@@ -249,9 +249,12 @@ extension AppModel {
             guard let payload = executeSkill(named: skill.name, arguments: argsDict) else {
                 return false
             }
-            promptText = rawArgs.isEmpty
-                ? "Execute the following skill instructions:\n\n\(payload)"
-                : "Execute the following skill instructions with arguments: \(rawArgs)\n\n\(payload)"
+            // Programmatic expansion of a skill payload, which is often
+            // larger than the paste threshold; never a paste.
+            writePromptTextDirectly(
+                rawArgs.isEmpty
+                    ? "Execute the following skill instructions:\n\n\(payload)"
+                    : "Execute the following skill instructions with arguments: \(rawArgs)\n\n\(payload)")
             run()
             return true
         }

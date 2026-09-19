@@ -140,21 +140,30 @@ private struct SplitPaneMessageRow: View {
         case .user:
             HStack(alignment: .top, spacing: 0) {
                 Spacer(minLength: 32)
-                Text(message.content)
-                    .themedFont(.small)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.appSurface.opacity(0.85))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                // Head-only preview (the marker inside states the hidden
+                // count): a pane is read-only follow-along, and the full
+                // text is one promote-click away in the main transcript.
+                Text(
+                    MessageContentPreview.make(message.content, includesTail: false)?.visible
+                        ?? message.content
+                )
+                .themedFont(.small)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.appSurface.opacity(0.85))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 6) {
                 if !message.content.isEmpty {
-                    ChatMessageMarkdownView(message.content)
+                    ChatMessageMarkdownView(
+                        MessageContentPreview.make(message.content, includesTail: false)?
+                            .visible ?? message.content
+                    )
                 }
                 ForEach(message.toolCalls) { call in
                     HStack(spacing: 5) {

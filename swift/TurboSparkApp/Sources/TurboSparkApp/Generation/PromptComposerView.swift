@@ -167,11 +167,16 @@ struct PromptComposerView: View {
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)
         }
-        .onChange(of: model.promptText) { _, newValue in
+        .onChange(of: model.promptText) { oldValue, newValue in
+            // Large-paste interception rides the same change stream as the
+            // popup: a change that inserts thousands of characters in one
+            // step is a paste, and its middle moves into an attachment chip
+            // before anything else reasons about the new draft.
+            model.processLargePaste(previous: oldValue, current: newValue)
             // The `/` and `@` popup rides the draft text: every keystroke
             // re-derives the trigger from the trailing token.
             autocomplete.textChanged(
-                text: newValue,
+                text: model.promptText,
                 skills: model.effectiveSkills,
                 projectRoot: model.selectedProject?.rootDirectoryURL)
         }
@@ -182,7 +187,7 @@ struct PromptComposerView: View {
 
     private func acceptAutocomplete() {
         if let newText = autocomplete.accept(in: model.promptText) {
-            model.promptText = newText
+            model.writePromptTextDirectly(newText)
         }
     }
 
@@ -254,13 +259,18 @@ struct PromptComposerView: View {
     }
 
     private func insertPromptText(_ text: String) {
-        if model.promptText.isEmpty {
-            model.promptText = text
-        } else if model.promptText.hasSuffix("\n") || model.promptText.hasSuffix(" ") {
-            model.promptText += text
+        let current = model.promptText
+        let combined: String
+        if current.isEmpty {
+            combined = text
+        } else if current.hasSuffix("\n") || current.hasSuffix(" ") {
+            combined = current + text
         } else {
-            model.promptText += " " + text
+            combined = current + " " + text
         }
+        // Programmatic insert (plus menu), not a paste: the same words
+        // arriving through the clipboard would convert, this must not.
+        model.writePromptTextDirectly(combined)
         promptFocused = true
     }
 }

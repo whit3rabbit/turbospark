@@ -80,9 +80,13 @@ extension AppModel {
         if let rowIndex = chats.firstIndex(where: { $0.id == chatID }) {
             chats[rowIndex].draftAttachments += entry.attachments
         }
-        promptText = promptText.isEmpty
-            ? entry.text
-            : "\(promptText)\n\n\(entry.text)"
+        // A queued prompt the user parked earlier is the draft's own text
+        // coming back, not a paste: it must stay inline even when it is
+        // thousands of characters.
+        writePromptTextDirectly(
+            promptText.isEmpty
+                ? entry.text
+                : "\(promptText)\n\n\(entry.text)")
     }
 
     /// Sends the chat's first queued prompt NOW, if the chat is idle.
@@ -111,7 +115,7 @@ extension AppModel {
         if let rowIndex = chats.firstIndex(where: { $0.id == chatID }) {
             chats[rowIndex].draftAttachments = first.attachments
         }
-        promptText = first.text
+        writePromptTextDirectly(first.text)
         run()
     }
 

@@ -15,11 +15,12 @@ use std::path::PathBuf;
 
 use turbospark_repack::{
     arch_from_gguf, canonicalize_qwen2_header, fetch_gguf_header, fetch_safetensors_header,
-    parse_gemma4_quantization, parse_qwen2_config, write_qwen2_dense_install_streamed,
-    Gemma4Shards, HttpRangeSource,
+    parse_gemma4_quantization, parse_qwen2_config, write_gguf_install_streamed,
+    write_qwen2_dense_install_streamed, Gemma4Shards, HttpRangeSource,
 };
 
 const GGUF_URL: &str = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/74ef91efd0899612867d6bb080ce5a2788ef6aa1/qwen2.5-7b-instruct-q3_k_m.gguf";
+const GGUF_Q4KM_URL: &str = "https://huggingface.co/mradermacher/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct.Q4_K_M.gguf";
 const MLX_BASE: &str = "https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit/resolve/c8e9187488f846965507bfc2b3957d59fd0d5a27";
 const MODEL_ID: &str = "mlx-community/Qwen2.5-7B-Instruct-4bit";
 
@@ -163,4 +164,98 @@ fn the_pinned_qwen25_mlx_header_matches_the_qwen2_contract() {
             "missing canonical tensor {name}"
         );
     }
+}
+
+/// The Dense Qwen2 roadmap item's full-stream gate: the pinned official
+/// single-file Q3_K_M GGUF writes into a verified `.gturbo` install whose
+/// manifest names executable types only. This used to be impossible by
+/// definition -- the walk refused ggml type 11 with "no .gturbo dtype tag"
+/// before the Q3_K resident kernels landed.
+#[test]
+#[ignore = "network: streams the pinned 3.5 GB Qwen2.5 Q3_K_M GGUF"]
+fn repacks_the_pinned_qwen25_q3_k_m_gguf() {
+    let source = HttpRangeSource::new(GGUF_URL);
+    let header = fetch_gguf_header(&source).expect("fetch Qwen2.5 GGUF header");
+    let dir = install_dir();
+
+    let arch = write_gguf_install_streamed(
+        &dir,
+        &header,
+        &source,
+        "Qwen/Qwen2.5-7B-Instruct-GGUF",
+        |stage| {
+            eprintln!("[repack] {stage}");
+        },
+    )
+    .expect("streamed Qwen2.5 Q3_K_M install");
+
+    assert_eq!(arch.family, model_io::ModelFamily::Qwen2Dense);
+    assert_eq!(arch, model_io::qwen2_5_7b());
+    model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("Q3_K_M manifest validates (every declared type is executable)");
+
+    let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
+        .expect("resident index loads");
+    // The census the header probe reports: Q3_K on the attention and FFN
+    // projections, Q4_K on the embedding table, Q6_K on the untied head,
+    // three Q5_K tensors, and the Q/K/V biases narrowed to BF16.
+    let mut census: std::collections::BTreeMap<u8, usize> = std::collections::BTreeMap::new();
+    for entry in index.entries.values() {
+        *census.entry(entry.dtype).or_default() += 1;
+    }
+    assert!(census[&11] >= 100, "Q3_K resident tag 11: {census:?}");
+    assert!(census[&7] >= 1, "Q4_K resident tag 7: {census:?}");
+    assert!(census[&8] >= 1, "Q6_K resident tag 8: {census:?}");
+    assert!(census[&13] >= 1, "Q5_K resident tag 13: {census:?}");
+    for layer in [0, 27] {
+        for projection in ["q", "k", "v"] {
+            let name =
+                format!("language_model.model.layers.{layer}.self_attn.{projection}_proj.bias");
+            assert_eq!(index.entries[&name].dtype, 1, "{name} is BF16");
+            let attn =
+                format!("language_model.model.layers.{layer}.self_attn.{projection}_proj.weight");
+            assert_eq!(index.entries[&attn].dtype, 11, "{attn} is Q3_K (tag 11)");
+        }
+    }
+}
+
+/// The roadmap's second real Qwen2 GGUF artifact. The official repo splits
+/// its Q4_K_M and Q8_0, and split GGUF is out of scope for the dense qwen2
+/// walk, so this streams the single-file mradermacher conversion of the same
+/// base checkpoint. Q4_K and Q6_K kernels only, which the install existed to
+/// prove on real bytes even before Q3_K did.
+#[test]
+#[ignore = "network: streams the 4.4 GB single-file Qwen2.5 Q4_K_M GGUF"]
+fn repacks_the_single_file_qwen25_q4_k_m_gguf() {
+    let source = HttpRangeSource::new(GGUF_Q4KM_URL);
+    let header = fetch_gguf_header(&source).expect("fetch Qwen2.5 Q4_K_M header");
+    assert_eq!(header.architecture(), Some("qwen2"));
+    let dir = install_dir();
+
+    let arch = write_gguf_install_streamed(
+        &dir,
+        &header,
+        &source,
+        "mradermacher/Qwen2.5-7B-Instruct-GGUF",
+        |stage| {
+            eprintln!("[repack] {stage}");
+        },
+    )
+    .expect("streamed Qwen2.5 Q4_K_M install");
+
+    assert_eq!(arch.family, model_io::ModelFamily::Qwen2Dense);
+    assert_eq!(arch, model_io::qwen2_5_7b());
+    model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("Q4_K_M manifest validates");
+
+    let index = model_io::load_resident_index(&dir.join("model_weights.bin"))
+        .expect("resident index loads");
+    let mut census: std::collections::BTreeMap<u8, usize> = std::collections::BTreeMap::new();
+    for entry in index.entries.values() {
+        *census.entry(entry.dtype).or_default() += 1;
+    }
+    assert!(census[&7] >= 100, "Q4_K resident tag 7: {census:?}");
+    assert!(census[&8] >= 1, "Q6_K resident tag 8: {census:?}");
+    // The head really is untied in the GGUF conversion, so it is Q6_K there.
+    assert_eq!(index.entries["lm_head.weight"].dtype, 8, "head is Q6_K");
 }

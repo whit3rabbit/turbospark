@@ -30,6 +30,20 @@ public struct CollapsibleMessageContentView: View {
         contentHeight > maxHeight + 10
     }
 
+    /// The string-level gate (see `MessageContentPreview`): when collapsed
+    /// and the text is long enough, only a head+tail window is handed to
+    /// the renderers below. This is what bounds the layout cost -- the
+    /// frame clamp alone hides overflow AFTER the full string has been laid
+    /// out, and transcript rows re-evaluate on every streamed token. User
+    /// messages preview head+tail (the end of a paste is worth seeing);
+    /// assistant messages preview head-only, matching what the frame clamp
+    /// already showed. Expanding falls back to the full text, so content,
+    /// copy, speak, and edit keep receiving `text` untouched.
+    private var gatedPreview: MessageContentPreview.Preview? {
+        guard !isExpanded else { return nil }
+        return MessageContentPreview.make(text, includesTail: isUser)
+    }
+
     public var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
             ZStack(alignment: .topLeading) {
@@ -69,14 +83,16 @@ public struct CollapsibleMessageContentView: View {
                 }
             }
 
-            if isClamped {
+            if isClamped || gatedPreview != nil {
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isExpanded.toggle()
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        if isExpanded { Text("Show less", bundle: .module) }
+                        if let gated = gatedPreview {
+                            Text("View all (+\(gated.hiddenCharacterCount) characters)", bundle: .module)
+                        } else if isExpanded { Text("Show less", bundle: .module) }
                         else { Text("View all", bundle: .module) }
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .themedFont(.micro, weight: .bold)
@@ -99,14 +115,15 @@ public struct CollapsibleMessageContentView: View {
     @ViewBuilder
     private var contentBody: some View {
         if isUser {
-            Text(text)
+            Text(gatedPreview?.visible ?? text)
                 .font(theme.uiFont)
                 .textSelection(.enabled)
         } else {
             // Interactive tables (qwen-code parity): a message carrying a
             // pipe table renders that segment as a sortable, copyable grid;
             // everything else is the ordinary markdown renderer.
-            MarkdownContentWithTablesView(text: text, onPreviewHTML: onPreviewHTML)
+            MarkdownContentWithTablesView(
+                text: gatedPreview?.visible ?? text, onPreviewHTML: onPreviewHTML)
         }
     }
 }

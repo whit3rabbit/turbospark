@@ -100,7 +100,8 @@ extension AppModel {
     private func fireCronJob(_ job: AppCronJob) -> Bool {
         guard chats.contains(where: { $0.id == job.chatID }) else { return false }
         if job.chatID == selectedChatID, canRun {
-            promptText = job.prompt
+            // A cron job's own prompt landing in the composer, not a paste.
+            writePromptTextDirectly(job.prompt)
             run()
             return true
         }

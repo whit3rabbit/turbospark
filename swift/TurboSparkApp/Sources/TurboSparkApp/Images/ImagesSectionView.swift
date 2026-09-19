@@ -1,448 +1,173 @@
 import AppKit
 import SwiftUI
 
-/// The canonical image-generation destination.
-///
-/// Image jobs are transient, while the gallery is rebuilt from the active
-/// profile's saved artifact rows. That keeps the gallery useful after relaunch
-/// without restoring an interrupted native image session.
+/// Creation and organization share the same saved outputs and image actions.
 @MainActor
 struct ImagesSectionView: View {
     @ObservedObject var model: AppModel
-
-    private enum Tab: String, CaseIterable, Identifiable {
-        case create
-        case gallery
-
-        var id: String { rawValue }
-        var title: String { rawValue.capitalized }
-    }
-
     @Environment(\.appTheme) private var theme
-    @State private var tab: Tab = .create
-    @State private var advancedExpanded = false
-    @State private var isImportingImageModel = false
-    @State private var selectedGalleryIndex: Int?
+    @State private var organizing = false
+    @State private var importing = false
+    @State private var search = ""
+    @State private var selecting = false
+    @State private var selection: Set<UUID> = []
+    @State private var preview: AppArtifact?
+
+    private var artifacts: [AppArtifact] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard organizing, !query.isEmpty else { return model.savedImageArtifacts }
+        return model.savedImageArtifacts.filter {
+            ($0.imageRequest?.prompt ?? $0.title).localizedStandardContains(query)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            if tab == .create {
-                createView
-            } else {
-                galleryView
+            if organizing { organizationToolbar }
+            gallery.frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !organizing {
+                ImageComposerView(model: model, importing: $importing)
             }
         }
         .background(.appPage)
-        .fileImporter(
-            isPresented: $isImportingImageModel,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            if case let .success(urls) = result, let url = urls.first {
-                model.imageModelPathText = url.path
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.folder]) { result in
+            if case let .success(url) = result { model.imageModelPathText = url.path }
+        }
+        .sheet(item: $preview) { artifact in
+            ImageGalleryCarousel(model: model, initialID: artifact.id) { artifact in
+                reusePrompt(artifact)
             }
         }
-        .sheet(isPresented: Binding(
-            get: { selectedGalleryIndex != nil },
-            set: { if !$0 { selectedGalleryIndex = nil } }
-        )) {
-            if let selectedGalleryIndex {
-                ImageGalleryCarousel(
-                    model: model,
-                    artifacts: model.savedImageArtifacts,
-                    initialIndex: selectedGalleryIndex)
-            }
+        .onChange(of: organizing) { selection.removeAll(); selecting = false }
+        .onChange(of: model.savedImageArtifacts.map(\.id)) {
+            selection.formIntersection(Set(model.savedImageArtifacts.map(\.id)))
         }
     }
 
     private var header: some View {
+        HStack(spacing: 20) {
+            Text("Images", bundle: .module).themedFont(.title2, weight: .semibold)
+            Picker(selection: $organizing) {
+                Text("Create", bundle: .module).tag(false)
+                Text("Organize", bundle: .module).tag(true)
+            } label: { Text("Images", bundle: .module) }
+            .labelsHidden().pickerStyle(.segmented).frame(width: 210)
+            Spacer(minLength: 0)
+            Text("\(model.savedImageArtifacts.count) image(s)", bundle: .module)
+                .themedFont(.small).foregroundStyle(.appSecondary)
+        }
+        .padding(.horizontal, 24).padding(.vertical, 18)
+    }
+
+    private var organizationToolbar: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Images", bundle: .module)
-                    .font(theme.ui(.title2, weight: .semibold))
-                Text(verbatim:
-                    tab == .create
-                        ? "Create images with a verified local image install."
-                        : "Saved images from this profile.")
-                    .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.appSecondary)
+                TextField(text: $search) { Text("Search images", bundle: .module) }
+                    .textFieldStyle(.plain)
+                if !search.isEmpty {
+                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain)
+                        .help(Text("Clear search", bundle: .module))
+                        .accessibilityLabel(Text("Clear search", bundle: .module))
+                }
             }
+            .padding(10).background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+            .frame(maxWidth: 360)
             Spacer(minLength: 0)
-            Picker(selection: $tab) {
-                ForEach(Tab.allCases) { tab in
-                    Text(verbatim: tab.title).tag(tab)
+            if selecting {
+                Text(verbatim: String(selection.count)).monospacedDigit()
+                Button { selection = Set(artifacts.map(\.id)) } label: {
+                    Text("Select all", bundle: .module)
                 }
-            } label: { Text(verbatim: "Image view") }
-            .pickerStyle(.segmented)
-            .frame(width: 190)
-            .accessibilityLabel("Image view")
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-    }
-
-    private var createView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                modelPicker
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(verbatim: "Prompt")
-                        .font(theme.ui(.title3, weight: .semibold))
-                    TextEditor(text: $model.promptText)
-                        .font(theme.ui(.base))
-                        .frame(minHeight: 150)
-                        .padding(8)
-                        .background(
-                            Color.primary.opacity(theme.isDark ? 0.1 : 0.05),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(.appBorder, lineWidth: 1)
-                        }
-                    Text(verbatim: "Describe the image you want to create.")
-                        .font(theme.ui(.tiny))
-                        .foregroundStyle(.secondary)
-                }
-
-                DisclosureGroup(isExpanded: $advancedExpanded) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text(verbatim: "Seed")
-                            Spacer()
-                            TextField("Random", text: $model.imageSeedText)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 180)
-                                .multilineTextAlignment(.trailing)
-                        }
-                        settingRow("Size", value: model.imageSizeLabel)
-                        settingRow("Scheduler steps", value: String(model.imageSchedulerSteps))
-                        settingRow(
-                            "Quantization",
-                            value: model.selectedImageModel?.quantization ?? "Unknown")
-                        Text(verbatim: "Size, steps, and quantization are read from the selected install.")
-                            .font(theme.ui(.tiny))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.top, 8)
+                Button(role: .destructive) {
+                    selection.subtract(model.trashGeneratedImages(ids: selection))
                 } label: {
-                    Text(verbatim: "Advanced settings")
+                    Label { Text("Move to Trash", bundle: .module) } icon: { Image(systemName: "trash") }
                 }
-                .font(theme.ui(.small, weight: .medium))
-
-                generationControls
-                currentResult
+                .disabled(selection.isEmpty)
             }
-            .frame(maxWidth: 820)
-            .frame(maxWidth: .infinity)
-            .padding(28)
+            Button { selecting.toggle(); selection.removeAll() } label: {
+                if selecting { Text("Done", bundle: .module) }
+                else { Text("Select", bundle: .module) }
+            }
+            .disabled(model.savedImageArtifacts.isEmpty)
         }
-    }
-
-    private var modelPicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(verbatim: "Image model")
-                .font(theme.ui(.title3, weight: .semibold))
-            Menu {
-                if model.imageModels.isEmpty {
-                    Text(verbatim: "No installed image models")
-                } else {
-                    ForEach(model.imageModels) { imageModel in
-                        Button {
-                            model.selectImageModel(imageModel)
-                        } label: {
-                            Label(
-                                imageModel.alias,
-                                systemImage: model.imageModelPath == imageModel.path
-                                    ? "checkmark" : "photo")
-                        }
-                    }
-                }
-                if !model.imageCatalog.isEmpty {
-                    Divider()
-                    Text(verbatim: "Download curated model")
-                    ForEach(model.imageCatalog) { source in
-                        Button {
-                            model.installImageModel(source)
-                        } label: {
-                            Label(
-                                source.alias,
-                                systemImage: model.imageInstallAlias == source.alias
-                                    ? "arrow.down.circle" : "icloud.and.arrow.down")
-                        }
-                        .disabled(
-                            model.isInstallingImageModel
-                                || model.imageModels.contains { $0.alias == source.alias }
-                                || !AppModel.testedZImageAliases.contains(source.alias))
-                    }
-                }
-                Divider()
-                Button {
-                    isImportingImageModel = true
-                } label: {
-                    Text(verbatim: "Choose side-loaded install folder…")
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "photo.on.rectangle")
-                    Text(selectedImageModelLabel)
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                            .font(theme.ui(.small, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    Color.primary.opacity(theme.isDark ? 0.1 : 0.05),
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-            .menuStyle(.borderlessButton)
-            .frame(maxWidth: 420)
-            .disabled(model.isRunning || model.isInstallingModel || model.isInstallingImageModel)
-
-            if model.isInstallingImageModel {
-                HStack(spacing: 10) {
-                    ProgressView(value: model.imageInstallProgressFraction)
-                        .frame(width: 180)
-                    Text(model.imageInstallStage ?? "Installing image model")
-                        .font(theme.ui(.small))
-                        .foregroundStyle(.secondary)
-                    Button { model.cancelImageInstall() } label: {
-                        Text(verbatim: "Cancel")
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-        }
-    }
-
-    private var generationControls: some View {
-        HStack(spacing: 10) {
-            if let job = model.imageJob, job.status == .waiting || job.status == .generating {
-                ProgressView(value: model.imageProgressFraction)
-                    .frame(width: 160)
-                Text(job.stage ?? "Generating")
-                    .font(theme.ui(.small))
-                    .foregroundStyle(.secondary)
-                Button { model.cancelImageGeneration() } label: {
-                    Text(verbatim: "Cancel")
-                }
-                    .buttonStyle(.bordered)
-            } else {
-                Button {
-                    model.generateImage()
-                } label: {
-                    Label("Generate", systemImage: "wand.and.stars")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!model.canGenerateImage || model.isInGhostChat)
-                .keyboardShortcut(.return, modifiers: .command)
-            }
-            Spacer(minLength: 0)
-        }
+        .themedFont(.small).padding(.horizontal, 24).padding(.vertical, 12)
     }
 
     @ViewBuilder
-    private var currentResult: some View {
-        if let job = model.imageJob, let result = job.result,
-           let image = NSImage(data: result.png) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(job.status == .completed ? "Preview" : "Result")
-                    .font(theme.ui(.title3, weight: .semibold))
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 720, maxHeight: 560)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .shadow(radius: 8)
-                HStack(spacing: 10) {
-                    if job.savedPath == nil {
-                        Button { model.saveImage() } label: {
-                            Text(verbatim: "Save to gallery")
-                        }
-                            .buttonStyle(.borderedProminent)
-                    } else {
-                        Label("Saved to this profile", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    }
-                    Button { model.regenerateImage() } label: {
-                        Text(verbatim: "Regenerate")
-                    }
-                        .buttonStyle(.bordered)
-                        .disabled(job.status != .completed || model.isRunning)
-                    Text(verbatim: "Seed " + String(job.options.seed))
-                        .font(theme.code(.tiny))
-                        .foregroundStyle(.secondary)
+    private var gallery: some View {
+        if artifacts.isEmpty && model.imageJob?.result == nil {
+            VStack(spacing: 14) {
+                Image(systemName: organizing ? "square.grid.2x2" : "photo.badge.plus")
+                    .themedFont(.hero).foregroundStyle(.appAccent)
+                Text(organizing ? "No images found" : "Make room for your imagination", bundle: .module)
+                    .themedFont(.title2, weight: .semibold)
+                Text(organizing ? "Your saved images appear here." : "Describe an idea below. Your images will be saved here automatically.", bundle: .module)
+                    .themedFont(.small).foregroundStyle(.appSecondary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 380)
+                if organizing && !search.isEmpty {
+                    Button { search = "" } label: { Text("Clear search", bundle: .module) }
                 }
             }
-            .padding(.top, 8)
-        }
-    }
-
-    private var galleryView: some View {
-        let artifacts = model.savedImageArtifacts
-        return Group {
-            if artifacts.isEmpty {
-                ContentUnavailableView {
-                    Label("No saved images", systemImage: "photo.on.rectangle.angled")
-                } description: {
-                    Text(verbatim: "Generate an image and save it to see it here.")
-                }
-            } else {
-                ScrollView {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 170), spacing: 16)],
-                        spacing: 18) {
-                        ForEach(Array(artifacts.enumerated()), id: \.element.id) { index, artifact in
-                            ImageGalleryThumbnail(artifact: artifact) {
-                                selectedGalleryIndex = index
+            .padding(32)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if !organizing { unsavedResult }
+                    ForEach(dayGroups, id: \.day) { group in
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text(group.day, format: .dateTime.month(.wide).day().year())
+                                .themedFont(.small, weight: .medium).foregroundStyle(.appSecondary)
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: organizing ? 160 : 230), spacing: 14)], spacing: 20) {
+                                ForEach(group.images) { artifact in
+                                    ImageGalleryCard(
+                                        model: model, artifact: artifact, compact: organizing,
+                                        selecting: selecting, selected: selection.contains(artifact.id),
+                                        open: {
+                                            if selecting {
+                                                if !selection.insert(artifact.id).inserted { selection.remove(artifact.id) }
+                                            } else { preview = artifact }
+                                        }, reuse: { reusePrompt(artifact) })
+                                }
                             }
                         }
                     }
-                    .padding(24)
                 }
+                .padding(24)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var selectedImageModelLabel: String {
-        if let selected = model.selectedImageModel { return selected.alias }
-        if !model.imageModelPath.isEmpty {
-            return URL(fileURLWithPath: model.imageModelPath).lastPathComponent
-        }
-        return "Select image model"
+    private var dayGroups: [(day: Date, images: [AppArtifact])] {
+        Dictionary(grouping: artifacts) { Calendar.current.startOfDay(for: $0.createdAt) }
+            .map { (day: $0.key, images: $0.value) }
+            .sorted { $0.day > $1.day }
     }
 
-    private func settingRow(_ label: String, value: String) -> some View {
-        HStack {
-            Text(label)
-            Spacer()
-            Text(value).foregroundStyle(.secondary)
-        }
-    }
-}
-
-private struct ImageGalleryThumbnail: View {
-    let artifact: AppArtifact
-    let onOpen: () -> Void
-    @Environment(\.appTheme) private var theme
-
-    var body: some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 8) {
-                Group {
-                    if let path = artifact.path, let image = NSImage(contentsOfFile: path) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFill()
-                    } else {
-                        Image(systemName: "photo")
-                            .font(theme.ui(.hero))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
-                .frame(height: 150)
-                .frame(maxWidth: .infinity)
-                .clipped()
-                .background(Color.primary.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                Text(artifact.imageRequest?.prompt ?? artifact.title)
-                    .font(theme.ui(.small))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Open image")
-    }
-}
-
-private struct ImageGalleryCarousel: View {
-    @ObservedObject var model: AppModel
-    let artifacts: [AppArtifact]
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.appTheme) private var theme
-    @State private var index: Int
-
-    init(model: AppModel, artifacts: [AppArtifact], initialIndex: Int) {
-        self.model = model
-        self.artifacts = artifacts
-        _index = State(initialValue: initialIndex)
-    }
-
-    private var artifact: AppArtifact? {
-        guard artifacts.indices.contains(index) else { return nil }
-        return artifacts[index]
-    }
-
-    var body: some View {
-        VStack(spacing: 14) {
-            HStack {
-                Text(verbatim: "Gallery")
-                    .font(theme.ui(.callout, weight: .semibold))
-                Spacer()
-                Button { dismiss() } label: {
-                    Text(verbatim: "Done")
-                }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-
-            if let artifact, let path = artifact.path,
-               let image = NSImage(contentsOfFile: path) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 900, maxHeight: 650)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                Text(artifact.imageRequest?.prompt ?? artifact.title)
-                    .font(theme.ui(.base))
-                    .lineLimit(3)
-                    .frame(maxWidth: 760, alignment: .leading)
-
+    @ViewBuilder
+    private var unsavedResult: some View {
+        if let job = model.imageJob, job.savedPath == nil, let result = job.result,
+           let image = NSImage(data: result.png) {
+            VStack(alignment: .leading, spacing: 12) {
+                Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 260)
+                Text("This image has not been saved.", bundle: .module).themedFont(.small)
                 HStack {
-                    Button {
-                        index -= 1
-                    } label: {
-                        Label("Previous", systemImage: "chevron.left")
-                    }
-                    .disabled(index == 0)
-
-                    Text(verbatim: String(index + 1) + " of " + String(artifacts.count))
-                        .font(theme.ui(.small, systemDesign: .monospaced))
-                        .foregroundStyle(.secondary)
-
-                    Button {
-                        index += 1
-                    } label: {
-                        Label("Next", systemImage: "chevron.right")
-                    }
-                    .labelStyle(.titleAndIcon)
-                    .disabled(index == artifacts.count - 1)
-
-                    if artifact.imageRequest != nil {
-                        Button {
-                            model.regenerateImage(from: artifact)
-                            dismiss()
-                        } label: {
-                            Text(verbatim: "Regenerate")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(model.isRunning)
+                    Button { model.saveImage() } label: { Text("Save", bundle: .module) }
+                    Button(role: .destructive) { model.discardUnsavedImage() } label: {
+                        Text("Remove", bundle: .module)
                     }
                 }
+                .disabled(model.imageGenerationTask != nil)
             }
         }
-        .frame(minWidth: 720, minHeight: 620)
-        .padding(.bottom, 16)
+    }
+
+    private func reusePrompt(_ artifact: AppArtifact) {
+        model.promptText = artifact.imageRequest?.prompt ?? artifact.title
+        organizing = false
     }
 }

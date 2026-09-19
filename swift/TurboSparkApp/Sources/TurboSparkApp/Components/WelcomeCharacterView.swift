@@ -240,7 +240,7 @@ public struct WelcomeHeroView: View {
     private func suggestionCard(_ suggestion: WelcomeSuggestion) -> some View {
         Button {
             withAnimation(TSMotion.select) {
-                model.promptText = suggestion.prompt
+                model.writePromptTextDirectly(suggestion.prompt)
             }
         } label: {
             VStack(alignment: .leading, spacing: 7) {

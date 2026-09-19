@@ -102,7 +102,8 @@ public struct ModelsSettingsPaneView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .help("Opens the TurboSpark store in Finder")
+                    .help(Text("Opens the TurboSpark store in Finder", bundle: .module))
+                    .accessibilityLabel(Text("Reveal in Finder", bundle: .module))
                     Spacer()
                     Button {
                         showingProviderDiscovery = true
@@ -111,6 +112,8 @@ public struct ModelsSettingsPaneView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .help(Text("Detect Model Libraries", bundle: .module))
+                    .accessibilityLabel(Text("Detect Model Libraries", bundle: .module))
                 }
 
                 Text("Catalog installs and future text, image, and audio installs use this shared root. Other folders are scanned in place and are never copied automatically.", bundle: .module)

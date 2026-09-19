@@ -38,8 +38,12 @@ struct ModelProviderDiscoverySheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                Button("Add Selected") { addSelected() }
+                Button(role: .cancel) { dismiss() } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                Button { addSelected() } label: {
+                    Text("Add Selected", bundle: .module)
+                }
                     .buttonStyle(.borderedProminent)
                     .disabled(isScanning || selectedIDs.isEmpty)
             }

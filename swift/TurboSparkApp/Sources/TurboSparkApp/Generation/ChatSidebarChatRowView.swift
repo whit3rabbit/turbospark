@@ -241,10 +241,10 @@ struct ChatSidebarChatRowView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Chat actions for \(chat.title)")
+        .help(Text("Chat actions for \(chat.title)", bundle: .module))
         // Always reachable from VoiceOver, even though sighted users only
         // see the button when hovering or when the row is selected.
-        .accessibilityLabel("Chat actions for \(chat.title)")
+        .accessibilityLabel(Text("Chat actions for \(chat.title)", bundle: .module))
         .opacity(showsActions ? 1 : 0)
         .scaleEffect(showsActions ? 1 : 0.85)
         .disabled(model.isRunning)

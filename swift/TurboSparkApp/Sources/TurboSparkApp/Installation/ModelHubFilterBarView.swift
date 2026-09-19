@@ -116,8 +116,8 @@ struct ModelHubFilterBarView: View {
             in: Capsule())
         .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
         .disabled(options.isEmpty && selection.wrappedValue == nil)
-        .help("Filter by \(title.lowercased())")
-        .accessibilityLabel("\(title) filter")
+        .help(title.lowercased() == "architecture" ? Text("Filter by architecture", bundle: .module) : Text("Filter by source", bundle: .module))
+        .accessibilityLabel(title.lowercased() == "architecture" ? Text("Filter by architecture", bundle: .module) : Text("Filter by source", bundle: .module))
         .accessibilityValue(selection.wrappedValue ?? ModelHubFilter.anyOption)
     }
 
@@ -152,8 +152,8 @@ struct ModelHubFilterBarView: View {
         .foregroundStyle(.appSecondary)
         .background(TurboSparkTheme.surfaceColor, in: Capsule())
         .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
-        .help("Sort the list")
-        .accessibilityLabel("Sort order")
+        .help(Text("Sort and group models", bundle: .module))
+        .accessibilityLabel(Text("Sort By", bundle: .module))
         .accessibilityValue(filter.sort.rawValue)
     }
 }

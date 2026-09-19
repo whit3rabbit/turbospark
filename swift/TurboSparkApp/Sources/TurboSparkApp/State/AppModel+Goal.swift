@@ -62,7 +62,8 @@ extension AppModel {
         // `run()` like any prompt: mentions resolve, the UserPromptSubmit
         // hook is consulted, and a busy chat queues it for the tail rather
         // than jumping the work already running.
-        promptText = argument
+        // Programmatic expansion of /goal, not a paste.
+        writePromptTextDirectly(argument)
         run()
     }
 

@@ -152,7 +152,8 @@ struct InteractiveMarkdownTableView: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .accessibilityLabel("Copy or export this table")
+            .help(Text("Copy or export table", bundle: .module))
+            .accessibilityLabel(Text("Copy or export table", bundle: .module))
         }
         .padding(.bottom, 4)
     }

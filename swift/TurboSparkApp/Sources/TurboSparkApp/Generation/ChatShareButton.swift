@@ -24,6 +24,7 @@ struct ChatShareButton: View {
         .help(model.selectedChat.isGhost
               ? Text("Temporary chats cannot be exported.", bundle: .module)
               : Text("Save a local copy of this conversation", bundle: .module))
+        .accessibilityLabel(Text("Share conversation", bundle: .module))
         .onChange(of: model.selectedChatID) { _, _ in options = .init() }
     }
 

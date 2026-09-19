@@ -96,6 +96,10 @@ public final class AppModel: ObservableObject {
     @Published public var imageModelPathText: String = ""
     /// Empty means choose a fresh random seed for each new request.
     @Published public var imageSeedText: String = ""
+    /// Multiple outputs run serially under one admission, keeping batch-one memory use.
+    @Published public var imageCount: Int = 1
+    @Published public var imageBatchIndex: Int = 0
+    @Published public var imageBatchCount: Int = 0
     /// The current image job is intentionally transient. A relaunch never
     /// restores an interrupted generation as completed; saved PNGs and chat
     /// artifacts are the durable record.
@@ -606,6 +610,11 @@ public final class AppModel: ObservableObject {
     @Published public var modelReasoningDefaults: [String: String] = [:]
     /// Maximum new tokens to generate per response.
     @Published public var maxNewTokens: Int = 2048
+    /// Depth counter around programmatic draft writes (history recall,
+    /// queued restore, autocomplete, command expansion), so the large-paste
+    /// policy cannot mistake one for a paste. Managed only by
+    /// `writePromptTextDirectly` (`AppModel+Paste`); never rendered.
+    public var promptWriteSuppressionDepth = 0
     /// Whether repetition penalty is enabled.
     @Published public var repetitionPenaltyEnabled: Bool = false
     /// Repetition penalty multiplier applied to generated tokens.

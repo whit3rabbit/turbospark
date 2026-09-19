@@ -69,9 +69,21 @@ enum AttachmentImporter {
         var imported = 0
         var failures: [String] = []
         var importedIDs: [UUID] = []
+        var overContextCount = 0
+        let freeTokens = max(0, model.resolvedContextTokens - model.maxNewTokens)
         for (url, size, outcome) in outcomes {
             switch outcome {
             case .success(let document):
+                // Context awareness at import time: the same chars/4 price
+                // the context ring charges, compared against the window
+                // minus the generation reserve. A warning, not a gate --
+                // the 240k-character extractor cap stays the hard bound and
+                // the send-time fit check the backstop.
+                if !document.text.isEmpty,
+                    document.text.count / PromptPastePolicy.charactersPerToken > freeTokens
+                {
+                    overContextCount += 1
+                }
                 let attachment = AppPromptAttachment(
                     fileName: document.fileName,
                     formatLabel: document.formatLabel,
@@ -89,6 +101,14 @@ enum AttachmentImporter {
             case .failure(let error):
                 failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
+        }
+        if overContextCount > 0 {
+            model.showToast(
+                String(
+                    localized: "Some attached files may not fit the free context window.",
+                    bundle: .module),
+                style: .warning,
+                duration: 6)
         }
         return Outcome(importedCount: imported, failures: failures, importedIDs: importedIDs)
     }

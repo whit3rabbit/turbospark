@@ -156,7 +156,10 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
             "Attach files", "Send", "Stop", "Generating response", "Thinking",
             "Thought process", "Approve", "Deny", "Always Allow", "Run", "View",
             "Settings", "Share message", "Read message out loud", "Stop reading out loud",
-            "Copy message text", "Copy message"
+            "Copy message text", "Copy message", "Select active model", "Adjust reasoning effort",
+            "User profile and appearance settings", "Copy or export table",
+            "Select comparison branch or commit", "Share conversation", "Skill actions",
+            "Image actions", "Detect Model Libraries", "Move Store..."
         ]
 
         for key in requiredKeys {

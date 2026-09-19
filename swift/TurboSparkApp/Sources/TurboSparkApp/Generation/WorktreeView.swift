@@ -286,6 +286,8 @@ struct WorktreeView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .help(Text("Select comparison branch or commit", bundle: .module))
+        .accessibilityLabel(Text("Git comparison target", bundle: .module))
     }
 
     private var comparisonLabel: String {

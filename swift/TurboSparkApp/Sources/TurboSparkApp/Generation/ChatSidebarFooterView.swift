@@ -88,8 +88,8 @@ struct ChatSidebarFooterView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .help("User Profile: \(profileDisplayName)")
-            .accessibilityLabel("User Profile \(profileDisplayName)")
+            .help(Text("User profile and appearance settings", bundle: .module))
+            .accessibilityLabel(Text("User profile and appearance", bundle: .module))
 
             // Beside the profile menu rather than the top bar: ghost mode is
             // a property of WHOSE chat this is (temporary, tied to nobody's

@@ -16,6 +16,11 @@ struct FilePreviewView: View {
 
     @State private var showsExtractedText = false
     @State private var isMaximized = false
+    /// The full extracted text behind a preview gate. The preview renders
+    /// the head+tail window from `MessageContentPreview` until this flips;
+    /// a 240k-character extraction (the extractor's own ceiling) must not
+    /// lay out in full just because the pane opened.
+    @State private var showsFullText = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,6 +33,7 @@ struct FilePreviewView: View {
         .background(TurboSparkTheme.barBackgroundColor)
         .sheet(isPresented: $isMaximized) { maximizedSheet }
         .onChange(of: attachment.id) { showsExtractedText = false }
+        .onChange(of: attachment.id) { showsFullText = false }
     }
 
     // MARK: - Header
@@ -122,17 +128,39 @@ struct FilePreviewView: View {
     }
 
     private var extractedTextView: some View {
-        ScrollView {
-            Text(attachment.extractedText.isEmpty
-                 ? "No text was extracted from this document."
-                 : attachment.extractedText)
-                .themedCode(.callout)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
+        let preview = showsFullText ? nil : MessageContentPreview.make(attachment.extractedText)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(displayText(preview: preview))
+                    .themedCode(.callout)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if preview != nil {
+                    Button {
+                        showsFullText = true
+                    } label: {
+                        Text(
+                            "View all (+\(preview?.hiddenCharacterCount ?? 0) characters)",
+                            bundle: .module)
+                            .themedFont(.small, weight: .medium)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.appAccent)
+                }
+            }
+            .padding(12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityLabel("Extracted text of \(attachment.fileName)")
+    }
+
+    /// The text to show: the preview window while gated, the empty-extraction
+    /// notice, or the whole extraction once expanded.
+    private func displayText(preview: MessageContentPreview.Preview?) -> String {
+        if let preview { return preview.visible }
+        return attachment.extractedText.isEmpty
+            ? "No text was extracted from this document."
+            : attachment.extractedText
     }
 
     @ViewBuilder

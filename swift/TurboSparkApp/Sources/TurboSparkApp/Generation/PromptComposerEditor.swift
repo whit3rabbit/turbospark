@@ -203,7 +203,7 @@ struct PromptComposerEditor: View {
         guard let autocomplete,
             let newText = autocomplete.accept(in: model.promptText)
         else { return false }
-        model.promptText = newText
+        model.writePromptTextDirectly(newText)
         return true
     }
 
@@ -222,7 +222,7 @@ struct PromptComposerEditor: View {
         }
         guard let applied else { return }
         lastHistoryAppliedText = applied
-        model.promptText = applied
+        model.writePromptTextDirectly(applied)
         if browser.isActive {
             historyBrowser = browser
         } else {

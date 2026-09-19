@@ -56,8 +56,8 @@ struct PromptComposerPlusMenu: View {
             .fixedSize()
             .disabled(isRunning)
             .onHover { isHovered = $0 }
-            .help("Add files, folders, MCP servers, skills, and tools (Cmd+U)")
-            .accessibilityLabel("Add options and tools")
+            .help(Text("Add files, folders, and tools (Cmd+U)", bundle: .module))
+            .accessibilityLabel(Text("Add options and tools", bundle: .module))
         }
     }
 

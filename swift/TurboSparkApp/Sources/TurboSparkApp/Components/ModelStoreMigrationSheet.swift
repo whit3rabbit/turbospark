@@ -43,12 +43,15 @@ struct ModelStoreMigrationSheet: View {
             if isMoving {
                 if totalBytes > 0 {
                     ProgressView(value: Double(completedBytes) / Double(totalBytes))
+                    Text("\(MetricFormat.storage(completedBytes)) of \(MetricFormat.storage(totalBytes))", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
                 } else {
                     ProgressView()
+                    Text("Preparing move...", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
                 }
-                Text(totalBytes > 0 ? "\(MetricFormat.storage(completedBytes)) of \(MetricFormat.storage(totalBytes))" : "Preparing move...", bundle: .module)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
             }
 
             if let errorText {
@@ -60,13 +63,19 @@ struct ModelStoreMigrationSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .disabled(isMoving)
-                Button("Choose Folder...") { chooseDestination() }
-                    .disabled(isMoving)
-                Button("Move Store") { moveStore() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canMove)
+                Button(role: .cancel) { dismiss() } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .disabled(isMoving)
+                Button { chooseDestination() } label: {
+                    Text("Choose Folder...", bundle: .module)
+                }
+                .disabled(isMoving)
+                Button { moveStore() } label: {
+                    Text("Move Store", bundle: .module)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canMove)
             }
         }
         .padding(22)
@@ -75,10 +84,10 @@ struct ModelStoreMigrationSheet: View {
 
     private func locationRow(title: String, path: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
+            Text(LocalizedStringKey(title), bundle: .module)
                 .themedFont(.tiny, weight: .semibold)
                 .foregroundStyle(.appSecondary)
-            Text(path)
+            Text(path == "Choose a folder" ? String(localized: "Choose a folder", bundle: .module) : path)
                 .themedCode(.small)
                 .textSelection(.enabled)
                 .lineLimit(1)

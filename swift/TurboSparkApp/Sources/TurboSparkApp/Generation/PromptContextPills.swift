@@ -54,8 +54,8 @@ struct PromptModelSelectorPill: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Select model for generation")
-        .accessibilityLabel("Selected model: \(model.selected?.alias ?? "None")")
+        .help(Text("Select active model", bundle: .module))
+        .accessibilityLabel(Text("Select active model", bundle: .module))
     }
 }
 
@@ -154,8 +154,8 @@ struct PromptReasoningPillControl: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Reasoning effort level for \(model.selected?.alias ?? "the model"): currently \(model.reasoning.label). Click to change.")
-        .accessibilityLabel("Reasoning effort: \(model.reasoning.label)")
-        .accessibilityHint("Selects thinking depth for the next response without requiring model reload")
+        .help(Text("Adjust reasoning effort", bundle: .module))
+        .accessibilityLabel(Text("Reasoning Effort", bundle: .module))
+        .accessibilityValue(model.reasoning.label)
     }
 }

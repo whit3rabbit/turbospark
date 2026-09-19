@@ -176,10 +176,10 @@ struct ChatSidebarProjectsSectionView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Project actions for \(project.name)")
+            .help(Text("Project actions for \(project.name)", bundle: .module))
             // Always reachable from VoiceOver, even though sighted users
             // only see the button when hovering or when the row is selected.
-            .accessibilityLabel("Project actions for \(project.name)")
+            .accessibilityLabel(Text("Project actions for \(project.name)", bundle: .module))
             .opacity(showsActions ? 1 : 0)
             .padding(.trailing, 4)
         }

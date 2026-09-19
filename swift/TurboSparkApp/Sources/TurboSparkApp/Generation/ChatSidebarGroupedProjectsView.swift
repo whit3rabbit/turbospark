@@ -250,8 +250,8 @@ struct ChatSidebarGroupedProjectsView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Project actions for \(project.name)")
-                .accessibilityLabel("Project actions for \(project.name)")
+                .help(Text("Project actions for \(project.name)", bundle: .module))
+                .accessibilityLabel(Text("Project actions for \(project.name)", bundle: .module))
             }
         }
         .padding(.horizontal, 6)

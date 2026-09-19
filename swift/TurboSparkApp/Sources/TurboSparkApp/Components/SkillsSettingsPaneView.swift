@@ -376,6 +376,7 @@ public struct SkillsSettingsPaneView: View {
                                     }
                                 } label: { Text("Copy to TurboSpark", bundle: .module)
                     .settingsControl("Copy to TurboSpark", pane: .skills, timing: .nextTurn) }
+                                .help(Text("Skill actions", bundle: .module))
                             }
                             Button {
                                 NSWorkspace.shared.activateFileViewerSelecting([skill.sourceURL])
@@ -392,6 +393,8 @@ public struct SkillsSettingsPaneView: View {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(.bordered)
+                            .help(Text("Delete", bundle: .module))
+                            .accessibilityLabel(Text("Delete", bundle: .module))
                             }
                         }
                     }
