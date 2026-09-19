@@ -73,6 +73,7 @@ final class ProfileVaultStore: @unchecked Sendable {
     private let rootProvider: @Sendable () -> URL
     private let profileIDProvider: @Sendable () -> String
     private let keychain: any ProfileVaultKeychainProtocol
+    private let migrateLegacyData: Bool
     private var prepared = false
     private var manifestStorage: ProfileSecurityManifest?
     private var sessionStorage: ProfileVaultSession?
@@ -82,11 +83,13 @@ final class ProfileVaultStore: @unchecked Sendable {
             AppStorageRoot.directory.appendingPathComponent("private-vault", isDirectory: true)
         },
         profileIDProvider: @escaping @Sendable () -> String = { UserProfileStore.active.id },
-        keychain: any ProfileVaultKeychainProtocol = ProfileVaultKeychain()
+        keychain: any ProfileVaultKeychainProtocol = ProfileVaultKeychain(),
+        migrateLegacyData: Bool = true
     ) {
         self.rootProvider = rootProvider
         self.profileIDProvider = profileIDProvider
         self.keychain = keychain
+        self.migrateLegacyData = migrateLegacyData
     }
 
     var rootURL: URL { rootProvider() }
@@ -137,7 +140,9 @@ final class ProfileVaultStore: @unchecked Sendable {
                 passphrase: passphrase, salt: kdf.salt, rounds: kdf.rounds)
             let masterKey = try ProfileVaultCrypto.unwrapMasterKey(envelope, with: wrappingKey)
             let session = try openLocked(masterKey: masterKey)
-            try ProfileRepository(store: self).migrateLegacyPrivateFiles()
+            if migrateLegacyData {
+                try ProfileRepository(store: self).migrateLegacyPrivateFiles()
+            }
             return session
         }
     }
@@ -165,7 +170,9 @@ final class ProfileVaultStore: @unchecked Sendable {
             let envelope = try ProfileVaultCrypto.wrapMasterKey(
                 session.masterKey, with: wrappingKey)
 
-            try ProfileRepository(store: self).migrateLegacyPrivateFiles()
+            if migrateLegacyData {
+                try ProfileRepository(store: self).migrateLegacyPrivateFiles()
+            }
 
             var manifest = manifestStorage ?? newLocalManifest(masterKey: session.masterKey)
             manifest.protectionMode = .passphrase
@@ -298,7 +305,9 @@ final class ProfileVaultStore: @unchecked Sendable {
         if manifestStorage?.protectionMode == .local {
             guard let key = manifestStorage?.localMasterKey else { throw VaultError.missingKey }
             _ = try openLocked(masterKey: key)
-            try ProfileRepository(store: self).migrateLegacyPrivateFiles()
+            if migrateLegacyData {
+                try ProfileRepository(store: self).migrateLegacyPrivateFiles()
+            }
         }
     }
 
@@ -439,7 +448,7 @@ public final class ProfileRepository: @unchecked Sendable {
     }
 
     func migrateLegacyPrivateFiles() throws {
-        let root = AppStorageRoot.directory
+        let root = store.rootURL.deletingLastPathComponent()
         let names = [
             "chats_archive.json", "cron_jobs.json",
             "disabled_items.json", "global_mcp_servers.json", "granted_folders.json",

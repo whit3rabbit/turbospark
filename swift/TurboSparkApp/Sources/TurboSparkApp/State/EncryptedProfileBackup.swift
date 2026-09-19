@@ -179,7 +179,8 @@ enum EncryptedProfileBackup {
         try writeSecurityManifest(temporaryManifest, to: extractedVault)
         let verificationStore = ProfileVaultStore(
             rootProvider: { extractedVault },
-            profileIDProvider: { newProfileID })
+            profileIDProvider: { newProfileID },
+            migrateLegacyData: false)
         guard let verificationSession = try verificationStore.prepareForLaunch(),
               try verificationSession.database.integrityCheck()
         else { throw BackupError.integrityCheckFailed }

@@ -157,6 +157,16 @@ struct ArtifactPanelView: View {
             .disabled(sourceText == nil)
 
             if resolvedArtifact?.existsOnDisk == true {
+                if let artifact = resolvedArtifact,
+                   artifact.path.flatMap(ManagedAssetStore.assetID(from:)) == nil {
+                    headerButton(
+                        "lock.doc",
+                        help: "Copy \(title) into this encrypted profile",
+                        label: "Copy into profile")
+                    {
+                        model.copyArtifactIntoProfile(id: artifact.id)
+                    }
+                }
                 headerButton(
                     "arrow.down.to.line",
                     help: "Save a copy of \(title)",

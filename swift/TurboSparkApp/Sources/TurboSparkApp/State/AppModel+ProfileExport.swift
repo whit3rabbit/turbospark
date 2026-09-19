@@ -113,7 +113,8 @@ extension AppModel {
             showToast(profileMutationMessage(error), style: .error)
             return false
         }
-        let destination = UserProfileStore.folder(of: validation)
+        let destination = UserProfileStore.storeDirectory(
+            profileID: newID, machineRoot: AppStorageRoot.machineRoot)!
         profileBackupInFlight = true
         Task.detached(priority: .userInitiated) { [weak self] in
             let outcome: Result<(EncryptedProfileBackup.Manifest, UserProfile), Error>

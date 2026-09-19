@@ -83,6 +83,37 @@ extension AppModel {
         return nil
     }
 
+    /// Explicitly takes ownership of an external artifact. The source stays
+    /// where it is; only the chat's managed copy is encrypted and exported.
+    public func copyArtifactIntoProfile(id: UUID) {
+        guard let artifact = artifact(id: id),
+              let path = artifact.path,
+              ManagedAssetStore.assetID(from: path) == nil,
+              artifact.existsOnDisk
+        else { return }
+        let source = URL(fileURLWithPath: path)
+        Task {
+            do {
+                let descriptor = try await Task.detached(priority: .utility) {
+                    try ManagedAssetStore.shared.store(
+                        fileURL: source, fileName: artifact.fileName)
+                }.value
+                for chatIndex in chats.indices {
+                    if let artifactIndex = chats[chatIndex].artifacts.firstIndex(where: { $0.id == id }) {
+                        chats[chatIndex].artifacts[artifactIndex].path = descriptor.storedReference
+                        chats[chatIndex].artifacts[artifactIndex].lastKnownByteSize = Int(descriptor.byteCount)
+                        chats[chatIndex].artifacts[artifactIndex].updatedAt = Date()
+                        persistChats()
+                        showToast("Copied into the encrypted profile.", style: .success)
+                        return
+                    }
+                }
+            } catch {
+                showToast("Could not copy into profile: \(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
     // MARK: - Network grants
     //
     // Offline by default. A grant is keyed to the EXACT content: a rewritten

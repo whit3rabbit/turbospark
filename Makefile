@@ -2,7 +2,10 @@
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
-BINARIES = turbospark-check turbospark-model turbospark-server turbospark-bench
+# turbospark (the unified front end) ships too: the app's Launch
+# Claude/Codex buttons and `turbospark start <agent>` resolve it from
+# ~/.local/bin.
+BINARIES = turbospark turbospark-check turbospark-model turbospark-server turbospark-bench
 
 all: check
 

@@ -1252,4 +1252,65 @@ final class SurfaceTests: XCTestCase {
             "the derived discovery alias must remain one shell argument: \(cmd)")
     }
 
+    /// CODEX DOES NOT READ `OPENAI_BASE_URL`: its custom-provider mechanism
+    /// is a `[model_providers.<id>]` table, spelled here as `-c` command-line
+    /// overrides. Those are in-memory overrides of `~/.codex/config.toml`
+    /// for the one invocation -- the file is never written, so a user's own
+    /// codex configuration needs no backup and no restoration step.
+    func testLaunchCommandWiresCodexThroughConfigOverridesNotOpenAIEnv() {
+        let cmd = TurboSparkAgent.launchCommand(
+            for: "codex", host: "127.0.0.1", port: 9001, apiKey: "sk-x",
+            canonicalModelID: "gemma4.gturbo")
+        XCTAssertFalse(cmd.contains("OPENAI_BASE_URL"), cmd)
+        XCTAssertTrue(cmd.contains("export TURBOSPARK_API_KEY=\"sk-x\""), cmd)
+        XCTAssertTrue(cmd.contains("-c 'model_provider=\"turbospark\"'"), cmd)
+        XCTAssertTrue(
+            cmd.contains("-c 'model_providers.turbospark.base_url=\"http://127.0.0.1:9001/v1\"'"),
+            cmd)
+        XCTAssertTrue(
+            cmd.contains("-c 'model_providers.turbospark.env_key=\"TURBOSPARK_API_KEY\"'"), cmd)
+        XCTAssertTrue(cmd.contains("-c 'model_providers.turbospark.wire_api=\"chat\"'"), cmd)
+        XCTAssertTrue(cmd.contains("-m \"gemma4.gturbo\""), cmd)
+    }
+
+    /// The CLI launch command spells the launcher contract one argument per
+    /// token, every interpolated value a quoted single shell argument. An
+    /// unknown agent is refused rather than spelled out.
+    func testCLILaunchCommandSpellsTheLauncherContract() {
+        let cmd = TurboSparkAgent.cliLaunchCommand(
+            for: "claude",
+            binaryPath: "/Users/dev/.local/bin/turbospark",
+            modelArgument: "gemma4.gturbo",
+            port: 9000)
+        XCTAssertEqual(
+            cmd,
+            "\"/Users/dev/.local/bin/turbospark\" start claude --model \"gemma4.gturbo\" --port 9000")
+
+        // A model id carrying metacharacters stays one argument; the raw
+        // id rides through the launcher's own catalog resolution.
+        let escaped = TurboSparkAgent.cliLaunchCommand(
+            for: "codex",
+            binaryPath: "/opt/turbo spark/turbospark",
+            modelArgument: "m\"$`odel",
+            port: nil)
+        XCTAssertEqual(
+            escaped,
+            "\"/opt/turbo spark/turbospark\" start codex --model \"m\\\"\\$\\`odel\"")
+
+        XCTAssertNil(TurboSparkAgent.cliLaunchCommand(
+            for: "not-an-agent", binaryPath: "/x/turbospark"))
+    }
+
+    /// The AppleScript wrapper escapes exactly AppleScript's two special
+    /// characters, so a shell command containing quotes and backslashes
+    /// reaches Terminal's `do script` as one literal string.
+    func testTerminalDoScriptEscapesAppleScriptMetacharacters() {
+        let script = TurboSparkAgent.terminalDoScript(
+            command: "echo \"a\\\\b\" && turbospark start claude")
+        XCTAssertEqual(
+            script,
+            "tell application \"Terminal\" to do script "
+                + "\"echo \\\"a\\\\\\\\b\\\" && turbospark start claude\"")
+    }
+
 }
