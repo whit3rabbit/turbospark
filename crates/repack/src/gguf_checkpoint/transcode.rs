@@ -56,6 +56,11 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         // real GGUFs ARE walked by this function -- unlike `qwen3_5` above,
         // this is not an unreached arm. There is simply no router or
         // shared-expert gate tensor in the file to transcode.
+        //
+        // `qwen3_vl` is dense like its neighbours and has no GGUF intake
+        // this pass (`gguf_names` maps nothing for it), so the arm is
+        // unreachable today and stays empty for the same reason a dense
+        // family's is: no router, no shared-expert gate.
         ModelFamily::DeepseekV4Flash
         | ModelFamily::QwenGdnDense
         | ModelFamily::MuseGlimmer
@@ -63,7 +68,8 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         | ModelFamily::Spark25
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
-        | ModelFamily::MiniMaxM2 => &[],
+        | ModelFamily::MiniMaxM2
+        | ModelFamily::Qwen3Vl => &[],
     }
 }
 

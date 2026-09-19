@@ -259,8 +259,11 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         | ModelFamily::Qwen2Dense
         // `deepseek2` is GGUF-intake-only like these (no safetensors path),
         // so the marker can never match; the default is the honest arm.
+        // `qwen3_vl` is DENSE too and MLX-safetensors-only, with no MoE
+        // sibling marker to borrow: the default arm for the same reason.
         | ModelFamily::Deepseek2
-        | ModelFamily::MiniMaxM2 => ".experts.switch_glu.",
+        | ModelFamily::MiniMaxM2
+        | ModelFamily::Qwen3Vl => ".experts.switch_glu.",
     }
 }
 
@@ -272,6 +275,7 @@ fn is_dense_family(family: ModelFamily) -> bool {
             | ModelFamily::Spark25
             | ModelFamily::Qwen3Dense
             | ModelFamily::Qwen2Dense
+            | ModelFamily::Qwen3Vl
     )
 }
 

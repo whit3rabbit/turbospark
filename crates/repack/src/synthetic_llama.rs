@@ -138,6 +138,18 @@ pub fn tiny_gqa_moe_arch(
     }
 }
 
+/// A tiny dense `qwen3_vl` config: the `Qwen3Moe` arm's per-head q/k norms
+/// combined with the dense FFN and a TIED output head -- the real
+/// architecture's switch combination at fixture scale. The tie is the one
+/// field [`tiny_gqa_moe_arch`] does not already carry, and it changes the
+/// builder below structurally: a tied install ships NO `lm_head` tensor and
+/// the head reads the embedding table.
+pub fn tiny_qwen3_vl_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
+    let mut arch = tiny_gqa_moe_arch(vocab_size, num_layers, 0, ModelFamily::Qwen3Vl);
+    arch.tie_word_embeddings = true;
+    arch
+}
+
 /// Writes a tiny Mixtral-shaped `.gturbo` install and returns the
 /// `ArchConfig` needed to open it.
 ///
@@ -204,6 +216,27 @@ pub fn build_synthetic_qwen2_install(
     build_synthetic_qwen2_install_with_bias(dir, vocab_size, num_layers, model_id, 0.01)
 }
 
+/// Writes a tiny dense `qwen3_vl` install: per-head q/k norms (as
+/// `Qwen3Moe`), the dense FFN (as Llama/Mistral), and a TIED head -- no
+/// `lm_head` tensor, so the fixture is what proves the tied-head path
+/// reads the embedding table rather than a missing tensor.
+pub fn build_synthetic_qwen3_vl_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_gqa_install(
+        dir,
+        vocab_size,
+        num_layers,
+        0,
+        model_id,
+        ModelFamily::Qwen3Vl,
+        0.0,
+    )
+}
+
 /// Qwen2 fixture variant with an explicit bias value, used to prove that the
 /// Q/K/V bias tensors affect logits rather than merely being present.
 pub fn build_synthetic_qwen2_install_with_bias(
@@ -262,24 +295,38 @@ fn build_gqa_install(
     family: ModelFamily,
     qwen2_bias: f32,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    let arch = tiny_gqa_moe_arch(vocab_size, num_layers, num_experts, family);
+    // `qwen3_vl` is the one family here with a tied head, so its fixture
+    // carries that in the ARCH (and in the manifest) rather than only in
+    // the tensor list -- a tied flag the manifest contradicts would fail at
+    // validation, and one the tensor list contradicts would fail at the
+    // first head GEMV.
+    let arch = if family == ModelFamily::Qwen3Vl {
+        tiny_qwen3_vl_arch(vocab_size, num_layers)
+    } else {
+        tiny_gqa_moe_arch(vocab_size, num_layers, num_experts, family)
+    };
     let experts = num_experts as usize;
     let vocab = vocab_size as usize;
 
     let mut ts: Vec<Tensor> = Vec::new();
-    // Untied head, as every real `llama` checkpoint here is.
+    // Untied for every family but `qwen3_vl`, whose real checkpoints tie the
+    // head to the embedding table: a tied install ships NO `lm_head` tensor,
+    // and the flow's head GEMV reads the embedding instead.
+    let tied = family == ModelFamily::Qwen3Vl;
     ts.extend(int4_triple(
         "language_model.model.embed_tokens.weight",
         vocab,
         HIDDEN,
         1,
     ));
-    ts.extend(int4_triple(
-        "language_model.lm_head.weight",
-        vocab,
-        HIDDEN,
-        2,
-    ));
+    if !tied {
+        ts.extend(int4_triple(
+            "language_model.lm_head.weight",
+            vocab,
+            HIDDEN,
+            2,
+        ));
+    }
 
     let mut overrides = std::collections::HashMap::new();
     for l in 0..num_layers as usize {
@@ -299,10 +346,10 @@ fn build_gqa_install(
         }
 
         // Plain GQA: q_proj emits exactly `num_heads * head_dim` rows, with
-        // no gate half. The per-head q/k norms exist on `qwen3moe` and not
-        // on `llama`, which is one of the two differences the shared decode
-        // flow keys on the family for.
-        if family == ModelFamily::Qwen3Moe {
+        // no gate half. The per-head q/k norms exist on `qwen3moe` and
+        // `qwen3_vl` and not on `llama`, which is one of the two differences
+        // the shared decode flow keys on the family for.
+        if matches!(family, ModelFamily::Qwen3Moe | ModelFamily::Qwen3Vl) {
             for (i, norm) in ["q_norm", "k_norm"].iter().enumerate() {
                 ts.push(bf16_vector(
                     &format!("{p}.self_attn.{norm}.weight"),

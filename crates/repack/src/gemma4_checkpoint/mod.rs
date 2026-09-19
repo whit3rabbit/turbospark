@@ -539,6 +539,27 @@ pub fn write_qwen2_dense_install_streamed(
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
 }
 
+/// Dense `qwen3_vl` install write through the shared MLX checkpoint walk.
+/// The walk's classification already excludes every `vision_tower.*` tensor
+/// for this family (the deepstack mergers included), so the same guard-shape
+/// wrapper the `qwen2` writer uses is all the family needs.
+pub fn write_qwen3_vl_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Qwen3Vl {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_qwen3_vl_install_streamed needs arch.family = qwen3_vl, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
 /// Grafts a multi-token-prediction head onto an EXISTING `qwen3_5` DENSE
 /// install's resident entries -- read back byte for byte off its own
 /// `model_weights.bin` (`crate::resident_reader::read_resident_entries`) --

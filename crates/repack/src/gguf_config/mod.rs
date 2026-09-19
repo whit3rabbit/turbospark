@@ -281,7 +281,13 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // tensors or its indexer -- so a mask derived here would be the one
         // part of an install that looked right while the rest went missing.
         // Refuse until the GGUF walk has an arm that reads the whole file.
-        ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen4Exp => {
+        // `qwen3_vl` refuses for `qwen4_exp`'s reason: GGUFs exist, the
+        // converter's tower naming is unparsed, and the MLX path is the
+        // intake this port built.
+        ModelFamily::DeepseekV4Flash
+        | ModelFamily::MuseGlimmer
+        | ModelFamily::Qwen4Exp
+        | ModelFamily::Qwen3Vl => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })

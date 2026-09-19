@@ -181,7 +181,17 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             // two thirds and silently drop the n-gram shards, the
             // hyper-connections and the indexer, which is a partial install
             // that opens. Unmapped until the whole file has a table.
-            ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen4Exp => None,
+            //
+            // `qwen3_vl` is in `qwen4_exp`'s position: real GGUFs exist
+            // (llama.cpp has carried the architecture since 2025), its trunk
+            // names would largely fall out of a neighbour's table, and a
+            // converter's tower naming is unparsed here. This port ingests
+            // its MLX safetensors, so unmapped until the whole file has a
+            // table.
+            ModelFamily::DeepseekV4Flash
+            | ModelFamily::MuseGlimmer
+            | ModelFamily::Qwen4Exp
+            | ModelFamily::Qwen3Vl => None,
         }
         .ok_or_else(unmapped);
     }
@@ -240,7 +250,13 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // refuses the GGUF at `gguf_config`. `Some` here would let a caller
         // mistake recognition for support, which is the distinction this
         // table exists to keep.
-        ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen4Exp => None,
+        //
+        // `qwen3_vl` is in `qwen4_exp`'s position: GGUFs exist and this
+        // port ingests the MLX safetensors instead.
+        ModelFamily::DeepseekV4Flash
+        | ModelFamily::MuseGlimmer
+        | ModelFamily::Qwen4Exp
+        | ModelFamily::Qwen3Vl => None,
     }
 }
 

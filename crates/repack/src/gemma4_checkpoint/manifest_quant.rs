@@ -146,7 +146,14 @@ pub fn manifest_quant_for(
         // unreachable today; it is written in the shape the future
         // safetensors pass would want rather than parked on another
         // family's arm whose probes name tensors Spark does not have.
-        ModelFamily::MuseGlimmer | ModelFamily::Spark25 => (
+        //
+        // `qwen3_vl` IS reached today (its pinned witness is an MLX
+        // conversion) and its layer 0 is a plain attention layer with dense
+        // `mlp.{gate,up,down}_proj`, so it takes this exact shape: the
+        // attention probe measures `self_attn.q_proj`, the shared-expert
+        // probe measures the dense FFN, and the router/routed probes take
+        // the default.
+        ModelFamily::MuseGlimmer | ModelFamily::Spark25 | ModelFamily::Qwen3Vl => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),

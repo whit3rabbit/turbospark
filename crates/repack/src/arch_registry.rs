@@ -190,6 +190,18 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // c8e9187488f846965507bfc2b3957d59fd0d5a27. The root config is the
     // plain `qwen2` form used by this parser.
     ("qwen2", ModelFamily::Qwen2Dense),
+    // The FIFTEENTH family. Read off
+    // `mlx-community/Qwen3-VL-4B-Instruct-4bit` @
+    // 2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b, whose root `model_type` is
+    // `qwen3_vl`. The `_text` row follows the `qwen3_5`/`qwen3_5_text`
+    // precedent for the trunk-only string the transformers config schema
+    // uses; the pinned artifact carries `qwen3_vl` at the root and no
+    // `model_type` inside `text_config`.
+    // NOTE the prefix hazard these rows sit next to: `qwen3` (dense) and
+    // `qwen3_vl` share their first six characters, and the lookup is exact
+    // equality, so the two never collapse.
+    ("qwen3_vl", ModelFamily::Qwen3Vl),
+    ("qwen3_vl_text", ModelFamily::Qwen3Vl),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.
