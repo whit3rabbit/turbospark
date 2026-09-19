@@ -1,17 +1,27 @@
 import SwiftUI
+import TurboSpark
 
 @MainActor
 struct ImageComposerView: View {
     @ObservedObject var model: AppModel
     @Binding var importing: Bool
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.appTheme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var expanded = false
 
     private var active: Bool { model.imageGenerationTask != nil }
 
+    private var reduceMotion: Bool {
+        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            if model.imageModelPath.isEmpty && !model.isInstallingImageModel
+                && !model.savedImageArtifacts.isEmpty && !expanded {
+                ImageModelDownloadOffer(model: model, importing: $importing)
+            }
             if active || model.isInstallingImageModel { progress.padding(.bottom, 12) }
             VStack(spacing: 12) {
                 TextField(text: $model.promptText, axis: .vertical) {
@@ -92,56 +102,41 @@ struct ImageComposerView: View {
         let name = model.selectedImageModel.map { ImageModelPresentation.family($0.modelID) }
             ?? (model.imageModelPath.isEmpty ? "" : URL(fileURLWithPath: model.imageModelPath).lastPathComponent)
         let quant = model.selectedImageModel.map { ImageModelPresentation.quantization($0.quantization) } ?? ""
-        return [name, quant, model.imageModelPath.isEmpty ? "" : model.imageSizeLabel,
-                String(localized: "\(model.imageCount) image(s)", bundle: .module)]
-            .filter { !$0.isEmpty }.joined(separator: " / ")
+        let parts = [
+            name.isEmpty ? (model.hasInstalledZImageModel ? "" : "Z-Image Turbo") : name,
+            quant.isEmpty ? (model.hasInstalledZImageModel ? "" : String(localized: "Download", bundle: .module)) : quant,
+            model.imageModelPath.isEmpty ? "" : model.imageSizeLabel,
+            String(localized: "\(model.imageCount) image(s)", bundle: .module)
+        ].filter { !$0.isEmpty }
+        return parts.joined(separator: " / ")
     }
 
     private var settings: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ImageModelControls(model: model, importing: $importing)
-            Divider()
-            HStack(alignment: .top, spacing: 24) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Number of images", bundle: .module).themedFont(.tiny, weight: .medium)
-                    Picker(selection: $model.imageCount) {
-                        ForEach(1...4, id: \.self) { count in Text(verbatim: String(count)).tag(count) }
-                    } label: { Text("Number of images", bundle: .module) }
-                    .labelsHidden().pickerStyle(.segmented)
-                    .frame(maxWidth: 180)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Image size", bundle: .module).themedFont(.tiny, weight: .medium)
-                    HStack(spacing: 6) {
-                        Image(systemName: "square")
-                        Text("Default", bundle: .module)
-                        if model.imageSupportedSize != nil { Text(model.imageSizeLabel) }
-                    }
-                    Text("This model supports its default size only.", bundle: .module)
-                        .themedFont(.tiny).foregroundStyle(.appSecondary)
-                }
-                Spacer(minLength: 0)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Seed", bundle: .module).themedFont(.tiny, weight: .medium)
-                    TextField(text: $model.imageSeedText) { Text("Random", bundle: .module) }
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 145)
-                        .accessibilityLabel(Text("Seed", bundle: .module))
-                }
-            }
-            .themedFont(.small)
-            .disabled(active)
-        }
+        ImageGenerationSettings(model: model, importing: $importing)
     }
 
     private var progress: some View {
         HStack(spacing: 12) {
             if model.isInstallingImageModel {
-                ProgressView(value: model.imageInstallProgressFraction).frame(width: 100)
-                Text(model.imageInstallStage ?? String(localized: "Download", bundle: .module))
-                    .lineLimit(1)
+                ProgressView(value: model.imageInstallProgressFraction)
+                    .frame(width: 120)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.imageInstallAlias ?? String(localized: "Download", bundle: .module))
+                        .themedFont(.small, weight: .medium)
+                        .lineLimit(1)
+                    if let stage = model.imageInstallStage {
+                        Text(verbatim: stage)
+                            .themedFont(.tiny)
+                            .foregroundStyle(.appSecondary)
+                            .lineLimit(1)
+                    }
+                }
                 Spacer(minLength: 0)
-                Button { model.cancelImageInstall() } label: { Text("Cancel", bundle: .module) }
+                Button { model.cancelImageInstall() } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             } else {
                 ProgressView(value: model.imageProgressFraction).frame(width: 100)
                 Text("Image \(model.imageBatchIndex) of \(model.imageBatchCount)", bundle: .module)

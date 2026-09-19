@@ -806,6 +806,35 @@ The submitted prompt is used directly, without a text-model prompt enhancer or
 conversation history. Regenerate reuses the recorded request and seed with the
 currently selected image install; changing the seed is explicit.
 
+The download offer and Settings use the same tested, memory-ranked quantization
+choices. Refresh selects an installed model only when the path is empty, so a
+side-loaded selection survives catalog refresh. Starting Regenerate returns to
+Create to show progress. Search changes clear bulk selection; hidden search
+results cannot remain selected for removal. Settings reflow at narrow window
+widths and use the app's theme and reduced-motion preference.
+
+UI validation on 2026-09-19: Swift build, the full app suite (1,834 tests,
+one expected skip), and the final 47 image/font/localization checks passed.
+All ten new image-workspace behavior tests were mutation-checked. A separately
+signed debug app with an isolated fixture profile was inspected in light and
+dark themes, at wide and compact widths, with expanded settings, search, bulk
+selection, carousel navigation, and prompt reuse. No new native image quality,
+resource, or multi-output real-model measurement is claimed by this UI pass.
+
+The same checkout passed `cargo build --workspace`, `cargo test --workspace`
+(2,681 passed, 197 ignored), and `cargo clippy --workspace --tests` with warnings.
+`cargo fmt --check` reported formatting in concurrently edited catalog,
+model-io, repack, and runtime files outside this UI change. Those edits were
+left intact; this pass changed no Rust source.
+
+New image-workspace labels include Create, Organize, Image settings, Image
+prompt, Number of images, Image size, Seed, Random, Search images, Select,
+Select all, Open image, Image actions, Use prompt, Regenerate, Save As...,
+Show in Finder, Move to Trash, Image unavailable, Previous, Next, the empty
+and unsaved-image messages, and sequence progress. The count key
+`%lld image(s)` now uses localized singular/plural forms. All catalog languages
+are compiled and covered by the localization parity checks.
+
 Capture the originating chat ID and job identity when submitting. Switching
 chats cannot redirect events or results. Serialize heavyweight jobs across
 chat, background text work, and the in-process server. Show why a job is

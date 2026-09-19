@@ -65,6 +65,17 @@ extension AppModel {
             .compactMap { byAlias[$0] }
     }
 
+    /// Every setup surface uses the same tested, memory-ranked download order.
+    var imageDownloadChoices: [ImageCatalogEntry] {
+        let tested = imageCatalog.filter { Self.testedZImageAliases.contains($0.alias) }
+        let preferred = recommendedZImageSources.map(\.alias)
+        return tested.sorted {
+            let left = preferred.firstIndex(of: $0.alias) ?? preferred.count
+            let right = preferred.firstIndex(of: $1.alias) ?? preferred.count
+            return left == right ? $0.alias < $1.alias : left < right
+        }
+    }
+
     /// Downloads a curated image source through the native image-install ABI.
     /// The source is packed and verified before it becomes selectable.
     public func installImageModel(_ source: ImageCatalogEntry) {

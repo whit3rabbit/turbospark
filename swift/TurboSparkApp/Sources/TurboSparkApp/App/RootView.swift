@@ -84,7 +84,7 @@ struct RootView: View {
                 // here would let the window shrink under its own sidebar in
                 // Files and Server.
                 isSidebarExpanded: isSidebarExpanded,
-                rightColumn: rightColumnClaimant == .projectSummary ? .none : rightColumnClaimant),
+                rightColumn: (model.activeSection == .images || rightColumnClaimant == .projectSummary) ? .none : rightColumnClaimant),
             minHeight: AppChromeLayout.minimumHeight)
         .clipped()
         .background(.appPage)
@@ -133,6 +133,7 @@ struct RootView: View {
             isChatSearchPresented.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
+            guard model.activeSection != .images else { return }
             // A preview pane owns the right column while it is open, so the
             // same key has to be able to close it: otherwise the shortcut
             // silently toggles a pane the user cannot see. All three
@@ -162,13 +163,14 @@ struct RootView: View {
         }
         .onChange(of: model.isModelAvailable) { wasAvailable, isAvailable in
             // Loading during a conversation must not steal its reading space.
-            if !wasAvailable, isAvailable, !model.hasOutputTranscript {
+            if !wasAvailable, isAvailable, !model.hasOutputTranscript, model.activeSection != .images {
                 isInspectorVisible = true
             }
         }
     }
 
     private func toggleModelSettings() {
+        guard model.activeSection != .images else { return }
         // Preview panes have priority, so dismiss them before opening settings.
         if !isInspectorVisible || rightColumnClaimant.isPreviewPane {
             model.dismissArtifact()
@@ -217,7 +219,8 @@ struct RootView: View {
     /// directly; the third claimant (`htmlPreview`) is what made the chain a
     /// decision worth naming (`AppRightColumnClaimant`).
     private var rightColumnClaimant: AppRightColumnClaimant {
-        AppRightColumnClaimant.resolve(
+        guard model.activeSection != .images else { return .none }
+        return AppRightColumnClaimant.resolve(
             openArtifactID: model.openArtifactID,
             htmlPreviewID: model.htmlPreviewID,
             previewAttachmentID: model.previewAttachmentID,
@@ -227,39 +230,43 @@ struct RootView: View {
 
     @ViewBuilder
     private var rightColumn: some View {
-        switch rightColumnClaimant {
-        case .none:
+        if model.activeSection == .images {
             EmptyView()
-        case .projectSummary:
-            rightPane(width: ProjectChatSummary.width) {
-                ProjectChatSummaryView(model: model).id(model.selectedChatID)
-            }
-        case .artifact(let id):
-            verticalHairline
-            rightPane(width: AppChromeLayout.artifactPanelWidth) {
-                ArtifactPanelView(model: model, source: .artifact(id))
-            }
-        case .htmlPreview:
-            verticalHairline
-            rightPane(width: AppChromeLayout.artifactPanelWidth) {
-                ArtifactPanelView(model: model, source: .inlinePreview)
-            }
-        case .filePreview:
-            // The claimant is keyed on the id; the attachment lookup can
-            // still miss (a detached draft). Missing falls through to the
-            // inspector exactly as the old `if let` chain did.
-            if let attachment = model.previewAttachment {
-                verticalHairline
-                rightPane(width: AppChromeLayout.inspectorWidth) {
-                    FilePreviewView(model: model, attachment: attachment)
+        } else {
+            switch rightColumnClaimant {
+            case .none:
+                EmptyView()
+            case .projectSummary:
+                rightPane(width: ProjectChatSummary.width) {
+                    ProjectChatSummaryView(model: model).id(model.selectedChatID)
                 }
-            } else if isInspectorVisible {
+            case .artifact(let id):
+                verticalHairline
+                rightPane(width: AppChromeLayout.artifactPanelWidth) {
+                    ArtifactPanelView(model: model, source: .artifact(id))
+                }
+            case .htmlPreview:
+                verticalHairline
+                rightPane(width: AppChromeLayout.artifactPanelWidth) {
+                    ArtifactPanelView(model: model, source: .inlinePreview)
+                }
+            case .filePreview:
+                // The claimant is keyed on the id; the attachment lookup can
+                // still miss (a detached draft). Missing falls through to the
+                // inspector exactly as the old `if let` chain did.
+                if let attachment = model.previewAttachment {
+                    verticalHairline
+                    rightPane(width: AppChromeLayout.inspectorWidth) {
+                        FilePreviewView(model: model, attachment: attachment)
+                    }
+                } else if isInspectorVisible {
+                    verticalHairline
+                    inspectorColumn
+                }
+            case .inspector:
                 verticalHairline
                 inspectorColumn
             }
-        case .inspector:
-            verticalHairline
-            inspectorColumn
         }
     }
 

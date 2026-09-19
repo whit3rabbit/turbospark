@@ -129,6 +129,30 @@ final class ImageWorkspaceTests: XCTestCase {
         XCTAssertEqual(ImageModelPresentation.quantization("custom-format"), "custom-format")
     }
 
+    func testRefreshPreservesAnExplicitSideLoadedModel() {
+        let model = AppModel()
+        model.imageModels = [ImageInstalledModel(
+            alias: "installed", modelID: "test/model", revision: "test", path: "/models/installed",
+            width: 1024, height: 1024, schedulerSteps: 9)]
+        model.imageModelPathText = "/models/side-loaded"
+        model.reconcileImageSelection()
+        XCTAssertEqual(model.imageModelPath, "/models/side-loaded")
+    }
+
+    func testEveryDownloadSurfaceUsesTestedMemoryRankedChoices() throws {
+        let model = AppModel()
+        model.imageCatalog = try JSONDecoder().decode([ImageCatalogEntry].self, from: Data("""
+            [{"alias":"z-image-turbo","modelID":"Tongyi-MAI/Z-Image-Turbo","revision":"r","quantization":"int4"},
+             {"alias":"unverified","modelID":"other/model","revision":"r","quantization":"fp16"},
+             {"alias":"z-image-turbo-mlx-2bit","modelID":"andrevp/Z-Image-Turbo-MLX-2bit","revision":"r","quantization":"bits-2"},
+             {"alias":"z-image-turbo-mlx-4bit","modelID":"andrevp/Z-Image-Turbo-MLX-4bit","revision":"r","quantization":"bits-4"}]
+            """.utf8))
+        model.telemetry = nil // No telemetry uses the conservative 16 GB recommendation.
+        XCTAssertEqual(model.imageDownloadChoices.map(\.alias), [
+            "z-image-turbo-mlx-4bit", "z-image-turbo-mlx-2bit", "z-image-turbo",
+        ])
+    }
+
     private func makeArtifact(chatID: UUID) throws -> AppArtifact {
         let file = AppStorageRoot.subdirectory("image-artifacts").appendingPathComponent("\(UUID()).png")
         try Data([1, 2, 3]).write(to: file)

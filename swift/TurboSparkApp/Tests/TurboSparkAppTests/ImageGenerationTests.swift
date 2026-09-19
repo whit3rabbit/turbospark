@@ -280,4 +280,30 @@ final class ImageGenerationTests: XCTestCase {
 
         XCTAssertTrue(model.chats.contains { $0.id == chatID })
     }
+
+    func testImageModelPresentationFamilyResolvesZImageAliases() {
+        XCTAssertEqual(ImageModelPresentation.family("Tongyi-MAI/Z-Image-Turbo"), "Z-Image Turbo")
+        XCTAssertEqual(ImageModelPresentation.family("andrevp/z-image-mlx"), "Z-Image Turbo")
+        XCTAssertEqual(ImageModelPresentation.family("custom-model"), "custom-model")
+    }
+
+    func testReconcileImageSelectionAutoSelectsInstalledModelWhenEmpty() {
+        let model = AppModel()
+        let image = ImageInstalledModel(
+            alias: "z-image-turbo-mlx-4bit",
+            modelID: "Tongyi-MAI/Z-Image-Turbo",
+            revision: "rev",
+            path: "/models/z-image-turbo-mlx-4bit.image.gturbo",
+            width: 1024,
+            height: 1024,
+            schedulerSteps: 9,
+            quantization: "4-bit")
+        model.imageModels = [image]
+        model.imageModelPathText = ""
+
+        model.reconcileImageSelection()
+
+        XCTAssertEqual(model.selectedImageModel?.alias, "z-image-turbo-mlx-4bit")
+        XCTAssertEqual(model.imageSupportedSize?.width, 1024)
+    }
 }

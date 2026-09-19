@@ -59,6 +59,7 @@ extension AppModel {
             imageModels = try TurboSparkCatalog.imageInstalled()
             telemetry = TurboSparkSession.systemTelemetry
             reconcileSelection()
+            reconcileImageSelection()
 
             let lmPath =
                 enableLMStudioDetection
@@ -158,6 +159,12 @@ extension AppModel {
         if let selected {
             modelPathText = selected.path
         }
+    }
+
+    func reconcileImageSelection() {
+        // A side-loaded path is an explicit selection even without a catalog row.
+        guard imageModelPath.isEmpty, let first = imageModels.first else { return }
+        selectImageModel(first)
     }
 
     /// Whether this app installed `model` itself, and may therefore delete

@@ -89,7 +89,9 @@ struct TopBarView: View {
                         }
                     }
                 }
-                inspectorToggle
+                if model.activeSection != .images {
+                    inspectorToggle
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }

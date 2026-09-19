@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TurboSpark
 
 /// Creation and organization share the same saved outputs and image actions.
 @MainActor
@@ -41,6 +42,13 @@ struct ImagesSectionView: View {
             }
         }
         .onChange(of: organizing) { selection.removeAll(); selecting = false }
+        .onChange(of: search) { selection.removeAll() }
+        .onChange(of: model.generating) {
+            if model.generating && model.imageGenerationTask != nil {
+                organizing = false
+                preview = nil
+            }
+        }
         .onChange(of: model.savedImageArtifacts.map(\.id)) {
             selection.formIntersection(Set(model.savedImageArtifacts.map(\.id)))
         }
@@ -111,6 +119,25 @@ struct ImagesSectionView: View {
                     .multilineTextAlignment(.center).frame(maxWidth: 380)
                 if organizing && !search.isEmpty {
                     Button { search = "" } label: { Text("Clear search", bundle: .module) }
+                } else if !organizing && model.imageModelPath.isEmpty && !model.isInstallingImageModel {
+                    if let source = model.imageDownloadChoices.first {
+                        Button {
+                            model.installImageModel(source)
+                        } label: {
+                            Label {
+                                HStack(spacing: 4) {
+                                    Text("Download", bundle: .module)
+                                    Text(ImageModelPresentation.family(source.modelID))
+                                    Text(ImageModelPresentation.quantization(source.quantization))
+                                }
+                            } icon: {
+                                Image(systemName: "arrow.down.circle.fill")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        .padding(.top, 4)
+                    }
                 }
             }
             .padding(32)
@@ -167,7 +194,7 @@ struct ImagesSectionView: View {
     }
 
     private func reusePrompt(_ artifact: AppArtifact) {
-        model.promptText = artifact.imageRequest?.prompt ?? artifact.title
+        model.writePromptTextDirectly(artifact.imageRequest?.prompt ?? artifact.title)
         organizing = false
     }
 }

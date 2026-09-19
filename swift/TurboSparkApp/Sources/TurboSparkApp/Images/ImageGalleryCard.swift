@@ -41,15 +41,17 @@ struct ImageGalleryCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(Text("Open image", bundle: .module))
-                .accessibilityLabel(Text("Open image", bundle: .module))
+                .help(Text(selecting ? "Select" : "Open image", bundle: .module))
+                .accessibilityLabel(Text(selecting ? "Select" : "Open image", bundle: .module))
                 .accessibilityValue(Text(artifact.imageRequest?.prompt ?? artifact.title))
+                .accessibilityAddTraits(selected ? .isSelected : [])
 
                 if selecting {
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                         .themedFont(.title3).foregroundStyle(.appAccent)
                         .padding(8).background(.appPage, in: Circle()).padding(8)
                         .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 } else {
                     Menu {
                         ImageGalleryActions(model: model, artifact: artifact, reuse: reuse)
