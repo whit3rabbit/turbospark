@@ -14,6 +14,14 @@
 use runtime::StopReason;
 
 /// Test case specification for the community benchmark protocol.
+///
+/// `Copy` because it is plain static data (two `&'static str` and a seed),
+/// and because an oracle that needs a NON-CONTIGUOUS case subset -- a
+/// family whose middle case cannot terminate, say -- cannot otherwise
+/// assemble `&[ProtocolCase]` from indices of the shared array (a const
+/// array cannot be indexed to move out, and `from_ref` makes only
+/// one-element slices).
+#[derive(Clone, Copy)]
 pub struct ProtocolCase {
     /// Benchmark case identifier string.
     pub id: &'static str,

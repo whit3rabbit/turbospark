@@ -110,7 +110,12 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
         | ModelFamily::QwenGdnDense
         | ModelFamily::Qwen3Moe
         | ModelFamily::Qwen3Dense
-        | ModelFamily::DeepseekV4Flash => ProtocolParameters {
+        | ModelFamily::DeepseekV4Flash
+        // `qwen3_vl` shares this row on the SAME tokenizer evidence dense
+        // `qwen3` does: Qwen3-VL ships the Qwen3 BPE tokenizer, padded to
+        // the same 151,936, under the same ChatML dialect. UNVERIFIED until
+        // an install exists, like every row in this arm.
+        | ModelFamily::Qwen3Vl => ProtocolParameters {
             family,
             max_context: PROTOCOL_MAX_CONTEXT,
             max_new: PROTOCOL_MAX_NEW,
