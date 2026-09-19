@@ -127,6 +127,9 @@ pub(crate) fn stream_mlx(
         ModelFamily::Qwen2Dense => {
             repack::parse_qwen2_config(&config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Qwen3Vl => {
+            repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
+        }
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
     enable_requested_vision(plan, family, &mut arch, &config_text)?;
@@ -279,6 +282,9 @@ pub(crate) fn stream_mlx(
         ModelFamily::Qwen2Dense => repack::write_qwen2_dense_install_streamed(
             dir, &arch, &model_id, &shards, &quant, report,
         ),
+        ModelFamily::Qwen3Vl => {
+            repack::write_qwen3_vl_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
+        }
         other => Err(Box::<dyn std::error::Error>::from(format!(
             "{} has no safetensors writer here",
             other.as_str()
@@ -488,6 +494,36 @@ fn shard_names_for_prefixes(
 /// already uses for the trunk's own shard list. Refuses only when NEITHER
 /// source names a candidate, so a caller with no index and no `--file` gets a
 /// message naming the gap rather than an empty result.
+/// Keeps the shard names from a repo's index that the repository ACTUALLY
+/// still lists, dropping the rest.
+///
+/// **A REPO'S SHARD INDEX IS A CLAIM, NOT A FACT** (`docs/QWEN3VL_PHASE0.md`
+/// section 0): `mlx-community/Qwen3-VL-4B-Instruct-4bit` ships an index
+/// naming two shards from an earlier two-shard upload while the repo as it
+/// stands carries one consolidated `model.safetensors` -- so every
+/// index-derived name 404s at the first header fetch and the whole pull
+/// dies on a file the publisher deleted. The repository's own file listing
+/// is what the download URLs are built from, so it is the authority; an
+/// index name not in the listing is stale by definition and is dropped
+/// rather than requested. An empty survivor list means the index describes
+/// nothing that exists, and the caller falls back to its single-file
+/// convention.
+fn retain_existing_shard_names(
+    repo: &RepoRef,
+    client: &Client,
+    names: BTreeSet<String>,
+) -> Result<BTreeSet<String>, String> {
+    if names.is_empty() {
+        return Ok(names);
+    }
+    let files = client.file_list(repo)?;
+    let listed: std::collections::HashSet<&str> = files.iter().map(String::as_str).collect();
+    Ok(names
+        .into_iter()
+        .filter(|name| listed.contains(name.as_str()))
+        .collect())
+}
+
 pub(crate) fn fetch_prefixed_shards(
     repo: &RepoRef,
     prefixes: &[&str],
@@ -503,7 +539,9 @@ pub(crate) fn fetch_prefixed_shards(
         Some(bytes) => {
             let index: serde_json::Value = serde_json::from_slice(bytes)
                 .map_err(|e| format!("parsing {repo}'s shard index: {e}"))?;
-            shard_names_for_prefixes(&index, prefixes).map_err(|e| format!("{repo}: {e}"))?
+            let names =
+                shard_names_for_prefixes(&index, prefixes).map_err(|e| format!("{repo}: {e}"))?;
+            retain_existing_shard_names(repo, client, names)?
         }
         None => BTreeSet::new(),
     };
@@ -728,6 +766,10 @@ pub(crate) fn shard_names(plan: &InstallPlan, client: &Client) -> Result<Vec<Str
                 names.insert(name.to_string());
             }
         }
+        // The index is cross-checked against the repo's real file list
+        // before any of its names is trusted -- the stale-index 404 this
+        // prevents is `retain_existing_shard_names`'s own doc.
+        let names = retain_existing_shard_names(&plan.weights, client, names)?;
         if !names.is_empty() {
             return Ok(names.into_iter().collect());
         }

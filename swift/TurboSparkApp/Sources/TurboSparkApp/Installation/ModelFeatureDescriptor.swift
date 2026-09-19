@@ -231,6 +231,9 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     private static let steeringFamilies: Set<String> = [
         "gemma4", "qwen36", "qwen35", "llama", "qwen3moe", "qwen3", "qwen2",
         "minimax_m2", "gptOss", "museGlimmer", "spark2_5",
+        // The llama flow's dense arm at different shapes; mirrors
+        // `family_dispatches_steering`.
+        "qwen3_vl",
     ]
 
     /// - Parameter sessionInfo: the OPEN session's own report, when this
