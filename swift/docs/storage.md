@@ -36,11 +36,12 @@ Existing flat installs remain readable for compatibility: legacy text and
 vision paths under `models/`, plus legacy `<alias>.image.gturbo` image paths.
 New installs always use the modality directories. The Swift app exposes a
 Settings move wizard for the managed root. It copies and verifies the whole
-managed `models/` tree, registry, catalog override, and Hugging Face token,
-then removes the old managed entries only after the destination is verified.
-The destination must be empty, and the move is disabled while a model is
-loaded, generating, or installing. Provider-owned folders are never moved by
-this operation.
+managed `models/` tree, registry, and catalog override, then removes the old
+managed entries only after the destination is verified. The Hugging Face token
+is a credential rather than a model-store artifact and is never copied to the
+destination; an existing token file remains at the old root. The destination
+must be empty, and the move is disabled while a model is loaded, generating,
+or installing. Provider-owned folders are never moved by this operation.
 
 The app persists a configured root in `MacAppSettings.turboSparkStoreRoot`
 and applies it to the Rust binding at launch. The binding uses a process-local
