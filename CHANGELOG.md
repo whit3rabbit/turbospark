@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-20
+
 ### Security
 - `swift/TurboSparkApp`: subagent runs go through
   `AppToolPermissionEngine.evaluate` plus
