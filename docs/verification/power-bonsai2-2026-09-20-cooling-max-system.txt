@@ -1,0 +1,15 @@
+date         2026-09-20T00:52:02Z
+chip         Apple M4 Max
+memory       36 GB
+macos        26.6.2 (25G83)
+power        AC
+label        ac
+arms         default
+cooling      max (fans pinned 5017/5016 -> 5777 RPM)
+rev          f50680eb (dirty)
+install      /Users/whit3rabbit/.turbospark/models/text/bonsai2.gturbo
+manifest sha 52fe6c1db18cde6d650ed632185472ce1ab0ed7657a73ba3b421a39f82aef60d
+pairs        2
+interval     200 ms
+contamination floor 180 mW
+note         the tail of the interrupted 2026-09-19 session, immediately after the qwen38 cooled capture -- the two are one thermal condition and are the clean same-architecture pairing

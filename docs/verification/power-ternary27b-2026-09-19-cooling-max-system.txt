@@ -1,0 +1,14 @@
+date         2026-09-19T19:17:33Z
+chip         Apple M4 Max
+memory       36 GB
+macos        26.6.2 (25G83)
+power        AC
+label        ac
+arms         default
+cooling      max (fans pinned 3565/3589 -> 5777 RPM)
+install      /Users/whit3rabbit/models/ternary27b.gturbo
+manifest sha e058c06efa10d29db9cdb5d1b5e8d85f46a8e962f70a329726b789d535afb476
+pairs        2
+interval     200 ms
+contamination floor 160 mW
+note         the two captures that were to follow (qwen38-27b, bonsai2) were REFUSED: a concurrent Swift release build started mid-capture

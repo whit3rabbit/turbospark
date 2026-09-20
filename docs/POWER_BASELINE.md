@@ -858,9 +858,8 @@ The same correction re-reads the qwen38 pairing below: against the clean
 ternary point, 2-bit reads ~2.2x the J/token of the 4-bit leg (3.35 vs
 1.507) at ~77% of its throughput (13.35 vs 17.4) -- not "~2x at ~40%", which
 is what a Heavy ternary against a free-running qwen38 suggested. The
-remaining caveat is symmetry: the qwen38 row was captured UNCOOLED, so its
-COOLING=max rerun (same session as this one's script intended; refused by a
-concurrent Swift build, see below) is what completes the clean pairing.
+remaining caveat WAS symmetry; the qwen38 COOLING=max rerun landed 2026-09-20
+(section below) and closed it.
 
 ### What still does not reproduce
 
@@ -879,8 +878,95 @@ qwen38 -> bonsai2, one thermal condition). The ternary capture completed
 clean; the qwen38 capture was then REFUSED by the harness's own preflight --
 a concurrent Swift release build had started (swift-frontend, 14 threads) and
 `another model process is running; results would be contaminated` is exactly
-the right refusal. The bonsai2 arm did not run either. The remaining two
-captures are the owed tail of this session.
+the right refusal. The bonsai2 arm did not run either. The tail ran
+2026-09-20; the next two sections are it.
+
+## Qwen3.8-27B 4-bit: the COOLING=max arm, and the pairing it closes (2026-09-20)
+
+The interrupted session's tail, leg one. `LABEL=ac COOLING=max
+MODEL=~/models/qwen38-27b.gturbo scripts/power.sh 2`, rev `f50680eb` dirty,
+re-pulled install (manifest sha
+`0dcccb5531b4d9ed95f415a1616cacdac0feb9bff239975ddeb11cc9fdb97c88`), 2 pairs,
+200 ms, all three cases, 00:25 UTC. Fans pinned 5892/5815 -> 5777 RPM.
+Contamination floor **142 mW** over 7,275 samples: clean. Every measured row
+Nominal. Per-arm rows and provenance archived at
+`docs/verification/power-qwen38-27b-2026-09-20-cooling-max.tsv` and
+`...-system.txt`.
+
+### The row that reproduces
+
+Long-synthesis decode, both pairs Nominal:
+
+| | p1 | p2 | spread |
+| --- | ---: | ---: | ---: |
+| watts | 32.67 | 31.52 | 3.6% |
+| J/token | 1.7815 | 1.6972 | 4.8% |
+| tok/s | 18.324 | 18.645 | 1.7% |
+
+Short-explanation decode reads 1.5872 against 1.4630 J/token (8.1% --
+looser; its cpu_W halved on p2). Publish beside the 2026-09-16 UNCOOLED row,
+never instead of it: **long-synthesis decode on the 4-bit install,
+UN-governed under pinned fans, reads ~32 W and ~1.74 J/token at ~18.5 tok/s,
+reproducing to 4.8%.** Against that same work's own uncooled row (1.507
+J/token at 26.2 W, 17.4 tok/s): the cooled point is +6% throughput at +15%
+J/token -- the same direction, and roughly the same magnitude (+13.6%), as
+ternary's governed-to-un-governed move. Two architectures, same correction;
+the governed rows flatter J/token in both cases.
+
+## Bonsai-2 27B: first power row, and the clean pairing (2026-09-20)
+
+The interrupted session's tail, leg two, captured 27 minutes after the
+qwen38 arm -- one thermal condition, one machine state, two widths of ONE
+architecture. `LABEL=ac COOLING=max
+MODEL=~/.turbospark/models/text/bonsai2.gturbo scripts/power.sh 2`, rev
+`f50680eb` dirty, the Hadamard-folded install (manifest sha
+`52fe6c1db18cde6d650ed632185472ce1ab0ed7657a73ba3b421a39f82aef60d`), 2 pairs,
+200 ms, all three cases, 00:52 UTC. Fans pinned 5017/5016 -> 5777 RPM.
+Contamination floor **180 mW** over 11,175 samples: clean. **All eighteen
+measured rows Nominal and none of the six summary spreads exceeded 5%** --
+short-explanation decode reproduced to 0.03% (2.4368 against 2.4376 J/token),
+the tightest pairing of any capture on this page. Per-arm rows and
+provenance archived at `docs/verification/power-bonsai2-2026-09-20-cooling-max.tsv`
+and `...-system.txt`.
+
+### The row
+
+| short-explanation decode | p1 | p2 | spread |
+| --- | ---: | ---: | ---: |
+| watts | 34.93 | 34.76 | 0.5% |
+| J/token | 2.4368 | 2.4376 | 0.03% |
+| tok/s | 14.058 | 14.036 | 0.2% |
+
+Publishable sentence: **short-explanation decode on the Hadamard-folded 2-bit
+install, UN-governed under pinned fans, reads ~34.8 W and ~2.44 J/token at
+~14.05 tok/s, reproducing to 0.03%.** Long-synthesis decode reads 2.7512
+against 2.7876 J/token (1.3%) at ~12.7 tok/s. Nothing here spread wide enough
+to refuse; this is the page's cleanest capture by every instrument it has.
+
+### The pairing this page was built to produce
+
+Same architecture (`qwen3_5` dense), same machine, same night, both legs
+COOLING=max and Nominal, same corpus positions -- short-explanation decode:
+
+| | 4-bit (qwen38-27b) | 2-bit (bonsai2) | ratio |
+| --- | ---: | ---: | ---: |
+| J/token | 1.5251 | 2.4372 | **1.60x** |
+| tok/s | 21.0 | 14.05 | **67%** |
+| watts | ~32.7 | ~34.8 | ~1.07x |
+
+**The clean same-architecture quantization pairing reads 1.60x the energy
+per token at 67% of the throughput for 2-bit against 4-bit.** Every earlier
+sentence on this page that compared the two widths carried a thermal-state
+asterisk (governed 2-bit against free-running 4-bit read as "~2x at ~40%"));
+this one carries none of the same kind: the two captures are 27 minutes
+apart on a fan-pinned, sub-200-mW machine. The wattage column says the 2-bit
+matmuls cost ~7% more power at the same pressure level and still finish 33%
+fewer tokens per second -- the energy gap is a TIME gap, not a power gap.
+And one footnote for the family: the first-generation ternary install's
+cooled point (3.35 J/token at 13.35 tok/s, 2026-09-19) sits well above this
+row's efficiency at the same width and speed class -- but its own capture
+carried 33-53% spreads on two of three cases where this one carried none, so
+read that cross-GENERATION gap as indicative until either row is reproduced.
 
 ## Qwen3.8-27B 4-bit: the pairing row, and two refused means (2026-09-16)
 

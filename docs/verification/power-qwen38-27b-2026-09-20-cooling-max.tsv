@@ -1,0 +1,18 @@
+short-explanation	ac	default	warmup	prefill	2.64	62	83.1	31.94	1.3398	679	31265	54.7	21.4	Nominal	12		max
+short-explanation	ac	default	warmup	decode	28.41	603	881.4	31.73	1.4617	1278	30454	59.2	30.7	Nominal	128		max
+short-explanation	ac	default	p1.default	prefill	2.65	62	84.6	32.56	1.3648	813	31751	56.4	24.0	Nominal	12		max
+short-explanation	ac	default	p1.default	decode	28.97	603	957.1	33.64	1.5872	1745	31898	63.5	35.8	Nominal	131		max
+short-explanation	ac	default	p2.default	prefill	2.75	62	97.8	34.67	1.5769	1375	33296	62.7	37.2	Nominal	13		max
+short-explanation	ac	default	p2.default	decode	28.35	603	882.2	31.75	1.4630	1294	30459	70.7	32.4	Nominal	128		max
+medium-review	ac	default	warmup	prefill	18.35	426	635.1	34.42	1.4909	1145	33274	62.7	29.8	Nominal	85		max
+medium-review	ac	default	warmup	decode	38.01	795	1193.7	31.79	1.5015	1319	30476	66.7	31.9	Nominal	173		max
+medium-review	ac	default	p1.default	prefill	20.24	426	831.7	41.08	1.9523	3073	38004	75.0	49.9	Nominal	93		max
+medium-review	ac	default	p1.default	decode	39.23	795	1392.1	35.95	1.7511	2966	32987	65.9	46.2	Nominal	178		max
+medium-review	ac	default	p2.default	prefill	18.46	426	641.4	34.78	1.5056	927	33850	64.0	29.0	Nominal	85		max
+medium-review	ac	default	p2.default	decode	38.22	795	1209.1	32.02	1.5209	1086	30931	59.7	29.1	Nominal	174		max
+long-synthesis	ac	default	warmup	prefill	139.67	2940	5142.8	36.82	1.7492	1589	35227	62.1	35.6	Nominal	643	98.95	max
+long-synthesis	ac	default	warmup	decode	34.36	637	1072.3	31.49	1.6833	1050	30445	61.2	26.6	Nominal	157		max
+long-synthesis	ac	default	p1.default	prefill	137.01	2940	4858.6	35.46	1.6526	1394	34071	62.7	33.4	Nominal	631		max
+long-synthesis	ac	default	p1.default	decode	34.76	637	1134.8	32.67	1.7815	1619	31053	64.5	35.2	Nominal	160		max
+long-synthesis	ac	default	p2.default	prefill	135.82	2940	4783.6	35.25	1.6271	1372	33881	62.2	32.1	Nominal	625		max
+long-synthesis	ac	default	p2.default	decode	34.16	637	1081.1	31.52	1.6972	1410	30112	60.7	34.2	Nominal	158		max

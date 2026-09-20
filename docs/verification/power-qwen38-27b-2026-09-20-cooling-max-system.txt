@@ -1,0 +1,15 @@
+date         2026-09-20T00:25:29Z
+chip         Apple M4 Max
+memory       36 GB
+macos        26.6.2 (25G83)
+power        AC
+label        ac
+arms         default
+cooling      max (fans pinned 5892/5815 -> 5777 RPM)
+rev          f50680eb (dirty)
+install      /Users/whit3rabbit/models/qwen38-27b.gturbo
+manifest sha 0dcccb5531b4d9ed95f415a1616cacdac0feb9bff239975ddeb11cc9fdb97c88
+pairs        2
+interval     200 ms
+contamination floor 142 mW
+note         the tail of the interrupted 2026-09-19 session; bonsai2 captured immediately after, one thermal condition
