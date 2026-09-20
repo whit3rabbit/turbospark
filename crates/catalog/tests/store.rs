@@ -144,14 +144,14 @@ fn relocation_does_not_follow_a_destination_symlink_added_during_copy() {
     let model = Store::new(&source).install_path("model");
     std::fs::create_dir_all(&model).unwrap();
     std::fs::write(model.join("weights.bin"), [1, 2, 3, 4]).unwrap();
-    std::fs::write(source.join("hf_token"), "secret").unwrap();
+    std::fs::write(source.join("models.json"), "{}").unwrap();
     std::fs::write(&victim, "keep me").unwrap();
 
     let mut planted = false;
     set_default_root(Some(source.clone())).unwrap();
     let outcome = turbospark_catalog::relocate_default_store(&destination, |_, _| {
         if !planted {
-            symlink(&victim, destination.join("hf_token")).unwrap();
+            symlink(&victim, destination.join("models.json")).unwrap();
             planted = true;
         }
     });
@@ -160,7 +160,7 @@ fn relocation_does_not_follow_a_destination_symlink_added_during_copy() {
     let error = outcome.unwrap_err();
     assert!(error.contains("without replacing an existing entry"));
     assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
-    assert!(source.join("hf_token").is_file());
+    assert!(source.join("models.json").is_file());
 }
 
 #[test]
