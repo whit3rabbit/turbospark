@@ -28,7 +28,7 @@ extension AppModel {
         guard let summary, !summary.isEmpty else { return history }
         let injection = AppChatCompaction.injectionMessage(summary)
         let at = history.firstIndex { $0.role != .system } ?? history.count
-        return history[..<at] + [injection] + history[at...]
+        return Array(history[..<at]) + [injection] + Array(history[at...])
     }
 
     func buildAppendOnlyHistory(chatIndex: Int, project: AppProject?) -> [ChatMessage] {

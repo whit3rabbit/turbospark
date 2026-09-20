@@ -69,14 +69,14 @@ enum GoalEvaluator {
         if (object["impossible"] as? Bool) == true {
             return .impossible(reason: reason ?? "the evaluator judged the goal unsatisfiable")
         }
-        switch object["ok"] as? Bool {
-        case true:
-            return .met(reason: reason)
-        case false:
-            return .notMet(reason: reason ?? "the evaluator did not say why it is not met")
-        case nil:
-            return nil
+        if let ok = object["ok"] as? Bool {
+            if ok {
+                return .met(reason: reason)
+            } else {
+                return .notMet(reason: reason ?? "the evaluator did not say why it is not met")
+            }
         }
+        return nil
     }
 
     /// The assistant-facing status row appended to the transcript for one
