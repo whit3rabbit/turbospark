@@ -107,7 +107,7 @@ fn open_marker_prefix_length(text: &str, open_mark: &str) -> usize {
     0
 }
 
-fn char_index_to_byte(s: &str, char_idx: usize) -> usize {
+pub(super) fn char_index_to_byte(s: &str, char_idx: usize) -> usize {
     s.char_indices()
         .nth(char_idx)
         .map(|(b, _)| b)

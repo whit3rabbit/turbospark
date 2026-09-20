@@ -82,6 +82,36 @@ pub(crate) const SPARK_BOS_MARK: &str = "<\u{FF5C}start\u{2581}of\u{2581}sentenc
 pub(crate) const SPARK_EOS_MARK: &str = "<\u{FF5C}end\u{2581}of\u{2581}sentence\u{FF5C}>";
 pub(crate) const SPARK_USER_MARK: &str = "<|User|>";
 pub(crate) const SPARK_BOT_MARK: &str = "<|Bot|>";
+/// GLM-4.7-Flash. The witness for these names is `zai-org/GLM-4.7-Flash`'s
+/// `tokenizer.json` (read 2026-09-19): the frame tokens `<|system|>` /
+/// `<|user|>` / `<|assistant|>` / `<|observation|>` are SPECIAL ids
+/// 154826-154829, `<|endoftext|>` 154820 is EOS and PAD, and the prompt
+/// opens with `[gMASK]<sop>` (ids 154822 / 154824), which the checkpoint's
+/// own template emits itself. `<|observation|>` is the witness alongside
+/// `<|assistant|>`: it is the tool-result turn marker no other table this
+/// port resolves carries, and `resolve_glm` requires it, so the probe
+/// cannot pass where the resolver fails (AGENTS.md Gotcha 52).
+pub(crate) const GLM_ENDOFTEXT_MARK: &str = "<|endoftext|>";
+pub(crate) const GLM_USER_MARK: &str = "<|user|>";
+pub(crate) const GLM_ASSISTANT_MARK: &str = "<|assistant|>";
+pub(crate) const GLM_OBSERVATION_MARK: &str = "<|observation|>";
+pub(crate) const GLM_SOP_MARK: &str = "<sop>";
+/// Kimi K2. The witness for these names is `moonshotai/Kimi-K2.5`'s
+/// `tokenizer_config.json` (read 2026-09-19; the K2 line ships no
+/// `tokenizer.json` at all -- the whole line is tiktoken): `[EOS]` 163585
+/// and `<|im_end|>` 163586 are SPECIAL, the role headers are
+/// `<|im_user|>` / `<|im_assistant|>` / `<|im_system|>` closed by the
+/// Kimi-owned `<|im_middle|>` (ids 163587 / 163588 / 163594 / 163601), and
+/// `[BOS]` 163584 opens a rendered prompt only when the caller adds it --
+/// the template writes none. `<|im_assistant|>` plus `<|im_middle|>` is the
+/// probe: both are unique to this line and both are required by
+/// `resolve_kimi` (Gotcha 52).
+pub(crate) const KIMI_BOS_MARK: &str = "[BOS]";
+pub(crate) const KIMI_EOS_MARK: &str = "[EOS]";
+pub(crate) const KIMI_IM_END_MARK: &str = "<|im_end|>";
+pub(crate) const KIMI_IM_USER_MARK: &str = "<|im_user|>";
+pub(crate) const KIMI_IM_ASSISTANT_MARK: &str = "<|im_assistant|>";
+pub(crate) const KIMI_IM_MIDDLE_MARK: &str = "<|im_middle|>";
 
 pub(crate) struct Resolved {
     pub(crate) bos_id: i32,
@@ -164,6 +194,30 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
         // `<|Bot|>` in a Gemma-fallback vocab would silently misframe, so it
         // is tested positively rather than left to the fallback.
         ChatDialect::Spark
+    } else if special_token_id(tokenizer, GLM_OBSERVATION_MARK).is_some()
+        && special_token_id(tokenizer, GLM_ASSISTANT_MARK).is_some()
+    {
+        // GLM-4.7-Flash and siblings. No ordering arm here is load-bearing
+        // relative to the frames above (this table carries no fullwidth
+        // DeepSeek marks, no `<|Bot|>`, no `<|start|>`), but the probe must
+        // come before the Gemma FALLBACK, into which an unrecognized GLM
+        // table used to fall and die on a missing `<bos>` config token.
+        // The lowercase ASCII spellings collide with nothing: ChatML's
+        // roles are `<|im_*|>`, Spark's are capitalized `<|User|>`.
+        ChatDialect::Glm
+    } else if special_token_id(tokenizer, KIMI_IM_ASSISTANT_MARK).is_some()
+        && special_token_id(tokenizer, KIMI_IM_MIDDLE_MARK).is_some()
+    {
+        // Kimi K2. TESTED BEFORE ChatML, and THAT ORDER IS LOAD-BEARING: a
+        // Kimi table carries `<|im_end|>` (id 163586, special, the rendered
+        // turn end), which is the ChatML probe's whole witness, so a Kimi
+        // checkpoint tested after that arm resolves ChatML and then dies in
+        // `resolve_chatml` on the missing `<|im_start|>` / `<|endoftext|>`.
+        // `<|im_assistant|>` and `<|im_middle|>` are the split because they
+        // are Kimi-owned spellings no other table carries (ChatML's roles
+        // are `<|im_start|>role` with no middle marker), and both are
+        // required by `resolve_kimi` (Gotcha 52).
+        ChatDialect::Kimi
     } else if special_token_id(tokenizer, HARMONY_START_MARK).is_some()
         && special_token_id(tokenizer, HARMONY_MESSAGE_MARK).is_some()
         && special_token_id(tokenizer, HARMONY_CHANNEL_MARK).is_some()
@@ -223,8 +277,9 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
 }
 
 use super::resolvers::{
-    resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_gemma, resolve_harmony,
-    resolve_llama3, resolve_mistral, resolve_muse_glimmer, resolve_spark,
+    resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_gemma, resolve_glm,
+    resolve_harmony, resolve_kimi, resolve_llama3, resolve_mistral, resolve_muse_glimmer,
+    resolve_spark,
 };
 
 pub(crate) fn resolve_dialect(
@@ -243,5 +298,7 @@ pub(crate) fn resolve_dialect(
         ChatDialect::Llama3 => resolve_llama3(tokenizer),
         ChatDialect::Spark => resolve_spark(tokenizer),
         ChatDialect::MiniMax => super::minimax::resolve(tokenizer),
+        ChatDialect::Glm => resolve_glm(tokenizer),
+        ChatDialect::Kimi => resolve_kimi(tokenizer),
     }
 }

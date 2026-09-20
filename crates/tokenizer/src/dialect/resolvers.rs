@@ -3,13 +3,15 @@ use tokenizers::Tokenizer;
 use super::config::TokenizerConfig;
 use super::resolve::{
     required_id, special_token_id, Resolved, DEEPSEEK_ASSISTANT_MARK, DEEPSEEK_BOS_MARK,
-    DEEPSEEK_EOS_MARK, DEEPSEEK_USER_MARK, HARMONY_BOS_MARK, HARMONY_CALL_MARK,
+    DEEPSEEK_EOS_MARK, DEEPSEEK_USER_MARK, GLM_ASSISTANT_MARK, GLM_ENDOFTEXT_MARK,
+    GLM_OBSERVATION_MARK, GLM_SOP_MARK, GLM_USER_MARK, HARMONY_BOS_MARK, HARMONY_CALL_MARK,
     HARMONY_CHANNEL_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK, HARMONY_PAD_MARK,
-    HARMONY_RETURN_MARK, IM_END_MARK, IM_START_MARK, LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK,
-    LLAMA3_EOS_MARK, LLAMA3_EOT_MARK, LLAMA3_START_HEADER_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK,
-    MISTRAL_TOOL_CALLS_MARK, MUSE_BOS_MARK, MUSE_EOM_MARK, MUSE_EOS_MARK, MUSE_EOT_MARK,
-    MUSE_MESSAGE_MARK, MUSE_PAD_MARK, MUSE_START_MARK, SPARK_BOS_MARK, SPARK_BOT_MARK,
-    SPARK_EOS_MARK, SPARK_USER_MARK,
+    HARMONY_RETURN_MARK, IM_END_MARK, IM_START_MARK, KIMI_BOS_MARK, KIMI_EOS_MARK,
+    KIMI_IM_ASSISTANT_MARK, KIMI_IM_END_MARK, KIMI_IM_MIDDLE_MARK, KIMI_IM_USER_MARK,
+    LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK, LLAMA3_EOS_MARK, LLAMA3_EOT_MARK,
+    LLAMA3_START_HEADER_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK, MISTRAL_TOOL_CALLS_MARK,
+    MUSE_BOS_MARK, MUSE_EOM_MARK, MUSE_EOS_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_PAD_MARK,
+    MUSE_START_MARK, SPARK_BOS_MARK, SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use super::NO_SUCH_TOKEN_ID;
 use crate::error::TokenizerError;
@@ -496,5 +498,136 @@ pub(crate) fn resolve_spark(tokenizer: &Tokenizer) -> Result<Resolved, Tokenizer
         // a coincidence of THIS checkpoint, not a property of the dialect.
         // Callers holding a `RealForwardRunner` read `vocab_size()` off it.
         vocab_size: 131_072,
+    })
+}
+
+/// GLM-4.7-Flash and siblings, resolved off the real `zai-org/GLM-4.7-Flash`
+/// table (2026-09-19).
+///
+/// **THE STOP SET HAS THREE MEMBERS**, read off the checkpoint's
+/// `generation_config.json` (`eos_token_id: [154820, 154827, 154829]`): a
+/// GLM turn ends by emitting `<|endoftext|>` (answer complete), the next
+/// `<|user|>` (multi-turn continuation), or `<|observation|>` (the tool
+/// result request). Dropping the latter two reads as a rambling model that
+/// answers its own follow-up questions -- Harmony's Gotcha 2 failure mode on
+/// two more tokens. `end_of_turn` is `<|endoftext|>`; `<|observation|>` is
+/// separately `tool_call_stop_id`, the one member that means "invoking a
+/// tool" rather than "the turn is over".
+///
+/// The think pair is REQUIRED, not optional: the generation prompt always
+/// ends with one of the two tags (`<think>` with thinking on, `</think>`
+/// with it off, the Spark arrangement), so a table without the pair could
+/// not split reasoning from content at all. Both are ADDED but NOT SPECIAL
+/// in the real table (154841 / 154842, `special: false`), which changes
+/// what the detokenizer renders and nothing about the id-keyed channel
+/// split: `consume` sees the id either way.
+///
+/// Every tool id is [`NO_SUCH_TOKEN_ID`] even though the markup ids all
+/// exist in the table (`<tool_call>` 154843 through `</arg_value>` 154850):
+/// the decoder arm is a TEXT-MARKER scan -- the tokens are added-but-not-
+/// special, so they SURVIVE detokenization as literal text, and carrying
+/// ids nothing reads would claim an id-bracket arm this dialect does not
+/// have (the Spark resolver's reason, on a dialect that does parse).
+pub(crate) fn resolve_glm(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    let eos = required_id(tokenizer, GLM_ENDOFTEXT_MARK)?;
+    let sop = required_id(tokenizer, GLM_SOP_MARK)?;
+    let _user = required_id(tokenizer, GLM_USER_MARK)?;
+    let _assistant = required_id(tokenizer, GLM_ASSISTANT_MARK)?;
+    let observation = required_id(tokenizer, GLM_OBSERVATION_MARK)?;
+    let think_start = required_id(tokenizer, "<think>")?;
+    let think_end = required_id(tokenizer, "</think>")?;
+    Ok(Resolved {
+        bos_id: sop,
+        // The checkpoint's template opens every prompt with `[gMASK]<sop>`
+        // itself, so the encoder must not prepend anything (AGENTS.md
+        // Gotcha 41's closing note).
+        bos_prefix_id: None,
+        eos_id: eos,
+        pad_id: eos,
+        end_of_turn_id: eos,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        tool_call_stop_id: observation,
+        channel_start_id: think_start,
+        channel_end_id: think_end,
+        // The thought channel above already brackets; there is no header.
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: Some(think_start),
+        think_end_id: Some(think_end),
+        // All three generation_config end-of-sequence ids; the file reader
+        // re-adds the same ids when the install ships it, and the set
+        // dedupes.
+        stop_token_ids: [eos, _user, observation].into_iter().collect(),
+        // The real checkpoint's `config.json` `vocab_size` (154,880), the
+        // padded lm_head row count rather than the tokenizer's own
+        // vocabulary (AGENTS.md Gotcha 37).
+        vocab_size: 154_880,
+    })
+}
+
+/// Moonshot's Kimi K2 line, resolved off the real `moonshotai/Kimi-K2.5`
+/// `tokenizer_config.json` (2026-09-19; the line ships no `tokenizer.json`
+/// at all -- it is tiktoken-only, so this file's names come from the added-
+/// token list and the ids are the real ones: `[BOS]` 163584, `[EOS]`
+/// 163585, `<|im_end|>` 163586, `<|im_assistant|>` 163588, `<|im_middle|>`
+/// 163601, think pair 163606 / 163607).
+///
+/// **END OF TURN IS `<|im_end|>`, NOT `[EOS]`.** The rendered template
+/// closes EVERY turn with `<|im_end|>` and the checkpoint's
+/// `generation_config.json` names it (`eos_token_id: 163586`); `[EOS]` is
+/// the tokenizer_config's `eos_token` and the base end-of-sequence beside
+/// it. Both are stops; conflating them would leave `end_of_turn` pointing
+/// at a token the model never emits to close a chat turn.
+///
+/// The think pair is REQUIRED for GLM's reason: the generation prompt ends
+/// `<|im_assistant|>assistant<|im_middle|><think>` (or `<think></think>`
+/// with thinking off), a forced-open frame the channel split must seed
+/// from. Both are ADDED but NOT SPECIAL (163606 / 163607).
+///
+/// Every tool id is [`NO_SUCH_TOKEN_ID`] for GLM's reason: the section and
+/// call markers (163595-163599) are added-but-not-special and survive
+/// detokenization as text, so the decoder arm is a TEXT-MARKER scan.
+pub(crate) fn resolve_kimi(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    let bos = required_id(tokenizer, KIMI_BOS_MARK)?;
+    let eos = required_id(tokenizer, KIMI_EOS_MARK)?;
+    let im_end = required_id(tokenizer, KIMI_IM_END_MARK)?;
+    let _user = required_id(tokenizer, KIMI_IM_USER_MARK)?;
+    let _assistant = required_id(tokenizer, KIMI_IM_ASSISTANT_MARK)?;
+    let _middle = required_id(tokenizer, KIMI_IM_MIDDLE_MARK)?;
+    let think_start = required_id(tokenizer, "<think>")?;
+    let think_end = required_id(tokenizer, "</think>")?;
+    Ok(Resolved {
+        bos_id: bos,
+        // The template writes no `[BOS]` of its own -- a rendered prompt
+        // starts directly at the role header -- so encoding must not prepend
+        // one either and the caller decides, exactly as ChatML's contract
+        // reads.
+        bos_prefix_id: None,
+        eos_id: eos,
+        pad_id: bos,
+        end_of_turn_id: im_end,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        // A K2 turn that invoked a tool closes with the same `<|im_end|>`
+        // every other turn closes with; no separate token means "tool".
+        tool_call_stop_id: NO_SUCH_TOKEN_ID,
+        channel_start_id: think_start,
+        channel_end_id: think_end,
+        // The thought channel above already brackets; there is no header.
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: Some(think_start),
+        think_end_id: Some(think_end),
+        stop_token_ids: [eos, im_end].into_iter().collect(),
+        // The K2 line spans more than one table width across checkpoints,
+        // and the real decode path takes the row count from the model
+        // itself (`RealForwardRunner::vocab_size`); the LOADED table's size
+        // serves the scripted paths (the DeepseekV2 resolver's reason).
+        vocab_size: tokenizer.get_vocab_size(true),
     })
 }

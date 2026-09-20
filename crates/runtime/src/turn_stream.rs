@@ -136,7 +136,18 @@ impl<'a> TurnSplitter<'a> {
                 && matches!(
                     tokenizer.dialect,
                     ChatDialect::ChatMl | ChatDialect::Gemma | ChatDialect::Spark
-                ));
+                ))
+            // GLM and Kimi K2 join the reasoning-on arm on Spark's grounds:
+            // their generation prompts also FORCE the think frame open
+            // (`<|assistant|><think>` and
+            // `<|im_assistant|>assistant<|im_middle|><think>` when thinking
+            // is on), so the model never emits the opening tag and only the
+            // prompt-aware decoder seed splits the channels. With no tools
+            // and reasoning off, both checkpoints' own templates pre-close
+            // the frame, the markup never reaches the stream, and raw
+            // pass-through is exactly right.
+            || (effort != ReasoningEffort::Off
+                && matches!(tokenizer.dialect, ChatDialect::Glm | ChatDialect::Kimi));
         Self {
             decoder: wanted.then(|| {
                 StructuredAssistantDecoder::new(tokenizer, tools.clone(), id_generator, prompt_ids)

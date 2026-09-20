@@ -4,7 +4,9 @@
 
 mod chatml;
 mod deepseek;
+mod glm;
 mod harmony;
+mod kimi;
 mod mistral;
 mod muse;
 
@@ -252,6 +254,14 @@ impl<'a> StructuredAssistantDecoder<'a> {
             ChatDialect::Deepseek | ChatDialect::Spark => {
                 return self.consume_deepseek(token_id, delta)
             }
+            // GLM and Kimi K2 frame calls in ADDED-but-not-special text
+            // markers, so their arms are text scans on the DeepSeek DSML
+            // pattern rather than id-bracket arms; unlike the DSML arm both
+            // EMIT their thought channel (ChatML's rule), because both
+            // generation prompts force the think frame open and `--reasoning`
+            // exists for exactly that case.
+            ChatDialect::Glm => return self.consume_glm(token_id, delta),
+            ChatDialect::Kimi => return self.consume_kimi(token_id, delta),
             // V2-era tables carry NO structural markup at all: plain text in,
             // plain text out, exactly the Llama3 arm's contract (all ids are
             // NO_SUCH_TOKEN_ID, nothing can open a span).

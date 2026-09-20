@@ -1,14 +1,22 @@
-//! Tool-call parsers for the four supported dialects: Gemma's custom DSL,
-//! Qwen's ChatML `<function=...>` framing, DeepSeek's DSML markers, and
-//! Mistral's `[TOOL_CALLS]` JSON array.
+//! Tool-call parsers for the supported dialects: Gemma's custom DSL, Qwen's
+//! ChatML `<function=...>` framing, DeepSeek's DSML markers, Mistral's
+//! `[TOOL_CALLS]` JSON array, GLM's `<arg_key>`/`<arg_value>` XML, and Kimi
+//! K2's section markers around a `functions.NAME:IDX` id.
 
 mod deepseek;
 mod gemma;
+mod glm;
+mod kimi;
 mod mistral;
 mod qwen;
 
 pub use deepseek::{DeepseekToolCallParser, DSML_MARK};
 pub use gemma::GemmaToolCallParser;
+pub use glm::{GlmToolCallParser, GLM_TOOL_CALL_CLOSE_MARK, GLM_TOOL_CALL_OPEN_MARK};
+pub use kimi::{
+    KimiToolCallParser, KIMI_CALL_BEGIN_MARK, KIMI_CALL_END_MARK, KIMI_SECTION_BEGIN_MARK,
+    KIMI_SECTION_END_MARK,
+};
 pub use mistral::MistralToolCallParser;
 pub use qwen::QwenToolCallParser;
 

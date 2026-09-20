@@ -16,9 +16,10 @@ mod llama3;
 mod mistral;
 
 use crate::dialect::{
-    ChatDialect, MfTokenizer, DEEPSEEK_BOS_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK,
-    HARMONY_START_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK, SPARK_BOS_MARK,
-    SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
+    ChatDialect, MfTokenizer, DEEPSEEK_BOS_MARK, GLM_SOP_MARK, HARMONY_END_MARK,
+    HARMONY_MESSAGE_MARK, HARMONY_START_MARK, KIMI_IM_ASSISTANT_MARK, KIMI_IM_END_MARK,
+    KIMI_IM_MIDDLE_MARK, KIMI_IM_USER_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK,
+    SPARK_BOS_MARK, SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use crate::error::TokenizerError;
 use crate::json_value::JsonValue;
@@ -314,6 +315,26 @@ impl MfTokenizer {
             // output that is not an answer. A real install always ships the
             // template; this refusal is what a MALFORMED install gets.
             ChatDialect::MiniMax => Err(TokenizerError::UnsupportedForDialect("MiniMax requires its checkpoint chat template".into())),
+            // NO FALLBACK RENDERER FOR GLM OR KIMI, on the Harmony/Muse
+            // doctrine: both real checkpoints ship templates that decide
+            // things a hand-rolled renderer would have to guess -- GLM's
+            // `[gMASK]<sop>` opening, its `<think>`-forced generation prompt
+            // and its `<|observation|>` tool-result turns; Kimi's
+            // `tool_declare` system turn, its `## Return of {id}` tool
+            // results and its forced-open think frame. Guessing one wrong is
+            // fluent output that is not an answer (AGENTS.md Gotcha 41). A
+            // real install always ships the template; this refusal is what a
+            // MALFORMED install gets.
+            ChatDialect::Glm => Err(TokenizerError::UnsupportedForDialect(
+                "GLM has no fallback renderer; the install must carry its own \
+                 chat_template.jinja (or tokenizer_config.json's chat_template key)"
+                    .to_string(),
+            )),
+            ChatDialect::Kimi => Err(TokenizerError::UnsupportedForDialect(
+                "the Kimi K2 line has no fallback renderer; the install must carry its own \
+                 chat_template.jinja (or tokenizer_config.json's chat_template key)"
+                    .to_string(),
+            )),
             ChatDialect::Spark => Err(TokenizerError::UnsupportedForDialect(
                 "spark2_5 has no fallback renderer; the install must carry its own \
                  chat_template.jinja (or tokenizer_config.json's chat_template key)"
@@ -368,6 +389,23 @@ impl MfTokenizer {
             // malformed. `prompt_opens_thought` keys on the rendered tag, so
             // the structured decoder lands in Thought to match.
             ChatDialect::MiniMax => format!("]~b]user\n{content}[e~[\n]~b]ai\n<think>\n"),
+            // Writable for Harmony's reason: a continuation is one user turn
+            // plus the opening of an assistant one. Both frames were read
+            // off the real checkpoints' own templates (2026-09-19), at the
+            // default thinking-on: GLM renders
+            // `[gMASK]<sop><|user|>...<|assistant|><think>` and Kimi renders
+            // `<|im_user|>user<|im_middle|>...<|im_end|>\
+            // <|im_assistant|>assistant<|im_middle|><think>`. The forced
+            // open think tag is what `prompt_opens_thought` keys on, so the
+            // structured decoder lands in Thought to match -- the Spark
+            // continuation's reason.
+            ChatDialect::Glm => format!(
+                "{GLM_SOP_MARK}<|user|>{content}<|assistant|><think>"
+            ),
+            ChatDialect::Kimi => format!(
+                "{KIMI_IM_USER_MARK}user{KIMI_IM_MIDDLE_MARK}{content}{KIMI_IM_END_MARK}\
+                 {KIMI_IM_ASSISTANT_MARK}assistant{KIMI_IM_MIDDLE_MARK}<think>"
+            ),
             ChatDialect::Spark => format!(
                 "{SPARK_BOS_MARK}{SPARK_USER_MARK}{content}{SPARK_EOS_MARK}\
                  {SPARK_BOS_MARK}{SPARK_BOT_MARK}<think>"

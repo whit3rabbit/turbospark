@@ -28,7 +28,8 @@ pub use stop_matcher::StreamingStopMatcher;
 pub use structured_decoder::{StructuredAssistantDecoder, StructuredAssistantEvent};
 pub use tokenizers::Tokenizer;
 pub use tool_call::{
-    DeepseekToolCallParser, GemmaToolCallParser, ParsedToolCall, QwenToolCallParser,
+    DeepseekToolCallParser, GemmaToolCallParser, GlmToolCallParser, KimiToolCallParser,
+    MistralToolCallParser, ParsedToolCall, QwenToolCallParser,
 };
 
 // Token id width consumed from the core primitives, keeping the dependency

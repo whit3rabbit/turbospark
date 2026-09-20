@@ -20,8 +20,9 @@ use tokenizers::Tokenizer;
 
 use self::config::{GenerationConfig, TokenizerConfig};
 pub(crate) use self::resolve::{
-    DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK,
-    HARMONY_START_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK, SPARK_BOS_MARK,
+    DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK, GLM_SOP_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK,
+    HARMONY_START_MARK, KIMI_IM_ASSISTANT_MARK, KIMI_IM_END_MARK, KIMI_IM_MIDDLE_MARK,
+    KIMI_IM_USER_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_START_MARK, SPARK_BOS_MARK,
     SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use crate::error::TokenizerError;
@@ -120,6 +121,62 @@ pub enum ChatDialect {
     Spark,
     /// MiniMax-M2 checkpoint framing and EOS; native tool parsing is deferred.
     MiniMax,
+    /// GLM-4.7-Flash and siblings (`Glm4MoeLiteForCausalLM`, an MLA MoE that
+    /// reports the same `deepseek2` GGUF architecture string as Kimi K2):
+    /// `[gMASK]<sop>` opens the prompt, turns frame as the special tokens
+    /// `<|system|>` / `<|user|>` / `<|assistant|>` / `<|observation|>`, and a
+    /// generation prompt ends `<|assistant|>` plus a FORCED think frame
+    /// (`<think>` with thinking on, `</think>` with it off), the Spark/Kimi
+    /// arrangement.
+    ///
+    /// Every id here was read off `zai-org/GLM-4.7-Flash`'s `tokenizer.json`
+    /// (2026-09-19), not recalled: `<|endoftext|>` 154820, `<|user|>` 154827,
+    /// `<|assistant|>` 154828, `<|observation|>` 154829, the think pair 154841
+    /// / 154842. `generation_config.json` declares THREE end-of-sequence ids
+    /// -- `<|endoftext|>`, `<|user|>` and `<|observation|>` -- because a GLM
+    /// turn ends by handing off to the caller, the observation request, or
+    /// the next user turn, and all three must stop generation.
+    ///
+    /// **THE TOOL MARKUP IS ADDED BUT NOT SPECIAL** (`<tool_call>` 154843,
+    /// `<arg_key>` 154847, `<arg_value>` 154849 and friends, `special:
+    /// false`), so unlike Gemma's or ChatML's brackets it SURVIVES
+    /// detokenization as literal text (the same finding the MiniMax entry
+    /// records), and the decoder arm is a TEXT-MARKER arm like DeepSeek's
+    /// DSML scan, not an id-bracket arm. Tool calls are
+    /// `<tool_call>NAME<arg_key>K</arg_key><arg_value>V</arg_value>...</tool_call>`
+    /// where a string argument's value is RAW text and every other value is
+    /// JSON-encoded -- exactly what the checkpoint's own template renders and
+    /// parses with `tojson`.
+    Glm,
+    /// Moonshot's Kimi K2 line (`KimiK25ForConditionalGeneration` / the
+    /// DeepSeek-V3-line MLA MoE behind it): turns frame as the special tokens
+    /// `<|im_user|>` / `<|im_assistant|>` / `<|im_system|>` with a Kimi-owned
+    /// `<|im_middle|>` ending each role header, and a generation prompt ends
+    /// `<|im_assistant|>assistant<|im_middle|>` plus a FORCED think frame,
+    /// the Spark/GLM arrangement.
+    ///
+    /// Every id here was read off `moonshotai/Kimi-K2.5`'s
+    /// `tokenizer_config.json` (2026-09-19), not recalled: `[EOS]` 163585,
+    /// `<|im_end|>` 163586, `<|im_assistant|>` 163588, `<|im_middle|>`
+    /// 163601, the think pair 163606 / 163607. `<|im_end|>` is SPECIAL and
+    /// ends every rendered turn, which is why this variant's probe must be
+    /// tested BEFORE the ChatML arm -- a Kimi table carries `<|im_end|>` and
+    /// would otherwise be probed as ChatML and fail to load.
+    ///
+    /// **THE ENTIRE K2 LINE IS TIKTOKEN-ONLY**: every Moonshot K2 checkpoint
+    /// ships `tiktoken.model` and no `tokenizer.json` at all, so the table
+    /// this dialect resolves from is the added-token list of
+    /// `tokenizer_config.json`, and no K2 install is loadable by this engine
+    /// today (the fixture that tests it carries the real added tokens and a
+    /// disclosed synthetic BPE body). The tool markup
+    /// (`<|tool_calls_section_begin|>` 163595 through `<|tool_call_end|>`
+    /// 163599) is ADDED BUT NOT SPECIAL like GLM's, so the decoder arm is a
+    /// TEXT-MARKER arm: a call is
+    /// `<|tool_call_begin|>functions.NAME:IDX<|tool_call_argument_begin|>{json}<|tool_call_end|>`
+    /// inside a `<|tool_calls_section_begin|>` / `<|tool_calls_section_end|>`
+    /// wrapper, and the NAME lives inside the id string, Moonshot's own
+    /// `functions.NAME:IDX` convention.
+    Kimi,
     /// DeepSeek V2-line checkpoints whose tables predate the reasoning
     /// channel (`DeepSeek-V2-Lite` / `-Chat` and siblings): the same
     /// fullwidth `<｜User｜>` / `<｜Assistant｜>` marks and BOS/EOS the
@@ -200,6 +257,18 @@ impl ChatDialect {
             // passthrough behavior -- a call it cannot emit is also a call it
             // cannot parse.
             ChatDialect::Mistral => ToolCallSupport::Native,
+            // GLM's `<tool_call>` / `<arg_key>` / `<arg_value>` XML, parsed
+            // by `GlmToolCallParser` out of the TEXT stream -- the markup is
+            // added-but-not-special, so the arm is a text scan and the
+            // bracketing ids stay the sentinel (they exist in the table but
+            // nothing reads them; carrying them would claim an id-bracket
+            // arm this dialect does not have).
+            ChatDialect::Glm => ToolCallSupport::Native,
+            // Kimi K2's section/call markers around a
+            // `functions.NAME:IDX` + JSON body, parsed by
+            // `KimiToolCallParser` out of the TEXT stream for the same
+            // added-but-not-special reason.
+            ChatDialect::Kimi => ToolCallSupport::Native,
             // No tool markup in either table at all: every tool id resolves to
             // `NO_SUCH_TOKEN_ID` and the decoder's arm is a content-only
             // passthrough.

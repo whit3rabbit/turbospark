@@ -307,7 +307,18 @@ pub(crate) fn may_produce_reasoning(model: &AppState, effort: ReasoningEffort) -
     let dialect = model.tokenizer().dialect;
     matches!(dialect, ChatDialect::Harmony | ChatDialect::MuseGlimmer)
         || (effort != ReasoningEffort::Off
-            && matches!(dialect, ChatDialect::ChatMl | ChatDialect::Gemma))
+            && matches!(
+                dialect,
+                ChatDialect::ChatMl
+                    | ChatDialect::Gemma
+                    | ChatDialect::Spark
+                    // GLM and Kimi K2 force the think frame open in their
+                    // generation prompts when thinking is on, the Spark
+                    // arrangement; at effort Off their templates pre-close
+                    // it and no reasoning is produced.
+                    | ChatDialect::Glm
+                    | ChatDialect::Kimi
+            ))
 }
 
 pub(crate) fn responses_warnings(
