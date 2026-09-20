@@ -99,3 +99,106 @@ kernel void hadamard_fwht_rows(device const half* src [[buffer(0)]],
         dst[row * width + base + i] = half(buf[i]);
     }
 }
+
+// ============================================================================
+// hadamard_fwht_block -- the hybrid shape for the block widths real
+// checkpoints ship. Same contract, same (row, segment) grid, same buffer ABI
+// as the generic kernel above (`block` is bound but unused: the width is a
+// template parameter), at kHadamardHybridThreads threads per threadgroup with
+// N/NT elements per thread in registers. Butterflies below the simdgroup
+// width exchange through simd_shuffle_xor, the middle stages through
+// threadgroup memory, and the rest pair registers of one thread, so the
+// stage barriers the generic kernel pays at every step shrink to the middle
+// stages only.
+//
+// BIT-IDENTITY with the generic kernel: every butterfly pairs element e with
+// e ^ h, and both kernels compute a + b on the clear-bit partner and a - b on
+// the set-bit one over the same h = 1..N/2 stage order, with the 1/sqrt(N)
+// scale AFTER the butterflies and the signs exact +/-1 multiplies at the same
+// two points. Only the data movement differs, so the per-element arithmetic
+// sequence -- and therefore the output bits -- is unchanged.
+// ============================================================================
+
+constant constexpr uint kHadamardHybridThreads = 256;
+
+template<int N, int NT>
+kernel void hadamard_fwht_block(device const half* src [[buffer(0)]],
+                                device half* dst [[buffer(1)]],
+                                device const float* signs [[buffer(2)]],
+                                constant uint& width [[buffer(3)]],
+                                constant uint& block [[buffer(4)]],
+                                constant uint& forward [[buffer(5)]],
+                                uint gid [[threadgroup_position_in_grid]],
+                                uint lid [[thread_position_in_threadgroup]]) {
+    threadgroup float buf[N];
+    constexpr uint NE = N / NT;
+    float reg[NE];
+    const uint segments = width / N;
+    const uint row = gid / segments;
+    const uint base = (gid % segments) * N;
+    src += row * width + base;
+    dst += row * width + base;
+    device const float* seg_signs = signs + base;
+    for (uint j = 0u; j < NE; ++j) {
+        reg[j] = float(src[j * NT + lid]);
+    }
+    if (forward != 0u) {
+        for (uint j = 0u; j < NE; ++j) {
+            reg[j] *= seg_signs[j * NT + lid];
+        }
+    }
+    // Stages below the simdgroup width: the partner differs in lane bits.
+    for (uint h = 1u; h < 32u; h <<= 1) {
+        for (uint j = 0u; j < NE; ++j) {
+            const float val = reg[j];
+            const float val2 = simd_shuffle_xor(val, h);
+            reg[j] = (lid & h) == 0u ? val + val2 : val2 - val;
+        }
+    }
+    // Stages up to the threadgroup width: the partner is another thread's
+    // element, exchanged through threadgroup memory.
+    for (uint h = 32u; h < NT; h <<= 1) {
+        for (uint j = 0u; j < NE; ++j) {
+            buf[j * NT + lid] = reg[j];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint j = 0u; j < NE; ++j) {
+            const float val = reg[j];
+            const float val2 = buf[j * NT + (lid ^ h)];
+            reg[j] = (lid & h) == 0u ? val + val2 : val2 - val;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    // Stages above the threadgroup width: the partner is another register of
+    // the same thread.
+    for (uint h = NT; h < N; h <<= 1) {
+        const uint step = h / NT;
+        for (uint j = 0u; j < NE; j += 2u * step) {
+            for (uint k = 0u; k < step; ++k) {
+                const float x = reg[j + k];
+                const float y = reg[j + k + step];
+                reg[j + k] = x + y;
+                reg[j + k + step] = x - y;
+            }
+        }
+    }
+    const float scale = rsqrt(float(N));
+    for (uint j = 0u; j < NE; ++j) {
+        reg[j] *= scale;
+    }
+    if (forward == 0u) {
+        for (uint j = 0u; j < NE; ++j) {
+            reg[j] *= seg_signs[j * NT + lid];
+        }
+    }
+    for (uint j = 0u; j < NE; ++j) {
+        dst[j * NT + lid] = half(reg[j]);
+    }
+}
+
+typedef decltype(hadamard_fwht_block<256, kHadamardHybridThreads>) hadamard_fwht_block_fn;
+template [[host_name("hadamard_fwht_tg_256")]] kernel hadamard_fwht_block_fn hadamard_fwht_block<256, kHadamardHybridThreads>;
+template [[host_name("hadamard_fwht_tg_512")]] kernel hadamard_fwht_block_fn hadamard_fwht_block<512, kHadamardHybridThreads>;
+template [[host_name("hadamard_fwht_tg_1024")]] kernel hadamard_fwht_block_fn hadamard_fwht_block<1024, kHadamardHybridThreads>;
+template [[host_name("hadamard_fwht_tg_2048")]] kernel hadamard_fwht_block_fn hadamard_fwht_block<2048, kHadamardHybridThreads>;
+template [[host_name("hadamard_fwht_tg_4096")]] kernel hadamard_fwht_block_fn hadamard_fwht_block<4096, kHadamardHybridThreads>;

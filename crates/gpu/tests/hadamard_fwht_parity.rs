@@ -1,7 +1,9 @@
-//! Runs `hadamard_fwht_rows` on real Metal hardware against the CPU
-//! reference in `turbospark_compute::kv_quant` (`rht_forward`/`rht_inverse`
-//! per block segment) -- the activation-side half of the prism Hadamard
-//! contract, `docs/BONSAI2.md`. Proves the shader compiles (a pipeline is
+//! Runs the Hadamard FWHT kernels (the hybrid `hadamard_fwht_block`
+//! instantiations for blocks 256 and up, the generic `hadamard_fwht_rows`
+//! strided kernel below) on real Metal hardware against the CPU reference in
+//! `turbospark_compute::kv_quant` (`rht_forward`/`rht_inverse` per block
+//! segment) -- the activation-side half of the prism Hadamard contract,
+//! `docs/BONSAI2.md`. Proves each shader shape compiles (a pipeline is
 //! created), dispatches, and computes the same signed block transform prism's
 //! bundled `fwht` does.
 #![cfg(target_os = "macos")]
@@ -172,4 +174,19 @@ fn matches_at_block_512() {
         .map(|i| f16::from_f32(((i % 53) as f32 - 26.0) * 0.03))
         .collect();
     assert_parity(&src, &signs, 1, 5120, 512, true);
+}
+
+/// Block 128, below the hybrid kernel's smallest instantiation: the generic
+/// strided kernel's fallback arm, which a manifest block width smaller than
+/// any real checkpoint still reaches.
+#[test]
+fn matches_at_block_128_on_the_generic_fallback() {
+    let signs: Vec<f32> = (0..512)
+        .map(|i| if i % 3 == 0 { -1.0 } else { 1.0 })
+        .collect();
+    let src: Vec<f16> = (0..512)
+        .map(|i| f16::from_f32(((i % 43) as f32 - 21.0) * 0.05))
+        .collect();
+    assert_parity(&src, &signs, 1, 512, 128, true);
+    assert_parity(&src, &signs, 1, 512, 128, false);
 }

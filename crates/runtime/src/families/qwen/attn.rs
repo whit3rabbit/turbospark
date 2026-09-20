@@ -58,12 +58,20 @@ pub(crate) fn encode_linear_block(
             &z_w,
             &a_w,
             &b_w,
-            // The fused INT4 path serves one CALLER per tensor set, all four
-            // folded together on the checkpoints that reach it, so the
-            // transformed input is right for all four or none.
+            // The fused INT4 path serves one CALLER per tensor set, feeding
+            // ONE input buffer to all four resident matrices, so the
+            // transformed input is right only when the manifest folds all
+            // four; a partial quartet on this dtype is refused at open by
+            // the plan's routing guard.
             match qwen.hadamard.as_ref() {
-                Some(h) => (&h.normed_h, 0),
-                None => (&scratch.normed, 0),
+                Some(h)
+                    if in_proj
+                        .iter()
+                        .all(|(suffix, _, _)| h.is_folded(&name(suffix))) =>
+                {
+                    (&h.normed_h, 0)
+                }
+                _ => (&scratch.normed, 0),
             },
             (&qwen.gdn_qkv_raw, 0),
             (&qwen.gdn_z, 0),

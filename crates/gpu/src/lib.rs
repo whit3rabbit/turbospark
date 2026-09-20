@@ -257,7 +257,8 @@ pub use gdn_state::{GdnSnapshot, GdnStateManager};
 pub use gemv_bf16::{encode_bf16_gemv_resident, Bf16ResidentMatrix};
 #[cfg(target_os = "macos")]
 pub use hadamard::{
-    encode_hadamard_fwht, hadamard_shape_error, HADAMARD_MAX_BLOCK, HADAMARD_THREADS,
+    encode_hadamard_fwht, hadamard_shape_error, HADAMARD_HYBRID_THREADS, HADAMARD_MAX_BLOCK,
+    HADAMARD_THREADS,
 };
 #[cfg(target_os = "macos")]
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
