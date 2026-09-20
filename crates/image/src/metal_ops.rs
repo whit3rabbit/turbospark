@@ -1163,7 +1163,18 @@ pub(crate) fn vae_attention(
     if channels == 0 || channels > 512 {
         return Err("image VAE attention channels must be in 1..=512".to_string());
     }
-    let len = channels * height * width;
+    if channels % 8 != 0 {
+        return Err("image VAE attention channels must be a multiple of 8".to_string());
+    }
+    let area = height
+        .checked_mul(width)
+        .ok_or_else(|| "image VAE attention dimensions overflow".to_string())?;
+    if area == 0 || area % 64 != 0 {
+        return Err("image VAE attention area must be a non-zero multiple of 64".to_string());
+    }
+    let len = channels
+        .checked_mul(area)
+        .ok_or_else(|| "image VAE attention dimensions overflow".to_string())?;
     if q.len != len || k.len != len || v.len != len {
         return Err("image VAE attention input shapes do not match".to_string());
     }
@@ -1184,7 +1195,7 @@ pub(crate) fn vae_attention(
             (&output.buffer, 3, 0),
         ],
         &[(&params, 4)],
-        ((len / channels).div_ceil(8) as u64, 1, 1),
+        ((area / 8) as u64, 1, 1),
         (256, 1, 1),
     );
     let ready = commit_deferred(pass);
@@ -1209,6 +1220,7 @@ mod tests {
         compute_tensor_inventory_sha256, PackedIndex, PackedQuantization, PackedTensor,
         MLX_AFFINE_BITS, PACKED_DATA_NAME, PACKED_GROUP_SIZE, PACKED_MAGIC, PACKED_VERSION,
     };
+
     use compute::quantize_int4_affine;
     use std::collections::BTreeMap;
     use std::fs;
@@ -1671,8 +1683,8 @@ mod tests {
             return;
         };
         let channels = 512;
-        let height = 2;
-        let width = 4;
+        let height = 8;
+        let width = 8;
         let area = height * width;
         let len = channels * area;
         let q: Vec<f32> = (0..len)
