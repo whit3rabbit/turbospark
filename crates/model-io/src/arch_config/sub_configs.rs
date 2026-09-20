@@ -182,12 +182,10 @@ pub struct VisionConfig {
     /// own default is an empty list (`qwen3_vl/config.py`'s
     /// `default_factory`), not a sibling's answer (AGENTS.md Gotcha 39).
     ///
-    /// A `Vec` rather than a fixed array on purpose: the count is the
-    /// checkpoint's choice of merger count (three on `qwen3_vl`-4B), and the
-    /// trunk layers it injects after are `0..len`, so a second checkpoint
-    /// with a different count is a data change here and not a schema
-    /// migration. This drops `Copy` from the struct; `ArchConfig` is
-    /// `Clone` already and every by-value use was `VisionConfig::NONE`.
+    /// A `Vec` rather than a fixed array because families without deepstack
+    /// use an empty list. Supported deepstack checkpoints have at most
+    /// [`MAX_VISION_DEEPSTACK_MERGERS`] entries; intake and runtime both
+    /// enforce that allocation bound.
     pub deepstack_visual_indexes: Vec<i64>,
     /// `<|vision_start|>`.
     pub vision_start_token_id: i64,
@@ -198,6 +196,13 @@ pub struct VisionConfig {
     /// `<|video_pad|>`. Carried for completeness; no video path exists here.
     pub video_token_id: i64,
 }
+
+/// Maximum supported number of retained vision deepstack merger outputs.
+///
+/// Published Qwen3-VL checkpoints use three. Each output is copied into host
+/// prompt storage and a Metal buffer, so this is also a request-time memory
+/// amplification bound at the untrusted-model boundary.
+pub const MAX_VISION_DEEPSTACK_MERGERS: usize = 3;
 
 impl VisionConfig {
     /// No vision tower, for every architecture that declares none.

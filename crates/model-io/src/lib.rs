@@ -38,7 +38,7 @@ pub use arch_baselines::{
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
-    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig, MAX_VISION_DEEPSTACK_MERGERS,
 };
 pub use cgroup::{
     parse_limit as parse_cgroup_limit, probe_self as probe_cgroup_memory, CgroupMemoryLimit,

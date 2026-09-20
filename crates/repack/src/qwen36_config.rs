@@ -32,7 +32,7 @@
 
 use model_io::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
-    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig, MAX_VISION_DEEPSTACK_MERGERS,
 };
 
 use crate::gemma4_checkpoint::Gemma4Error;
@@ -404,6 +404,13 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
             vision.depth
         )));
     }
+    if vision.deepstack_visual_indexes.len() > MAX_VISION_DEEPSTACK_MERGERS {
+        return Err(Gemma4Error::Config(format!(
+            "deepstack_visual_indexes has {} entries; at most \
+             {MAX_VISION_DEEPSTACK_MERGERS} are supported",
+            vision.deepstack_visual_indexes.len()
+        )));
+    }
     // Every index names a block of THIS tower, and no block feeds two
     // mergers: a repeated index would run the same features through two
     // different mergers into two different trunk layers, which no published
@@ -727,6 +734,13 @@ mod vision_depth_tests {
         let err = parse_vision_config(&qwen3vl_vision_json(24, serde_json::json!([5, 5])))
             .expect_err("two mergers reading one block is ambiguous");
         assert!(err.to_string().contains("twice"), "{err}");
+    }
+
+    #[test]
+    fn too_many_deepstack_mergers_are_refused() {
+        let err = parse_vision_config(&qwen3vl_vision_json(24, serde_json::json!([2, 5, 11, 17])))
+            .expect_err("deepstack retention must have a fixed allocation bound");
+        assert!(err.to_string().contains("at most 3 are supported"), "{err}");
     }
 
     #[test]

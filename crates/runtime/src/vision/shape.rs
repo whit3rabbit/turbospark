@@ -7,7 +7,7 @@
 //! product it implies. Deriving them in one place is what stops two call
 //! sites from disagreeing about a number the file never wrote down.
 
-use model_io::VisionConfig;
+use model_io::{VisionConfig, MAX_VISION_DEEPSTACK_MERGERS};
 
 use crate::real_forward_types::RealForwardError;
 
@@ -150,6 +150,13 @@ impl VisionShape {
             )));
         }
 
+        if vision.deepstack_visual_indexes.len() > MAX_VISION_DEEPSTACK_MERGERS {
+            return Err(unsupported(format!(
+                "deepstack_visual_indexes has {} entries; at most \
+                 {MAX_VISION_DEEPSTACK_MERGERS} are supported",
+                vision.deepstack_visual_indexes.len()
+            )));
+        }
         let mut deepstack = Vec::with_capacity(vision.deepstack_visual_indexes.len());
         for &idx in &vision.deepstack_visual_indexes {
             if idx < 0 || idx >= vision.depth {
