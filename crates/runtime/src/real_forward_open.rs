@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::{fs::File, io::Read};
 
 use model_io::{ArchConfig, ExpertCacheSlots, KvQuant, ResidentBuffer};
 
@@ -51,18 +52,32 @@ impl RealForwardRunner {
 
         let manifest = model_io::load_manifest(dir, &expecting, model_io::DEFAULT_MAX_BYTES)
             .map_err(RealForwardError::Model)?;
-        // The Hadamard contract's sign vectors live in a sibling file, read
-        // whole and uploaded once by the state build below. Read HERE, beside
-        // the manifest, so a missing or truncated file refuses at open with
-        // the install's name in the message.
+        // Bound the read by the validated manifest entry. `take` keeps a file
+        // replacement or a lying local artifact from turning this into an
+        // unbounded allocation between metadata validation and the read.
         let hadamard_signs = match &manifest.hadamard {
-            Some(_) => Some(std::fs::read(dir.join("hadamard.bin")).map_err(|e| {
-                RealForwardError::Unsupported(format!(
-                    "{} declares a hadamard section but its hadamard.bin could not be \
-                         read: {e}",
-                    dir.display()
-                ))
-            })?),
+            Some(_) => {
+                let expected_bytes = manifest.files["hadamard.bin"].size;
+                let mut bytes = Vec::new();
+                File::open(dir.join("hadamard.bin"))
+                    .and_then(|file| {
+                        file.take(expected_bytes.saturating_add(1)).read_to_end(&mut bytes)
+                    })
+                    .map_err(|e| {
+                        RealForwardError::Unsupported(format!(
+                            "{} declares a hadamard section but its hadamard.bin could not be read: {e}",
+                            dir.display()
+                        ))
+                    })?;
+                if bytes.len() as u64 != expected_bytes {
+                    return Err(RealForwardError::Unsupported(format!(
+                        "{} declares hadamard.bin as {expected_bytes} bytes but the file is {} bytes",
+                        dir.display(),
+                        bytes.len()
+                    )));
+                }
+                Some(bytes)
+            }
             None => None,
         };
         // The section is consumed by the qwen flow's state build alone. A

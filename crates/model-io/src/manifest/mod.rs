@@ -142,12 +142,13 @@ pub fn validate(m: &Manifest, expected: &ArchConfig) -> Result<(), ModelError> {
         }
     }
     if let Some(h) = &m.hadamard {
-        validate_hadamard(h)?;
-        if !m.files.contains_key("hadamard.bin") {
-            return Err(ModelError::MissingFile {
+        let file = m
+            .files
+            .get("hadamard.bin")
+            .ok_or_else(|| ModelError::MissingFile {
                 name: "hadamard.bin".to_string(),
-            });
-        }
+            })?;
+        validate_hadamard(h, expected, file.size)?;
     }
     Ok(())
 }
@@ -156,7 +157,11 @@ pub fn validate(m: &Manifest, expected: &ArchConfig) -> Result<(), ModelError> {
 /// what it consumes (every folded width resolves to a sign vector, the
 /// butterfly fits the threadgroup); this catches a hand-edited or truncated
 /// section before the weights are mapped.
-fn validate_hadamard(h: &ManifestHadamard) -> Result<(), ModelError> {
+fn validate_hadamard(
+    h: &ManifestHadamard,
+    expected: &ArchConfig,
+    file_bytes: u64,
+) -> Result<(), ModelError> {
     let block = h.block;
     if block <= 0 || (block & (block - 1)) != 0 || block > 4096 {
         return Err(ModelError::IndexCorrupt {
@@ -171,6 +176,27 @@ fn validate_hadamard(h: &ManifestHadamard) -> Result<(), ModelError> {
             detail: "manifest.hadamard.signs is empty".to_string(),
         });
     }
+    let mut allowed_widths = HashSet::new();
+    for width in [
+        expected.hidden_size,
+        expected.intermediate_size,
+        expected
+            .num_heads
+            .checked_mul(expected.full_head_dim)
+            .unwrap_or(0),
+        expected
+            .linear_attention
+            .num_v_heads
+            .checked_mul(expected.linear_attention.value_head_dim)
+            .unwrap_or(0),
+    ] {
+        if width > 0 {
+            allowed_widths.insert(width);
+        }
+    }
+    let mut seen_widths = HashSet::new();
+    let mut ranges = Vec::with_capacity(h.signs.len());
+    let mut aggregate_bytes = 0_u64;
     for s in &h.signs {
         if s.width <= 0 || s.width % block != 0 {
             return Err(ModelError::IndexCorrupt {
@@ -180,7 +206,10 @@ fn validate_hadamard(h: &ManifestHadamard) -> Result<(), ModelError> {
                 ),
             });
         }
-        if s.bytes != s.width as u64 * 4 {
+        let expected_bytes = u64::try_from(s.width)
+            .ok()
+            .and_then(|width| width.checked_mul(4));
+        if expected_bytes != Some(s.bytes) {
             return Err(ModelError::IndexCorrupt {
                 detail: format!(
                     "manifest.hadamard sign width {} declares {} bytes; F32 signs are width*4",
@@ -188,6 +217,59 @@ fn validate_hadamard(h: &ManifestHadamard) -> Result<(), ModelError> {
                 ),
             });
         }
+        if !allowed_widths.contains(&s.width) {
+            return Err(ModelError::IndexCorrupt {
+                detail: format!(
+                    "manifest.hadamard sign width {} is not an activation width in this architecture",
+                    s.width
+                ),
+            });
+        }
+        if !seen_widths.insert(s.width) {
+            return Err(ModelError::IndexCorrupt {
+                detail: format!("manifest.hadamard repeats sign width {}", s.width),
+            });
+        }
+        let end = s
+            .offset
+            .checked_add(s.bytes)
+            .ok_or_else(|| ModelError::IndexCorrupt {
+                detail: "manifest.hadamard sign range overflows u64".to_string(),
+            })?;
+        if end > file_bytes {
+            return Err(ModelError::IndexCorrupt {
+                detail: format!(
+                    "manifest.hadamard sign range [{}..{end}] exceeds hadamard.bin size {file_bytes}",
+                    s.offset
+                ),
+            });
+        }
+        aggregate_bytes =
+            aggregate_bytes
+                .checked_add(s.bytes)
+                .ok_or_else(|| ModelError::IndexCorrupt {
+                    detail: "manifest.hadamard aggregate sign bytes overflow u64".to_string(),
+                })?;
+        ranges.push((s.offset, end));
+    }
+    ranges.sort_unstable();
+    if ranges.windows(2).any(|pair| pair[1].0 < pair[0].1) {
+        return Err(ModelError::IndexCorrupt {
+            detail: "manifest.hadamard sign ranges overlap".to_string(),
+        });
+    }
+    let max_upload_bytes = allowed_widths.iter().try_fold(0_u64, |total, width| {
+        u64::try_from(*width)
+            .ok()
+            .and_then(|width| width.checked_mul(4))
+            .and_then(|bytes| total.checked_add(bytes))
+    });
+    if max_upload_bytes.is_none_or(|cap| aggregate_bytes > cap || file_bytes > cap) {
+        return Err(ModelError::IndexCorrupt {
+            detail: format!(
+                "manifest.hadamard data exceeds the architecture-derived upload cap (file {file_bytes}, upload {aggregate_bytes})"
+            ),
+        });
     }
     if h.folded.is_empty() && h.inverse.is_empty() {
         return Err(ModelError::IndexCorrupt {

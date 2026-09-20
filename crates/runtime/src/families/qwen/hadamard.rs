@@ -93,10 +93,20 @@ impl HadamardPlan {
             );
         }
         let block = section.block as u32;
+        for name in section.folded.iter().chain(section.inverse.iter()) {
+            entry(index, name)?;
+        }
         let mut signs = Vec::new();
         for s in &section.signs {
-            let start = s.offset as usize;
-            let end = start + s.bytes as usize;
+            let start = usize::try_from(s.offset).map_err(|_| {
+                RealForwardError::Unsupported("hadamard sign offset does not fit usize".to_string())
+            })?;
+            let bytes = usize::try_from(s.bytes).map_err(|_| {
+                RealForwardError::Unsupported("hadamard sign length does not fit usize".to_string())
+            })?;
+            let end = start.checked_add(bytes).ok_or_else(|| {
+                RealForwardError::Unsupported("hadamard sign range overflows usize".to_string())
+            })?;
             let raw = signs_bytes.get(start..end).ok_or_else(|| {
                 RealForwardError::Unsupported(format!(
                     "hadamard.bin is {} bytes but its manifest declares signs at [{}..{}]",
@@ -108,9 +118,6 @@ impl HadamardPlan {
             let buffer = context.new_output_buffer(raw.len() as u64);
             gpu::write_buffer_bytes(&buffer, 0, raw);
             signs.push((s.width as u32, buffer));
-        }
-        for name in section.folded.iter().chain(section.inverse.iter()) {
-            entry(index, name)?;
         }
         if let Some(detail) = routing_error(&section.folded, &section.inverse, &|name| {
             index
