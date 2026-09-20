@@ -7,9 +7,12 @@
 //! the two failure routes, and the content around the span.
 
 use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
 
-use turbospark_tokenizer::{MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent};
+use turbospark_tokenizer::{
+    MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent, NO_SUCH_TOKEN_ID,
+};
 
 fn fixture(name: &str) -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -23,7 +26,59 @@ fn decoder<'a>(tok: &'a MfTokenizer) -> StructuredAssistantDecoder<'a> {
     StructuredAssistantDecoder::new(tok, allowed, || "call_1".to_string(), &[])
 }
 
+fn fixture_without_tool_marker() -> (MfTokenizer, PathBuf) {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ZephyrTokenizer");
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-mistral-without-tool-marker-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir(&dir).expect("temporary fixture directory should be created");
+    fs::copy(
+        source.join("tokenizer_config.json"),
+        dir.join("tokenizer_config.json"),
+    )
+    .expect("tokenizer config should be copied");
+
+    let mut tokenizer: serde_json::Value = serde_json::from_slice(
+        &fs::read(source.join("tokenizer.json")).expect("fixture tokenizer should be readable"),
+    )
+    .expect("fixture tokenizer should be JSON");
+    let added = tokenizer["added_tokens"]
+        .as_array_mut()
+        .expect("fixture should have added tokens");
+    added.retain(|token| token["content"] != "[TOOL_CALLS]");
+    fs::write(
+        dir.join("tokenizer.json"),
+        serde_json::to_vec(&tokenizer).expect("modified tokenizer should serialize"),
+    )
+    .expect("modified tokenizer should be written");
+
+    let tokenizer = MfTokenizer::load_from_dir(&dir).expect("modified tokenizer should load");
+    (tokenizer, dir)
+}
+
 const BODY: &str = r#"[{"name": "get_weather", "arguments": {"city": "Oslo"}}]"#;
+
+#[test]
+fn absent_tool_marker_does_not_swallow_idless_tail_text() {
+    let (tok, dir) = fixture_without_tool_marker();
+    assert_eq!(tok.tool_call_start_id, NO_SUCH_TOKEN_ID);
+    let mut d = decoder(&tok);
+
+    let events = d
+        .consume(NO_SUCH_TOKEN_ID, " nonempty flushed tail")
+        .expect("tail should remain ordinary content");
+    assert_eq!(
+        events,
+        vec![StructuredAssistantEvent::Content(
+            " nonempty flushed tail".to_string()
+        )]
+    );
+    assert!(d.finish().expect("no tool span should be open").is_empty());
+
+    fs::remove_dir_all(dir).expect("temporary fixture should be removed");
+}
 
 /// Feed `BODY` as ordinary token deltas the way the real detokenizer would:
 /// the marker itself is special and arrives empty.
