@@ -12,6 +12,11 @@
 </p>
 
 <p align="center">
+  <a href="assets/welcome-screen.png"><img src="assets/welcome-screen.png" alt="TurboSpark Welcome Screen" width="48%" /></a>
+  <a href="assets/chat-interface.png"><img src="assets/chat-interface.png" alt="TurboSpark Chat Interface" width="48%" /></a>
+</p>
+
+<p align="center">
   <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
 </p>
 
