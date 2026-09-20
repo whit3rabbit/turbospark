@@ -1,6 +1,27 @@
 import Foundation
+import LocalAuthentication
 @testable import TurboSparkApp
 import XCTest
+
+private final class FakeProfileVaultKeychain: ProfileVaultKeychainProtocol, @unchecked Sendable {
+    enum Failure: Error { case unavailable }
+
+    var available = true
+    var stored: [String: Data] = [:]
+
+    func save(masterKey: Data, profileID: String) throws {
+        guard available else { throw Failure.unavailable }
+        stored[profileID] = masterKey
+    }
+
+    func load(profileID: String, context _: LAContext) throws -> Data {
+        guard available, let key = stored[profileID] else { throw Failure.unavailable }
+        return key
+    }
+
+    func delete(profileID: String) { stored.removeValue(forKey: profileID) }
+    func canUseSystemAuthentication() -> Bool { available }
+}
 
 final class ProfileVaultTests: XCTestCase {
     private var root: URL!
@@ -52,6 +73,34 @@ final class ProfileVaultTests: XCTestCase {
         XCTAssertThrowsError(try store.unlock(passphrase: "correct horse battery"))
     }
 
+    func testQuickUnlockUsesInjectedKeychainAndPassphraseRemainsFallback() throws {
+        let keychain = FakeProfileVaultKeychain()
+        let vault = root.appendingPathComponent("quick", isDirectory: true)
+        let store = ProfileVaultStore(
+            rootProvider: { vault },
+            profileIDProvider: { "quick" },
+            keychain: keychain,
+            migrateLegacyData: false)
+        _ = try store.prepareForLaunch()
+        try ProfileRepository(store: store).save("private", key: "value")
+        try store.protect(passphrase: "correct horse battery", enableQuickUnlock: true)
+        XCTAssertTrue(store.manifest?.quickUnlockEnabled == true)
+
+        store.lockVault()
+        _ = try store.unlockWithSystemAuthentication(context: LAContext())
+        XCTAssertEqual(
+            try ProfileRepository(store: store).load(String.self, key: "value"),
+            "private")
+
+        store.lockVault()
+        keychain.available = false
+        XCTAssertThrowsError(try store.unlockWithSystemAuthentication(context: LAContext()))
+        _ = try store.unlock(passphrase: "correct horse battery")
+        XCTAssertEqual(
+            try ProfileRepository(store: store).load(String.self, key: "value"),
+            "private")
+    }
+
     func testSQLCipherAndManagedAssetsHidePlaintextAndDetectTampering() throws {
         let store = makeStore(id: "asset")
         let session = try XCTUnwrap(try store.prepareForLaunch())
@@ -68,6 +117,12 @@ final class ProfileVaultTests: XCTestCase {
         var opened = Data()
         try assets.streamDecrypted(reference: descriptor.storedReference) { opened.append($0) }
         XCTAssertEqual(opened, bytes)
+        enum ConsumerFailure: Error { case stopped }
+        XCTAssertThrowsError(try assets.streamDecrypted(reference: descriptor.storedReference) { _ in
+            throw ConsumerFailure.stopped
+        }) { error in
+            XCTAssertTrue(error is ConsumerFailure)
+        }
         try session.database.checkpoint()
         store.lockVault()
 
@@ -89,6 +144,35 @@ final class ProfileVaultTests: XCTestCase {
         try encrypted.write(to: assetURL, options: .atomic)
         XCTAssertThrowsError(try assets.streamDecrypted(
             reference: descriptor.storedReference) { _ in })
+    }
+
+    func testProjectsAndToolObservationsUseNormalizedEncryptedStorage() throws {
+        let store = makeStore(id: "records")
+        let session = try XCTUnwrap(try store.prepareForLaunch())
+        let repository = ProfileRepository(store: store)
+        let project = AppProject(name: "Secret Project")
+        let archive = AppProjectArchive(selectedProjectID: project.id, projects: [project])
+        try repository.saveProjectArchive(archive)
+        let loaded = try XCTUnwrap(repository.loadProjectArchive())
+        XCTAssertEqual(loaded.selectedProjectID, project.id)
+        XCTAssertEqual(loaded.projects, [project])
+
+        let observations = ToolObservationStore(rootURL: nil, repository: repository)
+        let chatID = UUID()
+        let secret = Data("private tool output".utf8)
+        let reference = try observations.archive(secret, chatID: chatID)
+        XCTAssertEqual(try observations.load(reference, chatID: chatID), secret)
+        observations.delete(chatID: chatID)
+        XCTAssertThrowsError(try observations.load(reference, chatID: chatID))
+
+        try session.database.checkpoint()
+        for suffix in ["", "-wal", "-shm"] {
+            let url = root.appendingPathComponent("records/profile.sqlite3\(suffix)")
+            if let bytes = try? Data(contentsOf: url) {
+                XCTAssertNil(bytes.range(of: Data("Secret Project".utf8)))
+                XCTAssertNil(bytes.range(of: secret))
+            }
+        }
     }
 
     func testEncryptedBackupRoundTripWrongPasswordAndTampering() async throws {
@@ -119,6 +203,17 @@ final class ProfileVaultTests: XCTestCase {
             passphrase: "wrong backup password",
             destination: wrongOutput))
 
+        let inspectionZIP = root.appendingPathComponent("inspection.zip")
+        _ = try ProfileEncryptedChunkWriter.decrypt(
+            archive: archive, passphrase: password, destination: inspectionZIP)
+        let inspection = try await ProcessExecutor.run(
+            executableURL: ProfileBackupImport.zipinfoURL,
+            arguments: ["-1", inspectionZIP.path], timeoutSeconds: 30)
+        let inspectionEntries = try ProfileBackupImport.entries(from: inspection)
+        XCTAssertTrue(inspectionEntries.contains(
+            "vault/assets/\(asset.id.prefix(2))/\(asset.id).tsasset"),
+            "entries: \(inspectionEntries)")
+
         let destination = root.appendingPathComponent("restored", isDirectory: true)
         _ = try await EncryptedProfileBackup.restore(
             archive: archive,
@@ -135,6 +230,11 @@ final class ProfileVaultTests: XCTestCase {
         let restoredArchive = try XCTUnwrap(
             try ProfileRepository(store: restored).loadChatArchive())
         XCTAssertEqual(restoredArchive.chats.first?.messages.first?.content, "restored text")
+        let restoredAssetURL = destination.appendingPathComponent(
+            "private-vault/assets/\(asset.id.prefix(2))/\(asset.id).tsasset")
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: restoredAssetURL.path),
+            "restored asset missing at \(restoredAssetURL.path)")
         var restoredAsset = Data()
         try ManagedAssetStore(vault: restored).streamDecrypted(
             reference: asset.storedReference) { restoredAsset.append($0) }
@@ -170,7 +270,11 @@ final class ProfileVaultTests: XCTestCase {
             modelAlias: "model",
             chats: [chat],
             projects: .empty(),
-            settingsJSON: Data("{\"private\":true}".utf8),
+            settingsFiles: [
+                "settings.json": Data("{\"private\":true}".utf8),
+                "appearance.json": Data("{\"theme\":\"dark\"}".utf8),
+            ],
+            chatFiles: [],
             memoryFiles: [])
         let zipURL = root.appendingPathComponent("open.zip")
         try OpenProfileExport.export(
@@ -186,6 +290,17 @@ final class ProfileVaultTests: XCTestCase {
         XCTAssertTrue(entries.contains(where: { $0.hasPrefix("assets/generated-images/") }))
         XCTAssertFalse(entries.contains("settings/settings.json"))
         XCTAssertFalse(entries.contains("projects/projects.json"))
+
+        let settingsURL = root.appendingPathComponent("settings.zip")
+        try OpenProfileExport.export(
+            snapshot: snapshot, included: ["settings"], destination: settingsURL,
+            assets: assetStore)
+        let settingsListing = try await ProcessExecutor.run(
+            executableURL: ProfileBackupImport.zipinfoURL,
+            arguments: ["-1", settingsURL.path], timeoutSeconds: 30)
+        let settingsEntries = Set(try ProfileBackupImport.entries(from: settingsListing))
+        XCTAssertTrue(settingsEntries.contains("settings/settings.json"))
+        XCTAssertTrue(settingsEntries.contains("settings/appearance.json"))
 
         let emptyURL = root.appendingPathComponent("empty.zip")
         try OpenProfileExport.export(

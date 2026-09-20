@@ -66,10 +66,14 @@ it through `AppStorageRoot` in tests. Tests that need model rows should use
 fixture paths or a temporary `TURBOSPARK_HOME`, and tests for the Swift scanner
 should assert path classification without touching real model directories.
 
-## The three JSON files
+## Private profile storage
 
-`settings.json`, `chats_archive.json`, `projects_archive.json`, each
-written whole with `.atomic` on every mutation.
+Private profile data now lives in SQLCipher and the encrypted managed asset
+store documented in [PROFILE_VAULT.md](PROFILE_VAULT.md). Legacy
+`settings.json`, `chats_archive.json`, and `projects_archive.json` files are
+migration inputs, not the active persistence format. The test-isolation rules
+below still apply because each test process receives its own
+`AppStorageRoot`, including its own private vault.
 
 Hook option values have a separate split store. Ordinary values live in
 `Hooks/hook_options_values.json`, written with mode 0600. Options whose
@@ -102,9 +106,8 @@ enum raw value or one bad array element and took the whole archive with
 them past the hand-written tolerance of the outer ones. A wrong-TYPED array
 key still throws, or an intact file gets read as empty and overwritten.
 
-`persistChats()` re-encodes the entire archive on every keystroke of the
-draft, since `promptText`'s setter calls it; fine at current sizes, and the
-first thing to look at if typing ever feels heavy.
+Draft persistence is debounced by 300 ms. SQLCipher compares versioned chat
+payloads and updates only changed rows and their FTS content.
 
 ## `AppStorageRoot` and why the test suite needed one
 

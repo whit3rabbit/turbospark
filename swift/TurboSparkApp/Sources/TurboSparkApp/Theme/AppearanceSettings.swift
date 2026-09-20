@@ -16,6 +16,7 @@ public final class AppearanceManager: ObservableObject {
     /// UserDefaults keys; cleared after the first successful JSON save,
     /// which is what makes removing them safe.
     private var needsLegacyCleanup = false
+    private var isReloadingProfile = false
 
     /// Resolved app appearance mode (system, light, dark).
     @Published public var appearance: AppAppearance {
@@ -100,6 +101,30 @@ public final class AppearanceManager: ObservableObject {
         updateDockIcon()
     }
 
+    /// Replaces the bootstrap appearance after a protected profile unlocks.
+    /// Property observers are suppressed while the archive is applied so a
+    /// partial set of fields is never written back to the vault.
+    public func reloadFromProfile() {
+        let (archive, migrated) = AppearanceFileStore.load()
+        isReloadingProfile = true
+        defer { isReloadingProfile = false }
+        needsLegacyCleanup = migrated
+        savedThemes = archive.savedThemes
+        selectedThemeID = archive.selectedThemeID
+        appearance = AppAppearance.resolve(archive.appearance)
+        textSize = AppTextSize.resolve(archive.textSize)
+        lightConfig = archive.lightConfig
+        darkConfig = archive.darkConfig
+        statusBarViewMode = StatusBarViewMode(rawValue: archive.statusBarViewMode) ?? .text
+        usePointerCursors = archive.usePointerCursors
+        dockIcon = AppDockIcon(rawValue: archive.dockIcon) ?? .emeraldSpark
+        reduceMotion = ReduceMotionPreference(rawValue: archive.reduceMotion) ?? .system
+        uiFontSize = archive.uiFontSize
+        codeFontSize = archive.codeFontSize
+        diffMarkers = DiffMarkerPreference(rawValue: archive.diffMarkers) ?? .color
+        updateDockIcon()
+    }
+
     // The four font accessors read `lightConfig` alone. Fonts are GLOBAL:
     // `setUIFont` / `setCodeFont` and the setters below are the only writers
     // and each writes both configs, so the two cannot disagree and either is
@@ -168,6 +193,7 @@ public final class AppearanceManager: ObservableObject {
     /// Writes every published field into the JSON store, and completes the
     /// one-way migration from UserDefaults on the first successful save.
     private func persist() {
+        guard !isReloadingProfile else { return }
         let archive = AppearanceArchive(
             appearance: appearance.rawValue,
             textSize: textSize.rawValue,

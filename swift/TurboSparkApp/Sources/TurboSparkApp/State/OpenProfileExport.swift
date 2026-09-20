@@ -14,7 +14,9 @@ public struct ProfileExportSnapshot: Sendable {
     public var modelAlias: String?
     public var chats: [AppChat]
     public var projects: AppProjectArchive
-    public var settingsJSON: Data?
+    /// Allowlisted per-profile JSON records, keyed by original file name.
+    public var settingsFiles: [String: Data]
+    public var chatFiles: [MemoryFile]
     public var memoryFiles: [MemoryFile]
 }
 
@@ -87,24 +89,34 @@ enum OpenProfileExport {
                     let base = "chats/\(chat.id.uuidString.lowercased())"
                     checksums.append(try zip.add(
                         path: "\(base)/chat.json", data: encoder.encode(chat)))
-                    var jsonl = Data()
-                    for message in chat.messages {
-                        jsonl.append(try compactEncoder.encode(message))
-                        jsonl.append(0x0a)
-                    }
-                    checksums.append(try zip.add(path: "\(base)/messages.jsonl", data: jsonl))
+                    checksums.append(try zip.add(path: "\(base)/messages.jsonl") { consume in
+                        for message in chat.messages {
+                            try consume(compactEncoder.encode(message))
+                            try consume(Data([0x0a]))
+                        }
+                    })
                     checksums.append(try zip.add(
                         path: "\(base)/transcript.md",
                         data: Data(AppChatExport.markdown(
                             for: chat, modelAlias: snapshot.modelAlias).utf8)))
+                }
+                for file in snapshot.chatFiles {
+                    if let data = file.data {
+                        checksums.append(try zip.add(path: file.archivePath, data: data))
+                    } else if let sourceURL = file.sourceURL {
+                        checksums.append(try zip.add(path: file.archivePath, fileURL: sourceURL))
+                    }
                 }
             }
             if included.contains("projects") {
                 checksums.append(try zip.add(
                     path: "projects/projects.json", data: encoder.encode(snapshot.projects)))
             }
-            if included.contains("settings"), let settings = snapshot.settingsJSON {
-                checksums.append(try zip.add(path: "settings/settings.json", data: settings))
+            if included.contains("settings") {
+                for name in snapshot.settingsFiles.keys.sorted() {
+                    guard let data = snapshot.settingsFiles[name] else { continue }
+                    checksums.append(try zip.add(path: "settings/\(name)", data: data))
+                }
             }
             if included.contains("memory") {
                 for memory in snapshot.memoryFiles {
@@ -167,11 +179,13 @@ enum OpenProfileExport {
                     attachments.insert(path)
                 }
             }
-            for message in chat.messages {
+            func collectMessageAssets(_ message: AppChatMessage) {
                 for path in message.imagePaths where ManagedAssetStore.assetID(from: path) != nil {
                     if !generated.contains(path) { attachments.insert(path) }
                 }
+                message.alternates.forEach(collectMessageAssets)
             }
+            chat.messages.forEach(collectMessageAssets)
         }
         if !included.contains("generated-images") { generated.removeAll() }
         if !included.contains("attachments") { attachments.removeAll() }
@@ -211,13 +225,15 @@ enum OpenProfileExport {
             }
             return copy
         }
-        chat.messages = chat.messages.map { source in
+        func portableMessage(_ source: AppChatMessage) -> AppChatMessage {
             var copy = source
             copy.imagePaths = source.imagePaths.compactMap { reference in
                 assetPaths[reference].map { "../../../\($0)" }
             }
+            copy.alternates = source.alternates.map(portableMessage)
             return copy
         }
+        chat.messages = chat.messages.map(portableMessage)
         chat.artifacts = chat.artifacts.map { source in
             var copy = source
             if let reference = copy.path, ManagedAssetStore.assetID(from: reference) != nil {
@@ -231,15 +247,35 @@ enum OpenProfileExport {
 
 extension AppModel {
     func makeProfileExportSnapshot() throws -> ProfileExportSnapshot {
-        let settingsKey = ProfileRepository.protectedRecordKey(
-            for: AppStorageRoot.directory.appendingPathComponent("settings.json"))
-        let settings = try settingsKey.flatMap { try ProfileRepository.shared.rawRecord(key: $0) }
+        var settingsFiles: [String: Data] = [:]
+        for name in ProfileRepository.protectedFileNames
+        where name != "chats_archive.json" && name != "projects_archive.json" {
+            let url = AppStorageRoot.directory.appendingPathComponent(name)
+            guard let key = ProfileRepository.protectedRecordKey(for: url),
+                  let data = try ProfileRepository.shared.rawRecord(key: key)
+            else { continue }
+            settingsFiles[name] = data
+        }
         var memoryFiles: [ProfileExportSnapshot.MemoryFile] = []
+        var chatFiles: [ProfileExportSnapshot.MemoryFile] = []
         if ProfileRepository.shared.isAvailable {
             for (key, data) in try ProfileRepository.shared.rawRecords(prefix: "memory:file:") {
                 let relative = String(key.dropFirst("memory:file:".count))
                 memoryFiles.append(.init(
                     archivePath: "memory/\(relative)", sourceURL: nil, data: data))
+            }
+            for (key, data) in try ProfileRepository.shared.rawRecords(prefix: "tool-observation:") {
+                let relative = String(key.dropFirst("tool-observation:".count))
+                let components = relative.split(separator: "/", omittingEmptySubsequences: true)
+                guard components.count == 2,
+                      let chatID = UUID(uuidString: String(components[0])),
+                      components[1].hasSuffix(".bin"),
+                      UUID(uuidString: String(components[1].dropLast(4))) != nil
+                else { continue }
+                chatFiles.append(.init(
+                    archivePath: "chats/\(chatID.uuidString.lowercased())/tool-observations/\(components[1])",
+                    sourceURL: nil,
+                    data: data))
             }
         } else {
             let manager = FileManager.default
@@ -267,7 +303,8 @@ extension AppModel {
             modelAlias: selected?.alias,
             chats: chats.filter { !$0.isGhost },
             projects: AppProjectArchive(selectedProjectID: selectedProjectID, projects: projects),
-            settingsJSON: settings,
+            settingsFiles: settingsFiles,
+            chatFiles: chatFiles.sorted { $0.archivePath < $1.archivePath },
             memoryFiles: memoryFiles.sorted { $0.archivePath < $1.archivePath })
     }
 }

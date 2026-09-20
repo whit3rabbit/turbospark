@@ -356,17 +356,18 @@ final class MemoryFeatureTests: XCTestCase {
         let remembered = UserMemoryInputMessage.parse(row.content)
         XCTAssertEqual(remembered, "Always deploy with pnpm, never npm")
 
-        // The memory itself: type user, dated slug, indexed.
-        let dir = MemoryStore.shared.directory(forProjectRoot: root)
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        let topic = files.first { $0.hasSuffix(".md") && $0 != "MEMORY.md" }
-        XCTAssertNotNil(topic, "expected a topic file, found: \(files)")
+        // The memory itself: type user, dated slug, indexed. Production
+        // memory lives in SQLCipher, so inspect it through the store API.
+        let index = MemoryStore.shared.loadIndex(forProjectRoot: root)
+        let topic = MemoryStore.parseIndex(index).first?.fileName
+        XCTAssertNotNil(topic, "expected a topic row, found: \(index)")
         if let topic {
-            let text = (try? String(contentsOf: dir.appendingPathComponent(topic), encoding: .utf8)) ?? ""
+            let name = String(topic.dropLast(".md".count))
+            let text = (try? MemoryStore.shared.readTopic(
+                projectRoot: root, name: name)) ?? ""
             XCTAssertTrue(text.contains("type: user"))
             XCTAssertTrue(text.contains("Always deploy with pnpm"))
         }
-        let index = MemoryStore.shared.loadIndex(forProjectRoot: root)
         XCTAssertTrue(index.contains("-- Always deploy with pnpm"))
     }
 
@@ -389,9 +390,8 @@ final class MemoryFeatureTests: XCTestCase {
         XCTAssertEqual(model.turnMessages(for: chat.id).count, 1)
         XCTAssertNotNil(UserMemoryInputMessage.parse(model.turnMessages(for: chat.id)[0].content))
         // And the memory is still written: ghost hides the transcript, not the store.
-        let dir = MemoryStore.shared.directory(forProjectRoot: root)
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        XCTAssertTrue(files.contains { $0.hasSuffix(".md") })
+        let index = MemoryStore.shared.loadIndex(forProjectRoot: root)
+        XCTAssertFalse(MemoryStore.parseIndex(index).isEmpty)
     }
 
     @MainActor

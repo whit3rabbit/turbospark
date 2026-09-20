@@ -1,14 +1,15 @@
 # Swift auto-memory (persistent project memory)
 
-Auto-memory in TurboSparkApp: a profile-wide `MEMORY.md` plus the existing
-per-project directory on disk holding a `MEMORY.md` index and topic files the model itself writes through a
+Auto-memory in TurboSparkApp: a profile-wide logical `MEMORY.md` plus the
+existing per-project Markdown index and topic shape the model writes through a
 `memory` tool. The index is injected into the system prompt every turn, so
 what was learned in an earlier conversation is visible in the next one. The
-transcript is never consulted; the memory directory is the whole of it.
-Default off. Existing files remain on disk when disabled.
+transcript is never consulted. Default off. The logical Markdown documents
+are stored inside the encrypted profile database; legacy files are migration
+inputs.
 
-Profile memory is ordinary Markdown at the active profile's user-scope
-`memory/MEMORY.md` and is shared across that profile's projects. Project memory
+Profile memory remains ordinary Markdown logically and is shared across that
+profile's projects. Project memory
 remains partitioned by project root. The optional `.embeddings.json` sidecar is
 disposable derived state. The native local encoder API can index an
 Arctic-compatible MLX encoder; lexical recall remains available without one.
@@ -20,16 +21,15 @@ scale this app runs at; the deliberate differences are listed at the bottom.
 
 ## The layout
 
-Everything hangs off ONE profile-aware base, resolved through the same
-`UserProfileStore.userScopeSubdirectory` seam as skills and plugins:
+The logical layout is retained for prompts and open export:
 
 ```
 <base>/projects/<key>/memory/MEMORY.md     the index, injected every turn
 <base>/projects/<key>/memory/<slug>.md     topic files, read on demand
 ```
 
-`<base>` is `~/.turbospark/memory` for the Default profile and inside the
-profile folder for anyone else. `<key>` (`MemoryStore.projectKey`) is the
+The rows live under `memory:file:` keys in SQLCipher. `<key>`
+(`MemoryStore.projectKey`) is the
 project root's SYMLINK-RESOLVED path with every character outside
 `[A-Za-z0-9._-]` replaced by `-`, plus 8 hex digits of SHA-256 of the
 resolved path. The readable prefix is what a user browses in Finder; the

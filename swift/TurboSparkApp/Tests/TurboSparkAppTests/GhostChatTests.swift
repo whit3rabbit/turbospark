@@ -17,10 +17,7 @@ final class GhostChatTests: XCTestCase {
         // another test in this process left in the shared (test-redirected,
         // per `AppStorageRoot`) storage directory.
         try? FileManager.default.removeItem(at: AppStorageRoot.file("chats_archive.json"))
-    }
-
-    private func archiveFileData() -> Data? {
-        try? Data(contentsOf: AppStorageRoot.file("chats_archive.json"))
+        try? ProfileRepository.shared.saveChatArchive(.empty())
     }
 
     // MARK: - Persistence exclusion
@@ -55,9 +52,11 @@ final class GhostChatTests: XCTestCase {
             reloaded.chats.first(where: { $0.id == ghostID }),
             "the ghost row must not survive a reload")
 
-        let archiveData = archiveFileData()
-        XCTAssertNotNil(archiveData, "the archive must still have been written")
-        let archiveText = String(data: archiveData!, encoding: .utf8) ?? ""
+        let database = AppStorageRoot.directory
+            .appendingPathComponent("private-vault/profile.sqlite3")
+        let archiveData = (try? Data(contentsOf: database)) ?? Data()
+        XCTAssertFalse(archiveData.isEmpty, "the encrypted archive must still have been written")
+        let archiveText = String(data: archiveData, encoding: .utf8) ?? ""
         XCTAssertFalse(
             archiveText.contains("ghost secret"),
             "the ghost conversation text must not appear anywhere on disk")
@@ -161,6 +160,10 @@ final class GhostChatTests: XCTestCase {
     /// persisted.
     func testAlwaysStartInGhostModeOpensInATemporaryChat() {
         try? FileManager.default.removeItem(at: AppStorageRoot.file("settings.json"))
+        if let key = ProfileRepository.protectedRecordKey(
+            for: AppStorageRoot.file("settings.json")) {
+            try? ProfileRepository.shared.deleteRecord(key: key)
+        }
         let first = AppModel()
         first.alwaysStartInGhostMode = true
         first.persistSettings()

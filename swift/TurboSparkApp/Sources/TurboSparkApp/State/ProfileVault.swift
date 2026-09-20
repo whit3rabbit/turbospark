@@ -402,12 +402,29 @@ public final class ProfileRepository: @unchecked Sendable {
         else { return nil }
         let data = try Data(contentsOf: legacyURL)
         let archive = try decoder.decode(AppChatArchive.self, from: data)
-        try database.saveChatArchive(archive)
+        _ = try database.saveChatArchive(archive)
         return archive
     }
 
     public func saveChatArchive(_ archive: AppChatArchive) throws {
-        try database().saveChatArchive(archive)
+        let unreachable = try database().saveChatArchive(archive)
+        ManagedAssetStore(vault: store).garbageCollect(ids: unreachable)
+    }
+
+    public func loadProjectArchive(legacyURL: URL? = nil) throws -> AppProjectArchive? {
+        let database = try database()
+        if let archive = try database.loadProjectArchive() { return archive }
+        guard let legacyURL, FileManager.default.fileExists(atPath: legacyURL.path) else {
+            return nil
+        }
+        let archive = try decoder.decode(
+            AppProjectArchive.self, from: Data(contentsOf: legacyURL))
+        try database.saveProjectArchive(archive)
+        return archive
+    }
+
+    public func saveProjectArchive(_ archive: AppProjectArchive) throws {
+        try database().saveProjectArchive(archive)
     }
 
     public func checkpoint() throws { try database().checkpoint() }
@@ -428,18 +445,23 @@ public final class ProfileRepository: @unchecked Sendable {
         try database().loadRecords(prefix: prefix)
     }
 
-    static func protectedRecordKey(for url: URL) -> String? {
-        let protectedNames: Set<String> = [
+    static let protectedFileNames: Set<String> = [
+            "appearance.json",
             "chats_archive.json",
             "cron_jobs.json",
             "disabled_items.json",
+            "excluded_scan_paths.json",
             "global_mcp_servers.json",
             "granted_folders.json",
             "input_history.json",
+            "mcp_marketplaces.json",
+            "model_organization.json",
             "projects_archive.json",
             "settings.json",
         ]
-        guard protectedNames.contains(url.lastPathComponent) else { return nil }
+
+    static func protectedRecordKey(for url: URL) -> String? {
+        guard protectedFileNames.contains(url.lastPathComponent) else { return nil }
         let root = AppStorageRoot.directory.standardizedFileURL.path
         let candidate = url.standardizedFileURL.path
         guard candidate == root || candidate.hasPrefix(root + "/") else { return nil }
@@ -449,11 +471,7 @@ public final class ProfileRepository: @unchecked Sendable {
 
     func migrateLegacyPrivateFiles() throws {
         let root = store.rootURL.deletingLastPathComponent()
-        let names = [
-            "chats_archive.json", "cron_jobs.json",
-            "disabled_items.json", "global_mcp_servers.json", "granted_folders.json",
-            "input_history.json", "projects_archive.json", "settings.json",
-        ]
+        let names = Self.protectedFileNames.sorted()
         guard let session = store.session else { throw ProfileVaultStore.VaultError.locked }
         let recoveryKey = ProfileVaultCrypto.deriveKey(
             masterKey: session.masterKey, purpose: "legacy-recovery")
@@ -464,6 +482,8 @@ public final class ProfileRepository: @unchecked Sendable {
             if let key = Self.protectedRecordKey(for: source) {
                 if name == "chats_archive.json" {
                     _ = try loadChatArchive(legacyURL: source)
+                } else if name == "projects_archive.json" {
+                    _ = try loadProjectArchive(legacyURL: source)
                 } else if try database().loadRecord(key: key) == nil {
                     try database().saveRecord(key: key, payload: Data(contentsOf: source))
                 }
@@ -488,6 +508,7 @@ public final class ProfileRepository: @unchecked Sendable {
             filesToDelete.append(source)
         }
         let memoryRoots = try migrateLegacyMemory()
+        let observationRoots = try migrateLegacyToolObservations()
         guard try database().integrityCheck() else {
             throw ProfileVaultStore.VaultError.integrityCheckFailed
         }
@@ -497,8 +518,9 @@ public final class ProfileRepository: @unchecked Sendable {
         for source in filesToDelete {
             try FileManager.default.removeItem(at: source)
         }
-        for root in memoryRoots.sorted(by: { $0.path.count > $1.path.count }) {
-            if memoryRoots.contains(where: { root.path.hasPrefix($0.path + "/") }) { continue }
+        let migratedRoots = memoryRoots + observationRoots
+        for root in migratedRoots.sorted(by: { $0.path.count > $1.path.count }) {
+            if migratedRoots.contains(where: { root.path.hasPrefix($0.path + "/") }) { continue }
             try FileManager.default.removeItem(at: root)
         }
     }
@@ -530,6 +552,28 @@ public final class ProfileRepository: @unchecked Sendable {
             migratedRoots.append(root)
         }
         return migratedRoots
+    }
+
+    private func migrateLegacyToolObservations() throws -> [URL] {
+        let manager = FileManager.default
+        let root = store.rootURL.deletingLastPathComponent()
+            .appendingPathComponent("tool-observations", isDirectory: true)
+        guard manager.fileExists(atPath: root.path) else { return [] }
+        let enumerator = manager.enumerator(
+            at: root, includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants])
+        while let file = enumerator?.nextObject() as? URL,
+              (try file.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true {
+            let relative = String(file.path.dropFirst(root.path.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let key = ToolObservationStore.recordKey(relativePath: relative)
+            let data = try Data(contentsOf: file)
+            try saveRawRecord(data, key: key)
+            guard try rawRecord(key: key) == data else {
+                throw ProfileVaultStore.VaultError.integrityCheckFailed
+            }
+        }
+        return [root]
     }
 
     private func database() throws -> ProfileDatabase {

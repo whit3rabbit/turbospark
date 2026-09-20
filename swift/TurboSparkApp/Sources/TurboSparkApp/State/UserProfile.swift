@@ -2,14 +2,11 @@ import Foundation
 
 /// One named user of this app on this machine.
 ///
-/// Profiles are FOLDERS, not accounts: no password, no login, and the only
-/// thing a profile owns is a directory under the machine root plus a row in
-/// `profiles.json`. Everything the app stores first-party (settings, chats,
-/// projects, global MCP servers, model favorites, appearance, hooks, custom
-/// tools) resolves through `AppStorageRoot`, so pointing that one seam at the
-/// folder is the whole per-user mechanism; the user-scope content that lives
-/// OUTSIDE the root (skills, agents, tools, marketplaces) follows
-/// `userScopeSubdirectory` instead.
+/// Profiles are local identities, not online accounts. The public registry
+/// stores bootstrap metadata; private state lives in an always-encrypted
+/// vault that can optionally require a recovery passphrase or system
+/// authentication. Shared components outside that vault keep their existing
+/// filesystem layout.
 ///
 /// The Default user is the machine's existing setup, not a folder of its own:
 /// its stores stay at the machine root and its user-scope content stays in the

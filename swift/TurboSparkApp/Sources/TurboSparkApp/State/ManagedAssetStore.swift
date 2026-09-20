@@ -184,6 +184,26 @@ public final class ManagedAssetStore: @unchecked Sendable {
         }
     }
 
+    /// Removes payloads whose metadata was deleted by a committed database
+    /// transaction. Failure leaves only an unreadable orphan ciphertext.
+    func garbageCollect(ids: [String]) {
+        guard !ids.isEmpty else { return }
+        lock.withLock {
+            for id in ids {
+                try? FileManager.default.removeItem(at: assetURL(id: id))
+                guard let session = vault.session,
+                      let cache = try? decryptedCacheURL(profileID: session.profileID)
+                else { continue }
+                let prefix = id + "-"
+                for item in (try? FileManager.default.contentsOfDirectory(
+                    at: cache, includingPropertiesForKeys: nil)) ?? []
+                where item.lastPathComponent.hasPrefix(prefix) {
+                    try? FileManager.default.removeItem(at: item)
+                }
+            }
+        }
+    }
+
     public func purgeDecryptedCache() {
         guard let profileID = vault.session?.profileID else { return }
         Self.purgeDecryptedCache(profileID: profileID)
@@ -242,32 +262,33 @@ public final class ManagedAssetStore: @unchecked Sendable {
             masterKey: session.masterKey, purpose: "asset", salt: Data(id.utf8))
         var remaining = parsed.plainByteCount
         var index: UInt32 = 0
-        do {
-            while remaining > 0 {
-                let plainCount = Int(min(UInt64(parsed.chunkSize), remaining))
-                let sealedCount = plainCount + Self.tagSize
-                guard let sealed = try input.read(upToCount: sealedCount), sealed.count == sealedCount else {
-                    throw AssetError.malformed
-                }
-                let nonce = try AES.GCM.Nonce(data: parsed.noncePrefix + index.bigEndianData)
-                let box = try AES.GCM.SealedBox(
-                    nonce: nonce,
-                    ciphertext: sealed.prefix(plainCount),
-                    tag: sealed.suffix(Self.tagSize))
-                let opened = try AES.GCM.open(
+        while remaining > 0 {
+            let plainCount = Int(min(UInt64(parsed.chunkSize), remaining))
+            let sealedCount = plainCount + Self.tagSize
+            guard let sealed = try input.read(upToCount: sealedCount), sealed.count == sealedCount else {
+                throw AssetError.malformed
+            }
+            let nonce = try AES.GCM.Nonce(data: parsed.noncePrefix + index.bigEndianData)
+            let box = try AES.GCM.SealedBox(
+                nonce: nonce,
+                ciphertext: sealed.prefix(plainCount),
+                tag: sealed.suffix(Self.tagSize))
+            let opened: Data
+            do {
+                opened = try AES.GCM.open(
                     box,
                     using: SymmetricKey(data: assetKey),
                     authenticating: aad(header: header, assetID: id, chunkIndex: index))
-                try consume(opened)
-                remaining -= UInt64(plainCount)
-                index &+= 1
-            }
-            guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
+            } catch {
                 throw AssetError.malformed
             }
-        } catch let error as AssetError {
-            throw error
-        } catch {
+            // Consumer failures, such as a full export volume, are not
+            // authentication failures and must retain their original error.
+            try consume(opened)
+            remaining -= UInt64(plainCount)
+            index &+= 1
+        }
+        guard (try input.read(upToCount: 1) ?? Data()).isEmpty else {
             throw AssetError.malformed
         }
     }

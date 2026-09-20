@@ -8,6 +8,7 @@ extension AppModel {
         persistChats()
         persistProjects()
         persistSettings()
+        AppChatFileStore.flush()
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.allowedContentTypes = [
@@ -48,6 +49,7 @@ extension AppModel {
         persistChats()
         persistProjects()
         persistSettings()
+        AppChatFileStore.flush()
         let snapshot: ProfileExportSnapshot
         do {
             snapshot = try makeProfileExportSnapshot()

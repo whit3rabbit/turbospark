@@ -82,6 +82,9 @@ enum EncryptedProfileBackup {
             checksums.append(Checksum(databaseDigest))
             for (root, prefix) in [(store.assetsURL, "vault/assets"),
                                    (store.recoveryURL, "vault/recovery")] {
+                // Path enumeration keeps the base and children in the same
+                // /var or /private/var namespace. Mixing URL enumeration
+                // with string prefix removal corrupts temporary-file paths.
                 for file in try recursiveFiles(at: root) {
                     let relative = file.path.dropFirst(root.path.count)
                         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -253,13 +256,11 @@ enum EncryptedProfileBackup {
 
     private static func recursiveFiles(at root: URL) throws -> [URL] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
-        let keys: [URLResourceKey] = [.isRegularFileKey]
-        let enumerator = FileManager.default.enumerator(
-            at: root, includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants])
+        guard let enumerator = FileManager.default.enumerator(atPath: root.path) else { return [] }
         var result: [URL] = []
-        while let url = enumerator?.nextObject() as? URL {
-            if (try url.resourceValues(forKeys: Set(keys))).isRegularFile == true {
+        while let relative = enumerator.nextObject() as? String {
+            let url = root.appendingPathComponent(relative)
+            if (try url.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true {
                 result.append(url)
             }
         }

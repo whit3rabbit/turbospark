@@ -8,6 +8,7 @@ final class ProfileDatabase: @unchecked Sendable {
         var mimeType: String?
         var byteCount: Int64
         var referenceCount: Int
+        var createdAt: Date
     }
     enum DatabaseError: Error, LocalizedError {
         case open(String)
@@ -132,7 +133,7 @@ final class ProfileDatabase: @unchecked Sendable {
                 try bind(body, at: 3, to: statement)
                 try stepDone(statement)
             }
-        } else if key.contains("settings") {
+        } else if key.hasPrefix("json:") {
             try withStatement(
                 """
                 INSERT INTO profile_settings(key, payload_version, payload, updated_at)
@@ -159,6 +160,11 @@ final class ProfileDatabase: @unchecked Sendable {
                 try stepDone(statement)
             }
             try withStatement("DELETE FROM memory_fts WHERE memory_id = ?1") { statement in
+                try bind(key, at: 1, to: statement)
+                try stepDone(statement)
+            }
+        } else if key.hasPrefix("json:") {
+            try withStatement("DELETE FROM profile_settings WHERE key = ?1") { statement in
                 try bind(key, at: 1, to: statement)
                 try stepDone(statement)
             }
@@ -198,8 +204,12 @@ final class ProfileDatabase: @unchecked Sendable {
         return AppChatArchive(selectedChatID: selectedID, chats: chats)
     }
 
-    func saveChatArchive(_ archive: AppChatArchive) throws {
+    /// Saves the chat graph and returns asset payload IDs that became
+    /// unreachable. Callers remove those files only after this transaction
+    /// commits, so a failed save can never strand a live database reference.
+    func saveChatArchive(_ archive: AppChatArchive) throws -> [String] {
         let encoder = JSONEncoder()
+        var unreachableAssetIDs: [String] = []
         try transaction {
             let existing = try chatIDs()
             let current = Set(archive.chats.map { $0.id.uuidString })
@@ -215,13 +225,73 @@ final class ProfileDatabase: @unchecked Sendable {
                 try deleteChat(id: removed)
             }
             try saveMetadata(key: "selected-chat-id", value: archive.selectedChatID.uuidString)
+            unreachableAssetIDs = try reconcileAssetReferences(in: archive)
+        }
+        try Self.applyFilePermissions(at: url)
+        return unreachableAssetIDs
+    }
+
+    func loadProjectArchive() throws -> AppProjectArchive? {
+        let selected = try loadMetadata(key: "selected-project-id")
+        var projects: [AppProject] = []
+        let decoder = JSONDecoder()
+        try withStatement("SELECT payload FROM projects ORDER BY updated_at DESC, id ASC") { statement in
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let payload = columnData(statement, index: 0),
+                      let project = try? decoder.decode(AppProject.self, from: payload)
+                else { continue }
+                projects.append(project)
+            }
+        }
+        guard selected != nil || !projects.isEmpty else { return nil }
+        return AppProjectArchive(
+            selectedProjectID: selected.flatMap(UUID.init(uuidString:)),
+            projects: projects)
+    }
+
+    func saveProjectArchive(_ archive: AppProjectArchive) throws {
+        let encoder = JSONEncoder()
+        try transaction {
+            var existing: Set<String> = []
+            try withStatement("SELECT id FROM projects") { statement in
+                while sqlite3_step(statement) == SQLITE_ROW {
+                    if let id = columnText(statement, index: 0) { existing.insert(id) }
+                }
+            }
+            let current = Set(archive.projects.map { $0.id.uuidString })
+            for project in archive.projects {
+                try withStatement(
+                    """
+                    INSERT INTO projects(id, name, updated_at, payload_version, payload)
+                    VALUES(?1, ?2, ?3, 1, ?4)
+                    ON CONFLICT(id) DO UPDATE SET name=excluded.name,
+                        updated_at=excluded.updated_at, payload=excluded.payload
+                    """) { statement in
+                    try bind(project.id.uuidString, at: 1, to: statement)
+                    try bind(project.name, at: 2, to: statement)
+                    try bind(project.updatedAt.timeIntervalSince1970, at: 3, to: statement)
+                    try bind(try encoder.encode(project), at: 4, to: statement)
+                    try stepDone(statement)
+                }
+            }
+            for removed in existing.subtracting(current) {
+                try withStatement("DELETE FROM projects WHERE id = ?1") { statement in
+                    try bind(removed, at: 1, to: statement)
+                    try stepDone(statement)
+                }
+            }
+            if let selected = archive.selectedProjectID {
+                try saveMetadata(key: "selected-project-id", value: selected.uuidString)
+            } else {
+                try deleteMetadata(key: "selected-project-id")
+            }
         }
         try Self.applyFilePermissions(at: url)
     }
 
     func assetMetadata(id: String) throws -> AssetMetadata? {
         try withStatement(
-            "SELECT file_name, mime_type, byte_count, reference_count FROM assets WHERE id = ?1"
+            "SELECT file_name, mime_type, byte_count, reference_count, created_at FROM assets WHERE id = ?1"
         ) { statement in
             try bind(id, at: 1, to: statement)
             guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
@@ -230,14 +300,15 @@ final class ProfileDatabase: @unchecked Sendable {
                 fileName: columnText(statement, index: 0) ?? "asset",
                 mimeType: columnText(statement, index: 1),
                 byteCount: sqlite3_column_int64(statement, 2),
-                referenceCount: Int(sqlite3_column_int64(statement, 3)))
+                referenceCount: Int(sqlite3_column_int64(statement, 3)),
+                createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)))
         }
     }
 
     func allAssetMetadata() throws -> [AssetMetadata] {
         var result: [AssetMetadata] = []
         try withStatement(
-            "SELECT id, file_name, mime_type, byte_count, reference_count FROM assets ORDER BY id"
+            "SELECT id, file_name, mime_type, byte_count, reference_count, created_at FROM assets ORDER BY id"
         ) { statement in
             while sqlite3_step(statement) == SQLITE_ROW {
                 guard let id = columnText(statement, index: 0) else { continue }
@@ -246,7 +317,8 @@ final class ProfileDatabase: @unchecked Sendable {
                     fileName: columnText(statement, index: 1) ?? "asset",
                     mimeType: columnText(statement, index: 2),
                     byteCount: sqlite3_column_int64(statement, 3),
-                    referenceCount: Int(sqlite3_column_int64(statement, 4))))
+                    referenceCount: Int(sqlite3_column_int64(statement, 4)),
+                    createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 5))))
             }
         }
         return result
@@ -293,6 +365,46 @@ final class ProfileDatabase: @unchecked Sendable {
         return try assetMetadata(id: id) == nil
     }
 
+    private func reconcileAssetReferences(in archive: AppChatArchive) throws -> [String] {
+        var counts: [String: Int] = [:]
+        func count(_ reference: String?) {
+            guard let reference, let id = ManagedAssetStore.assetID(from: reference) else { return }
+            counts[id, default: 0] += 1
+        }
+        func count(_ message: AppChatMessage) {
+            message.imagePaths.forEach { count($0) }
+            message.alternates.forEach(count)
+        }
+        for chat in archive.chats {
+            chat.draftAttachments.forEach { count($0.sourcePath) }
+            chat.artifacts.forEach { count($0.path) }
+            chat.messages.forEach(count)
+        }
+
+        var unreachable: [String] = []
+        let pendingWriteCutoff = Date().addingTimeInterval(-60)
+        for metadata in try allAssetMetadata() {
+            guard let referenceCount = counts[metadata.id], referenceCount > 0 else {
+                // File encryption and chat attachment are separate operations.
+                // A concurrent chat save must not collect a payload still on
+                // its way back from the import task to the main actor.
+                guard metadata.createdAt <= pendingWriteCutoff else { continue }
+                try withStatement("DELETE FROM assets WHERE id = ?1") { statement in
+                    try bind(metadata.id, at: 1, to: statement)
+                    try stepDone(statement)
+                }
+                unreachable.append(metadata.id)
+                continue
+            }
+            try withStatement("UPDATE assets SET reference_count = ?2 WHERE id = ?1") { statement in
+                try bind(metadata.id, at: 1, to: statement)
+                try bind(Int64(referenceCount), at: 2, to: statement)
+                try stepDone(statement)
+            }
+        }
+        return unreachable
+    }
+
     func integrityCheck() throws -> Bool {
         try scalarText("PRAGMA integrity_check;") == "ok"
     }
@@ -334,9 +446,14 @@ final class ProfileDatabase: @unchecked Sendable {
         guard result == SQLITE_DONE, finish == SQLITE_OK else {
             throw DatabaseError.open(String(cString: sqlite3_errmsg(target)))
         }
-        guard sqlite3_exec(target, "PRAGMA integrity_check;", nil, nil, nil) == SQLITE_OK else {
-            throw DatabaseError.open(String(cString: sqlite3_errmsg(target)))
-        }
+        var integrity: OpaquePointer?
+        guard sqlite3_prepare_v2(target, "PRAGMA integrity_check;", -1, &integrity, nil) == SQLITE_OK,
+              let integrity
+        else { throw DatabaseError.open(String(cString: sqlite3_errmsg(target))) }
+        defer { sqlite3_finalize(integrity) }
+        guard sqlite3_step(integrity) == SQLITE_ROW,
+              sqlite3_column_text(integrity, 0).map({ String(cString: $0) }) == "ok"
+        else { throw DatabaseError.open("snapshot integrity check failed") }
         try Self.applyFilePermissions(at: destination)
     }
 
@@ -511,9 +628,11 @@ final class ProfileDatabase: @unchecked Sendable {
             try bind(chat.id.uuidString, at: 1, to: statement)
             try stepDone(statement)
         }
-        let messageText = chat.messages.flatMap { message in
+        func searchableText(_ message: AppChatMessage) -> [String] {
             [message.content, message.reasoning]
+                + message.alternates.flatMap(searchableText)
         }
+        let messageText = chat.messages.flatMap(searchableText)
         let attachmentText = chat.draftAttachments.map(\.extractedText)
         let body = ([chat.draft] + messageText + attachmentText).joined(separator: "\n")
         try withStatement(
@@ -633,6 +752,13 @@ final class ProfileDatabase: @unchecked Sendable {
             """) { statement in
             try bind(key, at: 1, to: statement)
             try bind(value, at: 2, to: statement)
+            try stepDone(statement)
+        }
+    }
+
+    private func deleteMetadata(key: String) throws {
+        try withStatement("DELETE FROM vault_metadata WHERE key = ?1") { statement in
+            try bind(key, at: 1, to: statement)
             try stepDone(statement)
         }
     }

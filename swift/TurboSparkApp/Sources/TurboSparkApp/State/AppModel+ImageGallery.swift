@@ -16,13 +16,10 @@ extension AppModel {
         for artifact in savedImageArtifacts where ids.contains(artifact.id) {
             guard let path = artifact.path else { continue }
             if ManagedAssetStore.assetID(from: path) != nil {
-                do {
-                    try ManagedAssetStore.shared.release(reference: path)
-                    paths.insert(path)
-                    removed.insert(artifact.id)
-                } catch {
-                    showToast(error.localizedDescription, style: .error)
-                }
+                // Persistence reconciles reference counts in the same
+                // transaction as these row removals, then deletes ciphertext.
+                paths.insert(path)
+                removed.insert(artifact.id)
                 continue
             }
             let url = URL(fileURLWithPath: path).standardizedFileURL

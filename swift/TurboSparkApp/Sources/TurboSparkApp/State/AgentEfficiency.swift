@@ -46,13 +46,18 @@ public final class ToolObservationStore: @unchecked Sendable {
 
     private let fileManager: FileManager
     private let rootURL: URL
+    private let vaultBacked: Bool
+    private let repository: ProfileRepository
 
     public init(
-        rootURL: URL = AppStorageRoot.subdirectory("tool-observations"),
-        fileManager: FileManager = .default
+        rootURL: URL? = nil,
+        fileManager: FileManager = .default,
+        repository: ProfileRepository = .shared
     ) {
-        self.rootURL = rootURL
+        self.vaultBacked = rootURL == nil
+        self.rootURL = rootURL ?? AppStorageRoot.subdirectory("tool-observations")
         self.fileManager = fileManager
+        self.repository = repository
     }
 
     private func chatDirectory(_ chatID: UUID) -> URL {
@@ -63,9 +68,22 @@ public final class ToolObservationStore: @unchecked Sendable {
         chatDirectory(chatID).appendingPathComponent(observationID.uuidString + ".bin")
     }
 
+    private func recordKey(chatID: UUID, observationID: UUID) -> String {
+        Self.recordKey(relativePath: "\(chatID.uuidString)/\(observationID.uuidString).bin")
+    }
+
+    static func recordKey(relativePath: String) -> String {
+        "tool-observation:\(relativePath)"
+    }
+
     public func archive(_ bytes: Data, chatID: UUID) throws -> ToolObservationRef {
         let reference = ToolObservationRef(
             sourceHash: Self.hash(bytes), byteCount: bytes.count)
+        if vaultBacked {
+            try repository.saveRawRecord(
+                bytes, key: recordKey(chatID: chatID, observationID: reference.id))
+            return reference
+        }
         let directory = chatDirectory(chatID)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         try bytes.write(to: fileURL(chatID: chatID, observationID: reference.id), options: .atomic)
@@ -73,7 +91,15 @@ public final class ToolObservationStore: @unchecked Sendable {
     }
 
     public func load(_ reference: ToolObservationRef, chatID: UUID) throws -> Data {
-        let data = try Data(contentsOf: fileURL(chatID: chatID, observationID: reference.id))
+        let data: Data
+        if vaultBacked {
+            guard let stored = try repository.rawRecord(
+                key: recordKey(chatID: chatID, observationID: reference.id))
+            else { throw ObservationError.missing }
+            data = stored
+        } else {
+            data = try Data(contentsOf: fileURL(chatID: chatID, observationID: reference.id))
+        }
         guard data.count == reference.byteCount, Self.hash(data) == reference.sourceHash else {
             throw ObservationError.integrityFailed
         }
@@ -94,6 +120,12 @@ public final class ToolObservationStore: @unchecked Sendable {
     }
 
     public func delete(chatID: UUID) {
+        if vaultBacked {
+            let prefix = Self.recordKey(relativePath: "\(chatID.uuidString)/")
+            guard let rows = try? repository.rawRecords(prefix: prefix) else { return }
+            for (key, _) in rows { try? repository.deleteRecord(key: key) }
+            return
+        }
         try? fileManager.removeItem(at: chatDirectory(chatID))
     }
 
@@ -104,11 +136,13 @@ public final class ToolObservationStore: @unchecked Sendable {
     public enum ObservationError: LocalizedError {
         case invalidRange
         case integrityFailed
+        case missing
 
         public var errorDescription: String? {
             switch self {
             case .invalidRange: return "The requested observation byte range is invalid."
             case .integrityFailed: return "The archived observation did not pass its integrity check."
+            case .missing: return "The archived observation is missing."
             }
         }
     }

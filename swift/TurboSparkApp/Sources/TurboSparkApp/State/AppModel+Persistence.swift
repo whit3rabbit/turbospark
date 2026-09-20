@@ -392,7 +392,7 @@ extension AppModel {
     public func persistChatsDebounced() {
         chatPersistDebounceTask?.cancel()
         chatPersistDebounceTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled, let self else { return }
             self.chatPersistDebounceTask = nil
             AppChatFileStore.save(self.makeChatArchive())
@@ -513,5 +513,6 @@ extension AppModel {
         // them, so the last keystroke and the last setting reach disk.
         persistChats()
         persistSettings()
+        AppChatFileStore.flush()
     }
 }

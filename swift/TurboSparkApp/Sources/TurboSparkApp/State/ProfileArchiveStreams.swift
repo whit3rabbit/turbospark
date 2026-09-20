@@ -44,13 +44,6 @@ final class ProfileZipStreamWriter {
         self.sink = sink
     }
 
-    convenience init(fileURL: URL) throws {
-        FileManager.default.createFile(atPath: fileURL.path, contents: nil)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        let handle = try FileHandle(forWritingTo: fileURL)
-        self.init { data in try handle.write(contentsOf: data) }
-    }
-
     @discardableResult
     func add(path: String, data: Data, modifiedAt: Date = Date()) throws -> EntryDigest {
         try add(path: path, modifiedAt: modifiedAt) { consume in

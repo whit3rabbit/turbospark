@@ -285,7 +285,7 @@ final class LifecycleGuardTests: XCTestCase {
 
     func testAProjectStepCapIsClampedToThePickersOwnRange() throws {
         // Round-tripped through the real encoder and then hand-edited, the
-        // way a user editing `projects_archive.json` would: a literal fixture
+        // way a legacy or future persisted project payload could: a literal fixture
         // would be asserting this test's idea of the shape rather than the
         // app's.
         let encoded = try JSONEncoder().encode(AppProject(name: "P", maxAutonomousSteps: 5))
@@ -296,7 +296,7 @@ final class LifecycleGuardTests: XCTestCase {
         let decoded = try JSONDecoder().decode(AppProject.self, from: Data(edited.utf8))
         XCTAssertEqual(
             decoded.maxAutonomousSteps, AppProject.autonomousStepRange.upperBound,
-            "`projects_archive.json` is a plain file a user can edit, and an unclamped step cap "
+            "A persisted project payload can carry an old or future value, and an unclamped step cap "
                 + "is an agent loop that runs tools until the model stops proposing them.")
     }
 }

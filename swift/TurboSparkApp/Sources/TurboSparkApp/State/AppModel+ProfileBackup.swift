@@ -44,6 +44,7 @@ extension AppModel {
         if profile.id == UserProfileStore.active.id {
             persistChats()
             persistSettings()
+            AppChatFileStore.flush()
         }
 
         let machineRoot = AppStorageRoot.machineRoot

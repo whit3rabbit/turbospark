@@ -555,6 +555,10 @@ public struct AppChatArchive: Codable, Sendable {
 
 /// Filesystem storage utilities for saving and loading chat archives.
 public enum AppChatFileStore {
+    private static let writerQueue = DispatchQueue(
+        label: "com.whit3rabbit.turbospark.profile-chat-writer",
+        qos: .utility)
+
     private static var storageDirectory: URL {
         AppStorageRoot.directory
     }
@@ -570,6 +574,7 @@ public enum AppChatFileStore {
     /// `save()` overwrites this file whole and atomically, so reporting alone
     /// left the user's conversations gone by the time anyone read the log.
     public static func load() -> AppChatArchive {
+        flush()
         do {
             return try ProfileRepository.shared.loadChatArchive(legacyURL: archiveFileURL)
                 ?? AppChatArchive.empty()
@@ -585,6 +590,21 @@ public enum AppChatFileStore {
     /// swallowed: this used to be two `try?`s, so a full disk or an
     /// uncreatable directory lost the whole session on quit with no sign.
     public static func save(_ archive: AppChatArchive) {
+        if AppStorageRoot.isRunningTests {
+            saveNow(archive)
+            return
+        }
+        writerQueue.async { saveNow(archive) }
+    }
+
+    /// Waits for every queued archive write. Locking, migration, backup, and
+    /// shutdown call this before closing or snapshotting the vault.
+    public static func flush() {
+        guard !AppStorageRoot.isRunningTests else { return }
+        writerQueue.sync {}
+    }
+
+    private static func saveNow(_ archive: AppChatArchive) {
         do {
             try ProfileRepository.shared.saveChatArchive(archive)
         } catch {

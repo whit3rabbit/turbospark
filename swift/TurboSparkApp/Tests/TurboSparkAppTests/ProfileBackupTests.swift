@@ -245,10 +245,10 @@ final class ProfileBackupTests: XCTestCase {
         try await extract(destination, into: extraction)
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: extraction.appendingPathComponent("chats_archive.json").path))
-        XCTAssertTrue(
+        XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: extraction.appendingPathComponent("stray.txt").path),
-            "an entry no category owns always travels; the table is a description, not an allowlist")
+            "an entry no category owns must not cross a partial-export boundary")
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: extraction.appendingPathComponent("settings.json").path))
         XCTAssertFalse(FileManager.default.fileExists(
@@ -279,7 +279,7 @@ final class ProfileBackupTests: XCTestCase {
         try await extract(destination, into: extraction)
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: extraction.appendingPathComponent("app-support/settings.json").path))
-        XCTAssertTrue(FileManager.default.fileExists(
+        XCTAssertFalse(FileManager.default.fileExists(
             atPath: extraction.appendingPathComponent("app-support/other.txt").path))
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: extraction.appendingPathComponent("dot-turbospark/skills").path))

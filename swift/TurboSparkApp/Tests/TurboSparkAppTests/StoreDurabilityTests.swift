@@ -92,32 +92,22 @@ final class StoreDurabilityTests: XCTestCase {
 
     // MARK: - the real chat archive goes through it
 
-    func testTheChatArchiveQuarantinesRatherThanLosingConversations() throws {
-        // `AppStorageRoot` redirects to a per-process test directory
-        // (swift/CLAUDE.md Gotcha 37), so this cannot touch real user data.
-        let url = AppStorageRoot.file("chats_archive.json")
-        let saved = try? Data(contentsOf: url)
-        defer {
-            try? FileManager.default.removeItem(at: url)
-            if let saved { try? saved.write(to: url) }
-        }
-
+    func testMalformedLegacyChatArchiveIsNeverDeleted() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("chats_archive.json")
         try #"{"chats": "this used to be an array"}"#.write(
             to: url, atomically: true, encoding: .utf8)
-        _ = AppChatFileStore.load()
+        let vault = root.appendingPathComponent("private-vault", isDirectory: true)
+        let store = ProfileVaultStore(
+            rootProvider: { vault }, profileIDProvider: { "durability" },
+            migrateLegacyData: false)
+        _ = try store.prepareForLaunch()
 
-        XCTAssertFalse(
+        XCTAssertThrowsError(try ProfileRepository(store: store).loadChatArchive(legacyURL: url))
+        XCTAssertTrue(
             FileManager.default.fileExists(atPath: url.path),
-            "The archive that would not decode must be moved aside before anything can save over it.")
-        let siblings = try FileManager.default.contentsOfDirectory(
-            atPath: AppStorageRoot.directory.path)
-        XCTAssertTrue(siblings.contains { $0.hasPrefix("chats_archive.corrupt-") })
-
-        // Clean up the quarantined copy this test created.
-        for name in siblings where name.hasPrefix("chats_archive.corrupt-") {
-            try? FileManager.default.removeItem(
-                at: AppStorageRoot.directory.appendingPathComponent(name))
-        }
+            "A failed legacy import must keep the plaintext source for recovery.")
     }
 
     // MARK: - crash-orphaned tool calls are repaired at load

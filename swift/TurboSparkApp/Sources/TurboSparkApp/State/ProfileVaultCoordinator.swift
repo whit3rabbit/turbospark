@@ -69,6 +69,7 @@ public final class ProfileVaultCoordinator: ObservableObject {
         model?.persistChats()
         model?.persistProjects()
         model?.persistSettings()
+        AppChatFileStore.flush()
         let displayName = model?.currentProfile.name ?? UserProfileStore.active.name
         try ProfileRepository.shared.save(displayName, key: "profile:display-name")
         try await Task.detached(priority: .userInitiated) { [store] in
@@ -139,6 +140,7 @@ public final class ProfileVaultCoordinator: ObservableObject {
     private func finishUnlock() {
         state = .unlocked
         lastAuthenticationAt = Date()
+        AppearanceManager.shared.reloadFromProfile()
         constructModel()
     }
 

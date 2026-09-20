@@ -1,10 +1,9 @@
 # Swift user profiles
 
-User profiles in TurboSparkApp: multiple named users on one machine, each
-with their own settings, chat history, projects, global MCP servers, model
-favorites, appearance, hooks, custom tools, skills, agents, plugins, and
-marketplace installs. There are no passwords and no accounts: a profile is a
-FOLDER plus a row in a registry file, and nothing else.
+User profiles in TurboSparkApp are bootstrap registry rows plus encrypted
+private vaults. Read [PROFILE_VAULT.md](PROFILE_VAULT.md) for the canonical
+storage, protection, migration, and export contracts. Shared models, skills,
+plugins, hooks, and tool executables keep their existing filesystem layout.
 
 Read this before adding a store (where does it live?) or touching
 `AppStorageRoot`, `UserProfileStore`, or any of the `~/.turbospark` path
@@ -32,12 +31,13 @@ roots back in for non-default profiles.
 ```
 ~/Library/Application Support/TurboSpark/     machine root (AppStorageRoot.machineRoot)
   profiles.json                               the registry: profiles + activeProfileID
-  settings.json, chats_archive.json, ...      the DEFAULT user's stores (all of them)
+  private-vault/                              the Default user's private vault
+    security.json, profile.sqlite3, assets/, recovery/
   profiles/<uuid>/                            one folder per additional user
-    settings.json, chats_archive.json, projects_archive.json,
-    global_mcp_servers.json, mcp_marketplaces.json + mcp-marketplaces/,
-    disabled_items.json, model_organization.json, excluded_scan_paths.json,
-    appearance.json, granted_folders.json, hooks.json,
+    private-vault/
+      security.json, profile.sqlite3, assets/, recovery/
+    shared-component configuration and installs (outside the private vault):
+    mcp-marketplaces/, hooks.json,
     Hooks/*.json, tools/*.json,
     skills/, agents/, marketplaces/, plugins/installed_skills.json
 ```
@@ -102,6 +102,11 @@ save, so the Trash is for recovering files by hand only.
 
 ## Backup export and import
 
+This section describes the legacy version 1 plaintext backup format, retained
+only for importing older archives. New exports are either an exact encrypted
+`.turbospark-profile` backup or an explicit plaintext open ZIP. Their current
+contracts are in [PROFILE_VAULT.md](PROFILE_VAULT.md).
+
 Export writes a plain `.zip` (Finder-openable, no app needed to read it):
 the payload plus `turbospark-backup-manifest.json` at the archive root. The
 manifest carries a format version, the profile's identity, the layout, the
@@ -109,16 +114,15 @@ export time and app version, the sorted contents list, and the category
 selection (nil for a whole-profile backup), so a backup is self-describing
 and a future restore can refuse what it cannot read.
 
-The export sheet lists the categories a backup can carry -- settings
+The legacy export sheet lists the categories a backup can carry -- settings
 (including SOUL and personality, which are settings keys), chat history,
 projects, model favorites and scan paths, MCP servers and marketplaces,
 skills, agents, custom tools, plugins, hooks, memory, and automation data
 (cron jobs, steering vectors, tool observations) -- with every category
-selected by default and Select All / Clear All at hand. A category owns
-whole top-level files and directories inside either source root; an entry
-NO category owns always travels, because the table is a description of the
-known stores and not an allowlist, so an unknown file is backed up rather
-than silently dropped. Import reads none of this -- its contents list
+selected by default and Select All / Clear All at hand. Category selection is
+a strict allowlist. Unknown files and directories never enter a partial
+backup, which prevents generated images and future private stores from leaking
+through an unrelated category. Import reads none of this -- its contents list
 already says what arrived -- and restores whatever the archive holds.
 
 The payload depends on the user:
@@ -165,7 +169,12 @@ design), the shared model downloads, and the install registry.
 | `State/UserProfile.swift` | `UserProfile`, `UserProfileRegistry`, `UserProfileStore` (registry IO, resolution precedence, path math, mutation rules, the reserved-name rule) |
 | `State/AppStorageRoot.swift` | `machineRoot` vs profile-aware `directory` |
 | `State/AppModel+Profiles.swift` | the UI-facing half: create/rename/delete/switch, toasts, relaunch |
-| `State/ProfileBackup.swift` | the backup manifest, the name sanitizer, export assembly (staging + `ditto`) |
+| `State/ProfileVault.swift` | security manifest, vault session, repository, legacy migration |
+| `State/ProfileDatabase.swift` | SQLCipher schema, normalized persistence, FTS, online backup |
+| `State/ManagedAssetStore.swift` | chunked encrypted managed assets |
+| `State/EncryptedProfileBackup.swift` | exact encrypted backup and verified restore |
+| `State/OpenProfileExport.swift` | allowlisted streaming plaintext export |
+| `State/ProfileBackup.swift` | legacy v1 backup plus shared category and name helpers |
 | `State/ProfileBackupImport.swift` | the zip-slip validator, manifest validation, restore/merge |
 | `State/AppModel+ProfileBackup.swift` | the backup panels: export, import pick/sheet/name suggestions, flush-before-export, folder-first registry-last |
 | `Components/ProfilesSettingsPaneView.swift` | the Settings pane |
@@ -174,8 +183,8 @@ design), the shared model downloads, and the install registry.
 
 ## Out of scope in this version
 
-Passwords or auth of any kind; live switching without a relaunch;
-per-profile copies of downloaded models; a per-profile Keychain server key;
+Live switching without a relaunch; per-profile copies of downloaded models;
+a per-profile Keychain server key;
 copying an existing profile's settings at creation (new profiles start
 fresh, which every store already handles as a first run); migrating the
 Default user's `~/.turbospark` content into a folder of its own; live

@@ -360,8 +360,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     /// The range the picker offers, which is the range this field may hold
     /// (state#95).
     ///
-    /// `projects_archive.json` is a plain file a user or a future release can
-    /// write, and this one decoded whatever it found: a hand-edited 100000
+    /// A legacy archive or a future versioned vault payload can contain a
+    /// value outside today's picker range, and this one decoded whatever it found: a 100000
     /// is an agent loop that runs tools until the model stops proposing them.
     /// Same rule as `clampedSetting` on the engine settings (state#35), and
     /// the same reason -- the clamp belongs where the value ENTERS, not at
@@ -529,12 +529,21 @@ public enum AppProjectFileStore {
 
     /// Loads the saved project archive from disk or returns an empty default.
     public static func load() -> AppProjectArchive {
-        AppJSONStore.load(AppProjectArchive.self, from: archiveFileURL, label: "project archive")
-            ?? AppProjectArchive.empty()
+        do {
+            return try ProfileRepository.shared.loadProjectArchive(legacyURL: archiveFileURL)
+                ?? AppProjectArchive.empty()
+        } catch {
+            AppJSONStore.recordReadFailure(label: "Project archive", error: error)
+            return AppProjectArchive.empty()
+        }
     }
 
     /// Persists the project archive to disk atomically.
     public static func save(_ archive: AppProjectArchive) {
-        AppJSONStore.save(archive, to: archiveFileURL, label: "Project archive")
+        do {
+            try ProfileRepository.shared.saveProjectArchive(archive)
+        } catch {
+            AppJSONStore.recordWriteFailure(label: "Project archive", error: error)
+        }
     }
 }

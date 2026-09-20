@@ -3,8 +3,8 @@ import XCTest
 
 /// Persistence contracts for the settings that were previously unpersisted
 /// or stored in the wrong backend: the server's pinned port
-/// (`MacAppSettings`/settings.json) and the appearance archive (migrated off
-/// UserDefaults into `appearance.json`). The server API key is deliberately
+/// (`MacAppSettings`) and the appearance archive (migrated off UserDefaults
+/// into the encrypted profile repository). The server API key is deliberately
 /// untested here: a Keychain round-trip would touch the host user's real
 /// login keychain, which a test must not do.
 final class ServerAndAppearanceStoreTests: XCTestCase {
@@ -13,6 +13,8 @@ final class ServerAndAppearanceStoreTests: XCTestCase {
     /// Tests that a pinned port survives a save/load round-trip through the
     /// settings store (it reset every launch before this field existed).
     func testServerPinnedPortRoundTripsThroughTheSettingsStore() {
+        let original = MacAppSettingsFileStore.load()
+        defer { MacAppSettingsFileStore.save(original) }
         var settings = MacAppSettings()
         settings.serverPinnedPort = 8471
         MacAppSettingsFileStore.save(settings)
@@ -23,8 +25,18 @@ final class ServerAndAppearanceStoreTests: XCTestCase {
     /// hand, without it) decodes to 0, the "first free port" automatic.
     func testSettingsJSONWithoutAPortKeyDecodesToAutomatic() throws {
         let url = AppStorageRoot.file("settings.json")
+        let key = try XCTUnwrap(ProfileRepository.protectedRecordKey(for: url))
+        let original = try ProfileRepository.shared.rawRecord(key: key)
+        try ProfileRepository.shared.deleteRecord(key: key)
         try Data("{}".utf8).write(to: url)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            if let original {
+                try? ProfileRepository.shared.saveRawRecord(original, key: key)
+            } else {
+                try? ProfileRepository.shared.deleteRecord(key: key)
+            }
+        }
         XCTAssertEqual(MacAppSettingsFileStore.load().serverPinnedPort, 0)
     }
 
@@ -34,15 +46,25 @@ final class ServerAndAppearanceStoreTests: XCTestCase {
     /// UserDefaults keys yields an archive built from those keys, and the
     /// keys are removable only after the JSON store has held a save.
     @MainActor
-    func testLegacyDefaultsKeysMigrateIntoTheJSONStore() {
+    func testLegacyDefaultsKeysMigrateIntoTheJSONStore() throws {
         let originalArchive = AppearanceFileStore.load().archive
+        let key = try XCTUnwrap(ProfileRepository.protectedRecordKey(
+            for: AppearanceFileStore.fileURL))
+        let originalRecord = try ProfileRepository.shared.rawRecord(key: key)
+        try ProfileRepository.shared.deleteRecord(key: key)
         let defaults = UserDefaults.standard
         defaults.set("light", forKey: "TurboSpark.appearance")
         defaults.set(15.0, forKey: "TurboSpark.prefs.uiFontSize")
         defer {
             defaults.removeObject(forKey: "TurboSpark.appearance")
             defaults.removeObject(forKey: "TurboSpark.prefs.uiFontSize")
-            _ = AppearanceFileStore.save(originalArchive)
+            try? FileManager.default.removeItem(at: AppearanceFileStore.fileURL)
+            if let originalRecord {
+                try? ProfileRepository.shared.saveRawRecord(originalRecord, key: key)
+            } else {
+                try? ProfileRepository.shared.deleteRecord(key: key)
+                _ = AppearanceFileStore.save(originalArchive)
+            }
         }
 
         try? FileManager.default.removeItem(at: AppearanceFileStore.fileURL)

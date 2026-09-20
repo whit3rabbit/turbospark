@@ -15,7 +15,9 @@ final class PromptPastePolicyTests: XCTestCase {
         // the shared (test-redirected, per `AppStorageRoot`) storage root
         // holds, and an earlier case's converted draft would otherwise walk
         // in through `selectedChat` (the same setup GhostChatTests uses).
-        try? FileManager.default.removeItem(at: AppStorageRoot.file("chats_archive.json"))
+        try? ProfileRepository.shared.saveChatArchive(
+            AppChatArchive(selectedChatID: UUID(), chats: []))
+        MacAppSettingsFileStore.save(MacAppSettings())
     }
 
     private func repeated(_ text: String, _ count: Int) -> String {

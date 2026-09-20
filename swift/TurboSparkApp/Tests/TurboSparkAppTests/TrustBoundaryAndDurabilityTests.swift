@@ -180,14 +180,19 @@ final class TrustBoundaryAndDurabilityTests: XCTestCase {
     @MainActor
     func testAnOversizedMaxNewTokensLoadsClampedRatherThanTrapping() throws {
         let url = AppStorageRoot.file("settings.json")
-        let saved = try? Data(contentsOf: url)
+        let key = try XCTUnwrap(ProfileRepository.protectedRecordKey(for: url))
+        let saved = try ProfileRepository.shared.rawRecord(key: key)
         defer {
-            try? FileManager.default.removeItem(at: url)
-            if let saved { try? saved.write(to: url) }
+            if let saved {
+                try? ProfileRepository.shared.saveRawRecord(saved, key: key)
+            } else {
+                try? ProfileRepository.shared.deleteRecord(key: key)
+            }
         }
         // Gotcha 39: an `AppModel`-level assertion needs the file removed
         // first, or it reads whichever settings an earlier test file left.
-        try #"{"maxNewTokens": 9999999999999}"#.write(to: url, atomically: true, encoding: .utf8)
+        try ProfileRepository.shared.saveRawRecord(
+            Data(#"{"maxNewTokens": 9999999999999}"#.utf8), key: key)
 
         let model = AppModel()
         XCTAssertEqual(model.maxNewTokens, Int(UInt32.max))

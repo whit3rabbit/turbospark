@@ -8,12 +8,12 @@ struct ProfileUnlockView: View {
     var body: some View {
         VStack(spacing: 18) {
             Image(systemName: "lock.shield")
-                .font(.system(size: 42, weight: .medium))
+                .themedFont(.display, weight: .medium)
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             VStack(spacing: 5) {
                 Text("Unlock TurboSpark", bundle: .module)
-                    .font(.title2.weight(.semibold))
+                    .themedFont(.title2, weight: .semibold)
                 Text(coordinator.publicLabel)
                     .foregroundStyle(.secondary)
             }
@@ -39,13 +39,13 @@ struct ProfileUnlockView: View {
             }
             if case .error(let message) = coordinator.state {
                 Text(message)
-                    .font(.callout)
+                    .themedFont(.callout)
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 440)
             }
             Text("Your recovery passphrase works without this Mac's Keychain. TurboSpark cannot recover it for you.", bundle: .module)
-                .font(.caption)
+                .themedFont(.small)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 440)

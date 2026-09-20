@@ -78,9 +78,9 @@ final class ModelInstallLifecycleTests: XCTestCase {
                 + "what identifies it.")
     }
 
-    // MARK: - E5: model metadata is not in UserDefaults
+    // MARK: - E5: model metadata is encrypted, not in UserDefaults
 
-    func testModelMetadataIsWrittenUnderTheStorageRootRatherThanUserDefaults() {
+    func testModelMetadataIsWrittenIntoTheProfileVaultRatherThanUserDefaults() throws {
         // swift/CLAUDE.md Gotcha 37's class, in the one store the original fix
         // missed because it is not a path at all. A test that deletes a model
         // calls `removeMetadata`, which mutated the developer's real
@@ -89,12 +89,10 @@ final class ModelInstallLifecycleTests: XCTestCase {
         ModelOrganizationStore.shared.setNickname("A Nickname", for: alias, path: "/tmp/\(alias)")
 
         let file = AppStorageRoot.file("model_organization.json")
-        XCTAssertTrue(
-            FileManager.default.fileExists(atPath: file.path),
-            "The store must write under `AppStorageRoot`, which the test redirect covers.")
-
-        let contents = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
-        XCTAssertTrue(contents.contains("A Nickname"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        let key = try XCTUnwrap(ProfileRepository.protectedRecordKey(for: file))
+        let contents = try XCTUnwrap(ProfileRepository.shared.rawRecord(key: key))
+        XCTAssertNotNil(contents.range(of: Data("A Nickname".utf8)))
 
         ModelOrganizationStore.shared.removeMetadata(for: alias, path: "/tmp/\(alias)")
     }

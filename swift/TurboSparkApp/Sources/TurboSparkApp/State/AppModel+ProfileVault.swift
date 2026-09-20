@@ -89,5 +89,6 @@ extension AppModel {
             Array(Set(migrated.values)).sorted { $0.id < $1.id },
             key: "migration:legacy-assets")
         persistChats()
+        AppChatFileStore.flush()
     }
 }

@@ -166581,6 +166581,2495 @@
         }
       }
     },
+    "Unlock TurboSpark": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "فتح TurboSpark"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark entsperren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unlock TurboSpark"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desbloquear TurboSpark"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déverrouiller TurboSpark"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ביטול נעילת TurboSpark"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark अनलॉक करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buka kunci TurboSpark"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sblocca TurboSpark"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSparkのロックを解除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark 잠금 해제"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark ontgrendelen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Odblokuj TurboSpark"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desbloquear o TurboSpark"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разблокировать TurboSpark"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lås upp TurboSpark"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark kilidini aç"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Розблокувати TurboSpark"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mở khóa TurboSpark"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解锁 TurboSpark"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解鎖 TurboSpark"
+          }
+        }
+      }
+    },
+    "Unlock": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "فتح"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entsperren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unlock"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desbloquear"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déverrouiller"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ביטול נעילה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "अनलॉक करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buka kunci"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sblocca"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ロック解除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "잠금 해제"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ontgrendelen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Odblokuj"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desbloquear"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разблокировать"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lås upp"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kilidi aç"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Розблокувати"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mở khóa"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解锁"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解鎖"
+          }
+        }
+      }
+    },
+    "Your recovery passphrase works without this Mac's Keychain. TurboSpark cannot recover it for you.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعمل عبارة مرور الاسترداد من دون سلسلة مفاتيح هذا الـ Mac. لا يستطيع TurboSpark استعادتها لك."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deine Wiederherstellungs-Passphrase funktioniert ohne den Schlüsselbund dieses Macs. TurboSpark kann sie nicht für dich wiederherstellen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your recovery passphrase works without this Mac's Keychain. TurboSpark cannot recover it for you."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tu frase de recuperación funciona sin el llavero de este Mac. TurboSpark no puede recuperarla por ti."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Votre phrase secrète de récupération fonctionne sans le trousseau de ce Mac. TurboSpark ne peut pas la récupérer pour vous."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ביטוי הסיסמה לשחזור פועל ללא צרור המפתחות של Mac זה. TurboSpark אינו יכול לשחזר אותו עבורך."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आपका रिकवरी पासफ़्रेज़ इस Mac की कीचेन के बिना काम करता है। TurboSpark इसे आपके लिए वापस नहीं ला सकता।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frasa sandi pemulihan Anda dapat digunakan tanpa Rantai Kunci Mac ini. TurboSpark tidak dapat memulihkannya untuk Anda."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La passphrase di recupero funziona senza il Portachiavi di questo Mac. TurboSpark non può recuperarla per te."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "復旧パスフレーズは、このMacのキーチェーンがなくても使用できます。TurboSparkでは復旧できません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "복구 암호는 이 Mac의 키체인 없이도 작동합니다. TurboSpark는 암호를 복구해 드릴 수 없습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Je herstelwachtzin werkt zonder de sleutelhanger van deze Mac. TurboSpark kan deze niet voor je herstellen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hasło odzyskiwania działa bez pęku kluczy tego Maca. TurboSpark nie może go odzyskać."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sua frase secreta de recuperação funciona sem as Chaves deste Mac. O TurboSpark não pode recuperá-la para você."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Фраза восстановления работает без Связки ключей этого Mac. TurboSpark не может восстановить её для вас."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Din återställningsfras fungerar utan den här Macens nyckelring. TurboSpark kan inte återställa den åt dig."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kurtarma parolanız bu Mac'in Anahtar Zinciri olmadan çalışır. TurboSpark parolanızı sizin için kurtaramaz."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Фраза відновлення працює без В’язки ключів цього Mac. TurboSpark не може відновити її для вас."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cụm mật khẩu khôi phục hoạt động mà không cần Chuỗi khóa của máy Mac này. TurboSpark không thể khôi phục cụm mật khẩu cho bạn."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复口令无需此 Mac 的钥匙串即可使用。TurboSpark 无法为你恢复该口令。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "復原密語不需要此 Mac 的鑰匙圈即可使用。TurboSpark 無法替你復原該密語。"
+          }
+        }
+      }
+    },
+    "Export Encrypted Backup...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تصدير نسخة احتياطية مشفرة..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verschlüsseltes Backup exportieren..."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export Encrypted Backup..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar copia cifrada..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exporter une sauvegarde chiffrée..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ייצוא גיבוי מוצפן..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एन्क्रिप्टेड बैकअप निर्यात करें..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekspor Cadangan Terenkripsi..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esporta backup cifrato..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暗号化バックアップを書き出す..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "암호화된 백업 내보내기..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versleutelde reservekopie exporteren..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eksportuj szyfrowaną kopię..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar backup criptografado..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспорт зашифрованной копии..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportera krypterad säkerhetskopia..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Şifreli Yedeği Dışa Aktar..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Експортувати зашифровану копію..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xuất bản sao lưu được mã hóa..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出加密备份..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯出加密備份..."
+          }
+        }
+      }
+    },
+    "Export Open ZIP...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تصدير ZIP مفتوح..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offene ZIP-Datei exportieren..."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export Open ZIP..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar ZIP abierto..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exporter un ZIP ouvert..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ייצוא ZIP פתוח..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ओपन ZIP निर्यात करें..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekspor ZIP Terbuka..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esporta ZIP aperto..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オープンZIPを書き出す..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "공개 ZIP 내보내기..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open ZIP exporteren..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eksportuj otwarty ZIP..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar ZIP aberto..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспорт открытого ZIP..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportera öppen ZIP..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Açık ZIP'i Dışa Aktar..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Експортувати відкритий ZIP..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xuất ZIP mở..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出开放 ZIP..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯出開放 ZIP..."
+          }
+        }
+      }
+    },
+    "Profile Privacy": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "خصوصية الملف الشخصي"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profil-Datenschutz"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profile Privacy"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Privacidad del perfil"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confidentialité du profil"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "פרטיות הפרופיל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रोफ़ाइल गोपनीयता"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Privasi Profil"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Privacy del profilo"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロフィールのプライバシー"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "프로필 개인정보 보호"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profielprivacy"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prywatność profilu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Privacidade do perfil"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Конфиденциальность профиля"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profilsekretess"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profil Gizliliği"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Конфіденційність профілю"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quyền riêng tư của hồ sơ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配置文件隐私"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "描述檔隱私權"
+          }
+        }
+      }
+    },
+    "Touch ID or Mac login": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID أو تسجيل دخول Mac"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID oder Mac-Anmeldung"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID or Mac login"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID o inicio de sesión del Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID ou connexion au Mac"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID או התחברות ל-Mac"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID या Mac लॉगिन"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID atau login Mac"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID o accesso Mac"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch IDまたはMacのログイン"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID 또는 Mac 로그인"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID of Mac-aanmelding"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID lub logowanie do Maca"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID ou login do Mac"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID или вход на Mac"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID eller Mac-inloggning"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID veya Mac girişi"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID або вхід на Mac"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID hoặc đăng nhập máy Mac"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID 或 Mac 登录"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touch ID 或 Mac 登入"
+          }
+        }
+      }
+    },
+    "Change Passphrase...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تغيير عبارة المرور..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passphrase ändern..."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change Passphrase..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cambiar frase de contraseña..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modifier la phrase secrète..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שינוי ביטוי סיסמה..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पासफ़्रेज़ बदलें..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ubah Frasa Sandi..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cambia passphrase..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パスフレーズを変更..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "암호 변경..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wachtzin wijzigen..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zmień hasło..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alterar frase secreta..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Изменить фразу-пароль..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ändra lösenfras..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parolayı Değiştir..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Змінити фразу-пароль..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đổi cụm mật khẩu..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更改口令..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更改密語..."
+          }
+        }
+      }
+    },
+    "Disable Protection...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعطيل الحماية..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schutz deaktivieren..."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disable Protection..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desactivar protección..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactiver la protection..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "השבתת הגנה..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "सुरक्षा बंद करें..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nonaktifkan Perlindungan..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disattiva protezione..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保護を無効にする..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보호 비활성화..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beveiliging uitschakelen..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wyłącz ochronę..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desativar proteção..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отключить защиту..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inaktivera skydd..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Korumayı Devre Dışı Bırak..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вимкнути захист..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tắt bảo vệ..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停用保护..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停用保護..."
+          }
+        }
+      }
+    },
+    "Protection covers chats, projects, private settings, managed attachments, and generated images. Models, skills, plugins, hooks, external project files, and tool executables remain ordinary files. FileVault is still recommended for whole-disk protection.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تشمل الحماية المحادثات والمشاريع والإعدادات الخاصة والمرفقات المُدارة والصور المُنشأة. تبقى النماذج والمهارات والمكونات الإضافية والخطافات وملفات المشاريع الخارجية وأدوات التنفيذ ملفات عادية. ما زال FileVault موصى به لحماية القرص بالكامل."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Schutz umfasst Chats, Projekte, private Einstellungen, verwaltete Anhänge und erzeugte Bilder. Modelle, Skills, Plugins, Hooks, externe Projektdateien und ausführbare Tools bleiben normale Dateien. FileVault wird weiterhin für den Schutz der gesamten Festplatte empfohlen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Protection covers chats, projects, private settings, managed attachments, and generated images. Models, skills, plugins, hooks, external project files, and tool executables remain ordinary files. FileVault is still recommended for whole-disk protection."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La protección cubre chats, proyectos, ajustes privados, adjuntos administrados e imágenes generadas. Los modelos, habilidades, complementos, hooks, archivos de proyectos externos y ejecutables de herramientas siguen siendo archivos normales. Se recomienda FileVault para proteger todo el disco."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La protection couvre les discussions, projets, réglages privés, pièces jointes gérées et images générées. Les modèles, compétences, extensions, hooks, fichiers de projets externes et exécutables d’outils restent des fichiers ordinaires. FileVault reste recommandé pour protéger tout le disque."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ההגנה כוללת צ׳אטים, פרויקטים, הגדרות פרטיות, קבצים מצורפים מנוהלים ותמונות שנוצרו. מודלים, מיומנויות, תוספים, hooks, קובצי פרויקט חיצוניים וקובצי הפעלה של כלים נשארים קבצים רגילים. FileVault עדיין מומלץ להגנה על כל הכונן."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "सुरक्षा में चैट, प्रोजेक्ट, निजी सेटिंग, प्रबंधित अटैचमेंट और बनाई गई छवियाँ शामिल हैं। मॉडल, स्किल, प्लगइन, हुक, बाहरी प्रोजेक्ट फ़ाइलें और टूल एक्ज़ीक्यूटेबल सामान्य फ़ाइलें रहते हैं। पूरे डिस्क की सुरक्षा के लिए FileVault की सलाह अब भी दी जाती है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Perlindungan mencakup chat, proyek, pengaturan pribadi, lampiran terkelola, dan gambar yang dibuat. Model, skill, plugin, hook, file proyek eksternal, dan berkas alat tetap berupa file biasa. FileVault tetap disarankan untuk perlindungan seluruh disk."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La protezione copre chat, progetti, impostazioni private, allegati gestiti e immagini generate. Modelli, skill, plugin, hook, file di progetti esterni ed eseguibili degli strumenti restano file normali. FileVault è comunque consigliato per proteggere l’intero disco."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保護の対象は、チャット、プロジェクト、非公開設定、管理対象の添付ファイル、生成画像です。モデル、スキル、プラグイン、フック、外部プロジェクトファイル、ツール実行ファイルは通常のファイルのままです。ディスク全体の保護には引き続きFileVaultを推奨します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보호 대상에는 채팅, 프로젝트, 비공개 설정, 관리되는 첨부 파일 및 생성된 이미지가 포함됩니다. 모델, 스킬, 플러그인, 훅, 외부 프로젝트 파일 및 도구 실행 파일은 일반 파일로 유지됩니다. 전체 디스크 보호를 위해 FileVault 사용을 계속 권장합니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De beveiliging omvat chats, projecten, privé-instellingen, beheerde bijlagen en gegenereerde afbeeldingen. Modellen, vaardigheden, plug-ins, hooks, externe projectbestanden en uitvoerbare tools blijven gewone bestanden. FileVault blijft aanbevolen voor beveiliging van de volledige schijf."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ochrona obejmuje czaty, projekty, ustawienia prywatne, zarządzane załączniki i wygenerowane obrazy. Modele, umiejętności, wtyczki, hooki, zewnętrzne pliki projektu i pliki wykonywalne narzędzi pozostają zwykłymi plikami. FileVault nadal jest zalecany do ochrony całego dysku."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A proteção abrange chats, projetos, ajustes privados, anexos gerenciados e imagens geradas. Modelos, habilidades, plugins, hooks, arquivos de projetos externos e executáveis de ferramentas continuam sendo arquivos comuns. O FileVault ainda é recomendado para proteger todo o disco."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Защита охватывает чаты, проекты, личные настройки, управляемые вложения и созданные изображения. Модели, навыки, плагины, хуки, внешние файлы проектов и исполняемые файлы инструментов остаются обычными файлами. Для защиты всего диска по-прежнему рекомендуется FileVault."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skyddet omfattar chattar, projekt, privata inställningar, hanterade bilagor och genererade bilder. Modeller, färdigheter, insticksfiler, hooks, externa projektfiler och körbara verktyg förblir vanliga filer. FileVault rekommenderas fortfarande för skydd av hela disken."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Koruma; sohbetleri, projeleri, özel ayarları, yönetilen ekleri ve oluşturulan görüntüleri kapsar. Modeller, beceriler, eklentiler, hook'lar, harici proje dosyaları ve araç yürütülebilirleri normal dosya olarak kalır. Tüm disk koruması için FileVault yine önerilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Захист охоплює чати, проєкти, приватні налаштування, керовані вкладення та створені зображення. Моделі, навички, плагіни, хуки, зовнішні файли проєктів і виконувані файли інструментів залишаються звичайними файлами. Для захисту всього диска й надалі рекомендовано FileVault."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bảo vệ bao gồm cuộc trò chuyện, dự án, cài đặt riêng tư, tệp đính kèm được quản lý và hình ảnh đã tạo. Mô hình, kỹ năng, phần bổ trợ, hook, tệp dự án bên ngoài và tệp thực thi công cụ vẫn là tệp thông thường. Vẫn nên dùng FileVault để bảo vệ toàn bộ ổ đĩa."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保护范围包括聊天、项目、私密设置、托管附件和生成的图像。模型、技能、插件、钩子、外部项目文件和工具可执行文件仍是普通文件。仍建议使用 FileVault 保护整个磁盘。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保護範圍包括聊天、專案、私人設定、受管理的附件和產生的影像。模型、技能、外掛、掛鉤、外部專案檔案和工具執行檔仍是一般檔案。仍建議使用 FileVault 保護整個磁碟。"
+          }
+        }
+      }
+    },
+    "Use at least 15 characters. Spaces and pasted passphrases are allowed.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استخدم 15 محرفًا على الأقل. يُسمح بالمسافات وعبارات المرور الملصقة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verwende mindestens 15 Zeichen. Leerzeichen und eingefügte Passphrasen sind erlaubt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use at least 15 characters. Spaces and pasted passphrases are allowed."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa al menos 15 caracteres. Se permiten espacios y frases pegadas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utilisez au moins 15 caractères. Les espaces et les phrases secrètes collées sont autorisés."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "יש להשתמש ב-15 תווים לפחות. מותר להשתמש ברווחים ולהדביק ביטויי סיסמה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कम से कम 15 वर्ण उपयोग करें। स्पेस और पेस्ट किए गए पासफ़्रेज़ स्वीकार हैं।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gunakan setidaknya 15 karakter. Spasi dan frasa sandi yang ditempel diperbolehkan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa almeno 15 caratteri. Sono consentiti spazi e passphrase incollate."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "15文字以上を使用してください。空白や貼り付けたパスフレーズも使用できます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "15자 이상을 사용하세요. 공백과 붙여넣은 암호도 허용됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gebruik minimaal 15 tekens. Spaties en geplakte wachtzinnen zijn toegestaan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Użyj co najmniej 15 znaków. Spacje i wklejane hasła są dozwolone."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use pelo menos 15 caracteres. Espaços e frases secretas coladas são permitidos."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Используйте не менее 15 символов. Пробелы и вставленные фразы-пароли разрешены."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Använd minst 15 tecken. Blanksteg och inklistrade lösenfraser tillåts."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En az 15 karakter kullanın. Boşluklara ve yapıştırılan parolalara izin verilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Використовуйте щонайменше 15 символів. Пробіли та вставлені фрази-паролі дозволені."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dùng ít nhất 15 ký tự. Cho phép khoảng trắng và cụm mật khẩu được dán."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请至少使用 15 个字符。允许空格和粘贴的口令。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請至少使用 15 個字元。允許空格和貼上的密語。"
+          }
+        }
+      }
+    },
+    "The vault remains encrypted, but its key will be stored locally without requiring authentication.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تبقى الخزنة مشفرة، لكن مفتاحها سيُخزن محليًا من دون طلب المصادقة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Tresor bleibt verschlüsselt, sein Schlüssel wird jedoch lokal gespeichert, ohne eine Authentifizierung zu verlangen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The vault remains encrypted, but its key will be stored locally without requiring authentication."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La bóveda seguirá cifrada, pero su clave se guardará localmente sin exigir autenticación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le coffre reste chiffré, mais sa clé sera stockée localement sans demander d’authentification."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הכספת נשארת מוצפנת, אך המפתח שלה יאוחסן מקומית ללא דרישת אימות."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "वॉल्ट एन्क्रिप्टेड रहेगा, लेकिन उसकी कुंजी प्रमाणीकरण माँगे बिना स्थानीय रूप से रखी जाएगी।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brankas tetap terenkripsi, tetapi kuncinya akan disimpan secara lokal tanpa memerlukan autentikasi."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il vault resta cifrato, ma la sua chiave verrà archiviata localmente senza richiedere autenticazione."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保管庫は暗号化されたままですが、キーは認証なしでローカルに保存されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보관함은 암호화된 상태로 유지되지만 키는 인증 없이 로컬에 저장됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De kluis blijft versleuteld, maar de sleutel wordt lokaal opgeslagen zonder verificatie te vereisen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sejf pozostanie zaszyfrowany, ale jego klucz będzie przechowywany lokalnie bez wymagania uwierzytelnienia."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O cofre continua criptografado, mas sua chave será armazenada localmente sem exigir autenticação."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Хранилище останется зашифрованным, но его ключ будет храниться локально без запроса аутентификации."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valvet förblir krypterat, men nyckeln lagras lokalt utan krav på autentisering."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kasa şifreli kalır ancak anahtarı kimlik doğrulaması istemeden yerel olarak saklanır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сховище залишиться зашифрованим, але його ключ зберігатиметься локально без вимоги автентифікації."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kho vẫn được mã hóa, nhưng khóa sẽ được lưu cục bộ mà không yêu cầu xác thực."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保险库仍会加密，但其密钥将存储在本机且不要求认证。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保險庫仍會加密，但其金鑰將儲存在本機且不要求驗證。"
+          }
+        }
+      }
+    },
+    "Restore Encrypted Backup...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استعادة نسخة احتياطية مشفرة..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verschlüsseltes Backup wiederherstellen..."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore Encrypted Backup..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restaurar copia cifrada..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restaurer une sauvegarde chiffrée..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שחזור גיבוי מוצפן..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एन्क्रिप्टेड बैकअप पुनर्स्थापित करें..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pulihkan Cadangan Terenkripsi..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ripristina backup cifrato..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暗号化バックアップを復元..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "암호화된 백업 복원..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versleutelde reservekopie herstellen..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przywróć szyfrowaną kopię..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restaurar backup criptografado..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Восстановить зашифрованную копию..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Återställ krypterad säkerhetskopia..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Şifreli Yedeği Geri Yükle..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відновити зашифровану копію..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khôi phục bản sao lưu được mã hóa..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复加密备份..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回復加密備份..."
+          }
+        }
+      }
+    },
+    "Import Legacy ZIP...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استيراد ZIP قديم..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alte ZIP-Datei importieren..."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import Legacy ZIP..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importar ZIP heredado..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importer un ancien ZIP..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ייבוא ZIP ישן..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पुराना ZIP आयात करें..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impor ZIP Lama..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importa ZIP precedente..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧形式のZIPを読み込む..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "레거시 ZIP 가져오기..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oude ZIP importeren..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importuj starszy ZIP..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importar ZIP legado..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Импортировать старый ZIP..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importera äldre ZIP..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eski ZIP'i İçe Aktar..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Імпортувати старий ZIP..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhập ZIP cũ..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入旧版 ZIP..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯入舊版 ZIP..."
+          }
+        }
+      }
+    },
+    "Encrypted backups restore as locked profiles with a fresh identity. Legacy version 1 ZIP restore remains available for older archives. Keychain items are never included.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تُستعاد النسخ الاحتياطية المشفرة كملفات شخصية مقفلة بهوية جديدة. تظل استعادة ZIP القديم بالإصدار 1 متاحة للأرشيفات الأقدم. لا تُضمّن عناصر سلسلة المفاتيح مطلقًا."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verschlüsselte Backups werden als gesperrte Profile mit neuer Identität wiederhergestellt. Die Wiederherstellung alter ZIP-Archive der Version 1 bleibt verfügbar. Schlüsselbund-Einträge werden nie einbezogen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encrypted backups restore as locked profiles with a fresh identity. Legacy version 1 ZIP restore remains available for older archives. Keychain items are never included."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las copias cifradas se restauran como perfiles bloqueados con una identidad nueva. La restauración de ZIP versión 1 sigue disponible para archivos antiguos. Nunca se incluyen elementos del llavero."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les sauvegardes chiffrées sont restaurées comme des profils verrouillés avec une nouvelle identité. La restauration des ZIP version 1 reste disponible pour les anciennes archives. Les éléments du trousseau ne sont jamais inclus."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "גיבויים מוצפנים משוחזרים כפרופילים נעולים עם זהות חדשה. שחזור ZIP ישן מגרסה 1 נשאר זמין לארכיונים ישנים. פריטי צרור המפתחות לעולם אינם נכללים."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एन्क्रिप्टेड बैकअप नई पहचान वाले लॉक प्रोफ़ाइल के रूप में पुनर्स्थापित होते हैं। पुराने संग्रहों के लिए संस्करण 1 ZIP बहाली उपलब्ध रहती है। कीचेन आइटम कभी शामिल नहीं होते।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cadangan terenkripsi dipulihkan sebagai profil terkunci dengan identitas baru. Pemulihan ZIP versi 1 tetap tersedia untuk arsip lama. Item Rantai Kunci tidak pernah disertakan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I backup cifrati vengono ripristinati come profili bloccati con una nuova identità. Il ripristino ZIP versione 1 resta disponibile per gli archivi precedenti. Gli elementi del Portachiavi non sono mai inclusi."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暗号化バックアップは、新しいIDを持つロック済みプロフィールとして復元されます。古いアーカイブ向けのバージョン1 ZIP復元も利用できます。キーチェーン項目は含まれません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "암호화된 백업은 새 ID를 가진 잠긴 프로필로 복원됩니다. 이전 아카이브를 위한 버전 1 ZIP 복원도 계속 사용할 수 있습니다. 키체인 항목은 포함되지 않습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versleutelde reservekopieën worden hersteld als vergrendelde profielen met een nieuwe identiteit. Herstel van ZIP versie 1 blijft beschikbaar voor oudere archieven. Sleutelhangeritems worden nooit opgenomen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Szyfrowane kopie są przywracane jako zablokowane profile z nową tożsamością. Przywracanie ZIP w wersji 1 jest nadal dostępne dla starszych archiwów. Elementy pęku kluczy nigdy nie są dołączane."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Backups criptografados são restaurados como perfis bloqueados com uma nova identidade. A restauração de ZIP versão 1 continua disponível para arquivos antigos. Itens das Chaves nunca são incluídos."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зашифрованные копии восстанавливаются как заблокированные профили с новым идентификатором. Восстановление ZIP версии 1 остаётся доступным для старых архивов. Элементы Связки ключей никогда не включаются."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Krypterade säkerhetskopior återställs som låsta profiler med en ny identitet. Återställning av ZIP version 1 finns kvar för äldre arkiv. Nyckelringsobjekt inkluderas aldrig."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Şifreli yedekler yeni kimliğe sahip kilitli profiller olarak geri yüklenir. Eski arşivler için sürüm 1 ZIP geri yüklemesi kullanılabilir. Anahtar Zinciri öğeleri hiçbir zaman eklenmez."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зашифровані копії відновлюються як заблоковані профілі з новою ідентичністю. Відновлення ZIP версії 1 залишається доступним для старих архівів. Елементи В’язки ключів ніколи не додаються."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bản sao lưu được mã hóa được khôi phục thành hồ sơ bị khóa với danh tính mới. Vẫn có thể khôi phục ZIP phiên bản 1 cho kho lưu trữ cũ. Không bao giờ bao gồm mục Chuỗi khóa."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加密备份会恢复为具有新身份的锁定配置文件。旧归档仍可使用版本 1 ZIP 恢复。绝不会包含钥匙串项目。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加密備份會回復為具有新識別身分的鎖定描述檔。舊封存檔仍可使用版本 1 ZIP 回復。絕不會包含鑰匙圈項目。"
+          }
+        }
+      }
+    },
+    "Export a Plaintext ZIP": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تصدير ZIP بنص صريح"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP-Datei als Klartext exportieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export a Plaintext ZIP"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar un ZIP en texto claro"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exporter un ZIP en texte clair"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ייצוא ZIP בטקסט גלוי"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्लेनटेक्स्ट ZIP निर्यात करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekspor ZIP Teks Biasa"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esporta un ZIP in chiaro"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "平文ZIPを書き出す"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "평문 ZIP 내보내기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een ZIP met platte tekst exporteren"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eksportuj ZIP w postaci jawnej"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar um ZIP em texto simples"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспорт ZIP с открытым текстом"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportera en ZIP i klartext"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Düz Metin ZIP'i Dışa Aktar"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Експортувати ZIP із відкритим текстом"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xuất ZIP văn bản thuần"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出明文 ZIP"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯出純文字 ZIP"
+          }
+        }
+      }
+    },
+    "The ZIP contains only the selected categories. It never fetches remote URLs or includes Keychain secrets, models, skills, plugins, hooks, tools, external repositories, or referenced external files.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يحتوي ZIP على الفئات المحددة فقط. لا يجلب عناوين URL بعيدة ولا يضم أسرار سلسلة المفاتيح أو النماذج أو المهارات أو المكونات الإضافية أو الخطافات أو الأدوات أو المستودعات الخارجية أو الملفات الخارجية المشار إليها."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die ZIP-Datei enthält nur die ausgewählten Kategorien. Sie lädt keine entfernten URLs und enthält keine Schlüsselbund-Geheimnisse, Modelle, Skills, Plugins, Hooks, Tools, externen Repositorys oder referenzierten externen Dateien."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The ZIP contains only the selected categories. It never fetches remote URLs or includes Keychain secrets, models, skills, plugins, hooks, tools, external repositories, or referenced external files."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El ZIP solo contiene las categorías seleccionadas. Nunca obtiene URL remotas ni incluye secretos del llavero, modelos, habilidades, complementos, hooks, herramientas, repositorios externos o archivos externos referenciados."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le ZIP contient uniquement les catégories sélectionnées. Il ne récupère jamais d’URL distantes et n’inclut ni secrets du trousseau, ni modèles, compétences, extensions, hooks, outils, dépôts externes ou fichiers externes référencés."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "קובץ ה-ZIP מכיל רק את הקטגוריות שנבחרו. הוא אינו מושך כתובות URL מרוחקות ואינו כולל סודות מצרור המפתחות, מודלים, מיומנויות, תוספים, hooks, כלים, מאגרים חיצוניים או קבצים חיצוניים שהופנו."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP में केवल चुनी गई श्रेणियाँ होती हैं। यह दूरस्थ URL नहीं लाता और कीचेन रहस्य, मॉडल, स्किल, प्लगइन, हुक, टूल, बाहरी रिपॉज़िटरी या संदर्भित बाहरी फ़ाइलें शामिल नहीं करता।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP hanya berisi kategori yang dipilih. ZIP tidak mengambil URL jarak jauh atau menyertakan rahasia Rantai Kunci, model, skill, plugin, hook, alat, repositori eksternal, atau file eksternal yang dirujuk."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il file ZIP contiene solo le categorie selezionate. Non recupera URL remoti e non include segreti del Portachiavi, modelli, skill, plugin, hook, strumenti, repository esterni o file esterni referenziati."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIPには選択したカテゴリだけが含まれます。リモートURLを取得せず、キーチェーンの秘密、モデル、スキル、プラグイン、フック、ツール、外部リポジトリ、参照先の外部ファイルも含めません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP에는 선택한 범주만 포함됩니다. 원격 URL을 가져오지 않으며 키체인 비밀, 모델, 스킬, 플러그인, 훅, 도구, 외부 저장소 또는 참조된 외부 파일을 포함하지 않습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De ZIP bevat alleen de geselecteerde categorieën. Externe URL's worden nooit opgehaald en sleutelhangergeheimen, modellen, vaardigheden, plug-ins, hooks, tools, externe opslagplaatsen en externe verwijzingen worden niet opgenomen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP zawiera tylko wybrane kategorie. Nie pobiera zdalnych adresów URL ani nie zawiera sekretów pęku kluczy, modeli, umiejętności, wtyczek, hooków, narzędzi, zewnętrznych repozytoriów ani wskazanych plików zewnętrznych."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O ZIP contém apenas as categorias selecionadas. Ele nunca busca URLs remotos nem inclui segredos das Chaves, modelos, habilidades, plugins, hooks, ferramentas, repositórios externos ou arquivos externos referenciados."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP содержит только выбранные категории. Он не загружает удалённые URL и не включает секреты Связки ключей, модели, навыки, плагины, хуки, инструменты, внешние репозитории или указанные внешние файлы."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP-filen innehåller bara de valda kategorierna. Den hämtar aldrig fjärradresser och innehåller inte nyckelringshemligheter, modeller, färdigheter, insticksfiler, hooks, verktyg, externa kodförråd eller refererade externa filer."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP yalnızca seçilen kategorileri içerir. Uzak URL'leri getirmez; Anahtar Zinciri sırlarını, modelleri, becerileri, eklentileri, hook'ları, araçları, harici depoları veya başvurulan harici dosyaları içermez."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP містить лише вибрані категорії. Він не завантажує віддалені URL і не містить секретів В’язки ключів, моделей, навичок, плагінів, хуків, інструментів, зовнішніх репозиторіїв або вказаних зовнішніх файлів."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP chỉ chứa các danh mục đã chọn. ZIP không tải URL từ xa hoặc chứa bí mật Chuỗi khóa, mô hình, kỹ năng, phần bổ trợ, hook, công cụ, kho mã bên ngoài hay tệp bên ngoài được tham chiếu."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP 仅包含所选类别。它不会获取远程 URL，也不会包含钥匙串机密、模型、技能、插件、钩子、工具、外部仓库或引用的外部文件。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZIP 僅包含所選類別。它不會擷取遠端 URL，也不會包含鑰匙圈機密、模型、技能、外掛、掛鉤、工具、外部儲存庫或參照的外部檔案。"
+          }
+        }
+      }
+    },
+    "Generated images": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الصور المُنشأة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erzeugte Bilder"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generated images"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Imágenes generadas"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Images générées"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "תמונות שנוצרו"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बनाई गई छवियाँ"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gambar yang dibuat"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Immagini generate"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成画像"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "생성된 이미지"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gegenereerde afbeeldingen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wygenerowane obrazy"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Imagens geradas"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Созданные изображения"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Genererade bilder"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oluşturulan görüntüler"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Створені зображення"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hình ảnh đã tạo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成的图像"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "產生的影像"
+          }
+        }
+      }
+    },
+    "Attachments": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المرفقات"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anhänge"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attachments"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adjuntos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pièces jointes"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "קבצים מצורפים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "अटैचमेंट"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lampiran"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allegati"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイル"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "첨부 파일"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bijlagen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Załączniki"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anexos"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вложения"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bilagor"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekler"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вкладення"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tệp đính kèm"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "附件"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "附件"
+          }
+        }
+      }
+    },
     "turbospark CLI not found": {
       "extractionState": "manual",
       "localizations": {

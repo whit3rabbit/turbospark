@@ -220,15 +220,17 @@ final class ImageGenerationTests: XCTestCase {
 
         model.saveImage()
 
-        let path = try XCTUnwrap(model.imageJob?.savedPath)
-        defer { try? FileManager.default.removeItem(atPath: path) }
-        XCTAssertTrue(path.hasPrefix(AppStorageRoot.subdirectory("image-artifacts").path))
+        let reference = try XCTUnwrap(model.imageJob?.savedPath)
+        XCTAssertNotNil(ManagedAssetStore.assetID(from: reference))
+        let materializedPath = AppStorageRoot.resolveStoredPath(reference)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: materializedPath))
         XCTAssertEqual(model.selectedChat.artifacts.last?.origin, .imageGeneration)
+        XCTAssertEqual(model.selectedChat.artifacts.last?.path, reference)
         XCTAssertEqual(
             model.selectedChat.messages.last?.imagePaths,
-            ["image-artifacts/\(model.imageJob!.id.uuidString).png"])
+            [reference])
         XCTAssertEqual(AppStorageRoot.resolveStoredPath(
-            model.selectedChat.messages.last!.imagePaths[0]), path)
+            model.selectedChat.messages.last!.imagePaths[0]), materializedPath)
 
         let reloaded = AppModel()
         let persisted = try XCTUnwrap(reloaded.chats.first { $0.id == chatID })
