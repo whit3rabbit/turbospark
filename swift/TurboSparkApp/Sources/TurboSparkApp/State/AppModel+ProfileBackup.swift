@@ -61,7 +61,7 @@ extension AppModel {
                     turbosparkHome: turbosparkHome,
                     destination: url,
                     appVersion: appVersion,
-                    included: included.isEmpty ? nil : included))
+                    included: included))
             } catch {
                 outcome = .failure(error)
             }
