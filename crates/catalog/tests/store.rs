@@ -105,14 +105,18 @@ fn relocating_the_default_store_verifies_and_rewrites_install_paths() {
     assert_eq!(relocation.source, expected_source);
     assert_eq!(relocation.destination, destination);
     assert!(relocation.bytes >= 9);
-    assert!(relocation.files >= 4);
+    assert!(relocation.files >= 3);
     assert!(
-        !source.exists(),
-        "the managed source store should be removed"
+        !source.join("models").exists(),
+        "the managed model tree should be removed from the source"
     );
     assert_eq!(
-        std::fs::read_to_string(destination.join("hf_token")).unwrap(),
+        std::fs::read_to_string(source.join("hf_token")).unwrap(),
         "hf_test"
+    );
+    assert!(
+        !destination.join("hf_token").exists(),
+        "model-store relocation must not export credentials"
     );
     assert!(destination
         .join("models/image/image-model.gturbo/weights.bin")

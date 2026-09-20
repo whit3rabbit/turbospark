@@ -200,7 +200,10 @@ fn copy_entry(
 }
 
 fn managed_entries(root: &Path) -> Vec<PathBuf> {
-    ["models", "installed.json", "hf_token", "models.json"]
+    // Credentials are deliberately not part of model-store relocation. A
+    // destination may be removable or shared storage whose access controls
+    // are weaker than the source filesystem's mode 0600 token file.
+    ["models", "installed.json", "models.json"]
         .into_iter()
         .map(|name| root.join(name))
         .filter(|path| path.exists())
