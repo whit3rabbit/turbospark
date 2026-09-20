@@ -94,13 +94,13 @@ pub unsafe extern "C" fn ts_image_installed_json(out: *mut *mut c_char) -> c_int
     })
 }
 
-/// Deletes one valid image-generation install from the shared image store.
+/// Deletes one valid image-generation install by path or unambiguous alias.
 #[no_mangle]
-pub unsafe extern "C" fn ts_image_delete(alias: *const c_char) -> c_int {
+pub unsafe extern "C" fn ts_image_delete(identifier: *const c_char) -> c_int {
     guard_result(|| {
-        let alias =
-            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        models::delete_image(alias).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+        let identifier = strings::required(identifier, "identifier")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        models::delete_image(identifier).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
 

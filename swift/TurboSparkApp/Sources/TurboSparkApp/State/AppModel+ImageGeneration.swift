@@ -135,7 +135,7 @@ extension AppModel {
             imageSessionPath = nil
         }
         do {
-            try TurboSparkCatalog.deleteImage(image.alias)
+            try TurboSparkCatalog.deleteImage(image.path)
             if wasSelected {
                 imageModelPathText = ""
             }

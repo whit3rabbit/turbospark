@@ -103,7 +103,7 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
 /// A valid image-generation install. Image artifacts intentionally have a
 /// separate type and listing from text models.
 public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable {
-    public var id: String { alias }
+    public var id: String { path }
 
     public let alias: String
     public let modelID: String
@@ -298,9 +298,10 @@ public enum TurboSparkCatalog {
         try resolvePath(for: aliasOrPath) != nil
     }
 
-    /// Deletes a validated image install from the shared image store.
-    public static func deleteImage(_ alias: String) throws {
-        try check(alias.withCString { ts_image_delete($0) })
+    /// Deletes a validated image install from the shared image store by its
+    /// listed path. An alias remains accepted when it identifies one row.
+    public static func deleteImage(_ path: String) throws {
+        try check(path.withCString { ts_image_delete($0) })
     }
 
     /// Returns the catalog entry for a given alias from the curated table, if present.

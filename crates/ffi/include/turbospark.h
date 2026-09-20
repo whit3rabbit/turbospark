@@ -758,8 +758,8 @@ int32_t ts_installed_json(char **out);
 /* What valid image-generation installs are present in ~/.turbospark. */
 int32_t ts_image_installed_json(char **out);
 
-/* Deletes one valid image-generation install from ~/.turbospark. */
-int32_t ts_image_delete(const char *alias);
+/* Deletes one valid image-generation install by path or unambiguous alias. */
+int32_t ts_image_delete(const char *identifier);
 
 /* The curated pinned image-generation sources, including Z-Image MLX rows. */
 int32_t ts_image_catalog_json(char **out);

@@ -4,7 +4,7 @@ use catalog::{Catalog, ModelModality, Store};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct ImageInstalledRow {
     alias: String,
     #[serde(rename = "modelID")]
@@ -55,30 +55,54 @@ pub(crate) fn image_installed_json() -> Result<String, String> {
     let store = Store::default_store()?;
     let mut rows = image_installed_rows(&store.modality_root(ModelModality::Image));
     rows.extend(image_installed_rows(&store.models_root()));
-    rows.sort_by(|a, b| a.alias.cmp(&b.alias));
+    rows.sort_by(|a, b| a.alias.cmp(&b.alias).then_with(|| a.path.cmp(&b.path)));
     serde_json::to_string(&rows).map_err(|e| e.to_string())
 }
 
 /// Deletes one valid image install from the shared image store.
 ///
 /// Image installs are absent from the text index, so deletion resolves the
-/// alias from the same validated manifest listing used by the app. That keeps
-/// arbitrary aliases from becoming filesystem paths.
-pub(crate) fn delete_image(alias: &str) -> Result<(), String> {
+/// path (or an unambiguous legacy alias) from the same validated manifest
+/// listing used by the app. That keeps arbitrary paths from becoming deletion
+/// targets and preserves the selected row when canonical and legacy aliases
+/// collide.
+pub(crate) fn delete_image(identifier: &str) -> Result<(), String> {
     let store = Store::default_store()?;
     let canonical = store.modality_root(ModelModality::Image);
     let legacy = store.models_root();
-    let row = image_installed_rows(&canonical)
+    let rows = image_installed_rows(&canonical)
         .into_iter()
         .chain(image_installed_rows(&legacy))
-        .into_iter()
-        .find(|row| row.alias == alias)
-        .ok_or_else(|| format!("image model {alias:?} is not installed"))?;
+        .collect();
+    let row = image_row_for_delete(rows, identifier)?;
     if row.path.exists() {
         std::fs::remove_dir_all(&row.path)
             .map_err(|e| format!("failed to remove {}: {e}", row.path.display()))?;
     }
     Ok(())
+}
+
+fn image_row_for_delete(
+    rows: Vec<ImageInstalledRow>,
+    identifier: &str,
+) -> Result<ImageInstalledRow, String> {
+    if let Some(index) = rows
+        .iter()
+        .position(|row| row.path == Path::new(identifier))
+    {
+        return Ok(rows.into_iter().nth(index).expect("index came from rows"));
+    }
+
+    let mut matches = rows.into_iter().filter(|row| row.alias == identifier);
+    let row = matches
+        .next()
+        .ok_or_else(|| format!("image model {identifier:?} is not installed"))?;
+    if matches.next().is_some() {
+        return Err(format!(
+            "image model alias {identifier:?} is ambiguous; delete by its installed path"
+        ));
+    }
+    Ok(row)
 }
 
 fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
@@ -178,6 +202,43 @@ mod tests {
 
         assert!(image_installed_rows(&models).is_empty());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn image_row(alias: &str, path: &str) -> ImageInstalledRow {
+        ImageInstalledRow {
+            alias: alias.to_string(),
+            model_id: "owner/image".to_string(),
+            revision: "main".to_string(),
+            path: PathBuf::from(path),
+            width: 1024,
+            height: 1024,
+            scheduler_steps: 9,
+            quantization: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn image_delete_path_preserves_identity_across_duplicate_aliases() {
+        let canonical = image_row("duplicate", "/models/image/duplicate.gturbo");
+        let legacy = image_row("duplicate", "/models/duplicate.image.gturbo");
+
+        let selected =
+            image_row_for_delete(vec![canonical, legacy], "/models/duplicate.image.gturbo")
+                .unwrap();
+
+        assert_eq!(selected.path, Path::new("/models/duplicate.image.gturbo"));
+    }
+
+    #[test]
+    fn image_delete_rejects_an_ambiguous_alias() {
+        let rows = vec![
+            image_row("duplicate", "/models/image/duplicate.gturbo"),
+            image_row("duplicate", "/models/duplicate.image.gturbo"),
+        ];
+
+        let error = image_row_for_delete(rows, "duplicate").unwrap_err();
+
+        assert!(error.contains("ambiguous"), "got {error:?}");
     }
 
     fn record(store: &Store, alias: &str, path: &std::path::Path) {
