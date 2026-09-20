@@ -87,18 +87,43 @@ jobs:
 
           for crate in "${ORDER[@]}"; do
             echo "::group::cargo publish -p ${crate}"
-            set +e
-            out=$(cargo publish -p "${crate}" "${EXTRA_ARGS[@]}" 2>&1)
-            status=$?
-            set -e
-            echo "${out}"
-            echo "::endgroup::"
-            if [ "${status}" -ne 0 ]; then
-              if echo "${out}" | grep -qiE "already (uploaded|exists)"; then
+            published=0
+            attempt=0
+            max_attempts=6
+            while [ "${published}" -eq 0 ] && [ "${attempt}" -lt "${max_attempts}" ]; do
+              attempt=$((attempt + 1))
+              set +e
+              out=$(cargo publish -p "${crate}" "${EXTRA_ARGS[@]}" 2>&1)
+              status=$?
+              set -e
+              echo "${out}"
+              if [ "${status}" -eq 0 ]; then
+                published=1
+              elif echo "${out}" | grep -qiE "already (uploaded|exists)"; then
                 echo "::notice::${crate} already published at this version, continuing"
+                published=1
+              elif echo "${out}" | grep -qiE "(429 Too Many Requests|rate-limits|rate limit)"; then
+                echo "::warning::Rate limit hit publishing ${crate} (attempt ${attempt}/${max_attempts}). Waiting 90s before retrying..."
+                sleep 90
+              elif echo "${out}" | grep -qiE "(failed to select a version|no matching package named|failed to download)"; then
+                echo "::warning::Dependency index propagation delay for ${crate} (attempt ${attempt}/${max_attempts}). Waiting 20s before retrying..."
+                sleep 20
               else
                 echo "::error::cargo publish failed for ${crate}"
+                echo "::endgroup::"
                 exit "${status}"
               fi
+            done
+
+            if [ "${published}" -ne 1 ]; then
+              echo "::error::Failed to publish ${crate} after ${max_attempts} attempts"
+              echo "::endgroup::"
+              exit 1
+            fi
+            echo "::endgroup::"
+
+            # Give the registry index time to settle and pace new crate creation
+            if [ "${DRY_RUN}" != "true" ]; then
+              sleep 10
             fi
           done
