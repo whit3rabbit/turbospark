@@ -171,14 +171,14 @@ impl ModelRegistry for StaticRegistry {
 /// separately from every generation call. Routing per REQUEST, here, hands
 /// the handler a single self-consistent backend.
 ///
-/// **MEMBERS ARE CHOSEN LEAST-QUEUED-FIRST, ROUND-ROBIN ON TIES**, reading
-/// each gate's `queued()` counter: an idle member is always preferred over
-/// a busy one, and among equally-loaded members the cursor spreads
-/// arrivals so an all-idle pool distributes rather than stampeding member
-/// 0. The counter is advisory at the moment of choice (a member can pick
-/// up work between the read and the routing), which is fine: it is a
-/// balance heuristic riding on top of gates that are CORRECT whatever it
-/// reads.
+/// **MEMBERS ARE CHOSEN LEAST-BUSY-FIRST, ROUND-ROBIN ON TIES**, reading
+/// each gate's `load()` (active plus waiting) counter: an idle member is
+/// always preferred over a busy one, and among equally-loaded members the
+/// cursor spreads arrivals so an all-idle pool distributes rather than
+/// stampeding member 0. The counter is advisory at the moment of choice (a
+/// member can pick up work between the read and the routing), which is fine:
+/// it is a balance heuristic riding on top of gates that are CORRECT whatever
+/// it reads.
 ///
 /// `rows()` reports ONE row, because the pool IS one model as far as a
 /// client can tell: one id, one advertised context, and `/v1/models` has
@@ -230,25 +230,25 @@ impl PoolRegistry {
     }
 
     /// The member a request should run on: the first idle member scanning
-    /// from the round-robin cursor, else the least-queued one in that scan
-    /// order. `queued()` is the gate's waiting-count; a member with no gate
-    /// (scripted backends in tests) reads as permanently idle.
+    /// from the round-robin cursor, else the least-busy one in that scan
+    /// order. `load()` includes the active permit holder; a member with no
+    /// gate (scripted backends in tests) reads as permanently idle.
     fn pick(&self) -> Arc<dyn ChatModel> {
         let n = self.members.len();
         let start = self.next.fetch_add(1, Ordering::Relaxed);
         let mut best = 0usize;
-        let mut best_len = usize::MAX;
+        let mut best_load = usize::MAX;
         for i in 0..n {
             let idx = (start.wrapping_add(i)) % n;
-            let queued = self.members[idx]
+            let load = self.members[idx]
                 .generation_queue()
-                .map(|q| q.queued())
+                .map(|q| q.load())
                 .unwrap_or(0);
-            if queued < best_len {
-                best_len = queued;
+            if load < best_load {
+                best_load = load;
                 best = idx;
             }
-            if best_len == 0 {
+            if best_load == 0 {
                 break;
             }
         }
@@ -686,6 +686,50 @@ mod tests {
     mod pool_tests {
         use super::*;
 
+        struct Gated {
+            inner: Arc<dyn ChatModel>,
+            queue: Arc<crate::GenerationQueue>,
+        }
+
+        impl ChatModel for Gated {
+            fn tokenizer(&self) -> &tokenizer::MfTokenizer {
+                self.inner.tokenizer()
+            }
+            fn vocab_size(&self) -> usize {
+                self.inner.vocab_size()
+            }
+            fn max_context(&self) -> u32 {
+                self.inner.max_context()
+            }
+            fn model_id(&self) -> &str {
+                self.inner.model_id()
+            }
+            fn model_aliases(&self) -> Vec<String> {
+                self.inner.model_aliases()
+            }
+            fn with_producer(
+                &self,
+                f: &mut dyn FnMut(
+                    &mut dyn runtime::LogitProducer,
+                )
+                    -> Result<runtime::RawDecodeResult, runtime::RuntimeError>,
+            ) -> Result<runtime::RawDecodeResult, runtime::RuntimeError> {
+                self.inner.with_producer(f)
+            }
+            fn generation_queue(&self) -> Option<Arc<crate::GenerationQueue>> {
+                Some(Arc::clone(&self.queue))
+            }
+        }
+
+        fn gated_model(id: &str) -> (Arc<dyn ChatModel>, Arc<crate::GenerationQueue>) {
+            let queue = crate::GenerationQueue::shared();
+            let model: Arc<dyn ChatModel> = Arc::new(Gated {
+                inner: model(id),
+                queue: Arc::clone(&queue),
+            });
+            (model, queue)
+        }
+
         /// N members of one install advertise THE SAME identity, and the pool
         /// exists precisely so that identity can be duplicated. `StaticRegistry`
         /// refuses what this accepts, and the pair of refusals is the contract:
@@ -775,6 +819,27 @@ mod tests {
                 seen,
                 vec![0, 1, 2],
                 "an all-idle pool must spread arrivals across every member"
+            );
+        }
+
+        /// An acquired permit is active load even when nobody is waiting.
+        /// Starting the scan at that member must not queue a request there
+        /// while the other member is idle.
+        #[tokio::test]
+        async fn active_member_is_skipped_for_an_idle_member() {
+            let (active, active_queue) = gated_model("a.gturbo");
+            let (idle, _idle_queue) = gated_model("a.gturbo");
+            let pool =
+                PoolRegistry::new(vec![active, Arc::clone(&idle)]).expect("identical members");
+            let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let _active_permit = active_queue.acquire(&cancel).await.expect("admitted");
+
+            let Resolution::Model(served) = pool.resolve(Some("a.gturbo")) else {
+                panic!("expected a member");
+            };
+            assert!(
+                Arc::ptr_eq(&served, &idle),
+                "an idle runner must win over an active runner with no waiters"
             );
         }
 
