@@ -18,9 +18,7 @@
 use super::deepseek::char_index_to_byte;
 use super::{Channel, StructuredAssistantDecoder, StructuredAssistantEvent};
 use crate::error::ToolCallParserError;
-use crate::tool_call::{
-    GlmToolCallParser, GLM_TOOL_CALL_CLOSE_MARK, GLM_TOOL_CALL_OPEN_MARK,
-};
+use crate::tool_call::{GlmToolCallParser, GLM_TOOL_CALL_CLOSE_MARK, GLM_TOOL_CALL_OPEN_MARK};
 
 /// The marks the arm scans for while no block is open. A partial match at
 /// the tail of the buffer is withheld until the next delta says which mark
@@ -116,7 +114,8 @@ impl<'a> StructuredAssistantDecoder<'a> {
                     if !visible.is_empty() {
                         events.push(StructuredAssistantEvent::Content(visible));
                     }
-                    self.held_text = self.held_text[open + GLM_TOOL_CALL_OPEN_MARK.len()..].to_string();
+                    self.held_text =
+                        self.held_text[open + GLM_TOOL_CALL_OPEN_MARK.len()..].to_string();
                     self.dsml_text = Some(String::new());
                     continue 'scanning;
                 }
@@ -148,9 +147,13 @@ impl<'a> StructuredAssistantDecoder<'a> {
 /// prefix (`</tool_call>` starts with `</`).
 pub(super) fn partial_mark_prefix_length(text: &str, marks: &[&str]) -> usize {
     let text_chars: Vec<char> = text.chars().collect();
-    let longest = text_chars
-        .len()
-        .min(marks.iter().map(|m| m.chars().count().saturating_sub(1)).max().unwrap_or(0));
+    let longest = text_chars.len().min(
+        marks
+            .iter()
+            .map(|m| m.chars().count().saturating_sub(1))
+            .max()
+            .unwrap_or(0),
+    );
     if longest == 0 {
         return 0;
     }
