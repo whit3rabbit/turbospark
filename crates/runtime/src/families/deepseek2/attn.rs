@@ -122,16 +122,7 @@ pub(crate) fn encode_mla_attention_block(
     // Both specialized kernels interpret this tensor as Q8_0 and derive
     // every read from the architecture geometry. Validate that contract once
     // before either kernel receives a raw offset into the shared buffer.
-    let kv_b = q8_0_weights_gpu_view(
-        weights,
-        index,
-        layer,
-        KV_B_PROJ,
-        state.heads,
-        state.nope,
-        state.kv_lora,
-        state.v_dim,
-    )?;
+    let kv_b = q8_0_weights_gpu_view(weights, index, layer, KV_B_PROJ, state)?;
 
     // Absorb: fused `[q' ; q_pe]` rows from the full q buffer.
     gpu::encode_mla_absorb_q(
@@ -202,14 +193,11 @@ fn q8_0_weights_gpu_view<'a>(
     index: &ResidentIndex,
     layer: usize,
     suffix: &str,
-    heads: u32,
-    nope: u32,
-    kv_lora: u32,
-    v_dim: u32,
+    state: &RealDeepseek2State,
 ) -> Result<(&'a gpu::MetalBuffer, u64), RealForwardError> {
     let name = layer_tensor(layer, suffix);
     let e = crate::real_forward_utils::entry(index, &name)?;
-    validate_q8_0_matrix(e, &name, heads, nope, kv_lora, v_dim)?;
+    validate_q8_0_matrix(e, &name, state.heads, state.nope, state.kv_lora, state.v_dim)?;
     let base = index.header.index_size;
     Ok((weights.buffer(), weights.gpu_offset(e.file_offset - base)))
 }
