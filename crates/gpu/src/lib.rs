@@ -47,9 +47,11 @@ mod attention_tq;
 mod bytes;
 #[cfg(target_os = "macos")]
 mod context;
+#[cfg(target_os = "macos")]
 mod dequant_1bit_gemm_batch;
 #[cfg(target_os = "macos")]
 mod dequant_1bit_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_2bit_gemm_batch;
 #[cfg(target_os = "macos")]
 mod dequant_2bit_gemv;
@@ -101,6 +103,7 @@ mod kv_quantize;
 mod logit_softmax;
 #[cfg(target_os = "macos")]
 mod mla;
+#[cfg(target_os = "macos")]
 mod moe_decode;
 #[cfg(target_os = "macos")]
 mod moe_gguf;
