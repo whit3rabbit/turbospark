@@ -2209,4 +2209,25 @@ Deliberately not done (the descope list; this section is its one home):
 - **The V3 / GLM-4.7-Flash / Kimi K2 checkpoints themselves.** One
   architecture string covers many models; each is its own witness with its
   own slot arithmetic (AGENTS.md Gotcha 36), and `q_lora_rank > 0` above
-  gates several of them before any kernel question is reached.
+  gates several of them before any kernel question is reached. **The GLM
+  header evidence is now pinned** (2026-09-19, read off
+  `unsloth/GLM-4.7-Flash-GGUF`'s 60-key header and 844-tensor list, and
+  recorded in ROADMAP's tool-calling item): the file reports
+  `general.architecture = deepseek2` with `q_lora_rank = 768`, SPLIT
+  `attn_k_b` / `attn_v_b` (no fused `attn_kv_b`), `expert_gating_func = 2`
+  with `expert_weights_norm = 1` and scale 1.8 (`exp_probs_b.bias` routing,
+  the noaux_tc method -- top-4 of 64), and MXFP4 expert tensors in its
+  16.97 GB MXFP4_MOE build (the Q4_K_M build's experts are Q3_K_M and
+  Q4_K_S, with no Q3_K routed arm; Q8_0 is 31.84 GB). So a GLM witness
+  needs FOUR lifts, in intake order: the q-lora branch (baseline field
+  already exists at 0, the `attn_q_a`/`attn_q_a_norm`/`attn_q_b` names and
+  the flow's q path are new), a split-kv_b reader (or a pack-time re-fusion
+  into the fused resident layout the absorb/v-combine kernels already
+  read), the noaux_tc routing parameterization, and the MXFP4 routed arm
+  for this family's expert dispatch -- then the same cross-engine parity
+  the V2-Lite numerics closure ran. Kimi K2 additionally has NO loadable
+  path at any size: the whole line is tiktoken-only (no `tokenizer.json`
+  exists to source the required sidecar from), recorded in
+  `docs/TOOL_CALLING.md`'s table. Both dialects themselves ARE landed and
+  real-table-tested (ROADMAP's tool-calling item, 2026-09-19); only the
+  real-generation smoke is owed.
