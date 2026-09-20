@@ -18,6 +18,7 @@
 use super::{StructuredAssistantDecoder, StructuredAssistantEvent};
 use crate::error::ToolCallParserError;
 use crate::tool_call::MistralToolCallParser;
+use crate::NO_SUCH_TOKEN_ID;
 
 impl<'a> StructuredAssistantDecoder<'a> {
     /// The Mistral arm. Everything outside a `[TOOL_CALLS]` span is ordinary
@@ -28,7 +29,9 @@ impl<'a> StructuredAssistantDecoder<'a> {
         token_id: i32,
         delta: &str,
     ) -> Result<Vec<StructuredAssistantEvent>, ToolCallParserError> {
-        if token_id == self.tokenizer.tool_call_start_id {
+        if self.tokenizer.tool_call_start_id != NO_SUCH_TOKEN_ID
+            && token_id == self.tokenizer.tool_call_start_id
+        {
             if self.tool_tokens.is_some() {
                 // A second marker abandons the first span, the way the
                 // Gemma arm's second-start arm does.
