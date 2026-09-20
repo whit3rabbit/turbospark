@@ -32,6 +32,8 @@ use model_io::{
 
 use crate::gemma4_checkpoint::Gemma4Error;
 
+const MAX_MODEL_LAYERS: i64 = 4096;
+
 pub fn parse_qwen3_vl_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
@@ -65,6 +67,12 @@ pub fn parse_qwen3_vl_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
             "hidden size, attention heads, KV heads, layer count, and head_dim must be positive"
                 .into(),
         ));
+    }
+    if num_layers > MAX_MODEL_LAYERS {
+        return Err(Gemma4Error::Config(format!(
+            "num_hidden_layers {num_layers} exceeds the maximum supported layer count of \
+             {MAX_MODEL_LAYERS}"
+        )));
     }
     if num_heads % num_kv_heads != 0 {
         return Err(Gemma4Error::Config(format!(

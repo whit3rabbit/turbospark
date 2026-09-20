@@ -94,6 +94,17 @@ fn refuses_wrong_behavioral_contracts() {
 }
 
 #[test]
+fn refuses_an_unreasonably_large_layer_count_before_allocating() {
+    let mut config: serde_json::Value = serde_json::from_str(&config_json()).unwrap();
+    config["text_config"]["num_hidden_layers"] = serde_json::json!(4097);
+    let error = parse_qwen3_vl_config(&config.to_string()).expect_err("layer count refused");
+    assert!(
+        error.to_string().contains("num_hidden_layers 4097"),
+        "expected the error to name the rejected layer count, got: {error}"
+    );
+}
+
+#[test]
 fn refuses_a_rope_scaling_type_this_port_does_not_know() {
     let mut config: serde_json::Value = serde_json::from_str(&config_json()).unwrap();
     config["text_config"]["rope_scaling"]["rope_type"] = serde_json::json!("yarn");
