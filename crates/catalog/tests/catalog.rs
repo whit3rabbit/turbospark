@@ -200,6 +200,35 @@ fn every_caveat_row_explains_itself() {
     }
 }
 
+#[test]
+fn curated_qwen25_gguf_artifacts_are_immutable() {
+    let is_commit =
+        |revision: &str| revision.len() == 40 && revision.chars().all(|c| c.is_ascii_hexdigit());
+    let catalog = Catalog::embedded().unwrap();
+    let rows: Vec<_> = catalog
+        .entries()
+        .filter(|entry| entry.alias.starts_with("qwen25-7b-q"))
+        .collect();
+    assert!(
+        !rows.is_empty(),
+        "the curated Qwen2.5 GGUF rows disappeared"
+    );
+    for entry in rows {
+        assert!(
+            is_commit(&entry.source.revision),
+            "row {} has mutable weights revision {:?}",
+            entry.alias,
+            entry.source.revision
+        );
+        assert!(
+            is_commit(entry.sidecar_revision()),
+            "row {} has mutable sidecar revision {:?}",
+            entry.alias,
+            entry.sidecar_revision()
+        );
+    }
+}
+
 /// A pinned row's revision must be a commit sha, because the whole value of
 /// pinning is that the bytes cannot move under a frozen number. Rows at
 /// `main` float on purpose (their publishers offer nothing else) and are

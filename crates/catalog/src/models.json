@@ -477,7 +477,7 @@
       },
       "sidecars": {
         "repo": "Qwen/Qwen2.5-7B-Instruct",
-        "revision": "main",
+        "revision": "a09a35458c702b33eeacc393d103063234e8bc28",
         "files": [
           "tokenizer.json",
           "tokenizer_config.json",
@@ -508,48 +508,7 @@
       "notes": "The roadmap's pinned official single-file Q3_K_M GGUF, executable since the Q3_K resident kernels landed (2026-09-19): resident GEMV + embedding lookup, no routed pair (Q6_K's footing; the real file is dense). Carries Q3_K on every attention and FFN projection (53.8% of weights), Q4_K on the embedding table and remaining projections, Q6_K on output.weight, and three Q5_K tensors -- the first mixed Q3_K/Q5_K install this port runs. Frozen quality at perplexity 12.2878 with stable greedy and sampled digests (8-slot constrained digest equals the 16-slot one) and a memory oracle at 651 MiB peak at 8192 context (+0.02 MiB replay, all three cases endOfTurn). Greedy and sampled CLI smokes coherent. The CPU reference is anchored to ggml by a generated oracle; see DEVIATIONS.md's qwen2 section. Install removed after the gates froze per the session's space goal; re-pull to re-verify."
     },
     {
-      "alias": "qwen25-7b-q4km",
-      "name": "Qwen2.5 7B Instruct (GGUF Q4_K_M, single file)",
-      "family": "qwen2",
-      "source": {
-        "kind": "gguf",
-        "repo": "mradermacher/Qwen2.5-7B-Instruct-GGUF",
-        "revision": "main",
-        "file": "Qwen2.5-7B-Instruct.Q4_K_M.gguf"
-      },
-      "sidecars": {
-        "repo": "Qwen/Qwen2.5-7B-Instruct",
-        "revision": "main",
-        "files": [
-          "tokenizer.json",
-          "tokenizer_config.json",
-          "generation_config.json"
-        ]
-      },
-      "download_bytes": 4683074400,
-      "install_bytes": 4690000000,
-      "status": "verified",
-      "gates": [
-        "qwen2_checkpoint_network",
-        "real CLI greedy + sampled smokes",
-        "qwen2_dense_quality_gate (GGUF Q4_K_M row)",
-        "qwen2_dense_memory_oracle (GGUF Q4_K_M row)"
-      ],
-      "measured": [
-        {
-          "chip": "Apple M4 Max",
-          "context": 8192,
-          "expert_cache_slots": 16,
-          "peak_footprint_mib": 646,
-          "decode_tok_s_min": 22.232,
-          "decode_tok_s_max": 29.751,
-          "measured_on": "2026-09-19",
-          "source": "this port, Qwen2.5-7B Instruct GGUF Q4_K_M (single file), on battery; quality and memory gates, all three protocol cases endOfTurn"
-        }
-      ],
-      "notes": "The roadmap's second real Qwen2 GGUF artifact, streamed and gated 2026-09-19. The official repo splits its Q4_K_M and Q8_0 into shards and split GGUF is out of scope for the dense qwen2 walk, so the single-file mradermacher conversion of the same base checkpoint stands in: Q4_K on the projections and FFN, Q6_K on output.weight, F32 norms. Frozen quality at perplexity 11.6563 with stable digests (1.00x at 8 constrained slots) and a memory oracle at 646 MiB peak. Greedy and sampled CLI smokes coherent. Install removed after the gates froze; re-pull to re-verify."
-    },
-    {
+
       "alias": "qwen36",
       "name": "Qwen 3.6 35B-A3B (MLX INT4, group 64)",
       "family": "qwen36",
