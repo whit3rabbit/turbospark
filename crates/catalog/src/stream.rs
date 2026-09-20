@@ -605,8 +605,8 @@ fn shard_names_for_prefixes(
 /// already uses for the trunk's own shard list. Refuses only when NEITHER
 /// source names a candidate, so a caller with no index and no `--file` gets a
 /// message naming the gap rather than an empty result.
-/// Keeps the shard names from a repo's index that the repository ACTUALLY
-/// still lists, dropping the rest.
+/// Keeps the shard names from a repo's index only when the repository still
+/// lists ALL of them.
 ///
 /// **A REPO'S SHARD INDEX IS A CLAIM, NOT A FACT** (`docs/QWEN3VL_PHASE0.md`
 /// section 0): `mlx-community/Qwen3-VL-4B-Instruct-4bit` ships an index
@@ -615,10 +615,10 @@ fn shard_names_for_prefixes(
 /// index-derived name 404s at the first header fetch and the whole pull
 /// dies on a file the publisher deleted. The repository's own file listing
 /// is what the download URLs are built from, so it is the authority; an
-/// index name not in the listing is stale by definition and is dropped
-/// rather than requested. An empty survivor list means the index describes
-/// nothing that exists, and the caller falls back to its single-file
-/// convention.
+/// index name not in the listing is stale by definition. The index is atomic:
+/// if any referenced shard is stale, the whole set is discarded so the caller
+/// falls back to its single-file convention rather than installing a partial
+/// model from the surviving shards.
 fn retain_existing_shard_names(
     repo: &RepoRef,
     client: &Client,
@@ -628,11 +628,16 @@ fn retain_existing_shard_names(
         return Ok(names);
     }
     let files = client.file_list(repo)?;
+    Ok(retain_complete_shard_set(names, &files))
+}
+
+fn retain_complete_shard_set(names: BTreeSet<String>, files: &[String]) -> BTreeSet<String> {
     let listed: std::collections::HashSet<&str> = files.iter().map(String::as_str).collect();
-    Ok(names
-        .into_iter()
-        .filter(|name| listed.contains(name.as_str()))
-        .collect())
+    if names.iter().all(|name| listed.contains(name.as_str())) {
+        names
+    } else {
+        BTreeSet::new()
+    }
 }
 
 pub(crate) fn fetch_prefixed_shards(
@@ -899,9 +904,11 @@ pub(crate) fn shard_names(plan: &InstallPlan, client: &Client) -> Result<Vec<Str
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{
-        enable_bytes_detected_vision, enable_requested_vision, shard_names_for_prefixes,
-        write_vision_preprocessor,
+        enable_bytes_detected_vision, enable_requested_vision, retain_complete_shard_set,
+        shard_names_for_prefixes, write_vision_preprocessor,
     };
     use crate::{Catalog, InstallPlan};
     use model_io::ModelFamily;
@@ -1278,5 +1285,30 @@ mod tests {
         let index = serde_json::json!({"not_weight_map": {}});
         let err = shard_names_for_prefixes(&index, &["vision_tower."]).unwrap_err();
         assert!(err.contains("weight_map"), "{err}");
+    }
+
+    #[test]
+    fn a_partially_stale_index_discards_every_indexed_shard() {
+        let names = ["model-00001.safetensors", "model-00002.safetensors"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let files = vec!["model-00001.safetensors".to_string()];
+
+        assert!(retain_complete_shard_set(names, &files).is_empty());
+    }
+
+    #[test]
+    fn a_fully_listed_index_keeps_every_indexed_shard() {
+        let names: BTreeSet<String> = ["model-00001.safetensors", "model-00002.safetensors"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let files = vec![
+            "model-00002.safetensors".to_string(),
+            "model-00001.safetensors".to_string(),
+        ];
+
+        assert_eq!(retain_complete_shard_set(names.clone(), &files), names);
     }
 }
