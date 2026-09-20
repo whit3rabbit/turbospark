@@ -10,34 +10,44 @@ prompt as its `defaultSystem` but never applies a personality.
 
 ## App-wide prompt library
 
-Engine Settings has a named prompt library. `TurboSpark Agent` is selected for
-a fresh install, and `Compact Agent` and `Code Reviewer` are short alternatives
-for local models. Select a row to load it, or add, edit, save, and delete any
-row, including a built-in. Selecting None sends no app-wide default.
+Engine Settings has a named prompt library. A fresh install ships the starter
+library (`TurboSpark Agent`, `Compact Agent`, `Code Reviewer`) with NOTHING
+selected: sending an app-wide system prompt is an explicit choice. Select a
+row to load it, or add, edit, save, and delete any row, including a built-in.
+Selecting None sends no app-wide default.
 
 `MacAppSettings` stores `systemPrompts` and `activeSystemPromptID`. Its legacy
 `defaultSystemPrompt` field remains a compatibility mirror for the selected
 row, the in-process server, and copied server commands. A pre-library custom
-default becomes an `Imported Default` row; a pre-library empty setting receives
-the starter library and selects `TurboSpark Agent`.
+default becomes an `Imported Default` row; a pre-library file carrying only
+the old shipped starter text (or nothing) receives the starter library with
+none selected, the same fresh-install default.
 
 The in-process server reads that mirror when it starts. Restart it after
 loading, editing, or deleting its selected prompt.
 
 ## Global SOUL.md
 
-Engine Settings also exposes a global `SOUL.md` section. TurboSpark resolves
-`HERMES_HOME/SOUL.md`, falling back to `~/.hermes/SOUL.md`, before the
-per-profile `soulPrompt` setting. An existing Hermes file wins even when it is
-empty, while a missing file uses the native setting, which is blank by
-default. Saving an active Hermes file updates it atomically. Import copies it
-into the native fallback; Create Hermes writes only when the file is absent.
-The section detects an existing OpenClaw workspace file at
-`~/.openclaw/workspace/SOUL.md`, honoring `OPENCLAW_HOME`,
-`OPENCLAW_STATE_DIR`, and `OPENCLAW_WORKSPACE_DIR`, and offers a separate
-import action for each detected harness. Load File is always available for a
-workspace or framework that uses a different location. All imports copy into
-the native fallback and never overwrite the source file.
+The Soul settings pane owns the global `SOUL.md` section (it is no longer
+mounted in Engine Settings). SOUL is disabled on a fresh install: nothing is
+injected until the Enable SOUL.md toggle is on, and detected external files
+are never consumed on their own.
+
+Content lives in a saved-entry library (`soulPrompts` plus
+`activeSoulPromptID` in `MacAppSettings`). The Active Soul picker selects the
+row in use while enabled; the editor, Save, Save As New, and Delete manage
+library rows and require the toggle to be on. External files are import
+sources only: the section detects Hermes at `HERMES_HOME/SOUL.md` (default
+`~/.hermes/SOUL.md`) and an OpenClaw workspace file at
+`~/.openclaw/workspace/SOUL.md`, honoring `OPENCLAW_HOME`, `OPENCLAW_STATE_DIR`,
+and `OPENCLAW_WORKSPACE_DIR`, and offers an import action per detected
+harness. Import copies the file into a named saved row (re-import refreshes
+the same-named row in place) and stays available while SOUL is disabled; it
+never flips the toggle and never modifies the source file. Load File imports
+from any other location. Create Hermes writes the missing Hermes file from
+the editor content and refuses to overwrite an existing one. A pre-library
+settings file's non-empty `soulPrompt` migrates once into an `Imported Soul`
+row with SOUL enabled, preserving an explicit authorship.
 
 Nonblank global SOUL content is its own system-prompt section and is included
 in `appWideSystemPrompt`, so isolated and background subagents inherit it.
@@ -52,7 +62,7 @@ part of the contract:
 | Order | Section | Source | When included |
 | --- | --- | --- | --- |
 | 1 | User prompt | The chat's nonblank `systemPrompt`, otherwise the selected app-wide prompt | When nonempty |
-| 2 | SOUL | Global Hermes `SOUL.md`, otherwise the native profile fallback | When nonblank |
+| 2 | SOUL | The selected saved soul, while Enable SOUL.md is on | When enabled, selected, and nonblank |
 | 3 | Personality | Selected app-wide `AppPersonality` | When selected and its instructions are nonempty |
 | 4 | Agent role | Project agent type | With a project |
 | 5 | Workspace | Project root path | With a nonempty project root |

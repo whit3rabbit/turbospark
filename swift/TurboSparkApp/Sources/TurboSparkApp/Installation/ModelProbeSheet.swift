@@ -275,8 +275,8 @@ struct ModelProbeSheet: View {
                 Button { requestInstall() } label: { Text("Install Model", bundle: .module) }
                     .buttonStyle(.borderedProminent)
                     .disabled(
-                        repo.isEmpty || alias.isEmpty || isProbing || model.isInstallingModel
-                            || decision.isBlocked
+                        repo.isEmpty || alias.isEmpty || isProbing || model.isRunning
+                            || decision.isBlocked || !model.canInstall(alias: alias)
                     )
                     .help("Download and install probed repository")
                     .accessibilityHint("Downloads and installs the probed repository")

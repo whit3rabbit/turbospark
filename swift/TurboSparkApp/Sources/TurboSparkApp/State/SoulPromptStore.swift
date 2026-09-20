@@ -1,11 +1,5 @@
 import Foundation
 
-/// The source selected for the app-wide SOUL prompt.
-public enum SoulPromptSource: String, Sendable {
-    case hermes
-    case turboSpark
-}
-
 /// A known external harness that can provide a SOUL.md for import.
 public enum SoulPromptImportKind: String, CaseIterable, Identifiable, Sendable {
     case hermes
@@ -35,30 +29,8 @@ public struct SoulPromptImportSource: Equatable, Identifiable, Sendable {
     }
 }
 
-/// The resolved SOUL prompt and the source used to obtain it.
-public struct SoulPromptResolution: Equatable, Sendable {
-    public let content: String
-    public let source: SoulPromptSource
-    public let hermesFileURL: URL
-    public let hermesFileExists: Bool
-    public let readError: String?
-
-    public init(
-        content: String,
-        source: SoulPromptSource,
-        hermesFileURL: URL,
-        hermesFileExists: Bool,
-        readError: String? = nil
-    ) {
-        self.content = content
-        self.source = source
-        self.hermesFileURL = hermesFileURL
-        self.hermesFileExists = hermesFileExists
-        self.readError = readError
-    }
-}
-
-/// Reads Hermes' global SOUL.md and provides the TurboSpark fallback path.
+/// Resolves external SOUL.md locations and reads them for import. External
+/// files are import sources only: nothing here is consumed on its own.
 public enum SoulPromptStore {
     public static let fileName = "SOUL.md"
 
@@ -162,39 +134,6 @@ public enum SoulPromptStore {
         }
     }
 
-    /// Uses Hermes content whenever the file exists, including an empty file.
-    /// A missing file falls back to the per-profile TurboSpark setting.
-    public static func resolve(
-        fallback: String,
-        hermesHome: URL? = nil,
-        fileManager: FileManager = .default
-    ) -> SoulPromptResolution {
-        let fileURL = (hermesHome ?? hermesHomeURL).appendingPathComponent(fileName)
-        guard fileManager.fileExists(atPath: fileURL.path) else {
-            return SoulPromptResolution(
-                content: fallback,
-                source: .turboSpark,
-                hermesFileURL: fileURL,
-                hermesFileExists: false)
-        }
-
-        do {
-            let content = try String(contentsOf: fileURL, encoding: .utf8)
-            return SoulPromptResolution(
-                content: content,
-                source: .hermes,
-                hermesFileURL: fileURL,
-                hermesFileExists: true)
-        } catch {
-            return SoulPromptResolution(
-                content: "",
-                source: .hermes,
-                hermesFileURL: fileURL,
-                hermesFileExists: true,
-                readError: error.localizedDescription)
-        }
-    }
-
     /// Reads an existing Hermes file for import without creating one.
     public static func readHermes(
         hermesHome: URL? = nil
@@ -221,15 +160,6 @@ public enum SoulPromptStore {
             throw CocoaError(.fileWriteFileExists)
         }
         try fileManager.createDirectory(at: home, withIntermediateDirectories: true)
-        try Data(content.utf8).write(to: fileURL, options: .atomic)
-    }
-
-    /// Updates an existing Hermes file atomically.
-    public static func writeHermes(
-        content: String,
-        hermesHome: URL? = nil
-    ) throws {
-        let fileURL = (hermesHome ?? hermesHomeURL).appendingPathComponent(fileName)
         try Data(content.utf8).write(to: fileURL, options: .atomic)
     }
 }

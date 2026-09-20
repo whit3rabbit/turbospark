@@ -15,6 +15,11 @@ import CTurboSpark
 /// question here is whether the two sides agree on the ABI.
 final class SurfaceTests: XCTestCase {
 
+    func testIdleInstallPauseAndResumeDoNotInventAnActiveDownload() {
+        XCTAssertFalse(TurboSparkCatalog.pauseInstall())
+        XCTAssertFalse(TurboSparkCatalog.resumeInstall())
+    }
+
     /// Tests that the embedded catalog decodes cleanly into Swift types.
     func testTheCatalogDecodesIntoSwiftTypes() throws {
         let rows = try TurboSparkCatalog.available()
@@ -227,6 +232,26 @@ final class SurfaceTests: XCTestCase {
         XCTAssertFalse(first.alias.isEmpty)
         XCTAssertFalse(first.name.isEmpty)
         XCTAssertFalse(first.verdictSummary.isEmpty)
+    }
+
+    /// The streamed entry point must deliver the same offline result without
+    /// inventing header progress when probing was not requested.
+    func testRecommendationProgressStreamPreservesTheOfflinePath() async throws {
+        var progressEvents = 0
+        var recommendations: [ModelRecommendation] = []
+        for try await event in TurboSparkCatalog.recommendWithProgress(
+            context: 4096,
+            probe: false
+        ) {
+            switch event {
+            case .progress:
+                progressEvents += 1
+            case .finished(let rows):
+                recommendations = rows
+            }
+        }
+        XCTAssertEqual(progressEvents, 0)
+        XCTAssertFalse(recommendations.isEmpty)
     }
 
     /// A recommendation says WHERE its footprint came from, and a row nothing

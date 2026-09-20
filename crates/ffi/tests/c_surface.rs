@@ -29,13 +29,14 @@ use turbospark_ffi::{
     ts_embedding_encode_json, ts_generate, ts_hf_endpoint_get, ts_hf_endpoint_set,
     ts_hf_token_clear, ts_hf_token_get, ts_hf_token_set, ts_hf_token_validate_json,
     ts_image_buffer_free, ts_image_session_open, ts_last_error, ts_model_delete, ts_probe_json,
-    ts_recommend_json, ts_repo_variants_json, ts_server_attach_embedding_model,
-    ts_server_attach_session, ts_server_detach_model, ts_server_info_json,
-    ts_server_poll_events_json, ts_server_start, ts_server_stop, ts_session_cancel,
-    ts_session_count_text_tokens, ts_session_count_tokens, ts_session_detokenize_json,
-    ts_session_fit_window_json, ts_session_info_json, ts_session_open, ts_session_render_prompt,
-    ts_session_tokenize_json, ts_string_free, ts_system_info_json, Server, Session, TsImageSession,
-    TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING, TS_EVENT_TOOL,
+    ts_recommend_json, ts_recommend_progress_json, ts_repo_variants_json,
+    ts_server_attach_embedding_model, ts_server_attach_session, ts_server_detach_model,
+    ts_server_info_json, ts_server_poll_events_json, ts_server_start, ts_server_stop,
+    ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
+    ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
+    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_system_info_json,
+    Server, Session, TsImageSession, TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL,
+    TS_EVENT_REASONING, TS_EVENT_TOOL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -796,6 +797,80 @@ fn recommend_json_keeps_probe_optional() {
     if code == abi::TS_OK {
         let _ = unsafe { take(out) };
     }
+}
+
+unsafe extern "C" fn count_recommendation_progress(userdata: *mut c_void, done: u32, total: u32) {
+    assert!(done <= total);
+    let calls = unsafe { &*(userdata as *const AtomicUsize) };
+    calls.fetch_add(1, Ordering::SeqCst);
+}
+
+/// The progress entry point preserves the old offline behavior. Header
+/// progress belongs only to the explicit probe arm, so a cheap recommendation
+/// must neither touch the network nor fabricate progress events.
+#[test]
+fn recommend_progress_entrypoint_keeps_the_offline_path_quiet() {
+    let calls = AtomicUsize::new(0);
+    let mut out: *mut c_char = ptr::null_mut();
+    let opts = c("{}");
+    let code = unsafe {
+        ts_recommend_progress_json(
+            4096,
+            opts.as_ptr(),
+            Some(count_recommendation_progress),
+            (&calls as *const AtomicUsize).cast_mut().cast(),
+            &mut out,
+        )
+    };
+    assert_ne!(code, abi::TS_ERR_INVALID_ARGUMENT, "{}", last_error());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    if code == abi::TS_OK {
+        let _ = unsafe { take(out) };
+    }
+}
+
+#[derive(Default)]
+struct RecommendationProgressState {
+    calls: AtomicUsize,
+    completed: AtomicUsize,
+    total: AtomicUsize,
+}
+
+unsafe extern "C" fn record_recommendation_progress(userdata: *mut c_void, done: u32, total: u32) {
+    let state = unsafe { &*(userdata as *const RecommendationProgressState) };
+    let previous = state.completed.swap(done as usize, Ordering::SeqCst);
+    assert!(done as usize >= previous);
+    assert!(done <= total);
+    state.total.store(total as usize, Ordering::SeqCst);
+    state.calls.fetch_add(1, Ordering::SeqCst);
+}
+
+/// The real network arm begins at zero, advances monotonically, and reaches
+/// the curated model count. Kept ignored because it reads every published
+/// checkpoint header and therefore depends on Hugging Face availability.
+#[test]
+#[ignore = "network: reads every curated model header"]
+fn recommend_progress_reports_live_header_completion() {
+    let state = RecommendationProgressState::default();
+    let mut out: *mut c_char = ptr::null_mut();
+    let opts = c(r#"{"probe":true}"#);
+    let code = unsafe {
+        ts_recommend_progress_json(
+            4096,
+            opts.as_ptr(),
+            Some(record_recommendation_progress),
+            (&state as *const RecommendationProgressState)
+                .cast_mut()
+                .cast(),
+            &mut out,
+        )
+    };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let _ = unsafe { take(out) };
+    let total = state.total.load(Ordering::SeqCst);
+    assert!(total > 0);
+    assert_eq!(state.completed.load(Ordering::SeqCst), total);
+    assert!(state.calls.load(Ordering::SeqCst) >= 2);
 }
 
 /// The guard reaches the ranking, and a misspelling is REFUSED rather than

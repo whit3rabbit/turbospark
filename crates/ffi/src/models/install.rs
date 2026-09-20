@@ -18,16 +18,34 @@ pub const TS_INSTALL_BYTES: i32 = 1;
 /// whether this vec is non-empty, and `cancel_active_installs` signals
 /// every walk in it (in practice one -- `ts_install` blocks its caller's
 /// thread -- but nothing here assumes that).
-static ACTIVE_INSTALLS: Mutex<Vec<CancelFlag>> = Mutex::new(Vec::new());
+static ACTIVE_INSTALLS: Mutex<Vec<(CancelFlag, bool)>> = Mutex::new(Vec::new());
 
 /// Signals every in-flight install walk to stop. Returns how many walks
 /// were running; `ts_install_cancel` publishes that as its verdict.
 pub(crate) fn cancel_active_installs() -> usize {
     let active = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
-    for flag in active.iter() {
+    for (flag, _) in active.iter() {
         flag.cancel();
     }
     active.len()
+}
+
+/// These signals never wait for the worker itself. Only its next checkpoint
+/// parks, so the UI remains responsive while an HTTP chunk is in flight.
+pub(crate) fn pause_active_installs() -> usize {
+    let active = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
+    active
+        .iter()
+        .filter(|(flag, pausable)| *pausable && flag.pause())
+        .count()
+}
+
+pub(crate) fn resume_active_installs() -> usize {
+    let active = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
+    active
+        .iter()
+        .filter(|(flag, pausable)| *pausable && flag.resume())
+        .count()
 }
 
 /// Registers one walk: hands out its cancel flag and guarantees
@@ -38,11 +56,21 @@ pub(crate) struct ActiveInstall {
 
 impl ActiveInstall {
     pub(crate) fn register() -> Self {
+        Self::register_with_pause(true)
+    }
+
+    pub(crate) fn register_image() -> Self {
+        // Image packing has separate controls. A text download's Pause
+        // button must not silently park an unrelated image install.
+        Self::register_with_pause(false)
+    }
+
+    fn register_with_pause(pausable: bool) -> Self {
         let flag = CancelFlag::new();
         ACTIVE_INSTALLS
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .push(flag.clone());
+            .push((flag.clone(), pausable));
         Self { flag }
     }
 
@@ -54,7 +82,7 @@ impl ActiveInstall {
 impl Drop for ActiveInstall {
     fn drop(&mut self) {
         let mut active = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
-        active.retain(|f| !f.same_flag(&self.flag));
+        active.retain(|(f, _)| !f.same_flag(&self.flag));
         // In the guard, so a walk cancelled mid-stream and one that failed
         // on the network both count: the number's only reader wants to know
         // that A walk which was running has exited, whatever ended it.
@@ -74,9 +102,10 @@ pub(crate) fn installs_finished() -> usize {
 
 /// Installs the catalog row named `alias` into the store.
 ///
-/// **THE WALK CANNOT RESUME.** It streams 4 to 25 GB and a failure restarts
-/// it from the beginning, which is why the first stage line says so and why
-/// a GUI must surface that before starting rather than after failing.
+/// **IMMUTABLE-REVISION NETWORK RANGES RESUME.** Completed, SHA-256 checked
+/// ranges survive a failed or cancelled walk. Conversion and repacking still
+/// restart because their output is published atomically rather than exposed
+/// as a partially usable install.
 ///
 /// **THE WALK CAN NOW BE CANCELLED** (`ts_install_cancel`): the flag is
 /// checked at every step boundary and inside every ranged chunk read, so a
@@ -106,8 +135,8 @@ pub(crate) fn install(
     let dir = store.install_path(alias);
 
     on_stage(
-        "this walk streams the checkpoint and CANNOT RESUME: a failure restarts it \
-         from the beginning",
+        "failed or cancelled immutable-revision downloads reuse completed ranges; \
+         conversion restarts, and pause keeps in-memory progress",
     );
 
     let installed = catalog::install_with_byte_progress(
@@ -153,8 +182,8 @@ pub(crate) fn install_repo(
         return Err(format!("{} already holds an install", dir.display()));
     }
     on_stage(
-        "this walk streams the checkpoint and CANNOT RESUME: a failure restarts it \
-         from the beginning",
+        "failed or cancelled immutable-revision downloads reuse completed ranges; \
+         conversion restarts, and pause keeps in-memory progress",
     );
     let installed = catalog::install_with_byte_progress(
         &plan,
@@ -225,9 +254,36 @@ mod cancel_tests {
         // Registry mechanics: register one walk, signal it, and watch the
         // guard deregister it exactly once. The finished counter is what
         // the GUI's cancel path polls to learn the walk actually exited.
+        // Pause is scoped to text installs; image packing has its own UI.
+        let image = ActiveInstall::register_image();
+        assert_eq!(unsafe { crate::ts_install_pause() }, 0);
+        assert_eq!(unsafe { crate::ts_install_resume() }, 0);
+        drop(image);
+
         let before = installs_finished();
         let active = ActiveInstall::register();
+        assert_eq!(unsafe { crate::ts_install_pause() }, 1);
+        let worker_flag = active.flag.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || tx.send(worker_flag.checkpoint()).unwrap());
+        let premature = rx.recv_timeout(std::time::Duration::from_millis(100));
+        assert_eq!(unsafe { crate::ts_install_resume() }, 1);
+        assert!(rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap()
+            .is_ok());
+        worker.join().unwrap();
+        assert!(
+            premature.is_err(),
+            "the ABI pause must park the registered walk"
+        );
+        assert_eq!(unsafe { crate::ts_install_pause() }, 1);
         assert_eq!(cancel_active_installs(), 1, "one walk is in flight");
+        assert_eq!(
+            unsafe { crate::ts_install_resume() },
+            0,
+            "resume cannot undo cancellation"
+        );
         assert!(
             active.flag.is_cancelled(),
             "the signal must reach the walk's own flag"

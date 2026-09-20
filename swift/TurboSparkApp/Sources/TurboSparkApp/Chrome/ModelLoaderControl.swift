@@ -24,7 +24,7 @@ import TurboSpark
 /// | nothing installed | `No model installed` (primary), no secondary |
 /// | installed, none selected | `Select a model`, no secondary |
 /// | selected, not open | `Not loaded` |
-/// | installing | `installStageText`, with a progress bar |
+/// | installing | `Installing`; progress lives in the Downloads panel |
 /// | opening | `Loading...`, with an indeterminate bar |
 /// | open | `Ready -- 65,536 ctx` |
 ///
@@ -87,7 +87,7 @@ struct ModelLoaderControl: View {
         }
         .animation(TSMotion.select, value: model.session != nil)
         .animation(TSMotion.hover, value: loaderState)
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// The pill's own border picks up the accent while a session is live, so
@@ -173,12 +173,7 @@ struct ModelLoaderControl: View {
                     }
                 }
 
-                // The bar occupies the same slot the chevron would, so the
-                // pill does not change width when an install starts.
-                if let progress = progressFraction {
-                    ModelLoadProgressBar(fraction: progress, tint: theme.accent)
-                        .frame(width: 42)
-                } else if isIndeterminate {
+                if loaderState == .opening {
                     ModelLoadProgressBar(fraction: nil, tint: theme.accent)
                         .frame(width: 42)
                 } else {
@@ -207,11 +202,10 @@ struct ModelLoaderControl: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
-        // 320 was sized for the two-line label. One line is much wider, and
-        // clipping it would truncate exactly the context figure this control
-        // goes out of its way to print in full.
+        // Honor the available width so long model aliases cannot draw
+        // outside the capsule in a narrow conversation column.
         .frame(maxWidth: density == .compact ? 420 : 320)
+        .fixedSize(horizontal: false, vertical: true)
         .help(chooserHelp)
         // Without this the two Texts are two elements, and VoiceOver reads
         // "Active model" twice.
@@ -390,10 +384,9 @@ struct ModelLoaderControl: View {
         case .noneInstalled, .noneSelected:
             return nil
         case .installing:
-            // The engine's own stage text, not a generic "Installing...":
-            // downloading, verifying and converting have very different
-            // durations and the user is entitled to know which one is slow.
-            return model.installStageText ?? "Installing"
+            // Installer logs can be arbitrarily wide. Keep the selector
+            // compact and let the Downloads panel carry progress.
+            return String(localized: "Installing", bundle: .module)
         case .opening:
             return "Loading..."
         case .notLoaded:
@@ -401,16 +394,6 @@ struct ModelLoaderControl: View {
         case .ready:
             return "Ready -- \(model.resolvedContextTokens.formatted()) ctx"
         }
-    }
-
-    private var progressFraction: Double? {
-        guard loaderState == .installing else { return nil }
-        return model.installProgressFraction
-    }
-
-    private var isIndeterminate: Bool {
-        loaderState == .opening
-            || (loaderState == .installing && model.installProgressFraction == nil)
     }
 
     private var chooserHelp: String {

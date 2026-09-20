@@ -184,6 +184,11 @@ pub fn encode_attention_decode_indexed_tq(
     let k_packed_words = model_io::tq_packed_words(head_dim as i64, tables.k.bits) as u32;
     let v_packed_words = model_io::tq_packed_words(head_dim as i64, tables.v.bits) as u32;
 
+    let min_k_bytes = n_sel as u64 * num_kv_heads as u64 * (1 + k_packed_words) as u64 * 4;
+    let min_v_bytes = n_sel as u64 * num_kv_heads as u64 * (1 + v_packed_words) as u64 * 4;
+    assert!(k_buffer.length() >= min_k_bytes, "K buffer too small");
+    assert!(v_buffer.length() >= min_v_bytes, "V buffer too small");
+
     let partial_pipeline = context.pipeline(
         SOURCE,
         "attention_decode_indexed_partial_tq",

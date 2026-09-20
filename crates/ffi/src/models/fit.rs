@@ -195,12 +195,16 @@ fn expert_stride_of(dir: &std::path::Path, arch: &model_io::ArchConfig) -> Optio
 /// what makes a recommendation trustworthy; a hub ranking under `relaxed`
 /// while its sessions open under `strict` promises a fit the loader then
 /// refuses, in the one place the user cannot see the two disagree.
-pub(crate) fn recommend_json(
+pub(crate) fn recommend_json_with_progress<F>(
     context: Option<u32>,
     slots: model_io::ExpertCacheSlots,
     guard: model_io::LoadGuard,
     probe: bool,
-) -> Result<String, String> {
+    mut on_progress: F,
+) -> Result<String, String>
+where
+    F: FnMut(u32, u32),
+{
     let physical = runtime::physical_memory();
     if physical == 0 {
         return Err(
@@ -222,12 +226,13 @@ pub(crate) fn recommend_json(
     let entries: Vec<&catalog::CatalogEntry> = catalog.entries().collect();
     let context_val = context.unwrap_or(4096);
     let recommendations = if probe {
-        catalog::recommend_catalog_probed(
+        catalog::recommend_catalog_probed_with_progress(
             &entries,
             &catalog::Client::with_timeout(std::time::Duration::from_secs(15)),
             &machine,
             context_val,
             slots,
+            |done, total| on_progress(done as u32, total as u32),
         )?
     } else {
         catalog::recommend_catalog(&entries, &machine, context_val, slots)

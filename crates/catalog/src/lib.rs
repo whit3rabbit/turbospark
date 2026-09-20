@@ -52,9 +52,10 @@ pub use probe::{
 };
 pub use recommend::{
     context_ladder, discover, fit, from_entry, gguf_variants, name_params_hint, probe_entry,
-    rank_recommendations, recommend_catalog, recommend_catalog_probed, CountedSource,
-    DiscoverOptions, Evidence, Fit, FitVerdict, GgufVariant, GgufVariants, LadderRung, Machine,
-    Origin, Recommendation, Shape, ThroughputBand,
+    rank_recommendations, recommend_catalog, recommend_catalog_probed,
+    recommend_catalog_probed_with_progress, CountedSource, DiscoverOptions, Evidence, Fit,
+    FitVerdict, GgufVariant, GgufVariants, LadderRung, Machine, Origin, Recommendation, Shape,
+    ThroughputBand,
 };
 pub use store::{
     default_root, directory_bytes, relocate_default_store, resolve_image_arg, resolve_model_arg,

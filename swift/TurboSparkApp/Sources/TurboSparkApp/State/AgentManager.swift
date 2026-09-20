@@ -64,6 +64,7 @@ public final class AgentManager: @unchecked Sendable {
         [
             (.turboSpark, ".turbospark/agents"),
             (.claude, ".claude/agents"),
+            (.codex, ".codex/agents"),
             (.openCode, ".config/opencode/agents"),
             (.pi, ".pi/agent/agents"),
             (.antigravity, ".gemini/antigravity/agents"),
@@ -85,7 +86,21 @@ public final class AgentManager: @unchecked Sendable {
 
     // MARK: - Discovery
 
-    public func discoverUserAgents(includeExternalAgents: Bool = true) -> [AppAgentDefinition] {
+    /// Whether the default discovery path may read other agent tools' home
+    /// folders. Mirrored from `MacAppSettings.autoLoadExternalAgentContent`
+    /// by `AppModel`; off by default, same contract as
+    /// `SkillManager.externalAgentDiscoveryEnabled`.
+    public var externalAgentDiscoveryEnabled: Bool = false
+
+    /// `includeExternalAgents` nil (the default) follows
+    /// `externalAgentDiscoveryEnabled`; see
+    /// `SkillManager.discoverUserSkills(includeExternalAgents:)`. `home` is
+    /// injectable so the external-root scan is testable against a fixture
+    /// tree instead of the real one.
+    public func discoverUserAgents(
+        includeExternalAgents: Bool? = nil,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> [AppAgentDefinition] {
         var agents: [AppAgentDefinition] = []
         var seenNames = Set<String>()
 
@@ -101,8 +116,8 @@ public final class AgentManager: @unchecked Sendable {
 
         // Same isolation rule as skills: the cross-agent roots are shared
         // home-directory trees a non-default profile does not read.
-        if includeExternalAgents, UserProfileStore.isDefault {
-            let home = fileManager.homeDirectoryForCurrentUser
+        let includesExternalAgents = includeExternalAgents ?? externalAgentDiscoveryEnabled
+        if includesExternalAgents, UserProfileStore.isDefault {
             for (sourceAgent, relPath) in knownUserAgentRoots where sourceAgent != .turboSpark {
                 let dirURL = home.appendingPathComponent(relPath, isDirectory: true)
                 let extAgents = scanDirectory(dirURL, scope: .userGlobal, defaultAgent: sourceAgent)
@@ -337,8 +352,10 @@ public final class AgentManager: @unchecked Sendable {
     // MARK: - Scanning Directory
 
     /// - Parameter containedIn: the project root a PROJECT-scoped scan must
-    ///   keep its files inside (state#39). Nil for a user scope.
-    private func scanDirectory(
+    /// keep its files inside (state#39). Nil for a user scope. Public like
+    /// `SkillManager.scanDirectory`, because the Import wizard scans other
+    /// tools' agent roots directly rather than through discovery.
+    public func scanDirectory(
         _ dirURL: URL, scope: AppAgentScope, defaultAgent: AgentSourceAgent,
         containedIn root: URL? = nil
     ) -> [AppAgentDefinition] {

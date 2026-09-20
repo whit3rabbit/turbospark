@@ -31,6 +31,11 @@ final class PluginManagerTests: XCTestCase {
             userEnableProvider: { [unowned self] in userEnable },
             projectEnableProvider: { [unowned self] _ in projectEnable },
             claudeEnableProvider: { [unowned self] in claudeEnable })
+        // This suite exercises the interop path itself; the app default is
+        // opt-in (`includeClaudeInterop` false until
+        // `autoLoadExternalAgentContent` is enabled), which
+        // `PluginGatingTests` covers.
+        manager.includeClaudeInterop = true
     }
 
     override func tearDownWithError() throws {

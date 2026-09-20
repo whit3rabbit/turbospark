@@ -169,13 +169,16 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var serverFavorites: [ServerFavorite]
     public var serverPinnedPort: UInt16
     /// Compatibility mirror of the currently selected reusable system prompt.
-    /// The prompt library and its selection are the source of truth.
+    /// The prompt library and its selection are the source of truth. Empty by
+    /// default: a fresh install ships with the built-in library but nothing
+    /// selected, so no system prompt is sent until the user picks one.
     public var defaultSystemPrompt: String
     /// Reusable app-wide system prompts. A fresh settings file starts with a
-    /// compact coding-agent default and two alternatives. An encoded empty
-    /// array is an intentional user choice and remains empty.
+    /// compact starter library and NOTHING selected. An encoded empty array
+    /// is an intentional user choice and remains empty.
     public var systemPrompts: [AppSystemPrompt]
     /// UUID string of the selected app-wide system prompt, or empty for none.
+    /// Empty is the fresh-install default.
     public var activeSystemPromptID: String
     /// App-wide response-style prompts. A newly initialized settings file
     /// starts with the compact built-in library, while an empty array means
@@ -185,15 +188,34 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// mirrors `activeSteeringPresetID` and leaves malformed hand edits
     /// harmless at decode time.
     public var activePersonalityID: String
-    /// TurboSpark's per-profile SOUL fallback, used only when Hermes' global
-    /// SOUL.md does not exist. Empty is the intentional default.
+    /// Legacy pre-library SOUL fallback, kept only as the decode-migration
+    /// input: a non-empty value is moved into `soulPrompts` once and the
+    /// field is written back empty. Nothing reads it at runtime.
     public var soulPrompt: String
+    /// Whether the selected SOUL entry is injected into the system prompt at
+    /// all. Disabled is the intentional default: detected external SOUL.md
+    /// files (Hermes, OpenClaw) are import sources only and are never
+    /// consumed on their own.
+    public var soulPromptEnabled: Bool
+    /// Saved SOUL.md entries. The selected row is used while
+    /// `soulPromptEnabled` is on. Empty is the intentional default; nothing
+    /// ships a soul.
+    public var soulPrompts: [AppSoulPrompt]
+    /// UUID string of the selected SOUL entry, or empty for none.
+    public var activeSoulPromptID: String
     /// User-scope plugin enable state, keyed `<plugin>@<origin>`
     /// (`swift/docs/SWIFT_PLUGINS.md`). Absent means enabled: an installed plugin
     /// that nothing disabled runs. Claude Code's own setting is consulted
     /// only for its interop plugins and only when neither this nor a
     /// project's map answers.
     public var enabledPlugins: [String: Bool]
+    /// Whether user-global skills, agents, plugins, and hooks are discovered
+    /// LIVE from other agent tools' home folders (Claude, Cursor, Codex, ...)
+    /// without an explicit import. Off by default: other agents' content
+    /// appears only after the Import wizard copies it into TurboSpark's own
+    /// folders, or after the user opts into live discovery here. Project
+    /// directories inside the open repository are unaffected.
+    public var autoLoadExternalAgentContent: Bool
     /// Whether to display the menu bar status extra icon in macOS menu bar.
     public var showMenuBarItem: Bool
     /// Whether fans pinned through the status bar's ThermalForge control
@@ -273,13 +295,17 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         serverHost: String = "127.0.0.1",
         serverFavorites: [ServerFavorite] = [],
         serverPinnedPort: UInt16 = 0,
-        defaultSystemPrompt: String = AppSystemPrompt.builtIns[0].instructions,
+        defaultSystemPrompt: String = "",
         systemPrompts: [AppSystemPrompt] = AppSystemPrompt.builtIns,
-        activeSystemPromptID: String = AppSystemPrompt.builtIns[0].id.uuidString,
+        activeSystemPromptID: String = "",
         personalities: [AppPersonality] = AppPersonality.builtIns,
         activePersonalityID: String = "",
         soulPrompt: String = "",
+        soulPromptEnabled: Bool = false,
+        soulPrompts: [AppSoulPrompt] = [],
+        activeSoulPromptID: String = "",
         enabledPlugins: [String: Bool] = [:],
+        autoLoadExternalAgentContent: Bool = false,
         showMenuBarItem: Bool = true,
         keepFansPinnedOnQuit: Bool = false,
         serverAutoStartOnLaunch: Bool = false,
@@ -342,10 +368,17 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.serverFavorites = serverFavorites
         self.serverPinnedPort = serverPinnedPort
         let starterPrompts = AppSystemPrompt.builtIns
-        let usesStarterSelection = systemPrompts == starterPrompts
+        // The memberwise default for `activeSystemPromptID` changed from the
+        // first starter row to none, so both spellings mean "the caller did
+        // not touch the library": old callers selected the starter by default,
+        // new callers select nothing.
+        let starterLibraryPassed = systemPrompts == starterPrompts
+        let starterSelectionPassed = starterLibraryPassed
             && activeSystemPromptID == starterPrompts[0].id.uuidString
+        let noSelectionPassed = starterLibraryPassed && activeSystemPromptID.isEmpty
         let trimmedDefaultPrompt = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if usesStarterSelection && trimmedDefaultPrompt != starterPrompts[0].instructions {
+        if (starterSelectionPassed || noSelectionPassed)
+            && trimmedDefaultPrompt != starterPrompts[0].instructions {
             // Preserve the historical initializer's `defaultSystemPrompt:`
             // contract for callers and old tests that construct settings
             // without knowing about the new library fields.
@@ -360,6 +393,12 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
                 self.activeSystemPromptID = imported.id.uuidString
                 self.defaultSystemPrompt = imported.instructions
             }
+        } else if starterSelectionPassed {
+            // Only `activeSystemPromptID` was passed: the starter row stays
+            // selected with its compatibility mirror.
+            self.systemPrompts = starterPrompts
+            self.activeSystemPromptID = starterPrompts[0].id.uuidString
+            self.defaultSystemPrompt = starterPrompts[0].instructions
         } else {
             self.defaultSystemPrompt = defaultSystemPrompt
             self.systemPrompts = systemPrompts
@@ -368,7 +407,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.personalities = personalities
         self.activePersonalityID = activePersonalityID
         self.soulPrompt = soulPrompt
+        self.soulPromptEnabled = soulPromptEnabled
+        self.soulPrompts = soulPrompts
+        self.activeSoulPromptID = activeSoulPromptID
         self.enabledPlugins = enabledPlugins
+        self.autoLoadExternalAgentContent = autoLoadExternalAgentContent
         self.showMenuBarItem = showMenuBarItem
         self.keepFansPinnedOnQuit = keepFansPinnedOnQuit
         self.serverAutoStartOnLaunch = serverAutoStartOnLaunch
@@ -473,20 +516,27 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         } else {
             // A pre-library settings file can hold a meaningful custom
             // default. Preserve it as a named row instead of replacing it
-            // with the new starter prompt during migration.
+            // with the new starter prompt during migration. A value equal to
+            // the old shipped starter text was never an explicit choice, so
+            // it migrates to the seeded library with NOTHING selected, the
+            // same fresh-install default.
             let trimmedLegacyPrompt = legacyDefaultSystemPrompt
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let starterText = AppSystemPrompt.builtIns[0].instructions
             let migratedPrompts: [AppSystemPrompt]
-            if trimmedLegacyPrompt.isEmpty {
+            let migratedSelection: AppSystemPrompt?
+            if trimmedLegacyPrompt.isEmpty || trimmedLegacyPrompt == starterText {
                 migratedPrompts = AppSystemPrompt.builtIns
+                migratedSelection = nil
             } else {
-                migratedPrompts = [
-                    AppSystemPrompt(name: "Imported Default", instructions: trimmedLegacyPrompt)
-                ]
+                let imported = AppSystemPrompt(
+                    name: "Imported Default", instructions: trimmedLegacyPrompt)
+                migratedPrompts = [imported]
+                migratedSelection = imported
             }
             self.systemPrompts = migratedPrompts
-            self.activeSystemPromptID = migratedPrompts.first?.id.uuidString ?? ""
-            self.defaultSystemPrompt = migratedPrompts.first?.instructions ?? ""
+            self.activeSystemPromptID = migratedSelection?.id.uuidString ?? ""
+            self.defaultSystemPrompt = migratedSelection?.instructions ?? ""
         }
         // Missing means this settings file predates personalities, so seed the
         // initial library. An encoded empty array is intentional removal and
@@ -496,10 +546,46 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             : AppPersonality.builtIns
         self.activePersonalityID = c.decodeLenient(
             String.self, forKey: .activePersonalityID, fallback: "")
-        self.soulPrompt = c.decodeLenient(
+        let legacySoulPrompt = c.decodeLenient(
             String.self, forKey: .soulPrompt, fallback: "")
+        if c.contains(.soulPrompts) {
+            // An encoded empty library is intentional removal. A stale or
+            // malformed selection becomes none rather than another entry.
+            let decodedSouls = c.decodeLenientElements(
+                AppSoulPrompt.self, forKey: .soulPrompts)
+            let selectedSoulID = c.decodeLenient(
+                String.self, forKey: .activeSoulPromptID, fallback: "")
+            let activeSoulID = UUID(uuidString: selectedSoulID)
+                .flatMap { id in decodedSouls.contains(where: { $0.id == id }) ? id : nil }
+            self.soulPrompts = decodedSouls
+            self.activeSoulPromptID = activeSoulID?.uuidString ?? ""
+            self.soulPromptEnabled = c.decodeLenient(
+                Bool.self, forKey: .soulPromptEnabled, fallback: false)
+        } else {
+            // A pre-library file kept one SOUL string. Non-empty content was
+            // an explicit authorship, so it migrates to one selected entry
+            // with SOUL enabled; blank migrates to the fresh-install default
+            // (disabled, empty library).
+            let trimmedLegacySoul = legacySoulPrompt
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedLegacySoul.isEmpty {
+                self.soulPrompts = []
+                self.activeSoulPromptID = ""
+                self.soulPromptEnabled = false
+            } else {
+                let imported = AppSoulPrompt(name: "Imported Soul", content: trimmedLegacySoul)
+                self.soulPrompts = [imported]
+                self.activeSoulPromptID = imported.id.uuidString
+                self.soulPromptEnabled = true
+            }
+        }
+        // The legacy field is retired the moment it has been consumed; every
+        // later save writes it back empty so the migration never re-fires.
+        self.soulPrompt = ""
         self.enabledPlugins = c.decodeLenient(
             [String: Bool].self, forKey: .enabledPlugins, fallback: [:])
+        self.autoLoadExternalAgentContent = c.decodeLenient(
+            Bool.self, forKey: .autoLoadExternalAgentContent, fallback: false)
         self.showMenuBarItem = c.decodeLenient(
             Bool.self, forKey: .showMenuBarItem, fallback: true)
         self.keepFansPinnedOnQuit = c.decodeLenient(

@@ -161,7 +161,7 @@ Three facts about that layout that are decisions rather than defaults:
 `make-dmg.sh` wraps the bundle with an `/Applications` symlink, then
 **mounts the image it just built and checks it**: main executable present,
 all three CLI binaries present, a resource `.bundle` in `Contents/Resources`,
-and `codesign --verify --strict` on the mounted copy. That check is the
+and `codesign --verify --deep --strict` on the mounted copy. That check is the
 reason the script exists rather than a one-line `hdiutil` call in the
 workflow -- `hdiutil create` exits 0 over a staging directory missing the
 resource bundle, and the symptom is an app that launches with no provider
@@ -198,6 +198,94 @@ add a `xcrun notarytool submit --wait` plus `xcrun stapler staple` pair
 after `make-dmg.sh`. Only the last two are new work; the signing seam is
 already there.
 
+## In-app updates: Sparkle, fed from GitHub Releases
+
+The app updates itself through Sparkle 2 (`SUPublicEDKey` + `SUFeedURL` in
+the bundle's Info.plist, both written by `make-app-bundle.sh`). The update
+archive IS the release DMG -- Sparkle 2 mounts DMGs natively -- and the feed
+is the `appcast.xml` asset each release attaches, reached through the
+evergreen `https://github.com/whit3rabbit/turbospark/releases/latest/download/appcast.xml`.
+No feed host beyond GitHub Releases; `release.yml`'s `build-macos` job
+generates and uploads it via `scripts/make-sparkle-appcast.sh`.
+The runtime detection path and UI contract are documented in
+[`swift/docs/AUTO_UPDATE.md`](../swift/docs/AUTO_UPDATE.md).
+
+Trust is EdDSA, not Apple. The app is ad-hoc signed, so there is no Team ID
+for Sparkle's Apple-identity comparison; what makes an update verifiable is
+the `sparkle:edSignature` over the DMG, checked against the committed public
+key. This is why a Developer ID is not a prerequisite for the updater. The
+DMG a brew user installs and the DMG Sparkle installs are the same artifact,
+and the Gatekeeper quarantine caveat above applies to both equally -- it is
+unchanged by the updater.
+
+One-time bootstrap (done 2026-09-20):
+
+```sh
+# generate_keys lives in the Sparkle tools tarball the script downloads
+./bin/generate_keys            # created the key in the login keychain, printed SUPublicEDKey
+./bin/generate_keys -x ~/path/to/sparkle-ed25519.key   # export a copy
+gh secret set SPARKLE_ED_PRIVATE_KEY < ~/path/to/sparkle-ed25519.key
+```
+
+The public half is the literal in `make-app-bundle.sh` (public on purpose:
+local bundles and ci.yml must never need the secret). The private half lives
+in the login keychain and as the `SPARKLE_ED_PRIVATE_KEY` repo secret. Lose
+both and updates stop being signable -- Sparkle's key rotation
+documentation covers recovery, which requires a Developer ID DMG, so treat
+the key as release-critical.
+
+The secret is required. `build-macos` fails before publishing when it is
+missing. The feed URL resolves through the latest release, so publishing a
+release without `appcast.xml` would turn update checks into a 404 for every
+installed app.
+
+For Homebrew installs, the `turbospark` cask declares `auto_updates true`:
+the app replaces its own bundle, and brew defers to it instead of offering
+an `upgrade` that would fight the updater over the same `/Applications`
+path. `turbospark-cli` keeps no updater -- `brew upgrade turbospark-cli`
+remains its only update path (the CLIs inside the app bundle update together
+with the app, so a cask `upgrade` after an in-app update would at worst
+relink three binaries from the newer bundle).
+
+Local two-version smoke (the real gate; proves an ad-hoc app survives a
+Sparkle install + relaunch on current macOS). The app binary is identical
+across the two versions -- only the Info.plist version differs -- so the
+"update" is real Sparkle work with throwaway version numbers:
+
+```sh
+KEY=~/.turbospark/keys/sparkle-ed25519-private.key   # keychain export (bootstrap above)
+TOOLS=/tmp/turbospark-sparkle-tools                  # Sparkle tarball extracted
+
+# 1. The "new" release: DMG + its localhost-signed feed.
+scripts/make-app-bundle.sh --version 9.9.2
+scripts/make-dmg.sh --version 9.9.2
+mkdir -p /tmp/update-smoke && cp dist/TurboSpark-9.9.2-arm64.dmg /tmp/update-smoke/
+SPARKLE_ED_KEY_FILE="$KEY" SPARKLE_TOOLS_DIR="$TOOLS" \
+  scripts/make-sparkle-appcast.sh --version 9.9.2 \
+  --dist /tmp/update-smoke --download-url-prefix http://127.0.0.1:8765/
+(cd /tmp/update-smoke && python3 -m http.server 8765) &
+
+# 2. The "old" app, stamped down, launched with the feed override and the
+# unattended smoke driver. The driver forces a check even if SULastCheckTime
+# says the normal interval is not due.
+scripts/make-app-bundle.sh --version 9.9.1 --skip-build
+TURBOSPARK_UPDATE_SILENT=1 \
+TURBOSPARK_UPDATE_FEED_URL=http://127.0.0.1:8765/appcast.xml \
+  dist/TurboSpark.app/Contents/MacOS/TurboSparkApp &
+
+# 3. Assert the handover and inspect the complete funnel:
+test "$(plutil -extract CFBundleShortVersionString raw \
+  dist/TurboSpark.app/Contents/Info.plist)" = "9.9.2"
+sed -n '1,200p' /tmp/turbospark-update-smoke.log
+# The log must end with installed and relaunched=true.
+```
+
+(`SPARKLE_TOOLS_DIR` avoids the tarball re-download; loopback is exempt from
+ATS, so plain http on 127.0.0.1 needs no Info.plist exception.) The
+ad-hoc-signing edge this smoke exists for: Sparkle verifies the new bundle's
+code signature and there is no stable identity to match, so if current macOS
+refuses the handover it happens HERE, not on a user's machine.
+
 ## Prerequisites
 
 - **Local cargo >= 1.90** if you ever want to run `cargo publish
@@ -214,6 +302,9 @@ already there.
 - **`HOMEBREW_TAP_TOKEN`** repo secret: a PAT with push access to
   `whit3rabbit/homebrew-tap`, only needed for the cask update. Same
   no-op-with-notice behavior when unset.
+- **`SPARKLE_ED_PRIVATE_KEY`** repo secret: the Sparkle EdDSA private key
+  (see the in-app updates section). Without it `build-macos` fails before a
+  GitHub Release can replace the last valid `appcast.xml`.
 - **`cargo login`** if publishing manually (not through CI): the token
   needs publish rights on every crate name below, which is automatic on
   first publish (crates.io grants the publishing account ownership) and
@@ -257,6 +348,12 @@ because the symlinks are part of the same cask.
 **`conflicts_with` is declared on both casks, not one.** Homebrew does not
 infer the reverse edge, and without both the second install would try to
 link three command names the first already owns.
+
+**`auto_updates true` is on the app cask only.** The app self-updates
+through Sparkle (previous section), and the stanza is what keeps `brew
+outdated`/`brew upgrade` from fighting that updater over the same
+`/Applications` path. The CLI cask gets no updater and no stanza: `brew
+upgrade turbospark-cli` is its update path, by design.
 
 **`zap` deliberately does not list `~/.turbospark`.** That is where
 multi-gigabyte model installs live, and a zap is not the place to silently

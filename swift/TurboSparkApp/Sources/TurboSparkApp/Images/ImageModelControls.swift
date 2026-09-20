@@ -97,6 +97,7 @@ struct ImageModelControls: View {
                                 Text(ImageModelPresentation.quantization(source.quantization))
                             } icon: { Image(systemName: "arrow.down.circle") }
                         }
+                        .disabled(!model.canInstallImageModel(alias: source.alias))
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -134,12 +135,13 @@ struct ImageModelControls: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
+                    .disabled(!model.canInstallImageModel(alias: source.alias))
                 }
             }
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden)
         .themedFont(.small)
-        .disabled(model.isRunning || model.isInstallingModel || model.isInstallingImageModel)
+        .disabled(model.isRunning)
         .onChange(of: model.imageModelPath) { browsingFamily = nil }
     }
 }

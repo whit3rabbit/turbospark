@@ -134,6 +134,11 @@ typedef void (*TsInstallCallback)(void *userdata, int32_t kind,
                                   const char *text, size_t len,
                                   uint64_t done, uint64_t total);
 
+/* Recommendation header-probe progress. Called on the recommending thread;
+ * `done` is monotonic and `total` excludes standalone vision towers. */
+typedef void (*TsRecommendCallback)(void *userdata,
+                                    uint32_t done, uint32_t total);
+
 /* ---- errors and strings ---- */
 
 /*
@@ -797,6 +802,9 @@ int32_t ts_model_delete(const char *alias);
  *                     with. A footprint is slots x layers x expert stride, so
  *                     a ranking at one slot count and an open at another are
  *                     two configurations rather than one approximation.
+ *   probe             boolean (default false). Read curated checkpoint
+ *                     headers before ranking when offline evidence cannot
+ *                     establish a runnable row.
  *
  * Each row carries "countedSource": "measured" | "estimated" | "unknown".
  * NEVER render an "unknown" row's countedBytes as a figure -- a row whose
@@ -804,6 +812,14 @@ int32_t ts_model_delete(const char *alias);
  */
 int32_t ts_recommend_json(uint32_t context_window, const char *options_json,
                           char **out);
+
+/* The same recommendation call with real completed-header progress. The
+ * callback fires only when `probe` is true, beginning at 0/total and ending
+ * at total/total. It runs on this call's thread and may be NULL. */
+int32_t ts_recommend_progress_json(uint32_t context_window,
+                                   const char *options_json,
+                                   TsRecommendCallback cb, void *userdata,
+                                   char **out);
 
 /*
  * Probes a Hugging Face repository by HEADER ALONE: kilobytes and seconds,
@@ -915,9 +931,9 @@ int32_t ts_install_bytes_json(const char *alias, char **out);
  * Installs the catalog row `alias`. Blocks for the whole walk, which is
  * minutes to tens of minutes.
  *
- * THE WALK CANNOT RESUME. It streams the checkpoint without writing it to
- * disk whole, and a failure restarts from the beginning. Tell the user that
- * BEFORE starting, not after failing; the first stage line says so.
+ * Failed or cancelled immutable-revision downloads retain SHA-256 checked
+ * ranges for a later ts_install call. Conversion may restart. Floating
+ * revisions never reuse cached ranges.
  *
  * `cb` receives TS_INSTALL_STAGE lines on the calling thread and
  * TS_INSTALL_BYTES updates FROM WORKER THREADS, CONCURRENTLY and possibly
@@ -931,7 +947,7 @@ int32_t ts_install(const char *alias, TsInstallCallback cb, void *userdata,
  * Probes and installs an arbitrary Hugging Face repository `repo` under
  * local `alias`. `file` and `sidecar_repo` may be NULL.
  *
- * Blocks for the whole walk and cannot resume.
+ * Blocks for the whole walk. Pause/resume works only while the walk is alive.
  */
 int32_t ts_install_repo(const char *repo, const char *alias, const char *file,
                         const char *sidecar_repo, TsInstallCallback cb,
@@ -942,12 +958,24 @@ int32_t ts_install_repo(const char *repo, const char *alias, const char *file,
  * walk was running and has been signalled, 0 when nothing was running.
  *
  * The walk notices at its next step boundary or ranged chunk read (seconds,
- * not tensor boundaries) and fails with the "install cancelled" error, the
- * same death a network failure gives it: CANNOT RESUME applies, so nothing
- * of the partial install is kept. Safe to call from any thread while an
- * install is blocking another one.
+ * not tensor boundaries) and fails with the "install cancelled" error.
+ * Verified ranges for immutable revisions remain available to a later
+ * ts_install call. Safe to call from any thread while an install is blocking
+ * another one.
  */
 int32_t ts_install_cancel(void);
+
+/*
+ * Pause/resume active text-model installs while this process stays alive. These calls
+ * return 1 if a non-cancelled walk received the signal, otherwise 0.
+ * In-flight requests finish before pausing; no new requests start until
+ * resumed. Pausing preserves buffers and written output. Cancellation wakes
+ * paused workers and remains final. Quitting, failure, and cancellation
+ * require a new install call, not ts_install_resume; that call can reuse
+ * verified immutable-revision ranges. Safe from any thread.
+ */
+int32_t ts_install_pause(void);
+int32_t ts_install_resume(void);
 
 /*
  * How many install walks have finished (success, failure, or cancel) since

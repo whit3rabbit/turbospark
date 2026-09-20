@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use model_io::{ArchConfig, ModelFamily, VisionConfig};
@@ -18,16 +18,27 @@ pub(crate) fn range_source(
     byte_progress: Option<&ByteProgressCallback>,
     client: &Client,
     cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
 ) -> HttpRangeSource {
-    let source = match byte_progress {
+    let mut source = match byte_progress {
         Some(cb) => HttpRangeSource::with_progress(url, Arc::clone(cb)),
         None => HttpRangeSource::new(url),
     }
     .with_optional_token(client.token());
+    if let Some(cache_dir) = cache_dir {
+        source = source.with_cache_dir(cache_dir);
+    }
     match cancel {
         Some(flag) => source.with_cancel(flag.clone()),
         None => source,
     }
+}
+
+/// Immutable repository URLs can safely retain completed network ranges
+/// between failed walks. Floating branches must never reuse cached bytes.
+pub(crate) fn immutable_download_cache(dir: &Path, repo: &RepoRef) -> Option<PathBuf> {
+    (repo.revision.len() == 40 && repo.revision.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| dir.join(".download-cache"))
 }
 
 /// Step-boundary cancel check for the whole-file GETs (`config.json`, a
@@ -36,7 +47,7 @@ pub(crate) fn range_source(
 /// right granularity for them.
 fn check_cancelled(cancel: Option<&CancelFlag>) -> Result<(), String> {
     match cancel {
-        Some(flag) if flag.is_cancelled() => Err(INSTALL_CANCELLED.to_string()),
+        Some(flag) if flag.checkpoint().is_err() => Err(INSTALL_CANCELLED.to_string()),
         _ => Ok(()),
     }
 }
@@ -53,7 +64,15 @@ pub(crate) fn stream_gguf(
         .file
         .as_deref()
         .ok_or_else(|| "a gguf install needs a filename".to_string())?;
-    let source = crate::gguf_source::load(client, &plan.weights, file, byte_progress, cancel)?;
+    let cache = immutable_download_cache(dir, &plan.weights);
+    let source = crate::gguf_source::load(
+        client,
+        &plan.weights,
+        file,
+        byte_progress,
+        cancel,
+        cache.as_deref(),
+    )?;
     let header = &source.header;
     if header.architecture() == Some("minimax-m2") {
         let size = repack::minimax_gguf_sizing(header).map_err(|e| e.to_string())?;
@@ -102,6 +121,7 @@ pub(crate) fn stream_mlx(
     byte_progress: Option<&ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
 ) -> Result<ArchConfig, String> {
+    let cache = immutable_download_cache(dir, &plan.weights);
     check_cancelled(cancel)?;
     let config_text = String::from_utf8(client.get(&plan.weights.file_url("config.json"))?)
         .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
@@ -156,7 +176,7 @@ pub(crate) fn stream_mlx(
             "reusing the trunk already installed at {}",
             existing_dir.display()
         ));
-        let head_pairs = fetch_mtp_shards(mtp, client, byte_progress, cancel)?;
+        let head_pairs = fetch_mtp_shards(mtp, client, byte_progress, cancel, cache.as_deref())?;
         let mtp_base_names: Vec<String> = head_pairs
             .iter()
             .flat_map(|(h, _)| h.tensors.keys().cloned())
@@ -204,7 +224,7 @@ pub(crate) fn stream_mlx(
         .iter()
         .map(|name| {
             let url = plan.weights.file_url(name);
-            range_source(url, byte_progress, client, cancel)
+            range_source(url, byte_progress, client, cancel, cache.as_deref())
         })
         .collect();
     let mut headers = sources
@@ -263,7 +283,9 @@ pub(crate) fn stream_mlx(
         progress(&format!(
             "fetching the multi-token-prediction head from {mtp}"
         ));
-        for (header, source) in fetch_mtp_shards(mtp, client, byte_progress, cancel)? {
+        for (header, source) in
+            fetch_mtp_shards(mtp, client, byte_progress, cancel, cache.as_deref())?
+        {
             headers.push(header);
             sources.push(source);
         }
@@ -541,6 +563,7 @@ fn fetch_mtp_shards(
     client: &Client,
     byte_progress: Option<&ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
 ) -> Result<Vec<(SafetensorsHeader, HttpRangeSource)>, String> {
     let shards = fetch_prefixed_shards(
         mtp,
@@ -549,6 +572,7 @@ fn fetch_mtp_shards(
         client,
         byte_progress,
         cancel,
+        cache_dir,
     )
     .map_err(|e| {
         // Preserve the head-specific wording for the "nothing matched"
@@ -647,6 +671,7 @@ pub(crate) fn fetch_prefixed_shards(
     client: &Client,
     byte_progress: Option<&ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
 ) -> Result<Vec<(String, SafetensorsHeader, HttpRangeSource)>, String> {
     check_cancelled(cancel)?;
     let index_url = repo.file_url("model.safetensors.index.json");
@@ -689,7 +714,7 @@ pub(crate) fn fetch_prefixed_shards(
     for shard_name in shard_names {
         check_cancelled(cancel)?;
         let url = repo.file_url(&shard_name);
-        let source = range_source(url, byte_progress, client, cancel);
+        let source = range_source(url, byte_progress, client, cancel, cache_dir);
         let mut header = repack::fetch_safetensors_header(&source)
             .map_err(|e| format!("{repo}/{shard_name} header: {e}"))?;
         header
@@ -734,6 +759,7 @@ pub(crate) fn stream_vision_sidecar(
     byte_progress: Option<&ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
 ) -> Result<VisionConfig, String> {
+    let cache = immutable_download_cache(out_dir, weights);
     check_cancelled(cancel)?;
     let config_text = String::from_utf8(client.get(&weights.file_url("config.json"))?)
         .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
@@ -799,6 +825,7 @@ pub(crate) fn stream_vision_sidecar(
         client,
         byte_progress,
         cancel,
+        cache.as_deref(),
     )?;
     progress(&format!("{} vision shard(s) fetched", fetched.len()));
 
@@ -907,8 +934,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        enable_bytes_detected_vision, enable_requested_vision, retain_complete_shard_set,
-        shard_names_for_prefixes, write_vision_preprocessor,
+        enable_bytes_detected_vision, enable_requested_vision, immutable_download_cache,
+        retain_complete_shard_set, shard_names_for_prefixes, write_vision_preprocessor,
     };
     use crate::{Catalog, InstallPlan};
     use model_io::ModelFamily;
@@ -970,6 +997,19 @@ mod tests {
             vision_only: false,
             vision_file: None,
         }
+    }
+
+    #[test]
+    fn only_immutable_revisions_receive_a_durable_range_cache() {
+        let root = std::path::Path::new("/tmp/install");
+        let pinned =
+            crate::hf::RepoRef::new("example/model", "0123456789abcdef0123456789abcdef01234567");
+        assert_eq!(
+            immutable_download_cache(root, &pinned),
+            Some(root.join(".download-cache"))
+        );
+        let floating = crate::hf::RepoRef::new("example/model", "main");
+        assert_eq!(immutable_download_cache(root, &floating), None);
     }
 
     #[test]

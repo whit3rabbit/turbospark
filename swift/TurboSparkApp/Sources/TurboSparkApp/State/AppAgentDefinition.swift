@@ -31,6 +31,7 @@ public enum AppAgentScope: String, Codable, CaseIterable, Sendable {
 public enum AgentSourceAgent: String, Codable, CaseIterable, Sendable {
     case turboSpark = "turbospark"
     case claude = "claude"
+    case codex = "codex"
     case openCode = "opencode"
     case pi = "pi"
     case antigravity = "antigravity"
@@ -41,6 +42,7 @@ public enum AgentSourceAgent: String, Codable, CaseIterable, Sendable {
         switch self {
         case .turboSpark: return "TurboSpark"
         case .claude: return "Claude Code"
+        case .codex: return "Codex"
         case .openCode: return "OpenCode"
         case .pi: return "Pi"
         case .antigravity: return "Antigravity"

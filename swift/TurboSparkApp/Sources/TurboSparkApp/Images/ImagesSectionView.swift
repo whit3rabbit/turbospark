@@ -13,6 +13,9 @@ struct ImagesSectionView: View {
     @State private var selecting = false
     @State private var selection: Set<UUID> = []
     @State private var preview: AppArtifact?
+    @AppStorage("TurboSpark.imageModelRecommendationSeen")
+    private var imageModelRecommendationSeen = false
+    @State private var showingImageModelRecommendation = false
 
     private var artifacts: [AppArtifact] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -41,6 +44,14 @@ struct ImagesSectionView: View {
                 reusePrompt(artifact)
             }
         }
+        .sheet(isPresented: $showingImageModelRecommendation) {
+            ImageModelRecommendationSheet(model: model)
+        }
+        .onChange(of: model.shouldRecommendImageModel, initial: true) { _, shouldRecommend in
+            guard shouldRecommend, !imageModelRecommendationSeen else { return }
+            imageModelRecommendationSeen = true
+            showingImageModelRecommendation = true
+        }
         .onChange(of: organizing) { selection.removeAll(); selecting = false }
         .onChange(of: search) { selection.removeAll() }
         .onChange(of: model.generating) {
@@ -56,11 +67,11 @@ struct ImagesSectionView: View {
 
     private var header: some View {
         HStack(spacing: 20) {
-            Text("Images", bundle: .module).themedFont(.title2, weight: .semibold)
+            Text("Image Generation", bundle: .module).themedFont(.title2, weight: .semibold)
             Picker(selection: $organizing) {
                 Text("Create", bundle: .module).tag(false)
                 Text("Organize", bundle: .module).tag(true)
-            } label: { Text("Images", bundle: .module) }
+            } label: { Text("Image Generation", bundle: .module) }
             .labelsHidden().pickerStyle(.segmented).frame(width: 210)
             Spacer(minLength: 0)
             Text("\(model.savedImageArtifacts.count) image(s)", bundle: .module)
@@ -119,7 +130,7 @@ struct ImagesSectionView: View {
                     .multilineTextAlignment(.center).frame(maxWidth: 380)
                 if organizing && !search.isEmpty {
                     Button { search = "" } label: { Text("Clear search", bundle: .module) }
-                } else if !organizing && model.imageModelPath.isEmpty && !model.isInstallingImageModel {
+                } else if !organizing && model.imageModelPath.isEmpty {
                     if let source = model.imageDownloadChoices.first {
                         Button {
                             model.installImageModel(source)
@@ -136,6 +147,7 @@ struct ImagesSectionView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.regular)
+                        .disabled(!model.canInstallImageModel(alias: source.alias))
                         .padding(.top, 4)
                     }
                 }

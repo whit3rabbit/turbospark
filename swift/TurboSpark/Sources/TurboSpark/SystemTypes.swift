@@ -1,12 +1,12 @@
 import Foundation
 
 /// Hardware model fit recommendation for this machine.
-public struct ModelRecommendation: Decodable, Sendable, Identifiable, Equatable {
+public struct ModelRecommendation: Codable, Sendable, Identifiable, Equatable {
     /// Unique identifier for table presentation matching the model alias.
     public var id: String { alias }
 
     /// Fit verdict classifying whether and how the model runs on this machine.
-    public enum FitVerdict: String, Decodable, Sendable {
+    public enum FitVerdict: String, Codable, Sendable {
         /// Fully fits inside unified memory with plenty of headroom.
         case resident
         /// Streams expert weights from storage with active cache fitting memory.

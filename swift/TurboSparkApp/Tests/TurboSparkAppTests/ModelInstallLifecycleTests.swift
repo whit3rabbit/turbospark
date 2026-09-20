@@ -7,38 +7,54 @@ import XCTest
 @MainActor
 final class ModelInstallLifecycleTests: XCTestCase {
 
-    // MARK: - E1: Cancel stops watching, and says so
+    // MARK: - E1: Cancel retains ownership until the native stream closes
 
-    func testCancellingAnInstallRefusesToStartTheSameOneAgain() {
+    func testCancellationWaitsForTheWriterBeforeAllowingRetry() async {
         let appModel = AppModel()
-        appModel.installingAlias = "gemma4"
-        appModel.isInstallingModel = true
+        defer { appModel.stopCronScheduler() }
+        let (events, continuation) = AsyncThrowingStream<InstallEvent, Error>.makeStream()
+        appModel.installModel(alias: "cancel-fixture", stream: { _ in events })
+        let task = appModel.installTask
+        await Task.yield()
 
         appModel.cancelInstall()
-
-        // The engine has no install-cancel call: dropping the consumer ends
-        // DELIVERY while `ts_install` keeps streaming that checkpoint to the
-        // same directory. A second install of the same alias would be a
-        // second writer on it.
-        XCTAssertTrue(appModel.abandonedInstallAliases.contains("gemma4"))
-        XCTAssertFalse(
-            appModel.canInstall(alias: "gemma4"),
-            "Re-installing an alias whose walk cannot be stopped must be refused.")
+        XCTAssertTrue(appModel.isInstallingModel)
+        XCTAssertTrue(appModel.isCancellingModelInstall)
+        XCTAssertFalse(task?.isCancelled ?? true, "the consumer must wait for native completion")
+        XCTAssertFalse(appModel.canInstall(alias: "cancel-fixture"))
         XCTAssertTrue(
-            appModel.canInstall(alias: "some-other-model"),
-            "A DIFFERENT model writes a different directory and is still installable.")
+            appModel.canInstall(alias: "another-model"),
+            "a different model may queue while the native writer is stopping")
+        appModel.installModel(alias: "cancel-fixture", stream: { _ in
+            XCTFail("a second writer must not start during cancellation")
+            return events
+        })
+
+        continuation.yield(.stage("a late installer message"))
+        continuation.finish(throwing: NSError(domain: "install cancelled", code: 1))
+        await task?.value
+        XCTAssertFalse(appModel.isInstallingModel)
+        XCTAssertFalse(appModel.isCancellingModelInstall)
+        XCTAssertEqual(appModel.modelDownloads.first?.status, .cancelled)
+        XCTAssertNil(appModel.error, "an acknowledged cancellation is not an install failure")
+        XCTAssertTrue(appModel.canInstall(alias: "cancel-fixture"))
     }
 
-    func testAnAbandonedInstallCannotBeRestartedThroughInstallModel() {
+    func testCompletedInstallWinsCancelRaceWithoutAutoLoading() async {
         let appModel = AppModel()
-        appModel.abandonedInstallAliases.insert("gemma4")
-
-        appModel.installModel(alias: "gemma4")
-
-        XCTAssertFalse(
-            appModel.isInstallingModel,
-            "`installModel` must consult the abandoned set, not just `isInstallingModel`.")
-        XCTAssertNotNil(appModel.activeToast, "The refusal must say why.")
+        defer { appModel.stopCronScheduler() }
+        let (events, continuation) = AsyncThrowingStream<InstallEvent, Error>.makeStream()
+        appModel.installModel(alias: "completed-fixture", stream: { _ in events })
+        let task = appModel.installTask
+        await Task.yield()
+        appModel.cancelInstall()
+        continuation.yield(.finished(model(alias: "completed-fixture", path: "/tmp/completed-fixture")))
+        continuation.finish()
+        await task?.value
+        XCTAssertEqual(appModel.modelDownloads.first?.status, .completed)
+        XCTAssertNil(appModel.session, "Cancel must prevent automatic loading")
+        XCTAssertFalse(appModel.isInstallingModel)
+        XCTAssertNil(appModel.error)
     }
 
     // MARK: - E6: delete matches on path, never on a colliding alias

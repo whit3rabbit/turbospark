@@ -15,12 +15,11 @@
 //! byte of weight data moves, the install is known to have a tokenizer that
 //! loads and a chat template that renders.
 //!
-//! **THE WALK CANNOT RESUME.** `repack::ranged_download` retries a chunk
-//! eight times and then gives up, and giving up costs the whole walk. A pull
-//! that dies 19 GB in starts again from zero. [`install`] says so through
-//! `progress` before it begins rather than leaving it to be discovered;
-//! adding resume is a change to the walks in `crates/repack`, not to this
-//! file.
+//! **IMMUTABLE-REVISION NETWORK RANGES RESUME.** `repack::ranged_download`
+//! stores completed, SHA-256 checked ranges below the partial install and
+//! reuses them after failure or cancellation. Conversion still restarts and
+//! floating revisions never use the cache. The cache is removed only after
+//! the published install passes its normal verification.
 
 use std::path::{Path, PathBuf};
 
@@ -208,7 +207,7 @@ pub fn install_with_byte_progress(
     cancel: Option<&CancelFlag>,
 ) -> Result<Installed, String> {
     if let Some(flag) = cancel {
-        if flag.is_cancelled() {
+        if flag.checkpoint().is_err() {
             return cancelled();
         }
     }
@@ -221,9 +220,9 @@ pub fn install_with_byte_progress(
         dir.display()
     ));
     progress(&format!(
-        "about {} of weights will stream; THIS WALK CANNOT RESUME, so a failure \
-         restarts it from the beginning",
-        human_bytes(plan.install_bytes)
+        "about {} of weights will stream; immutable-revision network ranges \
+         are retained after failure or cancellation, while conversion restarts",
+        human_bytes(plan.install_bytes),
     ));
 
     // Step 1, and it is first on purpose: see the module header. A
@@ -269,6 +268,7 @@ pub fn install_with_byte_progress(
     // one of the two block-type gates, so an install whose types have no
     // kernels is caught here rather than at the first dispatch.
     verify_install(dir, &arch, &mut progress)?;
+    clear_download_cache(dir, &plan.weights, &mut progress);
 
     let model = InstalledModel {
         alias: plan.alias.clone(),
@@ -327,6 +327,7 @@ fn install_vision_only(
         "vision sidecar install verified: {} block(s) pairing with {} at hidden_size {}",
         record.tower_blocks, record.pairs_with.family, record.pairs_with.hidden_size
     ));
+    clear_download_cache(dir, &plan.weights, progress);
 
     let arch = model_io::sidecar_arch(family, vision.out_hidden_size, &vision);
     let model = InstalledModel {
@@ -347,6 +348,22 @@ fn install_vision_only(
     Ok(Installed { model, arch })
 }
 
+fn clear_download_cache(dir: &Path, repo: &RepoRef, progress: &mut impl FnMut(&str)) {
+    let Some(cache) = crate::stream::immutable_download_cache(dir, repo) else {
+        return;
+    };
+    if !cache.exists() {
+        return;
+    }
+    match std::fs::remove_dir_all(&cache) {
+        Ok(()) => progress("cleared the completed network range cache"),
+        Err(error) => progress(&format!(
+            "could not clear completed network range cache {}: {error}",
+            cache.display()
+        )),
+    }
+}
+
 /// Fetch the tokenizer sidecars. A missing REQUIRED file is fatal here, where
 /// it costs seconds, rather than after the stream.
 fn fetch_sidecars(
@@ -364,7 +381,7 @@ fn fetch_sidecars(
     ));
     for name in &plan.sidecar_files {
         if let Some(flag) = cancel {
-            if flag.is_cancelled() {
+            if flag.checkpoint().is_err() {
                 return cancelled();
             }
         }

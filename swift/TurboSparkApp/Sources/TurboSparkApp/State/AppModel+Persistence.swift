@@ -58,8 +58,13 @@ extension AppModel {
         self.personalities = settings.personalities
         self.selectedPersonalityID = UUID(uuidString: settings.activePersonalityID)
             .flatMap { id in settings.personalities.contains(where: { $0.id == id }) ? id : nil }
-        self.soulPrompt = settings.soulPrompt
+        self.soulPromptEnabled = settings.soulPromptEnabled
+        self.soulPrompts = settings.soulPrompts
+        self.selectedSoulPromptID = UUID(uuidString: settings.activeSoulPromptID)
+            .flatMap { id in settings.soulPrompts.contains(where: { $0.id == id }) ? id : nil }
         self.pluginEnableState = settings.enabledPlugins
+        self.autoLoadExternalAgentContent = settings.autoLoadExternalAgentContent
+        Self.applyExternalAgentContentFlag(settings.autoLoadExternalAgentContent)
         self.runtimeOptions.powerProfile = AppPowerProfileOption(rawValue: settings.powerProfile) ?? .auto
         self.runtimeOptions.loadGuard = AppLoadGuardOption(rawValue: settings.loadGuard) ?? .relaxed
         self.runtimeOptions.loadGuardCustomBytes = settings.loadGuardCustomBytes
@@ -131,6 +136,33 @@ extension AppModel {
         if settings.serverAutoStartOnLaunch && server == nil {
             startServer()
         }
+    }
+
+    /// Pushes the cross-agent auto-load flag to the managers that read it
+    /// with no AppModel in hand (the `CommandGate.vetoEnabled` pattern):
+    /// skill/agent resolution runs off the tool path, plugin resolution and
+    /// hook discovery run through their own stores. Also drops every
+    /// affected resolution cache, so a flag change can never leave a stale
+    /// memoized set in place.
+    static func applyExternalAgentContentFlag(_ enabled: Bool) {
+        SkillManager.shared.externalAgentDiscoveryEnabled = enabled
+        AgentManager.shared.externalAgentDiscoveryEnabled = enabled
+        PluginManager.shared.includeClaudeInterop = enabled
+        AppHookStore.shared.includeClaudeGlobalConfig = enabled
+        SkillManager.shared.invalidateResolutionCache()
+        AgentManager.shared.invalidateResolutionCache()
+        PluginManager.shared.invalidateResolutionCache()
+    }
+
+    /// Sets and persists the cross-agent auto-load preference, then refreshes
+    /// every surface it gates (skills, agents, plugins, hooks, MCP catalog)
+    /// so the lists reflect the new mode immediately rather than at the next
+    /// project switch.
+    public func setAutoLoadExternalAgentContent(_ enabled: Bool) {
+        autoLoadExternalAgentContent = enabled
+        Self.applyExternalAgentContentFlag(enabled)
+        persistSettingsDebounced()
+        pluginStateChanged()
     }
 
     /// Persists after a short quiet period, collapsing a burst of mutations
@@ -206,8 +238,12 @@ extension AppModel {
             activeSystemPromptID: selectedSystemPromptID?.uuidString ?? "",
             personalities: personalities,
             activePersonalityID: selectedPersonalityID?.uuidString ?? "",
-            soulPrompt: soulPrompt,
+            soulPrompt: "",
+            soulPromptEnabled: soulPromptEnabled,
+            soulPrompts: soulPrompts,
+            activeSoulPromptID: selectedSoulPromptID?.uuidString ?? "",
             enabledPlugins: pluginEnableState,
+            autoLoadExternalAgentContent: autoLoadExternalAgentContent,
             showMenuBarItem: showMenuBarItem,
             keepFansPinnedOnQuit: keepFansPinnedOnQuit,
             serverAutoStartOnLaunch: serverAutoStartOnLaunch,
@@ -486,6 +522,7 @@ extension AppModel {
         // Deliberately NOT `unloadModel()`: that refuses while `generating`,
         // which is exactly the case where the flush below matters most.
         cancel()
+        prepareModelDownloadsForShutdown()
         imageSession?.cancel()
         imageSession = nil
         imageSessionPath = nil

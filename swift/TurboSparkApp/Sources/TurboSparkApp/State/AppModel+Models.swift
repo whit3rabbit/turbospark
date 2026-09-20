@@ -117,32 +117,47 @@ extension AppModel {
             probe: probe)) ?? []
     }
 
-    /// Load recommendations without blocking the UI. The exact offline
-    /// catalog is always tried first. Header probes are the fallback only
-    /// when that pass cannot establish one runnable model, so the common
-    /// path remains instant and the fallback never guesses a checkpoint's
-    /// shape from its family name.
-    public func loadFitRecommendations(probeIfNeeded: Bool = true) async throws
+    /// Reuse this machine's saved ranking. On a cache miss, try the offline
+    /// catalog before probing checkpoint headers, without blocking the UI.
+    public func loadFitRecommendations(
+        probeIfNeeded: Bool = true,
+        onProgress: @escaping (UInt32, UInt32) -> Void = { _, _ in }
+    ) async throws
         -> [ModelRecommendation]
     {
         let context = activeFitContext
         let slots = activeCacheSlots
         let guardTier = activeLoadGuard
-        let offline = try await Task.detached(priority: .userInitiated) {
-            try TurboSparkCatalog.recommend(
-                context: context,
-                expertCacheSlots: slots,
-                loadGuard: guardTier)
-        }.value
-        guard probeIfNeeded, !offline.contains(where: \.runs) else { return offline }
+        let key = ModelRecommendationCache.Key(
+            telemetry: telemetry ?? TurboSparkSession.systemTelemetry,
+            configuration: fitRecommendationConfigurationID,
+            catalog: try TurboSparkCatalog.recommendationCatalogFingerprint(),
+            probeIfNeeded: probeIfNeeded)
+        return try await ModelRecommendationCache.shared.load(key: key, onProgress: onProgress) { progress in
+            let offline = try await Task.detached(priority: .userInitiated) {
+                try TurboSparkCatalog.recommend(
+                    context: context,
+                    expertCacheSlots: slots,
+                    loadGuard: guardTier)
+            }.value
+            guard probeIfNeeded, !offline.contains(where: \.runs) else { return offline }
 
-        return try await Task.detached(priority: .userInitiated) {
-            try TurboSparkCatalog.recommend(
+            for try await event in TurboSparkCatalog.recommendWithProgress(
                 context: context,
                 expertCacheSlots: slots,
-                loadGuard: guardTier,
-                probe: true)
-        }.value
+                loadGuard: guardTier
+            ) {
+                switch event {
+                case .progress(let completed, let total):
+                    progress(completed, total)
+                case .finished(let rows):
+                    return rows
+                }
+            }
+            // An interrupted stream must never turn an incomplete pass into
+            // a persistent ranking.
+            throw CancellationError()
+        }
     }
 
     /// Changes whenever a setting that affects fit arithmetic changes. Views

@@ -78,5 +78,5 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
 ## Crate Gotchas
 
 1. **Header-Only Probe**: `probe` reads only the first few kilobytes of remote checkpoint files to extract metadata, tensor headers, and block quantization types. It exits with a non-zero code if any layer lacks an optimized Metal kernel.
-2. **Layer-by-Layer Streaming**: `pull` streams weights in chunks directly into repacked files. A 30 GB source repository never lands on disk in its original format, drastically reducing scratch disk requirements.
+2. **Layer-by-Layer Streaming and Resume**: `pull` streams weights into repacked files without requiring a complete source checkpoint first. For immutable revisions it also retains SHA-256 checked range chunks until the install verifies, so temporary disk can approach download size plus install size. Failed and cancelled pulls reuse those chunks; floating revisions do not.
 3. **Mandatory Sidecar Verification**: Installation requires required tokenizer sidecars (`tokenizer.json`, `tokenizer_config.json`, `preprocessor_config.json` for vision models). Any stale temporary sidecar files are explicitly pruned before writing the install receipt.

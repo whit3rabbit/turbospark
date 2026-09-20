@@ -2,12 +2,13 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::abi::{self, guard_result};
 use crate::models::{self, TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 use crate::strings;
-use crate::TsInstallCallback;
+use crate::{TsInstallCallback, TsRecommendCallback};
 
 /// Returns the active process-local model store root.
 #[no_mangle]
@@ -189,6 +190,34 @@ pub unsafe extern "C" fn ts_recommend_json(
     options_json: *const c_char,
     out: *mut *mut c_char,
 ) -> c_int {
+    recommend_json_impl(
+        context_window,
+        options_json,
+        None,
+        std::ptr::null_mut(),
+        out,
+    )
+}
+
+/// Ranks curated models while reporting completed header probes.
+#[no_mangle]
+pub unsafe extern "C" fn ts_recommend_progress_json(
+    context_window: u32,
+    options_json: *const c_char,
+    cb: TsRecommendCallback,
+    userdata: *mut c_void,
+    out: *mut *mut c_char,
+) -> c_int {
+    recommend_json_impl(context_window, options_json, cb, userdata, out)
+}
+
+unsafe fn recommend_json_impl(
+    context_window: u32,
+    options_json: *const c_char,
+    cb: TsRecommendCallback,
+    userdata: *mut c_void,
+    out: *mut *mut c_char,
+) -> c_int {
     guard_result(|| {
         let ctx = if context_window == 0 {
             None
@@ -206,8 +235,18 @@ pub unsafe extern "C" fn ts_recommend_json(
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let json = models::recommend_json(ctx, slots, guard, options.probe)
-            .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        let json = models::recommend_json_with_progress(
+            ctx,
+            slots,
+            guard,
+            options.probe,
+            |done, total| {
+                if let Some(f) = cb {
+                    unsafe { f(userdata, done, total) };
+                }
+            },
+        )
+        .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
         strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
@@ -331,7 +370,8 @@ pub unsafe extern "C" fn ts_install_bytes_json(
 }
 
 /// Installs the catalog row `alias`. Blocks for the whole walk (minutes to
-/// tens of minutes) and **cannot resume**: a failure restarts it.
+/// tens of minutes). A later call reuses verified network ranges when the
+/// repository revision is immutable; conversion may restart.
 ///
 /// `cb` receives `TS_INSTALL_STAGE` lines on the calling thread and
 /// `TS_INSTALL_BYTES` updates **from worker threads, concurrently**. A
@@ -344,10 +384,9 @@ pub unsafe extern "C" fn ts_install(
     result_json: *mut *mut c_char,
 ) -> c_int {
     guard_result(|| {
-        // Checked before any work: an install streams a whole checkpoint (it
-        // is never written to disk twice) and cannot resume, so a null
-        // out-pointer discovered only after the download completes means
-        // re-streaming the entire thing to try again.
+        // Checked before any work: discovering an invalid result pointer only
+        // after a multi-minute download and conversion would waste the walk,
+        // even when a later retry can reuse its verified network ranges.
         if result_json.is_null() {
             return Err((
                 abi::TS_ERR_INVALID_ARGUMENT,
@@ -367,9 +406,24 @@ pub unsafe extern "C" fn ts_install(
         let sink = Arc::new(Sink(cb, userdata));
 
         let bytes_sink = Arc::clone(&sink);
-        let on_bytes: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |done: u64| {
+        let downloaded = AtomicU64::new(0);
+        let total = models::install_bytes(alias)
+            .map(|(download, _)| download)
+            .unwrap_or(0);
+        let on_bytes: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |bytes: u64| {
+            // The range source reports chunk deltas; the ABI promises cumulative bytes.
+            let done = downloaded.fetch_add(bytes, Ordering::Relaxed) + bytes;
             if let Some(f) = bytes_sink.0 {
-                unsafe { f(bytes_sink.1, TS_INSTALL_BYTES, std::ptr::null(), 0, done, 0) };
+                unsafe {
+                    f(
+                        bytes_sink.1,
+                        TS_INSTALL_BYTES,
+                        std::ptr::null(),
+                        0,
+                        done,
+                        total,
+                    )
+                };
             }
         });
 
@@ -408,9 +462,9 @@ pub unsafe extern "C" fn ts_install_repo(
     result_json: *mut *mut c_char,
 ) -> c_int {
     guard_result(|| {
-        // Checked before any work, for `ts_install`'s reason: an install
-        // cannot resume, so a null out-pointer found only at the end means
-        // re-streaming the whole checkpoint to try again.
+        // Checked before any work, for `ts_install`'s reason: an invalid
+        // result pointer discovered only after download and conversion wastes
+        // the walk even when verified network ranges can be reused.
         if result_json.is_null() {
             return Err((
                 abi::TS_ERR_INVALID_ARGUMENT,
@@ -432,7 +486,10 @@ pub unsafe extern "C" fn ts_install_repo(
         let sink = Arc::new(Sink(cb, userdata));
 
         let bytes_sink = Arc::clone(&sink);
-        let on_bytes: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |done: u64| {
+        let downloaded = AtomicU64::new(0);
+        let on_bytes: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |bytes: u64| {
+            // The range source reports chunk deltas; the ABI promises cumulative bytes.
+            let done = downloaded.fetch_add(bytes, Ordering::Relaxed) + bytes;
             if let Some(f) = bytes_sink.0 {
                 unsafe { f(bytes_sink.1, TS_INSTALL_BYTES, std::ptr::null(), 0, done, 0) };
             }
@@ -478,11 +535,19 @@ pub unsafe extern "C" fn ts_install_repo(
 /// `ts_installs_finished` before and after.
 #[no_mangle]
 pub unsafe extern "C" fn ts_install_cancel() -> c_int {
-    if models::cancel_active_installs() > 0 {
-        1
-    } else {
-        0
-    }
+    abi::guard_value(0, || i32::from(models::cancel_active_installs() > 0))
+}
+
+/// Parks active installs at their next checkpoint, preserving in-process work.
+#[no_mangle]
+pub unsafe extern "C" fn ts_install_pause() -> c_int {
+    abi::guard_value(0, || i32::from(models::pause_active_installs() > 0))
+}
+
+/// Releases paused installs. Cancellation cannot be reversed by this call.
+#[no_mangle]
+pub unsafe extern "C" fn ts_install_resume() -> c_int {
+    abi::guard_value(0, || i32::from(models::resume_active_installs() > 0))
 }
 
 /// How many install walks have finished (any outcome) since process start.
@@ -490,7 +555,7 @@ pub unsafe extern "C" fn ts_install_cancel() -> c_int {
 /// walk actually exited rather than being wedged inside a blocking read.
 #[no_mangle]
 pub unsafe extern "C" fn ts_installs_finished() -> u32 {
-    models::installs_finished() as u32
+    abi::guard_value(0, || models::installs_finished() as u32)
 }
 
 /// Reads the currently resolved Hugging Face token. If a token is found,

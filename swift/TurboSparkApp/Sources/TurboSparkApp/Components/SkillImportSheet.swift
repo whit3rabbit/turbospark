@@ -1,31 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// Modal sheet for discovering skills from other agent harnesses and importing
-/// or installing skills from remote Git/HTTPS marketplaces into TurboSpark.
+/// Modal sheet for installing skills from remote Git/HTTPS marketplaces.
+///
+/// Local cross-agent import used to live here; it moved to
+/// `AgentContentImportSheet`, the unified wizard that covers skills,
+/// agents, and MCP servers from other agent tools.
 public struct SkillImportSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
 
-    public enum ImportMode: String, CaseIterable, Identifiable {
-        case localHarnesses = "Local Agents"
-        case remoteMarketplace = "Remote / Marketplace"
-
-        public var id: String { rawValue }
-    }
-
-    struct ImportableSkillCandidate: Identifiable {
-        let id = UUID()
-        let skill: AppSkill
-        let agent: SkillSourceAgent
-        let sourceLocationDescription: String
-        var isSelected: Bool = false
-    }
-
     @State private var showsSources = false
-    @State private var mode: ImportMode = .localHarnesses
-    @State private var candidates: [ImportableSkillCandidate] = []
-    @State private var isLoading: Bool = true
     @State private var importToProjectScope: Bool = false
 
     // Remote marketplace state
@@ -52,39 +37,30 @@ public struct SkillImportSheet: View {
                 .frame(height: 1)
 
             Button { showsSources = true } label: { Text("Manage sources", bundle: .module) }
-            modeSelectorBar
+            scopeBar
 
             Rectangle()
                 .fill(.appBorder)
                 .frame(height: 1)
 
-            switch mode {
-            case .localHarnesses:
-                localHarnessesContent
-            case .remoteMarketplace:
-                remoteMarketplaceContent
-            }
+            remoteMarketplaceContent
         }
         .frame(minWidth: 640, minHeight: 480)
         .sheet(isPresented: $showsSources) {
             MarketplaceSourcesView(model: model, kind: .skills, projectID: importToProjectScope ? capturedProjectID : nil) { source in
-                mode = .remoteMarketplace
                 fetchRemoteMarketplace(source: source)
             }
         }
-        .onAppear {
-            scanCandidates()
-        }
     }
 
-    // MARK: - Header & Mode Bars
+    // MARK: - Header & Scope Bars
 
     private var headerBar: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Skills Import & Marketplace", bundle: .module)
+                Text("Skill Marketplace", bundle: .module)
                     .themedFont(.base, weight: .semibold)
-                Text("Acquire skills from local agent harnesses (Claude, Cursor, Codex) or remote Git/HTTPS marketplaces.", bundle: .module)
+                Text("Install skills from remote Git/HTTPS marketplaces. Skills from other agent tools on this Mac are imported through Settings > General > Import from Other Agents.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
@@ -92,23 +68,15 @@ public struct SkillImportSheet: View {
             Button {
                 dismiss()
             } label: { Text("Close", bundle: .module) }
-            .keyboardShortcut(.cancelAction)
+                .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(.appPage)
     }
 
-    private var modeSelectorBar: some View {
+    private var scopeBar: some View {
         HStack {
-            Picker(selection: $mode) {
-                ForEach(ImportMode.allCases) { m in
-                    Text(m.rawValue).tag(m)
-                }
-            } label: { Text("Mode", bundle: .module) }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 320)
-
             Spacer()
 
             Text("Target Scope:", bundle: .module)
@@ -124,102 +92,6 @@ public struct SkillImportSheet: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
         .background(.appSurface.opacity(0.4))
-    }
-
-    // MARK: - Local Harness Content
-
-    @ViewBuilder
-    private var localHarnessesContent: some View {
-        if isLoading {
-            VStack(spacing: 12) {
-                ProgressView()
-                Text("Scanning agent skill directories...", bundle: .module)
-                    .themedFont(.base)
-                    .foregroundStyle(.appSecondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if candidates.isEmpty {
-            VStack(spacing: 16) {
-                Image(systemName: "folder.badge.questionmark")
-                    .themedFont(.display)
-                    .foregroundStyle(.appSecondary)
-                Text("No external skills found in standard agent locations.", bundle: .module)
-                    .themedFont(.base)
-                    .foregroundStyle(.appSecondary)
-
-                Button {
-                    selectCustomFolder()
-                } label: { Text("Choose Custom Folder...", bundle: .module) }
-                .buttonStyle(.bordered)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(40)
-        } else {
-            VStack(spacing: 0) {
-                List {
-                    ForEach($candidates) { $cand in
-                        HStack(spacing: 12) {
-                            Toggle("", isOn: $cand.isSelected)
-                                .labelsHidden()
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(cand.skill.name)
-                                        .themedFont(.small, weight: .semibold)
-                                    Text(cand.agent.displayName)
-                                        .themedFont(.tiny)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 1)
-                                        .background(Color.secondary.opacity(0.15))
-                                        .clipShape(Capsule())
-                                }
-                                Text(cand.skill.skillDescription)
-                                    .themedFont(.small)
-                                    .foregroundStyle(.appSecondary)
-                                    .lineLimit(1)
-                                Text(cand.sourceLocationDescription)
-                                    .themedFont(.tiny)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            Spacer()
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-
-                Rectangle()
-                    .fill(.appBorder)
-                    .frame(height: 1)
-
-                HStack {
-                    Button {
-                        for i in candidates.indices { candidates[i].isSelected = true }
-                    } label: { Text("Select All", bundle: .module) }
-                    .buttonStyle(.plain)
-                    .themedFont(.small)
-
-                    Text(verbatim: "|").foregroundStyle(.tertiary)
-
-                    Button {
-                        for i in candidates.indices { candidates[i].isSelected = false }
-                    } label: { Text("Deselect All", bundle: .module) }
-                    .buttonStyle(.plain)
-                    .themedFont(.small)
-
-                    Spacer()
-
-                    let count = candidates.filter { $0.isSelected }.count
-                    Button("Import Selected (\(count))") {
-                        importSelectedSkills()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(TurboSparkTheme.accentColor)
-                    .disabled(count == 0)
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(.appPage)
-            }
-        }
     }
 
     // MARK: - Remote Marketplace Content
@@ -347,98 +219,6 @@ public struct SkillImportSheet: View {
     }
 
     // MARK: - Actions
-
-    private func scanCandidates() {
-        isLoading = true
-        let projectURL = importToProjectScope ? project?.rootDirectoryURL : nil
-        DispatchQueue.global(qos: .userInitiated).async {
-            let manager = SkillManager.shared
-            var found: [ImportableSkillCandidate] = []
-            let home = FileManager.default.homeDirectoryForCurrentUser
-
-            // The cross-agent roots are shared home-directory trees, so a
-            // non-default profile -- which owns its own skills folder --
-            // offers nothing from them.
-            for (agent, relPath) in manager.knownUserAgentSkillRoots
-            where agent != .turboSpark && UserProfileStore.isDefault {
-                let url = home.appendingPathComponent(relPath, isDirectory: true)
-                guard FileManager.default.fileExists(atPath: url.path) else { continue }
-                let skills = manager.scanDirectory(url, scope: .userGlobal, defaultAgent: agent)
-                for skill in skills {
-                    found.append(ImportableSkillCandidate(
-                        skill: skill,
-                        agent: agent,
-                        sourceLocationDescription: "~/\(relPath)/\(skill.sourceURL.lastPathComponent)",
-                        isSelected: true
-                    ))
-                }
-            }
-
-            if let projectURL {
-                for (agent, relPath) in manager.knownProjectSkillSubdirectories where agent != .turboSpark {
-                    let url = projectURL.appendingPathComponent(relPath, isDirectory: true)
-                    guard FileManager.default.fileExists(atPath: url.path) else { continue }
-                    let skills = manager.scanDirectory(url, scope: .projectLocal(projectPath: projectURL.path), defaultAgent: agent)
-                    for skill in skills {
-                        found.append(ImportableSkillCandidate(
-                            skill: skill,
-                            agent: agent,
-                            sourceLocationDescription: "<project>/\(relPath)/\(skill.sourceURL.lastPathComponent)",
-                            isSelected: true
-                        ))
-                    }
-                }
-            }
-
-            DispatchQueue.main.async {
-                self.candidates = found
-                self.isLoading = false
-            }
-        }
-    }
-
-    private func selectCustomFolder() {
-        guard !importToProjectScope || project?.rootDirectoryURL != nil else {
-            model.showToast(String(localized: "The target project no longer exists.", bundle: .module), style: .error)
-            return
-        }
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Import Skill"
-
-        if panel.runModal() == .OK, let selectedURL = panel.url {
-            let targetScope: SkillScope
-            if importToProjectScope, let path = project?.rootDirectoryPath {
-                targetScope = .projectLocal(projectPath: path)
-            } else {
-                targetScope = .userGlobal
-            }
-            model.importSkill(from: selectedURL, targetScope: targetScope)
-            dismiss()
-        }
-    }
-
-    private func importSelectedSkills() {
-        guard !importToProjectScope || project?.rootDirectoryURL != nil else {
-            model.showToast(String(localized: "The target project no longer exists.", bundle: .module), style: .error)
-            return
-        }
-        let targetScope: SkillScope
-        if importToProjectScope, let path = project?.rootDirectoryPath {
-            targetScope = .projectLocal(projectPath: path)
-        } else {
-            targetScope = .userGlobal
-        }
-
-        let selected = candidates.filter { $0.isSelected }
-        for cand in selected {
-            let source = cand.skill.isDirectoryBased ? (cand.skill.skillDirectoryURL ?? cand.skill.sourceURL) : cand.skill.sourceURL
-            model.importSkill(from: source, targetScope: targetScope)
-        }
-        dismiss()
-    }
 
     private func fetchRemoteMarketplace(source explicitSource: MarketplaceSource? = nil) {
         let input = remoteInput.trimmingCharacters(in: .whitespacesAndNewlines)

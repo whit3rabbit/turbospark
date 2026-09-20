@@ -99,7 +99,7 @@ struct ModelRecommendationRow: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
-            .disabled(model.isInstallingModel)
+            .disabled(model.isRunning || !model.canInstall(alias: recommendation.alias))
             .help("Install and start \(recommendation.alias)")
             .accessibilityLabel("Install and start \(recommendation.alias)")
             .accessibilityHint("Downloads the model and starts a new chat with it")
@@ -195,4 +195,3 @@ struct RecommendationVerdictBadge: View {
         }
     }
 }
-

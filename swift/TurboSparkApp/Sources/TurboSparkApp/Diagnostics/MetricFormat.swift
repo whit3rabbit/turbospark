@@ -51,6 +51,18 @@ enum MetricFormat {
         storageFormatter.string(fromByteCount: Int64(clamping: bytes))
     }
 
+    static func transferBytes(_ bytesPerSecond: Double) -> String {
+        let bytes: Int64
+        if !bytesPerSecond.isFinite || bytesPerSecond <= 0 {
+            bytes = 0
+        } else if bytesPerSecond >= Double(Int64.max) {
+            bytes = .max
+        } else {
+            bytes = Int64(bytesPerSecond)
+        }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
     /// Formats a single file's size, KB included.
     ///
     /// Separate from `storage` on purpose: that one is for MODEL installs and

@@ -438,6 +438,8 @@ pub(crate) fn encode_full_attention_block(
         // dense-path fork -- kept separate here because the QSA sparse
         // kernel is a fourth shape (`crate::kv_write`'s doc only covers the
         // two dense variants) rather than a case that helper can express.
+        let (k_cache, _) = kv.k_slot(layer, position);
+        let (v_cache, _) = kv.v_slot(layer, position);
         match kv.layer_quant(layer) {
             Some(_) => {
                 let tables = kv
@@ -451,8 +453,8 @@ pub(crate) fn encode_full_attention_block(
                     context,
                     pass,
                     (&scratch.q, 0),
-                    k_buf,
-                    v_buf,
+                    k_cache,
+                    v_cache,
                     (&qwen4.qsa_positions, 0),
                     positions.len() as u32,
                     tq_scratch,
@@ -470,8 +472,8 @@ pub(crate) fn encode_full_attention_block(
                     context,
                     pass,
                     (&scratch.q, 0),
-                    k_buf,
-                    v_buf,
+                    k_cache,
+                    v_cache,
                     (&qwen4.qsa_positions, 0),
                     positions.len() as u32,
                     &scratch.attn,

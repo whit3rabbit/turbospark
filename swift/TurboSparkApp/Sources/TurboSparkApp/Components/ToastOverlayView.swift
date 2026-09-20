@@ -20,21 +20,25 @@ public struct ToastOverlayView: View {
     }
 
     public var body: some View {
-        if let toast = model.activeToast {
-            toastCard(toast)
-                .transition(reduceMotion ? .opacity : .asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity),
-                    removal: .scale(scale: 0.95).combined(with: .opacity)
-                ))
-                .id(toast.id)
-                .task(id: toast.id) {
-                    try? await Task.sleep(for: .seconds(toast.duration))
-                    guard !Task.isCancelled else { return }
-                    withAnimation(reduceMotion ? .none : .easeOut(duration: 0.2)) {
-                        model.dismissToast()
+        VStack(alignment: .trailing, spacing: 10) {
+            if let toast = model.activeToast {
+                toastCard(toast)
+                    .transition(reduceMotion ? .opacity : .asymmetric(
+                        insertion: .move(edge: .top).combined(with: .opacity),
+                        removal: .scale(scale: 0.95).combined(with: .opacity)
+                    ))
+                    .id(toast.id)
+                    .task(id: toast.id) {
+                        try? await Task.sleep(for: .seconds(toast.duration))
+                        guard !Task.isCancelled, model.activeToast?.id == toast.id else { return }
+                        withAnimation(reduceMotion ? .none : .easeOut(duration: 0.2)) {
+                            model.dismissToast()
+                        }
                     }
-                }
+            }
         }
+        .frame(maxWidth: 420, alignment: .trailing)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func toastCard(_ toast: AppToast) -> some View {
@@ -48,6 +52,8 @@ public struct ToastOverlayView: View {
                 .themedFont(.base, weight: .medium)
                 .foregroundStyle(.appText)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Button {
                 withAnimation(reduceMotion ? .none : .easeOut(duration: 0.15)) {
@@ -68,11 +74,12 @@ public struct ToastOverlayView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background {
-            Capsule()
+            RoundedRectangle(cornerRadius: 14)
                 .fill(.appPage)
                 .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 4)
                 .overlay {
-                    Capsule().stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(.appBorder, lineWidth: 0.5)
                 }
         }
         .accessibilityElement(children: .combine)

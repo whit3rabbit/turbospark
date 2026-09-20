@@ -164,13 +164,18 @@ broken."
 
 ## 2. Persisted settings, field by field
 
-`MacAppSettings.soulPrompt` is the blank-by-default, per-profile fallback for
-external `SOUL.md` files. `AppModel+Soul.swift` resolves the external Hermes
-file on every prompt access, so live Hermes edits take effect without a
-settings reload. The Engine Settings SOUL section edits the active source,
-detects Hermes and OpenClaw files for copy-only import, and always offers a
-file picker for other harnesses or workspace locations. Create Hermes refuses
-to overwrite an existing file.
+SOUL is opt-in. `MacAppSettings.soulPromptEnabled` (default false) gates
+whether any SOUL content is injected; `soulPrompts` and `activeSoulPromptID`
+hold the saved-entry library in the Soul settings pane (the section is no
+longer mounted in Engine Settings). `AppModel+Soul.swift` resolves the
+selected row only while enabled: detected external files are import sources,
+never auto-consumed. Import copies Hermes or OpenClaw `SOUL.md` into a named
+saved row, stays available while disabled, never flips the toggle, and never
+modifies the source file; re-import refreshes the same-named row. Create
+Hermes refuses to overwrite an existing file. The legacy `soulPrompt` string
+is decode-migration only: a non-empty pre-library value becomes one
+`Imported Soul` row with SOUL enabled, and the field is written back empty so
+the migration never re-fires.
 
 Every `MacAppSettings` field was traced from `AppModel+Persistence.swift`'s
 `loadSettings()` to a consumer outside the store and outside the pane that
@@ -328,8 +333,8 @@ worth recording so they are not re-derived:
   `AppModel+AgentEfficiency` guards), `activeSystemPromptID` /
   `activePersonalityID` to `selected*` (prompt assembly in
   `AppModel+Tools`), `serverEmbeddingModel` to `serverEmbeddingModelInput`
-  (read at server start), plus `soulPrompt` (Soul + prompt assembly) and
-  `serverFavorites`. The audit doc's field-by-field table from 09-06
+  (read at server start), plus `activeSoulPromptID` (Soul + prompt assembly)
+  and `serverFavorites`. The audit doc's field-by-field table from 09-06
   predates most of these mirrors.
 - **The server chain was verified THROUGH the ABI, not to the Swift call
   edge.** `performServerStart` builds `ServerOptions` from

@@ -9,7 +9,7 @@ use super::DownloadError;
 /// 26.9 GB Q8_0 checkpoint died with "error decoding response body" ~2.5 GB
 /// in. Splitting bounds what a retry has to re-fetch as well as making the
 /// drop less likely.
-pub const MAX_RANGE_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_RANGE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Attempts per chunk before giving up. Transport failures on a multi-GB
 /// walk are expected rather than exceptional; a format error is not retried
@@ -37,8 +37,8 @@ pub const RANGE_ATTEMPTS: usize = 8;
 /// existed it did so one [`MAX_RANGE_BYTES`] GET at a time. That is one
 /// connection, hence one CloudFront edge of the Xet bridge, hence one
 /// per-edge rate cap. Measured 2026-08-14 on AC against the real
-/// `gpt-oss-20b-MXFP4.gguf`, at the 64 MiB chunk size this actually
-/// dispatches, over a 512 MiB span (the size of one routed tensor):
+/// `gpt-oss-20b-MXFP4.gguf`, at the former 64 MiB chunk size, over a 512 MiB
+/// span (the size of one routed tensor):
 ///
 /// | | wall clock | rate |
 /// |---|---|---|
@@ -46,10 +46,13 @@ pub const RANGE_ATTEMPTS: usize = 8;
 /// | 8-way, same 512 MiB | 17.6 s | 30.5 MB/s |
 ///
 /// 3.4x, and the serial arm landing on 8.9 MB/s is itself the finding: the
-/// per-edge cap `xet-core` #821 documents is 8.7. Scaling is sublinear (a
-/// 16 MiB sweep the same day read 10.4 / 16.0 / 23.4 MB/s at 1 / 4 / 8), so
-/// this sits at 8 rather than higher, where the shared link is the limit and
-/// more streams buy only more sockets to drop. These are cross-session
+/// per-edge cap `xet-core` #821 documents is 8.7. Scaling is sublinear. A
+/// 16 MiB sweep the same day read 10.4 / 16.0 / 23.4 MB/s at 1 / 4 / 8. The
+/// 16 MiB cap is now used so dense checkpoints whose individual tensors sit
+/// below 64 MiB can use the same eight-way path, while a failed request
+/// re-fetches one quarter as much data. The concurrency stays at 8 because
+/// the shared link is the limit and more streams buy only more sockets to
+/// drop. These are cross-session
 /// NETWORK numbers, unlike the two constants in
 /// `crates/streaming/src/read_pool.rs` whose sweeps measure this machine's
 /// page cache: read the shape, re-measure before quoting an absolute.
@@ -60,11 +63,9 @@ pub const RANGE_ATTEMPTS: usize = 8;
 /// routed tensors are the whole expert table for a layer (Gemma's
 /// `ffn_gate_up_exps` is ~410 MiB, i.e. 7 chunks) and are the dominant share
 /// of its bytes, and worth almost NOTHING on a dense one, whose largest
-/// tensor is under the cap: TinyLlama re-streamed in 3:28 against a recorded
-/// ~3 min, unchanged, because not one of its 201 tensors chunked. That is the
-/// expected result and not a failed optimization. Collecting it for dense
-/// checkpoints too means reading several tensors concurrently, which is a
-/// change to the walk rather than to this file.
+/// tensor was under the former 64 MiB cap: TinyLlama re-streamed in 3:28
+/// against a recorded ~3 min, unchanged. The smaller cap addresses that
+/// dispatch gap, but it is not a new end-to-end dense-model benchmark.
 ///
 /// This is worth nothing on its own: see [`super::HttpRangeSource::new`] for the
 /// client setting that makes these separate connections rather than one

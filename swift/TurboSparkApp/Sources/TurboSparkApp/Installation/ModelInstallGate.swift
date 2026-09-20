@@ -51,6 +51,7 @@ enum ModelInstallGate {
         refusedBecause: String?,
         verdict: ModelRecommendation.FitVerdict?,
         installBytes: UInt64?,
+        downloadBytes: UInt64? = nil,
         freeDiskBytes: UInt64?
     ) -> ModelInstallDecision {
         // **A REFUSAL UPSTREAM OF THE ARITHMETIC OUTRANKS THE ARITHMETIC.**
@@ -72,14 +73,17 @@ enum ModelInstallGate {
         }
 
         // Disk before memory: it is the one that wastes the download.
-        if let need = installBytes, let free = freeDiskBytes,
+        let temporaryBytes = installBytes.map { install in
+            let sum = install.addingReportingOverflow(downloadBytes ?? 0)
+            return sum.overflow ? UInt64.max : sum.partialValue
+        }
+        if let need = temporaryBytes, let free = freeDiskBytes,
             need > free || (free - need) < diskHeadroomBytes
         {
             return .confirm(
-                "This needs \(MetricFormat.storage(need)) and there is "
-                    + "\(MetricFormat.storage(free)) free. The install streams the "
-                    + "checkpoint and CANNOT RESUME, so running out of space restarts it "
-                    + "from the beginning.")
+                "This needs up to \(MetricFormat.storage(need)) temporarily and there is "
+                    + "\(MetricFormat.storage(free)) free. Verified download ranges are kept "
+                    + "until the install passes verification, then removed.")
         }
 
         if verdict == .tight {

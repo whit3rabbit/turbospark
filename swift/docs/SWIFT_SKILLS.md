@@ -64,10 +64,14 @@ Skills are partitioned into two user-facing scopes:
 
 1. **User Scope (`SkillScope.userGlobal`)**:
    - Location: `~/.turbospark/skills/<name>/SKILL.md` (canonical).
-   - Compatibility roots: also discovers existing skills from other installed
-     agents. The full list lives in
+   - Compatibility roots: other installed agents' folders, read ONLY under
+     the cross-agent opt-in (Settings > General > "Auto-load skills,
+     agents, plugins, and hooks from other agent tools", default OFF) or
+     through the Import wizard (Settings > General > "Import from Other
+     Agents..."), which copies the selected skills into
+     `~/.turbospark/skills`. The full list lives in
      `SkillManager.knownUserAgentSkillRoots`: `~/.claude/skills/`,
-     `~/.gemini/skills/`, `~/.gemini/antigravity/skills/`, `~/.agents/skills/`,
+     `~/.codex/skills/`, `~/.gemini/skills/`, `~/.gemini/antigravity/skills/`, `~/.agents/skills/`,
      `~/.config/opencode/skills/`, `~/.pi/agent/skills/`, `~/.cursor/skills/`,
      `~/.codeium/windsurf/skills/`, `~/.kilo/skills/`, `~/.crush/skills/`,
      `~/.cline/skills/`, `~/.forge/skills/`, `~/.qwen/skills/`, and
@@ -436,6 +440,7 @@ contracts in `https://github.com/whit3rabbit/agent-config/blob/main/docs/support
 |---|---|---|---|
 | **TurboSpark** | `~/.turbospark/skills/<name>/` | `<root>/.turbospark/skills/<name>/` | `SKILL.md` |
 | **Claude Code** | `~/.claude/skills/<name>/` | `<root>/.claude/skills/<name>/` | `SKILL.md` |
+| **Codex** | `~/.codex/skills/<name>/` | `<root>/.codex/skills/<name>/` | `SKILL.md` |
 | **Cursor** | `~/.cursor/skills/<name>/` | `<root>/.cursor/skills/<name>/` | `SKILL.md` |
 | **OpenClaw** | `~/.openclaw/skills/<name>/` | `<root>/.agents/skills/<name>/` | `SKILL.md` |
 | **Gemini CLI** | `~/.gemini/skills/<name>/` | `<root>/.gemini/skills/<name>/` | `SKILL.md` |
@@ -446,6 +451,8 @@ lists are `SkillManager.knownUserAgentSkillRoots` and
 `knownProjectSkillSubdirectories` (section 2A), and they are the definitive
 answer -- not every cell above is scanned (OpenClaw's `~/.openclaw/skills/`
 is not one of our user roots, though its `.agents/skills/` project root is).
-Skills installed for Claude Code, Cursor, Gemini, OpenCode, and the other
-covered harnesses are discovered and runnable in TurboSpark without manual
-migration.
+Reading another harness's USER-scope folder at all is opt-in: with the
+cross-agent auto-load setting off (the default), the Import wizard
+(`AgentContentImportSheet`, Settings > General) is the way those skills
+enter TurboSpark, as a copy into `~/.turbospark/skills`. Project-scope
+directories inside an open repository keep being read directly.

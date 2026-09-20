@@ -59,6 +59,18 @@ min_macos="14.0"
 target="aarch64-apple-darwin"
 identity="${CODESIGN_IDENTITY:--}"
 
+# Sparkle update feed + trust. The feed is the appcast.xml asset attached to
+# every GitHub release, reached through the evergreen latest-release URL; the
+# DMG is itself the update archive Sparkle installs. Trust is EdDSA (the
+# public half of the key whose private half lives in the keychain on the
+# release machine and as the SPARKLE_ED_PRIVATE_KEY repo secret -- see
+# docs/RELEASE.md). The app is ad-hoc signed, so there is no Team ID for
+# Sparkle's Apple-identity comparison; the EdDSA signature is what makes an
+# update verifiable. This literal is PUBLIC on purpose -- local bundles and
+# the ci.yml packaging job must never need the secret.
+update_feed_url="https://github.com/whit3rabbit/turbospark/releases/latest/download/appcast.xml"
+sparkle_public_ed_key="O+w+eDlUPQQa1Y+quYgz9BiJljUdS01KeafmpSzoZ3g="
+
 app="$out_dir/TurboSpark.app"
 contents="$app/Contents"
 
@@ -83,7 +95,7 @@ exe="$build_dir/TurboSparkApp"
 
 echo "==> assembling $app"
 rm -rf "$app"
-mkdir -p "$contents/MacOS" "$contents/Resources"
+mkdir -p "$contents/MacOS" "$contents/Resources" "$contents/Frameworks"
 
 cp "$exe" "$contents/MacOS/TurboSparkApp"
 
@@ -108,6 +120,39 @@ for bin in turbospark-check turbospark-model turbospark-server; do
   [ -x "$src" ] || { echo "expected $src to exist; run without --skip-build" >&2; exit 1; }
   cp "$src" "$contents/MacOS/$bin"
 done
+
+# Dynamic frameworks ride in as SwiftPM binary targets, and SwiftPM drops
+# each linked .framework next to the executable in .build/release. Without
+# this copy the assembled bundle is missing them entirely and dies in dyld
+# before main -- and the DMG verify checks signatures and file presence, not
+# launchability, so a missing framework would ship silently. SQLCipher
+# predates the updater and shipped with exactly that bug; Sparkle made it
+# visible because it was the second dynamic dependency.
+for fw in "$build_dir"/*.framework; do
+  [ -e "$fw" ] || continue
+  cp -R "$fw" "$contents/Frameworks/"
+done
+for required_framework in SQLCipher.framework Sparkle.framework; do
+  [ -d "$contents/Frameworks/$required_framework" ] || {
+    echo "missing $required_framework in $build_dir -- the packaged app would fail before main" >&2
+    exit 1
+  }
+done
+
+# SwiftPM bakes rpaths for ITS layout (@loader_path next to the executable in
+# .build/release, where SwiftPM also drops the framework). Inside the bundle
+# the framework lives one directory up in Contents/Frameworks, which none of
+# the baked rpaths cover -- the exe links @rpath/Sparkle.framework and would
+# die in dyld before main on a machine that never had this repo's .build.
+# Bundle convention is @executable_path/../Frameworks. This edit invalidates
+# the exe's existing (build-time) signature, which the codesign pass below
+# then re-establishes.
+exe_rpaths="$(otool -l "$contents/MacOS/TurboSparkApp" | awk '/LC_RPATH/{getline; print $2}')"
+case "$exe_rpaths" in
+  *"@executable_path/../Frameworks"*) ;;
+  *) install_name_tool -add_rpath @executable_path/../Frameworks \
+       "$contents/MacOS/TurboSparkApp" ;;
+esac
 
 # Copy application icon if available
 if [ -f "$root/assets/icons/AppIcon.icns" ]; then
@@ -149,6 +194,12 @@ cat > "$contents/Info.plist" <<PLIST
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUFeedURL</key>
+    <string>${update_feed_url}</string>
+    <key>SUPublicEDKey</key>
+    <string>${sparkle_public_ed_key}</string>
 </dict>
 </plist>
 PLIST
@@ -164,7 +215,30 @@ echo "==> codesign (identity: ${identity})"
 for bin in turbospark-check turbospark-model turbospark-server; do
   codesign --force --timestamp=none --sign "$identity" "$contents/MacOS/$bin"
 done
+
+# Sparkle's nested helpers BEFORE the framework root that seals them,
+# innermost first. The Downloader XPC keeps its entitlements (Sparkle's own
+# docs prescribe --preserve-metadata=entitlements for it); the others carry
+# none. Sparkle ships these helpers ad-hoc signed, so re-signing with the
+# bundle's (default ad-hoc) identity keeps the whole chain one identity.
+fw_b="$contents/Frameworks/Sparkle.framework/Versions/B"
+if [ -d "$fw_b" ]; then
+  for helper in \
+    "$fw_b/XPCServices/Installer.xpc" \
+    "$fw_b/XPCServices/Downloader.xpc" \
+    "$fw_b/Autoupdate" \
+    "$fw_b/Updater.app"; do
+    codesign --force --timestamp=none --preserve-metadata=entitlements \
+      --sign "$identity" "$helper"
+  done
+fi
+
+# Then every framework root (SQLCipher has no nested code; a root signing
+# seals it), then the app itself.
+for fw in "$contents/Frameworks"/*.framework; do
+  codesign --force --timestamp=none --sign "$identity" "$fw"
+done
 codesign --force --timestamp=none --sign "$identity" "$app"
-codesign --verify --strict "$app"
+codesign --verify --deep --strict "$app"
 
 echo "==> ok: $app ($(du -sh "$app" | cut -f1), version ${version}, id ${bundle_id})"

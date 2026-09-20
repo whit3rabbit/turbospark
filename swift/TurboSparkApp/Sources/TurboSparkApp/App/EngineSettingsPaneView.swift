@@ -20,7 +20,6 @@ struct EngineSettingsPaneView: View {
             Text("Sampling and prompt changes apply to the next turn. Load settings apply after model reload.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
             SystemPromptSettingsSection(model: model)
-            SoulSettingsSection(model: model)
             PersonalitySettingsSection(model: model)
             generationDefaultsSection
             advancedGenerationSection

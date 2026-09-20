@@ -1,10 +1,13 @@
 //! Curated Diffusers image sources, separate from the text-model catalog.
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use serde::Deserialize;
 
 use crate::{CancelFlag, Client, RepoRef, INSTALL_CANCELLED};
+use repack::HttpRangeSource;
 
 const EMBEDDED: &str = include_str!("image_models.json");
 
@@ -44,19 +47,20 @@ impl ImageCatalog {
 }
 
 /// Materializes the bounded Diffusers source tree consumed by the image
-/// packer. The large safetensors files are streamed to disk, not collected in
-/// memory. `progress` receives the selected filename and cumulative bytes
-/// after each file completes.
+/// packer. Large safetensors files use bounded concurrent ranges written to a
+/// sibling partial file. Completed ranges are cached with SHA-256 under the
+/// staging tree, so an interrupted immutable-revision install can reuse them.
 pub fn materialize_image_source(
     client: &Client,
     repo: &RepoRef,
     destination: &Path,
     cancel: Option<&CancelFlag>,
-    mut progress: impl FnMut(&str, u64, u64),
+    mut progress: impl FnMut(&str),
+    on_bytes: Arc<dyn Fn(u64, u64) + Send + Sync>,
 ) -> Result<u64, String> {
-    if destination.exists() {
+    if destination.exists() && !destination.is_dir() {
         return Err(format!(
-            "refusing to overwrite image source staging directory {}",
+            "image source staging path is not a directory: {}",
             destination.display()
         ));
     }
@@ -73,27 +77,65 @@ pub fn materialize_image_source(
             .map(|file| file.name.clone())
             .collect::<Vec<_>>(),
     )?;
-    let total = selected
-        .iter()
-        .filter_map(|name| files.iter().find(|file| file.name == *name)?.size)
-        .sum();
-    let mut bytes: u64 = 0;
-    for remote in selected {
+    let selected = selected
+        .into_iter()
+        .map(|name| {
+            let listed = files
+                .iter()
+                .find(|file| file.name == name)
+                .ok_or_else(|| format!("image repository stopped listing {name}"))?;
+            let size = match listed.size {
+                Some(size) => size,
+                None => client
+                    .content_length(&repo.file_url(&name))?
+                    .ok_or_else(|| format!("{name}: missing content length"))?,
+            };
+            Ok((name, size))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let total = selected.iter().try_fold(0u64, |sum, (_, size)| {
+        sum.checked_add(*size)
+            .ok_or_else(|| "image source download byte count overflowed u64".to_string())
+    })?;
+    let completed = Arc::new(AtomicU64::new(0));
+    std::fs::create_dir_all(destination)
+        .map_err(|e| format!("creating {}: {e}", destination.display()))?;
+    let cache = destination.join(".download-cache");
+    for (remote, expected_size) in selected {
         if cancel.is_some_and(CancelFlag::is_cancelled) {
             return Err(INSTALL_CANCELLED.to_string());
         }
         let local = safe_join(destination, &remote)?;
         let stage = format!("downloading {remote}");
-        progress(&stage, bytes, total);
-        bytes = bytes
-            .checked_add(client.download_to(&repo.file_url(&remote), &local)?)
-            .ok_or_else(|| "image source download byte count overflowed u64".to_string())?;
-        progress(&stage, bytes, total);
+        progress(&stage);
+        // Rebuild even a size-matching source file from the verified range
+        // cache. Size alone cannot prove that a source left by a crashed pack
+        // is still intact; cache entries carry hashes and remain local I/O.
+        if local.exists() {
+            std::fs::remove_file(&local)
+                .map_err(|e| format!("removing incomplete {}: {e}", local.display()))?;
+        }
+        let done = Arc::clone(&completed);
+        let report = Arc::clone(&on_bytes);
+        let range_progress: repack::ByteProgressCallback = Arc::new(move |delta| {
+            let cumulative = done.fetch_add(delta, Ordering::Relaxed) + delta;
+            report(cumulative, total);
+        });
+        let mut source = HttpRangeSource::with_progress(repo.file_url(&remote), range_progress)
+            .with_optional_token(client.token())
+            .with_cache_dir(&cache);
+        if let Some(cancel) = cancel {
+            source = source.with_cancel(cancel.clone());
+        }
+        source
+            .download_to(&local, expected_size)
+            .map_err(|e| format!("downloading {remote}: {e}"))?;
+        progress(&stage);
     }
     if cancel.is_some_and(CancelFlag::is_cancelled) {
         return Err(INSTALL_CANCELLED.to_string());
     }
-    Ok(bytes)
+    Ok(completed.load(Ordering::Relaxed))
 }
 
 fn select_files(files: &[String]) -> Result<Vec<String>, String> {

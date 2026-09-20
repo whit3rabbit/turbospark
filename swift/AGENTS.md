@@ -16,6 +16,8 @@ Short seams. Verify each one before release.
 - [Swift storage](docs/storage.md)
 - [Swift localization](docs/SWIFT_LOCALIZATION.md)
 - [Swift keyboard and accessibility](docs/KEYBOARD_SHORTCUTS.md)
+- [Automatic app updates](docs/AUTO_UPDATE.md)
+- [Download manager](docs/DOWNLOAD_MANAGER.md)
 - [Rust binding contract](../docs/SWIFT_BINDINGS.md)
 - [Verification reference](../.claude/docs/verification.md)
 
@@ -49,6 +51,13 @@ staging files changed.
   storage abstractions. Do not invent another `~/.turbospark` path.
 - Accessibility and keyboard changes must follow the existing shortcuts and
   VoiceOver contracts.
+- The Sparkle updater starts only inside a real .app bundle (see
+  `SparkleUpdateController`); never bypass that guard for `swift run` builds.
+  Update trust is the EdDSA signature, not Apple code signing -- the bundle
+  is ad-hoc signed. Bundle-script signing order ends innermost-first inside
+  Sparkle.framework (XPCServices, Autoupdate, Updater.app, then the
+  framework) before the app itself. The brew cask's `auto_updates true` and
+  the in-app updater are one contract: either may change, not just one.
 
 ## Checks
 

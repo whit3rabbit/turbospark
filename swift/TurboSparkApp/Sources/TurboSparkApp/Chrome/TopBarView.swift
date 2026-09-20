@@ -399,7 +399,7 @@ struct GenerationPhaseIndicator: View {
         Group {
             if let statusText {
                 HStack(spacing: 5) {
-                    if model.opening || model.isInstallingModel {
+                    if model.opening {
                         ProgressView().controlSize(.mini).scaleEffect(0.7)
                     } else if model.phase == .prefill, !reduceMotion {
                         PulsingIndicatorDot()
@@ -429,7 +429,6 @@ struct GenerationPhaseIndicator: View {
     /// changes, and the status strip already carries the loaded/not signal.
     private var statusText: String? {
         if model.opening { return "Loading model" }
-        if model.isInstallingModel { return model.installStageText ?? "Installing" }
         switch model.phase {
         case .prefill:
             return "Prefill \(model.livePrefillDone)/\(max(model.livePrefillTotal, 1))"

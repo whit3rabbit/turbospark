@@ -90,7 +90,7 @@ done
 # this is asserted rather than left to a launch test.
 ls "$mounted/Contents/Resources"/*.bundle >/dev/null 2>&1 \
   || { echo "no resource .bundle in Contents/Resources" >&2; exit 1; }
-codesign --verify --strict "$mounted" \
+codesign --verify --deep --strict "$mounted" \
   || { echo "signature does not verify on the mounted copy" >&2; exit 1; }
 
 echo "==> ok: $dmg ($(du -h "$dmg" | cut -f1))"

@@ -1,6 +1,7 @@
 //! Shared header-only split discovery for probe and installation.
 use crate::hf::{Client, RepoRef};
 use repack::{ByteProgressCallback, CancelFlag, GgufSet, HttpRangeSource};
+use std::path::Path;
 
 pub(crate) fn load(
     client: &Client,
@@ -8,8 +9,10 @@ pub(crate) fn load(
     file: &str,
     progress: Option<&ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
 ) -> Result<GgufSet<HttpRangeSource>, String> {
-    let first = crate::stream::range_source(repo.file_url(file), progress, client, cancel);
+    let first =
+        crate::stream::range_source(repo.file_url(file), progress, client, cancel, cache_dir);
     let header = repack::fetch_gguf_header(&first).map_err(|e| format!("{file}: {e}"))?;
     let names = repack::gguf_shard_names(file, &header)?;
     let mut shards = Vec::with_capacity(names.len());
@@ -22,7 +25,8 @@ pub(crate) fn load(
         let (header, source) = match initial.take() {
             Some(pair) => pair,
             None => {
-                let source = crate::stream::range_source(url.clone(), progress, client, cancel);
+                let source =
+                    crate::stream::range_source(url.clone(), progress, client, cancel, cache_dir);
                 let header =
                     repack::fetch_gguf_header(&source).map_err(|e| format!("{name}: {e}"))?;
                 (header, source)

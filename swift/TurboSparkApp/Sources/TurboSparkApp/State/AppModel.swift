@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 import TurboSpark
@@ -358,6 +359,14 @@ public final class AppModel: ObservableObject {
     /// -- a direct write there would be clobbered by this model's own
     /// debounced settings save.
     @Published public var pluginEnableState: [String: Bool] = [:]
+    /// Whether user-global skills, agents, plugins, and hooks are discovered
+    /// live from other agent tools' home folders. Mirrors
+    /// `MacAppSettings.autoLoadExternalAgentContent`; off by default, and the
+    /// only other path to cross-agent content is the Import wizard copying
+    /// items into TurboSpark's own folders. Change it through
+    /// `setAutoLoadExternalAgentContent(_:)`, which also refreshes every
+    /// gated surface.
+    @Published public var autoLoadExternalAgentContent: Bool = false
 
     // Profiles State
     /// The ADDITIONAL users this installation knows about. The Default user
@@ -631,23 +640,31 @@ public final class AppModel: ObservableObject {
     @Published public var samplingPresets: [AppSamplingPreset] = []
     /// Compatibility mirror of the selected reusable system prompt. New UI
     /// writes go through `systemPrompts`; this remains the direct source used
-    /// by legacy callers and per-chat fallback tests.
-    @Published public var defaultSystemPrompt: String = AppSystemPrompt.builtIns[0].instructions
+    /// by legacy callers and per-chat fallback tests. Empty unless a prompt
+    /// is selected.
+    @Published public var defaultSystemPrompt: String = ""
 
-    /// Reusable app-wide prompts. The first built-in is selected by default,
-    /// while an empty selection explicitly sends no app-wide default.
+    /// Reusable app-wide prompts, stocked with the starter library. Nothing
+    /// is selected by default: sending an app-wide system prompt is an
+    /// explicit choice, while an empty selection sends none.
     @Published public var systemPrompts: [AppSystemPrompt] = AppSystemPrompt.builtIns
 
     /// `nil` means no app-wide system prompt is selected.
-    @Published public var selectedSystemPromptID: UUID? = AppSystemPrompt.builtIns[0].id
+    @Published public var selectedSystemPromptID: UUID? = nil
 
     /// App-wide response styles, including the compact starter library.
     @Published public var personalities: [AppPersonality] = AppPersonality.builtIns
 
     /// `nil` means no personality is added to a turn's system prompt.
     @Published public var selectedPersonalityID: UUID? = nil
-    /// Per-profile SOUL content used only when Hermes' SOUL.md is absent.
-    @Published public var soulPrompt: String = ""
+    /// Whether the selected SOUL entry is injected into the system prompt.
+    /// Disabled by default; detected external SOUL.md files are import
+    /// sources only.
+    @Published public var soulPromptEnabled: Bool = false
+    /// Saved SOUL.md entries. Empty until one is imported or authored.
+    @Published public var soulPrompts: [AppSoulPrompt] = []
+    /// `nil` means no saved soul is selected.
+    @Published public var selectedSoulPromptID: UUID? = nil
     /// Path to activation steering vectors file.
     @Published public var steeringPath: String? = nil
     /// Named steering directions the operator registered. Empty until one is
@@ -686,6 +703,25 @@ public final class AppModel: ObservableObject {
     @Published public var turboSparkStoreRoot: String = ""
 
     // Installation State
+    @Published public var modelDownloads: [ModelDownload] = []
+    @Published public var isDownloadManagerExpanded = false
+    @Published public var isInstallPaused = false
+    @Published public var isCancellingModelInstall = false
+    var activeModelDownloadID: UUID?
+    var installPausedAt: Date?
+    var installPausedDuration: TimeInterval = 0
+    var downloadHistoryStore = ModelDownloadHistoryStore()
+    var downloadHistoryWritable = false
+    var downloadHistorySaveFailed = false
+    var lastDownloadHistorySaveUptime: TimeInterval?
+    var downloadTransferMeter = DownloadTransferMeter()
+    var modelDownloadsShuttingDown = false
+    // A profile may reopen before its previous model's native worker exits.
+    static weak var modelInstallOwner: AppModel? {
+        didSet { modelInstallOwnershipChanged.send() }
+    }
+    static let modelInstallOwnershipChanged = PassthroughSubject<Void, Never>()
+    var modelInstallOwnershipObserver: AnyCancellable?
     /// Whether a model download and installation task is currently running.
     @Published public var isInstallingModel: Bool = false
     /// Description of the current installation stage.
@@ -700,15 +736,6 @@ public final class AppModel: ObservableObject {
     @Published public var installETAText: String? = nil
     /// The alias currently installing, if any.
     @Published public var installingAlias: String? = nil
-    /// Aliases whose install was abandoned by `cancelInstall()`.
-    ///
-    /// Refuses a re-install of `alias` while a cancelled walk may still be
-    /// writing its directory. `cancelInstall()` inserts the alias and
-    /// `watchCancelledWalkExit` lifts the refusal once `installsFinished()`
-    /// shows the walk exited; if the walk never notices the flag, the entry
-    /// stays until app restart rather than racing a live writer.
-    @Published public var abandonedInstallAliases: Set<String> = []
-
     var runTask: Task<Void, Never>?
     /// Work spawned OUTSIDE `runTask`: an approved or denied pending call,
     /// which runs a tool and then re-enters the loop. `runTask` cannot reach
@@ -745,15 +772,8 @@ public final class AppModel: ObservableObject {
     /// turn's state out from under it (state#10).
     var generationEpoch: Int = 0
 
-    /// Same shape as `generationEpoch`, for installs. `cancelInstall()`
-    /// cancels the running `Task` cooperatively -- the task keeps running
-    /// until its next suspension point notices -- so a user who cancels and
-    /// immediately starts a NEW install can have the OLD task's delayed
-    /// `CancellationError` tail run AFTER the new install's own `installTask`
-    /// is already in flight. Without this guard that tail unconditionally
-    /// reset `isInstallingModel`/`installTask` to nil, silently clobbering
-    /// the new install's state and dropping the only reference that could
-    /// cancel IT (state#15).
+    /// Prevent a stale install consumer from changing a newer install's state.
+    /// Cancellation keeps its consumer alive until the native writer exits.
     var installEpoch: Int = 0
 
     /// Consecutive times a `Stop` hook has blocked and re-entered the
@@ -767,6 +787,11 @@ public final class AppModel: ObservableObject {
     public init() {
         loadSettings()
         loadProfiles()
+        restoreModelDownloads()
+        modelInstallOwnershipObserver = Self.modelInstallOwnershipChanged.sink { [weak self] in
+            self?.objectWillChange.send()
+            self?.startNextModelDownloadIfPossible()
+        }
         loadProjects()
         loadChats()
         installBackgroundShellObserver()

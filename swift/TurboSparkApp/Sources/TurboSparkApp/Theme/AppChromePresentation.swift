@@ -33,12 +33,12 @@ public struct AppSidebarControlPresentation: Equatable, Sendable {
 }
 
 public enum AppChromeLayout {
-    public static let primaryMinimumWidth: CGFloat = 520
+    public static let primaryMinimumWidth: CGFloat = 640
     public static let chatSidebarWidth: CGFloat = 260
     public static let inspectorWidth: CGFloat = 320
     public static let expandedInspectorWidth: CGFloat = 720
     public static let dividerWidth: CGFloat = 1
-    public static let minimumHeight: CGFloat = 520
+    public static let minimumHeight: CGFloat = 640
 
     public static func inspectorWidth(isExpanded: Bool) -> CGFloat {
         isExpanded ? expandedInspectorWidth : inspectorWidth

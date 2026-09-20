@@ -40,3 +40,16 @@ pub fn byte_progress_bar(total_bytes: u64) -> ProgressBar {
     pb.enable_steady_tick(Duration::from_millis(100));
     pb
 }
+
+/// Create a count-tracking progress bar for iterating over N items.
+pub fn count_progress_bar(total: u64, msg: impl Into<String>) -> ProgressBar {
+    let pb = ProgressBar::new(total);
+    if let Ok(style) =
+        ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+    {
+        pb.set_style(style.progress_chars("=>-"));
+    }
+    pb.set_message(msg.into());
+    pb.enable_steady_tick(Duration::from_millis(100));
+    pb
+}

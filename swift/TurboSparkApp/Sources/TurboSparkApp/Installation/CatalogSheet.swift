@@ -190,7 +190,7 @@ struct CatalogSheet: View {
                         } label: { Text("Install", bundle: .module) }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
-                        .disabled(model.isInstallingModel || model.isRunning)
+                        .disabled(model.isRunning || !model.canInstall(alias: entry.alias))
                         .help("Install \(entry.alias)")
                         .accessibilityLabel("Install \(entry.alias)")
                         .accessibilityHint("Downloads and installs \(entry.name)")
@@ -217,7 +217,9 @@ struct CatalogSheet: View {
                 } label: { Text("Install Custom Repo", bundle: .module) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(customRepo.isEmpty || customAlias.isEmpty || model.isInstallingModel)
+                .disabled(
+                    customRepo.isEmpty || customAlias.isEmpty || model.isRunning
+                        || !model.canInstall(alias: customAlias))
                 .accessibilityLabel("Install custom repository")
                 .accessibilityHint("Downloads and builds model from specified Hugging Face repository")
             }

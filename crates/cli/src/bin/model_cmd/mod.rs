@@ -638,9 +638,18 @@ pub fn recommend(catalog: &Catalog, client: &Client, options: &Options) -> Resul
         .filter(|e| e.kind == catalog::EntryKind::Model)
         .collect();
     let mut rows: Vec<catalog::Recommendation> = if options.probe {
-        let pb = progress::spinner("probing curated models...".to_string());
-        let results =
-            catalog::recommend_catalog_probed(&entries, client, &machine, context, SLOT_POLICY);
+        let pb = progress::count_progress_bar(entries.len() as u64, "probing curated models...");
+        let results = catalog::recommend_catalog_probed_with_progress(
+            &entries,
+            client,
+            &machine,
+            context,
+            SLOT_POLICY,
+            |done, total| {
+                pb.set_length(total as u64);
+                pb.set_position(done as u64);
+            },
+        );
         pb.finish_and_clear();
         results?
     } else {

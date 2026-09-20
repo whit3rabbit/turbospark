@@ -2,6 +2,15 @@ import Foundation
 import TurboSpark
 
 extension AppModel {
+    /// Setup belongs to the image workspace, including when its catalog
+    /// becomes available after the user has already opened that workspace.
+    var shouldRecommendImageModel: Bool {
+        activeSection == .images
+            && imageModelPath.isEmpty
+            && !hasInstalledZImageModel
+            && !recommendedZImageSources.isEmpty
+    }
+
     /// Image installs stay separate from the text catalog. The path remains a
     /// string because a user may still choose a valid side-loaded install.
     public var imageModelPath: String {
@@ -79,30 +88,62 @@ extension AppModel {
     /// Downloads a curated image source through the native image-install ABI.
     /// The source is packed and verified before it becomes selectable.
     public func installImageModel(_ source: ImageCatalogEntry) {
-        guard !isInstallingImageModel, !isInstallingModel, !generating else { return }
         guard !imageModels.contains(where: { $0.alias == source.alias }) else {
             if let installed = imageModels.first(where: { $0.alias == source.alias }) {
                 selectImageModel(installed)
             }
             return
         }
+        enqueueModelDownload(.image(alias: source.alias))
+    }
+
+    func startImageModelInstall(alias: String) {
+        Self.modelInstallOwner = self
         isInstallingImageModel = true
-        imageInstallAlias = source.alias
+        installingAlias = alias
+        imageInstallAlias = alias
+        installStageText = "Preparing image source..."
         imageInstallStage = "Preparing image source..."
+        installProgressFraction = nil
+        installDownloadedBytes = nil
+        installTotalBytes = nil
+        installETAText = nil
         imageInstallProgressFraction = nil
         imageInstallTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if Self.modelInstallOwner === self { Self.modelInstallOwner = nil }
+                self.imageInstallTask = nil
+                self.startNextModelDownloadIfPossible()
+            }
             do {
-                for try await event in TurboSparkCatalog.installImage(source.alias) {
+                for try await event in TurboSparkCatalog.installImage(alias) {
+                    if self.modelDownloadsShuttingDown {
+                        TurboSparkCatalog.cancelInstall()
+                        continue
+                    }
+                    if self.isCancellingModelInstall {
+                        if case .finished = event {
+                            self.setModelDownloadStatus(.completed)
+                            self.refreshModels()
+                        } else {
+                            TurboSparkCatalog.cancelInstall()
+                        }
+                        continue
+                    }
                     switch event {
                     case let .stage(stage):
+                        self.recordModelDownloadStage(stage)
                         self.imageInstallStage = stage
+                        self.installStageText = stage
                     case let .bytes(done, total):
+                        self.recordModelDownloadProgress(done: done, total: total)
                         if total > 0 {
                             self.imageInstallProgressFraction =
                                 min(Double(done) / Double(total), 1.0)
                         }
                     case let .finished(model):
+                        self.setModelDownloadStatus(.completed)
                         self.refreshModels()
                         self.selectImageModel(model)
                         self.showToast(
@@ -111,13 +152,27 @@ extension AppModel {
                     }
                 }
             } catch is CancellationError {
-                self.showToast("Image model install stopped.", style: .info)
+                if !self.modelDownloadsShuttingDown {
+                    self.setModelDownloadStatus(.cancelled)
+                    self.showToast("Image model install stopped.", style: .info)
+                }
             } catch {
-                self.showToast(
-                    "Image model install failed: \(error.localizedDescription)",
-                    style: .error, duration: 6.0)
+                if !self.modelDownloadsShuttingDown && !self.isCancellingModelInstall {
+                    self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
+                    self.showToast(
+                        "Image model install failed: \(error.localizedDescription)",
+                        style: .error, duration: 6.0)
+                }
             }
+            guard !self.modelDownloadsShuttingDown else { return }
+            self.finishModelInstallCancellation()
             self.isInstallingImageModel = false
+            self.installingAlias = nil
+            self.installStageText = nil
+            self.installProgressFraction = nil
+            self.installDownloadedBytes = nil
+            self.installTotalBytes = nil
+            self.installETAText = nil
             self.imageInstallAlias = nil
             self.imageInstallStage = nil
             self.imageInstallProgressFraction = nil
@@ -128,10 +183,13 @@ extension AppModel {
     /// Cancels the native image install walk and waits for its stream to close.
     /// Dropping the Swift consumer alone would leave the Rust packer writing.
     public func cancelImageInstall() {
-        guard isInstallingImageModel else { return }
-        if TurboSparkCatalog.cancelInstall() {
-            imageInstallStage = "Stopping image install..."
-        }
+        guard isInstallingImageModel, !isCancellingModelInstall else { return }
+        isCancellingModelInstall = true
+        setModelDownloadStatus(.cancelling)
+        installETAText = nil
+        imageInstallStage = "Stopping image install..."
+        installStageText = imageInstallStage
+        TurboSparkCatalog.cancelInstall()
     }
 
     /// Deletes a curated image install. The native catalog validates the

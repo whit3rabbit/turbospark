@@ -25,9 +25,7 @@ struct RootView: View {
     @State private var isChatSearchPresented = false
     @State private var isSummaryVisible = true
     @State private var workingWidth: CGFloat = 0
-    @AppStorage("TurboSpark.imageModelRecommendationSeen")
-    private var imageModelRecommendationSeen = false
-    @State private var showingImageModelRecommendation = false
+    @State private var downloadControlHeight: CGFloat = 38
 
     private var canPinSummary: Bool { ProjectChatSummary.canPin(availableWidth: workingWidth) }
     private var hasProjectSummary: Bool {
@@ -38,6 +36,16 @@ struct RootView: View {
 
     private var effectiveReduceMotion: Bool {
         appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
+    }
+
+    private var minimumWindowSize: CGSize {
+        CGSize(
+            width: AppChromeLayout.minimumWindowWidth(
+                isSidebarExpanded: isSidebarExpanded,
+                rightColumn: rightColumnClaimant == .projectSummary ? .none : rightColumnClaimant,
+                isExpandedWorktree: model.interactionMode == .projects
+                    && model.worktree?.isExpandedSplitMode == true),
+            height: AppChromeLayout.minimumHeight)
     }
 
     var body: some View {
@@ -71,32 +79,37 @@ struct RootView: View {
                     })
 
                 workingArea
+                    // Reserve room for Downloads so its collapsed control
+                    // never covers the composer or model selector.
+                    .padding(.bottom, downloadControlHeight + 24)
 
                 StatusBarView(model: model)
             }
         }
         .frame(
-            minWidth: AppChromeLayout.minimumWindowWidth(
-                // A function of the toggle ALONE. This used to be
-                // conjoined with `activeSection == .chat`, which is now
-                // `AppSidebarView`'s business and was never this one's: the
-                // column is present in every section, so anding the section in
-                // here would let the window shrink under its own sidebar in
-                // Files and Server.
-                isSidebarExpanded: isSidebarExpanded,
-                rightColumn: (model.activeSection == .images || rightColumnClaimant == .projectSummary) ? .none : rightColumnClaimant),
-            minHeight: AppChromeLayout.minimumHeight)
+            minWidth: minimumWindowSize.width,
+            minHeight: minimumWindowSize.height)
+        .background { MainWindowMinimumSize(size: minimumWindowSize).allowsHitTesting(false) }
         .clipped()
         .background(.appPage)
-        .appThemed()
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isSidebarExpanded)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isInspectorVisible)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.previewAttachmentID)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.openArtifactID)
         .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.htmlPreviewID)
-        .overlay(alignment: .top) {
-            ToastOverlayView(model: model)
-                .padding(.top, AppChromeLayout.topBarHeight + 10)
+        .overlay(alignment: .trailing) {
+            // Share the available height so a toast cannot cover the manager
+            // when the window is short or interface text is enlarged.
+            VStack(alignment: .trailing, spacing: 12) {
+                ToastOverlayView(model: model)
+                Spacer(minLength: 0)
+                DownloadManagerView(model: model)
+                    .onPreferenceChange(DownloadControlHeightKey.self) { downloadControlHeight = $0 }
+            }
+            .frame(maxWidth: 420)
+            .padding(.horizontal, 16)
+            .padding(.top, AppChromeLayout.topBarHeight + 10)
+            .padding(.bottom, AppChromeLayout.statusBarHeight + 12)
         }
         .overlay {
             // The Search Chats palette. Sits above every pane so Cmd+K
@@ -122,9 +135,6 @@ struct RootView: View {
                 if !presented { model.pendingMcpApprovals.removeAll() }
             })) {
                 ProjectMcpApprovalSheet(model: model)
-        }
-        .sheet(isPresented: $showingImageModelRecommendation) {
-            ImageModelRecommendationSheet(model: model)
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             isSidebarExpanded.toggle()
@@ -163,7 +173,6 @@ struct RootView: View {
             AppShutdownCoordinator.shared.onTerminate = { [weak model] in
                 model?.shutdown()
             }
-            presentImageModelRecommendationIfNeeded()
         }
         .onChange(of: model.hasOutputTranscript, initial: true) { _, hasTranscript in
             if hasTranscript, model.activeSection == .chat { isInspectorVisible = false }
@@ -177,6 +186,9 @@ struct RootView: View {
                 isInspectorVisible = true
             }
         }
+        // Theme the complete scene once. Applying this to an overlay also
+        // paints its empty space, hiding every pane underneath it.
+        .appThemed()
     }
 
     private func toggleModelSettings() {
@@ -190,15 +202,6 @@ struct RootView: View {
         } else {
             isInspectorVisible = false
         }
-    }
-
-    private func presentImageModelRecommendationIfNeeded() {
-        guard !imageModelRecommendationSeen,
-            !model.hasInstalledZImageModel,
-            !model.recommendedZImageSources.isEmpty
-        else { return }
-        imageModelRecommendationSeen = true
-        showingImageModelRecommendation = true
     }
 
     private var workingArea: some View {

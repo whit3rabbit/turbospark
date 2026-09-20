@@ -81,7 +81,7 @@ pub(super) fn make_manifest(
             latent_shape: vec![1, 16, 128, 128],
         },
         components,
-        files: collect_files(staging)?,
+        files: collect_files(staging, reports)?,
         verification: serde_json::json!({
             "hash": "sha256",
             "packed_index": "tensor_inventory_sha256",

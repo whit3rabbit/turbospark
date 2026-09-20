@@ -121,6 +121,62 @@ extension AgentManager {
         return agent
     }
 
+    /// Imports an agent definition file from another tool's directory into
+    /// TurboSpark user or project scope.
+    ///
+    /// Same contract as `SkillManager.importSkill`: the file is parsed
+    /// BEFORE it is copied (state#107), a name collision is reported rather
+    /// than replaced, and the copy is a snapshot -- later edits in the other
+    /// tool's folder do not reach the imported file.
+    @discardableResult
+    public func importAgent(
+        from sourceURL: URL,
+        scope: AppAgentScope,
+        projectRootURL: URL? = nil,
+        overwrite: Bool = false
+    ) throws -> AppAgentDefinition {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &isDir),
+              !isDir.boolValue else {
+            throw AgentParseError.fileNotFound(sourceURL.path)
+        }
+
+        let targetDir: URL
+        switch scope {
+        case .userGlobal:
+            targetDir = defaultUserAgentsDirectory
+        case .project:
+            guard let projectRootURL else {
+                throw AgentFileError.projectRootRequired
+            }
+            targetDir = projectRootURL
+                .appendingPathComponent(".turbospark", isDirectory: true)
+                .appendingPathComponent("agents", isDirectory: true)
+        case .builtIn, .plugin:
+            throw AgentFileError.scopeNotAllowed(scope)
+        }
+
+        // Parse before copy, with the source's own directory as the
+        // containment root: `parseFile`'s symlink check (state#23) runs on
+        // the SOURCE, so an agent definition that reaches outside its
+        // folder is refused before anything is written.
+        _ = try AgentParser.parseFile(
+            at: sourceURL, scope: scope, sourceAgent: .custom,
+            containedIn: sourceURL.deletingLastPathComponent())
+
+        try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+        let destFileURL = targetDir.appendingPathComponent(sourceURL.lastPathComponent)
+        if FileManager.default.fileExists(atPath: destFileURL.path) {
+            guard overwrite else {
+                throw AgentFileError.destinationExists(sourceURL.lastPathComponent)
+            }
+            try FileManager.default.removeItem(at: destFileURL)
+        }
+        try FileManager.default.copyItem(at: sourceURL, to: destFileURL)
+        return try AgentParser.parseFile(
+            at: destFileURL, scope: scope, sourceAgent: .turboSpark, containedIn: targetDir)
+    }
+
     /// Saves modifications to an existing user- or project-scoped agent.
     public func saveAgent(_ agent: AppAgentDefinition) throws {
         switch agent.scope {

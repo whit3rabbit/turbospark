@@ -27,6 +27,13 @@ public final class PluginManager: @unchecked Sendable {
     private let lock = NSLock()
     private var resolutionCache: (key: String, result: PluginResolution)?
 
+    /// Whether Claude Code's own plugin root is read at all. Mirrored from
+    /// `MacAppSettings.autoLoadExternalAgentContent` by `AppModel`; off by
+    /// default, so another tool's installs do not appear until the user
+    /// opts into live cross-agent discovery. Tests exercising interop set
+    /// this to `true`.
+    public var includeClaudeInterop: Bool = false
+
     public struct PluginResolution: Sendable {
         /// All discovered plugins, precedence-ordered. Includes DISABLED
         /// ones; `enabledPlugins(projectURL:)` filters.
@@ -190,19 +197,24 @@ public final class PluginManager: @unchecked Sendable {
                 admit: admit, errors: &errors)
         }
 
-        let claudeLedger = ledgerInstallPaths(root: claudeRoot)
-        for url in flatPluginDirectories(in: claudeRoot) {
-            loadPlugin(
-                at: url, origin: .claudeInterop, marketplaceName: nil,
-                extraDiagnostics: [Self.readOnlyInteropNote],
-                admit: admit, errors: &errors)
-        }
-        for (marketplace, _, version, url) in cachePluginDirectories(in: claudeRoot) {
-            loadPlugin(
-                at: url, origin: .claudeInterop, marketplaceName: marketplace,
-                fallbackVersion: claudeLedger[url.standardizedFileURL.path]?.version ?? version,
-                extraDiagnostics: [Self.readOnlyInteropNote],
-                admit: admit, errors: &errors)
+        // 4. Claude Code's own installs, read-only -- and only under the
+        //    cross-agent opt-in, so another tool's plugins do not appear
+        //    uninvited.
+        if includeClaudeInterop {
+            let claudeLedger = ledgerInstallPaths(root: claudeRoot)
+            for url in flatPluginDirectories(in: claudeRoot) {
+                loadPlugin(
+                    at: url, origin: .claudeInterop, marketplaceName: nil,
+                    extraDiagnostics: [Self.readOnlyInteropNote],
+                    admit: admit, errors: &errors)
+            }
+            for (marketplace, _, version, url) in cachePluginDirectories(in: claudeRoot) {
+                loadPlugin(
+                    at: url, origin: .claudeInterop, marketplaceName: marketplace,
+                    fallbackVersion: claudeLedger[url.standardizedFileURL.path]?.version ?? version,
+                    extraDiagnostics: [Self.readOnlyInteropNote],
+                    admit: admit, errors: &errors)
+            }
         }
 
         var shadowedNotes: [String] = []

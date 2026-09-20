@@ -89,6 +89,11 @@ pub type TsEventCallback =
 pub type TsInstallCallback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, *const c_char, usize, u64, u64)>;
 
+/// Progress while curated model headers are inspected for recommendations.
+/// Called on the same thread as `ts_recommend_progress_json`; `done` is
+/// monotonic and `total` excludes standalone vision towers.
+pub type TsRecommendCallback = Option<unsafe extern "C" fn(*mut c_void, u32, u32)>;
+
 /// One image stage-progress event. `text` is the snake-case stage name,
 /// `a` is completed work, and `b` is the stage total.
 pub type TsImageEventCallback =

@@ -29,6 +29,13 @@ enable cascade.
 +-- (same shapes)                 discovered for interop, never written
 ```
 
+The Claude interop root is read only under the cross-agent opt-in
+(`MacAppSettings.autoLoadExternalAgentContent`, Settings > General,
+default OFF; mirrored into `PluginManager.includeClaudeInterop`). With the
+setting off, another tool's installs do not appear at all -- the Import
+wizard (Settings > General > "Import from Other Agents...") is the opt-in
+path for cross-agent content.
+
 Precedence on a lowercased name collision, first match wins: turbospark
 flat dirs, then local folders, then the versioned caches, then Claude
 interop. The shadowed entries are reported in `pluginLoadDiagnostics`, not

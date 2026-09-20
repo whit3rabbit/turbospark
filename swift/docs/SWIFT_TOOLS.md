@@ -470,6 +470,18 @@ A catalog is a JSON manifest in a Git repository or a local folder, listing
 servers a user can install in one click. Settings, MCP Servers, Browse
 Marketplace.
 
+The Import wizard (Settings > General > "Import from Other Agents...", MCP
+Servers tab; also reachable from the MCP pane's "From Other Agents...")
+offers a second source: the GLOBAL MCP configs other agent tools keep in
+the home directory. `ExternalAgentMcpReader` reads `~/.claude.json`,
+`~/.cursor/mcp.json`, `~/.gemini/settings.json` (the shared
+`ProjectMcpDetector.parseConfigData` JSON path), and Codex's
+`~/.codex/config.toml` `[mcp_servers.<name>]` tables (a targeted parser,
+not a TOML engine -- anything it cannot interpret is skipped, not guessed
+at). The same security rules as project configs apply: `autoApprove` is
+forced false, env expansion is allowlisted, and imported servers are added
+DISABLED with their command or URL shown in the wizard row before import.
+
 ### The manifest
 
 `mcp-marketplace.json` at the repository root, or at the path the source

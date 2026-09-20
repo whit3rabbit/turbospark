@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::install::{ImageManifest, ImageManifestFile, IMAGE_RECEIPT_NAME};
-use crate::packed::{PackedIndex, PACKED_DATA_NAME, PACKED_INDEX_NAME};
+use crate::packed::{PackedIndex, PackedTensorReport, PACKED_DATA_NAME, PACKED_INDEX_NAME};
 use crate::runtime::{IMAGE_MLX_QUANTIZATION, IMAGE_QUANTIZATION, IMAGE_UNQUANTIZED};
 
 pub(super) fn write_receipt(
@@ -71,7 +71,10 @@ pub(super) fn future_canonical_path(output: &Path) -> Result<String, String> {
         .to_string())
 }
 
-pub(super) fn collect_files(staging: &Path) -> Result<Vec<ImageManifestFile>, String> {
+pub(super) fn collect_files(
+    staging: &Path,
+    reports: &BTreeMap<String, PackedTensorReport>,
+) -> Result<Vec<ImageManifestFile>, String> {
     let mut files = Vec::new();
     for path in collect_paths(staging)? {
         let rel = path
@@ -81,15 +84,30 @@ pub(super) fn collect_files(staging: &Path) -> Result<Vec<ImageManifestFile>, St
         if relative == "manifest.json" || relative == IMAGE_RECEIPT_NAME {
             continue;
         }
-        let bytes =
-            fs::read(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+        let size_bytes = fs::metadata(&path)
+            .map_err(|e| format!("failed to stat {}: {e}", path.display()))?
+            .len();
         let owner = owner_for_path(&relative)?;
-        let (storage_dtype, quantization, inventory) = file_metadata(&path, &relative, &bytes)?;
+        let (storage_dtype, quantization, inventory) = file_metadata(&path, &relative)?;
+        let sha256 = if relative.ends_with(PACKED_DATA_NAME) {
+            let component = relative
+                .strip_prefix("components/")
+                .and_then(|rest| rest.split('/').next())
+                .ok_or_else(|| format!("packed payload {relative} has no component"))?;
+            reports
+                .get(component)
+                .ok_or_else(|| format!("packed payload {relative} has no pack report"))?
+                .data_sha256
+                .clone()
+        } else {
+            model_io::hash_file(&path, 1 << 20)
+                .map_err(|e| format!("failed to hash {}: {e}", path.display()))?
+        };
         files.push(ImageManifestFile {
             path: relative,
             owner,
-            size_bytes: bytes.len() as u64,
-            sha256: model_io::hash_data(&bytes),
+            size_bytes,
+            sha256,
             storage_dtype,
             quantization,
             tensor_inventory_sha256: inventory,
@@ -102,10 +120,11 @@ pub(super) fn collect_files(staging: &Path) -> Result<Vec<ImageManifestFile>, St
 fn file_metadata(
     path: &Path,
     relative: &str,
-    bytes: &[u8],
 ) -> Result<(String, serde_json::Value, String), String> {
     if relative.ends_with(PACKED_INDEX_NAME) {
-        let index: PackedIndex = serde_json::from_slice(bytes)
+        let bytes = fs::read(path)
+            .map_err(|e| format!("failed to read packed index {}: {e}", path.display()))?;
+        let index: PackedIndex = serde_json::from_slice(&bytes)
             .map_err(|e| format!("failed to parse packed index {}: {e}", path.display()))?;
         return Ok((
             "index".to_string(),

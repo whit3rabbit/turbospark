@@ -44,11 +44,19 @@ pub struct ImageInstallReport {
 
 /// Pack and publish a complete image install without exposing a partial tree.
 pub fn build_image_install(spec: &ImageInstallSpec) -> Result<ImageInstallReport, String> {
+    build_image_install_with_progress(spec, |_| {})
+}
+
+/// Pack and publish an image install while reporting coarse, UI-safe stages.
+pub fn build_image_install_with_progress(
+    spec: &ImageInstallSpec,
+    mut progress: impl FnMut(&str),
+) -> Result<ImageInstallReport, String> {
     validate_spec(spec)?;
     let staging = staging_path(&spec.output_root)?;
     fs::create_dir(&staging).map_err(|e| format!("failed to create staging install: {e}"))?;
 
-    let result = build_staged(spec, &staging);
+    let result = build_staged(spec, &staging, &mut progress);
     if result.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
@@ -93,7 +101,11 @@ fn validate_spec(spec: &ImageInstallSpec) -> Result<(), String> {
     Ok(())
 }
 
-fn build_staged(spec: &ImageInstallSpec, staging: &Path) -> Result<ImageInstallReport, String> {
+fn build_staged(
+    spec: &ImageInstallSpec,
+    staging: &Path,
+    progress: &mut impl FnMut(&str),
+) -> Result<ImageInstallReport, String> {
     let components = staging.join(COMPONENTS_DIR);
     fs::create_dir(&components)
         .map_err(|e| format!("failed to create components directory: {e}"))?;
@@ -116,6 +128,7 @@ fn build_staged(spec: &ImageInstallSpec, staging: &Path) -> Result<ImageInstallR
             VAE_INDEX,
         ),
     ] {
+        progress(&format!("packing {name}"));
         let report = crate::packed::pack_component(
             &spec.source_root.join(source_dir),
             index_name,
@@ -142,6 +155,7 @@ fn build_staged(spec: &ImageInstallSpec, staging: &Path) -> Result<ImageInstallR
     fs::copy(scheduler_config, scheduler_dst.join("config.json"))
         .map_err(|e| format!("failed to copy scheduler config: {e}"))?;
 
+    progress("verifying image install");
     let manifest = make_manifest(spec, staging, &component_reports)?;
     manifest.validate()?;
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)

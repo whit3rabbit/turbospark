@@ -77,11 +77,16 @@ struct TurboSparkApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: ForegroundAppDelegate
     @StateObject private var vaultCoordinator = ProfileVaultCoordinator.shared
     @ObservedObject private var appearanceManager = AppearanceManager.shared
+    // Shared with the General settings pane; the App struct only needs it so
+    // the menu item's disabled state re-renders on updater session changes.
+    @ObservedObject private var updateController = SparkleUpdateController.shared
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
 
     init() {
         AppFontRegistrar.registerBundledFonts()
+        // No-op in `swift run` builds (the controller guards on a real .app).
+        SparkleUpdateController.shared.start()
     }
 
     /// The default window size: the whole visible screen.
@@ -121,6 +126,19 @@ struct TurboSparkApp: App {
         .defaultPosition(.center)
         .windowResizability(.contentMinSize)
         .commands {
+            // Update check lives OUTSIDE the vault gate on purpose: it reads
+            // no user data, and staying available while the vault is locked is
+            // what lets a stuck release be fixed without unlocking first.
+            // SwiftUI has no `.updates` placement; `.appInfo` puts the item
+            // right under "About TurboSpark", the conventional spot.
+            CommandGroup(after: .appInfo) {
+                Button {
+                    updateController.checkForUpdates()
+                } label: {
+                    Text("Check for Updates…", bundle: .module)
+                }
+                .disabled(!updateController.canCheckForUpdates)
+            }
             if let model = vaultCoordinator.model {
             // Menu-bar chrome takes its text from `Text(_:bundle:)` labels
             // rather than bare `LocalizedStringKey`s: the string catalog lives
@@ -140,7 +158,7 @@ struct TurboSparkApp: App {
                 Button {
                     model.activeSection = .images
                 } label: {
-                    Text("Images", bundle: .module)
+                    Text("Image Generation", bundle: .module)
                 }
                 .keyboardShortcut("2", modifiers: .command)
 
@@ -354,12 +372,12 @@ struct TurboSparkApp: App {
                     Text("Stop All", bundle: .module)
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
-                .disabled(!model.canCancel && !model.isInstallingModel
+                .disabled(!model.canCancel && !model.hasActiveModelDownload
                     && model.backgroundAgentRuns.values.allSatisfy { $0.status != "running" }
                     && model.backgroundShellSummaries.isEmpty)
 
                 Button {
-                    model.cancelInstall()
+                    model.cancelActiveModelDownload()
                 } label: {
                     Text("Cancel Model Installation", bundle: .module)
                 }

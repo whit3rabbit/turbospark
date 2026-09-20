@@ -136,17 +136,26 @@ extension AppHookStore {
 
     // MARK: - Discovery Parsers
 
-    private func discoverGlobalHooks(diagnostics: inout [String]) -> [AppHookCommand] {
+    /// `home` is injectable so global discovery is testable against a
+    /// fixture tree instead of the real one.
+    func discoverGlobalHooks(
+        diagnostics: inout [String],
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> [AppHookCommand] {
         var results: [AppHookCommand] = []
-        let home = fileManager.homeDirectoryForCurrentUser
 
         let candidates: [URL]
         if UserProfileStore.isDefault {
-            candidates = [
+            var list = [
                 home.appendingPathComponent(".turbospark/hooks.json"),
-                home.appendingPathComponent(".turbospark/settings.json"),
-                home.appendingPathComponent(".claude/settings.json")
+                home.appendingPathComponent(".turbospark/settings.json")
             ]
+            // Claude Code's own config is another tool's state; it is read
+            // only under the cross-agent opt-in.
+            if includeClaudeGlobalConfig {
+                list.append(home.appendingPathComponent(".claude/settings.json"))
+            }
+            candidates = list
         } else {
             // A non-default profile owns its user-scope hook config inside
             // its own folder and reads no shared tree. Only the dedicated
@@ -165,10 +174,11 @@ extension AppHookStore {
         // not shared" by the same rule.
         let localCandidates: [URL]
         if UserProfileStore.isDefault {
-            localCandidates = [
-                home.appendingPathComponent(".turbospark/settings.local.json"),
-                home.appendingPathComponent(".claude/settings.local.json")
-            ]
+            var list = [home.appendingPathComponent(".turbospark/settings.local.json")]
+            if includeClaudeGlobalConfig {
+                list.append(home.appendingPathComponent(".claude/settings.local.json"))
+            }
+            localCandidates = list
         } else {
             localCandidates = []
         }

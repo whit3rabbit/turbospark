@@ -81,7 +81,7 @@ struct ImageModelManagerView: View {
                     model.activeSection = .images
                 } label: {
                     Label {
-                        Text("Open Images", bundle: .module)
+                        Text("Open Image Generation", bundle: .module)
                     } icon: {
                         Image(systemName: "photo.on.rectangle")
                     }
@@ -226,7 +226,7 @@ struct ImageModelManagerView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(model.isInstallingImageModel || !isTested)
+                .disabled(!isTested || !model.canInstallImageModel(alias: source.alias))
             }
         }
         .padding(10)
@@ -275,7 +275,7 @@ struct ImageModelRecommendationSheet: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
-                        .disabled(model.isInstallingImageModel)
+                        .disabled(!model.canInstallImageModel(alias: source.alias))
                     }
                     Text(verbatim: "\(source.quantization)  |  \(source.modelID)")
                         .themedFont(.tiny)

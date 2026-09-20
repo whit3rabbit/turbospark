@@ -26,7 +26,9 @@ pub mod metal;
 #[cfg(target_os = "macos")]
 mod metal_ops;
 
-pub use builder::{build_image_install, ImageInstallReport, ImageInstallSpec};
+pub use builder::{
+    build_image_install, build_image_install_with_progress, ImageInstallReport, ImageInstallSpec,
+};
 pub use conditioning::{frame_prompt, tokenize_prompt, MAX_SEQUENCE_LENGTH, PAD_TOKEN_ID};
 pub use fixtures::{
     read_npy_bool, read_npy_complex64, read_npy_f32, read_npy_file_bool, read_npy_file_complex64,

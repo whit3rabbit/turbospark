@@ -21,6 +21,7 @@ public struct AgentsSettingsPaneView: View {
     @State private var searchQuery: String = ""
     @State private var selectedAgentID: UUID? = nil
     @State private var showingEditorSheet: Bool = false
+    @State private var isImportingFromAgents: Bool = false
     @State private var agentToEdit: AppAgentDefinition? = nil
     @State private var agentToDelete: AppAgentDefinition? = nil
 
@@ -176,6 +177,10 @@ public struct AgentsSettingsPaneView: View {
         .sheet(isPresented: $showingEditorSheet) {
             AgentEditorSheet(model: model, agentToEdit: agentToEdit)
         }
+        .sheet(isPresented: $isImportingFromAgents) {
+            AgentContentImportSheet(
+                model: model, initialCategory: .agents, projectID: nil)
+        }
         .alert(
             Text("Delete Agent", bundle: .module),
             isPresented: Binding(
@@ -233,6 +238,14 @@ public struct AgentsSettingsPaneView: View {
             }
             .buttonStyle(.bordered)
             .help("Rescan agents on disk")
+
+            Button {
+                isImportingFromAgents = true
+            } label: {
+                Label { Text("Import...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+            }
+            .buttonStyle(.bordered)
+            .help("Import agents from other agent tools")
 
             Button {
                 agentToEdit = nil
@@ -439,6 +452,12 @@ public struct AgentsSettingsPaneView: View {
             Text("No agent definitions match the selected scope filter.", bundle: .module)
                 .themedFont(.base)
                 .foregroundStyle(.appSecondary)
+            Button {
+                isImportingFromAgents = true
+            } label: {
+                Label { Text("Import from Agents...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+            }
+            .buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

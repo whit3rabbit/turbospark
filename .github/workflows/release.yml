@@ -130,18 +130,37 @@ jobs:
           VER: ${{ needs.check-version.outputs.version }}
         run: ./scripts/make-dmg.sh --version "${VER}"
 
+      # The Sparkle feed that lets installed apps update in place. Signed with
+      # the repo's EdDSA key; the DMG above is the update archive it points
+      # at, so there is no new artifact to build -- only this XML. The secret
+      # is release-critical: publishing a new latest release without the
+      # appcast would turn the evergreen feed URL into a 404 for every app.
+      - name: Build Sparkle appcast
+        env:
+          VER: ${{ needs.check-version.outputs.version }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -z "${SPARKLE_ED_PRIVATE_KEY}" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY is required; refusing to publish a release without appcast.xml"
+            exit 1
+          fi
+          ./scripts/make-sparkle-appcast.sh --version "${VER}"
+
       - name: List artifacts
         run: ls -l dist/
 
       # dist/ also holds the unzipped TurboSpark.app that the DMG was built
-      # from. Only the two shippable files are uploaded; the loose bundle
-      # would be a third, redundant, several-hundred-megabyte upload.
+      # from. Only the shippable files are uploaded; the loose bundle would be
+      # a third, redundant, several-hundred-megabyte upload. appcast.xml
+      # rides along and becomes the feed the bundle's SUFeedURL resolves
+      # through releases/latest/download/.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-arm64
           path: |
             dist/*.zip
             dist/*.dmg
+            dist/*.xml
           if-no-files-found: error
 
   release:
@@ -322,6 +341,13 @@ jobs:
             name "TurboSpark"
             desc "Apple Silicon MoE inference engine streaming expert weights from SSD"
             homepage "https://github.com/whit3rabbit/turbospark"
+
+            # The app updates itself through Sparkle (the release's signed
+            # appcast), replacing the bundle in place. Without this stanza
+            # brew would keep offering `brew upgrade` for versions the app
+            # already installed, and an upgrade would fight the updater over
+            # the same /Applications path.
+            auto_updates true
 
             depends_on arch: :arm64
             depends_on macos: ">= :sonoma"

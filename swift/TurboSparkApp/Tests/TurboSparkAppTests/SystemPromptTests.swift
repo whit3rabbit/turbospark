@@ -15,14 +15,14 @@ final class SystemPromptTests: XCTestCase {
 
     // MARK: - Persistence
 
-    func testTheDefaultSystemPromptLibrarySelectsTurboSparkAgent() {
+    func testTheDefaultSystemPromptLibraryShipsUnselected() {
         let settings = MacAppSettings()
         XCTAssertEqual(settings.systemPrompts, AppSystemPrompt.builtIns)
         XCTAssertEqual(settings.systemPrompts.map(\.name), [
             "TurboSpark Agent", "Compact Agent", "Code Reviewer"
         ])
-        XCTAssertEqual(settings.activeSystemPromptID, AppSystemPrompt.builtIns[0].id.uuidString)
-        XCTAssertEqual(settings.defaultSystemPrompt, AppSystemPrompt.builtIns[0].instructions)
+        XCTAssertEqual(settings.activeSystemPromptID, "")
+        XCTAssertEqual(settings.defaultSystemPrompt, "")
     }
 
     func testTheDefaultSystemPromptRoundTrips() throws {
@@ -36,13 +36,26 @@ final class SystemPromptTests: XCTestCase {
 
     /// Gotcha 13's rule: a settings file written before this field existed has
     /// to decode, or the store swallows the failure and discards every other
-    /// preference with it.
+    /// preference with it. A file with no prompt of its own migrates to the
+    /// seeded library with NOTHING selected, the fresh-install default.
     func testSettingsWrittenBeforeTheFieldExistedStillDecode() throws {
         let legacy = #"{"contextTokens":0,"temperature":0.2}"#
         let decoded = try JSONDecoder().decode(MacAppSettings.self, from: Data(legacy.utf8))
-        XCTAssertEqual(decoded.defaultSystemPrompt, AppSystemPrompt.builtIns[0].instructions)
+        XCTAssertEqual(decoded.defaultSystemPrompt, "")
         XCTAssertEqual(decoded.systemPrompts, AppSystemPrompt.builtIns)
-        XCTAssertEqual(decoded.activeSystemPromptID, AppSystemPrompt.builtIns[0].id.uuidString)
+        XCTAssertEqual(decoded.activeSystemPromptID, "")
+    }
+
+    /// The old shipped starter text was a default, never an explicit choice,
+    /// so a pre-library file carrying it migrates to None as well.
+    func testLegacyStarterTextMigratesToNothingSelected() throws {
+        let legacyData = try JSONEncoder().encode(
+            ["defaultSystemPrompt": AppSystemPrompt.builtIns[0].instructions])
+        let decoded = try JSONDecoder().decode(MacAppSettings.self, from: legacyData)
+
+        XCTAssertEqual(decoded.systemPrompts, AppSystemPrompt.builtIns)
+        XCTAssertEqual(decoded.activeSystemPromptID, "")
+        XCTAssertEqual(decoded.defaultSystemPrompt, "")
     }
 
     func testLegacyCustomDefaultMigratesIntoThePromptLibrary() throws {

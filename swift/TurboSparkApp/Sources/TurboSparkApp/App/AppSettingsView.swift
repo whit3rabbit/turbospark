@@ -1,7 +1,23 @@
+import AppKit
 import SwiftUI
 import TurboSpark
 
 public struct AppSettingsView: View {
+    /// The Settings scene sizes its window to this view and the window is not
+    /// user-resizable, so the ideal size in `body` is the size the settings
+    /// window actually opens at. It is derived from the visible frame (same
+    /// approach as `TurboSparkApp.defaultWindowSize`) so a larger display gets
+    /// a roomier pane while a small display clamps to the minimum.
+    static var defaultWindowSize: CGSize {
+        guard let visible = NSScreen.main?.visibleFrame else {
+            return CGSize(width: 1040, height: 720)
+        }
+        return CGSize(
+            width: min(max(940, visible.width * 0.7), 1440),
+            height: min(max(660, visible.height * 0.8), 940)
+        )
+    }
+
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @ObservedObject private var appearanceManager = AppearanceManager.shared
@@ -17,7 +33,7 @@ public struct AppSettingsView: View {
     public var body: some View {
         HStack(spacing: 0) {
             settingsSidebar
-                .frame(width: 220)
+                .frame(width: 240)
                 .background(.appPage.opacity(0.85))
 
             Rectangle()
@@ -31,7 +47,7 @@ public struct AppSettingsView: View {
                         .font(theme.ui(.title3, weight: .semibold))
                     Spacer()
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 28)
                 .padding(.vertical, 16)
                 .background(.appPage)
 
@@ -52,9 +68,30 @@ public struct AppSettingsView: View {
                         }
                 }
             }
+            // A soft edge on the content's leading side so the sidebar seam
+            // reads in both light and dark themes. The bare hairline alone
+            // disappears against the two near-identical page backgrounds, and
+            // a shadow cast by the divider would be covered by this column.
+            .overlay(alignment: .leading) {
+                LinearGradient(
+                    colors: [
+                        theme.foreground.opacity(theme.isDark ? 0.22 : 0.08),
+                        .clear
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: 6)
+                .allowsHitTesting(false)
+            }
         }
         .font(theme.ui(.base))
-        .frame(minWidth: 780, minHeight: 580)
+        .frame(
+            minWidth: 940,
+            idealWidth: Self.defaultWindowSize.width,
+            minHeight: 660,
+            idealHeight: Self.defaultWindowSize.height
+        )
         .onReceive(NotificationCenter.default.publisher(for: .openSettingsTab)) { notification in
             if let tab = notification.object as? SettingsTab {
                 selectedTab = tab

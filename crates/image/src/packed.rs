@@ -16,6 +16,7 @@ use compute::{
     dequantize_int4_affine, f16_to_f32, f32_to_bf16, quantize_int4_affine, Int4AffineRow,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::text_encoder::ShardedSafetensors;
 
@@ -27,6 +28,48 @@ pub const PACKED_GROUP_SIZE: usize = 64;
 /// Widths accepted by upstream MLX `mx.quantize`; 1-bit is not an upstream
 /// quantization mode, so it is intentionally outside this image contract.
 pub const MLX_AFFINE_BITS: [u8; 6] = [2, 3, 4, 5, 6, 8];
+
+struct DigestWriter<W> {
+    inner: W,
+    digest: Sha256,
+}
+
+impl<W> DigestWriter<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            digest: Sha256::new(),
+        }
+    }
+
+    fn sha256(&self) -> String {
+        format!("{:x}", self.digest.clone().finalize())
+    }
+}
+
+impl<W: Write> Write for DigestWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(bytes)?;
+        self.digest.update(&bytes[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<W: Seek> Seek for DigestWriter<W> {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        match position {
+            SeekFrom::Current(0) => self.inner.seek(position),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "packed payload hashing writer is append-only",
+            )),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackedIndex {
@@ -392,7 +435,7 @@ pub fn pack_component(
         .create_new(true)
         .open(&data_path)
         .map_err(|e| format!("failed to create packed image payload: {e}"))?;
-    let mut writer = BufWriter::new(data_file);
+    let mut writer = BufWriter::new(DigestWriter::new(data_file));
     let mut tensors = BTreeMap::new();
     let mut quantized_tensor_count = 0;
 
@@ -537,10 +580,9 @@ pub fn pack_component(
     writer
         .flush()
         .map_err(|e| format!("failed to flush packed image payload: {e}"))?;
+    let data_sha256 = writer.get_ref().sha256();
     drop(writer);
 
-    let data_sha256 = model_io::hash_file(&data_path, 1 << 20)
-        .map_err(|e| format!("failed to hash packed image payload: {e}"))?;
     let tensor_inventory_sha256 = compute_tensor_inventory_sha256(&tensors);
     let payload_bytes = fs::metadata(&data_path)
         .map_err(|e| format!("failed to stat packed image payload: {e}"))?
@@ -687,7 +729,7 @@ fn discover_mlx_affine(
 }
 
 fn write_mlx_affine_tensor(
-    writer: &mut BufWriter<File>,
+    writer: &mut (impl Write + Seek),
     source: &ShardedSafetensors,
     name: &str,
     descriptor: &model_io::safetensors::TensorDescriptor,
@@ -1067,7 +1109,7 @@ fn read_u16_vec(bytes: &[u8]) -> Vec<u16> {
         .collect()
 }
 
-fn write_int4_row(writer: &mut BufWriter<File>, row: &Int4AffineRow) -> Result<(), String> {
+fn write_int4_row(writer: &mut impl Write, row: &Int4AffineRow) -> Result<(), String> {
     writer
         .write_all(&row.packed)
         .map_err(|e| format!("failed to write packed INT4 values: {e}"))?;

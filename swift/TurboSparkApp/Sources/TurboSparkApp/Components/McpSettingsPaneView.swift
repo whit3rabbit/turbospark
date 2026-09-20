@@ -10,6 +10,7 @@ public struct McpSettingsPaneView: View {
     @State private var searchText = ""
     @State private var showingEditorSheet = false
     @State private var showingImportSheet = false
+    @State private var showingAgentImportSheet = false
     @State private var editingServer: McpServerConfig?
     @State private var expandedServerIDs: Set<UUID> = []
     @State private var testingServerID: UUID?
@@ -88,6 +89,10 @@ public struct McpSettingsPaneView: View {
         .sheet(isPresented: $showingImportSheet) {
             McpImportSheet(model: model) { showingImportSheet = false }
         }
+        .sheet(isPresented: $showingAgentImportSheet) {
+            AgentContentImportSheet(
+                model: model, initialCategory: .mcpServers, projectID: nil)
+        }
     }
 
     private var headerBar: some View {
@@ -111,6 +116,17 @@ public struct McpSettingsPaneView: View {
                 }
             }
             Spacer()
+            Button {
+                showingAgentImportSheet = true
+            } label: {
+                Label { Text("From Other Agents...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .help("Import servers from Claude, Codex, Cursor, or Gemini global configs; they are added disabled")
+            .accessibilityLabel("Import MCP servers from other agent tools")
+            .accessibilityHint("Opens the import wizard listing servers found in other agents' global config files")
+
             Button {
                 showingImportSheet = true
             } label: {

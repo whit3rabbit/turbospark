@@ -64,6 +64,7 @@ public enum SkillScope: Codable, Equatable, Hashable, Sendable {
 public enum SkillSourceAgent: String, Codable, CaseIterable, Identifiable, Sendable {
     case turboSpark = "turbospark"
     case claude = "claude"
+    case codex = "codex"
     case cursor = "cursor"
     case gemini = "gemini"
     case antigravity = "antigravity"
@@ -84,6 +85,7 @@ public enum SkillSourceAgent: String, Codable, CaseIterable, Identifiable, Senda
         switch self {
         case .turboSpark: return "TurboSpark"
         case .claude: return "Claude Code"
+        case .codex: return "Codex"
         case .cursor: return "Cursor"
         case .gemini: return "Gemini CLI"
         case .antigravity: return "Google Antigravity"

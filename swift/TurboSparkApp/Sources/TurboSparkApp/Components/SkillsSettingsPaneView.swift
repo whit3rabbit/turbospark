@@ -23,6 +23,7 @@ public struct SkillsSettingsPaneView: View {
     @State private var isCreatingSkill: Bool = false
     @State private var isEditingSkill: Bool = false
     @State private var isImportingSkill: Bool = false
+    @State private var isImportingFromAgents: Bool = false
     @State private var skillToDelete: AppSkill? = nil
     @State private var isConfirmingDelete: Bool = false
 
@@ -129,6 +130,10 @@ public struct SkillsSettingsPaneView: View {
         .sheet(isPresented: $isImportingSkill) {
             SkillImportSheet(model: model, projectID: projectID)
         }
+        .sheet(isPresented: $isImportingFromAgents) {
+            AgentContentImportSheet(
+                model: model, initialCategory: .skills, projectID: projectID)
+        }
         .confirmationDialog(
             "Delete Skill",
             isPresented: $isConfirmingDelete,
@@ -177,12 +182,20 @@ public struct SkillsSettingsPaneView: View {
             .help("Refresh skills from disk")
 
             Button {
-                isImportingSkill = true
+                isImportingFromAgents = true
             } label: {
                 Label { Text("Import...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
             }
             .buttonStyle(.bordered)
-            .help("Import skills from Claude, Cursor, Antigravity, or OpenCode")
+            .help("Import skills, agents, or MCP servers from other agent tools")
+
+            Button {
+                isImportingSkill = true
+            } label: {
+                Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "globe") }
+            }
+            .buttonStyle(.bordered)
+            .help("Browse remote skill marketplaces")
 
             Button {
                 isCreatingSkill = true
@@ -545,7 +558,7 @@ public struct SkillsSettingsPaneView: View {
                 .fixedSize()
 
                 Button {
-                    isImportingSkill = true
+                    isImportingFromAgents = true
                 } label: {
                     Label { Text("Import from Agents...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
                 }

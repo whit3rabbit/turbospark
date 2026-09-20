@@ -34,7 +34,7 @@ extension AppModel {
         public var title: String {
             switch self {
             case .chat: return "Chat"
-            case .images: return "Images"
+            case .images: return "Image Generation"
             case .files: return "Files"
             case .modelManager: return "Installed"
             case .modelHub: return "Discover"

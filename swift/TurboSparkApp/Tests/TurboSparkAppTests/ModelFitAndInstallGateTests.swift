@@ -218,17 +218,27 @@ final class ModelFitAndInstallGateTests: XCTestCase {
         }
     }
 
-    /// Low disk asks, names both figures, and says the walk cannot resume --
-    /// which is the fact that makes running out of space expensive rather
-    /// than annoying.
-    func testLowDiskAsksAndSaysTheWalkCannotResume() throws {
+    /// Low disk asks and explains why temporary scratch remains live until
+    /// the final install has passed verification.
+    func testLowDiskAsksAndExplainsTheRangeCache() throws {
         let d = ModelInstallGate.decide(
             probeRunnable: true, refusedBecause: nil, verdict: .streams,
             installBytes: 18_000_000_000,
             freeDiskBytes: 20_000_000_000)  // fits, but not with headroom
         XCTAssertFalse(d.isBlocked)
         let reason = try XCTUnwrap(d.reason)
-        XCTAssertTrue(reason.contains("CANNOT RESUME"), "got \(reason)")
+        XCTAssertTrue(reason.contains("Verified download ranges"), "got \(reason)")
+    }
+
+    func testDiskGateCountsInstallAndResumableDownloadScratch() {
+        let d = ModelInstallGate.decide(
+            probeRunnable: true, refusedBecause: nil, verdict: .streams,
+            installBytes: 12_000_000_000, downloadBytes: 10_000_000_000,
+            freeDiskBytes: 25_000_000_000)
+        XCTAssertEqual(d, .confirm(d.reason ?? ""))
+        XCTAssertTrue(
+            d.reason?.contains(MetricFormat.storage(22_000_000_000)) ?? false,
+            "got \(d.reason ?? "")")
     }
 
     /// Disk is checked before memory: it is the failure that wastes the

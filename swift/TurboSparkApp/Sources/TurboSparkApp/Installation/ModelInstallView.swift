@@ -12,6 +12,7 @@ struct ModelInstallView: View {
     @ObservedObject var model: AppModel
     @State private var recommendations: [ModelRecommendation] = []
     @State private var isLoadingRecommendations = true
+    @State private var recommendationProgress: ModelRecommendationProbeProgress?
     @State private var recommendationError: String?
     @State private var selectedFilter: RecommendationFilter = .recommended
 
@@ -131,17 +132,9 @@ struct ModelInstallView: View {
             }
 
             if isLoadingRecommendations {
-                VStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Calculating hardware fit recommendations...", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                }
+                ModelRecommendationLoadingView(progress: recommendationProgress)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Calculating hardware fit recommendations")
             } else if let recommendationError {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
@@ -252,19 +245,64 @@ struct ModelInstallView: View {
     private func loadRecommendations() async {
         let configurationID = model.fitRecommendationConfigurationID
         isLoadingRecommendations = true
+        recommendationProgress = nil
         recommendationError = nil
         do {
-            let rows = try await model.loadFitRecommendations()
+            let rows = try await model.loadFitRecommendations { completed, total in
+                guard configurationID == model.fitRecommendationConfigurationID else { return }
+                recommendationProgress = ModelRecommendationProbeProgress(
+                    completed: completed,
+                    total: total)
+            }
             guard !Task.isCancelled,
                   configurationID == model.fitRecommendationConfigurationID else { return }
             recommendations = rows
+            recommendationProgress = nil
             isLoadingRecommendations = false
         } catch {
             guard !Task.isCancelled,
                   configurationID == model.fitRecommendationConfigurationID else { return }
             recommendations = []
+            recommendationProgress = nil
             recommendationError = error.localizedDescription
             isLoadingRecommendations = false
         }
+    }
+}
+
+struct ModelRecommendationProbeProgress: Equatable {
+    let completed: UInt32
+    let total: UInt32
+
+    var fraction: Double {
+        guard total > 0 else { return 0 }
+        return min(1, Double(completed) / Double(total))
+    }
+}
+
+struct ModelRecommendationLoadingView: View {
+    let progress: ModelRecommendationProbeProgress?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if let progress, progress.total > 0 {
+                ProgressView(value: progress.fraction)
+                    .progressViewStyle(.linear)
+                    .accessibilityValue(MetricFormat.percent(progress.fraction * 100))
+                Text(MetricFormat.percent(progress.fraction * 100))
+                    .themedFont(.tiny)
+                    .monospacedDigit()
+                    .foregroundStyle(.appSecondary)
+            } else {
+                ProgressView()
+                    .progressViewStyle(.linear)
+            }
+            Text("Calculating hardware fit recommendations...", bundle: .module)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+        }
+        .frame(maxWidth: 360)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Calculating hardware fit recommendations...", bundle: .module))
     }
 }

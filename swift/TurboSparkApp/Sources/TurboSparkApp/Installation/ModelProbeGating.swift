@@ -66,6 +66,7 @@ enum ModelProbeGating {
             refusedBecause: report.refusedBecause,
             verdict: report.fit?.verdict,
             installBytes: report.downloadBytes ?? selectedVariant?.bytes,
+            downloadBytes: report.downloadBytes ?? selectedVariant?.bytes,
             freeDiskBytes: freeDiskBytes
         )
     }

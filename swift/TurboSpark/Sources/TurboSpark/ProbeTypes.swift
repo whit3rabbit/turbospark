@@ -6,7 +6,7 @@ import Foundation
 /// reports zeros in every sizing field, and a zero rendered as a figure reads
 /// as "fits easily", which is the exact inverse of what it means. Branch on
 /// this before showing `countedBytes`, `slotCacheSlots` or `largestContext`.
-public enum CountedSource: String, Decodable, Sendable {
+public enum CountedSource: String, Codable, Sendable {
     /// A frozen row in the catalog, taken on this chip at this context and
     /// this slot count.
     case measured
@@ -91,7 +91,7 @@ public struct ContextLadder: Decodable, Sendable, Equatable {
 /// **THE CHIP IS PART OF THE VALUE, NOT PROVENANCE.** tok/s does not transfer
 /// across silicon. When `measuredOnThisChip` is false a host must NAME the
 /// chip, or it is presenting another machine's number as this one's answer.
-public struct ThroughputBand: Decodable, Sendable, Equatable {
+public struct ThroughputBand: Codable, Sendable, Equatable {
     public let minTokensPerSecond: Double
     public let maxTokensPerSecond: Double
     public let chip: String

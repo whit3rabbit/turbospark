@@ -5,10 +5,13 @@ import TurboSpark
 struct GeneralSettingsPaneView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @ObservedObject private var updateController = SparkleUpdateController.shared
     @ObservedObject var model: AppModel
 
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
+
+    @State private var showsImportWizard = false
 
     var body: some View {
         Form {
@@ -57,10 +60,46 @@ struct GeneralSettingsPaneView: View {
 
             codeSearchSection
 
+            integrationsSection
+
+            softwareUpdatesSection
+
             hfAuthSection
         }
         .formStyle(.grouped)
         .padding(16)
+        .sheet(isPresented: $showsImportWizard) {
+            AgentContentImportSheet(model: model)
+        }
+    }
+
+    // Its own computed property like its siblings: a Section inline in a
+    // larger Form expression is the shape that blew the macOS 14 SDK
+    // type-checker.
+    private var softwareUpdatesSection: some View {
+        Section(header: Text("Software Updates", bundle: .module)) {
+            Toggle(isOn: $updateController.automaticallyChecksForUpdates) {
+                Text("Automatically check for updates", bundle: .module)
+            }
+            .disabled(!SparkleUpdateController.isBundledApp)
+            .settingsControl("Automatically check for updates", pane: .general, timing: .immediate)
+
+            Button {
+                updateController.checkForUpdates()
+            } label: {
+                Text("Check for Updates…", bundle: .module)
+            }
+            .disabled(!updateController.canCheckForUpdates)
+            .settingsControl("Check for Updates…", pane: .general, timing: .immediate)
+
+            HStack {
+                Text("Current Version", bundle: .module)
+                Spacer()
+                Text(SparkleUpdateController.displayVersion)
+                    .font(theme.code(.small))
+                    .foregroundStyle(.appSecondary)
+            }
+        }
     }
 
     private var codeSearchSection: some View {
@@ -80,6 +119,30 @@ struct GeneralSettingsPaneView: View {
             .foregroundStyle(.appSecondary)
         } header: {
             Text("Code Search & Project Indexing", bundle: .module)
+        }
+    }
+
+    /// Cross-agent content: live discovery is OFF by default, and the
+    /// Import wizard is the explicit path in. Own section so the toggle and
+    /// the button read as one decision.
+    private var integrationsSection: some View {
+        Section(header: Text("Other Agent Tools", bundle: .module)) {
+            Toggle(isOn: Binding(
+                get: { model.autoLoadExternalAgentContent },
+                set: { model.setAutoLoadExternalAgentContent($0) }
+            )) {
+                Text("Auto-load skills, agents, plugins, and hooks from other agent tools", bundle: .module)
+            }
+            .settingsControl("Auto-load skills, agents, plugins, and hooks from other agent tools", pane: .general, timing: .immediate)
+            Text("When off, other agents' home folders are never read automatically. Use Import to copy only the skills, agents, and servers you want; project folders inside an open repository are unaffected.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+            Button {
+                showsImportWizard = true
+            } label: {
+                Text("Import from Other Agents…", bundle: .module)
+            }
+            .settingsControl("Import from Other Agents…", pane: .general, timing: .action)
         }
     }
 

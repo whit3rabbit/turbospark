@@ -231,6 +231,25 @@ pub fn recommend_catalog_probed(
     context: u32,
     slots: model_io::ExpertCacheSlots,
 ) -> Result<Vec<Recommendation>, String> {
+    recommend_catalog_probed_with_progress(entries, client, machine, context, slots, |_, _| {})
+}
+
+/// [`recommend_catalog_probed`] with completed-row progress.
+///
+/// The callback runs on the calling thread after each bounded probe batch.
+/// `done` is monotonic and `total` is the number of model rows, excluding
+/// standalone vision towers.
+pub fn recommend_catalog_probed_with_progress<F>(
+    entries: &[&CatalogEntry],
+    client: &crate::Client,
+    machine: &Machine,
+    context: u32,
+    slots: model_io::ExpertCacheSlots,
+    mut on_progress: F,
+) -> Result<Vec<Recommendation>, String>
+where
+    F: FnMut(usize, usize),
+{
     const PROBE_CONCURRENCY: usize = 4;
 
     let model_entries: Vec<&CatalogEntry> = entries
@@ -238,6 +257,9 @@ pub fn recommend_catalog_probed(
         .copied()
         .filter(|entry| entry.kind == crate::entry::EntryKind::Model)
         .collect();
+    let total = model_entries.len();
+    let mut completed = 0usize;
+    on_progress(completed, total);
     let mut probed = Vec::with_capacity(model_entries.len());
     for batch in model_entries.chunks(PROBE_CONCURRENCY) {
         let batch_results = std::thread::scope(|scope| {
@@ -256,7 +278,9 @@ pub fn recommend_catalog_probed(
                 })
                 .collect::<Vec<_>>()
         });
+        completed += batch_results.len();
         probed.extend(batch_results);
+        on_progress(completed, total);
     }
 
     let mut successful_probes = 0usize;

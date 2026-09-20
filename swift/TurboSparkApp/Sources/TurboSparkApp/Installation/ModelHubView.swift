@@ -18,6 +18,7 @@ struct ModelHubView: View {
     @State private var selectedAlias: String?
     @State private var recommendations: [String: ModelRecommendation] = [:]
     @State private var isLoadingRecommendations = true
+    @State private var recommendationProgress: ModelRecommendationProbeProgress?
     @State private var recommendationError: String?
     @State private var showingProbeSheet = false
 
@@ -293,13 +294,7 @@ struct ModelHubView: View {
     }
 
     private var recommendationLoadingState: some View {
-        VStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            Text("Calculating hardware fit recommendations...", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-        }
+        ModelRecommendationLoadingView(progress: recommendationProgress)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)
         .padding(.top, 48)
@@ -374,19 +369,27 @@ struct ModelHubView: View {
     private func loadRecommendations() async {
         let configurationID = model.fitRecommendationConfigurationID
         isLoadingRecommendations = true
+        recommendationProgress = nil
         recommendationError = nil
         do {
-            let rows = try await model.loadFitRecommendations()
+            let rows = try await model.loadFitRecommendations { completed, total in
+                guard configurationID == model.fitRecommendationConfigurationID else { return }
+                recommendationProgress = ModelRecommendationProbeProgress(
+                    completed: completed,
+                    total: total)
+            }
             guard !Task.isCancelled,
                   configurationID == model.fitRecommendationConfigurationID else { return }
             recommendations = Dictionary(
                 rows.map { ($0.alias, $0) },
                 uniquingKeysWith: { first, _ in first })
+            recommendationProgress = nil
             isLoadingRecommendations = false
         } catch {
             guard !Task.isCancelled,
                   configurationID == model.fitRecommendationConfigurationID else { return }
             recommendations = [:]
+            recommendationProgress = nil
             recommendationError = error.localizedDescription
             isLoadingRecommendations = false
         }

@@ -847,12 +847,22 @@ for try await event in TurboSparkCatalog.install(
 
 Two things a progress UI has to get right:
 
-**Warn before starting, not after failing.** The walk streams gigabytes
-without writing the checkpoint to disk whole, and **it cannot resume**: a
-failure restarts from the beginning. A user who does not know that will kill
-it at 90% and try again. The first `.stage` event says so;
-`swift/TurboSparkApp/Sources/TurboSparkApp/Installation/CatalogSheet.swift` puts the
-warning above the button.
+**Pause preserves work while the app stays open.** `pauseInstall()` stops
+text-model installs at download boundaries; in-flight requests finish first.
+`resumeInstall()` continues the same worker with its buffers and output intact.
+Cancellation, failure, or quitting requires a new install call. For an
+immutable revision that call reuses SHA-256 checked ranges; conversion may
+restart. The app's
+bottom-right Downloads panel saves the last 12 attempts, exact sources, byte
+counts, and timestamps in the encrypted profile vault. Running or paused rows
+return as Interrupted after reopening, with Retry reusing verified ranges
+where the repository is pinned.
+Completed rows stay completed; loading a model is separate from installing it.
+Progress snapshots are throttled to one write per two seconds and flushed on
+status changes and shutdown. Transfer speed uses a ten-second moving average
+of byte events, clears during pause, and resets on resume. Cancel retains the
+install slot until the native stream closes, so Retry cannot race that writer.
+The reservation also survives profile lock and unlock while that worker stops.
 
 **Take the maximum of byte events, not the latest.** Ranged downloads are
 split across connections, so byte progress arrives concurrently and out of
@@ -1020,9 +1030,9 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_repo_variants_json(repo, out)` | list all GGUF variants published by repository |
 | `ts_control_vector_info_json(path, out)` | a `.gguf` control vector's shape: no model, no session, no network |
 | `ts_install_bytes_json(alias, out)` | cost before committing |
-| `ts_install(alias, cb, ud, out)` | blocks for minutes; cannot resume |
+| `ts_install(alias, cb, ud, out)` | blocks for minutes; later calls reuse verified ranges for pinned revisions |
 | `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |
-| `ts_image_install(alias, cb, ud, out)` | download and pack a curated image source; cannot resume |
+| `ts_image_install(alias, cb, ud, out)` | ranged download and pack; later calls reuse verified ranges |
 | `ts_embedding_encode_json(model_path, texts_json, out)` | standalone batch text embedding generation |
 | `ts_cosine_similarity(a, b, len)` | cosine similarity between two float vectors |
 | `ts_image_session_open(model_dir, out)` | open a verified image install |

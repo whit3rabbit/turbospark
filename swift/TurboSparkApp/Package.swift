@@ -9,7 +9,8 @@ let package = Package(
         .package(path: "../TurboSpark"),
         .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", from: "4.10.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
-        .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.5.0")
+        .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.5.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.6")
     ],
     targets: [
         .executableTarget(
@@ -18,7 +19,8 @@ let package = Package(
                 .product(name: "TurboSpark", package: "TurboSpark"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
-                .product(name: "Syntext", package: "syntext")
+                .product(name: "Syntext", package: "syntext"),
+                .product(name: "Sparkle", package: "Sparkle")
             ],
             resources: [
                 .process("Resources")

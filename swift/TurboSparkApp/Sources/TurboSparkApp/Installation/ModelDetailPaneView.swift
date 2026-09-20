@@ -25,6 +25,7 @@ struct ModelDetailPaneView: View {
             refusedBecause: nil,
             verdict: recommendation?.verdict,
             installBytes: recommendation?.installBytes ?? entry.installBytes,
+            downloadBytes: entry.downloadBytes,
             freeDiskBytes: ModelInstallGate.freeSpace(at: AppStorageRoot.directory))
     }
 
@@ -317,7 +318,9 @@ struct ModelDetailPaneView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
-                .disabled(model.isInstallingModel || model.isRunning || installDecision.isBlocked)
+                .disabled(
+                    model.isRunning || installDecision.isBlocked
+                        || !model.canInstall(alias: entry.alias))
                 .accessibilityHint("Downloads and installs \(entry.alias)")
                 .alert(Text("Install anyway?", bundle: .module), isPresented: $showsInstallConfirm) {
                     Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }

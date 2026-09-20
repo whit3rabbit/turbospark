@@ -337,6 +337,18 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(ModelHubFilter.Tab.allCases.first, .recommended)
     }
 
+    func testRecommendationProbeProgressIsBoundedAndHandlesAnUnknownTotal() {
+        XCTAssertEqual(
+            ModelRecommendationProbeProgress(completed: 2, total: 8).fraction,
+            0.25)
+        XCTAssertEqual(
+            ModelRecommendationProbeProgress(completed: 1, total: 0).fraction,
+            0)
+        XCTAssertEqual(
+            ModelRecommendationProbeProgress(completed: 9, total: 8).fraction,
+            1)
+    }
+
     /// Tests that the Recommended tab filters out models that are refused or cannot run.
     func testRecommendedTabKeepsOnlyRunnableModels() throws {
         var filter = ModelHubFilter()

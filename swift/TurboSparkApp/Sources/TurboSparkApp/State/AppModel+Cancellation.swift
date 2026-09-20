@@ -160,8 +160,8 @@ extension AppModel {
             backgroundAgentTasks[id]?.cancel()
         }
         killAllBackgroundShells()
-        if isInstallingModel {
-            cancelInstall()
+        if hasActiveModelDownload {
+            cancelActiveModelDownload()
         }
     }
 }

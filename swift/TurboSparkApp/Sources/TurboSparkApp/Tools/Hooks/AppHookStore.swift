@@ -29,6 +29,13 @@ public final class AppHookStore: ObservableObject {
     /// and membership would revert to "no project" on the very next edit.
     public internal(set) var lastProjectDirectory: String?
 
+    /// Whether GLOBAL hook discovery may read Claude Code's own config files
+    /// (`~/.claude/settings.json` and its `.local` sibling). Mirrored from
+    /// `MacAppSettings.autoLoadExternalAgentContent` by `AppModel`; off by
+    /// default. Project-scoped `.claude/settings.json` inside an open
+    /// repository is project content and stays readable regardless.
+    public var includeClaudeGlobalConfig: Bool = false
+
     /// Whether `refresh(projectDirectory:)` has populated `hooks` yet.
     ///
     /// `init()` loads trusted hashes and option values but NOT `hooks`, so

@@ -110,7 +110,7 @@ extension AppModel {
     }
 
     /// Whether an active model download can be cancelled.
-    public var canCancelInstall: Bool { isInstallingModel }
+    public var canCancelInstall: Bool { hasActiveModelDownload }
 
     /// Whether the selected model can be loaded.
     ///

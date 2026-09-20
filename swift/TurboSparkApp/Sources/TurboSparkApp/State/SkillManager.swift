@@ -89,6 +89,7 @@ public final class SkillManager: @unchecked Sendable {
         [
             (.turboSpark, ".turbospark/skills"),
             (.claude, ".claude/skills"),
+            (.codex, ".codex/skills"),
             (.antigravity, ".gemini/antigravity/skills"),
             (.gemini, ".gemini/skills"),
             (.antigravity, ".agents/skills"),
@@ -126,8 +127,27 @@ public final class SkillManager: @unchecked Sendable {
 
     // MARK: - Discovery
 
-    /// Discovers all user-global skills from ~/.turbospark/skills and other agent roots.
-    public func discoverUserSkills(includeExternalAgents: Bool = true) -> [AppSkill] {
+    /// Whether the default discovery path may read other agent tools' home
+    /// folders. Mirrored from `MacAppSettings.autoLoadExternalAgentContent`
+    /// by `AppModel` (the `CommandGate.vetoEnabled` pattern), because the
+    /// `skill` tool resolves through here with no AppModel in hand. Off by
+    /// default: cross-agent skills appear only via the Import wizard's copy
+    /// or an explicit opt-in. The Import wizard itself scans the roots
+    /// directly and ignores this flag -- scanning is its purpose.
+    public var externalAgentDiscoveryEnabled: Bool = false
+
+    /// Discovers all user-global skills from ~/.turbospark/skills and,
+    /// when enabled, other agent roots.
+    ///
+    /// `includeExternalAgents` nil (the default) follows
+    /// `externalAgentDiscoveryEnabled`; pass `true` to force the shared
+    /// roots on (tests) or `false` to force them off regardless of the
+    /// setting. `home` is injectable so the external-root scan is testable
+    /// against a fixture tree instead of the real one.
+    public func discoverUserSkills(
+        includeExternalAgents: Bool? = nil,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> [AppSkill] {
         var skills: [AppSkill] = []
         var seenNames = Set<String>()
 
@@ -146,8 +166,8 @@ public final class SkillManager: @unchecked Sendable {
         // cross-agent roots are SHARED home-directory trees, so a non-default
         // profile -- whose whole point is owning its own content -- skips
         // them entirely.
-        if includeExternalAgents, UserProfileStore.isDefault {
-            let home = fileManager.homeDirectoryForCurrentUser
+        let includesExternalAgents = includeExternalAgents ?? externalAgentDiscoveryEnabled
+        if includesExternalAgents, UserProfileStore.isDefault {
             for (agent, relPath) in knownUserAgentSkillRoots where agent != .turboSpark {
                 let agentURL = home.appendingPathComponent(relPath, isDirectory: true)
                 guard fileManager.fileExists(atPath: agentURL.path) else { continue }

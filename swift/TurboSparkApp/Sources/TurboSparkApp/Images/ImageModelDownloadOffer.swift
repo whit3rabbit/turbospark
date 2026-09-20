@@ -23,11 +23,13 @@ struct ImageModelDownloadOffer: View {
                     Label { Text("Download", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(!model.canInstallImageModel(alias: source.alias))
                 Menu {
                     ForEach(model.imageDownloadChoices) { source in
                         Button { model.installImageModel(source) } label: {
                             Text(ImageModelPresentation.quantization(source.quantization) + " (" + source.alias + ")")
                         }
+                        .disabled(!model.canInstallImageModel(alias: source.alias))
                     }
                     Divider()
                     Button { importing = true } label: { Text("Choose Folder...", bundle: .module) }
@@ -36,7 +38,7 @@ struct ImageModelDownloadOffer: View {
                 .help(Text("Options", bundle: .module))
                 .accessibilityLabel(Text("Options", bundle: .module))
             }
-            .disabled(model.isRunning || model.isInstallingModel)
+            .disabled(model.isRunning)
             .padding(12)
             .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
             .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }

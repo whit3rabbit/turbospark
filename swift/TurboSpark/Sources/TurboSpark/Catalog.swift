@@ -1,4 +1,5 @@
 import CTurboSpark
+import CryptoKit
 import Foundation
 
 // THE TWO TYPES BELOW DECODE snake_case WHERE EVERYTHING ELSE IN THIS
@@ -197,6 +198,12 @@ public enum StoreRelocationEvent: Sendable, Equatable {
     case finished(StoreRelocation)
 }
 
+/// Progress while curated checkpoint headers are ranked for this machine.
+public enum RecommendationEvent: Sendable, Equatable {
+    case progress(completed: UInt32, total: UInt32)
+    case finished([ModelRecommendation])
+}
+
 /// Browsing, probing and installing models.
 ///
 /// Available on every platform, including ones that cannot then RUN a model:
@@ -243,6 +250,24 @@ public enum TurboSparkCatalog {
     /// The curated table, each row carrying whether it is installed.
     public static func available() throws -> [CatalogEntry] {
         try decode([CatalogEntry].self, from: try takeString { ts_catalog_json($0) })
+    }
+
+    /// Includes checkpoint revisions and measured evidence, which the display
+    /// rows omit. Installing a model does not change its hardware fit.
+    public static func recommendationCatalogFingerprint() throws -> String {
+        let json = try takeString { ts_catalog_json($0) }
+        return try recommendationCatalogFingerprint(json: Data(json.utf8))
+    }
+
+    static func recommendationCatalogFingerprint(json: Data) throws -> String {
+        guard var rows = try JSONSerialization.jsonObject(with: json) as? [[String: Any]] else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [], debugDescription: "Expected a catalog row array"))
+        }
+        for index in rows.indices { rows[index].removeValue(forKey: "installed") }
+        rows.sort { ($0["alias"] as? String ?? "") < ($1["alias"] as? String ?? "") }
+        let data = try JSONSerialization.data(withJSONObject: rows, options: [.sortedKeys])
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// What text models are installed in `~/.turbospark/models/text`.
@@ -437,6 +462,48 @@ public enum TurboSparkCatalog {
             })
     }
 
+    /// Ranks curated models on a dedicated thread and reports real header
+    /// probe progress. Use this for interactive surfaces when `probe` is
+    /// true; the synchronous overload remains the cheap offline path.
+    public static func recommendWithProgress(
+        context: UInt32 = 4096,
+        expertCacheSlots: OpenOptions.Sizing? = nil,
+        loadGuard: OpenOptions.LoadGuard? = nil,
+        probe: Bool = true
+    ) -> AsyncThrowingStream<RecommendationEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let thread = Thread {
+                let box = RecommendationBox(continuation)
+                let userdata = Unmanaged.passRetained(box).toOpaque()
+                defer { Unmanaged<RecommendationBox>.fromOpaque(userdata).release() }
+                do {
+                    let json = try encodeOptions(
+                        RecommendOptions(
+                            loadGuard: loadGuard,
+                            expertCacheSlots: expertCacheSlots,
+                            probe: probe ? true : nil))
+                    let result = try takeString { out in
+                        withOptionalCString(json) {
+                            ts_recommend_progress_json(
+                                context,
+                                $0,
+                                recommendationCallback,
+                                userdata,
+                                out)
+                        }
+                    }
+                    continuation.yield(.finished(
+                        try decode([ModelRecommendation].self, from: result)))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            thread.name = "com.turbospark.recommend"
+            thread.start()
+        }
+    }
+
     /// Encodes an options bag, or `nil` when every field is absent.
     ///
     /// NULL and `{}` mean the same thing to the ABI, so sending nothing when
@@ -471,10 +538,10 @@ public enum TurboSparkCatalog {
 
     /// Installs a catalog row, streaming progress.
     ///
-    /// **The walk CANNOT RESUME**: it streams gigabytes without writing the
+    /// **A failed or cancelled walk CANNOT RESUME**: it streams gigabytes without writing the
     /// checkpoint to disk whole, and a failure restarts it from the
     /// beginning. Tell the user before starting; the first `.stage` event
-    /// says so.
+    /// says so. Pause/resume preserves the current worker while the app stays open.
     ///
     /// Byte events arrive from several download threads at once and may go
     /// backwards in wall-clock order. Take the maximum rather than the last
@@ -536,8 +603,8 @@ public enum TurboSparkCatalog {
     ///
     /// `repo` is `owner/name` or `owner/name@revision`. `alias` is the local name.
     ///
-    /// Cannot resume; cancellable through `cancelInstall()`, same as the
-    /// catalog overload above.
+    /// Supports pause/resume while the worker stays alive; cancellation,
+    /// failure, or quitting requires a fresh install.
     public static func install(
         repo: String,
         alias: String,
@@ -585,6 +652,20 @@ public enum TurboSparkCatalog {
         ts_install_cancel() != 0
     }
 
+    /// Pauses at the next download boundary without discarding current work.
+    /// An in-flight request may finish first. The app must remain open.
+    @discardableResult
+    public static func pauseInstall() -> Bool {
+        ts_install_pause() != 0
+    }
+
+    /// Continues a paused install in this process. Cannot revive a cancelled
+    /// or failed install, or recover an install after quitting the app.
+    @discardableResult
+    public static func resumeInstall() -> Bool {
+        ts_install_resume() != 0
+    }
+
     /// How many install walks have finished (success, failure, or cancel)
     /// since process start. Read twice around `cancelInstall()` to confirm
     /// a cancelled walk actually exited rather than being wedged inside a
@@ -606,6 +687,20 @@ private final class InstallBox: @unchecked Sendable {
     init(_ continuation: AsyncThrowingStream<InstallEvent, Error>.Continuation) {
         self.continuation = continuation
     }
+}
+
+private final class RecommendationBox: @unchecked Sendable {
+    let continuation: AsyncThrowingStream<RecommendationEvent, Error>.Continuation
+
+    init(_ continuation: AsyncThrowingStream<RecommendationEvent, Error>.Continuation) {
+        self.continuation = continuation
+    }
+}
+
+private let recommendationCallback: TsRecommendCallback = { userdata, completed, total in
+    guard let userdata else { return }
+    let box = Unmanaged<RecommendationBox>.fromOpaque(userdata).takeUnretainedValue()
+    box.continuation.yield(.progress(completed: completed, total: total))
 }
 
 private let installCallback: TsInstallCallback = { userdata, kind, text, len, done, total in

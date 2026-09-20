@@ -20,7 +20,7 @@ pub(super) fn probe_gguf(
     repo: &RepoRef,
     file: &str,
 ) -> Result<ProbeReport, String> {
-    let source = crate::gguf_source::load(client, repo, file, None, None)?;
+    let source = crate::gguf_source::load(client, repo, file, None, None, None)?;
     Ok(evaluate_gguf(
         &source.header,
         repo,

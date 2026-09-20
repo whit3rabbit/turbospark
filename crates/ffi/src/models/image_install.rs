@@ -51,7 +51,7 @@ pub(crate) fn install(
     mut on_stage: impl FnMut(&str),
     on_bytes: Arc<dyn Fn(u64, u64) + Send + Sync>,
 ) -> Result<String, String> {
-    let active = ActiveInstall::register();
+    let active = ActiveInstall::register_image();
     let catalog = catalog::ImageCatalog::embedded()?;
     let entry = catalog
         .get(alias)
@@ -70,7 +70,7 @@ pub(crate) fn install(
         .ok_or_else(|| "image install has no parent directory".to_string())?;
     std::fs::create_dir_all(parent)
         .map_err(|e| format!("creating image install parent {}: {e}", parent.display()))?;
-    let source = parent.join(format!(".{alias}.image-source-{}", std::process::id()));
+    let source = parent.join(format!(".{alias}.{}.image-source", entry.revision));
     let repo = catalog::RepoRef::new(&entry.model_id, &entry.revision);
     on_stage("preparing image source");
     let downloaded = catalog::materialize_image_source(
@@ -78,29 +78,23 @@ pub(crate) fn install(
         &repo,
         &source,
         Some(active.cancel_flag()),
-        |stage, done, total| {
-            on_stage(stage);
-            on_bytes(done, total);
-        },
-    )
-    .inspect_err(|_| {
-        let _ = std::fs::remove_dir_all(&source);
-    })?;
+        |stage| on_stage(stage),
+        Arc::clone(&on_bytes),
+    )?;
     on_stage(&format!("downloaded {downloaded} image source bytes"));
 
-    let report = image::build_image_install(&image::ImageInstallSpec {
-        source_root: source.clone(),
-        output_root: output.clone(),
-        model_id: entry.model_id.clone(),
-        model_revision: entry.revision.clone(),
-    });
+    let report = image::build_image_install_with_progress(
+        &image::ImageInstallSpec {
+            source_root: source.clone(),
+            output_root: output.clone(),
+            model_id: entry.model_id.clone(),
+            model_revision: entry.revision.clone(),
+        },
+        |stage| on_stage(stage),
+    )?;
     let _ = std::fs::remove_dir_all(&source);
-    let report = report?;
     let manifest = image::ImageManifest::load(&report.output_root)?;
-    if let Err(error) = manifest.verify_files(&report.output_root) {
-        let _ = std::fs::remove_dir_all(&report.output_root);
-        return Err(error);
-    }
+    manifest.validate()?;
     let path = report
         .output_root
         .canonicalize()

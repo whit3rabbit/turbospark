@@ -24,6 +24,25 @@ extension AppModel {
         discoveredAgents = allManagedAgents
     }
 
+    /// Imports an agent definition file from another tool's directory into
+    /// user or project scope (the agent-side twin of `importSkill`).
+    @discardableResult
+    public func importAgent(
+        from sourceURL: URL, targetScope: AppAgentScope
+    ) -> Result<AppAgentDefinition, Error> {
+        do {
+            let projectURL = targetScope == .project ? selectedProject?.rootDirectoryURL : nil
+            let agent = try AgentManager.shared.importAgent(
+                from: sourceURL, scope: targetScope, projectRootURL: projectURL)
+            reloadAgents()
+            showToast("Imported '\(agent.name)' into \(targetScope.label).", style: .info)
+            return .success(agent)
+        } catch {
+            showToast("Import failed: \(error.localizedDescription)", style: .error)
+            return .failure(error)
+        }
+    }
+
     /// Project agent files held to a built-in's tool ceiling for taking its
     /// name. They still override the prompt; they cannot widen what it may do.
     public var constrainedProjectAgentNames: [String] {

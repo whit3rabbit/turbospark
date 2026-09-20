@@ -10,7 +10,7 @@ Read this before touching `AppModel+Installation.swift`, `AppModel+Models.swift`
 `AppModel+Server.swift`, `Catalog.swift`, `ModelHubView`, `ModelDetailPaneView`,
 or `ServerPaneView`.
 
-## Install: progress, threading, no resume
+## Install: progress, threading, and range resume
 
 The install byte callback fires CONCURRENTLY from several download threads,
 so progress can go backwards. `TurboSparkCatalog.install` documents taking
@@ -20,14 +20,16 @@ event alone jitters backwards on a real install.
 
 The install also runs on a DEDICATED `Thread`, not a global queue slot: it
 blocks for tens of minutes, and parking a shared concurrent-queue worker
-that long starves the rest of the process. And the walk CANNOT RESUME, so a
-cancelled or failed install restarts from zero; the UI should say so before
-starting.
+that long starves the rest of the process. Immutable-revision downloads keep
+verified ranges across a cancelled or failed attempt. Conversion may restart,
+and floating revisions never reuse cached bytes. See
+[`DOWNLOAD_MANAGER.md`](DOWNLOAD_MANAGER.md) for the cache and disk contract.
 
 **Cancelling is real since `ts_install_cancel` landed on the Rust side.**
 `cancelInstall()` sets the flag the blocking walk polls at its next ranged
 chunk read (seconds, not tensor boundaries) AND cancels the consuming Task;
-the walk then dies exactly as a network failure would, keeping nothing.
+the walk then dies exactly as a network failure would, retaining verified
+immutable-revision ranges for Retry.
 The cancelled alias sits in `abandonedInstallAliases` only until
 `watchCancelledWalkExit` sees `installsFinished()` prove the walk exited
 (a bounded 30 s poll), after which the model can be re-installed without
