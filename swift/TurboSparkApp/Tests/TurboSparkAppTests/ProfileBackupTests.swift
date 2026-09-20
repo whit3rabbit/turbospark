@@ -274,8 +274,10 @@ final class ProfileBackupTests: XCTestCase {
         let extraction = root.appendingPathComponent("extracted-empty", isDirectory: true)
         try FileManager.default.createDirectory(at: extraction, withIntermediateDirectories: true)
         try await extract(destination, into: extraction)
-        XCTAssertTrue(FileManager.default.fileExists(
+        XCTAssertFalse(FileManager.default.fileExists(
             atPath: extraction.appendingPathComponent("stray.txt").path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent(ProfileBackup.manifestFileName).path))
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: extraction.appendingPathComponent("settings.json").path))
         XCTAssertFalse(FileManager.default.fileExists(
