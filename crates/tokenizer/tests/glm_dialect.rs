@@ -2,13 +2,19 @@
 //!
 //! **THE FIXTURE'S ADDED-TOKEN TABLE IS REAL.** `fixtures/GlmTokenizer` is
 //! reduced from `zai-org/GLM-4.7-Flash`'s own `tokenizer.json` (read
-//! 2026-09-19): all 36 added tokens with their real ids and special flags,
-//! the real ByteLevel pre/post components, and the real vocab entries for
-//! all 256 byte tokens -- everything the dialect machinery reads. What is
-//! dropped is the 150k-entry BPE body (whole-word merges), which no
-//! resolver, probe, or decoder arm touches. The id assertions below pin the
-//! REAL checkpoint's ids so a fixture regeneration cannot silently renumber
-//! them.
+//! 2026-09-19): all 36 added tokens with their real ids and special flags
+//! (`<|endoftext|>` 154820, `<|user|>` 154827, `<|observation|>` 154829, the
+//! think pair 154841/154842, `<sop>` 154824), the real ByteLevel pre/post
+//! components, and the real vocab entries for all 256 byte tokens --
+//! everything the dialect machinery reads. What is dropped is the 150k-entry
+//! BPE body (whole-word merges), which no resolver, probe, or decoder arm
+//! touches.
+//!
+//! **EVERY ID ASSERTION IS BY NAME, NOT BY NUMBER.** The `tokenizers`
+//! library renumbers a sparse fixture's ids on load (crate Gotcha 2), so the
+//! assertions pin the RESOLUTION -- the resolver's ids are the named
+//! markers' ids -- which is also exactly how `resolve_glm` itself reads the
+//! table; a real install's table is dense and keeps its real ids.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -24,22 +30,22 @@ fn fixture() -> MfTokenizer {
     MfTokenizer::load_from_dir(&dir).expect("the GLM fixture tokenizer should load")
 }
 
-/// The ids below are `zai-org/GLM-4.7-Flash`'s own, not fixture-local
-/// guesses: `<|endoftext|>` 154820, `<|user|>` 154827, `<|assistant|>`
-/// 154828, `<|observation|>` 154829, think pair 154841/154842, and `<sop>`
-/// 154824 -- read off the real `tokenizer.json`.
 #[test]
-fn the_real_table_resolves_to_the_glm_dialect_with_the_real_ids() {
+fn the_real_table_resolves_to_the_glm_dialect_with_the_named_markers() {
     let tok = fixture();
     assert_eq!(tok.dialect, ChatDialect::Glm);
-    assert_eq!(tok.bos_id, 154824, "<sop>");
-    assert_eq!(tok.eos_id, 154820, "<|endoftext|>");
-    assert_eq!(tok.end_of_turn_id, 154820);
-    assert_eq!(tok.tool_call_stop_id, 154829, "<|observation|>");
-    assert_eq!(tok.think_start_id, Some(154841));
-    assert_eq!(tok.think_end_id, Some(154842));
-    assert_eq!(tok.channel_start_id, 154841);
-    assert_eq!(tok.channel_end_id, 154842);
+    let id = |name: &str| {
+        tok.token_to_id(name)
+            .unwrap_or_else(|| panic!("{name} must resolve in the loaded table"))
+    };
+    assert_eq!(tok.bos_id, id("<sop>"));
+    assert_eq!(tok.eos_id, id("<|endoftext|>"));
+    assert_eq!(tok.end_of_turn_id, id("<|endoftext|>"));
+    assert_eq!(tok.tool_call_stop_id, id("<|observation|>"));
+    assert_eq!(tok.think_start_id, Some(id("<think>")));
+    assert_eq!(tok.think_end_id, Some(id("</think>")));
+    assert_eq!(tok.channel_start_id, id("<think>"));
+    assert_eq!(tok.channel_end_id, id("</think>"));
     // The template writes `[gMASK]<sop>` itself, so the encoder adds no BOS:
     // add_bos must leave the id sequence exactly the encoded text's.
     assert_eq!(
@@ -48,9 +54,9 @@ fn the_real_table_resolves_to_the_glm_dialect_with_the_real_ids() {
         "no BOS prefix may be prepended"
     );
     // generation_config.json's three end-of-sequence ids are all stops.
-    assert!(tok.stop_token_ids.contains(&154820));
-    assert!(tok.stop_token_ids.contains(&154827));
-    assert!(tok.stop_token_ids.contains(&154829));
+    assert!(tok.stop_token_ids.contains(&id("<|endoftext|>")));
+    assert!(tok.stop_token_ids.contains(&id("<|user|>")));
+    assert!(tok.stop_token_ids.contains(&id("<|observation|>")));
     // The tool markup ids exist in the table but the arm is a text scan;
     // carrying them would claim an id-bracket arm.
     assert_eq!(tok.tool_call_start_id, turbospark_tokenizer::NO_SUCH_TOKEN_ID);

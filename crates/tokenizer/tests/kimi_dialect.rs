@@ -10,7 +10,14 @@
 //! their real ids and special flags, which is the only part of the table
 //! the dialect machinery reads -- over a synthetic 256-entry ByteLevel body
 //! that exists to make the fixture loadable and its test strings encodable.
-//! The id assertions below pin the REAL checkpoint's ids.
+//! The id assertions below are BY NAME, NOT BY NUMBER: the `tokenizers`
+//! library renumbers a sparse fixture's ids on load (crate Gotcha 2), and
+//! the assertions pin the RESOLUTION -- the resolver's ids are the named
+//! markers' ids -- which is how `resolve_kimi` itself reads the table. The
+//! real numbers ([BOS] 163584, [EOS] 163585, <|im_end|> 163586,
+//! <|im_assistant|> 163588, <|im_middle|> 163601, think 163606/163607) live
+//! in the fixture's added_tokens and in the resolver's doc comments; a real
+//! dense K2 table would keep them.
 //!
 //! No K2 checkpoint is installable by this engine today for the same reason
 //! (no `tokenizer.json` to source a sidecar from), which the roadmap entry
@@ -30,25 +37,25 @@ fn fixture() -> MfTokenizer {
     MfTokenizer::load_from_dir(&dir).expect("the Kimi K2 fixture tokenizer should load")
 }
 
-/// The ids below are `moonshotai/Kimi-K2.5`'s own, from the real
-/// `tokenizer_config.json`: `[BOS]` 163584, `[EOS]` 163585, `<|im_end|>`
-/// 163586, `<|im_assistant|>` 163588, `<|im_middle|>` 163601, think pair
-/// 163606/163607.
 #[test]
-fn the_real_added_tokens_resolve_to_the_kimi_dialect_with_the_real_ids() {
+fn the_real_added_tokens_resolve_to_the_kimi_dialect_with_the_named_markers() {
     let tok = fixture();
     assert_eq!(tok.dialect, ChatDialect::Kimi);
-    assert_eq!(tok.bos_id, 163584, "[BOS]");
-    assert_eq!(tok.eos_id, 163585, "[EOS]");
-    assert_eq!(tok.end_of_turn_id, 163586, "<|im_end|>");
-    assert_eq!(tok.think_start_id, Some(163606));
-    assert_eq!(tok.think_end_id, Some(163607));
-    assert_eq!(tok.channel_start_id, 163606);
-    assert_eq!(tok.channel_end_id, 163607);
+    let id = |name: &str| {
+        tok.token_to_id(name)
+            .unwrap_or_else(|| panic!("{name} must resolve in the loaded table"))
+    };
+    assert_eq!(tok.bos_id, id("[BOS]"));
+    assert_eq!(tok.eos_id, id("[EOS]"));
+    assert_eq!(tok.end_of_turn_id, id("<|im_end|>"));
+    assert_eq!(tok.think_start_id, Some(id("<think>")));
+    assert_eq!(tok.think_end_id, Some(id("</think>")));
+    assert_eq!(tok.channel_start_id, id("<think>"));
+    assert_eq!(tok.channel_end_id, id("</think>"));
     assert_eq!(tok.dialect.tool_call_support(), ToolCallSupport::Native);
     // Both EOS-class tokens stop; the template closes turns with the second.
-    assert!(tok.stop_token_ids.contains(&163585));
-    assert!(tok.stop_token_ids.contains(&163586));
+    assert!(tok.stop_token_ids.contains(&id("[EOS]")));
+    assert!(tok.stop_token_ids.contains(&id("<|im_end|>")));
 }
 
 /// **THE ORDERING TRAP.** A Kimi table carries `<|im_end|>` -- the ChatML
