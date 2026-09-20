@@ -206,8 +206,8 @@ pub unsafe extern "C" fn ts_recommend_json(
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let json =
-            models::recommend_json(ctx, slots, guard).map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        let json = models::recommend_json(ctx, slots, guard, options.probe)
+            .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
         strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }

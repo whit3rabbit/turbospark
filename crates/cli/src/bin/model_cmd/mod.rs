@@ -638,21 +638,11 @@ pub fn recommend(catalog: &Catalog, client: &Client, options: &Options) -> Resul
         .filter(|e| e.kind == catalog::EntryKind::Model)
         .collect();
     let mut rows: Vec<catalog::Recommendation> = if options.probe {
-        let pb = progress::count_progress_bar(entries.len() as u64, "probing curated models...");
-        let results = entries
-            .iter()
-            .map(|entry| {
-                pb.set_message(format!("probing {}...", entry.alias));
-                // A probe failure is not a refusal: the row still has its
-                // size and its evidence, and losing it entirely because a
-                // header read timed out would be the worse answer.
-                let report = catalog::probe_entry(client, entry).ok();
-                pb.inc(1);
-                catalog::from_entry(entry, &machine, context, SLOT_POLICY, report.as_ref())
-            })
-            .collect();
+        let pb = progress::spinner("probing curated models...".to_string());
+        let results =
+            catalog::recommend_catalog_probed(&entries, client, &machine, context, SLOT_POLICY);
         pb.finish_and_clear();
-        results
+        results?
     } else {
         catalog::recommend_catalog(&entries, &machine, context, SLOT_POLICY)
     };
@@ -673,12 +663,10 @@ pub fn recommend(catalog: &Catalog, client: &Client, options: &Options) -> Resul
         pb.finish_and_clear();
         rows.extend(found?);
     }
-    // **Ranked ONCE, here, over everything.** Ranking inside each arm is what
-    // the first draft did and it left `--probe` unsorted entirely, because
-    // that arm builds its rows with a `map` and only the offline arm went
-    // through `recommend_catalog`. One call over the concatenation is also
-    // the only ordering that can interleave a discovered row with a curated
-    // one, which is the whole point of the evidence tier.
+    // **Rank over the final concatenation.** The catalog helpers also return
+    // their standalone rows ranked for FFI callers, but only this final pass
+    // can interleave a discovered row with a curated one. Without discovery
+    // it is an intentionally harmless repeat of the same deterministic sort.
     catalog::rank_recommendations(&mut rows);
     render::recommendations(&rows, &machine, context);
     Ok(())

@@ -74,7 +74,7 @@ if [ "$skip_build" -eq 0 ]; then
     -p turbospark-cli -p turbospark-server --manifest-path "$root/Cargo.toml"
 
   echo "==> swift build -c release (TurboSparkApp)"
-  (cd "$root/swift/TurboSparkApp" && swift build -c release)
+  (cd "$root/swift/TurboSparkApp" && swift build -c release -Xbuild-tools-swiftc -suppress-warnings)
 fi
 
 build_dir="$root/swift/TurboSparkApp/.build/release"

@@ -15,11 +15,12 @@ struct ModelHubFilterBarView: View {
         HStack(spacing: 8) {
             Picker(selection: $filter.tab) {
                 ForEach(ModelHubFilter.Tab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
+                    tabText(tab).tag(tab)
                 }
             } label: { Text("View", bundle: .module) }
             .pickerStyle(.segmented)
             .controlSize(.small)
+            .themedFont(.tiny)
             .frame(width: 260)
             .labelsHidden()
             .accessibilityLabel("Catalog view")
@@ -27,17 +28,17 @@ struct ModelHubFilterBarView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     filterChip(
-                        title: "Format",
+                        title: "Format & Package",
                         options: ModelHubFilter.formatOptions(for: catalog),
                         selection: $filter.format)
 
                     filterChip(
-                        title: "Capability",
+                        title: "Architecture",
                         options: ModelHubFilter.capabilityOptions(for: catalog),
                         selection: $filter.capability)
 
                     filterChip(
-                        title: "Fit",
+                        title: "Fits Memory",
                         options: ModelHubFilter.fitOptions(
                             for: catalog,
                             recommendations: recommendations),
@@ -72,12 +73,14 @@ struct ModelHubFilterBarView: View {
     /// A dropdown that reads "Format" when inactive and "MLX INT4" when set,
     /// so an active filter is visible without opening it.
     private func filterChip(
-        title: String,
+        title: LocalizedStringKey,
         options: [String],
         selection: Binding<ModelHubFilter.Selection>
     ) -> some View {
         Menu {
-            Button(ModelHubFilter.anyOption) { selection.wrappedValue = nil }
+            Button { selection.wrappedValue = nil } label: {
+                Text("All", bundle: .module)
+            }
             if !options.isEmpty {
                 Divider()
                 ForEach(options, id: \.self) { option in
@@ -94,9 +97,15 @@ struct ModelHubFilterBarView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(selection.wrappedValue ?? title)
-                    .themedFont(.tiny, weight: selection.wrappedValue == nil ? .regular : .medium)
-                    .lineLimit(1)
+                if let selected = selection.wrappedValue {
+                    Text(selected)
+                        .themedFont(.tiny, weight: .medium)
+                        .lineLimit(1)
+                } else {
+                    Text(title, bundle: .module)
+                        .themedFont(.tiny)
+                        .lineLimit(1)
+                }
                 Image(systemName: "chevron.down")
                     .themedFont(.micro, weight: .bold)
                     .foregroundStyle(.tertiary)
@@ -116,9 +125,11 @@ struct ModelHubFilterBarView: View {
             in: Capsule())
         .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
         .disabled(options.isEmpty && selection.wrappedValue == nil)
-        .help(title.lowercased() == "architecture" ? Text("Filter by architecture", bundle: .module) : Text("Filter by source", bundle: .module))
-        .accessibilityLabel(title.lowercased() == "architecture" ? Text("Filter by architecture", bundle: .module) : Text("Filter by source", bundle: .module))
-        .accessibilityValue(selection.wrappedValue ?? ModelHubFilter.anyOption)
+        .help(Text(title, bundle: .module))
+        .accessibilityLabel(Text(title, bundle: .module))
+        .accessibilityValue(
+            selection.wrappedValue.map { Text(verbatim: $0) }
+                ?? Text("All", bundle: .module))
     }
 
     private var sortChip: some View {
@@ -128,9 +139,9 @@ struct ModelHubFilterBarView: View {
                     filter.sort = option
                 } label: {
                     if filter.sort == option {
-                        Label(option.rawValue, systemImage: "checkmark")
+                        Label { sortOptionText(option) } icon: { Image(systemName: "checkmark") }
                     } else {
-                        Text(option.rawValue)
+                        sortOptionText(option)
                     }
                 }
             }
@@ -138,7 +149,7 @@ struct ModelHubFilterBarView: View {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.up.arrow.down")
                     .themedFont(.micro, weight: .bold)
-                Text(filter.sort.rawValue)
+                sortOptionText(filter.sort)
                     .themedFont(.tiny)
                     .lineLimit(1)
             }
@@ -154,6 +165,22 @@ struct ModelHubFilterBarView: View {
         .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
         .help(Text("Sort and group models", bundle: .module))
         .accessibilityLabel(Text("Sort By", bundle: .module))
-        .accessibilityValue(filter.sort.rawValue)
+        .accessibilityValue(sortOptionText(filter.sort))
+    }
+
+    private func tabText(_ tab: ModelHubFilter.Tab) -> Text {
+        switch tab {
+        case .recommended: return Text("Recommended", bundle: .module)
+        case .discover: return Text("Discover", bundle: .module)
+        case .onDevice: return Text("Installed", bundle: .module)
+        }
+    }
+
+    private func sortOptionText(_ option: ModelHubFilter.SortOption) -> Text {
+        switch option {
+        case .recommended: return Text("Recommended", bundle: .module)
+        case .name: return Text("Name", bundle: .module)
+        case .size: return Text("Installed size", bundle: .module)
+        }
     }
 }

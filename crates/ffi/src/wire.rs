@@ -122,8 +122,8 @@ pub fn kv_bits(value: &Option<String>) -> Result<model_io::KvQuant, String> {
     }
 }
 
-/// Arguments to `ts_recommend_json`. One field today, and a JSON blob rather
-/// than a second `uint32_t` for the reason this crate takes every other
+/// Arguments to `ts_recommend_json`. A JSON blob rather than another C
+/// argument for the reason this crate takes every other
 /// options bag as JSON: a knob added here is a field rather than an ABI
 /// break, and the header stays readable.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -139,6 +139,11 @@ pub struct RecommendOptions {
     /// different configurations rather than the same one approximately
     /// (`crates/catalog` Gotcha 9).
     pub expert_cache_slots: Option<serde_json::Value>,
+    /// Read curated checkpoint headers before ranking. False keeps the fast,
+    /// offline behavior. The app uses this only as a fallback when that arm
+    /// cannot establish a single runnable model.
+    #[serde(default)]
+    pub probe: bool,
 }
 
 /// Arguments to `ts_probe_json`. The same two knobs as [`RecommendOptions`]

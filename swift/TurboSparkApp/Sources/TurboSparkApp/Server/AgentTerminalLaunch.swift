@@ -50,7 +50,7 @@ enum AgentTerminalLaunch {
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             let message = String(
-                decoding: (try? stderr.fileHandleForReading.readDataToEndOfFile()) ?? Data(),
+                decoding: stderr.fileHandleForReading.readDataToEndOfFile(),
                 as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw NSError(

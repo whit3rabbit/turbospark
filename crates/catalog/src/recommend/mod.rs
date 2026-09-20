@@ -214,6 +214,80 @@ pub fn recommend_catalog(
     out
 }
 
+/// Probe every curated model header in bounded parallel batches, then rank
+/// the resulting fits.
+///
+/// This is the network-backed counterpart to [`recommend_catalog`]. It keeps
+/// probe failures as unknown rows instead of dropping them: one gated or
+/// temporarily unavailable repository must not erase the rest of the catalog.
+/// If no header can be read at all, the caller gets an error instead of an
+/// empty recommendation state that looks like a real fit result.
+/// Callers should use the offline arm first and pay for these requests only
+/// when the catalog has no runnable answer for the requested configuration.
+pub fn recommend_catalog_probed(
+    entries: &[&CatalogEntry],
+    client: &crate::Client,
+    machine: &Machine,
+    context: u32,
+    slots: model_io::ExpertCacheSlots,
+) -> Result<Vec<Recommendation>, String> {
+    const PROBE_CONCURRENCY: usize = 4;
+
+    let model_entries: Vec<&CatalogEntry> = entries
+        .iter()
+        .copied()
+        .filter(|entry| entry.kind == crate::entry::EntryKind::Model)
+        .collect();
+    let mut probed = Vec::with_capacity(model_entries.len());
+    for batch in model_entries.chunks(PROBE_CONCURRENCY) {
+        let batch_results = std::thread::scope(|scope| {
+            let handles: Vec<_> = batch
+                .iter()
+                .copied()
+                .map(|entry| (entry, scope.spawn(move || probe_entry(client, entry))))
+                .collect();
+            handles
+                .into_iter()
+                .map(|(entry, handle)| {
+                    let result = handle
+                        .join()
+                        .unwrap_or_else(|_| Err("header probe worker panicked".to_string()));
+                    (entry, result)
+                })
+                .collect::<Vec<_>>()
+        });
+        probed.extend(batch_results);
+    }
+
+    let mut successful_probes = 0usize;
+    let mut first_error = None;
+    let mut out: Vec<Recommendation> = probed
+        .into_iter()
+        .map(|(entry, result)| match result {
+            Ok(report) => {
+                successful_probes += 1;
+                from_entry(entry, machine, context, slots, Some(&report))
+            }
+            Err(error) => {
+                first_error.get_or_insert_with(|| error.clone());
+                let mut recommendation = from_entry(entry, machine, context, slots, None);
+                recommendation
+                    .notes
+                    .push(format!("header probe failed: {error}"));
+                recommendation
+            }
+        })
+        .collect();
+    if !model_entries.is_empty() && successful_probes == 0 {
+        return Err(format!(
+            "could not read any catalog model headers: {}",
+            first_error.unwrap_or_else(|| "no probe result was returned".to_string())
+        ));
+    }
+    rank(&mut out, |r| r.key());
+    Ok(out)
+}
+
 /// Probe a curated row's own repository, the way `pull` would reach it.
 ///
 /// Exists so a caller does not rebuild the `(repo, revision, file, sidecar

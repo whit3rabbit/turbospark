@@ -100,19 +100,61 @@ extension AppModel {
     /// Curated rows ranked for this machine, at the configuration this app
     /// will actually open under.
     ///
-    /// One call for every caller: `ModelHubView`, `CatalogSheet`,
-    /// `ModelInstallView` and the installed-model detail pane all read the
-    /// same rows, so a fifth assembling its own would compile and be wrong
-    /// only once the user moved a setting off its default.
+    /// One configuration source for every caller: browser views, catalog
+    /// sheets, onboarding and installed-model detail all fit against these
+    /// same active settings. Interactive browser views use
+    /// `loadFitRecommendations` below so errors stay visible and header
+    /// probing remains off the main actor.
     /// **Ranked**, and the order is the answer: `rank_recommendations` puts
     /// fitting rows above non-fitting ones and frozen evidence above
     /// estimates. Callers that need lookup take `fitRecommendationsByAlias`
     /// rather than rebuilding a dictionary and losing it.
-    public func fitRecommendations() -> [ModelRecommendation] {
+    public func fitRecommendations(probe: Bool = false) -> [ModelRecommendation] {
         (try? TurboSparkCatalog.recommend(
             context: activeFitContext,
             expertCacheSlots: activeCacheSlots,
-            loadGuard: activeLoadGuard)) ?? []
+            loadGuard: activeLoadGuard,
+            probe: probe)) ?? []
+    }
+
+    /// Load recommendations without blocking the UI. The exact offline
+    /// catalog is always tried first. Header probes are the fallback only
+    /// when that pass cannot establish one runnable model, so the common
+    /// path remains instant and the fallback never guesses a checkpoint's
+    /// shape from its family name.
+    public func loadFitRecommendations(probeIfNeeded: Bool = true) async throws
+        -> [ModelRecommendation]
+    {
+        let context = activeFitContext
+        let slots = activeCacheSlots
+        let guardTier = activeLoadGuard
+        let offline = try await Task.detached(priority: .userInitiated) {
+            try TurboSparkCatalog.recommend(
+                context: context,
+                expertCacheSlots: slots,
+                loadGuard: guardTier)
+        }.value
+        guard probeIfNeeded, !offline.contains(where: \.runs) else { return offline }
+
+        return try await Task.detached(priority: .userInitiated) {
+            try TurboSparkCatalog.recommend(
+                context: context,
+                expertCacheSlots: slots,
+                loadGuard: guardTier,
+                probe: true)
+        }.value
+    }
+
+    /// Changes whenever a setting that affects fit arithmetic changes. Views
+    /// use it as their task identity so recommendations cannot stay frozen at
+    /// the configuration that happened to be active when the browser opened.
+    public var fitRecommendationConfigurationID: String {
+        [
+            String(activeFitContext),
+            String(runtimeOptions.expertCacheSlots),
+            runtimeOptions.loadGuard.rawValue,
+            String(runtimeOptions.loadGuardCustomBytes),
+        ].joined(separator: ":")
     }
 
     /// The same rows keyed by alias, for a view that joins rather than lists.

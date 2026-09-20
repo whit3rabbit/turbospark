@@ -70,6 +70,12 @@ final class ModelHubFilterTests: XCTestCase {
         ]
     }
 
+    private func discoveryFilter() -> ModelHubFilter {
+        var filter = ModelHubFilter()
+        filter.tab = .discover
+        return filter
+    }
+
     // MARK: - Options come from the data
 
     /// Tests that format filter options are dynamically derived from catalog rows.
@@ -110,7 +116,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     /// Tests that an unconstrained filter preserves all catalog rows.
     func testUnfilteredListKeepsEveryRow() throws {
-        var filter = ModelHubFilter()
+        var filter = discoveryFilter()
         filter.sort = .name
         let result = filter.apply(to: try catalog(), installedAliases: [], recommendations: [:])
         XCTAssertEqual(result.map(\.alias), ["gemma4", "gemma4-gguf", "mistral7b"])
@@ -118,7 +124,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     /// Tests that the On-Device tab limits visible models to installed aliases.
     func testOnDeviceTabKeepsOnlyInstalledRows() throws {
-        var filter = ModelHubFilter()
+        var filter = discoveryFilter()
         filter.tab = .onDevice
         let result = filter.apply(
             to: try catalog(),
@@ -131,7 +137,7 @@ final class ModelHubFilterTests: XCTestCase {
     func testSearchMatchesAliasNameFamilyAndNotes() throws {
         let rows = [try entry(alias: "a1", name: "Alpha", family: "gemma4", notes: "streams experts")]
         for query in ["a1", "alpha", "GEMMA4", "experts"] {
-            var filter = ModelHubFilter()
+            var filter = discoveryFilter()
             filter.searchText = query
             XCTAssertEqual(
                 filter.apply(to: rows, installedAliases: [], recommendations: [:]).count,
@@ -142,7 +148,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     /// Tests that search queries containing only whitespace do not filter rows.
     func testSearchIgnoresSurroundingWhitespace() throws {
-        var filter = ModelHubFilter()
+        var filter = discoveryFilter()
         filter.searchText = "   "
         XCTAssertEqual(
             filter.apply(to: try catalog(), installedAliases: [], recommendations: [:]).count,
@@ -156,7 +162,7 @@ final class ModelHubFilterTests: XCTestCase {
     func testEveryCapabilityOptionSelectsASubsetThatReallyHasIt() throws {
         let rows = try catalog()
         for option in ModelHubFilter.capabilityOptions(for: rows) {
-            var filter = ModelHubFilter()
+            var filter = discoveryFilter()
             filter.capability = option
             let result = filter.apply(to: rows, installedAliases: [], recommendations: [:])
             XCTAssertFalse(result.isEmpty, "\(option) matched nothing")
@@ -172,7 +178,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     /// Tests that format filters keep only entries matching the specified format.
     func testFormatFilterKeepsOnlyThatFormat() throws {
-        var filter = ModelHubFilter()
+        var filter = discoveryFilter()
         filter.format = "MLX INT4"
         let result = filter.apply(to: try catalog(), installedAliases: [], recommendations: [:])
         XCTAssertEqual(result.map(\.alias), ["gemma4"])
@@ -180,7 +186,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     /// Tests that fit filtering drops rows that lack recommendation entries.
     func testFitFilterDropsRowsWithNoRecommendation() throws {
-        var filter = ModelHubFilter()
+        var filter = discoveryFilter()
         filter.fit = "Streams"
         let result = filter.apply(
             to: try catalog(),
@@ -191,7 +197,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     /// Tests that format and search filters compose conjunctively.
     func testFiltersCompose() throws {
-        var filter = ModelHubFilter()
+        var filter = discoveryFilter()
         filter.format = "MLX INT4"
         filter.searchText = "mistral"
         let result = filter.apply(to: try catalog(), installedAliases: [], recommendations: [:])
@@ -202,7 +208,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     /// Tests that sorting by size orders rows ascending by download size.
     func testSizeSortIsAscendingByDownloadBytes() throws {
-        var filter = ModelHubFilter()
+        var filter = discoveryFilter()
         filter.sort = .size
         let result = filter.apply(to: try catalog(), installedAliases: [], recommendations: [:])
         XCTAssertEqual(result.map(\.alias), ["mistral7b", "gemma4", "gemma4-gguf"])
@@ -210,7 +216,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     /// Tests that best-fit sorting orders resident before streams before refused.
     func testBestFitSortPutsResidentBeforeStreamsBeforeRefused() throws {
-        var filter = ModelHubFilter()
+        var filter = discoveryFilter()
         filter.sort = .recommended
         let result = filter.apply(
             to: try catalog(),
@@ -225,7 +231,7 @@ final class ModelHubFilterTests: XCTestCase {
 
     /// Tests that best-fit sorting breaks verdict ties by sorting on alias.
     func testBestFitSortIsStableOnAliasWhenVerdictsTie() throws {
-        var filter = ModelHubFilter()
+        var filter = discoveryFilter()
         filter.sort = .recommended
         let result = filter.apply(to: try catalog(), installedAliases: [], recommendations: [:])
         XCTAssertEqual(result.map(\.alias), ["gemma4", "gemma4-gguf", "mistral7b"])
@@ -325,6 +331,11 @@ final class ModelHubFilterTests: XCTestCase {
     }
 
     // MARK: - Recommended tab
+
+    func testRecommendedIsTheFirstAndDefaultTab() {
+        XCTAssertEqual(ModelHubFilter().tab, .recommended)
+        XCTAssertEqual(ModelHubFilter.Tab.allCases.first, .recommended)
+    }
 
     /// Tests that the Recommended tab filters out models that are refused or cannot run.
     func testRecommendedTabKeepsOnlyRunnableModels() throws {

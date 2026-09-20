@@ -16,8 +16,8 @@ import TurboSpark
 struct ModelHubFilter: Equatable {
     /// Which half of the catalog to show.
     enum Tab: String, CaseIterable, Identifiable {
-        case discover = "Discover"
         case recommended = "Recommended"
+        case discover = "Discover"
         case onDevice = "On Device"
         var id: String { rawValue }
     }
@@ -37,10 +37,7 @@ struct ModelHubFilter: Equatable {
     /// stale before.
     typealias Selection = String?
 
-    /// Sentinel shown for "no filter applied".
-    static let anyOption = "Any"
-
-    var tab: Tab = .discover
+    var tab: Tab = .recommended
     var searchText: String = ""
     var format: Selection = nil
     var capability: Selection = nil

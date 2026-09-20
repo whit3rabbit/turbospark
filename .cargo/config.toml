@@ -1,2 +1,5 @@
 # Workspace-wide cargo configuration. Holds destination build settings only;
 # it mirrors no source-tree scaffolding.
+
+[future-incompat-report]
+frequency = "never"

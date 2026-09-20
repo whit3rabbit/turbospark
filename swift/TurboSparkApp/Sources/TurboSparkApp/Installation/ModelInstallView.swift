@@ -11,7 +11,8 @@ import TurboSpark
 struct ModelInstallView: View {
     @ObservedObject var model: AppModel
     @State private var recommendations: [ModelRecommendation] = []
-    @State private var isLoadingRecommendations = false
+    @State private var isLoadingRecommendations = true
+    @State private var recommendationError: String?
     @State private var selectedFilter: RecommendationFilter = .recommended
 
     enum RecommendationFilter: String, CaseIterable, Identifiable {
@@ -43,8 +44,11 @@ struct ModelInstallView: View {
             .padding(.vertical, 32)
             .frame(maxWidth: .infinity)
         }
-        .task {
-            loadRecommendations()
+        // Keep native buttons and segmented controls on the app's live font
+        // family and size even when their labels do not declare a role.
+        .themedFont(.small)
+        .task(id: model.fitRecommendationConfigurationID) {
+            await loadRecommendations()
         }
     }
 
@@ -71,7 +75,10 @@ struct ModelInstallView: View {
                 model.persistSettings()
                 model.refreshModels()
                 model.showToast("Scanned LM Studio models folder", style: .success)
-            } label: { Text("Scan LM Studio", bundle: .module) }
+            } label: {
+                Text("Scan LM Studio", bundle: .module)
+                    .themedFont(.small, weight: .medium)
+            }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
         }
@@ -114,15 +121,16 @@ struct ModelInstallView: View {
                 Spacer()
                 Picker(selection: $selectedFilter) {
                     ForEach(RecommendationFilter.allCases) { f in
-                        Text(f.rawValue).tag(f)
+                        recommendationFilterLabel(f).tag(f)
                     }
                 } label: { Text("Filter", bundle: .module) }
                 .pickerStyle(.segmented)
+                .themedFont(.small)
                 .frame(width: 240)
                 .accessibilityLabel("Recommendations filter")
             }
 
-            if displayedRecommendations.isEmpty {
+            if isLoadingRecommendations {
                 VStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
@@ -134,6 +142,42 @@ struct ModelInstallView: View {
                 .padding(.vertical, 24)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Calculating hardware fit recommendations")
+            } else if let recommendationError {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .themedFont(.title2)
+                        .foregroundStyle(.orange)
+                    Text(recommendationError)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                        .multilineTextAlignment(.center)
+                    Button {
+                        Task { await loadRecommendations() }
+                    } label: {
+                        Text("Refresh", bundle: .module)
+                            .themedFont(.small, weight: .medium)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            } else if displayedRecommendations.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .themedFont(.title2)
+                        .foregroundStyle(.quaternary)
+                    Text("No recommended models", bundle: .module)
+                        .themedFont(.base, weight: .medium)
+                    Button {
+                        selectedFilter = .all
+                    } label: {
+                        Text("All models", bundle: .module)
+                            .themedFont(.small, weight: .medium)
+                    }
+                    .buttonStyle(.link)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
             } else {
                 VStack(spacing: 10) {
                     ForEach(displayedRecommendations) { rec in
@@ -150,9 +194,10 @@ struct ModelInstallView: View {
         HStack(spacing: 12) {
             Button {
                 model.refreshModels()
-                loadRecommendations()
+                Task { await loadRecommendations() }
             } label: {
                 Label { Text("Rescan Storage", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
+                    .themedFont(.small)
             }
             .buttonStyle(.bordered)
             .help("Rescan storage for local models")
@@ -162,6 +207,7 @@ struct ModelInstallView: View {
                 ModelLocationPicker.choose(for: model)
             } label: {
                 Label { Text("Choose Existing Model Folder...", bundle: .module) } icon: { Image(systemName: "folder") }
+                    .themedFont(.small)
             }
             .buttonStyle(.bordered)
             .help("Select an existing model directory")
@@ -173,6 +219,7 @@ struct ModelInstallView: View {
                 model.openModelHub()
             } label: {
                 Label { Text("Browse Full Model Hub", bundle: .module) } icon: { Image(systemName: "square.grid.2x2") }
+                    .themedFont(.small)
             }
             .buttonStyle(.bordered)
             .help("Open the model catalog")
@@ -192,9 +239,32 @@ struct ModelInstallView: View {
         return recommendations
     }
 
-    private func loadRecommendations() {
+    @ViewBuilder
+    private func recommendationFilterLabel(_ filter: RecommendationFilter) -> some View {
+        switch filter {
+        case .recommended:
+            Text("Recommended", bundle: .module)
+        case .all:
+            Text("All models", bundle: .module)
+        }
+    }
+
+    private func loadRecommendations() async {
+        let configurationID = model.fitRecommendationConfigurationID
         isLoadingRecommendations = true
-        recommendations = model.fitRecommendations()
-        isLoadingRecommendations = false
+        recommendationError = nil
+        do {
+            let rows = try await model.loadFitRecommendations()
+            guard !Task.isCancelled,
+                  configurationID == model.fitRecommendationConfigurationID else { return }
+            recommendations = rows
+            isLoadingRecommendations = false
+        } catch {
+            guard !Task.isCancelled,
+                  configurationID == model.fitRecommendationConfigurationID else { return }
+            recommendations = []
+            recommendationError = error.localizedDescription
+            isLoadingRecommendations = false
+        }
     }
 }

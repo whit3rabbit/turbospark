@@ -103,13 +103,13 @@ swift-test-real: swift-lib
 	  TURBOSPARK_TEST_IMAGE_MODEL=$(IMAGE_MODEL) swift test
 
 swift-app-build: swift-lib-app compile-strings
-	cd swift/TurboSparkApp && swift build
+	cd swift/TurboSparkApp && swift build -Xbuild-tools-swiftc -suppress-warnings
 
 swift-app-release: swift-lib-app compile-strings
-	cd swift/TurboSparkApp && swift build -c release
+	cd swift/TurboSparkApp && swift build -c release -Xbuild-tools-swiftc -suppress-warnings
 
 swift-app: swift-lib-app compile-strings
-	cd swift/TurboSparkApp && swift run TurboSparkApp
+	cd swift/TurboSparkApp && swift run -Xbuild-tools-swiftc -suppress-warnings TurboSparkApp
 
 swift-demo: swift-app
 

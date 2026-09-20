@@ -199,6 +199,7 @@ pub(crate) fn recommend_json(
     context: Option<u32>,
     slots: model_io::ExpertCacheSlots,
     guard: model_io::LoadGuard,
+    probe: bool,
 ) -> Result<String, String> {
     let physical = runtime::physical_memory();
     if physical == 0 {
@@ -220,7 +221,17 @@ pub(crate) fn recommend_json(
     let catalog = Catalog::embedded()?;
     let entries: Vec<&catalog::CatalogEntry> = catalog.entries().collect();
     let context_val = context.unwrap_or(4096);
-    let recommendations = catalog::recommend_catalog(&entries, &machine, context_val, slots);
+    let recommendations = if probe {
+        catalog::recommend_catalog_probed(
+            &entries,
+            &catalog::Client::with_timeout(std::time::Duration::from_secs(15)),
+            &machine,
+            context_val,
+            slots,
+        )?
+    } else {
+        catalog::recommend_catalog(&entries, &machine, context_val, slots)
+    };
     let rows: Vec<_> = recommendations
         .into_iter()
         .map(|r| {

@@ -17,6 +17,8 @@ struct ModelHubView: View {
     @State private var filter = ModelHubFilter()
     @State private var selectedAlias: String?
     @State private var recommendations: [String: ModelRecommendation] = [:]
+    @State private var isLoadingRecommendations = true
+    @State private var recommendationError: String?
     @State private var showingProbeSheet = false
 
     var body: some View {
@@ -31,13 +33,18 @@ struct ModelHubView: View {
             Divider()
             masterDetailContent
         }
+        // Native controls without their own role inherit the same live theme
+        // as the explicit text roles below, including font family and size.
+        .themedFont(.small)
         .sheet(isPresented: $showingProbeSheet) {
             ModelProbeSheet(model: model)
         }
-        .task {
-            loadRecommendations()
+        .task(id: model.fitRecommendationConfigurationID) {
+            await loadRecommendations()
             if selectedAlias == nil {
-                selectedAlias = model.selected?.alias ?? model.catalog.first?.alias
+                let activeAlias = model.selected?.alias
+                selectedAlias = filteredEntries.first(where: { $0.alias == activeAlias })?.alias
+                    ?? filteredEntries.first?.alias
             }
         }
     }
@@ -160,10 +167,17 @@ struct ModelHubView: View {
     private var masterList: some View {
         ScrollView {
             LazyVStack(spacing: 3) {
-                if filter.tab == .recommended {
+                if filter.tab == .recommended,
+                   !isLoadingRecommendations,
+                   recommendationError == nil,
+                   !filteredEntries.isEmpty {
                     recommendedHeaderCard
                 }
-                if filteredEntries.isEmpty {
+                if filter.tab == .recommended && isLoadingRecommendations {
+                    recommendationLoadingState
+                } else if filter.tab == .recommended, let recommendationError {
+                    recommendationFailureState(recommendationError)
+                } else if filteredEntries.isEmpty {
                     emptyListState
                 } else {
                     ForEach(filteredEntries) { entry in
@@ -197,10 +211,6 @@ struct ModelHubView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            Text("Verified to run within your Apple Silicon unified memory budget, prioritizing native MLX quantization and fast streaming MoE models.", bundle: .module)
-                .themedFont(.micro)
-                .foregroundStyle(.appSecondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(8)
         .background(.appAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -215,7 +225,7 @@ struct ModelHubView: View {
         let isInstalled = model.installed.contains(where: { $0.alias == entry.alias }) || entry.installed
         let isActive = model.selected?.alias == entry.alias && model.session != nil
         let rec = recommendations[entry.alias]
-        let isSelected = selectedAlias == entry.alias
+        let isSelected = selectedEntry?.alias == entry.alias
 
         return ModelCardView(
             alias: entry.alias,
@@ -239,14 +249,17 @@ struct ModelHubView: View {
                 .themedFont(.hero)
                 .foregroundStyle(.quaternary)
                 .accessibilityHidden(true)
-            Text(emptyTitle)
-                .themedFont(.base, weight: .medium)
-            Text(emptyDetail)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .multilineTextAlignment(.center)
+            emptyTitle
             if filter.isNarrowed {
                 Button { filter.clearNarrowing() } label: { Text("Clear filters", bundle: .module) }
+                    .buttonStyle(.link)
+                    .themedFont(.small)
+            } else if filter.tab == .recommended {
+                Button { filter.tab = .discover } label: { Text("All models", bundle: .module) }
+                    .buttonStyle(.link)
+                    .themedFont(.small)
+            } else if filter.tab == .onDevice {
+                Button { filter.tab = .discover } label: { Text("Discover", bundle: .module) }
                     .buttonStyle(.link)
                     .themedFont(.small)
             }
@@ -265,20 +278,54 @@ struct ModelHubView: View {
         }
     }
 
-    private var emptyTitle: String {
-        if filter.tab == .onDevice && !filter.isNarrowed { return "No models installed" }
-        if filter.tab == .recommended && !filter.isNarrowed { return "No recommended models" }
-        return "No matching models"
+    @ViewBuilder
+    private var emptyTitle: some View {
+        if filter.tab == .onDevice && !filter.isNarrowed {
+            Text("No models installed", bundle: .module)
+                .themedFont(.base, weight: .medium)
+        } else if filter.tab == .recommended && !filter.isNarrowed {
+            Text("No recommended models", bundle: .module)
+                .themedFont(.base, weight: .medium)
+        } else {
+            Text("No matching models", bundle: .module)
+                .themedFont(.base, weight: .medium)
+        }
     }
 
-    private var emptyDetail: String {
-        if filter.tab == .onDevice && !filter.isNarrowed {
-            return "Switch to Discover to browse the catalog and install one."
+    private var recommendationLoadingState: some View {
+        VStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Calculating hardware fit recommendations...", bundle: .module)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
         }
-        if filter.tab == .recommended && !filter.isNarrowed {
-            return "No catalog models fit within this machine's memory budget. Switch to Discover to browse all models."
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16)
+        .padding(.top, 48)
+    }
+
+    private func recommendationFailureState(_ message: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .themedFont(.hero)
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            Text(message)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+                .multilineTextAlignment(.center)
+            Button {
+                Task { await loadRecommendations() }
+            } label: {
+                Text("Refresh", bundle: .module)
+            }
+            .buttonStyle(.link)
+            .themedFont(.small)
         }
-        return "Nothing in this view matches the current filters."
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16)
+        .padding(.top, 48)
     }
 
     @ViewBuilder
@@ -324,8 +371,24 @@ struct ModelHubView: View {
             recommendations: recommendations)
     }
 
-    private func loadRecommendations() {
-        // One accessor, not a fourth spelling of the same three knobs.
-        recommendations = model.fitRecommendationsByAlias()
+    private func loadRecommendations() async {
+        let configurationID = model.fitRecommendationConfigurationID
+        isLoadingRecommendations = true
+        recommendationError = nil
+        do {
+            let rows = try await model.loadFitRecommendations()
+            guard !Task.isCancelled,
+                  configurationID == model.fitRecommendationConfigurationID else { return }
+            recommendations = Dictionary(
+                rows.map { ($0.alias, $0) },
+                uniquingKeysWith: { first, _ in first })
+            isLoadingRecommendations = false
+        } catch {
+            guard !Task.isCancelled,
+                  configurationID == model.fitRecommendationConfigurationID else { return }
+            recommendations = [:]
+            recommendationError = error.localizedDescription
+            isLoadingRecommendations = false
+        }
     }
 }

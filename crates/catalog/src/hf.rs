@@ -205,10 +205,26 @@ impl Client {
         Self::with_token(None)
     }
 
+    /// Creates a client with a caller-supplied request timeout.
+    ///
+    /// Interactive callers use a shorter bound than model installation: a
+    /// recommendation refresh may inspect several independent repositories,
+    /// and one unavailable host must not leave the UI spinning indefinitely.
+    pub fn with_timeout(timeout: std::time::Duration) -> Self {
+        Self::with_token_and_timeout(None, timeout)
+    }
+
     /// Creates a new Hugging Face HTTP client with an optional explicit token override.
     pub fn with_token(explicit_token: Option<String>) -> Self {
+        Self::with_token_and_timeout(explicit_token, std::time::Duration::from_secs(120))
+    }
+
+    fn with_token_and_timeout(
+        explicit_token: Option<String>,
+        timeout: std::time::Duration,
+    ) -> Self {
         let inner = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(timeout)
             .build()
             .expect("blocking HTTP client");
         let token = crate::auth::resolve_hf_token(explicit_token.as_deref());

@@ -422,10 +422,14 @@ public enum TurboSparkCatalog {
     public static func recommend(
         context: UInt32 = 4096,
         expertCacheSlots: OpenOptions.Sizing? = nil,
-        loadGuard: OpenOptions.LoadGuard? = nil
+        loadGuard: OpenOptions.LoadGuard? = nil,
+        probe: Bool = false
     ) throws -> [ModelRecommendation] {
         let json = try encodeOptions(
-            RecommendOptions(loadGuard: loadGuard, expertCacheSlots: expertCacheSlots))
+            RecommendOptions(
+                loadGuard: loadGuard,
+                expertCacheSlots: expertCacheSlots,
+                probe: probe ? true : nil))
         return try decode(
             [ModelRecommendation].self,
             from: try takeString { out in
@@ -444,13 +448,16 @@ public enum TurboSparkCatalog {
         return text == "{}" ? nil : text
     }
 
-    /// The one-key options bag `ts_recommend_json` takes. Private because the
+    /// The options bag `ts_recommend_json` takes. Private because the
     /// only caller is `recommend` above; a JSON blob rather than a second C
     /// argument for the reason every other options bag in this ABI is one --
     /// a knob added later is a field rather than a break.
     private struct RecommendOptions: Encodable {
         let loadGuard: OpenOptions.LoadGuard?
         let expertCacheSlots: OpenOptions.Sizing?
+        /// Omitted for the fast offline path so existing callers keep the
+        /// byte-for-byte options shape they used before probing was exposed.
+        let probe: Bool?
     }
 
     /// The options bag `ts_probe_json` takes: `RecommendOptions` plus the

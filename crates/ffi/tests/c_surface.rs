@@ -784,6 +784,20 @@ fn recommend_json_returns_ranked_catalog_rows() {
     }
 }
 
+/// The probe option was added after the recommendation ABI shipped. Existing
+/// callers send an options object without that field, so omission must keep
+/// selecting the offline path rather than turning into a JSON error.
+#[test]
+fn recommend_json_keeps_probe_optional() {
+    let mut out: *mut c_char = ptr::null_mut();
+    let opts = c("{}");
+    let code = unsafe { ts_recommend_json(4096, opts.as_ptr(), &mut out) };
+    assert_ne!(code, abi::TS_ERR_INVALID_ARGUMENT, "{}", last_error());
+    if code == abi::TS_OK {
+        let _ = unsafe { take(out) };
+    }
+}
+
 /// The guard reaches the ranking, and a misspelling is REFUSED rather than
 /// quietly honoured as the default -- the rule `sized` already follows for
 /// `"atuo"`, and the one that matters most here: silently ranking under
