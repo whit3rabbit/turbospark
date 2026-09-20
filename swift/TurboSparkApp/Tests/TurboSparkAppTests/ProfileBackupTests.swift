@@ -257,6 +257,33 @@ final class ProfileBackupTests: XCTestCase {
             atPath: extraction.appendingPathComponent("memory").path))
     }
 
+    func testAnExportWithNoCategoriesExcludesEveryKnownCategory() async throws {
+        let (profile, folder) = try makeProfileFolder(id: "p1", name: "Work")
+        try makeFile("stray.txt", contents: "unowned", under: folder)
+        let destination = root.appendingPathComponent("empty-selection.zip")
+
+        let exported = try await ProfileBackup.export(
+            profile: profile,
+            machineRoot: root.appendingPathComponent("machine"),
+            turbosparkHome: root.appendingPathComponent("home"),
+            destination: destination,
+            appVersion: "test",
+            included: [])
+
+        XCTAssertEqual(exported.includedCategories, [])
+        let extraction = root.appendingPathComponent("extracted-empty", isDirectory: true)
+        try FileManager.default.createDirectory(at: extraction, withIntermediateDirectories: true)
+        try await extract(destination, into: extraction)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("stray.txt").path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("settings.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("chats_archive.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: extraction.appendingPathComponent("skills").path))
+    }
+
     func testASelectionFiltersBothRootsOfTheDefaultLayout() async throws {
         let machineRoot = root.appendingPathComponent("machine", isDirectory: true)
         let home = root.appendingPathComponent("home/.turbospark", isDirectory: true)
