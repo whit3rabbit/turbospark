@@ -121,16 +121,16 @@ fn the_hadamard_section_is_optional_and_must_carry_its_file() {
     // Present with the file listed: accepted, and the fields round-trip.
     let with_section = base.replace(
         "\"expertStride\": 4096",
-        "\"expertStride\": 4096,\"hadamard\": {\"block\": 1024,\"signs\": [{\"width\": 1024,\"offset\": 0,\"bytes\": 4096}],\"folded\": [\"lm_head.weight\"],\"inverse\": [\"embed.weight\"]}",
+        "\"expertStride\": 4096,\"hadamard\": {\"block\": 64,\"signs\": [{\"width\": 64,\"offset\": 0,\"bytes\": 256}],\"folded\": [\"lm_head.weight\"],\"inverse\": [\"embed.weight\"]}",
     );
     let with_section = with_section.replace(
         "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},",
-        "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},\"hadamard.bin\": {\"size\": 1, \"sha256\": \"h\"},",
+        "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},\"hadamard.bin\": {\"size\": 256, \"sha256\": \"h\"},",
     );
     write_manifest(dir.path(), &with_section);
     let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
     let hadamard = manifest.hadamard.expect("section round-trips");
-    assert_eq!(hadamard.block, 1024);
+    assert_eq!(hadamard.block, 64);
     assert_eq!(hadamard.signs.len(), 1);
     assert_eq!(hadamard.folded, vec!["lm_head.weight".to_string()]);
     assert_eq!(hadamard.inverse, vec!["embed.weight".to_string()]);
@@ -138,7 +138,7 @@ fn the_hadamard_section_is_optional_and_must_carry_its_file() {
     // Present WITHOUT the file entry: refused by name.
     let without_file = toy_manifest_json().replace(
         "\"expertStride\": 4096",
-        "\"expertStride\": 4096,\"hadamard\": {\"block\": 1024,\"signs\": [{\"width\": 1024,\"offset\": 0,\"bytes\": 4096}],\"folded\": [\"lm_head.weight\"],\"inverse\": []}",
+        "\"expertStride\": 4096,\"hadamard\": {\"block\": 64,\"signs\": [{\"width\": 64,\"offset\": 0,\"bytes\": 256}],\"folded\": [\"lm_head.weight\"],\"inverse\": []}",
     );
     write_manifest(dir.path(), &without_file);
     let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
@@ -152,22 +152,22 @@ fn the_hadamard_section_is_optional_and_must_carry_its_file() {
 fn a_structurally_broken_hadamard_section_is_refused() {
     let good = toy_manifest_json().replace(
         "\"expertStride\": 4096",
-        "\"expertStride\": 4096,\"hadamard\": {\"block\": 1024,\"signs\": [{\"width\": 1024,\"offset\": 0,\"bytes\": 4096}],\"folded\": [\"lm_head.weight\"],\"inverse\": []}",
+        "\"expertStride\": 4096,\"hadamard\": {\"block\": 64,\"signs\": [{\"width\": 64,\"offset\": 0,\"bytes\": 256}],\"folded\": [\"lm_head.weight\"],\"inverse\": []}",
     ).replace(
         "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},",
-        "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},\"hadamard.bin\": {\"size\": 1, \"sha256\": \"h\"},",
+        "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},\"hadamard.bin\": {\"size\": 256, \"sha256\": \"h\"},",
     );
 
     let cases: [(&str, &str); 3] = [
-        ("block", "\"block\": 1000,"),
-        ("width multiple", "\"width\": 1000,"),
-        ("bytes", "\"bytes\": 4097,"),
+        ("block", "\"block\": 63,"),
+        ("width multiple", "\"width\": 63,"),
+        ("bytes", "\"bytes\": 257,"),
     ];
     for (what, replacement) in cases {
         let broken = match (what, replacement) {
-            ("block", rep) => good.replace("\"block\": 1024,", rep),
-            ("width multiple", rep) => good.replace("\"width\": 1024,", rep),
-            ("bytes", rep) => good.replace("\"bytes\": 4096", rep),
+            ("block", rep) => good.replace("\"block\": 64,", rep),
+            ("width multiple", rep) => good.replace("\"width\": 64,", rep),
+            ("bytes", rep) => good.replace("\"bytes\": 256", rep),
             _ => unreachable!(),
         };
         let dir = tempfile_dir();
@@ -180,6 +180,40 @@ fn a_structurally_broken_hadamard_section_is_refused() {
             text.contains("IndexCorrupt"),
             "{what}: expected an IndexCorrupt refusal, got {text}"
         );
+    }
+}
+
+#[test]
+fn hadamard_signs_are_unique_bounded_architecture_ranges() {
+    let section = "\"expertStride\": 4096,\"hadamard\": {\"block\": 64,\"signs\": [{\"width\": 64,\"offset\": 0,\"bytes\": 256}],\"folded\": [\"lm_head.weight\"],\"inverse\": []}";
+    let good = toy_manifest_json()
+        .replace("\"expertStride\": 4096", section)
+        .replace(
+            "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},",
+            "\"model_weights.bin\": {\"size\": 1, \"sha256\": \"a\"},\"hadamard.bin\": {\"size\": 256, \"sha256\": \"h\"},",
+        );
+    let cases = [
+        good.replace(
+            "{\"width\": 64,\"offset\": 0,\"bytes\": 256}",
+            "{\"width\": 64,\"offset\": 0,\"bytes\": 256},{\"width\": 64,\"offset\": 0,\"bytes\": 256}",
+        ),
+        good.replace(
+            "{\"width\": 64,\"offset\": 0,\"bytes\": 256}",
+            "{\"width\": 64,\"offset\": 0,\"bytes\": 256},{\"width\": 128,\"offset\": 128,\"bytes\": 512}",
+        )
+        .replace("\"size\": 256", "\"size\": 640"),
+        good.replace("\"width\": 64", "\"width\": 192")
+            .replace("\"bytes\": 256", "\"bytes\": 768")
+            .replace("\"size\": 256", "\"size\": 768"),
+        good.replace("\"size\": 256", "\"size\": 1024"),
+    ];
+    for broken in cases {
+        let dir = tempfile_dir();
+        write_manifest(dir.path(), &broken);
+        assert!(matches!(
+            load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024),
+            Err(ModelError::IndexCorrupt { .. })
+        ));
     }
 }
 
