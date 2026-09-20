@@ -7,11 +7,13 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
 pub const IMAGE_MANIFEST_NAME: &str = "manifest.json";
+pub const IMAGE_MANIFEST_MAX_BYTES: u64 = 4 * 1024 * 1024;
 pub const IMAGE_RECEIPT_NAME: &str = "verified-install.json";
 pub const IMAGE_MANIFEST_MAGIC: &str = "GTURBO";
 pub const IMAGE_MANIFEST_SCHEMA: u32 = 1;
@@ -89,8 +91,31 @@ pub struct ImageManifestValidation {
 impl ImageManifest {
     pub fn load(root: &Path) -> Result<Self, String> {
         let path = root.join(IMAGE_MANIFEST_NAME);
-        let bytes = fs::read(&path)
+        let file = fs::File::open(&path)
             .map_err(|e| format!("failed to read image manifest {}: {e}", path.display()))?;
+        let size = file
+            .metadata()
+            .map_err(|e| format!("failed to stat image manifest {}: {e}", path.display()))?
+            .len();
+        if size > IMAGE_MANIFEST_MAX_BYTES {
+            return Err(format!(
+                "image manifest {} size {size} exceeds metadata cap {IMAGE_MANIFEST_MAX_BYTES}",
+                path.display()
+            ));
+        }
+
+        // Keep the reader bounded too, so a file that grows after the metadata
+        // check cannot make this process allocate without limit.
+        let mut bytes = Vec::with_capacity(size as usize);
+        file.take(IMAGE_MANIFEST_MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("failed to read image manifest {}: {e}", path.display()))?;
+        if bytes.len() as u64 > IMAGE_MANIFEST_MAX_BYTES {
+            return Err(format!(
+                "image manifest {} exceeds metadata cap {IMAGE_MANIFEST_MAX_BYTES}",
+                path.display()
+            ));
+        }
         serde_json::from_slice(&bytes)
             .map_err(|e| format!("failed to parse image manifest {}: {e}", path.display()))
     }
@@ -465,6 +490,29 @@ pub(crate) fn required_metadata_for(component_name: &str) -> &'static [&'static 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn rejects_oversized_manifest_before_reading_it() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "turbospark-image-manifest-size-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).expect("create test install");
+        let path = root.join(IMAGE_MANIFEST_NAME);
+        let file = fs::File::create(&path).expect("create manifest");
+        file.set_len(IMAGE_MANIFEST_MAX_BYTES + 1)
+            .expect("extend manifest");
+
+        let error = ImageManifest::load(&root).expect_err("oversized manifest must be rejected");
+        assert!(error.contains("exceeds metadata cap"), "got {error}");
+
+        fs::remove_dir_all(root).expect("remove test install");
+    }
 
     #[test]
     fn validates_the_frozen_ig2_envelope_and_stage_owners() {
