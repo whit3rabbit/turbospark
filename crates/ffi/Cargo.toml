@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+publish = false
 description = "C ABI over the inference engine, for native GUI hosts (Swift/SwiftUI). Opaque session handle, streaming event callback, cancel-from-any-thread."
 
 [lib]

@@ -1,4 +1,19 @@
-# TurboSpark
+<p align="center">
+  <img src="assets/banner-nobg.png" alt="TurboSpark" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml"><img src="https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml"><img src="https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
+  <a href="https://crates.io/crates/turbospark-cli"><img src="https://img.shields.io/crates/v/turbospark-cli.svg" alt="crates.io" /></a>
+  <a href="https://github.com/whit3rabbit/turbospark/stargazers"><img src="https://img.shields.io/github/stars/whit3rabbit/turbospark" alt="GitHub stars" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="docs/RELEASE.md"><img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey.svg" alt="Platform" /></a>
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
+</p>
 
 ** This is a early work in progress. Expect bugs and breaking changes **
 
@@ -7,13 +22,6 @@ TurboSpark is a native macOS app and Rust workspace for running local language m
 I built it as a hobby/side project as an alternative to LM Studio but there are other projects like Unsloth Desktop which are a lot more refined.
 
 The app provides desktop chat and agent tools. The Rust crates provide the Metal inference engine, model installer, command-line tools, HTTP server, and Swift/C bindings.
-
-[![CI](https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml/badge.svg)](https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml)
-[![Release](https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml/badge.svg)](https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml)
-[![crates.io](https://img.shields.io/crates/v/turbospark-cli.svg)](https://crates.io/crates/turbospark-cli)
-[![GitHub stars](https://img.shields.io/github/stars/whit3rabbit/turbospark)](https://github.com/whit3rabbit/turbospark/stargazers)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey.svg)](docs/RELEASE.md)
 
 ## Install
 

@@ -1,0 +1,104 @@
+name: Publish Crates
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (verify packaging without uploading to crates.io)'
+        type: boolean
+        required: true
+        default: false
+      crate:
+        description: 'Crate to publish (choose "all" or specific crate name)'
+        type: choice
+        required: true
+        default: 'all'
+        options:
+          - all
+          - turbospark-core
+          - turbospark-window-fit
+          - turbospark-vision-io
+          - turbospark-compute
+          - turbospark-invocation
+          - turbospark-model-io
+          - turbospark-selection
+          - turbospark-tokenizer
+          - turbospark-repack
+          - turbospark-catalog
+          - turbospark-streaming
+          - turbospark-gpu
+          - turbospark-image
+          - turbospark-runtime
+          - turbospark-cli
+          - turbospark-server
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - name: Publish crate(s) to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          TARGET_CRATE: ${{ inputs.crate }}
+        run: |
+          if [ "${DRY_RUN}" != "true" ] && [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is required for live publish"
+            exit 1
+          fi
+
+          ALL_CRATES=(
+            turbospark-core
+            turbospark-window-fit
+            turbospark-vision-io
+            turbospark-compute
+            turbospark-invocation
+            turbospark-model-io
+            turbospark-selection
+            turbospark-tokenizer
+            turbospark-repack
+            turbospark-catalog
+            turbospark-streaming
+            turbospark-gpu
+            turbospark-image
+            turbospark-runtime
+            turbospark-cli
+            turbospark-server
+          )
+
+          if [ "${TARGET_CRATE}" = "all" ]; then
+            ORDER=("${ALL_CRATES[@]}")
+          else
+            ORDER=("${TARGET_CRATE}")
+          fi
+
+          EXTRA_ARGS=()
+          if [ "${DRY_RUN}" = "true" ]; then
+            EXTRA_ARGS+=(--dry-run)
+            echo "::notice::Running publish in dry-run mode (no crates will be uploaded)"
+          fi
+
+          for crate in "${ORDER[@]}"; do
+            echo "::group::cargo publish -p ${crate}"
+            set +e
+            out=$(cargo publish -p "${crate}" "${EXTRA_ARGS[@]}" 2>&1)
+            status=$?
+            set -e
+            echo "${out}"
+            echo "::endgroup::"
+            if [ "${status}" -ne 0 ]; then
+              if echo "${out}" | grep -qiE "already (uploaded|exists)"; then
+                echo "::notice::${crate} already published at this version, continuing"
+              else
+                echo "::error::cargo publish failed for ${crate}"
+                exit "${status}"
+              fi
+            fi
+          done

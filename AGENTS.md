@@ -13,7 +13,7 @@ evidence in the linked project docs. Do not turn this file into a changelog.
 - Read `docs/BENCHMARKING.md` and `docs/BENCHMARKS.md` before quoting or
   re-freezing a number.
 - Read `docs/NEW_MODEL.md` before adding a model family or checkpoint path.
-- Read `docs/RELEASE.md` before cutting an artifact or tag.
+- Read `docs/RELEASE.md` before any release work, tag creation, or changelog update.
 - Read the relevant page under `.claude/docs/` for deep verification,
   benchmark, harness, install, power, cross-engine, or diagnostic work.
 
@@ -102,6 +102,10 @@ make app-bundle
 make dmg
 ```
 
+Before cutting an app release or tag, always review `docs/RELEASE.md` for the
+release flow, changelog update requirements (`CHANGELOG.md`), and the decoupled
+on-demand crate publishing workflow.
+
 The commands above are the baseline only. Changes to decode, quantization,
 sampling, KV, Metal, model intake, FFI, or real-install behavior require the
 additional gates documented in [verification](.claude/docs/verification.md)
@@ -116,7 +120,7 @@ from compilation or a CPU-only result.
   `docs/BENCHMARKS.md`, and `.claude/docs/benchmarks.md`. Do not add
   benchmark numbers to AGENTS.md files.
 - Keep release and packaging procedures in `docs/RELEASE.md` and the
-  verification reference.
+  verification reference. Always review `docs/RELEASE.md` before releasing.
 - Keep project planning in the existing planning document, design rationale in
   `docs/`, and unfinished work in the issue tracker. Do not append
   session summaries or dated handoff notes here.
