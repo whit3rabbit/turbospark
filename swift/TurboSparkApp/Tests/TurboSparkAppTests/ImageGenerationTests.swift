@@ -72,6 +72,27 @@ final class ImageGenerationTests: XCTestCase {
         XCTAssertEqual(model.quantization, "mlx-affine-linear-weights-group-64-bits-6")
     }
 
+    func testDuplicateImageAliasesRetainDistinctRowIdentities() {
+        let canonical = ImageInstalledModel(
+            alias: "duplicate",
+            modelID: "owner/image",
+            revision: "main",
+            path: "/models/image/duplicate.gturbo",
+            width: 1024,
+            height: 1024,
+            schedulerSteps: 9)
+        let legacy = ImageInstalledModel(
+            alias: "duplicate",
+            modelID: "owner/image",
+            revision: "main",
+            path: "/models/duplicate.image.gturbo",
+            width: 1024,
+            height: 1024,
+            schedulerSteps: 9)
+
+        XCTAssertNotEqual(canonical.id, legacy.id)
+    }
+
     func testZImageRecommendationsFollowPhysicalMemoryAndPreferTestedMlxRows() {
         let eightGB = AppModel.recommendedZImageAliases(
             physicalMemoryBytes: 8 * 1024 * 1024 * 1024)
