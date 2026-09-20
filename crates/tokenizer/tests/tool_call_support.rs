@@ -48,7 +48,10 @@ fn every_dialects_markup() -> String {
          </{DSML}invoke></{DSML}tool_calls>\n\
          <|channel|>commentary to=functions.f<|message|>{{\"x\":1}}<|call|>\n\
          <atem:function_calls><atem:invoke name=\"f\"><atem:parameter name=\"x\">1\
-         </atem:parameter></atem:invoke></atem:function_calls>\n"
+         </atem:parameter></atem:invoke></atem:function_calls>\n\
+         <tool_call>f<arg_key>x</arg_key><arg_value>1</arg_value></tool_call>\n\
+         <|tool_call_begin|>functions.f:0<|tool_call_argument_begin|>{{\"x\":1}}\
+         <|tool_call_end|>\n"
     )
 }
 
@@ -173,6 +176,29 @@ fn each_dialects_decoder_emits_a_call_exactly_when_the_predicate_says_native() {
         (
             "ZephyrTokenizer",
             Box::new(|t: &MfTokenizer| mistral_calls(t)),
+        ),
+        // GLM and Kimi K2 frame in ADDED-but-not-special text markers, so
+        // their markup arrives as ONE ordinary delta (the `as_one_delta`
+        // harness's reason applies verbatim) and the call comes out of the
+        // text scan.
+        (
+            "GlmTokenizer",
+            Box::new(|t: &MfTokenizer| {
+                as_one_delta(
+                    t,
+                    "<tool_call>f<arg_key>x</arg_key><arg_value>1</arg_value></tool_call>",
+                )
+            }),
+        ),
+        (
+            "KimiK2Tokenizer",
+            Box::new(|t: &MfTokenizer| {
+                as_one_delta(
+                    t,
+                    "<|tool_call_begin|>functions.f:0<|tool_call_argument_begin|>\
+                     {\"x\":1}<|tool_call_end|>",
+                )
+            }),
         ),
         // The two that answer `Prompted` get EVERY dialect's markup, so a
         // zero here is a statement about the decoder rather than about the

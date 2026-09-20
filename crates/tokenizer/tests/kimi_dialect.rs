@@ -27,13 +27,11 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use turbospark_tokenizer::{
-    ChatDialect, MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent,
-    ToolCallSupport,
+    ChatDialect, MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent, ToolCallSupport,
 };
 
 fn fixture() -> MfTokenizer {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/KimiK2Tokenizer");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/KimiK2Tokenizer");
     MfTokenizer::load_from_dir(&dir).expect("the Kimi K2 fixture tokenizer should load")
 }
 
@@ -81,7 +79,11 @@ fn deltas(tok: &MfTokenizer, text: &str) -> Vec<Delta> {
         .collect()
 }
 
-fn run(tok: &MfTokenizer, deltas_list: &[Delta], prompt_ids: &[i32]) -> Vec<StructuredAssistantEvent> {
+fn run(
+    tok: &MfTokenizer,
+    deltas_list: &[Delta],
+    prompt_ids: &[i32],
+) -> Vec<StructuredAssistantEvent> {
     let allowed: HashSet<String> = ["get_weather".to_string()].into_iter().collect();
     let mut decoder =
         StructuredAssistantDecoder::new(tok, allowed, || "generated_id".to_string(), prompt_ids);
@@ -125,7 +127,10 @@ fn a_sectioned_call_parses_with_the_checkpoints_own_id() {
     assert_eq!(calls[0].id, "functions.get_weather:0");
     assert_eq!(calls[0].name, "get_weather");
     assert_eq!(calls[0].arguments_json, r#"{"city":"Oslo"}"#);
-    assert!(text.is_empty(), "the section wrapper must be swallowed: {text:?}");
+    assert!(
+        text.is_empty(),
+        "the section wrapper must be swallowed: {text:?}"
+    );
 }
 
 /// The wrapper is framing, not structure: a call WITHOUT its section (and a
@@ -197,7 +202,10 @@ fn two_calls_in_one_section_each_parse_with_their_own_ids() {
             _ => None,
         })
         .collect();
-    assert_eq!(ids, vec!["functions.get_weather:0", "functions.get_weather:1"]);
+    assert_eq!(
+        ids,
+        vec!["functions.get_weather:0", "functions.get_weather:1"]
+    );
 }
 
 /// An unoffered tool refuses the call -- the allowlist rule every native
@@ -266,5 +274,8 @@ fn a_truncated_call_is_malformed_at_finish() {
         last = decoder.consume(id, &text);
     }
     assert!(last.is_ok(), "the open call buffers without error");
-    assert!(decoder.finish().is_err(), "an unterminated call is malformed");
+    assert!(
+        decoder.finish().is_err(),
+        "an unterminated call is malformed"
+    );
 }

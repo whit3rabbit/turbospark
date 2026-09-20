@@ -20,13 +20,11 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use turbospark_tokenizer::{
-    ChatDialect, MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent,
-    ToolCallSupport,
+    ChatDialect, MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent, ToolCallSupport,
 };
 
 fn fixture() -> MfTokenizer {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/GlmTokenizer");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/GlmTokenizer");
     MfTokenizer::load_from_dir(&dir).expect("the GLM fixture tokenizer should load")
 }
 
@@ -59,7 +57,10 @@ fn the_real_table_resolves_to_the_glm_dialect_with_the_named_markers() {
     assert!(tok.stop_token_ids.contains(&id("<|observation|>")));
     // The tool markup ids exist in the table but the arm is a text scan;
     // carrying them would claim an id-bracket arm.
-    assert_eq!(tok.tool_call_start_id, turbospark_tokenizer::NO_SUCH_TOKEN_ID);
+    assert_eq!(
+        tok.tool_call_start_id,
+        turbospark_tokenizer::NO_SUCH_TOKEN_ID
+    );
     assert_eq!(tok.tool_call_end_id, turbospark_tokenizer::NO_SUCH_TOKEN_ID);
     assert_eq!(tok.dialect.tool_call_support(), ToolCallSupport::Native);
 }
@@ -77,7 +78,11 @@ fn deltas(tok: &MfTokenizer, text: &str) -> Vec<Delta> {
         .collect()
 }
 
-fn run(tok: &MfTokenizer, deltas_list: &[Delta], prompt_ids: &[i32]) -> Vec<StructuredAssistantEvent> {
+fn run(
+    tok: &MfTokenizer,
+    deltas_list: &[Delta],
+    prompt_ids: &[i32],
+) -> Vec<StructuredAssistantEvent> {
     let allowed: HashSet<String> = ["get_weather".to_string()].into_iter().collect();
     let mut decoder =
         StructuredAssistantDecoder::new(tok, allowed, || "call_1".to_string(), prompt_ids);
@@ -131,8 +136,7 @@ fn a_tool_call_between_prose_parses_from_the_text_stream() {
 fn a_marker_split_across_deltas_is_withheld_not_emitted() {
     let tok = fixture();
     let allowed: HashSet<String> = ["get_weather".to_string()].into_iter().collect();
-    let mut decoder =
-        StructuredAssistantDecoder::new(&tok, allowed, || "call_1".to_string(), &[]);
+    let mut decoder = StructuredAssistantDecoder::new(&tok, allowed, || "call_1".to_string(), &[]);
     let head = decoder
         .consume_flushed_text("Sure. <tool_")
         .expect("the partial mark must not error");
@@ -205,7 +209,8 @@ fn an_unoffered_tool_is_refused() {
     let tok = fixture();
     let allowed: HashSet<String> = ["other_tool".to_string()].into_iter().collect();
     let mut decoder = StructuredAssistantDecoder::new(&tok, allowed, || "call_1".to_string(), &[]);
-    let stream = "<tool_call>get_weather<arg_key>city</arg_key><arg_value>Oslo</arg_value></tool_call>";
+    let stream =
+        "<tool_call>get_weather<arg_key>city</arg_key><arg_value>Oslo</arg_value></tool_call>";
     let mut errored = false;
     for (id, text) in deltas(&tok, stream) {
         if decoder.consume(id, &text).is_err() {

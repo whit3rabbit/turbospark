@@ -48,20 +48,35 @@ so drift shows up as one side failing a test the other passes.
 | DeepSeek-V4 | `<dsml:tool_calls>` text markers | yes | n/a | n/a | bundled fixture |
 | Muse Glimmer | `<atem:function_calls>` DSL | no parser (body routes to reasoning) | bare JSON only | bare JSON only | real installed checkpoint |
 | Mistral | `[TOOL_CALLS]` special token, then a JSON array of `{name, arguments}` running to end of turn | yes, since 2026-09-15 (`MistralToolCallParser`; span emitted from `finish` because `</s>` is the only terminator and it is a stop token) | forge | forge | real installed `mistral7b-dense.gturbo`; earliest tables carry no marker and keep the passthrough |
+| GLM | `<tool_call>NAME<arg_key>K</arg_key><arg_value>V</arg_value></tool_call>`; string argument values RAW, everything else JSON (`tojson`) | yes, since 2026-09-19 (`GlmToolCallParser`; text-marker arm -- the markup is ADDED but not special in the real table, ids 154843-154850, so it survives detokenization; `tool_call_support` = `Native`) | `extra_formats` | engine Pattern 1b | `zai-org/GLM-4.7-Flash`'s `tokenizer.json` + `chat_template.jinja`, read raw 2026-09-19; real-install witness still gated on the deepseek2 `q_lora_rank > 0` descope |
 | GLM | name + `<arg_key>K</arg_key>` / `<arg_value>V</arg_value>` pairs | no | `extra_formats` | engine Pattern 1b | published GLM-4.6 `chat_template.jinja` |
 | MiniMax (and the Anthropic invoke shape generally) | `<minimax:tool_call>` wrapper (a NON-special added token in the published M2 table, so it survives detokenization as text) around `<invoke name="N"><parameter name="K">V</parameter></invoke>` | no, and the 2026-09-15 probe of the published tokenizer found two blockers to revisit before building the arm: the wrapper tokens are not special (so a native arm is a text-marker arm like DeepSeek's, not an id-bracket arm), and this port's dialect probe strings (`]~!b[` et al.) do not match the published M2 table's bos (`]!p~[`) -- the dialect may have been built off a different generation's tokenizer | `extra_formats` | engine Pattern 1 (+ parameter extraction) | published MiniMax-M2 `chat_template.jinja` + `tokenizer_config.json` |
-| Kimi K2 | `<\|tool_call_begin\|>functions.NAME:IDX<\|tool_call_argument_begin\|>{json}<\|tool_call_end\|>` | no | `extra_formats` | engine Pattern 1c | Moonshot's `tool_call_guidance.md` + vLLM's `kimi_tool_parser` |
+| Kimi K2 | `<|tool_calls_section_begin|>` wrapper, then per call `<|tool_call_begin|>functions.NAME:IDX<|tool_call_argument_begin|>{json}<|tool_call_end|>` | yes, since 2026-09-19 (`KimiToolCallParser`; text-marker arm -- the section/call markers are ADDED but not special in the real table, ids 163595-163599; the checkpoint's own `functions.NAME:IDX` id is kept verbatim on the parsed call) | `extra_formats` | engine Pattern 1c | `moonshotai/Kimi-K2.5`'s `tokenizer_config.json` added-token list + `chat_template.jinja`, read raw 2026-09-19; **the whole K2 line is tiktoken-only** -- no `tokenizer.json` exists anywhere in the ecosystem (K2, K2.5, K2.6, K2.7, Thinking, the mlx/ISTA/nvidia builds all checked), so no K2 install is loadable by this engine and the witness stays unreachable independent of the models' 1T-class size |
 | Longcat | `<longcat_tool_call>{"name":...,"arguments":{...}}</longcat_tool_call>` | no | forge's JSON scan, ZERO new code | engine Pattern 3b (tag strip) | vLLM's `longcat_tool_parser` (Hermes JSON body) |
 | OpenAI / Hermes-style bare JSON | `{"name": ..., "arguments": {...}}` | no | forge | engine Pattern 4 | unit fixtures |
 
-**RESCUE-TIER ROWS ARE NOT VALIDATED AGAINST A REAL INSTALL**, the same way
-`docs/FORGE_GUARDRAILS.md` section 0c flags Muse Glimmer. None of GLM,
-MiniMax, Kimi K2 or Longcat is installed on this machine, and the repo's
-convention is to build a native `ChatDialect` + streaming decoder only
-against a checkpoint that can be smoke-tested. Their grammars were read out
-of each family's own published `chat_template.jinja` and Moonshot's tool-use
-guide (2026-09-06), NOT out of the compressed cross-engine table OLMX keeps
--- which mislabels Gemma's format besides (next section).
+**TWO OF THE RESCUE-TIER-ONLY ROWS HAVE SINCE GONE NATIVE, WITHOUT AN
+INSTALL.** GLM and Kimi K2 now carry native dialects derived from their
+real published tables (2026-09-19), but neither is validated against a
+real generation yet, and the blocks are precise:
+
+- **GLM**: the checkpoint that carries the dialect (`zai-org/GLM-4.7-Flash`,
+  a `Glm4MoeLiteForCausalLM` MLA MoE whose unsloth GGUF reports
+  `general.architecture = deepseek2`) is gated at deepseek2 intake by the
+  recorded `q_lora_rank > 0` descope (`DEVIATIONS.md`'s deepseek2 section)
+  -- its GGUF carries the full q-lora trio (`attn_q_a` / `attn_q_a_norm` /
+  `attn_q_b`), SPLIT `attn_k_b` / `attn_v_b` projections, `exp_probs_b.bias`
+  noaux_tc routing, and MXFP4 expert tensors, four lift items before a
+  witness install can even be attempted.
+- **Kimi K2**: no tokenizer sidecar exists to install at all -- the line is
+  tiktoken-only -- and every K2 checkpoint is 1T-class, past this machine at
+  any quantization.
+
+The native decoder tests therefore run over fixtures built from the REAL
+tables (GLM: reduced from the real `tokenizer.json`; Kimi: the real
+added-token list over a disclosed synthetic BPE body), which is what the
+dialect tier can honestly claim. Longcat remains rescue-only with no table
+derived at all.
 
 ## Two compressed-table claims corrected
 
