@@ -106,6 +106,13 @@ impl GenerationQueue {
     pub fn queued(&self) -> usize {
         self.queued.load(Ordering::Acquire)
     }
+
+    /// How many requests either hold the generation permit or are waiting
+    /// for it. This is the pool dispatcher's advisory load metric; unlike
+    /// [`Self::queued`], it does not mistake an active runner for an idle one.
+    pub fn load(&self) -> usize {
+        self.queued.load(Ordering::Acquire) + usize::from(self.permits.available_permits() == 0)
+    }
 }
 
 /// The live-stream sites' wrap: wait for admission (an ASYNC wait, holding
