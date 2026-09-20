@@ -701,7 +701,10 @@ fn write_mlx_affine_tensor(
     let packed_row_bytes = descriptor.shape[1]
         .checked_mul(4)
         .ok_or_else(|| format!("MLX weight {name} row size overflows"))?;
-    if weight.len() != rows * packed_row_bytes {
+    let weight_bytes = rows
+        .checked_mul(packed_row_bytes)
+        .ok_or_else(|| format!("MLX weight {name} byte length overflows"))?;
+    if weight.len() != weight_bytes {
         return Err(format!("MLX weight {name} has an invalid U32 byte length"));
     }
     let (scales_shard, scales) = source_tensor(source, &quantization.scales_name)?;
@@ -713,25 +716,47 @@ fn write_mlx_affine_tensor(
         .raw_bytes(&quantization.biases_name)
         .map_err(|e| format!("failed to read MLX biases for {name}: {e}"))?;
     let groups = scales.shape[1];
-    let companion_row_bytes = groups * 2;
-    if scales_bytes.len() != rows * companion_row_bytes
-        || biases_bytes.len() != rows * companion_row_bytes
-    {
+    let companion_row_bytes = groups
+        .checked_mul(2)
+        .ok_or_else(|| format!("MLX affine companion row size for {name} overflows"))?;
+    let companion_bytes = rows
+        .checked_mul(companion_row_bytes)
+        .ok_or_else(|| format!("MLX affine companion byte length for {name} overflows"))?;
+    if scales_bytes.len() != companion_bytes || biases_bytes.len() != companion_bytes {
         return Err(format!(
             "MLX affine companions for {name} have invalid byte lengths"
         ));
     }
     for row in 0..rows {
-        let start = row * packed_row_bytes;
+        let start = row
+            .checked_mul(packed_row_bytes)
+            .ok_or_else(|| format!("MLX weight {name} row offset overflows"))?;
+        let end = start
+            .checked_add(packed_row_bytes)
+            .ok_or_else(|| format!("MLX weight {name} row range overflows"))?;
+        let row_bytes = weight
+            .get(start..end)
+            .ok_or_else(|| format!("MLX weight {name} has an invalid U32 byte length"))?;
         writer
-            .write_all(&weight[start..start + packed_row_bytes])
+            .write_all(row_bytes)
             .map_err(|e| format!("failed to write MLX packed weight {name}: {e}"))?;
-        let start = row * companion_row_bytes;
+        let start = row
+            .checked_mul(companion_row_bytes)
+            .ok_or_else(|| format!("MLX affine companion row offset for {name} overflows"))?;
+        let end = start
+            .checked_add(companion_row_bytes)
+            .ok_or_else(|| format!("MLX affine companion row range for {name} overflows"))?;
+        let scales_row = scales_bytes
+            .get(start..end)
+            .ok_or_else(|| format!("MLX scales for {name} have an invalid byte length"))?;
+        let biases_row = biases_bytes
+            .get(start..end)
+            .ok_or_else(|| format!("MLX biases for {name} have an invalid byte length"))?;
         writer
-            .write_all(&scales_bytes[start..start + companion_row_bytes])
+            .write_all(scales_row)
             .map_err(|e| format!("failed to write MLX scales {name}: {e}"))?;
         writer
-            .write_all(&biases_bytes[start..start + companion_row_bytes])
+            .write_all(biases_row)
             .map_err(|e| format!("failed to write MLX biases {name}: {e}"))?;
     }
     Ok(())
@@ -1384,6 +1409,56 @@ mod tests {
             .iter()
             .enumerate()
             .all(|(col, value)| (*value - (col % 16) as f32 - 0.5).abs() < 0.01));
+
+        fs::remove_dir_all(root).expect("remove test directory");
+    }
+
+    #[test]
+    fn rejects_mlx_affine_shape_byte_length_overflow() {
+        let root = temporary_directory("mlx-overflow");
+        let source = root.join("source");
+        let output = root.join("packed");
+        fs::create_dir_all(&source).expect("create source");
+
+        let rows = usize::MAX / 2 + 1;
+        let header = serde_json::json!({
+            "linear.weight": {
+                "dtype": "U32",
+                "shape": [rows, 4],
+                "data_offsets": [0, 0]
+            },
+            "linear.scales": {
+                "dtype": "F16",
+                "shape": [rows, 1],
+                "data_offsets": [0, 0]
+            },
+            "linear.biases": {
+                "dtype": "F16",
+                "shape": [rows, 1],
+                "data_offsets": [0, 0]
+            }
+        });
+        let header_bytes = serde_json::to_vec(&header).expect("serialize malicious MLX header");
+        let mut shard = Vec::with_capacity(8 + header_bytes.len());
+        shard.extend_from_slice(&(header_bytes.len() as u64).to_le_bytes());
+        shard.extend_from_slice(&header_bytes);
+        fs::write(source.join("shard.safetensors"), shard).expect("write MLX source shard");
+        fs::write(
+            source.join("model.safetensors.index.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "weight_map": {
+                    "linear.weight": "shard.safetensors",
+                    "linear.scales": "shard.safetensors",
+                    "linear.biases": "shard.safetensors"
+                }
+            }))
+            .expect("serialize MLX source index"),
+        )
+        .expect("write MLX source index");
+
+        let error = pack_component(&source, "model.safetensors.index.json", &output)
+            .expect_err("overflowing MLX dimensions must be rejected");
+        assert_eq!(error, "MLX weight linear.weight byte length overflows");
 
         fs::remove_dir_all(root).expect("remove test directory");
     }
