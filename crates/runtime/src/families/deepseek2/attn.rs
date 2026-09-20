@@ -197,7 +197,14 @@ fn q8_0_weights_gpu_view<'a>(
 ) -> Result<(&'a gpu::MetalBuffer, u64), RealForwardError> {
     let name = layer_tensor(layer, suffix);
     let e = crate::real_forward_utils::entry(index, &name)?;
-    validate_q8_0_matrix(e, &name, state.heads, state.nope, state.kv_lora, state.v_dim)?;
+    validate_q8_0_matrix(
+        e,
+        &name,
+        state.heads,
+        state.nope,
+        state.kv_lora,
+        state.v_dim,
+    )?;
     let base = index.header.index_size;
     Ok((weights.buffer(), weights.gpu_offset(e.file_offset - base)))
 }
