@@ -17,8 +17,38 @@ extension AppModel {
     }
 
     public var imageProgressFraction: Double? {
-        guard let job = imageJob, job.total > 0 else { return nil }
-        return min(1, Double(job.completed) / Double(job.total))
+        guard let job = imageJob else { return nil }
+        let singleProgress: Double
+        if let stage = job.stage {
+            switch stage {
+            case "text_encoder":
+                let frac = job.total > 0 ? Double(job.completed) / Double(job.total) : 0.0
+                singleProgress = 0.05 * min(1.0, max(0.0, frac))
+            case "transformer":
+                let frac = job.total > 0 ? Double(job.completed) / Double(job.total) : 0.0
+                singleProgress = 0.05 + 0.90 * min(1.0, max(0.0, frac))
+            case "vae_decoder":
+                let frac = job.total > 0 ? Double(job.completed) / Double(job.total) : 0.0
+                singleProgress = 0.95 + 0.04 * min(1.0, max(0.0, frac))
+            case "png_encode":
+                singleProgress = 0.99
+            default:
+                if job.total > 0 {
+                    singleProgress = min(1.0, Double(job.completed) / Double(job.total))
+                } else {
+                    singleProgress = 0.0
+                }
+            }
+        } else if job.total > 0 {
+            singleProgress = min(1.0, Double(job.completed) / Double(job.total))
+        } else {
+            singleProgress = 0.0
+        }
+
+        let count = max(1, imageBatchCount)
+        let currentIndex = max(0, min(imageBatchIndex - 1, count - 1))
+        let overall = (Double(currentIndex) + singleProgress) / Double(count)
+        return min(1.0, max(0.0, overall))
     }
 
     /// Starts a direct-prompt image turn. Image prompts intentionally bypass

@@ -239,4 +239,12 @@ extension AppModel {
         return "\(size.width) x \(size.height)"
     }
 
+    /// Drops the resident image session to reclaim physical memory.
+    public func unloadImageModel() {
+        guard canUnloadImageModel else { return }
+        imageSession?.cancel()
+        imageSession = nil
+        imageSessionPath = nil
+        showToast("Image model unloaded", style: .info)
+    }
 }

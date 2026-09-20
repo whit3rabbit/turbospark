@@ -299,4 +299,33 @@ final class LifecycleGuardTests: XCTestCase {
             "A persisted project payload can carry an old or future value, and an unclamped step cap "
                 + "is an agent loop that runs tools until the model stops proposing them.")
     }
+
+    func testImageModelUnloadLifecycle() throws {
+        let appModel = AppModel()
+        XCTAssertFalse(appModel.canUnloadImageModel)
+        XCTAssertFalse(appModel.canUnloadAnyModel)
+
+        // Point imageSessionPath but session is nil: cannot unload
+        appModel.imageSessionPath = "/test/path/model.image.gturbo"
+        XCTAssertFalse(appModel.canUnloadImageModel)
+        appModel.unloadImageModel()
+        XCTAssertEqual(
+            appModel.imageSessionPath, "/test/path/model.image.gturbo",
+            "Without an active session, unload is a guarded no-op.")
+
+        // When generating, cannot unload
+        appModel.generating = true
+        XCTAssertFalse(appModel.canUnloadImageModel)
+        appModel.generating = false
+    }
+
+    func testUnloadActiveOrAnyModelGuardsWhenNothingLoaded() throws {
+        let appModel = AppModel()
+        appModel.activeSection = .images
+        XCTAssertFalse(appModel.canUnloadAnyModel)
+        appModel.unloadActiveOrAnyModel()
+        XCTAssertNil(appModel.imageSession)
+        XCTAssertNil(appModel.session)
+    }
 }
+

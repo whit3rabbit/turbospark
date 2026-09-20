@@ -138,6 +138,27 @@ struct ImageModelControls: View {
                     .disabled(!model.canInstallImageModel(alias: source.alias))
                 }
             }
+
+            if model.imageSession != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Model", bundle: .module)
+                        .themedFont(.tiny).hidden().accessibilityHidden(true)
+                    Button {
+                        model.unloadImageModel()
+                    } label: {
+                        Label {
+                            Text("Unload", bundle: .module)
+                        } icon: {
+                            Image(systemName: "eject.fill")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!model.canUnloadImageModel)
+                    .help(Text("Unload Model", bundle: .module))
+                    .accessibilityLabel(Text("Unload Model", bundle: .module))
+                }
+            }
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden)
         .themedFont(.small)

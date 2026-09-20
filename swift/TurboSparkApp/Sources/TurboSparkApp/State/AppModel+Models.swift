@@ -361,6 +361,23 @@ extension AppModel {
         showToast("Model unloaded", style: .info)
     }
 
+    /// Unloads either the active workspace's model or whichever model is currently resident.
+    public func unloadActiveOrAnyModel() {
+        if activeSection == .images {
+            if canUnloadImageModel {
+                unloadImageModel()
+            } else if canUnloadModel {
+                unloadModel()
+            }
+        } else {
+            if canUnloadModel {
+                unloadModel()
+            } else if canUnloadImageModel {
+                unloadImageModel()
+            }
+        }
+    }
+
     public func setModelURL(_ url: URL) {
         guard !generating, !opening else { return }
         let path = url.standardizedFileURL.path

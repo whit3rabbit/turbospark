@@ -142,4 +142,14 @@ extension AppModel {
     public var canUnloadModel: Bool {
         !generating && !submitting && !opening && session != nil
     }
+
+    /// Whether the active image model session can be unloaded.
+    public var canUnloadImageModel: Bool {
+        !generating && imageGenerationTask == nil && !isInstallingImageModel && imageSession != nil
+    }
+
+    /// Whether any active model session (text or image) can be unloaded.
+    public var canUnloadAnyModel: Bool {
+        canUnloadModel || canUnloadImageModel
+    }
 }

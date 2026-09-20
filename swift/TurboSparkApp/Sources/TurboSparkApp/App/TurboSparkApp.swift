@@ -412,6 +412,15 @@ struct TurboSparkApp: App {
                     Text("Unload Model", bundle: .module)
                 }
                 .disabled(!model.canUnloadModel)
+
+                if model.imageSession != nil {
+                    Button {
+                        model.unloadImageModel()
+                    } label: {
+                        Text("Unload", bundle: .module)
+                    }
+                    .disabled(!model.canUnloadImageModel)
+                }
             }
 
             CommandMenu(Text("Profile", bundle: .module)) {

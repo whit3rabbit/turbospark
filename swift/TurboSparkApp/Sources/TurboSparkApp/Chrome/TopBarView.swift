@@ -89,6 +89,7 @@ struct TopBarView: View {
                         }
                     }
                 }
+                unloadButton
                 if model.activeSection != .images {
                     inspectorToggle
                 }
@@ -197,6 +198,57 @@ struct TopBarView: View {
         .help("Git: \(worktree.currentBranch) (click to open changes pane)")
         .accessibilityLabel("Git branch \(worktree.currentBranch)")
     }
+
+    @ViewBuilder
+    private var unloadButton: some View {
+        if model.canUnloadModel && model.canUnloadImageModel {
+            Menu {
+                Button {
+                    model.unloadModel()
+                } label: {
+                    Label {
+                        Text("Unload Model", bundle: .module)
+                    } icon: {
+                        Image(systemName: "text.bubble")
+                    }
+                }
+                Button {
+                    model.unloadImageModel()
+                } label: {
+                    Label {
+                        Text("Unload", bundle: .module)
+                    } icon: {
+                        Image(systemName: "photo")
+                    }
+                }
+            } label: {
+                Image(systemName: "eject.fill")
+                    .font(theme.ui(.callout, weight: .medium))
+                    .frame(width: buttonSize, height: buttonSize)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .buttonStyle(TSPressScaleStyle(scale: 0.9))
+            .foregroundStyle(theme.accent)
+            .help(Text("Unload Model", bundle: .module))
+            .accessibilityLabel(Text("Unload Model", bundle: .module))
+        } else {
+            Button {
+                model.unloadActiveOrAnyModel()
+            } label: {
+                Image(systemName: "eject.fill")
+                    .font(theme.ui(.callout, weight: .medium))
+                    .frame(width: buttonSize, height: buttonSize)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(TSPressScaleStyle(scale: 0.9))
+            .foregroundStyle(model.canUnloadAnyModel ? theme.accent : Color.secondary.opacity(0.35))
+            .disabled(!model.canUnloadAnyModel)
+            .help(Text("Unload Model", bundle: .module))
+            .accessibilityLabel(Text("Unload Model", bundle: .module))
+        }
+    }
 }
 
 /// Memory, CPU and GPU wait, in the top bar's centre.
@@ -304,7 +356,7 @@ struct ChromeTelemetryView: View {
         }
         .help(
             "Metal GPU wait per pass from the last run's phase counters. "
-                + "This app measures no GPU utilization figure, so none is shown."
+                + "Updates after a generation pass completes; TurboSpark does not measure a live GPU percentage."
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("GPU wait per pass")

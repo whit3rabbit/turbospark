@@ -22,7 +22,7 @@ struct ImageComposerView: View {
                 && !model.savedImageArtifacts.isEmpty && !expanded {
                 ImageModelDownloadOffer(model: model, importing: $importing)
             }
-            if active || model.isInstallingImageModel { progress.padding(.bottom, 12) }
+            if active { progress.padding(.bottom, 12) }
             VStack(spacing: 12) {
                 TextField(text: $model.promptText, axis: .vertical) {
                     Text("Describe the image you want to create.", bundle: .module)
@@ -53,6 +53,21 @@ struct ImageComposerView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 0)
+                    if model.imageSession != nil {
+                        Button {
+                            model.unloadImageModel()
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "eject.fill")
+                                Text("Unload", bundle: .module)
+                            }
+                        }
+                        .buttonStyle(TSPressScaleStyle(scale: 0.94))
+                        .foregroundStyle(.appSecondary)
+                        .disabled(!model.canUnloadImageModel)
+                        .help(Text("Unload Model", bundle: .module))
+                        .accessibilityLabel(Text("Unload Model", bundle: .module))
+                    }
                     if active {
                         Button { model.cancelImageGeneration() } label: {
                             Label { Text("Stop", bundle: .module) } icon: { Image(systemName: "stop.fill") }
@@ -117,35 +132,34 @@ struct ImageComposerView: View {
 
     private var progress: some View {
         HStack(spacing: 12) {
-            if model.isInstallingImageModel {
-                ProgressView(value: model.imageInstallProgressFraction)
-                    .frame(width: 120)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.imageInstallAlias ?? String(localized: "Download", bundle: .module))
-                        .themedFont(.small, weight: .medium)
-                        .lineLimit(1)
-                    if let stage = model.imageInstallStage {
-                        Text(verbatim: stage)
-                            .themedFont(.tiny)
-                            .foregroundStyle(.appSecondary)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 0)
-                Button { model.cancelImageInstall() } label: {
-                    Text("Cancel", bundle: .module)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            } else {
-                ProgressView(value: model.imageProgressFraction).frame(width: 100)
-                Text("Image \(model.imageBatchIndex) of \(model.imageBatchCount)", bundle: .module)
-                Text(model.imageJob?.stage ?? String(localized: "Waiting", bundle: .module))
-                    .foregroundStyle(.appSecondary).lineLimit(1)
-                Spacer(minLength: 0)
-            }
+            ProgressView(value: model.imageProgressFraction).frame(width: 100)
+            Text("Image \(model.imageBatchIndex) of \(model.imageBatchCount)", bundle: .module)
+            Text(stageDescription)
+                .foregroundStyle(.appSecondary).lineLimit(1)
+            Spacer(minLength: 0)
         }
         .themedFont(.small)
         .accessibilityElement(children: .combine)
+    }
+
+    private var stageDescription: String {
+        guard let job = model.imageJob, let stage = job.stage else {
+            return String(localized: "Waiting", bundle: .module)
+        }
+        switch stage {
+        case "text_encoder":
+            return "Encoding prompt"
+        case "transformer":
+            if job.total > 0 {
+                return "Denoising step \(job.completed)/\(job.total)"
+            }
+            return "Denoising"
+        case "vae_decoder":
+            return "Decoding image"
+        case "png_encode":
+            return "Saving image"
+        default:
+            return stage.capitalized
+        }
     }
 }
