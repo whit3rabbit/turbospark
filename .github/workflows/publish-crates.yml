@@ -103,8 +103,20 @@ jobs:
                 echo "::notice::${crate} already published at this version, continuing"
                 published=1
               elif echo "${out}" | grep -qiE "(429 Too Many Requests|rate-limits|rate limit)"; then
-                echo "::warning::Rate limit hit publishing ${crate} (attempt ${attempt}/${max_attempts}). Waiting 90s before retrying..."
-                sleep 90
+                wait_sec=619
+                target_date=$(echo "${out}" | sed -nE 's/.*try again after ([^.]+ GMT).*/\1/p' | head -1)
+                if [ -n "${target_date}" ]; then
+                  target_epoch=$(date -d "${target_date}" +%s 2>/dev/null || true)
+                  now_epoch=$(date +%s)
+                  if [ -n "${target_epoch}" ] && [ "${target_epoch}" -gt "${now_epoch}" ]; then
+                    diff=$((target_epoch - now_epoch + 19))
+                    if [ "${diff}" -gt 0 ]; then
+                      wait_sec="${diff}"
+                    fi
+                  fi
+                fi
+                echo "::warning::Rate limit hit publishing ${crate} (attempt ${attempt}/${max_attempts}). Waiting ${wait_sec}s (10m 19s) before retrying..."
+                sleep "${wait_sec}"
               elif echo "${out}" | grep -qiE "(failed to select a version|no matching package named|failed to download)"; then
                 echo "::warning::Dependency index propagation delay for ${crate} (attempt ${attempt}/${max_attempts}). Waiting 20s before retrying..."
                 sleep 20
