@@ -235,6 +235,10 @@ fn run_one_turn(
         vision::attach(session, &rendered, &prepared, &params)?
     };
 
+    if std::env::var_os("TURBOSPARK_DEBUG_PROMPT_IDS").is_some() {
+        eprintln!("[prompt-ids] count={} ids={prompt_ids:?}", prompt_ids.len());
+    }
+
     let max_new = clamp_max_new(session, request, prompt_ids.len())?;
     println!("generating (real forward pass, chat template applied):");
     match stream_turn(session, request, &prompt_ids, max_new) {

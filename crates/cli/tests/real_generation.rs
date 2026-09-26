@@ -11,14 +11,35 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn temp_dir() -> PathBuf {
+struct TempDir(PathBuf);
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = std::path::Path;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+fn temp_dir() -> TempDir {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
         "turbospark-cli-real-gen-{}-{n}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    TempDir(dir)
 }
 
 fn tokenizer_fixture_dir() -> PathBuf {
@@ -28,7 +49,7 @@ fn tokenizer_fixture_dir() -> PathBuf {
 /// A real-naming MoE install with the ChatML tokenizer bundled alongside it,
 /// which is what the chat modes need: they render through the tokenizer's
 /// own dialect template (ChatML here; the repo has no Gemma fixture).
-fn install_with_tokenizer(label: &str) -> PathBuf {
+fn install_with_tokenizer(label: &str) -> TempDir {
     let dir = temp_dir();
     for name in [
         "tokenizer.json",

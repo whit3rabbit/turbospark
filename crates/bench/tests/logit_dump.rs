@@ -54,7 +54,7 @@ use std::path::{Path, PathBuf};
 use foundation::LogitValue;
 use runtime::LogitProducer;
 use turbospark_bench::protocol::{PROTOCOL_EXPERT_CACHE_SLOTS, PROTOCOL_MAX_CONTEXT};
-use turbospark_bench::real_model::open_model_runner;
+use turbospark_bench::real_model::open_model_runner_with_context;
 
 /// Logits are dumped in the width the runner produced them in.
 /// `LogitValue` is IEEE-754 binary16, so writing f16 bits is lossless AND
@@ -84,6 +84,7 @@ struct DumpTarget {
     install: PathBuf,
     assistant_prefix: &'static str,
     pinned_chat_date: Option<&'static str>,
+    max_context: u32,
 }
 
 fn resolve_target() -> Option<DumpTarget> {
@@ -92,9 +93,19 @@ fn resolve_target() -> Option<DumpTarget> {
             install,
             assistant_prefix: "",
             pinned_chat_date: None,
+            max_context: PROTOCOL_MAX_CONTEXT,
         })
     };
-    plain("TURBOSPARK_GEMMA4_INSTALL_DIR")
+    // Qwen4Exp's indexed-kernel budget is 2,048 tokens; keep the diagnostic
+    // runner at that window instead of the shared 4,096-token default.
+    env_dir("TURBOSPARK_QWEN4EXP_INSTALL_DIR")
+        .map(|install| DumpTarget {
+            install,
+            assistant_prefix: "",
+            pinned_chat_date: None,
+            max_context: 2048,
+        })
+        .or_else(|| plain("TURBOSPARK_GEMMA4_INSTALL_DIR"))
         .or_else(|| plain("TURBOSPARK_QWEN2_DENSE_INSTALL_DIR"))
         .or_else(|| plain("TURBOSPARK_QWEN36_INSTALL_DIR"))
         .or_else(|| plain("TURBOSPARK_QWEN38_INSTALL_DIR"))
@@ -153,18 +164,19 @@ fn resolve_target() -> Option<DumpTarget> {
                 install,
                 assistant_prefix: quality_common::HARMONY_ASSISTANT_PREFIX,
                 pinned_chat_date: Some(quality_common::GPTOSS_PINNED_CHAT_DATE),
+                max_context: PROTOCOL_MAX_CONTEXT,
             })
         })
 }
 
 #[test]
-#[ignore = "needs a real .gturbo install (TURBOSPARK_GEMMA4_INSTALL_DIR) and an output dir (TURBOSPARK_LOGIT_DUMP_DIR)"]
+#[ignore = "needs a real .gturbo install (TURBOSPARK_GEMMA4_INSTALL_DIR or TURBOSPARK_QWEN4EXP_INSTALL_DIR) and an output dir (TURBOSPARK_LOGIT_DUMP_DIR)"]
 fn dump_reference_logits() {
     let (Some(target), Some(out)) = (resolve_target(), env_dir("TURBOSPARK_LOGIT_DUMP_DIR")) else {
         eprintln!(
             "logit_dump: needs TURBOSPARK_GEMMA4_INSTALL_DIR (or \
              TURBOSPARK_QWEN2_DENSE_INSTALL_DIR, TURBOSPARK_QWEN36_INSTALL_DIR, \
-             TURBOSPARK_QWEN38_INSTALL_DIR, \
+             TURBOSPARK_QWEN38_INSTALL_DIR, TURBOSPARK_QWEN4EXP_INSTALL_DIR, \
              TURBOSPARK_QWEN3MOE_INSTALL_DIR, \
              TURBOSPARK_QWEN35_INSTALL_DIR, TURBOSPARK_TERNARY_INSTALL_DIR, \
              TURBOSPARK_ORNITH9B_INSTALL_DIR, TURBOSPARK_ORNITH35B_INSTALL_DIR, \
@@ -180,13 +192,19 @@ fn dump_reference_logits() {
         std::env::set_var(tokenizer::CHAT_DATE_ENV, date);
         eprintln!("logit_dump: chat template date pinned to {date}");
     }
-    dump(&target.install, &out, target.assistant_prefix);
+    dump(
+        &target.install,
+        &out,
+        target.assistant_prefix,
+        target.max_context,
+    );
 }
 
-fn dump(install: &Path, out: &Path, assistant_prefix: &str) {
+fn dump(install: &Path, out: &Path, assistant_prefix: &str, max_context: u32) {
     std::fs::create_dir_all(out).expect("create the dump directory");
     let (mut runner, tokenizer) =
-        open_model_runner(install, PROTOCOL_EXPERT_CACHE_SLOTS).expect("real install should open");
+        open_model_runner_with_context(install, PROTOCOL_EXPERT_CACHE_SLOTS, max_context)
+            .expect("real install should open");
 
     // The prefix counts as PROMPT, exactly as `reference_perplexity` scores
     // it: `prompt_len` and `first_scored_position` move with it, so the
@@ -205,9 +223,9 @@ fn dump(install: &Path, out: &Path, assistant_prefix: &str) {
     let mut ids = prompt_ids.to_vec();
     ids.extend(&answer_ids);
     assert!(
-        ids.len() <= PROTOCOL_MAX_CONTEXT as usize,
+        ids.len() <= max_context as usize,
         "prompt plus reference answer is {} tokens, over the \
-         {PROTOCOL_MAX_CONTEXT}-token KV the runner was opened with",
+         {max_context}-token KV the runner was opened with",
         ids.len()
     );
 
@@ -256,7 +274,7 @@ fn dump(install: &Path, out: &Path, assistant_prefix: &str) {
     let meta = out.join("meta.json");
     std::fs::write(
         &meta,
-        meta_json(install, &ids, prompt_ids.len(), vocab, cold),
+        meta_json(install, &ids, prompt_ids.len(), vocab, cold, max_context),
     )
     .expect("write the sidecar");
     eprintln!(
@@ -290,7 +308,14 @@ fn walk(
 /// The sidecar the second engine reads. Hand-rolled rather than pulling in
 /// a JSON serializer: it is one flat object of numbers and one array of
 /// integers, and this crate has no serde dependency today.
-fn meta_json(install: &Path, ids: &[i32], prompt_len: usize, vocab: usize, cold: bool) -> String {
+fn meta_json(
+    install: &Path,
+    ids: &[i32],
+    prompt_len: usize,
+    vocab: usize,
+    cold: bool,
+    max_context: u32,
+) -> String {
     let id_list = ids
         .iter()
         .map(|id| id.to_string())
@@ -306,6 +331,7 @@ fn meta_json(install: &Path, ids: &[i32], prompt_len: usize, vocab: usize, cold:
          \"engine\": \"turbospark\",\n  \
          \"install\": {:?},\n  \
          \"expert_cache_slots\": {PROTOCOL_EXPERT_CACHE_SLOTS},\n  \
+         \"max_context\": {max_context},\n  \
          \"cache_state\": \"{cache_state}\",\n  \
          \"dtype\": \"{DUMP_DTYPE}\",\n  \
          \"layout\": \"row-major [rows][vocab_size], row i = next-token logits after token_ids[i]\",\n  \

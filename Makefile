@@ -1,4 +1,4 @@
-.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-lib-app compile-strings swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist install uninstall
+.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-lib-app compile-strings swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist clean-tmp install uninstall
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -140,4 +140,7 @@ clean-swift:
 clean-dist:
 	rm -rf dist
 
-clean: clean-cargo clean-swift clean-dist
+clean-tmp:
+	find "$${TMPDIR:-/tmp}" -maxdepth 1 \( -name 'turbospark*' -o -name 'qwen*' -o -name 'TurboSparkTests*' \) -exec rm -rf {} + 2>/dev/null || true
+
+clean: clean-cargo clean-swift clean-dist clean-tmp
