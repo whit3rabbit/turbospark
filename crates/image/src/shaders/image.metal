@@ -242,6 +242,48 @@ void image_linear_tiled(
     }
 }
 
+// SIMD lanes walk contiguous K values and reduce one partial dot product per
+// output. Each SIMD group emits eight outputs, avoiding the long serial K loop
+// and repeated threadgroup barriers in image_linear_tiled.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void image_linear_simd(
+    device const uchar *weight [[buffer(0)]],
+    device const float *input [[buffer(1)]],
+    device float *output [[buffer(2)]],
+    device const uchar *bias [[buffer(3)]],
+    constant LinearParams &p [[buffer(4)]],
+    uint2 tid [[thread_position_in_threadgroup]],
+    uint2 group [[threadgroup_position_in_grid]]) {
+    const uint row = group.y * 2 + tid.y / 4;
+    const uint output_base = group.x * 32 + (tid.y % 4) * 8;
+    float sums[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+
+    if (row < p.rows) {
+        for (uint k_base = 0; k_base < p.in_dim; k_base += 32) {
+            const uint k = k_base + tid.x;
+            if (k < p.in_dim) {
+                const float x = input[uint64_t(row) * p.in_dim + k];
+                for (uint slot = 0; slot < 8; ++slot) {
+                    const uint col = output_base + slot;
+                    if (col < p.out_dim) {
+                        device const uchar *weight_row = weight + uint64_t(col) * p.row_stride;
+                        sums[slot] = fma(x, matrix_value(weight_row, k, p), sums[slot]);
+                    }
+                }
+            }
+        }
+    }
+
+    for (uint slot = 0; slot < 8; ++slot) {
+        const uint col = output_base + slot;
+        const float sum = simd_sum(sums[slot]);
+        if (tid.x == 0 && row < p.rows && col < p.out_dim) {
+            const float shift = p.bias_storage == 0 ? 0.0f : stored_value(bias, col, p.bias_storage);
+            output[uint64_t(row) * p.out_dim + col] = sum + shift;
+        }
+    }
+}
+
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void image_rms_norm(
     device const float *input [[buffer(0)]],

@@ -179,6 +179,17 @@ diffusion work instead of token throughput. The pinned 1024-by-1024 record is:
 | Packed native, two-slot streamed | 4,840.856 s; 7,328,138,608-byte peak | 0.985694 streamed/resident latency ratio, 400 payload reads, 393 fenced slot reuses |
 | Repeated packed jobs | 2 complete jobs; peak growth 113,557,576 bytes | Exact repeated PNGs, zero page-ins, zero swap delta, [`IG3`](IMAGE_GENERATION.md#ig3-bound-memory-and-add-dense-streaming-where-necessary) |
 | Swift app image gate | 4,665.912 s for the pinned image; cancellation 21.827 s | Real-install 1024-by-1024 app path, [`IG4`](IMAGE_GENERATION.md#ig4-expose-the-runtime-to-swift-and-the-images-destination) |
+| Packed native, SIMD-linear experiment | 3,608.010 s; one run | Release metadata-gate generation on Apple M4 Max with the local 8-bit MLX-affine install; 1024-by-1024, nine steps, guidance 0, seed 42 |
+
+The SIMD-linear experiment replaced the tiled linear kernel's serial inner
+product and repeated threadgroup barriers with contiguous-K SIMD lanes and a
+single reduction. Its one native-run latency is 26.5% below the historical
+resident native row and 22.7% below the historical Swift app result. These are
+not controlled paired runs: the app and native records use different
+harnesses, and this is one optimized run. The metadata gate confirms
+generation and PNG completion; it does not check image quality. Keep this as
+an experiment rather than a replacement frozen result. The focused Metal
+parity test passes F32, local INT4, and supported MLX-affine row formats.
 
 The first three rows are reference-stage observations and must not be read as
 packed-runtime memory claims. The packed rows are full image-generation

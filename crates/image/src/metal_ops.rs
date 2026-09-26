@@ -568,6 +568,31 @@ pub(crate) fn linear(
     in_dim: usize,
     out_dim: usize,
 ) -> Result<GpuTensor, String> {
+    linear_with_pipeline(
+        context,
+        component,
+        weight,
+        bias,
+        input,
+        rows,
+        in_dim,
+        out_dim,
+        "image_linear_simd",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn linear_with_pipeline(
+    context: &mut MetalContext,
+    component: &Component,
+    weight: WeightRef,
+    bias: Option<WeightRef>,
+    input: &GpuTensor,
+    rows: usize,
+    in_dim: usize,
+    out_dim: usize,
+    pipeline_name: &'static str,
+) -> Result<GpuTensor, String> {
     if input.len != rows * in_dim {
         return Err("image linear input shape does not match rows and in_dim".to_string());
     }
@@ -587,7 +612,7 @@ pub(crate) fn linear(
         weight.group_size,
         weight.companion_storage,
     ]);
-    let shader = pipeline(context, "image_linear_tiled")?;
+    let shader = pipeline(context, pipeline_name)?;
     let pass = context.begin_pass_labeled("image-linear");
     let mut buffers = vec![
         (&weight.buffer, 0, weight.offset),
@@ -597,7 +622,17 @@ pub(crate) fn linear(
     if let Some(bias) = bias.as_ref() {
         buffers.push((&bias.buffer, 3, bias.offset));
     }
-    dispatch_tiled(&pass, &shader, &buffers, &[(&params, 4)], rows, out_dim);
+    if pipeline_name == "image_linear_simd" {
+        pass.encode_threadgroups_3d(
+            &shader,
+            &buffers,
+            &[(&params, 4)],
+            (out_dim.div_ceil(32) as u64, rows.div_ceil(2) as u64, 1),
+            (32, 8, 1),
+        );
+    } else {
+        dispatch_tiled(&pass, &shader, &buffers, &[(&params, 4)], rows, out_dim);
+    }
     let ready = commit_component_deferred(pass, component);
     Ok(with_ready(output, ready))
 }
@@ -1229,7 +1264,7 @@ mod tests {
 
     #[test]
     #[ignore = "opt-in Metal kernel parity test"]
-    fn tiled_linear_matches_f32_int4_and_all_mlx_affine_packed_rows() {
+    fn simd_linear_matches_f32_int4_and_all_mlx_affine_packed_rows() {
         let Ok(mut context) = MetalContext::new() else {
             eprintln!("NOTE: skipping image Metal parity test, no Metal device");
             return;
