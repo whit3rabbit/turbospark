@@ -360,7 +360,11 @@ fn the_writer_checks_its_own_header_against_the_readers_rules() {
     .expect("header.json");
     let parsed: serde_json::Value = serde_json::from_str(&header).expect("valid json");
     assert_eq!(parsed["companionDtype"], "bf16");
-    assert_eq!(parsed["version"], 1);
+    assert_eq!(parsed["version"], model_io::NgramTableLayout::VERSION);
+    assert!(
+        parsed.get("ggmlType").is_none(),
+        "affine table stays untagged"
+    );
     assert_eq!(parsed["layerIndex"], 1);
     // The hashing buffers reached the header rather than being dropped.
     assert_eq!(parsed["multipliers"].as_array().expect("array").len(), 3);

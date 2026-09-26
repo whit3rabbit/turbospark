@@ -20,6 +20,8 @@ pub struct RoutedSource<'a> {
 
 pub struct Plan<'a> {
     pub resident: Vec<&'a str>,
+    /// Qwen4Exp's large IQ4_NL PLE table, streamed into its own row store.
+    pub ngram: Option<&'a str>,
     /// layer -> role-bearing source tensors.
     pub routed: BTreeMap<usize, Vec<RoutedSource<'a>>>,
     pub ignored: Vec<String>,
@@ -52,10 +54,20 @@ pub fn classify<'a>(
 ) -> Result<Plan<'a>, GgufRepackError> {
     let mut plan = Plan {
         resident: Vec::new(),
+        ngram: None,
         routed: BTreeMap::new(),
         ignored: Vec::new(),
     };
     for name in header.tensors.keys() {
+        if family == ModelFamily::Qwen4Exp && name == "per_layer_token_embd.weight" {
+            if plan.ngram.replace(name.as_str()).is_some() {
+                return Err(GgufRepackError::ShapeMismatch {
+                    tensor: name.to_string(),
+                    detail: "multiple PLE tables are not supported".to_string(),
+                });
+            }
+            continue;
+        }
         if let Some(layer) = head_block_index(name, num_layers) {
             plan.ignored.push(format!(
                 "{name} (block {layer} is above the {num_layers}-block trunk: a \

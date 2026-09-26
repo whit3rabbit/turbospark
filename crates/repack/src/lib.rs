@@ -73,7 +73,8 @@ pub use gemma4_checkpoint::{
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
-    write_gguf_install_streamed, GgufRepackError, GgufRepackOutput, FUSED_GATE_FIRST,
+    qwen4exp_tensor_is_transcoded, write_gguf_install_streamed, GgufRepackError, GgufRepackOutput,
+    FUSED_GATE_FIRST,
 };
 pub use gguf_config::{arch_from_gguf, GgufConfigError};
 pub use gguf_header::{
@@ -109,8 +110,8 @@ pub use repack::{quantize_matrix_int4, quantize_matrix_int8, RepackError};
 pub use resident_reader::read_resident_entries;
 pub use resident_writer::{
     build_resident_weights_bin, build_resident_weights_bin_mixed, RawTensorSpec, ResidentEntrySpec,
-    ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_GGUF_Q4_0, DTYPE_GGUF_Q4_K,
-    DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0, DTYPE_INT8_AFFINE, GGUF_BLOCK_DTYPES,
+    ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_GGUF_Q2_0, DTYPE_GGUF_Q4_0,
+    DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0, DTYPE_INT8_AFFINE, GGUF_BLOCK_DTYPES,
 };
 pub use safetensors_header::{
     parse_header, required_prefix_len, SafetensorsHeader, SafetensorsHeaderError, TensorInfo,

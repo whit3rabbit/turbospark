@@ -252,6 +252,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense => {
             qwen_gdn_moe_layer_mask(&m, num_layers_usize)?
         }
+        ModelFamily::Qwen4Exp => qwen4_exp_layer_mask(&m, num_layers_usize)?,
         // Every layer is full attention: neither a dense Llama nor a Mixtral
         // publishes `attention.sliding_window`, and Mistral 7B's window is a
         // property of that model rather than of the architecture.
@@ -284,10 +285,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // `qwen3_vl` refuses for `qwen4_exp`'s reason: GGUFs exist, the
         // converter's tower naming is unparsed, and the MLX path is the
         // intake this port built.
-        ModelFamily::DeepseekV4Flash
-        | ModelFamily::MuseGlimmer
-        | ModelFamily::Qwen4Exp
-        | ModelFamily::Qwen3Vl => {
+        ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen3Vl => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })
@@ -383,12 +381,19 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     // failed at the first linear layer's GEMV -- loudly, but four layers from
     // the cause, and only after a 5-minute stream. `ornith_gguf_network.rs`
     // asserts the linear block field by field now, which is a header read.
-    if matches!(family, ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense) {
+    if matches!(
+        family,
+        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense | ModelFamily::Qwen4Exp
+    ) {
         arch.linear_attention = linear_attention(&m)?;
         // Qwen's key/value length are per-head and equal on both paths.
         if let Some(k) = m.opt_i64("attention.key_length")? {
             arch.head_dim = k;
             arch.full_head_dim = k;
+        }
+        if family == ModelFamily::Qwen4Exp {
+            arch.linear_attention.output_gate_sigmoid = true;
+            derive_qwen4_exp_extensions(&m, &mut arch)?;
         }
     } else {
         match m.opt_i64("attention.key_length")? {
@@ -566,4 +571,287 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     }
 
     Ok(arch)
+}
+
+/// Qwen4Exp publishes its hybrid mask directly: `true` means recurrent GDN,
+/// while the runtime's mask uses 2 for GDN and 1 for full attention.
+fn qwen4_exp_layer_mask(m: &Meta<'_>, num_layers: usize) -> Result<Vec<u8>, GgufConfigError> {
+    let key = m.key("attention.recurrent_layers");
+    let values = m
+        .opt("attention.recurrent_layers")
+        .and_then(GgufValue::as_array)
+        .ok_or_else(|| GgufConfigError::BadValue {
+            key: key.clone(),
+            detail: "not a boolean array".to_string(),
+        })?;
+    if values.len() != num_layers {
+        return Err(GgufConfigError::BadValue {
+            key,
+            detail: format!("{} entries for {num_layers} layers", values.len()),
+        });
+    }
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_bool()
+                .map(|recurrent| if recurrent { 2 } else { 1 })
+                .ok_or_else(|| GgufConfigError::BadValue {
+                    key: m.key("attention.recurrent_layers"),
+                    detail: "contains a non-boolean layer entry".to_string(),
+                })
+        })
+        .collect()
+}
+
+/// Fields that llama.cpp keeps in Qwen4Exp-specific GGUF metadata rather
+/// than in the common attention/SSM keys.
+fn derive_qwen4_exp_extensions(m: &Meta<'_>, arch: &mut ArchConfig) -> Result<(), GgufConfigError> {
+    let bad = |suffix: &str, detail: String| GgufConfigError::BadValue {
+        key: m.key(suffix),
+        detail,
+    };
+
+    let dimension = m.i64("rope.dimension_count")?;
+    if dimension <= 0 || arch.full_head_dim <= 0 || dimension > arch.full_head_dim {
+        return Err(bad(
+            "rope.dimension_count",
+            format!(
+                "rotary width {dimension} must be positive and no greater than full head width {}",
+                arch.full_head_dim
+            ),
+        ));
+    }
+    arch.partial_rotary_factor = dimension as f64 / arch.full_head_dim as f64;
+
+    let hc_count = m.i64("hyper_connection.count")?;
+    let hc_lowrank = m.i64("hyper_connection.low_rank")?;
+    if hc_count <= 1 || hc_lowrank <= 0 {
+        return Err(bad(
+            "hyper_connection.count",
+            format!("hyper-connection count {hc_count} and low rank {hc_lowrank} are invalid"),
+        ));
+    }
+    arch.hyper_connections.mult = hc_count;
+    arch.hyper_connections.lowrank = hc_lowrank;
+
+    let compress_key = "attention.compress_ratios";
+    let compress_values = integer_array(m, compress_key)?;
+    if compress_values.len() != arch.full_attention_layer_mask.len() {
+        return Err(bad(
+            compress_key,
+            format!(
+                "{} entries for {} layers",
+                compress_values.len(),
+                arch.full_attention_layer_mask.len()
+            ),
+        ));
+    }
+    let mut compress_rate = None;
+    for (layer, (&kind, &ratio)) in arch
+        .full_attention_layer_mask
+        .iter()
+        .zip(&compress_values)
+        .enumerate()
+    {
+        match kind {
+            1 if ratio > 0 => {
+                match compress_rate {
+                    Some(expected) if expected != ratio => {
+                        return Err(bad(
+                        compress_key,
+                        format!("full-attention layer {layer} uses ratio {ratio}, expected {expected}"),
+                    ));
+                    }
+                    None => compress_rate = Some(ratio),
+                    _ => {}
+                }
+            }
+            2 if ratio == 0 => {}
+            _ => {
+                return Err(bad(
+                    compress_key,
+                    format!("layer {layer} mask {kind} disagrees with compression ratio {ratio}"),
+                ));
+            }
+        }
+    }
+    let compress_rate = compress_rate.ok_or_else(|| {
+        bad(
+            compress_key,
+            "no full-attention layer has a compression ratio".to_string(),
+        )
+    })?;
+    let index_budget = m.i64("attention.indexer.top_k")?;
+    if index_budget <= 0 || index_budget % compress_rate != 0 {
+        return Err(bad(
+            "attention.indexer.top_k",
+            format!("index budget {index_budget} is not divisible by ratio {compress_rate}"),
+        ));
+    }
+    arch.compressed_attention.index_n_heads = m.i64("attention.indexer.head_count")?;
+    arch.compressed_attention.index_head_dim = m.i64("attention.indexer.key_length")?;
+    arch.compressed_attention.index_budget = index_budget;
+    arch.compressed_attention.csa_compress_rate = compress_rate;
+    arch.compressed_attention.index_top_k = index_budget / compress_rate;
+
+    let ngram_size = m.i64("ple.ngram_size")?;
+    let heads_per_ngram = m.i64("ple.heads_per_ngram")?;
+    let heads = ngram_size
+        .checked_sub(1)
+        .and_then(|orders| orders.checked_mul(heads_per_ngram))
+        .filter(|&count| count > 0)
+        .ok_or_else(|| bad("ple.ngram_size", "invalid PLE head count".to_string()))?;
+    let per_layer_head_dim = m.i64("embedding_length_per_layer_input")?;
+    if per_layer_head_dim <= 0 {
+        return Err(bad(
+            "embedding_length_per_layer_input",
+            "must be positive".to_string(),
+        ));
+    }
+    let ple_embed_dim = per_layer_head_dim.checked_mul(heads).ok_or_else(|| {
+        bad(
+            "ple.ngram_size",
+            "PLE embedding width overflows".to_string(),
+        )
+    })?;
+    // The HF config spells PLE layers one-based, but llama.cpp stores the
+    // corresponding zero-based block indices in GGUF. ArchConfig keeps the
+    // original one-based contract used by the safetensors path and runtime.
+    let layer_indices = integer_array(m, "ple.layers")?;
+    if layer_indices.is_empty()
+        || layer_indices
+            .iter()
+            .any(|&layer| layer < 0 || layer >= arch.num_layers)
+    {
+        return Err(bad(
+            "ple.layers",
+            format!(
+                "zero-based GGUF layer indices {layer_indices:?} are outside 0..{}",
+                arch.num_layers
+            ),
+        ));
+    }
+    let layer_ids = layer_indices.into_iter().map(|layer| layer + 1).collect();
+    arch.ple.ngram_size = ngram_size;
+    arch.ple.heads_per_ngram = heads_per_ngram;
+    arch.ple.ple_embed_dim = ple_embed_dim;
+    arch.ple.conv_kernel_size = m.i64("ple.conv_kernel")?;
+    arch.ple.layer_ids = layer_ids;
+    arch.ple.eos_token_id = m.i64("ple.eos_token_id")?;
+
+    Ok(())
+}
+
+fn integer_array(m: &Meta<'_>, suffix: &str) -> Result<Vec<i64>, GgufConfigError> {
+    let key = m.key(suffix);
+    let values =
+        m.opt(suffix)
+            .and_then(GgufValue::as_array)
+            .ok_or_else(|| GgufConfigError::BadValue {
+                key: key.clone(),
+                detail: "not an unsigned integer array".to_string(),
+            })?;
+    values
+        .iter()
+        .map(|value| {
+            let raw = value.as_u64().ok_or_else(|| GgufConfigError::BadValue {
+                key: key.clone(),
+                detail: "contains a non-unsigned integer".to_string(),
+            })?;
+            i64::try_from(raw).map_err(|_| GgufConfigError::BadValue {
+                key: key.clone(),
+                detail: "contains a value above i64::MAX".to_string(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod qwen4_exp_tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    fn uint_array(values: &[u64]) -> GgufValue {
+        GgufValue::Array(values.iter().copied().map(GgufValue::U64).collect())
+    }
+
+    #[test]
+    fn qwen4_exp_gguf_extensions_follow_the_published_metadata() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "qwen4exp.attention.recurrent_layers".into(),
+            GgufValue::Array(vec![
+                GgufValue::Bool(true),
+                GgufValue::Bool(true),
+                GgufValue::Bool(true),
+                GgufValue::Bool(false),
+            ]),
+        );
+        metadata.insert(
+            "qwen4exp.attention.compress_ratios".into(),
+            uint_array(&[0, 0, 0, 4]),
+        );
+        metadata.insert("qwen4exp.rope.dimension_count".into(), GgufValue::U64(64));
+        metadata.insert("qwen4exp.hyper_connection.count".into(), GgufValue::U64(4));
+        metadata.insert(
+            "qwen4exp.hyper_connection.low_rank".into(),
+            GgufValue::U64(320),
+        );
+        metadata.insert(
+            "qwen4exp.attention.indexer.top_k".into(),
+            GgufValue::U64(2048),
+        );
+        metadata.insert(
+            "qwen4exp.attention.indexer.head_count".into(),
+            GgufValue::U64(4),
+        );
+        metadata.insert(
+            "qwen4exp.attention.indexer.key_length".into(),
+            GgufValue::U64(128),
+        );
+        metadata.insert("qwen4exp.ple.ngram_size".into(), GgufValue::U64(3));
+        metadata.insert("qwen4exp.ple.heads_per_ngram".into(), GgufValue::U64(8));
+        metadata.insert(
+            "qwen4exp.embedding_length_per_layer_input".into(),
+            GgufValue::U64(160),
+        );
+        metadata.insert("qwen4exp.ple.layers".into(), uint_array(&[1]));
+        metadata.insert("qwen4exp.ple.conv_kernel".into(), GgufValue::U64(4));
+        metadata.insert("qwen4exp.ple.eos_token_id".into(), GgufValue::U64(248_044));
+        let header = GgufHeader {
+            version: 3,
+            metadata,
+            tensors: Default::default(),
+            alignment: 32,
+            data_region_start: 0,
+        };
+        let m = Meta {
+            header: &header,
+            prefix: "qwen4exp",
+        };
+        let mut arch = model_io::known_architecture(ModelFamily::Qwen4Exp);
+        arch.num_layers = 4;
+        arch.full_attention_layer_mask = qwen4_exp_layer_mask(&m, 4).expect("hybrid mask");
+        derive_qwen4_exp_extensions(&m, &mut arch).expect("Qwen4Exp metadata");
+
+        assert_eq!(arch.full_attention_layer_mask, vec![2, 2, 2, 1]);
+        assert_eq!(arch.partial_rotary_factor, 0.25);
+        assert_eq!(arch.hyper_connections.mult, 4);
+        assert_eq!(arch.hyper_connections.lowrank, 320);
+        assert_eq!(arch.compressed_attention.index_n_heads, 4);
+        assert_eq!(arch.compressed_attention.index_kv_heads, 1);
+        assert_eq!(arch.compressed_attention.index_head_dim, 128);
+        assert_eq!(arch.compressed_attention.index_budget, 2048);
+        assert_eq!(arch.compressed_attention.index_top_k, 512);
+        assert_eq!(arch.compressed_attention.csa_compress_rate, 4);
+        assert_eq!(arch.ple.ngram_size, 3);
+        assert_eq!(arch.ple.heads_per_ngram, 8);
+        assert_eq!(arch.ple.ple_embed_dim, 2560);
+        assert_eq!(arch.ple.layer_ids, vec![2]);
+        assert_eq!(arch.ple.layer_indices(), vec![1]);
+        assert_eq!(arch.ple.conv_kernel_size, 4);
+        assert_eq!(arch.ple.eos_token_id, 248_044);
+    }
 }

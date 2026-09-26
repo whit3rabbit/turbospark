@@ -2,6 +2,76 @@
 
 use super::{layer_prefix, GgufMapping};
 
+/// Qwen3.8-Flash-Next's explicit GGUF-to-runtime name map. It deliberately
+/// lists the whole inventory because its hyper-connections, indexer and PLE
+/// tensors do not follow the older Qwen GDN names.
+pub fn map_qwen4_exp_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
+    let p = layer_prefix(layer);
+    let resident = |tail: &str| Some(GgufMapping::Resident(format!("{p}{tail}")));
+    match suffix {
+        "attn_q.weight" => resident("self_attn.q_proj.weight"),
+        "attn_k.weight" => resident("self_attn.k_proj.weight"),
+        "attn_v.weight" => resident("self_attn.v_proj.weight"),
+        "attn_output.weight" => resident("self_attn.o_proj.weight"),
+        "attn_q_norm.weight" => resident("self_attn.q_norm.weight"),
+        "attn_k_norm.weight" => resident("self_attn.k_norm.weight"),
+        "attn_qkv.weight" => resident("linear_attn.in_proj_qkv.weight"),
+        "attn_gate.weight" => resident("linear_attn.in_proj_z.weight"),
+        "ssm_alpha.weight" => resident("linear_attn.in_proj_a.weight"),
+        "ssm_beta.weight" => resident("linear_attn.in_proj_b.weight"),
+        "ssm_out.weight" => resident("linear_attn.out_proj.weight"),
+        "ssm_conv1d.weight" => resident("linear_attn.conv1d.weight"),
+        "ssm_norm.weight" => resident("linear_attn.norm.weight"),
+        "ssm_a" => resident("linear_attn.A_log"),
+        "ssm_dt.bias" => resident("linear_attn.dt_bias"),
+        "ffn_gate_inp.weight" => resident("mlp.gate.weight"),
+        "ffn_gate_inp_shexp.weight" => resident("mlp.shared_expert_gate.weight"),
+        "ffn_gate_shexp.weight" => resident("mlp.shared_expert.gate_proj.weight"),
+        "ffn_up_shexp.weight" => resident("mlp.shared_expert.up_proj.weight"),
+        "ffn_down_shexp.weight" => resident("mlp.shared_expert.down_proj.weight"),
+        "ffn_gate_exps.weight" => Some(GgufMapping::Routed {
+            layer,
+            role: "gate",
+        }),
+        "ffn_up_exps.weight" => Some(GgufMapping::Routed { layer, role: "up" }),
+        "ffn_down_exps.weight" => Some(GgufMapping::Routed {
+            layer,
+            role: "down",
+        }),
+        "hc_attn_norm.weight" => resident("attn_hyper_connection.hc_norm.weight"),
+        "hc_attn_down.weight" => resident("attn_hyper_connection.input_mix_weight_down.weight"),
+        "hc_attn_up.weight" => resident("attn_hyper_connection.input_mix_weight_up.weight"),
+        "hc_attn_inject.weight" => resident("attn_hyper_connection.block_inject_weight.weight"),
+        "hc_ffn_norm.weight" => resident("mlp_hyper_connection.hc_norm.weight"),
+        "hc_ffn_down.weight" => resident("mlp_hyper_connection.input_mix_weight_down.weight"),
+        "hc_ffn_up.weight" => resident("mlp_hyper_connection.input_mix_weight_up.weight"),
+        "hc_ffn_inject.weight" => resident("mlp_hyper_connection.block_inject_weight.weight"),
+        "indexer.q_proj.weight" => resident("self_attn.indexer.q_proj.weight"),
+        "indexer.k_proj.weight" => resident("self_attn.indexer.k_proj.weight"),
+        "indexer.q_norm.weight" => resident("self_attn.indexer.q_layernorm.weight"),
+        "indexer.k_norm.weight" => resident("self_attn.indexer.k_layernorm.weight"),
+        "ple_conv1d.weight" => resident("ple.conv1d.weight"),
+        "ple_key.weight" => resident("ple.key_proj.weight"),
+        "ple_norm_conv.weight" => resident("ple.norm_conv.weight"),
+        "ple_norm_key.weight" => resident("ple.norm_key.weight"),
+        "ple_norm_query.weight" => resident("ple.norm_query.weight"),
+        "ple_value.weight" => resident("ple.value_proj.weight"),
+        _ => None,
+    }
+}
+
+/// The final hyper-connection mixer lives at model scope in the runtime.
+pub fn map_qwen4_exp_top_level(name: &str) -> Option<GgufMapping> {
+    let prefix = "language_model.model.hyper_connection_mixer.";
+    let suffix = match name {
+        "output_hc_norm.weight" => "hc_norm.weight",
+        "output_hc_down.weight" => "input_mix_weight_down.weight",
+        "output_hc_up.weight" => "input_mix_weight_up.weight",
+        _ => return None,
+    };
+    Some(GgufMapping::Resident(format!("{prefix}{suffix}")))
+}
+
 /// Qwen 3.6's per-layer suffixes, verified against
 /// `Qwen3.6-35B-A3B-Q4_K_M.gguf` and `~/models/qwen36.gturbo`. Note the
 /// hybrid layer split: the 10 full-attention layers carry `attn_q/k/v`, the

@@ -37,8 +37,8 @@ fn the_two_running_architectures_resolve_to_their_family() {
 }
 
 /// Recognition is not support. A planned row must NOT leak into the family
-/// resolution the repack walk keys on, or a checkpoint with no decode flow
-/// would be installed under some other family's rules.
+/// resolution the repack walk keys on, or a checkpoint without a complete
+/// GGUF path would be installed under some other family's rules.
 #[test]
 fn a_planned_architecture_is_recognized_but_has_no_family() {
     for (key, planned) in planned_gguf_architectures() {
@@ -53,6 +53,18 @@ fn a_planned_architecture_is_recognized_but_has_no_family() {
             planned.witness
         );
     }
+}
+
+#[test]
+fn qwen4exp_gguf_and_safetensors_resolve_to_the_same_family() {
+    assert_eq!(
+        gguf_arch_support("qwen4exp"),
+        Some(ArchSupport::Supported(ModelFamily::Qwen4Exp))
+    );
+    assert_eq!(
+        hf_family_for_model_type("qwen4_exp"),
+        Some(ModelFamily::Qwen4Exp)
+    );
 }
 
 #[test]
@@ -95,7 +107,7 @@ fn arch_from_gguf_refuses_a_planned_architecture_with_the_registry_message() {
     let header =
         turbospark_repack::parse_gguf_header(&bytes, bytes.len() as u64).expect("parse header");
     let message = arch_from_gguf(&header)
-        .expect_err("llama4 has no flow")
+        .expect_err("llama4 has no complete GGUF path")
         .to_string();
     assert!(message.contains("llama4"), "{message}");
     assert!(message.contains("docs/NEW_MODEL.md"), "{message}");

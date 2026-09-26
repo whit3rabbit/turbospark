@@ -460,6 +460,10 @@ fn block_table_matches_the_spec_where_it_answers() {
     assert_eq!(ggml_type_block(22), Some((256, 82)), "IQ2_S");
     assert_eq!(ggml_type_block(29), Some((256, 56)), "IQ1_M");
     assert_eq!(ggml_type_block(30), Some((1, 2)), "BF16");
+    assert_eq!(ggml_type_name(42), Some("Q2_0"));
+    assert_eq!(ggml_type_block(42), Some((64, 18)), "Q2_0");
+    assert_eq!(turbospark_repack::dtype_tag_for_ggml_type(42), Some(25));
+    assert!(turbospark_repack::GGUF_BLOCK_DTYPES.contains(&25));
 
     assert_eq!(ggml_type_name(8), Some("Q8_0"));
     assert_eq!(ggml_type_name(12), Some("Q4_K"));

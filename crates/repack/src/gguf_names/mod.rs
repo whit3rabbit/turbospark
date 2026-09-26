@@ -161,6 +161,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
         }
         return match family {
             ModelFamily::Gemma4 => gemma4::map_gemma4_layer(suffix, layer),
+            ModelFamily::Qwen4Exp => qwen::map_qwen4_exp_layer(suffix, layer),
             ModelFamily::QwenGdnMoe => qwen::map_qwen_gdn_moe_layer(suffix, layer),
             ModelFamily::Llama => llama::map_llama_layer(suffix, layer),
             ModelFamily::Qwen2Dense => llama::map_qwen2_layer(suffix, layer),
@@ -188,10 +189,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             // converter's tower naming is unparsed here. This port ingests
             // its MLX safetensors, so unmapped until the whole file has a
             // table.
-            ModelFamily::DeepseekV4Flash
-            | ModelFamily::MuseGlimmer
-            | ModelFamily::Qwen4Exp
-            | ModelFamily::Qwen3Vl => None,
+            ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen3Vl => None,
         }
         .ok_or_else(unmapped);
     }
@@ -204,6 +202,16 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
         return Err(GgufNameError::UnsupportedRopeScaling {
             name: name.to_string(),
         });
+    }
+    if family == ModelFamily::Qwen4Exp {
+        if name == "per_layer_token_embd.weight" {
+            return Ok(GgufMapping::Ignored {
+                reason: "streamed to the Qwen4Exp IQ4_NL n-gram row store",
+            });
+        }
+        if let Some(mapping) = qwen::map_qwen4_exp_top_level(name) {
+            return Ok(mapping);
+        }
     }
     map_top_level(name).ok_or_else(unmapped)
 }

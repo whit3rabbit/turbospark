@@ -10,14 +10,21 @@ struct VHeadAxis {
     span: usize,
 }
 
+#[derive(Clone, Copy)]
+struct VHeadLayout {
+    num_k_heads: usize,
+    num_v_heads: usize,
+    values_per_k_head: usize,
+}
+
 fn v_head_axis(
     name: &str,
     canonical: &str,
     arch: &ArchConfig,
 ) -> Result<Option<VHeadAxis>, GgufRepackError> {
-    // BOTH Qwen halves. The convention belongs to llama.cpp's CONVERTER and
-    // to the gated-DeltaNet block, and the two halves share both -- the dense
-    // one is the same `linear_attn.*` inventory with a different FFN below it.
+    // Qwen's gated-DeltaNet families. The convention belongs to llama.cpp's
+    // converter. Restore the grouped V heads used by the runtime from the
+    // converter's tiled order; the V/K ratio varies by family.
     //
     // **THE DENSE HALF WAS EXCLUDED AND IT FAILED EXACTLY AS Gotcha 33 SAYS
     // THIS CLASS FAILS**: the first `qwen35` install loaded, decoded, never
@@ -27,7 +34,7 @@ fn v_head_axis(
     // gate rather than a tidy-up.
     if !matches!(
         arch.family,
-        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense
+        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense | ModelFamily::Qwen4Exp
     ) {
         return Ok(None);
     }
@@ -66,36 +73,54 @@ fn v_head_axis(
     }
 }
 
-fn permute_v_heads<T: Copy>(data: &mut [T], base: usize, span: usize, heads: usize) {
-    let source = data.to_owned();
-    for h in 0..heads {
-        let to = if h < heads / 2 {
-            2 * h
-        } else {
-            2 * (h - heads / 2) + 1
-        };
-        data[base + to * span..base + (to + 1) * span]
-            .copy_from_slice(&source[base + h * span..base + (h + 1) * span]);
-    }
-}
-
-fn even_v_heads(name: &str, arch: &ArchConfig) -> Result<usize, GgufRepackError> {
-    let heads = usize::try_from(arch.linear_attention.num_v_heads).map_err(|_| {
+fn v_head_layout(name: &str, arch: &ArchConfig) -> Result<VHeadLayout, GgufRepackError> {
+    let num_k_heads = usize::try_from(arch.linear_attention.num_k_heads).map_err(|_| {
         GgufRepackError::ShapeMismatch {
             tensor: name.to_string(),
             detail: format!(
-                "the V-head de-interleave needs a representable num_v_heads, got {}",
+                "the V-head reorder needs a representable num_k_heads, got {}",
+                arch.linear_attention.num_k_heads
+            ),
+        }
+    })?;
+    let num_v_heads = usize::try_from(arch.linear_attention.num_v_heads).map_err(|_| {
+        GgufRepackError::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!(
+                "the V-head reorder needs a representable num_v_heads, got {}",
                 arch.linear_attention.num_v_heads
             ),
         }
     })?;
-    if heads < 2 || heads % 2 != 0 {
+    if num_k_heads == 0 || num_v_heads == 0 || num_v_heads % num_k_heads != 0 {
         return Err(GgufRepackError::ShapeMismatch {
             tensor: name.to_string(),
-            detail: format!("the V-head de-interleave needs an even num_v_heads, got {heads}"),
+            detail: format!(
+                "V-head reorder needs positive num_k_heads and num_v_heads divisible by it, \
+                 got {num_k_heads} and {num_v_heads}"
+            ),
         });
     }
-    Ok(heads)
+    Ok(VHeadLayout {
+        num_k_heads,
+        num_v_heads,
+        values_per_k_head: num_v_heads / num_k_heads,
+    })
+}
+
+/// Restore grouped `[key_head, value_head_within_key, span]` order from the
+/// converter's tiled `[value_head_within_key, key_head, span]` order.
+fn restore_grouped_v_heads<T: Copy>(data: &mut [T], base: usize, span: usize, layout: VHeadLayout) {
+    let end = base + layout.num_v_heads * span;
+    let source = data[base..end].to_vec();
+    for key_head in 0..layout.num_k_heads {
+        for value_head in 0..layout.values_per_k_head {
+            let grouped_head = key_head * layout.values_per_k_head + value_head;
+            let tiled_head = value_head * layout.num_k_heads + key_head;
+            data[base + grouped_head * span..base + (grouped_head + 1) * span]
+                .copy_from_slice(&source[tiled_head * span..(tiled_head + 1) * span]);
+        }
+    }
 }
 
 /// Undo llama.cpp's ROTARY PAIR PERMUTATION on a `llama`-architecture
@@ -176,28 +201,47 @@ pub(crate) fn apply_source_convention(
     let Some(axis) = v_head_axis(name, canonical, arch)? else {
         return Ok(());
     };
-    let heads = even_v_heads(name, arch)?;
+    let layout = v_head_layout(name, arch)?;
     let shape_err = |detail: String| GgufRepackError::ShapeMismatch {
         tensor: name.to_string(),
         detail,
     };
     if axis.columns {
-        return Err(shape_err(
-            "a column-axis V-head tensor is not expected to arrive as F32".to_string(),
-        ));
+        if cols == 0 || values.len() % cols != 0 {
+            return Err(shape_err(format!(
+                "{} values do not form whole rows of {cols} columns",
+                values.len()
+            )));
+        }
+        let end = axis
+            .span
+            .checked_mul(layout.num_v_heads)
+            .and_then(|body| axis.base.checked_add(body));
+        if end != Some(cols) {
+            return Err(shape_err(format!(
+                "{cols} columns do not fill {} + {} x {} V-head values",
+                axis.base, layout.num_v_heads, axis.span
+            )));
+        }
+        let rows = values.len() / cols;
+        for row in 0..rows {
+            restore_grouped_v_heads(values, row * cols + axis.base, axis.span, layout);
+        }
+        return Ok(());
     }
     let base = axis.base.checked_mul(cols);
     let span = axis.span.checked_mul(cols);
     let end = span
-        .and_then(|span| heads.checked_mul(span))
+        .and_then(|span| layout.num_v_heads.checked_mul(span))
         .and_then(|body| base.and_then(|base| base.checked_add(body)));
     let (Some(base), Some(span), Some(end)) = (base, span, end) else {
         return Err(shape_err("V-head shape arithmetic overflowed".to_string()));
     };
     if span == 0 || end != values.len() {
         return Err(shape_err(format!(
-            "{} values do not fill {base} + {heads} x {span}",
-            values.len()
+            "{} values do not fill {base} + {} x {span}",
+            values.len(),
+            layout.num_v_heads
         )));
     }
 
@@ -211,7 +255,7 @@ pub(crate) fn apply_source_convention(
             *v = (-*v).ln();
         }
     }
-    permute_v_heads(values, base, span, heads);
+    restore_grouped_v_heads(values, base, span, layout);
     Ok(())
 }
 
@@ -229,19 +273,20 @@ pub(crate) fn apply_source_convention_bytes(
     let Some(axis) = v_head_axis(name, canonical, arch)? else {
         return Ok(());
     };
-    let heads = even_v_heads(name, arch)?;
+    let layout = v_head_layout(name, arch)?;
     let shape_err = |detail: String| GgufRepackError::ShapeMismatch {
         tensor: name.to_string(),
         detail,
     };
     let along = if axis.columns { cols } else { rows };
-    let end = heads
+    let end = layout
+        .num_v_heads
         .checked_mul(axis.span)
         .and_then(|body| axis.base.checked_add(body));
     if axis.span == 0 || end != Some(along) {
         return Err(shape_err(format!(
-            "a {rows}x{cols} tensor's V axis does not fill {} + {heads} x {}",
-            axis.base, axis.span
+            "a {rows}x{cols} tensor's V axis does not fill {} + {} x {}",
+            axis.base, layout.num_v_heads, axis.span
         )));
     }
     if rows == 0 || bytes.len() % rows != 0 {
@@ -253,7 +298,7 @@ pub(crate) fn apply_source_convention_bytes(
     let row_bytes = bytes.len() / rows;
 
     if !axis.columns {
-        permute_v_heads(bytes, axis.base * row_bytes, axis.span * row_bytes, heads);
+        restore_grouped_v_heads(bytes, axis.base * row_bytes, axis.span * row_bytes, layout);
         return Ok(());
     }
     // **WHOLE BLOCKS, NOT MERELY WHOLE BYTES.** A byte-divisibility check is
@@ -272,11 +317,9 @@ pub(crate) fn apply_source_convention_bytes(
     // Ornith's converter put `ssm_out` at Q4_K. Same trap as Gotcha 37: a
     // check that is correct for exactly as long as one file exercises it.
     //
-    // REFUSED rather than shuffled in halves, which is what Gotcha 7 already
-    // says this case must do. The de-interleave maps output heads `2k` and
-    // `2k+1` from source heads `k` and `k + H/2`, so one output superblock
-    // draws on two DIFFERENT source superblocks -- there is no byte-level
-    // rearrangement that fixes it, only dequantizing and requantizing.
+    // REFUSED rather than shuffled by bytes when a block spans heads from
+    // different key-head groups. The inverse tile-to-grouped permutation
+    // would split the source block, so dequantizing is required.
     let block_elements = crate::gguf_header::ggml_type_block(ggml_type)
         .map(|(elements, _)| elements as usize)
         .unwrap_or(1);
@@ -298,12 +341,122 @@ pub(crate) fn apply_source_convention_bytes(
     let head_bytes = row_bytes * axis.span / cols;
     let base_bytes = row_bytes * axis.base / cols;
     for r in 0..rows {
-        permute_v_heads(
+        restore_grouped_v_heads(
             &mut bytes[r * row_bytes..(r + 1) * row_bytes],
             base_bytes,
             head_bytes,
-            heads,
+            layout,
         );
     }
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qwen4_out_projection_restores_three_v_heads_per_key_per_output_row() {
+        let mut arch = model_io::known_architecture(ModelFamily::Qwen4Exp);
+        arch.linear_attention.num_k_heads = 2;
+        arch.linear_attention.key_head_dim = 1;
+        arch.linear_attention.num_v_heads = 6;
+        arch.linear_attention.value_head_dim = 2;
+        let mut values = (0..24).map(|n| n as f32).collect::<Vec<_>>();
+
+        apply_source_convention(
+            "blk.0.ssm_out.weight",
+            "language_model.model.layers.0.linear_attn.out_proj.weight",
+            &arch,
+            12,
+            &mut values,
+        )
+        .expect("restore grouped V-head columns");
+
+        assert_eq!(
+            values,
+            vec![
+                0., 1., 4., 5., 8., 9., 2., 3., 6., 7., 10., 11., 12., 13., 16., 17., 20., 21.,
+                14., 15., 18., 19., 22., 23.
+            ]
+        );
+    }
+
+    #[test]
+    fn qwen_gdn_out_projection_preserves_the_two_to_one_v_head_order() {
+        let mut arch = model_io::known_architecture(ModelFamily::QwenGdnMoe);
+        arch.linear_attention.num_k_heads = 2;
+        arch.linear_attention.key_head_dim = 1;
+        arch.linear_attention.num_v_heads = 4;
+        arch.linear_attention.value_head_dim = 2;
+        let mut values = (0..16).map(|n| n as f32).collect::<Vec<_>>();
+
+        apply_source_convention(
+            "blk.0.ssm_out.weight",
+            "language_model.model.layers.0.linear_attn.out_proj.weight",
+            &arch,
+            8,
+            &mut values,
+        )
+        .expect("restore grouped V-head columns");
+
+        assert_eq!(
+            values,
+            vec![0., 1., 4., 5., 2., 3., 6., 7., 8., 9., 12., 13., 10., 11., 14., 15.]
+        );
+    }
+
+    #[test]
+    fn qwen4exp_qkv_projection_reorders_only_v_rows_by_key_head_group() {
+        let mut arch = model_io::known_architecture(ModelFamily::Qwen4Exp);
+        arch.linear_attention.num_k_heads = 2;
+        arch.linear_attention.key_head_dim = 1;
+        arch.linear_attention.num_v_heads = 6;
+        arch.linear_attention.value_head_dim = 2;
+        let mut values = (0..16).map(|n| n as f32).collect::<Vec<_>>();
+
+        apply_source_convention(
+            "blk.0.ssm_qkv.weight",
+            "language_model.model.layers.0.linear_attn.in_proj_qkv.weight",
+            &arch,
+            1,
+            &mut values,
+        )
+        .expect("restore grouped V rows");
+
+        assert_eq!(
+            values,
+            vec![0., 1., 2., 3., 4., 5., 8., 9., 12., 13., 6., 7., 10., 11., 14., 15.]
+        );
+    }
+
+    #[test]
+    fn qwen4exp_restores_grouped_a_log_and_inverts_the_ssm_a_encoding() {
+        let mut arch = model_io::known_architecture(ModelFamily::Qwen4Exp);
+        arch.linear_attention.num_k_heads = 2;
+        arch.linear_attention.key_head_dim = 1;
+        arch.linear_attention.num_v_heads = 6;
+        arch.linear_attention.value_head_dim = 2;
+        let mut values = [-1., -2., -3., -4., -5., -6.];
+
+        apply_source_convention(
+            "blk.0.ssm_a",
+            "language_model.model.layers.0.linear_attn.A_log",
+            &arch,
+            1,
+            &mut values,
+        )
+        .expect("recover grouped A_log");
+
+        let expected = [
+            1.0f32.ln(),
+            3.0f32.ln(),
+            5.0f32.ln(),
+            2.0f32.ln(),
+            4.0f32.ln(),
+            6.0f32.ln(),
+        ];
+        for (actual, expected) in values.into_iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+        }
+    }
 }

@@ -142,10 +142,13 @@ pub const DTYPE_GGUF_IQ1_M: u8 = 23;
 /// keeps its experts -- there are none, it is dense -- and every routed slot
 /// would be a new file's problem, on Q6_K's footing).
 pub const DTYPE_GGUF_Q3_K: u8 = 24;
+/// GGUF Q2_0 block dtype tag for routed phase 1 and phase 2. Qwen4Exp
+/// resident instances are converted to BF16; there is no resident reader.
+pub const DTYPE_GGUF_Q2_0: u8 = 25;
 
 /// Every GGUF block dtype tag, for consumers that need to reject the whole
 /// family in one check rather than enumerate it and drift.
-pub const GGUF_BLOCK_DTYPES: [u8; 16] = [
+pub const GGUF_BLOCK_DTYPES: [u8; 17] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -162,6 +165,7 @@ pub const GGUF_BLOCK_DTYPES: [u8; 16] = [
     DTYPE_GGUF_IQ2_S,
     DTYPE_GGUF_IQ1_M,
     DTYPE_GGUF_Q3_K,
+    DTYPE_GGUF_Q2_0,
 ];
 
 /// One named raw tensor (a norm vector, a scalar like `router.scale`):

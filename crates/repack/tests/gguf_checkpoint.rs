@@ -355,10 +355,10 @@ fn f32_bytes(values: &[f32]) -> Vec<u8> {
 }
 
 /// The Qwen sibling of [`minimal_gemma_gguf`], sized so the V-head
-/// de-interleave has something to say: 4 V heads (so the map is
-/// `0 -> 0, 1 -> 2, 2 -> 1, 3 -> 3`, not the identity and not a reversal),
-/// 1 K head, 32-wide heads, kernel 2. That makes `conv1d`'s channel run
-/// `[q 32 | k 32 | v 128]` and the value stream 128 wide.
+/// de-interleave has something to say: 4 V heads and 2 K heads (so the map
+/// is `0 -> 0, 1 -> 2, 2 -> 1, 3 -> 3`, not the identity and not a reversal),
+/// 32-wide heads, kernel 2. That makes `conv1d`'s channel run
+/// `[q 64 | k 64 | v 128]` and the value stream 128 wide.
 ///
 /// The 32-wide head is not arbitrary: it is exactly one Q8_0 block, which is
 /// what lets `out_proj`'s COLUMN permutation stay a byte move. The real model
@@ -377,7 +377,7 @@ fn minimal_qwen_gguf() -> GgufBuilder {
         .metadata_u32("qwen35moe.expert_feed_forward_length", 16)
         .metadata_u32("qwen35moe.full_attention_interval", 4)
         // The gated-DeltaNet dimensions, under the `ssm.` keys GGUF borrows.
-        .metadata_u32("qwen35moe.ssm.group_count", 1)
+        .metadata_u32("qwen35moe.ssm.group_count", 2)
         .metadata_u32("qwen35moe.ssm.time_step_rank", 4)
         .metadata_u32("qwen35moe.ssm.state_size", 32)
         .metadata_u32("qwen35moe.ssm.inner_size", 128)
@@ -386,8 +386,8 @@ fn minimal_qwen_gguf() -> GgufBuilder {
 }
 
 /// The V-head map the whole convention rests on, as this test reads it:
-/// GGUF head `h` holds what MLX head `MAP[h]` holds, so the walk writes
-/// source head `h` out at `MAP[h]`.
+/// GGUF head `h` holds what the runtime head `MAP[h]` holds, so the walk
+/// writes source head `h` out at `MAP[h]`.
 const V_HEAD_MAP: [usize; 4] = [0, 2, 1, 3];
 
 /// Qwen's gated-DeltaNet parameters arrive under llama.cpp's convention and
@@ -404,16 +404,16 @@ fn qwens_gated_deltanet_parameters_are_rewritten_into_the_mlx_convention() {
     let dt = [1.0f32, 2.0, 4.0, 8.0];
     // Channel `c` is filled with the value `c`, so a moved channel is
     // readable straight off the output.
-    let conv: Vec<f32> = (0..192).flat_map(|c| [c as f32, c as f32]).collect();
+    let conv: Vec<f32> = (0..256).flat_map(|c| [c as f32, c as f32]).collect();
 
     let (bytes, _) = minimal_qwen_gguf()
         .tensor("blk.0.ssm_a", GGML_F32, &[4], f32_bytes(&ssm_a))
         .tensor("blk.0.ssm_dt.bias", GGML_F32, &[4], f32_bytes(&dt))
-        // Dims are fastest-varying first, so this is logically [192, 2].
+        // Dims are fastest-varying first, so this is logically [256, 2].
         .tensor(
             "blk.0.ssm_conv1d.weight",
             GGML_F32,
-            &[2, 192],
+            &[2, 256],
             f32_bytes(&conv),
         )
         // The quantized siblings, carried VERBATIM and permuted as bytes.
@@ -461,18 +461,18 @@ fn qwens_gated_deltanet_parameters_are_rewritten_into_the_mlx_convention() {
         );
     }
 
-    // `conv1d` is the one with a stride: `[q 32 | k 32 | v 128]` channels of
+    // `conv1d` is the one with a stride: `[q 64 | k 64 | v 128]` channels of
     // 2 elements each. The q and k halves must NOT move, and the v half moves
     // a whole 32-channel head at a time.
     let conv_out = stored(&at("linear_attn.conv1d.weight"));
-    assert_eq!(conv_out.len(), 384);
-    for c in 0..64 {
+    assert_eq!(conv_out.len(), 512);
+    for c in 0..128 {
         assert_eq!(conv_out[c * 2], c as f32, "q/k channel {c} must not move");
     }
     for (h, &to) in V_HEAD_MAP.iter().enumerate() {
         for i in 0..32 {
-            let want = (64 + h * 32 + i) as f32;
-            let got = conv_out[(64 + to * 32 + i) * 2];
+            let want = (128 + h * 32 + i) as f32;
+            let got = conv_out[(128 + to * 32 + i) * 2];
             assert_eq!(got, want, "v head {h} element {i} belongs at head {to}");
         }
     }

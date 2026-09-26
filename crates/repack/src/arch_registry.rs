@@ -3,10 +3,10 @@
 //! it cannot run, what they would need (ROADMAP Phase M Stage 1).
 //!
 //! **This table does not decide what runs. It decides what the error says.**
-//! [`ArchSupport::Supported`] is the two families that have a baseline, a name
-//! mapping and a decode flow; everything else is [`ArchSupport::Planned`],
-//! which is recognition and nothing more. A caller that gets `Planned` must
-//! still refuse the checkpoint.
+//! [`ArchSupport::Supported`] has a baseline, GGUF name mapping and decode
+//! flow; everything else is [`ArchSupport::Planned`], which is recognition
+//! and nothing more. A caller that gets `Planned` must still refuse the
+//! checkpoint.
 //!
 //! **Planned architectures deliberately get NO [`ModelFamily`] variant.**
 //! `model_io::known_architecture` is an exhaustive match returning a real
@@ -37,7 +37,7 @@
 
 use model_io::ModelFamily;
 
-/// A recognized architecture that has no decode flow here.
+/// A recognized GGUF architecture without a complete ingest-and-run path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlannedArch {
     /// The missing work, in one clause, so the refusal names a next step
@@ -53,9 +53,9 @@ pub struct PlannedArch {
 /// What this port can do with an architecture string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchSupport {
-    /// Has a baseline, a name mapping and a decode flow.
+    /// Has a baseline, GGUF name mapping and a decode flow.
     Supported(ModelFamily),
-    /// Recognized only. Still a refusal at every call site.
+    /// Recognized only. Still a refusal at every GGUF call site.
     Planned(PlannedArch),
 }
 
@@ -90,6 +90,12 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // Gotcha 36). Shares the `llama` decode flow; see `ModelFamily::Qwen3Moe`
     // for the two places they differ.
     ("qwen3moe", ModelFamily::Qwen3Moe),
+    // Qwen3.8-Flash-Next's `qwen4exp` GGUFs share the existing Qwen4Exp
+    // baseline and decode flow. Q2_0 gate/up/down, the IQ2_S/IQ2_XXS/IQ1_M
+    // gate/up variants, and top-10 reduction are covered by Metal parity;
+    // the published payload still needs its real install and runtime gates
+    // (docs/QWEN4_EXP.md).
+    ("qwen4exp", ModelFamily::Qwen4Exp),
     // Promoted by ROADMAP M5 step 3 and FULLY supported since step 4: a
     // baseline, a name table, a metadata mapping and its own decode flow
     // (`crates/runtime/src/families/gptoss/`), with both real-model gates
@@ -339,7 +345,7 @@ pub fn describe_gguf_architecture(architecture: &str) -> String {
             format!("GGUF architecture {architecture:?} is {}", family.as_str())
         }
         Some(ArchSupport::Planned(planned)) => format!(
-            "GGUF architecture {architecture:?} is recognized but has no decode flow here; \
+            "GGUF architecture {architecture:?} is recognized but has no complete ingest-and-run path here; \
              it needs {}. Bring-up checklist: docs/NEW_MODEL.md",
             planned.needs
         ),

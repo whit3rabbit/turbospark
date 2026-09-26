@@ -107,6 +107,10 @@ pub fn ggml_type_block(id: u32) -> Option<(u64, u64)> {
         27 => (1, 8),   // I64
         28 => (1, 8),   // F64
         30 => (1, 2),   // BF16
+        // Q2_0: QK2_0 is 64 and block_q2_0 is 2-byte scale + 64/4 quants
+        // (18 bytes), from ggml/src/ggml-common.h at
+        // 84e76d8a23162eca70490da131945ebec1f09bf4.
+        42 => (64, 18), // Q2_0
         _ => return None,
     })
 }

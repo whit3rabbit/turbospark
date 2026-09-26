@@ -2,6 +2,7 @@
 
 mod conventions;
 mod manifest;
+mod ngram;
 mod plan;
 mod sizing;
 mod transcode;
@@ -9,6 +10,7 @@ pub use sizing::{minimax_gguf_sizing, MiniMaxSizing};
 mod types;
 
 pub use manifest::gguf_manifest_quant;
+pub use transcode::qwen4exp_tensor_is_transcoded;
 pub use types::{dtype_tag_for_ggml_type, GgufRepackError, GgufRepackOutput, FUSED_GATE_FIRST};
 
 use std::path::Path;
@@ -81,8 +83,7 @@ pub fn write_gguf_install_streamed(
     let (resident, lossy) = transcode::resident_entries(header, source, &arch, &plan.resident)?;
     for (name, count) in &lossy {
         progress(&format!(
-            "WARNING {name}: {count} F32 values lost bits narrowing to BF16 \
-             (this converter did not upcast from BF16)"
+            "WARNING {name}: {count} values lost precision converting to BF16"
         ));
     }
     // `resident` is kept alive (not built into a `Vec<u8>` here) so
@@ -93,6 +94,14 @@ pub fn write_gguf_install_streamed(
         "{} resident tensors ready to stream to disk",
         resident.len()
     ));
+
+    if let Some(tensor) = plan.ngram {
+        ngram::write_gguf_ngram_table(dir, header, source, &arch, tensor, &mut progress)?;
+    } else if arch.family == ModelFamily::Qwen4Exp && arch.ple.ngram_size > 0 {
+        return Err(GgufRepackError::MissingTensor {
+            name: "per_layer_token_embd.weight".to_string(),
+        });
+    }
 
     if plan.routed.is_empty() {
         // A DENSE INSTALL STILL NEEDS ITS QUANT BLOCK (ROADMAP M4), which is
