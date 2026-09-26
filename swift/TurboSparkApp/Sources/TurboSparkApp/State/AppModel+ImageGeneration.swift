@@ -184,7 +184,12 @@ extension AppModel {
             do {
                 try Task.checkCancellation()
                 if self.imageSession == nil || self.imageSessionPath != modelPath {
-                    self.imageSession = try await TurboSparkImageSession(modelPath: modelPath)
+                    if let selected = self.selectedImageModel,
+                       selected.modelID.hasPrefix("andrevp/") {
+                        self.imageSession = MLXImageGenerationSession(model: selected)
+                    } else {
+                        self.imageSession = try await TurboSparkImageSession(modelPath: modelPath)
+                    }
                     self.imageSessionPath = modelPath
                 }
                 guard let session = self.imageSession else {

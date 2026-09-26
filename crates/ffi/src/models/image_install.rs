@@ -28,6 +28,8 @@ struct ImageInstalledRow {
     #[serde(rename = "schedulerSteps")]
     scheduler_steps: u32,
     quantization: String,
+    #[serde(rename = "sourcePath")]
+    source_path: Option<PathBuf>,
 }
 
 pub(crate) fn catalog_json() -> Result<String, String> {
@@ -92,7 +94,17 @@ pub(crate) fn install(
         },
         |stage| on_stage(stage),
     )?;
-    let _ = std::fs::remove_dir_all(&source);
+    // The Swift MLX runtime consumes the original safetensors tree. Keep it
+    // beside the packed install so MLX-backed models do not download a second
+    // copy into the Hugging Face cache. The packed install remains available
+    // to the native runtime as a fallback.
+    let mlx_source_path = if entry.model_id.starts_with("andrevp/") {
+        let _ = std::fs::remove_dir_all(source.join(".download-cache"));
+        source.canonicalize().ok()
+    } else {
+        let _ = std::fs::remove_dir_all(&source);
+        None
+    };
     let manifest = image::ImageManifest::load(&report.output_root)?;
     manifest.validate()?;
     let path = report
@@ -108,6 +120,7 @@ pub(crate) fn install(
         height: manifest.supported.height,
         scheduler_steps: manifest.supported.scheduler_steps,
         quantization: image::image_quantization_label(&manifest)?,
+        source_path: mlx_source_path,
     })
     .map_err(|e| e.to_string())
 }

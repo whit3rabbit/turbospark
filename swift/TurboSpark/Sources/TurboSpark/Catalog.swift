@@ -114,6 +114,9 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
     public let height: UInt32
     public let schedulerSteps: UInt32
     public let quantization: String
+    /// Original Diffusers-style source retained for the MLX runtime adapter.
+    /// Older packed installs do not carry this field and use the Hub cache.
+    public let sourcePath: String?
 
     public init(
         alias: String,
@@ -123,7 +126,8 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         width: UInt32,
         height: UInt32,
         schedulerSteps: UInt32,
-        quantization: String = "unknown"
+        quantization: String = "unknown",
+        sourcePath: String? = nil
     ) {
         self.alias = alias
         self.modelID = modelID
@@ -133,10 +137,11 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         self.height = height
         self.schedulerSteps = schedulerSteps
         self.quantization = quantization
+        self.sourcePath = sourcePath
     }
 
     private enum CodingKeys: String, CodingKey {
-        case alias, modelID, revision, path, width, height, schedulerSteps, quantization
+        case alias, modelID, revision, path, width, height, schedulerSteps, quantization, sourcePath
     }
 
     public init(from decoder: Decoder) throws {
@@ -149,6 +154,7 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         self.height = try values.decode(UInt32.self, forKey: .height)
         self.schedulerSteps = try values.decode(UInt32.self, forKey: .schedulerSteps)
         self.quantization = try values.decodeIfPresent(String.self, forKey: .quantization) ?? "unknown"
+        self.sourcePath = try values.decodeIfPresent(String.self, forKey: .sourcePath)
     }
 }
 

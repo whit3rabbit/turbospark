@@ -31,6 +31,22 @@ public struct GeneratedImageSchedulerMetadata: Decodable, Sendable, Equatable {
     public let sigmas: [Float]
     public let evaluationCount: UInt32
     public let guidancePolicy: String
+
+    public init(
+        numTrainTimesteps: Float,
+        shift: Float,
+        timesteps: [Float],
+        sigmas: [Float],
+        evaluationCount: UInt32,
+        guidancePolicy: String
+    ) {
+        self.numTrainTimesteps = numTrainTimesteps
+        self.shift = shift
+        self.timesteps = timesteps
+        self.sigmas = sigmas
+        self.evaluationCount = evaluationCount
+        self.guidancePolicy = guidancePolicy
+    }
 }
 
 public struct GeneratedImageMetadata: Decodable, Sendable, Equatable {
@@ -49,6 +65,40 @@ public struct GeneratedImageMetadata: Decodable, Sendable, Equatable {
     public let scheduler: GeneratedImageSchedulerMetadata
     public let noiseProvenance: String
     public let engineRevision: String
+
+    public init(
+        prompt: String,
+        seed: UInt64,
+        width: UInt32,
+        height: UInt32,
+        batch: UInt32,
+        schedulerSteps: UInt32,
+        transformerForwards: UInt32,
+        guidanceScale: Float,
+        modelID: String,
+        modelRevision: String,
+        componentRevisions: [String: String],
+        quantization: String,
+        scheduler: GeneratedImageSchedulerMetadata,
+        noiseProvenance: String,
+        engineRevision: String
+    ) {
+        self.prompt = prompt
+        self.seed = seed
+        self.width = width
+        self.height = height
+        self.batch = batch
+        self.schedulerSteps = schedulerSteps
+        self.transformerForwards = transformerForwards
+        self.guidanceScale = guidanceScale
+        self.modelID = modelID
+        self.modelRevision = modelRevision
+        self.componentRevisions = componentRevisions
+        self.quantization = quantization
+        self.scheduler = scheduler
+        self.noiseProvenance = noiseProvenance
+        self.engineRevision = engineRevision
+    }
 }
 
 public struct ImageGenerationResult: Sendable, Equatable {

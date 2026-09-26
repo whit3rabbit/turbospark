@@ -105,7 +105,7 @@ public final class AppModel: ObservableObject {
     /// restores an interrupted generation as completed; saved PNGs and chat
     /// artifacts are the durable record.
     @Published public var imageJob: AppImageJob?
-    var imageSession: TurboSparkImageSession?
+    var imageSession: any ImageGenerationSession?
     var imageSessionPath: String?
     var imageGenerationTask: Task<Void, Never>?
     var imageInstallTask: Task<Void, Never>?

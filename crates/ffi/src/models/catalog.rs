@@ -16,6 +16,8 @@ struct ImageInstalledRow {
     #[serde(rename = "schedulerSteps")]
     scheduler_steps: u32,
     quantization: String,
+    #[serde(rename = "sourcePath")]
+    source_path: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -75,6 +77,10 @@ pub(crate) fn delete_image(identifier: &str) -> Result<(), String> {
         .chain(image_installed_rows(&legacy))
         .collect();
     let row = image_row_for_delete(rows, identifier)?;
+    if let Some(source_path) = row.source_path.as_ref().filter(|path| path.exists()) {
+        std::fs::remove_dir_all(source_path)
+            .map_err(|e| format!("failed to remove {}: {e}", source_path.display()))?;
+    }
     if row.path.exists() {
         std::fs::remove_dir_all(&row.path)
             .map_err(|e| format!("failed to remove {}: {e}", row.path.display()))?;
@@ -128,6 +134,13 @@ fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
             let source = manifest.source.as_object()?;
             let model_id = source.get("model_id")?.as_str()?.to_string();
             let revision = source.get("model_revision")?.as_str()?.to_string();
+            let source_path = if model_id.starts_with("andrevp/") {
+                path.parent()
+                    .map(|parent| parent.join(format!(".{alias}.{revision}.image-source")))
+                    .filter(|source| source.is_dir())
+            } else {
+                None
+            };
             Some(ImageInstalledRow {
                 alias: alias.to_string(),
                 model_id,
@@ -137,6 +150,7 @@ fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
                 height: manifest.supported.height,
                 scheduler_steps: manifest.supported.scheduler_steps,
                 quantization: image::image_quantization_label(&manifest).ok()?,
+                source_path,
             })
         })
         .collect()
@@ -214,6 +228,7 @@ mod tests {
             height: 1024,
             scheduler_steps: 9,
             quantization: "test".to_string(),
+            source_path: None,
         }
     }
 
