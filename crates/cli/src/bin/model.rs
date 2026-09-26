@@ -91,6 +91,9 @@ OPTIONS:
 ENVIRONMENT:
     TURBOSPARK_HOME             the store root (default ~/.turbospark)
     HF_TOKEN                    for gated repositories
+    TURBOSPARK_DISABLE_DOWNLOAD_CACHE=1
+                                reduce peak disk use for pinned model pulls;
+                                interrupted downloads must fetch ranges again
 
 NOTE: an install streams multi-GB weights and CANNOT RESUME. A failure
 restarts the walk from the beginning.

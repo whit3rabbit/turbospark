@@ -110,14 +110,12 @@ pub fn run_oracle_with_budget(
 /// [`run_oracle_with_budget`] over a CHOSEN subset of the protocol cases,
 /// rather than always all three.
 ///
-/// `qwen4_exp` is why this exists: its window is capped at 2,048
-/// (`real_model_params::QWEN4_EXP_MAX_CONTEXT`, the checkpoint's own
-/// `compressed_attention.index_budget`, not a chosen number), and
-/// `long-synthesis` alone tokenizes to 2,940 under this family's vocab --
-/// over the window before a single generated token is added. There is no
-/// context at which that case can run on this family today, so an oracle
-/// that iterates `PROTOCOL_CASES` unconditionally cannot be written for it;
-/// this is the same body with the CASE LIST also a parameter. Every other
+/// `qwen4_exp` is why this exists: its frozen oracle row uses a 2,048-token
+/// context, matching the family's original index budget, and
+/// `long-synthesis` tokenizes to 2,940 under this family's vocab. QSA now
+/// supports larger contexts, but including that case requires a separately
+/// frozen higher-context row because context changes KV and peak footprint.
+/// This is the same body with the CASE LIST also a parameter. Every other
 /// family's oracle is unaffected: `run_oracle_with_budget` still runs all
 /// three by construction, not by a caller remembering to pass them.
 ///

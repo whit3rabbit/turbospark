@@ -41,6 +41,18 @@ pub(crate) fn immutable_download_cache(dir: &Path, repo: &RepoRef) -> Option<Pat
         .then(|| dir.join(".download-cache"))
 }
 
+fn download_cache_for_install(dir: &Path, repo: &RepoRef, disabled: bool) -> Option<PathBuf> {
+    if disabled {
+        None
+    } else {
+        immutable_download_cache(dir, repo)
+    }
+}
+
+fn download_cache_disabled() -> bool {
+    std::env::var("TURBOSPARK_DISABLE_DOWNLOAD_CACHE").as_deref() == Ok("1")
+}
+
 /// Step-boundary cancel check for the whole-file GETs (`config.json`, a
 /// shard index) that bypass `HttpRangeSource` and so cannot see the flag
 /// mid-download. Those files are KB-scale, so a boundary check is the
@@ -64,7 +76,12 @@ pub(crate) fn stream_gguf(
         .file
         .as_deref()
         .ok_or_else(|| "a gguf install needs a filename".to_string())?;
-    let cache = immutable_download_cache(dir, &plan.weights);
+    let cache = download_cache_for_install(dir, &plan.weights, download_cache_disabled());
+    if download_cache_disabled() {
+        progress(
+            "persistent range cache disabled; an interrupted download will fetch the source again",
+        );
+    }
     let source = crate::gguf_source::load(
         client,
         &plan.weights,
@@ -121,7 +138,7 @@ pub(crate) fn stream_mlx(
     byte_progress: Option<&ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
 ) -> Result<ArchConfig, String> {
-    let cache = immutable_download_cache(dir, &plan.weights);
+    let cache = download_cache_for_install(dir, &plan.weights, download_cache_disabled());
     check_cancelled(cancel)?;
     let config_text = String::from_utf8(client.get(&plan.weights.file_url("config.json"))?)
         .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
@@ -759,7 +776,7 @@ pub(crate) fn stream_vision_sidecar(
     byte_progress: Option<&ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
 ) -> Result<VisionConfig, String> {
-    let cache = immutable_download_cache(out_dir, weights);
+    let cache = download_cache_for_install(out_dir, weights, download_cache_disabled());
     check_cancelled(cancel)?;
     let config_text = String::from_utf8(client.get(&weights.file_url("config.json"))?)
         .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
@@ -934,8 +951,9 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        enable_bytes_detected_vision, enable_requested_vision, immutable_download_cache,
-        retain_complete_shard_set, shard_names_for_prefixes, write_vision_preprocessor,
+        download_cache_for_install, enable_bytes_detected_vision, enable_requested_vision,
+        immutable_download_cache, retain_complete_shard_set, shard_names_for_prefixes,
+        write_vision_preprocessor,
     };
     use crate::{Catalog, InstallPlan};
     use model_io::ModelFamily;
@@ -1010,6 +1028,18 @@ mod tests {
         );
         let floating = crate::hf::RepoRef::new("example/model", "main");
         assert_eq!(immutable_download_cache(root, &floating), None);
+    }
+
+    #[test]
+    fn disk_constrained_install_can_skip_the_persistent_range_cache() {
+        let root = std::path::Path::new("/tmp/install");
+        let pinned =
+            crate::hf::RepoRef::new("example/model", "0123456789abcdef0123456789abcdef01234567");
+        assert_eq!(
+            download_cache_for_install(root, &pinned, false),
+            Some(root.join(".download-cache"))
+        );
+        assert_eq!(download_cache_for_install(root, &pinned, true), None);
     }
 
     #[test]

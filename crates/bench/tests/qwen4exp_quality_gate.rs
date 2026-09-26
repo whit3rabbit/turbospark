@@ -30,15 +30,13 @@
 //! processes below, and the gate's own two-generations-per-process arm
 //! (arm 3) now passes.
 //!
-//! **RUNS AT 2,048 CONTEXT, NOT THE SHARED 4,096.** `RealForwardRunner::open`
-//! refuses a context above this family's own `compressed_attention.index_budget`
-//! (2,048 on this checkpoint) rather than degrading quietly, so the plain
-//! `run_quality_gate` entry point (which opens at the shared
-//! `PROTOCOL_MAX_CONTEXT`) cannot open this install at all. The gate's own
-//! corpus -- this family's `short-explanation` prompt (62 tokens) plus the
-//! reference answer (512 tokens) -- is 574 tokens, comfortably inside 2,048,
-//! so the window only needs to be legal at open, not as large as the shared
-//! one; see `quality_common::run_quality_gate_with_assistant_prefix_and_context`.
+//! **RUNS AT 2,048 CONTEXT, NOT THE SHARED 4,096.** This is the context of
+//! the frozen quality row, not a current runtime limit: QSA supports larger
+//! windows, and `qwen4exp_qsa_probe` checks its above-budget path on a real
+//! install. Keep this regression sentinel at 2,048 so its values remain
+//! comparable with their recorded baseline. The gate's own corpus -- the
+//! `short-explanation` prompt (62 tokens) plus the reference answer (512
+//! tokens) -- fits comfortably within that window.
 //!
 //! **NO CONSTRAINED-WORKING-SET ARM.** This checkpoint routes top-10 of 288
 //! experts, and `PRESSURE_EXPERT_CACHE_SLOTS` (8) is below `top_k`: a cache

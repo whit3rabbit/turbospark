@@ -56,6 +56,13 @@ TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
   cargo test -p turbospark-bench --test qwen3moe_quality_gate --release -- --ignored --nocapture
 
+# Qwen4Exp has separate rows for REAP-288 and the Swift GSQ-RCO IQ2_XS GGUF.
+# Never point one artifact at the other one's frozen digests or resource row.
+TURBOSPARK_QWEN4EXP_INSTALL_DIR=~/models/qwen4-reap288.gturbo \
+  cargo test -p turbospark-bench --test qwen4exp_quality_gate --release -- --ignored --nocapture
+TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR=~/models/qwen4exp-swift-iq2-xs.gturbo \
+  cargo test -p turbospark-bench --test qwen4exp_swift_quality_gate --release -- --ignored --nocapture
+
 # Proof that the gate above can SEE quantization damage, rather than just
 # asserting it could. Clones the install (APFS clonefile, so the original
 # is untouched and only written pages cost disk), shifts one quantization
@@ -78,6 +85,16 @@ TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
 # just does not land inside the band the README quotes.
 TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
   cargo test -p turbospark-bench --test qwen3moe_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_QWEN4EXP_INSTALL_DIR=~/models/qwen4-reap288.gturbo \
+  cargo test -p turbospark-bench --test qwen4exp_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR=~/models/qwen4exp-swift-iq2-xs.gturbo \
+  cargo test -p turbospark-bench --test qwen4exp_swift_memory_oracle --release -- --ignored --nocapture
+
+# The QSA probe compares the sparse and force-dense arms above the 2,048-token
+# index budget on a real 4,096-token context. Two long prefill passes take
+# several minutes.
+TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR=~/models/qwen4exp-swift-iq2-xs.gturbo \
+  cargo test -p turbospark-bench --test qwen4exp_qsa_probe --release -- --ignored --nocapture
 
 # The dense family's oracle (ROADMAP M4). RUNS AT 8,192 CONTEXT where the
 # other three run at 4,096, and that is not a knob: the protocol freezes the

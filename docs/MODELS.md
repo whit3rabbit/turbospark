@@ -313,6 +313,12 @@ tests do it:
 4. Read the install back through `model_io`'s real loaders.
 5. Record it in `installed.json`.
 
+Pinned downloads keep completed HTTP ranges in `.download-cache` until the
+install verifies, so an interrupted walk can reuse the source bytes. The
+cache and final install coexist during the write. On a disk-constrained host,
+set `TURBOSPARK_DISABLE_DOWNLOAD_CACHE=1` to stream without retaining that
+second copy; an interrupted install then fetches the ranges again.
+
 Step 2 comes before step 3 because `Qwen3.8-27B`'s bring-up failed on a 404
 for `merges.txt` **after** a 20-minute stream had written a perfectly good
 install (AGENTS.md Gotcha 47). By the time a byte of weight data moves, the

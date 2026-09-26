@@ -6,6 +6,27 @@ failures, and the evidence that closed them. Read it before changing
 `families/qwen4/` or the safetensors write path. Read the Phase 0 page first
 when the question is about checkpoint shape rather than runtime behavior.
 
+## Current support state (2026-09-26)
+
+Qwen4Exp is an existing family. The catalog now verifies its REAP-288 MLX
+checkpoint and the pinned Swift-1.5 IQ2_XS GGUF as separate artifacts. The
+new entry is `qwen4exp-swift-iq2-xs`; its quality and resource rows belong to
+that GGUF only.
+
+| Artifact | Support state | Boundary |
+| --- | --- | --- |
+| Qwen3.8-Flash-Next REAP-288, MLX INT4 | verified | existing Qwen4Exp quality and memory baselines |
+| Swift-1.5 Qwen3.8-Flash-Next GSQ-RCO, GGUF IQ2_XS | verified | text-only, pinned GGUF and sidecars, context gates at 2,048 plus QSA probe at 4,096 |
+| Swift GGUF Q2_0 | excluded | upstream labels it experimental; the exact install fails this port's generation checks |
+| Swift GGUF IQ3_XXS | untested | no install or runtime evidence |
+
+The separate 0.91 GB BF16 vision projector is not part of the text install.
+The IQ2_XS quality result is this port's own regression sentinel, not a
+Swift-engine parity or factual-accuracy claim. The early activation
+investigation used [SlotStream](https://github.com/carloslfu/slotstream) as
+its debugging reference; the detailed comparison and resulting fixes are
+recorded below.
+
 ## Evidence map
 
 | Date | Landed | Commit(s) |
@@ -754,13 +775,65 @@ different seed on the second turn produced different text and failed the
 content equality assertion as expected. This checks same-process seeded
 repeatability; it is not a frozen cross-session or cross-process baseline.
 
-IQ2_XS now runs through the public CLI and completes these prompts. Remaining
-gates are broader Swift-specific quality coverage, a cross-session or
-cross-process determinism baseline, repeated resource measurements before
-freezing a row, a post-fix Q2_0 generation check, and any IQ3_XXS integration.
-The router near-tie drift in layers 23 and 28 remains a cross-engine numerical
-difference; the direct logits do not point to a faulty sort. No Swift catalog
-entry is added by this smoke evidence.
+At this FFI checkpoint, still open were broader Swift-specific quality
+coverage, repeated resource measurements, post-fix Q2_0 generation, and any
+IQ3_XXS integration. The Swift IQ2_XS closeout below freezes its quality and
+memory rows and adds the pinned artifact to the catalog. Q2_0 remains
+excluded and IQ3_XXS remains untested. The router near-tie drift in layers 23
+and 28 remains a cross-engine numerical difference; the direct logits do not
+point to a faulty sort.
+
+### Swift IQ2_XS support closeout (2026-09-26)
+
+The catalog alias is `qwen4exp-swift-iq2-xs`, pinned to
+`ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF` revision
+`b22d729eae29b5796f76fb70f91aef549b9fc52c`. Its GGUF sidecars are pinned to
+`ukisai/Swift-Qwen3.8-Flash-Next` revision
+`0bd4fe22431372cdad1979267d3ab45aa7e6150a`. The actual network install
+test passed manifest loading and SHA-256 checks for all installed model
+files. This run set `TURBOSPARK_QWEN4EXP_DISABLE_SOURCE_CACHE=1`, so it kept
+one model copy on disk. It omitted Rust's `--exact` filter, which also
+selected the local-shard sibling and made the aggregate command fail because
+`TURBOSPARK_QWEN4EXP_IQ2_XS_SHARD_DIR` was unset. The documented command now
+uses `--exact`, and the local-shard test has a distinct name to prevent the
+same substring collision. Both install-test paths now fetch all six pinned
+sidecars; the intended network-install test itself passed.
+
+The earlier pinned local-shard fidelity comparison matched 35,454,976,000
+routed-expert bytes and all 320,001,536 PLE rows to the source IQ2_XS shards.
+The fresh network install contains all six tokenizer and chat sidecars from
+the pinned base revision. Two small files, `vocab.json` and `merges.txt`, were
+fetched after the already-running test binary finished because that binary
+predated the test source's sidecar-list update. The local-shard path now uses
+the same six-file sidecar list.
+
+The Swift-specific quality gate runs at 2,048 context and 16 expert slots.
+Two independent release processes on AC both measured reference-answer
+perplexity 4.5957 and identical greedy and sampled digests. The frozen third
+pass passed against those goldens. These digests are regression sentinels for
+this artifact, not a comparison to the REAP-288 row or to Swift.
+
+The Swift-specific memory oracle also runs the first two protocol cases at
+2,048 context and 16 slots. Two AC calibration readings had session peaks of
+1,633.8 and 1,633.7 MiB. Short-explanation decoded 484 tokens at 12.682 and
+12.666 tok/s; medium-review decoded 601 at 12.367 and 12.243 tok/s. Both
+stopped at `endOfTurn`; replay growth was +0.23 and +0.03 MiB. The frozen
+assertion pass peaked at 1,472 MiB and passed a 2,000 MiB ceiling and 8.9
+tok/s floor. `docs/BENCHMARKS.md` records the observed range and the
+artifact-specific margin.
+
+The real 4,096-context QSA probe teacher-forced the 2,940-token
+`long-synthesis` prompt. Sampled positions through 2,050 were bitwise
+identical between forced-dense and sparse attention. Above the selection
+point at 2,051, all 21 sampled argmaxes agreed; KL(sparse || dense) averaged
+0.00111 nats, with a 0.00939 maximum. This confirms the sparse path changes
+selection above budget without changing the below-budget path. It is an
+internal kernel comparison, not upstream parity evidence.
+
+The previous public-CLI smoke completed a coherent 462-token response, and
+the Swift FFI suite passed 9 tests with 6 environment-dependent skips. The
+catalog status is now `verified` for IQ2_XS only. Q2_0 and IQ3_XXS remain
+outside the supported catalog entry.
 
 ## The memory oracle: this family's first frozen row (2026-09-04)
 

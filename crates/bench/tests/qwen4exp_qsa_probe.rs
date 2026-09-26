@@ -1,10 +1,8 @@
 //! `qwen4_exp` QSA above the indexer budget: the sparse arm against the
 //! force-dense diagnostic arm, on the real install.
 //!
-//! No reference engine for this 125B checkpoint fits this machine (a 4-bit
-//! MLX copy is ~65 GB against 36 GB), so a cross-engine KL is not available
-//! and this probe is the ONE quantitative instrument the sparse path has on
-//! a real model. It teacher-forces the protocol's `long-synthesis` prompt
+//! This is an internal implementation comparison, not an upstream quality
+//! score. It teacher-forces the protocol's `long-synthesis` prompt
 //! (~2,940 tokens under this vocab, past the 2,051-token point where block
 //! selection starts dropping blocks) twice through one open runner: once
 //! with `set_qsa_force_dense(true)` (every block attended, the dense kernel
@@ -23,7 +21,7 @@
 //!
 //! Two sequential passes over ~2,940 tokens: several minutes.
 //!
-//!   TURBOSPARK_QWEN4EXP_INSTALL_DIR=~/.turbospark/models/qwen4-reap288.gturbo \
+//!   TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR=/tmp/qwen4exp-swift-iq2-xs.gturbo \
 //!     cargo test -p turbospark-bench --test qwen4exp_qsa_probe --release -- --ignored --nocapture
 
 #![cfg(target_os = "macos")]
@@ -37,7 +35,9 @@ use turbospark_bench::real_model::open_model_runner_with_context;
 const MAX_CONTEXT: u32 = 4096;
 
 fn install_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("TURBOSPARK_QWEN4EXP_INSTALL_DIR").map(std::path::PathBuf::from)
+    std::env::var_os("TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR")
+        .or_else(|| std::env::var_os("TURBOSPARK_QWEN4EXP_INSTALL_DIR"))
+        .map(std::path::PathBuf::from)
 }
 
 /// `log softmax` in f64, max-subtracted, over the whole vocab.
@@ -96,7 +96,7 @@ fn teacher_force(
 }
 
 #[test]
-#[ignore = "needs a real Qwen3.8-Flash-Next-REAP-288 install via TURBOSPARK_QWEN4EXP_INSTALL_DIR"]
+#[ignore = "needs a real Qwen4Exp install via TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR"]
 fn sparse_qsa_against_forced_dense_past_the_budget() {
     let Some(dir) = install_dir() else {
         eprintln!("qwen4exp_qsa_probe: TURBOSPARK_QWEN4EXP_INSTALL_DIR is not set; skipping");

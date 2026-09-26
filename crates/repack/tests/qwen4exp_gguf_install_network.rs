@@ -4,13 +4,19 @@
 //! install is retained so runtime and resource gates can use these exact
 //! bytes.
 //!
+//! The install target caches source ranges beside the output by default, so
+//! interrupted runs can reuse completed downloads. Set
+//! `TURBOSPARK_QWEN4EXP_DISABLE_SOURCE_CACHE=1` on disk-constrained hosts to
+//! stream directly into the install; an interrupted run then starts over.
+//!
 //! ```sh
 //! TURBOSPARK_QWEN4EXP_GGUF_INSTALL_DIR=/tmp/qwen4exp-swift-q2-0.gturbo \
 //!   cargo test -p turbospark-repack --test qwen4exp_gguf_install_network \
 //!   --release -- --ignored --nocapture
+//! TURBOSPARK_QWEN4EXP_DISABLE_SOURCE_CACHE=1 \
 //! TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR=/tmp/qwen4exp-swift-iq2-xs.gturbo \
 //!   cargo test -p turbospark-repack --test qwen4exp_gguf_install_network \
-//!   installs_the_real_swift_qwen38_iq2_xs_gguf --release -- --ignored --nocapture
+//!   installs_the_real_swift_qwen38_iq2_xs_gguf --release -- --ignored --nocapture --exact
 //! ```
 
 use std::fs::File;
@@ -253,7 +259,7 @@ fn install_dir(env_var: &str, tier: &str) -> PathBuf {
     dir
 }
 
-fn source(url: String, cache_dir: &Path, total_bytes: &Arc<AtomicU64>) -> HttpRangeSource {
+fn source(url: String, cache_dir: Option<&Path>, total_bytes: &Arc<AtomicU64>) -> HttpRangeSource {
     let total_bytes = Arc::clone(total_bytes);
     let on_bytes: ByteProgressCallback = Arc::new(move |bytes| {
         let previous = total_bytes.fetch_add(bytes, Ordering::Relaxed);
@@ -262,7 +268,11 @@ fn source(url: String, cache_dir: &Path, total_bytes: &Arc<AtomicU64>) -> HttpRa
             eprintln!("source ranges downloaded: {} GiB", total / (1 << 30));
         }
     });
-    HttpRangeSource::with_progress(url, on_bytes).with_cache_dir(cache_dir)
+    let source = HttpRangeSource::with_progress(url, on_bytes);
+    match cache_dir {
+        Some(cache_dir) => source.with_cache_dir(cache_dir),
+        None => source,
+    }
 }
 
 fn get(url: &str) -> Vec<u8> {
@@ -283,14 +293,21 @@ fn get(url: &str) -> Vec<u8> {
 
 fn install_tier(tier: &str, install_env: &str, shards: &[(&str, u64)]) {
     let dir = install_dir(install_env, tier);
-    let cache_dir = dir.with_extension("source-cache");
-    std::fs::create_dir_all(&cache_dir).expect("create source range cache");
+    let cache_dir =
+        if std::env::var("TURBOSPARK_QWEN4EXP_DISABLE_SOURCE_CACHE").as_deref() == Ok("1") {
+            None
+        } else {
+            Some(dir.with_extension("source-cache"))
+        };
+    if let Some(cache_dir) = &cache_dir {
+        std::fs::create_dir_all(cache_dir).expect("create source range cache");
+    }
     let downloaded_bytes = Arc::new(AtomicU64::new(0));
     let shard_sources = shards
         .iter()
         .map(|(name, bytes)| {
             let url = format!("{REPO_BASE}/resolve/{REVISION}/{name}");
-            let source = source(url, &cache_dir, &downloaded_bytes);
+            let source = source(url, cache_dir.as_deref(), &downloaded_bytes);
             let header = fetch_gguf_header(&source).expect("fetch shard header");
             (header, source, *bytes)
         })
@@ -300,7 +317,10 @@ fn install_tier(tier: &str, install_env: &str, shards: &[(&str, u64)]) {
     assert_eq!(source.header.tensors.len(), 1_224);
 
     eprintln!("installing {MODEL_ID} at {}", dir.display());
-    eprintln!("source range cache: {}", cache_dir.display());
+    match &cache_dir {
+        Some(cache_dir) => eprintln!("source range cache: {}", cache_dir.display()),
+        None => eprintln!("source range cache: disabled"),
+    }
     let arch = write_gguf_install_streamed(&dir, &source.header, &source, MODEL_ID, |stage| {
         eprintln!("[repack] {stage}");
     })
@@ -315,6 +335,8 @@ fn install_tier(tier: &str, install_env: &str, shards: &[(&str, u64)]) {
         "tokenizer_config.json",
         "chat_template.jinja",
         "generation_config.json",
+        "vocab.json",
+        "merges.txt",
     ] {
         let url = format!("{BASE_MODEL}/resolve/{BASE_REVISION}/{name}");
         std::fs::write(dir.join(name), get(&url)).expect("write tokenizer sidecar");
@@ -368,6 +390,8 @@ fn install_tier_from_local_shards(
         "tokenizer_config.json",
         "chat_template.jinja",
         "generation_config.json",
+        "vocab.json",
+        "merges.txt",
     ] {
         let url = format!("{BASE_MODEL}/resolve/{BASE_REVISION}/{name}");
         std::fs::write(dir.join(name), get(&url)).expect("write tokenizer sidecar");
@@ -434,7 +458,7 @@ fn pinned_swift_ggufs_match_hf_tokenizer_sidecars() {
     for (tier, shards) in [("Q2_0", &Q2_0_SHARDS), ("IQ2_XS", &IQ2_XS_SHARDS)] {
         let (name, _) = shards[0];
         let url = format!("{REPO_BASE}/resolve/{REVISION}/{name}");
-        let source = source(url, &cache_dir, &downloaded_bytes);
+        let source = source(url, Some(&cache_dir), &downloaded_bytes);
         let header = fetch_gguf_header(&source).expect("fetch pinned shard header");
         let gguf_tokens = header
             .metadata
@@ -485,7 +509,7 @@ fn installs_the_real_swift_qwen38_iq2_xs_gguf() {
 
 #[test]
 #[ignore = "needs the pinned IQ2_XS GGUF shards already assembled locally"]
-fn installs_the_real_swift_qwen38_iq2_xs_gguf_from_local_shards() {
+fn installs_swift_qwen38_iq2_xs_gguf_from_local_shards() {
     install_tier_from_local_shards(
         "iq2-xs",
         "TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR",

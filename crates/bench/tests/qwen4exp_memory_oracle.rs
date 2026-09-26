@@ -17,18 +17,14 @@
 //! (`docs/QWEN4_EXP.md`).
 //!
 //! **THIS ROW COVERS TWO OF THE THREE PROTOCOL CASES, NOT ALL THREE, AND ITS
-//! NUMBERS ARE NOT COMPARABLE TO ANY OTHER FAMILY'S.** `qwen4_exp`'s window is
-//! capped at 2,048 -- the checkpoint's own `compressed_attention.index_budget`,
-//! not a chosen number (`real_model_params::protocol_parameters`'s own
-//! comment): above it this port would compute dense attention where the
-//! reference was trained with a query-sparse indexer this port has not
-//! implemented, so `RealForwardRunner::open` refuses rather than being quietly
-//! wrong. `long-synthesis` alone tokenizes to 2,940 under this family's
-//! 248,320-entry ChatML vocab -- OVER the window before a single generated
-//! token is added -- so there is no context at which that case can run on this
-//! family today. `run_oracle_over_cases` (see `oracle_common`) is what makes an
-//! oracle over a PARTIAL case list possible at all; every other family's
-//! oracle still runs all three by construction.
+//! NUMBERS ARE NOT COMPARABLE TO ANY OTHER FAMILY'S.** This frozen row uses
+//! 2,048 context, the index budget recorded by the checkpoint when the row
+//! was established. QSA now supports larger windows, but
+//! `long-synthesis` tokenizes to 2,940 under this family's 248,320-entry
+//! ChatML vocab, so it cannot fit in this row. A higher-context oracle would
+//! need its own resource baseline. `run_oracle_over_cases` (see
+//! `oracle_common`) lets this target keep its established two-case protocol;
+//! every other family's default oracle still runs all three cases.
 //!
 //! A SEPARATE TARGET, not a second `#[test]`, for the reason every sibling
 //! oracle is: the footprint assertion is a whole-session peak.

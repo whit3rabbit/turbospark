@@ -852,6 +852,51 @@
       "notes": "qwen4_exp (Qwen3.8-Flash-Next), REAP-288 is a pruned-expert variant (288 of the original expert count) at top-10 routing. Window is capped at 2048: the checkpoint's own compressed_attention.index_budget, not a chosen number (docs/QWEN4_EXP.md, docs/QWEN4_PHASE0.md), so long-synthesis (2940 tokens under this vocab) cannot run and this row is not comparable to any other family's. Router and shared-expert-gate ship raw BF16 on this checkpoint rather than pre-packed U32 like every other MoE family here; both are force-quantized to INT8 at repack time (docs/QWEN4_EXP.md's dtype-bug fix). Quality-gate row is frozen (perplexity 8.7224, both digests, reproducing across three independent processes): the within-process determinism bug this row's earlier notes described (repeated greedy generation after reset() not reproducing) was root-caused and fixed 2026-09-04 -- RealQwen4State::reset never zeroed ple_conv_tail, the PLE sublayer's own dilated-conv recurrent tail (docs/QWEN4_EXP.md). An MTP-ingestible head DOES exist, published separately: sh0wie/Qwen3.8-Flash-Next-MTP-Drafter-MLX-bf16 (same publisher, verified 2026-09-04 against its safetensors header, matching this port's own Phase 0 tensor inventory). It is a complete QSA plus 512-expert MoE decoder layer with its own hyper-connections, not a small drafter: wiring it needs a second repack path, a second independent expert cache separate from this checkpoint's pruned 288-expert one, and an unresolved rollback-cost question (docs/QWEN4_EXP.md's MTP section). Not wired into this port today. The indexer's REPACK groundwork is already complete and verified against real bytes (this install's model_weights.bin carries all 36 self_attn.indexer.* tensors); the CPU reference for its block pooling, scoring and top-k selection lives in crates/compute/src/qsa_indexer.rs, with its norm/RoPE convention resolved from source (rms_norm_centered plus rope_neox_subdim at rotary_dim=64, theta=1e7 -- the same object the trunk's own QSA attention already uses). The QSA indexer is WIRED since 2026-09-05 (families/qwen4/attn.rs): the pool/score kernels, the indexer cache manager and the indexed decode-attention kernel run above index_top_k complete blocks, and the family opens at any --max-context; at or below the budget the dispatch stream is byte-identical to before, which the frozen quality-gate row reproducing is the proof of. This row's own measured window stays 2048 until it is re-frozen (docs/QWEN4_EXP.md's QSA sections)."
     },
     {
+      "alias": "qwen4exp-swift-iq2-xs",
+      "name": "Swift-1.5 Qwen3.8-Flash-Next GSQ-RCO (GGUF IQ2_XS)",
+      "family": "qwen4exp",
+      "source": {
+        "kind": "gguf",
+        "repo": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+        "revision": "b22d729eae29b5796f76fb70f91aef549b9fc52c",
+        "file": "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf"
+      },
+      "sidecars": {
+        "repo": "ukisai/Swift-Qwen3.8-Flash-Next",
+        "revision": "0bd4fe22431372cdad1979267d3ab45aa7e6150a",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json",
+          "vocab.json",
+          "merges.txt"
+        ]
+      },
+      "download_bytes": 68152167168,
+      "install_bytes": 69000000000,
+      "status": "verified",
+      "gates": [
+        "qwen4exp_gguf_install_network",
+        "qwen4exp_swift_quality_gate",
+        "qwen4exp_swift_memory_oracle",
+        "qwen4exp_qsa_probe"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 2048,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 1634,
+          "decode_tok_s_min": 12.23,
+          "decode_tok_s_max": 12.77,
+          "measured_on": "2026-09-26",
+          "source": "this port, two AC calibration readings plus a frozen assertion pass"
+        }
+      ],
+      "notes": "Pinned IQ2_XS text install, about 64 GiB on disk; the 69 GB install_bytes value conservatively covers free-space planning. The separate 0.91 GB BF16 vision projector is not included. Quality and memory gates are specific to this artifact. Q2_0 is upstream-labeled experimental and failed this port's generation checks; IQ3_XXS has not been installed or gated."
+    },
+    {
       "alias": "spark25",
       "name": "Spark-X2.5-4B (GGUF Q4_K_M, dense)",
       "family": "spark2_5",

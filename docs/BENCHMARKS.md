@@ -194,9 +194,10 @@ transferable to those rows.
 ### Every install, side by side
 
 The table the README's summary is drawn from. All M4 Max, AC, release, 16
-expert-cache slots; each row is the session peak its memory oracle asserts,
-and the ceiling beside it is that oracle's bound (deliberately ~8-13% above
-the reading, so allocator jitter cannot flake it).
+expert-cache slots; each row is the session peak its memory oracle asserts.
+Most ceilings sit about 8-13% above their readings. Each Qwen4Exp artifact
+has a separate, wider bound because the streamed top-10 cache has more
+run-to-run variation.
 
 | Install | On disk | Context | Measured peak | Oracle ceiling | Decode tok/s | Streams? |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
@@ -211,6 +212,7 @@ the reading, so allocator jitter cannot flake it).
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
 | Qwen3.8-Flash-Next REAP-288, MLX INT4 (`qwen4_exp`) | 68 GB | **2,048** | 2,503 - 2,509 MiB | 3,000 | 6.870 - 7.530 | yes, 288 experts (top-10) |
+| Swift-1.5 Qwen3.8-Flash-Next, GGUF IQ2_XS (`qwen4exp`) | 64 GB | **2,048** | 1,633.7 - 1,633.8 MiB (frozen pass: 1,472) | 2,000 | 12.23 - 12.77 | yes, 512 experts (top-10) |
 
 **Read the `Streams?` column before comparing any two rows**, because the
 two groups are measuring different things and only one of them is a result
@@ -250,18 +252,16 @@ it is a cold-GPU forward pass (AGENTS.md Gotcha 20), and the repeated
 large-page round later in the same run reads faster (15.997) than either
 smaller page.
 
-**The `qwen4_exp` row is not comparable to any other row in this table, and
-the bolded context column is the reason why.** Every other row here shares
-either the protocol's 4,096 window or the 8,192 one three families need
-(Gotcha 11); `qwen4_exp` runs at 2,048, the checkpoint's own
-`compressed_attention.index_budget` rather than a chosen number
-(`docs/QWEN4_EXP.md`, `docs/QWEN4_PHASE0.md`). Above it this port would
-compute dense attention where the checkpoint was trained with a
-query-sparse indexer this port has not implemented, so `RealForwardRunner::open`
-refuses outright rather than degrading quietly. The consequence reaches the
-protocol itself: `long-synthesis` tokenizes to 2,940 under this family's
-vocabulary, over the window before a single generated token exists, so this
-row covers only `short-explanation` and `medium-review`
+**The `qwen4_exp` row is not comparable to any other row in this table.**
+Every other row here shares either the protocol's 4,096 window or the 8,192
+one three families need (Gotcha 11); the Qwen4Exp row remains at 2,048 to
+match its frozen resource baseline. The runtime now implements QSA above
+the checkpoint's `compressed_attention.index_budget`, and
+`qwen4exp_qsa_probe` checks sparse attention against the force-dense arm on a
+real install. `long-synthesis` tokenizes to 2,940 under this family's
+vocabulary, so it cannot fit the 2,048 row; a higher-context oracle needs a
+separate resource baseline. The row therefore covers only
+`short-explanation` and `medium-review`
 (`oracle_common::run_oracle_over_cases`, the first oracle in this crate over
 a partial case list). Its 6.870-7.530 tok/s is also this repo's slowest MoE
 reading by a wide margin -- 288 experts at top-10 against a 16-slot cache
@@ -303,6 +303,25 @@ alongside both digests, and `crates/bench/tests/qwen4exp_quality_gate.rs`
 now carries a frozen `ChipQuality` row like every other family's gate (no
 constrained-working-set arm, for the reason the memory section above
 gives: this family's routed width has no legal cache size below 16).
+
+**The Swift IQ2_XS GGUF has a separate quality row.** Two independent
+release processes on AC (2026-09-26, M4 Max, 2,048 context, 16 slots) both
+measured reference-answer perplexity **4.5957** and produced the same greedy
+and sampled digests. A third process passed against the frozen row. These are
+this port's regression sentinels for the pinned IQ2_XS artifact; they are not
+comparable to REAP-288's perplexity or an upstream quality score. The
+constrained-cache arm is disabled because top-10 routing has no legal cache
+size below the 16-slot protocol setting.
+
+The Swift IQ2_XS memory row is anchored to two AC calibration runs: session
+peaks 1,633.8 and 1,633.7 MiB; the short case decoded at 12.682 and 12.666
+tok/s, and medium-review at 12.367 and 12.243 tok/s. Both cases reached
+`endOfTurn`, and replay growth was at most 0.23 MiB. The frozen assertion
+process passed at a lower 1,472 MiB peak and 12.233 tok/s on its slower case.
+The catalog records the highest calibration peak and the decode range across
+all three runs, with a 2,000 MiB ceiling and an 8.9 tok/s floor. All readings
+use 2,048 context and 16 expert slots; they are not comparable to the
+REAP-288 artifact.
 
 ### External reference points for the Qwen3.8-27B row
 
