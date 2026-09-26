@@ -41,11 +41,24 @@ fn real() -> NgramTableLayout {
         scale_bytes: 10,
         bias_bytes: 10,
         companion_dtype: "bf16".to_string(),
+        ggml_type: None,
         layer_index: 1,
         multipliers: vec![1, 3, 5],
         head_vocab_sizes,
         head_offsets,
     }
+}
+
+fn iq4_nl() -> NgramTableLayout {
+    let mut layout = real();
+    layout.version = NgramTableLayout::VERSION;
+    layout.record_bytes = 90;
+    layout.weight_bytes = 90;
+    layout.scale_bytes = 0;
+    layout.bias_bytes = 0;
+    layout.companion_dtype = "inline".to_string();
+    layout.ggml_type = Some("iq4_nl".to_string());
+    layout
 }
 
 #[test]
@@ -60,6 +73,40 @@ fn the_real_tables_shape_validates_and_its_arithmetic_matches_the_checkpoint() {
     // three source tensors summed over all 128 shards.
     assert_eq!(l.blob_bytes(), Some(32_000_153_600));
     assert_eq!(l.record_bytes, 100, "80 weight + 10 scales + 10 biases");
+}
+
+#[test]
+fn gguf_iq4_nl_rows_validate_without_affine_companion_planes() {
+    let layout = iq4_nl();
+    layout.validate().expect("IQ4_NL PLE rows validate");
+    assert_eq!(layout.record_bytes, 90, "five 32-element blocks per row");
+    assert_eq!(layout.blob_bytes(), Some(28_800_138_240));
+    assert_eq!(layout.row_offset(2_500_012), Some(225_001_080));
+
+    let mut wrong_width = layout.clone();
+    wrong_width.weight_bytes = 100;
+    wrong_width.record_bytes = 100;
+    let err = wrong_width
+        .validate()
+        .expect_err("wrong IQ4_NL width is refused");
+    assert!(format!("{err:?}").contains("weight_bytes"), "{err:?}");
+
+    let mut fake_companions = layout;
+    fake_companions.scale_bytes = 10;
+    fake_companions.record_bytes = 100;
+    let err = fake_companions
+        .validate()
+        .expect_err("IQ4_NL rows cannot declare affine companion planes");
+    assert!(format!("{err:?}").contains("requires 0/0"), "{err:?}");
+}
+
+#[test]
+fn version_one_affine_rows_remain_readable_after_the_format_extension() {
+    let mut legacy = real();
+    legacy.version = 1;
+    legacy
+        .validate()
+        .expect("existing version-one installs remain readable");
 }
 
 /// The offset mapping is LINEAR in the global row id: the shard boundary never
@@ -213,7 +260,7 @@ fn a_non_ascending_head_offsets_array_is_refused() {
     assert!(format!("{err:?}").contains("ascending"), "{err:?}");
 }
 
-/// `multipliers` is one per n-gram ORDER and the other two are one per HEAD,
+/// `multipliers` is one per context shift and the other two are one per HEAD,
 /// so they are different lengths by construction.
 ///
 /// Pinned because the obvious validation -- requiring all three to agree --
@@ -225,7 +272,7 @@ fn the_three_hashing_buffers_are_not_all_the_same_length() {
     assert_eq!(
         l.multipliers.len(),
         3,
-        "one per n-gram order, 1..=ngram_size"
+        "one per context shift, 0..ngram_size"
     );
     assert_eq!(l.head_vocab_sizes.len(), 16, "one per hash head");
     assert_eq!(l.head_offsets.len(), l.head_vocab_sizes.len());

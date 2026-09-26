@@ -45,9 +45,10 @@ const QUANT_2BIT_GROUP_SIZE: i64 = 128;
 /// The three IQ types (ROADMAP Phase S) join on the same terms as the rest,
 /// and one of them is narrower than it looks: IQ3_XXS and IQ4_XS have a
 /// routed phase-1 kernel, IQ4_NL a routed phase-2 one, and all three a
-/// resident GEMV, but there is no IQ4_NL phase 1 and no IQ3_XXS phase 2
-/// because no real file asks for either. That is the same weaker footing
-/// Q6_K stands on, and it fails the same way: at the dispatch site, by name.
+/// resident GEMV. IQ4_XS also has an embedding lookup for the Swift Qwen3.8
+/// tier. There is no IQ4_NL phase 1 and no IQ3_XXS phase 2 because no real
+/// file asks for either. That is the same weaker footing Q6_K stands on,
+/// and it fails the same way: at the dispatch site, by name.
 ///
 /// MXFP4 (ROADMAP M5, `gpt-oss`) joins on the narrowest footing yet, and it
 /// is narrow in a NEW DIRECTION: it has both routed phases and NO resident
@@ -67,9 +68,9 @@ const QUANT_2BIT_GROUP_SIZE: i64 = 128;
 /// is nothing any real file asks for; an install that carried Q3_K experts
 /// passes this gate and fails at the routed dispatch, by name -- the same
 /// weaker footing Q6_K and Q5_K stand on.
-pub const EXECUTABLE_GGUF_TYPES: [&str; 16] = [
+pub const EXECUTABLE_GGUF_TYPES: [&str; 17] = [
     "q8_0", "q4_k", "q5_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs", "mxfp4", "q2_k", "iq2_xxs",
-    "iq2_xs", "iq1_s", "iq3_s", "iq2_s", "iq1_m", "q3_k",
+    "iq2_xs", "iq1_s", "iq3_s", "iq2_s", "iq1_m", "q3_k", "q2_0",
 ];
 
 /// Accepts a quant block iff every slot's shape has kernels behind it.

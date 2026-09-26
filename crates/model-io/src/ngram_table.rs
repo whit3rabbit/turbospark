@@ -40,7 +40,7 @@
 
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::ModelError;
 
@@ -73,7 +73,7 @@ pub const NGRAM_HEADER_MAX_BYTES: u64 = 1 << 20;
 /// reference recomputes them from a seed as a fallback, and a derived
 /// convention that reads plausibly and is wrong is exactly what the control
 /// vector's `direction.N` numbering cost (`crates/repack` Gotcha 11).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NgramTableLayout {
     /// Schema version. Bumped when the record layout changes.
@@ -108,6 +108,11 @@ pub struct NgramTableLayout {
     /// values orders of magnitude off (`crates/repack` Gotcha 9's measured
     /// case, 0.0271 read as 1.7e-16).
     pub companion_dtype: String,
+    /// Optional inline GGUF block type. `None` is the legacy affine row
+    /// format; `Some("iq4_nl")` stores five 32-value GGUF blocks directly for
+    /// a 160-value PLE row, with no companion planes.
+    #[serde(default)]
+    pub ggml_type: Option<String>,
     /// ZERO-BASED index of the layer carrying this table.
     pub layer_index: u64,
     /// Hash multipliers, one per n-gram order.
@@ -119,8 +124,8 @@ pub struct NgramTableLayout {
 }
 
 impl NgramTableLayout {
-    /// The current schema version.
-    pub const VERSION: u32 = 1;
+    /// The current schema version. Version 1 affine tables remain readable.
+    pub const VERSION: u32 = 2;
 
     /// Byte offset of a global row id in `rows.bin`.
     ///
@@ -141,7 +146,7 @@ impl NgramTableLayout {
         self.rows.checked_mul(self.record_bytes)
     }
 
-    /// Groups per row, which is how many scale and bias entries a record has.
+    /// Groups per row for the affine representation.
     pub fn groups_per_row(&self) -> u64 {
         if self.group_size == 0 {
             return 0;
@@ -161,9 +166,9 @@ impl NgramTableLayout {
                 detail: format!("ngram_table/header.json: {detail}"),
             })
         };
-        if self.version != Self::VERSION {
+        if !matches!(self.version, 1 | Self::VERSION) {
             return bad(format!(
-                "version {} is not the {} this port reads",
+                "version {} is not a version 1 affine or version {} table",
                 self.version,
                 Self::VERSION
             ));
@@ -171,46 +176,88 @@ impl NgramTableLayout {
         if self.bits != 4 {
             return bad(format!("{}-bit rows have no dequantizer here", self.bits));
         }
-        if self.companion_dtype != "bf16" {
-            return bad(format!(
-                "companion planes are {:?}; only bf16 is read, and fp16 is the \
-                 same width so it would be misread rather than refused",
-                self.companion_dtype
-            ));
-        }
         if self.group_size == 0 || self.head_dim == 0 || self.head_dim % self.group_size != 0 {
             return bad(format!(
                 "head_dim {} is not a whole number of {}-value groups",
                 self.head_dim, self.group_size
             ));
         }
-        // The three plane widths are DERIVED from the shape, and checking them
-        // against it is what catches a writer that packed at a different width
-        // than it declared -- which is a record stride that reads plausible
-        // bytes from the wrong place.
-        let want_weight = self.head_dim * self.bits / 8;
+
+        // The record widths are derived from the declared representation.
+        // Both cases share the same row address arithmetic, but IQ4_NL has
+        // inline scales and no affine companion planes.
+        let (want_weight, want_scale, want_bias) = match self.ggml_type.as_deref() {
+            None => {
+                if self.companion_dtype != "bf16" {
+                    return bad(format!(
+                        "companion planes are {:?}; only bf16 is read, and fp16 is the \
+                         same width so it would be misread rather than refused",
+                        self.companion_dtype
+                    ));
+                }
+                let Some(weight_bits) = self.head_dim.checked_mul(self.bits) else {
+                    return bad("affine row bit count overflows".to_string());
+                };
+                if weight_bits % 8 != 0 {
+                    return bad(format!(
+                        "{} values at {} bits is not a whole number of bytes",
+                        self.head_dim, self.bits
+                    ));
+                }
+                let Some(companion) = self.groups_per_row().checked_mul(2) else {
+                    return bad("affine companion width overflows".to_string());
+                };
+                (weight_bits / 8, companion, companion)
+            }
+            Some("iq4_nl") => {
+                if self.version != Self::VERSION {
+                    return bad("inline GGUF rows require schema version 2".to_string());
+                }
+                if self.group_size != 32 {
+                    return bad(format!(
+                        "IQ4_NL blocks cover 32 values, not {}",
+                        self.group_size
+                    ));
+                }
+                if self.companion_dtype != "inline" {
+                    return bad(format!(
+                        "IQ4_NL scales are inline, not {:?}",
+                        self.companion_dtype
+                    ));
+                }
+                let Some(weight) = (self.head_dim / 32).checked_mul(18) else {
+                    return bad("IQ4_NL row width overflows".to_string());
+                };
+                (weight, 0, 0)
+            }
+            Some(other) => return bad(format!("GGUF block type {other:?} has no row decoder")),
+        };
+
         if self.weight_bytes != want_weight {
             return bad(format!(
-                "weight_bytes {} but {} values at {} bits is {want_weight}",
-                self.weight_bytes, self.head_dim, self.bits
+                "weight_bytes {} but this row format requires {want_weight}",
+                self.weight_bytes
             ));
         }
-        let want_companion = self.groups_per_row() * 2;
-        if self.scale_bytes != want_companion || self.bias_bytes != want_companion {
+        if self.scale_bytes != want_scale || self.bias_bytes != want_bias {
             return bad(format!(
-                "scale/bias bytes {}/{} but {} bf16 groups is {want_companion} each",
-                self.scale_bytes,
-                self.bias_bytes,
-                self.groups_per_row()
+                "scale/bias bytes {}/{} but this row format requires {want_scale}/{want_bias}",
+                self.scale_bytes, self.bias_bytes
             ));
         }
-        if self.record_bytes != self.weight_bytes + self.scale_bytes + self.bias_bytes {
+        let Some(want_record) = want_weight
+            .checked_add(want_scale)
+            .and_then(|n| n.checked_add(want_bias))
+        else {
+            return bad("record width overflows".to_string());
+        };
+        if self.record_bytes != want_record {
             return bad(format!(
-                "record_bytes {} is not {} + {} + {}",
-                self.record_bytes, self.weight_bytes, self.scale_bytes, self.bias_bytes
+                "record_bytes {} but this row format requires {want_record}",
+                self.record_bytes
             ));
         }
-        if self.rows != self.rows_per_shard.saturating_mul(self.shards) {
+        if self.rows_per_shard.checked_mul(self.shards) != Some(self.rows) {
             return bad(format!(
                 "rows {} is not rows_per_shard {} x shards {}",
                 self.rows, self.rows_per_shard, self.shards
@@ -220,8 +267,8 @@ impl NgramTableLayout {
             return bad("the table is empty".to_string());
         }
         // The hashing buffers. `head_vocab_sizes` and `head_offsets` are one
-        // per hash head and must agree; `multipliers` is one per n-gram order
-        // and is a different length on purpose, so a check that required all
+        // per hash head and must agree; `multipliers` is one per context shift
+        // (current token plus prior tokens) and is a different length on purpose, so a check that required all
         // three to match would refuse every real table.
         if self.head_vocab_sizes.len() != self.head_offsets.len() {
             return bad(format!(
