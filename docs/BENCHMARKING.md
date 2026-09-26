@@ -184,6 +184,12 @@ climbs to 24 or 32 slots and trades roughly 1.5 GB of peak for 16% of decode
 
 ## The memory oracle
 
+Qwen4Exp's REAP-288 MLX and Swift-1.5 IQ2_XS GGUF installs use separate
+quality and memory gates. The Swift row is frozen at 2,048 context and 16
+expert-cache slots on M4 Max; do not apply the REAP-288 limits or digests to
+it. See [`QWEN4_EXP.md`](QWEN4_EXP.md) for the artifact boundaries and
+[`BENCHMARKS.md`](BENCHMARKS.md) for the separate frozen rows.
+
 ```bash
 TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test memory_oracle --release -- --ignored --nocapture

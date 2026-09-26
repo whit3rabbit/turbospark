@@ -51,6 +51,31 @@ and split GGUF is not supported by the dense qwen2 walk, so the Q4_K_M row
 streams mradermacher's single-file conversion of the same base checkpoint.
 Qwen2-MoE and Qwen2-VL are different families.
 
+### Swift-1.5 Qwen3.8-Flash-Next GSQ-RCO (GGUF IQ2_XS)
+
+The verified, text-only GGUF is cataloged as `qwen4exp-swift-iq2-xs`. The
+upstream payload is about 68.15 GB (63.47 GiB); reserve 69 GB (64.3 GiB) for
+the packed install. The separate BF16 vision projector is not included.
+
+```sh
+turbospark-model info qwen4exp-swift-iq2-xs
+turbospark-model pull qwen4exp-swift-iq2-xs
+turbospark-model recommend --context 2048
+```
+
+Its frozen M4 Max row is 12.23-12.77 decode tok/s and a 1,633.7-1,633.8 MiB
+process peak at 2,048 context and 16 expert-cache slots. This is measured
+`phys_footprint`, not a universal RAM minimum. See the [benchmark row and
+quality evidence](BENCHMARKS.md#every-install-side-by-side) and
+[`QWEN4_EXP.md`](QWEN4_EXP.md) for the gate boundaries.
+
+The desktop welcome screen and Model Hub rank the catalog against the active
+machine, context, and cache-slot settings; there is no separate static startup
+allowlist. This artifact remains in the catalog and All Models. Its frozen
+resource measurement applies only at 2,048 context and 16 slots, so it does not
+establish a fit at a fresh app's 4,096-context default. Do not treat the
+measurement as evidence for a universal startup recommendation.
+
 ```sh
 turbospark-model list                    # the catalog
 turbospark-model recommend               # ...ranked for this machine

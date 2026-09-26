@@ -27,6 +27,13 @@ investigation used [SlotStream](https://github.com/carloslfu/slotstream) as
 its debugging reference; the detailed comparison and resulting fixes are
 recorded below.
 
+The IQ2_XS alias is already in the catalog used by the desktop welcome screen
+and Model Hub. Those surfaces rank against current fit settings. Its frozen
+resource row is for an M4 Max at 2,048 context and 16 slots; the fresh app
+defaults to 4,096 context with automatic slots. The measured row alone does
+not establish that default fit, so keep the artifact available in All Models
+and let the dynamic fit ranking decide whether to show it as Recommended.
+
 ## Evidence map
 
 | Date | Landed | Commit(s) |

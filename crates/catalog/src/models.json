@@ -894,7 +894,7 @@
           "source": "this port, two AC calibration readings plus a frozen assertion pass"
         }
       ],
-      "notes": "Pinned IQ2_XS text install, about 64 GiB on disk; the 69 GB install_bytes value conservatively covers free-space planning. The separate 0.91 GB BF16 vision projector is not included. Quality and memory gates are specific to this artifact. Q2_0 is upstream-labeled experimental and failed this port's generation checks; IQ3_XXS has not been installed or gated."
+      "notes": "Pinned IQ2_XS text install, about 64 GiB on disk; the 69 GB install_bytes value conservatively covers free-space planning. The separate 0.91 GB BF16 vision projector is not included. Quality and memory gates are specific to this artifact; the measured resource row applies only to Apple M4 Max at 2,048 context and 16 expert-cache slots. It is not a universal RAM minimum. Q2_0 is upstream-labeled experimental and failed this port's generation checks; IQ3_XXS has not been installed or gated."
     },
     {
       "alias": "spark25",

@@ -121,30 +121,43 @@ The default server listens on `127.0.0.1:8080` and provides `/v1/chat/completion
 
 ## Supported models
 
-TurboSpark supports 15 declared model families (DeepSeek-V4-Flash is still scaffolded-only), and MoE checkpoints are the headline: only each expert's always-needed core sits in RAM while routed experts stream from SSD on demand, so a 13 GB model runs in about 2 GB of memory. Recent additions include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288, Qwen3-VL 4B with image input, DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
+TurboSpark supports 15 declared model families (DeepSeek-V4-Flash is still scaffolded-only). Recent additions include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
+
+MoE checkpoints can stream routed experts from SSD through a bounded cache,
+so install size and process footprint are different quantities. The Swift
+IQ2_XS source payload is 68.15 GB; its measured process peak is about 1.60
+GiB at 2K context and 16 slots on an M4 Max.
 
 The catalog in [`crates/catalog/src/models.json`](crates/catalog/src/models.json) is the source of truth. Use `turbospark-model list` for current aliases and evidence status, and `turbospark-model recommend` to rank these for your machine.
 
 ### MoE checkpoints (experts stream from disk)
 
-RAM while running is the measured peak from the frozen memory oracles on a 36 GB M4 Max with 16 expert-cache slots, at the listed context. This is the number to budget against: it is the whole working set. A dash means no frozen RAM row is published for that install yet; `turbospark-model info <alias>` carries its evidence status.
+The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-cache slots, at the listed context. It is not the total working set or a minimum system-RAM requirement; mapped model weights are not fully represented by this counter. A dash means no frozen process-footprint row is published for that install yet. `turbospark-model info <alias>` carries its evidence status.
 
-| Model | Quant | Format | Disk | RAM while running |
+| Model | Quant | Format | Disk | Measured process peak |
 | --- | --- | --- | ---: | ---: |
 | Qwen 3.6 35B-A3B | INT4 (group 64) | MLX | ~18 GB | ~1.6 GB @ 4k ctx |
 | Qwen 3.6 35B-A3B | Q4_K_M | GGUF | ~21 GB | - |
 | Ornith-1.5 35B-A3B | INT4 (group 64) | MLX | ~20 GB | - |
 | Ornith-1.5 35B-A3B | Q8_0 | GGUF | ~38 GB | - |
 | Qwen3.8-Flash-Next REAP-288 | INT4 | MLX | ~74 GB | ~2.5 GB @ 2k ctx |
+| Qwen3.8-Flash-Next Swift-1.5 (`qwen4exp-swift-iq2-xs`) | IQ2_XS | GGUF | ~69 GB reserve | ~1.60 GiB @ 2k ctx |
 | Qwen3-30B-A3B | Q4_K_M | GGUF | ~19 GB | ~2.7 GB @ 4k ctx |
 | Gemma 4 26B-A4B | INT4 (group 64) | MLX | ~13 GB | ~2.1 GB @ 4k ctx |
 | Gemma 4 26B-A4B | UD-Q3_K_M (IQ3 experts) | GGUF | ~13 GB | ~1.9 GB @ 4k ctx |
 | Gemma 4 26B-A4B | Q8_0 | GGUF | ~27 GB | - |
 | gpt-oss 20B | MXFP4 | GGUF | ~12 GB | ~5.4 GB @ 8k ctx |
 | DeepSeek-V2-Lite 16B (MLA) | Q8_0 | GGUF | ~17 GB | ~4.1 GB @ 8k ctx |
-| Mixtral 8x7B | Q4_K_M | GGUF | ~29 GB | ~55 GB slot cache @ 16 slots: needs a big machine |
+| Mixtral 8x7B | Q4_K_M | GGUF | ~29 GB | - |
 
-Expert granularity decides that RAM column, not model size: Qwen3-30B-A3B splits its experts smallest here but has 48 layers of them, while gpt-oss's 32 experts are individually huge, and Mixtral's 8 blob-sized experts cannot stream usefully at all. See the slot arithmetic in [`docs/MODEL_FAMILY.md`](docs/MODEL_FAMILY.md) before picking by parameter count.
+Mixtral has no frozen process-footprint row; its estimated slot-cache
+capacity is about 55 GiB at 16 slots, so it does not fit ordinary machines.
+Expert granularity drives slot-cache sizing, not model file size: Qwen3-30B-A3B
+splits its experts smallest here but has 48 layers of them, while gpt-oss's 32
+experts are individually huge. The measured peaks are observations for the
+listed configurations, not guarantees for other machines or settings. See
+the slot arithmetic in [`docs/MODEL_FAMILY.md`](docs/MODEL_FAMILY.md) and use
+`turbospark-model recommend` for the active machine and context.
 
 ### Dense checkpoints (weights stay memory-mapped)
 
@@ -170,13 +183,14 @@ New checkpoints are not automatically supported just because their architecture 
 
 ## Memory and benchmark results
 
-These rows are measured `phys_footprint` peaks on one Apple M4 Max with 36 GB unified memory. They use 16 expert-cache slots and the listed context window. Peak footprint is process memory, not the model's on-disk size. Results vary by chip, context, cache size, and workload.
+These rows are measured `phys_footprint` process peaks on one Apple M4 Max with 36 GB unified memory. They use the listed context window; MoE rows use 16 expert-cache slots. Process footprint is not the model's on-disk size or a minimum system-RAM requirement. Results vary by chip, context, cache size, and workload.
 
 | Model | Context | Peak footprint | Decode | Install on disk |
 | --- | ---: | ---: | ---: | ---: |
 | Gemma 4 26B-A4B, MLX INT4 | 4,096 | 2,175 MiB | 33.0-45.6 tok/s | about 13.0 GB |
 | Qwen 3.6 35B-A3B, MLX INT4 | 4,096 | 1,610 MiB | 32.6-38.0 tok/s | about 18.0 GB |
 | Qwen3-30B-A3B, GGUF Q4_K_M | 4,096 | 2,748 MiB | 16.0-27.3 tok/s | about 18.6 GB |
+| Swift-1.5 Qwen3.8-Flash-Next, GGUF IQ2_XS | 2,048 | 1,634 MiB | 12.23-12.77 tok/s | about 69 GB reserved |
 | Qwen 3.8 27B, MLX INT4, dense | 4,096 | 661 MiB | 16.8-19.0 tok/s | about 15.2 GB |
 | gpt-oss 20B, GGUF MXFP4 | 8,192 | 5,422 MiB | 23.4-31.3 tok/s | about 12.2 GB |
 

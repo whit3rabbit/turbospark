@@ -212,11 +212,16 @@ run-to-run variation.
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
 | Qwen3.8-Flash-Next REAP-288, MLX INT4 (`qwen4_exp`) | 68 GB | **2,048** | 2,503 - 2,509 MiB | 3,000 | 6.870 - 7.530 | yes, 288 experts (top-10) |
-| Swift-1.5 Qwen3.8-Flash-Next, GGUF IQ2_XS (`qwen4exp`) | 64 GB | **2,048** | 1,633.7 - 1,633.8 MiB (frozen pass: 1,472) | 2,000 | 12.23 - 12.77 | yes, 512 experts (top-10) |
+| Swift-1.5 Qwen3.8-Flash-Next, GGUF IQ2_XS (`qwen4exp-swift-iq2-xs`) | 64.3 GiB (69 GB install budget) | **2,048** | 1,633.7 - 1,633.8 MiB (frozen pass: 1,472) | 2,000 | 12.23 - 12.77 | yes, 512 experts (top-10) |
 
 **Read the `Streams?` column before comparing any two rows**, because the
 two groups are measuring different things and only one of them is a result
 about this engine.
+
+The Swift IQ2_XS source payload is 68.15 GB (63.47 GiB); the catalog budgets
+69 GB (64.3 GiB) for the packed install. Its peak is a process
+`phys_footprint` measurement, not a total-model working set or minimum system
+RAM requirement.
 
 - **Streaming rows**: the peak is `resident core + KV + slot cache`, and the
   slot term (`slots x layers x expert_stride`) dominates. That is the
