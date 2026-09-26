@@ -118,7 +118,7 @@ struct ImageModelManagerView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("All curated variants", bundle: .module)
                 .themedFont(.base, weight: .semibold)
-            ForEach(model.imageCatalog) { source in
+            ForEach(model.imageDownloadChoices) { source in
                 curatedRow(source, recommended: false)
             }
         }
@@ -137,7 +137,11 @@ struct ImageModelManagerView: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            if model.imageModelPath == image.path {
+            if !AppModel.supportsMLXZImage(modelID: image.modelID) {
+                Label("MLX required", systemImage: "exclamationmark.triangle")
+                    .themedFont(.tiny, weight: .medium)
+                    .foregroundStyle(.appSecondary)
+            } else if model.imageModelPath == image.path {
                 Label("Selected", systemImage: "checkmark.circle.fill")
                     .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(.green)

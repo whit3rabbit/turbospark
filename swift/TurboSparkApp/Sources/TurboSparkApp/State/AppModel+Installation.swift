@@ -360,6 +360,7 @@ extension AppModel {
     }
 
     public func canInstallImageModel(alias: String) -> Bool {
-        canQueueModelDownload(.image(alias: alias))
+        guard Self.testedZImageAliases.contains(alias) else { return false }
+        return canQueueModelDownload(.image(alias: alias))
     }
 }

@@ -40,6 +40,12 @@ if [ "${TURBOSPARK_LOCALIZE_RUST_SYMBOLS:-0}" = 1 ]; then
   printf "_rust_eh_personality\n" > "$dest/.hide_symbols"
   nmedit -R "$dest/.hide_symbols" "$dest/libturbospark_ffi.a"
   rm -f "$dest/.hide_symbols"
+
+  for build_out in "$root/swift/TurboSparkApp/.build/out/Products/Debug" "$root/swift/TurboSparkApp/.build/out/Products/Release"; do
+    if [ -d "$build_out" ] && [ ! -f "$build_out/CSyntext.o" ]; then
+      clang -c -x c /dev/null -o "$build_out/CSyntext.o" 2>/dev/null || true
+    fi
+  done
 fi
 
 # **SwiftPM DOES NOT TREAT THE ARCHIVE AS A BUILD INPUT, so without this the

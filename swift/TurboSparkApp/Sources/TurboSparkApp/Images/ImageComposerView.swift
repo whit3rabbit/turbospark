@@ -114,9 +114,13 @@ struct ImageComposerView: View {
     }
 
     private var summary: String {
+        let unsupportedSelection = !model.imageModelPath.isEmpty
+            && !model.hasSupportedSelectedZImageModel
         let name = model.selectedImageModel.map { ImageModelPresentation.family($0.modelID) }
             ?? (model.imageModelPath.isEmpty ? "" : URL(fileURLWithPath: model.imageModelPath).lastPathComponent)
-        let quant = model.selectedImageModel.map { ImageModelPresentation.quantization($0.quantization) } ?? ""
+        let quant = unsupportedSelection
+            ? "MLX required"
+            : (model.selectedImageModel.map { ImageModelPresentation.quantization($0.quantization) } ?? "")
         let parts = [
             name.isEmpty ? (model.hasInstalledZImageModel ? "" : "Z-Image Turbo") : name,
             quant.isEmpty ? (model.hasInstalledZImageModel ? "" : String(localized: "Download", bundle: .module)) : quant,

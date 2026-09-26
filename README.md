@@ -218,6 +218,7 @@ The low-memory result is primarily an MoE result. Dense models run, but they do 
 - [Release assets, Homebrew casks, and packaging](docs/RELEASE.md)
 - [Swift bindings and app development](docs/SWIFT_BINDINGS.md)
 - [Vision and image generation](docs/VISION.md) and [image generation details](docs/IMAGE_GENERATION.md)
+- [Desktop feature parity and architecture matrix](docs/DESKTOP_FEATURE_PARITY.md)
 - [Testing and evidence gates](docs/TESTING.md)
 
 ## License

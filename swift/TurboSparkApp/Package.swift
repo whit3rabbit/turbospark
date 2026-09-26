@@ -7,10 +7,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(path: "../TurboSpark"),
-        .package(
-            url: "https://github.com/zhutao100/Z-Image.swift.git",
-            revision: "28bfcf3148c041a554629247170eb54d9ac46830"
-        ),
+        .package(path: "Vendor/ZImage"),
         .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", from: "4.10.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
         .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.5.0"),
@@ -21,7 +18,7 @@ let package = Package(
             name: "TurboSparkApp",
             dependencies: [
                 .product(name: "TurboSpark", package: "TurboSpark"),
-                .product(name: "ZImage", package: "z-image.swift"),
+                .product(name: "ZImage", package: "zimage"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 .product(name: "Syntext", package: "syntext"),
@@ -48,6 +45,11 @@ let package = Package(
                     "-Xlinker", "../TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a",
                 ])
             ]
+        ),
+        .executableTarget(
+            name: "ZImageMLXBenchmark",
+            dependencies: [.product(name: "ZImage", package: "zimage")],
+            path: "Benchmarks/ZImageMLXBenchmark"
         ),
         .testTarget(
             name: "TurboSparkAppTests",

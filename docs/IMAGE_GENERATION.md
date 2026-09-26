@@ -1,11 +1,13 @@
 # Native image generation: Z-Image-Turbo
 
-Status: IG0, IG1, IG2, IG3, and IG4 are closed for the pinned 1024-by-1024
-case. The full-width checkpoint block, complete nine-step DiT rollout,
-production-shape VAE parity, PNG metadata, cancellation, remote intake,
-packed resource evidence, bounded streaming, repeated-job stability, Swift
-integration, and app image mode pass their recorded contracts. IG5 remains
-open only for measured optimization work.
+Status: IG0, IG1, IG2, IG3, and IG4 are closed for the pinned native
+1024-by-1024 case. The historical native Swift app gate passed its recorded
+contract, but the app now routes supported Z-Image generation through MLX.
+That standalone pipeline measured a 57.61-second median across three runs;
+the packaged app and UI gate for the new route remains unverified. See
+[ZIMAGE_TURBO.md](ZIMAGE_TURBO.md) for the speed comparison and current
+recommendation. IG5 remains open for measured optimization work on the native
+runtime.
 [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) records pinned inputs,
 real-image captures, and component comparisons.
 The reusable bring-up process and the lessons from this model are summarized
@@ -103,17 +105,21 @@ the roadmap owns the remaining task checklist.
 
 ### Default MLX source and artifact support
 
-MLX safetensors is the default source format for Z-Image-Turbo image installs.
-The default source is
-[`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit),
-and the installer accepts all four upstream variants below through the same
-source adapter and image install format.
+MLX safetensors is the source format for the curated Z-Image-Turbo image
+installs. The Swift app recommends
+[`andrevp/Z-Image-Turbo-MLX-8bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-8bit)
+on Macs with at least 32 GB of physical memory. Its picker ranks 4-bit then
+2-bit on 16-31 GB and 2-bit below 16 GB. These are memory-based UI heuristics,
+not validated runtime-memory floors. The 4-bit variant remains the pinned IG2
+quality baseline, but is no longer the default recommendation on 32 GB or more.
+All four upstream variants use the same source adapter and image install
+format.
 
 | Variant | Install alias | Size | Quantization | Link |
 | --- | --- | ---: | --- | --- |
 | Full precision (fp16) | `z-image-turbo-mlx-fp16` | 20.54 GB | None | [`andrevp/Z-Image-Turbo-MLX`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX) |
 | 8-bit | `z-image-turbo-mlx-8bit` | 11.37 GB | 8-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-8bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-8bit) |
-| 4-bit (default) | `z-image-turbo-mlx-4bit` | 6.48 GB | 4-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit) |
+| 4-bit (IG2 baseline) | `z-image-turbo-mlx-4bit` | 6.48 GB | 4-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit) |
 | 2-bit | `z-image-turbo-mlx-2bit` | 4.04 GB | 2-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-2bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-2bit) |
 
 The pinned header-only intake gate covers these four revisions and checks the
@@ -179,9 +185,10 @@ the app build.
 The image crate is intentional. `turbospark-image` owns the image graph,
 image-specific install schema, packed storage, scheduler, VAE, and the native
 Metal backend. It shares only matching context, pass, and resident-buffer
-contracts with `turbospark-gpu`. The same image crate is the future shared
-runtime for the CLI and the C ABI/Swift package; no second image GPU crate is
-needed at this stage.
+contracts with `turbospark-gpu`. It remains the native runtime for the CLI and
+historical C ABI path. The Swift app uses the image install catalog and source
+retention, but dispatches supported Z-Image generation through MLX; it has no
+native generation fallback.
 
 The memory strategy is stage ownership first: text encoder, transformer, and
 VAE do not remain resident together. Packed linear weights stay in the mapped
@@ -197,11 +204,12 @@ scratch is not observable, so the contract uses an inclusive non-parameter
 process budget and explicitly does not call driver-retained bytes scratch or
 claim a minimum whole-machine RAM size. IG3 closed repeated full-pipeline
 stability, resident-versus-streamed ownership, and cancellation lifetime proof.
-IG2 and IG4 are closed for the pinned install. MLX variant installation is
-closed for the published 2-, 4-, and 8-bit rows, while FP16 installation,
-quality, resource, and real-install Swift image-generation gates remain open.
-The Swift catalog/install surface is covered separately by the binding and app
-build gates.
+IG2 and the historical native IG4 gate are closed for the pinned install. MLX
+variant installation is closed for the published 2-, 4-, and 8-bit rows,
+while FP16 installation, quality, resource, and real-install Swift image
+generation gates for the current MLX route remain open. The Swift
+catalog/install surface is covered separately by the binding and app build
+gates.
 
 ## IG4 app seam
 
@@ -210,13 +218,15 @@ the text token stream. `TsImageSession` opens a verified image install, emits
 stage progress through `TsImageEventCallback`, supports cancellation from
 another thread, returns explicit PNG ownership, and returns the same
 camelCase metadata that the runtime embeds in the PNG. `TurboSparkImageSession`
-copies the PNG before releasing the C buffer.
+copies the PNG before releasing the C buffer. This remains the historical
+native session wrapper; current Swift Z-Image generation uses
+`MLXImageGenerationSession` and does not dispatch through this path.
 
 The macOS app's top-level `Images` destination is the canonical image workflow.
 Its `Create` tab accepts a direct prompt and lists valid installed image
 artifacts through the separate `ts_image_installed_json` catalog surface. A
-folder chooser remains available for a side-loaded install, but image
-generation never falls back to the selected text model. The `Gallery` tab
+folder chooser remains available for a side-loaded install, but the current
+Swift Z-Image path requires a supported curated MLX model. The `Gallery` tab
 shows profile-owned PNG thumbnails and opens a previous/next carousel. A
 process-wide FIFO coordinator serializes heavyweight image jobs across chats in
 the app. The result stays in transient
@@ -240,7 +250,7 @@ make swift-test-real IMAGE_MODEL=~/.turbospark/models/image/z-image-turbo.gturbo
 The image-generation tests open the verified install, assert PNG and metadata
 return through Swift, and cancel during a stage.
 
-The recorded native pinned-install gate passed both Swift image-session arms:
+The historical native pinned-install gate passed both Swift image-session arms:
 the full 1024-by-1024 generation returned a valid PNG and decoded runtime
 metadata in 4,665.912 seconds, including the public `modelID` spelling used by
 Swift; the cancellation arm returned `cancelled` without publishing a PNG in
@@ -259,12 +269,13 @@ backlog that must be closed before the milestone checkbox is marked.
 
 ## Direction and first release
 
-Build Z-Image-Turbo text-to-image inference in Rust with the existing Metal
-backend. Deliver a quantized CLI pipeline first, then expose that same
-runtime through the C ABI and Swift package to an explicit image mode in
-chat. MLX safetensors are a supported source format; external engines remain
-correctness references and benchmark tools, not production subprocesses or
-runtime dependencies.
+The Rust and CLI path builds Z-Image-Turbo inference on the existing Metal
+backend. It remains the native runtime for CLI generation and its recorded
+quality/resource gates. The Swift app now uses the vendored MLX pipeline for
+Z-Image generation because the native path measured over an hour per image;
+MLX is therefore a production runtime dependency of the app, not just a
+reference engine there. The 8-bit app benchmark and routing decision are
+recorded in [ZIMAGE_TURBO.md](ZIMAGE_TURBO.md).
 
 The first release generates one PNG per request from an explicit prompt,
 with a resolved seed, dimensions, progress, cancellation, and reproducibility
@@ -293,12 +304,12 @@ approximate timestep reuse, and concurrent heavyweight text/image execution.
 | [Model installation](MODELS.md) and [install format](GTURBO.md) | Reuse discovery, validation, receipts, and bounded payload handling. Add an image-pipeline identity and complete component inventory. |
 | [Swift bindings](SWIFT_BINDINGS.md) | Keep inference in process and share the runtime with the CLI. Add an image session contract rather than overloading token events. |
 
-The production Rust GPU backend is Metal. MLX array ownership experiments
-are not prerequisites for this direction because the source adapter normalizes
-MLX safetensors before native execution. Existing quantized kernels are reuse
-candidates, not proof that a community checkpoint's packing or shapes are
-compatible. Likewise, a text-generation Qwen runner is not automatically
-the hidden-state encoder the image pipeline requires.
+The production Rust GPU backend remains Metal. For that native path, MLX array
+ownership experiments are not prerequisites because the source adapter
+normalizes MLX safetensors before native execution. Existing quantized kernels
+are reuse candidates, not proof that a community checkpoint's packing or
+shapes are compatible. Likewise, a text-generation Qwen runner is not
+automatically the hidden-state encoder the image pipeline requires.
 
 MoE demand loading already exists, and [KV quantization](TRUBOQUANT.md)
 already ships as an opt-in text feature. Neither needs rebuilding to unlock

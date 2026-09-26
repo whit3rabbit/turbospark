@@ -149,7 +149,7 @@ final class ImageWorkspaceTests: XCTestCase {
             """.utf8))
         model.telemetry = nil // No telemetry uses the conservative 16 GB recommendation.
         XCTAssertEqual(model.imageDownloadChoices.map(\.alias), [
-            "z-image-turbo-mlx-4bit", "z-image-turbo-mlx-2bit", "z-image-turbo",
+            "z-image-turbo-mlx-4bit", "z-image-turbo-mlx-2bit",
         ])
     }
 

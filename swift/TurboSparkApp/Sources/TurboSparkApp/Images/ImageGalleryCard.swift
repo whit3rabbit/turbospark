@@ -99,7 +99,11 @@ struct ImageGalleryActions: View {
         Button { model.regenerateImage(from: artifact) } label: {
             Label { Text("Regenerate", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
         }
-        .disabled(!model.canStartImageGeneration || model.imageModelPath.isEmpty || artifact.imageRequest == nil)
+        .disabled(
+            !model.canStartImageGeneration
+                || !model.hasSupportedSelectedZImageModel
+                || model.imageModelPath.isEmpty
+                || artifact.imageRequest == nil)
         Divider()
         Button { export() } label: {
             Label { Text("Save As...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }

@@ -40,7 +40,10 @@ struct ImageModelControls: View {
     }
 
     private var installed: [ImageInstalledModel] {
-        model.imageModels.filter { ImageModelPresentation.family($0.modelID) == family }
+        model.imageModels.filter {
+            AppModel.supportsMLXZImage(modelID: $0.modelID)
+                && ImageModelPresentation.family($0.modelID) == family
+        }
     }
 
     private var sources: [ImageCatalogEntry] {
@@ -59,7 +62,8 @@ struct ImageModelControls: View {
                         Button {
                             browsingFamily = name
                             if let first = model.imageModels.first(where: {
-                                ImageModelPresentation.family($0.modelID) == name
+                                AppModel.supportsMLXZImage(modelID: $0.modelID)
+                                    && ImageModelPresentation.family($0.modelID) == name
                             }) { model.selectImageModel(first) }
                         } label: { Text(name) }
                     }
@@ -102,6 +106,7 @@ struct ImageModelControls: View {
                 } label: {
                     HStack(spacing: 4) {
                         if let selected = model.selectedImageModel,
+                           AppModel.supportsMLXZImage(modelID: selected.modelID),
                            ImageModelPresentation.family(selected.modelID) == family {
                             Text(ImageModelPresentation.quantization(selected.quantization))
                         } else if let firstSource = sources.first {

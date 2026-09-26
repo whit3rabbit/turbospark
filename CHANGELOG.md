@@ -13,6 +13,33 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- `swift/TurboSparkApp`: in-process Apple MLX Swift integration for Z-Image
+  Turbo generation. Vendored `Z-Image.swift` under
+  `swift/TurboSparkApp/Vendor/ZImage` to provide standalone, hermetic builds
+  without remote Git package dependency overhead.
+- `swift/TurboSparkApp`: `ZImageMLXBenchmark` executable target under
+  `Benchmarks/ZImageMLXBenchmark` for headless timing, model loading, and
+  pipeline throughput evaluation.
+- `docs/DESKTOP_FEATURE_PARITY.md`: comprehensive 530+ feature comparison
+  matrix and architecture review evaluating `swift/TurboSparkApp` against
+  ZCode v3.14.3 and Unsloth Desktop/Studio, documenting parity, implementation
+  routes, and pinned hardware evidence.
+
+### Changed
+- `swift/TurboSparkApp`: migrated app image generation dispatch from the
+  legacy native image session to `MLXImageGenerationSession` using the
+  vendored ZImage MLX pipeline, with multi-stage progress reporting (prompt
+  encoding, diffusion steps, VAE decoding, PNG export), seed preservation,
+  cancellation handling, and warm-session caching.
+- `docs/IMAGE_GENERATION.md` and `docs/ZIMAGE_TURBO.md`: updated execution
+  topology documentation to reflect Swift app dispatch via MLX while keeping
+  `crates/image` as the CLI and native Metal reference/benchmark engine.
+- `docs/BENCHMARKING.md` and `docs/BENCHMARKS.md`: recorded standalone Swift
+  MLX pipeline benchmarks on Apple M4 Max (57.61 s median across 3 runs for
+  1024x1024 9-step generation, achieving roughly 63x speedup over the
+  3,608 s native packed experiment).
+
 ## [0.1.0] - 2026-09-20
 
 ### Security

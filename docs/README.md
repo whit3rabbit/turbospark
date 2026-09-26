@@ -18,6 +18,7 @@ the evidence that supports the claim.
 | Configure environment variables | [`ENV.md`](ENV.md) |
 | Understand the text install format | [`GTURBO.md`](GTURBO.md) |
 | Build a release artifact | [`RELEASE.md`](RELEASE.md) |
+| Compare desktop feature parity (ZCode, Unsloth Desktop) | [`DESKTOP_FEATURE_PARITY.md`](DESKTOP_FEATURE_PARITY.md) |
 
 ## Runtime and integration references
 

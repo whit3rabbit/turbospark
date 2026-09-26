@@ -152,15 +152,6 @@
         "revision" : "8b4a38dc994a110abaec8a400615567bd996105f",
         "version" : "0.12.0"
       }
-    },
-    {
-      "identity" : "z-image.swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/zhutao100/Z-Image.swift.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "28bfcf3148c041a554629247170eb54d9ac46830"
-      }
     }
   ],
   "version" : 2

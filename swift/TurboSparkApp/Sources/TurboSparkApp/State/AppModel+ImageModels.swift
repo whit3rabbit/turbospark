@@ -6,7 +6,7 @@ extension AppModel {
     /// becomes available after the user has already opened that workspace.
     var shouldRecommendImageModel: Bool {
         activeSection == .images
-            && imageModelPath.isEmpty
+            && !hasSupportedSelectedZImageModel
             && !hasInstalledZImageModel
             && !recommendedZImageSources.isEmpty
     }
@@ -21,6 +21,7 @@ extension AppModel {
 
     public var canGenerateImage: Bool {
         !imageModelPath.isEmpty
+            && hasSupportedSelectedZImageModel
             && !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && canStartImageGeneration
     }
@@ -29,27 +30,35 @@ extension AppModel {
         imageModelPathText = model.path
     }
 
-    /// True when at least one curated Z-Image install is available locally.
-    /// Side-loaded folders remain selectable by path, but do not count as a
-    /// curated install until the native image catalog can validate them.
+    /// True when an installed MLX checkpoint supported by the app is available.
     public var hasInstalledZImageModel: Bool {
         imageModels.contains {
-            $0.alias.lowercased().contains("z-image")
-                || $0.modelID.lowercased().contains("z-image")
+            Self.supportsMLXZImage(modelID: $0.modelID)
         }
     }
 
-    /// The MLX variants whose pinned install gates have passed. FP16 is kept
-    /// in the catalog for explicit users, but is not a first-run suggestion
-    /// while its install gate remains open.
+    var hasSupportedSelectedZImageModel: Bool {
+        guard let selectedImageModel else { return false }
+        return Self.supportsMLXZImage(modelID: selectedImageModel.modelID)
+    }
+
+    static func supportsMLXZImage(modelID: String) -> Bool {
+        [
+            "andrevp/Z-Image-Turbo-MLX-2bit",
+            "andrevp/Z-Image-Turbo-MLX-4bit",
+            "andrevp/Z-Image-Turbo-MLX-8bit",
+        ].contains(modelID)
+    }
+
+    /// The MLX variants whose pinned install gates have passed. Native and
+    /// unqualified sources stay out of every Swift app download surface.
     public static let testedZImageAliases = [
-        "z-image-turbo",
         "z-image-turbo-mlx-2bit",
         "z-image-turbo-mlx-4bit",
         "z-image-turbo-mlx-8bit",
     ]
 
-    /// Returns one or more curated MLX choices appropriate for this machine.
+    /// Returns MLX choices ranked for this machine; the first is the default.
     /// The ordering is intentional: the first row is the default suggestion,
     /// and the remaining rows give users a useful quality/footprint choice.
     public static func recommendedZImageAliases(physicalMemoryBytes: UInt64) -> [String] {
@@ -85,9 +94,14 @@ extension AppModel {
         }
     }
 
-    /// Downloads a curated image source through the native image-install ABI.
+    /// Downloads a supported MLX source through the catalog install ABI.
     /// The source is packed and verified before it becomes selectable.
     public func installImageModel(_ source: ImageCatalogEntry) {
+        guard Self.testedZImageAliases.contains(source.alias),
+              Self.supportsMLXZImage(modelID: source.modelID) else {
+            showToast("Only supported MLX Z-Image models can be installed in the app.", style: .warning)
+            return
+        }
         guard !imageModels.contains(where: { $0.alias == source.alias }) else {
             if let installed = imageModels.first(where: { $0.alias == source.alias }) {
                 selectImageModel(installed)
@@ -221,8 +235,8 @@ extension AppModel {
         imageModels.first { $0.path == imageModelPath }
     }
 
-    /// Sizes are owned by the selected install. A side-loaded current
-    /// Z-Image install uses the same single supported envelope.
+    /// Sizes are owned by the selected install. An arbitrary side-loaded path
+    /// cannot be generated until the app has a supported MLX model identity.
     public var imageSupportedSize: (width: UInt32, height: UInt32)? {
         if let selectedImageModel {
             return (selectedImageModel.width, selectedImageModel.height)

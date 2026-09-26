@@ -11,9 +11,10 @@ install, hardware, build mode, protocol, counter definition, and limitations
 beside every result. A benchmark without those fields is a timing sample, not
 a frozen row.
 
-Everything here lives in `crates/bench`: the `turbospark-bench` binary, a
-small library the binary and the oracle test share, and
-`tests/memory_oracle.rs`.
+The text-model harness lives in `crates/bench`: the `turbospark-bench` binary,
+a small library shared by the binary and oracle, and `tests/memory_oracle.rs`.
+The Swift MLX image benchmark is a separate executable target in
+`swift/TurboSparkApp`.
 
 ## The three modes
 
@@ -23,9 +24,36 @@ small library the binary and the oracle test share, and
 | Synthetic real | `turbospark-bench <tokenizer-dir> --real` | The real GPU dispatch path over a tiny synthetic install. |
 | Real install | `turbospark-bench --model <install-dir> [--case <id>]` | Real Gemma 4 throughput and peak memory. The Swift-comparison number. |
 
-Only the third mode is comparable to anything published. The first two
-exist so the loop and the dispatch path can be timed without a
+Only the third mode is comparable to published text-model throughput rows.
+The first two exist so the loop and dispatch path can be timed without a
 multi-gigabyte checkout.
+
+## Image generation (macOS, MLX)
+
+The release benchmark executable uses the same vendored `ZImagePipeline` as
+the Swift app. It runs one fixed 1024 x 1024 image at 9 steps, guidance 0, and
+seed 42. Its elapsed time starts immediately before the request and includes
+model load, denoising, VAE decode, PNG encoding, and the PNG file write.
+Download, installation, package compilation, and SwiftUI are outside the
+timer. Each invocation is a fresh process; warm residency applies within
+that process.
+
+Install the selected MLX checkpoint in the app and generate once to create its
+MLX-compatible cache snapshot. Then run:
+
+```sh
+swift run -c release --package-path swift/TurboSparkApp ZImageMLXBenchmark \
+  "$HOME/Library/Caches/TurboSpark/ImageMLX/andrevp-Z-Image-Turbo-MLX-8bit-c9f70995562299b1eda9b9145a94dd7a5a1ae0d6" \
+  "$TMPDIR/zimage-mlx.png"
+```
+
+The executable prints elapsed time for each progress stage and a final
+`RESULT elapsed_s=...` line. For a report, run three fresh processes and
+record each result, median, and range. Use the same model revision and do not
+include the first download or Swift package build when comparing a run. This
+is a standalone pipeline timing, not a packaged app, quality, or memory gate.
+The current measurements and their comparison limits are recorded in
+[`ZIMAGE_TURBO.md`](ZIMAGE_TURBO.md#recommended-model-and-benchmark-record).
 
 ### Scripted
 

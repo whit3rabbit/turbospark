@@ -1,11 +1,12 @@
 # Z-Image-Turbo: current implementation and evidence
 
-Status: IG0, IG1, IG2, IG3, and IG4 are closed for the pinned 1024-by-1024
-case. The checked image format, local and remote packers, macOS Metal backend,
-CLI path, native quality/resource evidence, real cancellation, no-device
-execution evidence, bounded memory, lifetime proof, Swift integration, and
-macOS app image mode are complete. IG5 is intentionally open for measured
-optimization work only.
+Status: IG0, IG1, IG2, IG3, and IG4 are closed for the pinned native
+1024-by-1024 case. The Swift app now sends supported Z-Image generation
+through MLX after native runs measured 3,608 to 4,666 seconds per image. The
+standalone MLX pipeline measured a 57.61-second median across three runs on
+Apple M4 Max. The packaged app and UI gate for this new route remains
+unverified. IG5 remains open for measured optimization work on the native
+runtime.
 This page is both the summary of what was learned from Z-Image-Turbo and the
 reusable process for bringing up another image-generation model in this
 repository.
@@ -62,18 +63,29 @@ manifest fields, hashes, and qualification rules, is the
 
 ## Recommended model and benchmark record
 
-The default image source is the MLX export
-[`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit).
-It is the default because it preserves the image-quality-oriented protected
-tensors while reducing the published download to 6.48 GB. All four MLX
-variants below are first-class inputs to the same image install and runtime
-path; the selected variant is recorded in the install manifest.
+The Swift app uses MLX for every supported Z-Image generation. It no longer
+offers the original `Tongyi-MAI/Z-Image-Turbo` checkpoint in its download or
+selection menus, and the install entry point rejects identities outside the
+supported MLX list. Generation also refuses old native installs and arbitrary
+side-loaded paths. Existing native installs remain visible in the model
+manager so they can be deleted.
+
+On a 32 GB or larger Mac, the first recommendation is the 8-bit MLX export
+[`andrevp/Z-Image-Turbo-MLX-8bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-8bit).
+It generated one image in a 57.61-second median (three fresh-process runs) in
+the release pipeline benchmark below. The 2-bit export took 56.06 seconds in
+one run, 1.55 seconds faster than that 8-bit median, and its
+[model card](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-2bit) warns of
+noticeable quality degradation. That small one-run speed difference does not
+make 2-bit the speed-first recommendation. The app's current memory ranking
+offers 4-bit then 2-bit on 16-31 GB and 2-bit below 16 GB. These are picker
+heuristics, not variant-specific runtime-memory qualifications.
 
 | Variant | Install alias | Size | Quantization | Source |
 | --- | --- | ---: | --- | --- |
 | Full precision (fp16) | `z-image-turbo-mlx-fp16` | 20.54 GB | None | [`andrevp/Z-Image-Turbo-MLX`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX) |
 | 8-bit | `z-image-turbo-mlx-8bit` | 11.37 GB | 8-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-8bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-8bit) |
-| 4-bit (default) | `z-image-turbo-mlx-4bit` | 6.48 GB | 4-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit) |
+| 4-bit | `z-image-turbo-mlx-4bit` | 6.48 GB | 4-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit) |
 | 2-bit | `z-image-turbo-mlx-2bit` | 4.04 GB | 2-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-2bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-2bit) |
 
 The header-only source gate pins the four published revisions at `2bit`
@@ -152,12 +164,10 @@ not image-generation runtime requirements. The fp16 source was not rerun as a
 full install because it is unquantized and needs more temporary storage than
 the current free-space budget supports.
 
-For a practical provisional machine recommendation, use 4-bit as the default
-with 17 GB free storage and 32 GB unified memory. The 32 GB memory figure is
-conservative, not an MLX runtime qualification: the existing pinned native
-image resource record reached a 20,725,728,336-byte process peak, while the
-MLX numbers above measure installation only. A variant-specific generation
-memory floor remains open until the real MLX image resource gate is run.
+The app's memory-based ordering is a practical selection heuristic, not a
+validated MLX runtime-memory floor. The pinned native resource record reached
+a 20,725,728,336-byte process peak; the MLX generation runs below are wall
+time measurements and did not collect a comparable memory profile.
 
 The benchmark record below remains the pinned native Rust/Metal gate record;
 the upstream sizes in this table are download sizes, not runtime memory
@@ -180,6 +190,46 @@ diffusion work instead of token throughput. The pinned 1024-by-1024 record is:
 | Repeated packed jobs | 2 complete jobs; peak growth 113,557,576 bytes | Exact repeated PNGs, zero page-ins, zero swap delta, [`IG3`](IMAGE_GENERATION.md#ig3-bound-memory-and-add-dense-streaming-where-necessary) |
 | Swift app image gate | 4,665.912 s for the pinned image; cancellation 21.827 s | Real-install 1024-by-1024 app path, [`IG4`](IMAGE_GENERATION.md#ig4-expose-the-runtime-to-swift-and-the-images-destination) |
 | Packed native, SIMD-linear experiment | 3,608.010 s; one run | Release metadata-gate generation on Apple M4 Max with the local 8-bit MLX-affine install; 1024-by-1024, nine steps, guidance 0, seed 42 |
+| Swift MLX pipeline, 8-bit | 57.61 s median; 56.47-64.24 s range; 59.44 s mean; 3 runs | Release process, Apple M4 Max, 1024-by-1024, nine steps, guidance 0, seed 42; model load, generation, PNG encoding, and file write included |
+| Swift MLX pipeline, 2-bit | 56.06 s; one run | Same standalone release harness and image settings; model load, generation, PNG encoding, and file write included |
+
+The MLX run used vendored `Z-Image.swift` revision
+`28bfcf3148c041a554629247170eb54d9ac46830`, MLX 0.30.6, and the pinned
+8-bit revision `c9f70995562299b1eda9b9145a94dd7a5a1ae0d6`. The host was an
+Apple M4 Max with 36 GB unified memory on macOS 26.6.2. The benchmark prompt
+was fixed to a tiny red cabin beside a frozen lake; the standalone harness
+starts a fresh process for each measurement and uses warm residency within
+that process. The three committed-harness totals were 64.24, 56.47, and
+57.61 seconds. Model files were local and OS file caches were not cleared.
+The earlier 59.17-second one-off is not included in these three-run
+statistics. Timing excludes download, install, package compilation, and SwiftUI.
+
+The 3,608.010-second native experiment and the 57.61-second MLX median are a
+roughly 63x directional comparison. They use different engines and harnesses,
+so this ratio is not a controlled paired result. The historical 4,665.912-
+second Swift app gate is a separate native-path record. The timing gap is
+large enough to remove that native path from the Swift app despite the lack of
+a paired benchmark.
+
+The median stage split is 2.12 seconds for model load plus text encoding,
+52.43 seconds for nine denoising steps, and 3.06 seconds for decode plus PNG
+output. The bottleneck is repeated denoising work, not language-model prefill.
+The app maps MLX progress into text-encoder, transformer, VAE decode, and PNG
+stages and warms the pipeline within a session. A repeat-image latency
+benchmark has not been recorded.
+
+The speedup is from changing the Swift app's execution backend. The app uses
+the vendored upstream `Z-Image.swift` implementation with MLX 0.30.6 and
+`residencyPolicy: .warm`. Its adapter casts loaded FP16 tensors to BF16 and
+dequantizes the packed auxiliary pad-token and final-layer weights expected by
+the model. For packed app installs, it creates an MLX-compatible cache tree
+with real component directories and symlinked files, so it does not copy the
+multi-gigabyte source weights. The selected source and model revision remain
+in the install metadata.
+
+The stage split rules out text prefill as the hour-long cause. A GPU profiler
+trace was not captured, so this timing does not identify an individual MLX
+kernel as the remaining bottleneck.
 
 The SIMD-linear experiment replaced the tiled linear kernel's serial inner
 product and repeated threadgroup barriers with contiguous-K SIMD lanes and a
@@ -192,9 +242,10 @@ an experiment rather than a replacement frozen result. The focused Metal
 parity test passes F32, local INT4, and supported MLX-affine row formats.
 
 The first three rows are reference-stage observations and must not be read as
-packed-runtime memory claims. The packed rows are full image-generation
-measurements on the pinned install, and the long wall times are why IG5 is
-limited to measured optimization proposals. The full evidence ledger remains
+packed-runtime memory claims. The packed rows are full native image-generation
+measurements on the pinned install. The MLX rows are standalone Swift pipeline
+timings and do not close the packaged app, image quality, or runtime-memory
+gates. The full evidence ledger remains
 in the [IG0 resource records](verification/z-image-ig0-benchmarks-quiet-05.json),
 the [IG3 runtime record](IMAGE_GENERATION.md#ig3-bound-memory-and-add-dense-streaming-where-necessary),
 and the [IG4 app closure](IMAGE_GENERATION.md#ig4-expose-the-runtime-to-swift-and-the-images-destination).
@@ -216,8 +267,9 @@ the legacy local row format. Neither profile quantizes every tensor:
 embeddings, norms, modulation, positional data, and other protected tensors
 remain at higher precision, as do the VAE and other image-sensitive
 operations. All four published MLX variants use the same tensor-layout adapter
-and install contract; they are not separate model families. MLX is a supported
-source format and does not require an MLX runtime dependency.
+and install contract; they are not separate model families. The packer and
+Rust native runtime do not require an MLX runtime dependency. The Swift app
+does, and uses MLX for supported Z-Image generation.
 
 The adapter's affine-width contract is now explicit: MLX U32 weight planes
 with F16 or BF16 `.scales` and `.biases` companions are accepted at 2, 3, 4,
@@ -237,12 +289,11 @@ the closed IG2 claim still applies only to the pinned INT4 profile. The Swift
 catalog/install binding surface is implemented separately from the real
 image-generation gate.
 
-`crates/image` is an intentional new Rust crate. It owns the image graph,
-install schema, packed storage, scheduler, VAE, and native Metal backend. It
-shares only matching context, pass, and resident-buffer contracts with the
-general GPU crate. This lets the CLI and the later C ABI/Swift package use the
-same image runtime without putting diffusion state into the autoregressive
-text runner.
+`crates/image` owns the image graph, install schema, packed storage,
+scheduler, VAE, and native Metal backend. It remains the CLI and native
+benchmark path. The Swift app uses its install catalog and `.image.gturbo`
+source retention, but dispatches generation through the separate MLX
+pipeline. This keeps diffusion state out of the autoregressive text runner.
 
 Memory work starts with ownership, not a disk-size headline: keep only one
 heavyweight stage resident, map packed payloads without expanding every matrix,
@@ -672,14 +723,13 @@ the same conditioning, scheduler, quantization, cancellation, and output
 implementation as the CLI. Image jobs remain transient until saved, while
 saved request metadata makes regeneration reuse the original seed and options.
 
-The Swift catalog now exposes the pinned image rows through
+The Swift catalog exposes the pinned image rows through
 `TurboSparkCatalog.imageAvailable()` and installs them through
 `TurboSparkCatalog.installImage(_:)`. The app's image model picker uses those
-bindings, reports staged download progress, and routes a completed
-`.image.gturbo` install into the existing native `TurboSparkImageSession`.
-This proves the catalog and ABI surface without retaining a multi-gigabyte
-fixture; the real image-generation Swift gate remains opt-in through
-`TURBOSPARK_TEST_IMAGE_MODEL`.
+bindings and reports staged download progress. Its current Z-Image generation
+session uses MLX; the historical `TurboSparkImageSession` route is no longer
+available in the app because its best recorded native run took over an hour.
+The standalone MLX measurement does not close the packaged app or UI gate.
 
 ### IG5: measured optimization
 

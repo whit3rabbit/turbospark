@@ -51,9 +51,8 @@ extension AppModel {
         return min(1.0, max(0.0, overall))
     }
 
-    /// Starts a direct-prompt image turn. Image prompts intentionally bypass
-    /// text hooks, tool calls, and the text transcript pipeline: the native
-    /// image runtime has its own verified request envelope.
+    /// Starts a direct-prompt image turn through the supported MLX pipeline.
+    /// Image prompts bypass text hooks, tool calls, and text generation.
     public func generateImage() {
         let prompt = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
@@ -62,6 +61,10 @@ extension AppModel {
         }
         guard !imageModelPath.isEmpty else {
             showToast("Select an image .gturbo install first.", style: .warning)
+            return
+        }
+        guard hasSupportedSelectedZImageModel else {
+            showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
             return
         }
         guard !isInGhostChat else {
@@ -109,6 +112,10 @@ extension AppModel {
             showToast("Select an image .gturbo install first.", style: .warning)
             return
         }
+        guard hasSupportedSelectedZImageModel else {
+            showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
+            return
+        }
         guard canStartImageGeneration else { return }
         startImageGeneration(job.options, chatID: job.chatID)
     }
@@ -120,6 +127,10 @@ extension AppModel {
         }
         guard !imageModelPath.isEmpty else {
             showToast("Select an image .gturbo install first.", style: .warning)
+            return
+        }
+        guard hasSupportedSelectedZImageModel else {
+            showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
             return
         }
         guard canStartImageGeneration else { return }
@@ -156,6 +167,10 @@ extension AppModel {
         _ options: ImageGenerateOptions, chatID: UUID, count: Int = 1
     ) {
         guard imageGenerationTask == nil else { return }
+        guard hasSupportedSelectedZImageModel else {
+            showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
+            return
+        }
         let requests = ImageGenerationSequence.requests(options: options, count: count)
         imageBatchIndex = 1
         imageBatchCount = requests.count
@@ -183,13 +198,14 @@ extension AppModel {
             }
             do {
                 try Task.checkCancellation()
+                guard let selected = self.selectedImageModel,
+                      Self.supportsMLXZImage(modelID: selected.modelID) else {
+                    throw TurboSparkError(
+                        code: .open,
+                        message: "Select a supported MLX Z-Image model from the curated list.")
+                }
                 if self.imageSession == nil || self.imageSessionPath != modelPath {
-                    if let selected = self.selectedImageModel,
-                       selected.modelID.hasPrefix("andrevp/") {
-                        self.imageSession = MLXImageGenerationSession(model: selected)
-                    } else {
-                        self.imageSession = try await TurboSparkImageSession(modelPath: modelPath)
-                    }
+                    self.imageSession = MLXImageGenerationSession(model: selected)
                     self.imageSessionPath = modelPath
                 }
                 guard let session = self.imageSession else {

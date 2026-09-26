@@ -142,13 +142,13 @@ final class ImageGenerationTests: XCTestCase {
         XCTAssertNil(job.savedPath)
     }
 
-    func testSelectingAnInstalledImageModelUsesItsNativePath() {
+    func testSelectingAnInstalledMLXImageModelUsesItsPackedPath() {
         let model = AppModel()
         let image = ImageInstalledModel(
-            alias: "z-image-turbo",
-            modelID: "Tongyi-MAI/Z-Image-Turbo",
+            alias: "z-image-turbo-mlx-4bit",
+            modelID: "andrevp/Z-Image-Turbo-MLX-4bit",
             revision: String(repeating: "a", count: 40),
-            path: "/models/z-image-turbo.image.gturbo",
+            path: "/models/z-image-turbo-mlx-4bit.image.gturbo",
             width: 1024,
             height: 1024,
             schedulerSteps: 9)
@@ -314,7 +314,7 @@ final class ImageGenerationTests: XCTestCase {
         let model = AppModel()
         let image = ImageInstalledModel(
             alias: "z-image-turbo-mlx-4bit",
-            modelID: "Tongyi-MAI/Z-Image-Turbo",
+            modelID: "andrevp/Z-Image-Turbo-MLX-4bit",
             revision: "rev",
             path: "/models/z-image-turbo-mlx-4bit.image.gturbo",
             width: 1024,

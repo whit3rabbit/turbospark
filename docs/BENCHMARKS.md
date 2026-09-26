@@ -27,6 +27,22 @@ row. Its pinned Z-Image-Turbo benchmark record, including full-image wall time,
 packed resident-versus-streamed memory, and repeated-job stability, is in
 [`docs/ZIMAGE_TURBO.md`](ZIMAGE_TURBO.md#recommended-model-and-benchmark-record).
 
+## Image generation
+
+| Path | Wall time | Scope |
+| --- | ---: | --- |
+| Swift MLX pipeline, 8-bit | 57.61 s median (56.47-64.24 s, n=3) | Release runs on M4 Max, 1024 x 1024, 9 steps; model load through PNG write |
+| Swift MLX pipeline, 2-bit | 56.06 s | One release run with the same image settings; model card warns of noticeable quality degradation |
+| Packed native, SIMD-linear | 3,608.010 s | One release metadata-gate run on the 8-bit MLX-affine install, 1024 x 1024, 9 steps |
+| Historical Swift app native path | 4,665.912 s | Prior real-install app gate, 1024 x 1024 |
+
+The fastest recorded native run took about 63 times longer than the MLX median.
+That ratio is directional, not a controlled paired result: the engines and
+harnesses differ. The Swift app now recommends 8-bit MLX on machines with at
+least 32 GB of physical memory and does not offer the native checkpoint for
+generation. See [`ZIMAGE_TURBO.md`](ZIMAGE_TURBO.md#recommended-model-and-benchmark-record)
+for revisions, stage timings, diagnosis, and reproduction details.
+
 ## Run provenance
 
 | | |

@@ -15,7 +15,7 @@ final class ImageModelOnboardingTests: XCTestCase {
         return model
     }
 
-    func testSetupRequiresImageNavigationAndNoSelectedOrInstalledModel() throws {
+    func testSetupRequiresImageNavigationAndNoSupportedMlxModel() throws {
         let model = try model()
         for section in AppModel.AppNavigationSection.allCases {
             model.activeSection = section
@@ -23,12 +23,12 @@ final class ImageModelOnboardingTests: XCTestCase {
         }
         model.activeSection = .images
         model.imageModelPathText = "/models/side-loaded.image.gturbo"
-        XCTAssertFalse(model.shouldRecommendImageModel)
+        XCTAssertTrue(model.shouldRecommendImageModel)
         model.imageModelPathText = ""
         model.imageModels = [ImageInstalledModel(
             alias: "z-image-turbo", modelID: "fixture/Z-Image", revision: "pinned",
             path: "/models/image", width: 1024, height: 1024, schedulerSteps: 9)]
-        XCTAssertFalse(model.shouldRecommendImageModel)
+        XCTAssertTrue(model.shouldRecommendImageModel)
         model.imageModels = []
         model.imageCatalog = []
         XCTAssertFalse(model.shouldRecommendImageModel)
