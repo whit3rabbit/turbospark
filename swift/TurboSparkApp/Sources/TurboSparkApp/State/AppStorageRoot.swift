@@ -19,6 +19,17 @@ import Foundation
 /// keys on the TEST HOST rather than on a flag any one test sets, because the
 /// stores are reached through `.shared` singletons and static enums whose
 /// first touch can happen before any test body runs.
+private var testStorageDirectoryToClean: URL?
+
+private func registerTestStorageCleanup(_ url: URL) {
+    testStorageDirectoryToClean = url
+    atexit {
+        if let url = testStorageDirectoryToClean {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+}
+
 public enum AppStorageRoot {
     /// Set this to redirect the stores anywhere, for a sandbox or a fixture.
     public static let overrideEnvironmentKey = "TURBOSPARK_STATE_DIR"
@@ -64,6 +75,7 @@ public enum AppStorageRoot {
                     "TurboSparkTests-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)",
                     isDirectory: true)
             try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+            registerTestStorageCleanup(url)
             return (url, false)
         }
 

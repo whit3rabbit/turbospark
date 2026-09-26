@@ -162,6 +162,36 @@ final class RealModelTests: RealModelTestCase {
         print("generate: \(r.newTokens) tokens at \(r.tokensPerSecond ?? 0) tok/s, \(r.stopReason)")
     }
 
+    /// A fixed seed must reproduce sampled text through the Swift-to-FFI path.
+    /// This catches RNG state leaking across turns or being ignored by the
+    /// Swift generation options; greedy-only checks cannot exercise that path.
+    func testFixedSeedSamplingIsRepeatable() async throws {
+        let session = try await TurboSparkSession(modelPath: try modelPath())
+        var options = GenerateOptions()
+        options.maxNewTokens = 48
+        options.temperature = 0.8
+        options.topK = 64
+        options.topP = 0.95
+        options.seed = 20260721
+
+        var results: [GenerationResult] = []
+        for _ in 0..<2 {
+            var result: GenerationResult?
+            for try await event in session.generate(
+                [ChatMessage(role: .user, content: "Name a primary color and explain why it matters.")],
+                options: options
+            ) {
+                if case .finished(let finished) = event { result = finished }
+            }
+            results.append(try XCTUnwrap(result))
+        }
+
+        XCTAssertEqual(results[0].content, results[1].content)
+        XCTAssertEqual(results[0].newTokens, results[1].newTokens)
+        XCTAssertEqual(results[0].stopReason, results[1].stopReason)
+        print("repeatability: \(results[0].newTokens) sampled tokens match across both fixed-seed turns")
+    }
+
     /// A second turn on the same session continues from the first turn's KV
     /// instead of re-prefilling the whole transcript from scratch.
     ///

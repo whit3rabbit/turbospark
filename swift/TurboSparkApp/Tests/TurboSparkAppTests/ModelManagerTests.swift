@@ -18,6 +18,25 @@ final class ModelManagerTests: XCTestCase {
         XCTAssertTrue(desc.supportsChunkedPrefill)
     }
 
+    func testModelFeatureDescriptorQwen4ExpCatalogFeatures() {
+        let swiftQwen = InstalledModel(
+            alias: "swift-qwen38-iq2-xs",
+            repo: "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+            path: "",
+            family: "qwen4exp"
+        )
+        let desc = ModelFeatureDescriptor.resolve(installedModel: swiftQwen)
+
+        XCTAssertEqual(desc.routingType, .moe)
+        XCTAssertEqual(desc.routingDetails, "Routed Slot Cache")
+        XCTAssertTrue(desc.isSlotCacheStreaming)
+        XCTAssertTrue(desc.hasLinearAttention)
+        XCTAssertTrue(desc.supportsChunkedPrefill)
+        XCTAssertTrue(desc.supportsReasoning)
+        XCTAssertFalse(desc.supportsVision)
+        XCTAssertFalse(desc.isSteeringReady)
+    }
+
     func testModelFeatureDescriptorDenseDetection() {
         let mistral = InstalledModel(
             alias: "mistral7b",

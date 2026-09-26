@@ -166,7 +166,7 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     /// this repo's dense MTP/DFlash2 family, not MoE at all -- the old
     /// alias-substring chain wrongly flagged it as MoE.
     private static let knownMoEFamilies: Set<String> = [
-        "gemma4", "qwen36", "qwen3moe", "qwen35moe", "gptoss", "mixtral",
+        "gemma4", "qwen36", "qwen4exp", "qwen3moe", "qwen35moe", "gptoss", "mixtral",
         // deepseek2: 64 experts top-6 plus a fused shared expert.
         "deepseek2",
     ]
@@ -416,8 +416,8 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         let isSteeringReady =
             sessionInfo?.steering.supported ?? Self.steeringFamilies.contains(family)
 
-        let hasLinearAttention = lAlias.contains("qwen36") || lFamily == "qwen36"
-        let supportsChunkedPrefill = lAlias.contains("gemma") || lFamily.contains("gemma") || lFamily.contains("llama") || lAlias.contains("mistral")
+        let hasLinearAttention = lAlias.contains("qwen36") || lFamily == "qwen36" || lFamily == "qwen4exp"
+        let supportsChunkedPrefill = lAlias.contains("gemma") || lFamily.contains("gemma") || lFamily.contains("llama") || lAlias.contains("mistral") || lFamily == "qwen4exp"
         let supportsReasoning = combined.contains("think") || combined.contains("reason") || combined.contains("harmony") || lAlias.contains("gptoss") || lAlias.contains("museglimmer") || lAlias.contains("deepseek") || lAlias.contains("qwen")
         let supportsToolCalls: Bool? = sessionInfo?.toolCalling.native
         let supportsVision = combined.contains("vision") || combined.contains("vlm") || combined.contains("mrope")

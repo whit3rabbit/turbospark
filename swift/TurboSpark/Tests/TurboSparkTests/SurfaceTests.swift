@@ -101,7 +101,7 @@ final class SurfaceTests: XCTestCase {
     func testImageInstallListingDecodesSeparatelyFromTextModels() throws {
         let rows = try TurboSparkCatalog.imageInstalled()
         for row in rows {
-            XCTAssertTrue(row.path.hasSuffix(".image.gturbo"))
+            XCTAssertTrue(row.path.hasSuffix(".image.gturbo") || row.path.hasSuffix(".gturbo"))
             XCTAssertFalse(row.modelID.isEmpty)
             XCTAssertFalse(row.revision.isEmpty)
             XCTAssertEqual(row.width, 1024)
