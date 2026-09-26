@@ -492,3 +492,33 @@ kernel void embed_lookup_iq1_m(
     const float delta = negative_delta ? -0.125f : 0.125f;
     out[gid] = half(out_scale * scale * (iq_i8(kIq1SGrid[index], j) + delta));
 }
+
+// One IQ4_XS token row, dequantized into `out` and scaled. The lookup keeps
+// each block's eight 32-element sub-blocks in logical order, while each
+// sub-block's two packed nibbles address elements 16 apart.
+kernel void embed_lookup_iq4_xs(
+    device const uint8_t* table [[buffer(0)]],
+    device half* out [[buffer(1)]],
+    constant uint& token_id [[buffer(2)]],
+    constant uint& D [[buffer(3)]],
+    constant float& out_scale [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= D) return;
+    const uint row_bytes = (D / kIq4XsBlockElems) * kIq4XsBlockBytes;
+    device const uint8_t* blk = table + token_id * row_bytes
+        + (gid / kIq4XsBlockElems) * kIq4XsBlockBytes;
+    const uint e = gid % kIq4XsBlockElems;
+    const uint ib = e / kIq4XsSubElems;
+    const uint within = e % kIq4XsSubElems;
+    const float d = iq_f16_at(blk);
+    const uint scales_h = uint(blk[2]) | (uint(blk[3]) << 8);
+    device const uint8_t* scales_l = blk + 4;
+    device const uint8_t* qs = blk + 8;
+    const uint lo = uint((scales_l[ib / 2] >> (4 * (ib % 2))) & 0xF);
+    const uint hi = (scales_h >> (2 * ib)) & 3u;
+    const float dl = d * (float(int(lo | (hi << 4))) - 32.0f);
+    const uint8_t packed = qs[ib * (kIq4XsSubElems / 2) + (within % (kIq4XsSubElems / 2))];
+    const uint q = within < (kIq4XsSubElems / 2) ? uint(packed & 0xF) : uint(packed >> 4);
+    out[gid] = half(out_scale * dl * float(kIq4NlValues[q]));
+}

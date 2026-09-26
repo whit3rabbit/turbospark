@@ -1,8 +1,127 @@
-//! Host-side dispatch for IQ codebook quant types (IQ3_XXS, IQ4_XS, IQ4_NL).
+//! Host-side dispatch for IQ codebook quant types used by routed experts.
 
 use super::{encode_phase1, encode_phase2};
 use crate::context::{GpuError, MetalContext, PassEncoder};
 use crate::moe_decode::{MoeExpertOffsets, RoutedBlobsBuffer};
+
+#[allow(clippy::too_many_arguments)]
+fn encode_phase1_iq_lowbit(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kernel: &'static str,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert!(top_k as usize <= crate::MAX_STREAMED_EXPERTS);
+    encode_phase1(
+        context, pass, kernel, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+    )
+}
+
+/// Phase 1 over IQ2_S routed gate/up rows.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase1_iq2_s(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(
+        d_dim as usize % turbospark_compute::IQ_LOWBIT_BLOCK_ELEMS,
+        0
+    );
+    encode_phase1_iq_lowbit(
+        context,
+        pass,
+        "moe_phase1_gate_up_act_iq2_s",
+        routed,
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
+
+/// Phase 1 over IQ2_XXS routed gate/up rows.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase1_iq2_xxs(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(
+        d_dim as usize % turbospark_compute::IQ_LOWBIT_BLOCK_ELEMS,
+        0
+    );
+    encode_phase1_iq_lowbit(
+        context,
+        pass,
+        "moe_phase1_gate_up_act_iq2_xxs",
+        routed,
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
+
+/// Phase 1 over IQ1_M routed gate/up rows.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase1_iq1_m(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(
+        d_dim as usize % turbospark_compute::IQ_LOWBIT_BLOCK_ELEMS,
+        0
+    );
+    encode_phase1_iq_lowbit(
+        context,
+        pass,
+        "moe_phase1_gate_up_act_iq1_m",
+        routed,
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
 
 /// Phase 1 over IQ3_XXS expert blobs (ROADMAP Phase S), the codebook type the
 /// candidate checkpoint puts in 29 of its 30 `ffn_gate_up_exps` tensors.

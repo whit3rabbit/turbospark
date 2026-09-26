@@ -245,6 +245,37 @@ pub fn encode_rms_norm_bf16w_grouped_centered(
     Ok(())
 }
 
+/// Encoder-level grouped RMSNorm with a direct scale (`rmsnorm_bf16w_grouped`).
+/// Each group gets an independent statistic, and the full-width BF16 weight is
+/// read at its global element index. Use this when checkpoint conversion has
+/// already folded a centered `(1 + weight)` norm into its stored scale.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rms_norm_bf16w_grouped(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    weight: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    groups: u32,
+    group_dim: u32,
+    eps: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rmsnorm_bf16w_grouped",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(x.0, 0, x.1), (weight.0, 1, weight.1), (out.0, 2, out.1)],
+        &[(u32_bytes(&group_dim), 3), (f32_bytes(&eps), 4)],
+        groups as u64,
+        THREADS_PER_GROUP.min(group_dim.max(1) as u64),
+    );
+    Ok(())
+}
+
 /// One-shot [`encode_rms_norm_bf16w_grouped_centered`] over host slices, for
 /// the parity tests: `x` and `weight_bits` (BF16 bit patterns) are both
 /// `[groups * group_dim]`, `group_dim = x.len() / groups`.

@@ -194,12 +194,12 @@ pub use dequant_int8_gemv::{
 };
 #[cfg(target_os = "macos")]
 pub use dequant_iq_gemv::{
-    dequant_iq_gemv, encode_dequant_iq_gemv_resident, encode_embed_lookup_iq1_m, IqBlockType,
-    IqResidentMatrix, IQ1_M_BLOCK_BYTES, IQ1_M_BLOCK_ELEMS, IQ1_S_BLOCK_BYTES, IQ1_S_BLOCK_ELEMS,
-    IQ2_S_BLOCK_BYTES, IQ2_S_BLOCK_ELEMS, IQ2_XS_BLOCK_BYTES, IQ2_XS_BLOCK_ELEMS,
-    IQ2_XXS_BLOCK_BYTES, IQ2_XXS_BLOCK_ELEMS, IQ3_S_BLOCK_BYTES, IQ3_S_BLOCK_ELEMS,
-    IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS, IQ4_NL_BLOCK_BYTES, IQ4_NL_BLOCK_ELEMS,
-    IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
+    dequant_iq_gemv, encode_dequant_iq_gemv_resident, encode_embed_lookup_iq1_m,
+    encode_embed_lookup_iq4_xs, IqBlockType, IqResidentMatrix, IQ1_M_BLOCK_BYTES,
+    IQ1_M_BLOCK_ELEMS, IQ1_S_BLOCK_BYTES, IQ1_S_BLOCK_ELEMS, IQ2_S_BLOCK_BYTES, IQ2_S_BLOCK_ELEMS,
+    IQ2_XS_BLOCK_BYTES, IQ2_XS_BLOCK_ELEMS, IQ2_XXS_BLOCK_BYTES, IQ2_XXS_BLOCK_ELEMS,
+    IQ3_S_BLOCK_BYTES, IQ3_S_BLOCK_ELEMS, IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS,
+    IQ4_NL_BLOCK_BYTES, IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q2_k_gemv::{
@@ -249,7 +249,8 @@ pub use dsv4_state::{Dsv4StateManager, LayerCounters};
 pub use gdn::{
     encode_gdn_conv_decode, encode_gdn_conv_prefill, encode_gdn_conv_tail_update,
     encode_gdn_delta_decode, encode_gdn_delta_prefill, encode_gdn_gated_norm,
-    encode_gdn_gated_norm_sigmoid, encode_gdn_in_proj, encode_gdn_qk_norm, GdnShape,
+    encode_gdn_gated_norm_sigmoid, encode_gdn_in_proj, encode_gdn_qk_norm,
+    encode_gdn_qk_norm_with_rms_epsilon, GdnShape,
 };
 #[cfg(target_os = "macos")]
 pub use gdn_state::{GdnSnapshot, GdnStateManager};
@@ -283,11 +284,12 @@ pub use moe_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
+    encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s, encode_moe_phase1_iq2_xxs,
     encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_mxfp4,
-    encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_iq4_nl,
-    encode_moe_phase2_mxfp4, encode_moe_phase2_q4_k, encode_moe_phase2_q6_k,
-    encode_moe_phase2_q8_0, moe_gguf_source, mxfp4_row_bytes, Mxfp4Activation, MXFP4_BLOCK_BYTES,
-    MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
+    encode_moe_phase1_q2_0, encode_moe_phase1_q4_k, encode_moe_phase1_q8_0,
+    encode_moe_phase2_iq4_nl, encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10,
+    encode_moe_phase2_q4_k, encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source,
+    mxfp4_row_bytes, Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch::{
@@ -317,10 +319,11 @@ pub use qsa_indexer_state::QsaIndexerCacheManager;
 pub use resident_metal::{wrap_page_aligned_no_copy, ResidentGpuWeights};
 #[cfg(target_os = "macos")]
 pub use rms_norm::{
-    encode_rms_norm_bf16w, encode_rms_norm_bf16w_centered, encode_rms_norm_bf16w_grouped_centered,
-    encode_rms_norm_bf16w_perhead, encode_rms_norm_bf16w_perhead_centered,
-    encode_rms_norm_no_scale, encode_rms_norm_no_scale_perhead, rms_norm_bf16w_grouped_centered,
-    rms_norm_bf16w_perhead, rms_norm_no_scale, rms_norm_no_scale_perhead,
+    encode_rms_norm_bf16w, encode_rms_norm_bf16w_centered, encode_rms_norm_bf16w_grouped,
+    encode_rms_norm_bf16w_grouped_centered, encode_rms_norm_bf16w_perhead,
+    encode_rms_norm_bf16w_perhead_centered, encode_rms_norm_no_scale,
+    encode_rms_norm_no_scale_perhead, rms_norm_bf16w_grouped_centered, rms_norm_bf16w_perhead,
+    rms_norm_no_scale, rms_norm_no_scale_perhead,
 };
 #[cfg(target_os = "macos")]
 pub use rope::{

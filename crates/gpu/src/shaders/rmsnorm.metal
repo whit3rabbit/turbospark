@@ -271,6 +271,37 @@ void rmsnorm_bf16w_grouped_centered(
     }
 }
 
+// The plain-scale grouped form is used when the checkpoint stores gamma
+// directly (for example, llama.cpp-converted Qwen4 GGUF tensors). The
+// reduction and global weight indexing match the centered sibling; only the
+// scale convention differs.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void rmsnorm_bf16w_grouped(
+    device const half*   x          [[buffer(0)]],   // [groups * GD] FP16
+    device const bfloat* weight     [[buffer(1)]],   // [groups * GD] BF16, direct scale
+    device       half*   out        [[buffer(2)]],   // [groups * GD] FP16
+    constant     uint&   groupDim   [[buffer(3)]],
+    constant     float&  eps        [[buffer(4)]],
+    uint  group            [[threadgroup_position_in_grid]],
+    uint  lid              [[thread_position_in_threadgroup]],
+    uint  lsize            [[threads_per_threadgroup]],
+    uint  simd_lane_id     [[thread_index_in_simdgroup]],
+    uint  simd_group_id    [[simdgroup_index_in_threadgroup]],
+    uint  simdgroups       [[simdgroups_per_threadgroup]]
+) {
+    threadgroup float partial[kRmsMaxSimdGroups];
+    const uint GD = rms_fc_d(groupDim);
+    const uint base = group * GD;
+    device const half*   xg = x      + base;
+    device const bfloat* wg = weight + base;
+    device       half*   og = out    + base;
+    const float inv = rms_block_inv(xg, GD, eps, lid, lsize,
+                                    simd_lane_id, simd_group_id, simdgroups, partial);
+    for (uint i = lid; i < GD; i += lsize) {
+        og[i] = half(float(xg[i]) * inv * float(wg[i]));
+    }
+}
+
 [[kernel, max_total_threads_per_threadgroup(256)]]
 void rmsnorm_no_scale_perhead(
     device const half*  x          [[buffer(0)]],   // [numHeads * headDim] FP16

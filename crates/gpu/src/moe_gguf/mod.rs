@@ -34,6 +34,7 @@
 mod iq;
 mod kquants;
 mod mxfp4;
+mod q2_0;
 
 use crate::bytes::u32_bytes;
 use crate::context::{GpuError, MetalContext, PassEncoder};
@@ -41,7 +42,10 @@ use crate::moe_decode::{
     constants_key, moe_function_constants, MoeExpertOffsets, RoutedBlobsBuffer,
 };
 
-pub use iq::{encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase2_iq4_nl};
+pub use iq::{
+    encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s, encode_moe_phase1_iq2_xxs,
+    encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase2_iq4_nl,
+};
 pub use kquants::{
     encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_q4_k, encode_moe_phase2_q6_k,
     encode_moe_phase2_q8_0,
@@ -50,6 +54,7 @@ pub use mxfp4::{
     encode_moe_phase1_mxfp4, encode_moe_phase2_mxfp4, mxfp4_row_bytes, Mxfp4Activation,
     MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
 };
+pub use q2_0::{encode_moe_phase1_q2_0, encode_moe_phase2_q2_0_top10};
 
 const SOURCE: &str = concat!(
     include_str!("../shaders/moe.metal"),

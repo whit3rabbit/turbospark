@@ -1,7 +1,7 @@
 #![cfg(target_os = "macos")]
-//! Parity tests for `rmsnorm_bf16w_grouped_centered` (`qwen4_exp`'s `hc_norm`
-//! and PLE norms, `docs/QWEN4_PHASE0.md` item 9's norm taxonomy row 1)
-//! against `turbospark_compute::rms_norm_grouped_centered`.
+//! Parity tests for grouped RMSNorm dispatch, covering centered weights and
+//! direct scales. Qwen4 GGUF runtime paths use direct scales because the
+//! llama.cpp converter already folds `1 + weight` into those stored values.
 //!
 //! **THE DISCRIMINATION CASE HERE IS THE ONE THE PHASE 0 DOC ITSELF FLAGS AS
 //! OWED.** This kernel and `rmsnorm_bf16w_centered` (the PLAIN full-width
@@ -46,6 +46,12 @@ fn grouped_weight_bits(d: usize) -> Vec<u16> {
         .collect()
 }
 
+fn direct_scale_bits(d: usize) -> Vec<u16> {
+    (0..d)
+        .map(|i| f32_to_bf16_bits(1.25 + 0.2 * ((i as f32) * 0.29).sin()))
+        .collect()
+}
+
 /// Runs the grouped kernel over `x` (`groups * group_dim` halfs) with the
 /// full-width weight `w_bits`, returning FP32.
 fn run_grouped(
@@ -64,6 +70,36 @@ fn run_grouped(
 
     let pass = context.begin_pass();
     turbospark_gpu::encode_rms_norm_bf16w_grouped_centered(
+        context,
+        &pass,
+        (&x_buf, 0),
+        (&w_buf, 0),
+        (&out_buf, 0),
+        groups,
+        group_dim,
+        eps,
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+    read_halfs(&out_buf, total)
+}
+
+fn run_grouped_plain(
+    context: &mut MetalContext,
+    x16: &[f16],
+    w_bits: &[u16],
+    groups: u32,
+    eps: f32,
+) -> Vec<f32> {
+    let total = x16.len();
+    let group_dim = total as u32 / groups;
+    let x_buf = context.new_buffer_with_data(&to_le(x16));
+    let w_bytes: Vec<u8> = w_bits.iter().flat_map(|bits| bits.to_le_bytes()).collect();
+    let w_buf = context.new_buffer_with_data(&w_bytes);
+    let out_buf = context.new_output_buffer((total * 2) as u64);
+
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_rms_norm_bf16w_grouped(
         context,
         &pass,
         (&x_buf, 0),
@@ -149,6 +185,47 @@ fn rmsnorm_bf16w_grouped_centered_matches_cpu_reference() {
             expected[i]
         );
     }
+}
+
+#[test]
+fn rmsnorm_bf16w_grouped_direct_scale_matches_cpu_reference() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let groups = 4usize;
+    let group_dim = 64usize;
+    let d = groups * group_dim;
+    let eps = 1e-6f32;
+    let x16: Vec<f16> = (0..d)
+        .map(|i| {
+            let group = (i / group_dim) as f32;
+            let lane = (i % group_dim) as f32;
+            f16::from_f32((1.0 + group) * (lane * 0.23 + group * 1.7).sin())
+        })
+        .collect();
+    let weight_bits = direct_scale_bits(d);
+    let weights: Vec<f32> = weight_bits
+        .iter()
+        .map(|&bits| f32::from_bits((bits as u32) << 16))
+        .collect();
+    let input: Vec<f32> = x16.iter().map(|value| value.to_f32()).collect();
+
+    let expected = turbospark_compute::rms_norm_grouped(&input, &weights, groups, eps);
+    let got = run_grouped_plain(&mut context, &x16, &weight_bits, groups as u32, eps);
+    let centered = run_grouped(&mut context, &x16, &weight_bits, groups as u32, eps);
+
+    let mut max_direct_error = 0.0f32;
+    let mut max_centered_gap = 0.0f32;
+    for i in 0..d {
+        max_direct_error = max_direct_error.max((got[i] - expected[i]).abs());
+        max_centered_gap = max_centered_gap.max((centered[i] - expected[i]).abs());
+    }
+    assert!(
+        max_direct_error <= 2e-3,
+        "direct-scale output differs from CPU reference by {max_direct_error}"
+    );
+    assert!(
+        max_centered_gap > 0.2,
+        "fixture does not distinguish direct scale from centered scale: {max_centered_gap}"
+    );
 }
 
 /// **THE FIXTURE MUST DISCRIMINATE GROUPED FROM PLAIN**, and this states it

@@ -12,8 +12,9 @@ use turbospark_compute::{bf16_to_f32, f32_to_bf16, quantize_int4_affine, GdnDims
 use turbospark_gpu::{
     encode_dequant_int4_gemv_resident, encode_gdn_conv_decode, encode_gdn_conv_prefill,
     encode_gdn_conv_tail_update, encode_gdn_delta_decode, encode_gdn_delta_prefill,
-    encode_gdn_gated_norm, encode_gdn_in_proj, encode_gdn_qk_norm, read_buffer_f16,
-    read_f32_buffer, write_buffer_bytes, GdnShape, Int4ResidentMatrix, MetalBuffer, MetalContext,
+    encode_gdn_gated_norm, encode_gdn_in_proj, encode_gdn_qk_norm,
+    encode_gdn_qk_norm_with_rms_epsilon, read_buffer_f16, read_f32_buffer, write_buffer_bytes,
+    GdnShape, Int4ResidentMatrix, MetalBuffer, MetalContext,
 };
 
 const HK: usize = 2;
@@ -253,6 +254,87 @@ fn assert_close(got: &[f32], want: &[f32], what: &str) {
             "{what} element {i}: got {g}, want {w}"
         );
     }
+}
+
+#[test]
+fn qwen4_qk_norm_matches_slotstream_l2_definition_at_small_scales() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let c = dims().qkv_dim();
+    let mut input = vec![f16::from_f32(0.0); c];
+    for head in 0..HK {
+        for i in 0..DK {
+            let q = (((head * DK + i) % 19) as f32 - 9.0) * 1e-4;
+            let k = (((head * DK + i * 3) % 23) as f32 - 11.0) * 1e-4;
+            input[head * DK + i] = f16::from_f32(q);
+            input[HK * DK + head * DK + i] = f16::from_f32(k);
+        }
+    }
+    let qk_width = 2 * HK * DK;
+    for (i, value) in input[qk_width..].iter_mut().enumerate() {
+        *value = f16::from_f32(0.05 + i as f32 * 1e-4);
+    }
+
+    let conv_out = zeroed(&context, c * 2);
+    write_buffer_bytes(&conv_out, 0, &half_bytes(&input));
+    let pass = context.begin_pass();
+    encode_gdn_qk_norm_with_rms_epsilon(
+        &mut context,
+        &pass,
+        shape(),
+        (&conv_out, 0),
+        1,
+        1e-6 / DK as f32,
+    )
+    .expect("Qwen4 epsilon qk norm");
+    pass.commit_and_wait();
+
+    let actual = read_buffer_f16(&conv_out, 0, c);
+    let mut expected = input.clone();
+    let mut legacy_max_error = 0.0f32;
+    for is_q in [true, false] {
+        for head in 0..HK {
+            let base = if is_q { 0 } else { HK * DK };
+            let base = base + head * DK;
+            let sumsq: f32 = input[base..base + DK]
+                .iter()
+                .map(|value| {
+                    let x = value.to_f32();
+                    x * x
+                })
+                .sum();
+            let reference_norm = (sumsq + 1e-6).sqrt();
+            let reference_scale = if is_q { (DK as f32).sqrt() } else { 1.0 };
+            let legacy_norm = (sumsq / DK as f32 + 1e-6).sqrt();
+            let legacy_scale = if is_q { DK as f32 } else { (DK as f32).sqrt() };
+            for i in 0..DK {
+                let x = input[base + i].to_f32();
+                let reference = x / reference_norm / reference_scale;
+                expected[base + i] = f16::from_f32(reference);
+                let legacy = x / legacy_norm / legacy_scale;
+                legacy_max_error = legacy_max_error.max((reference - legacy).abs());
+            }
+        }
+    }
+
+    for i in 0..qk_width {
+        let error = (actual[i].to_f32() - expected[i].to_f32()).abs();
+        assert!(error <= 2e-4, "q/k element {i}: error {error}");
+    }
+    assert!(
+        legacy_max_error > 1e-2,
+        "small-activation fixture must distinguish the old mean-space epsilon"
+    );
+    assert_eq!(
+        actual[qk_width..]
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>(),
+        input[qk_width..]
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>(),
+        "q/k normalization must leave v unchanged"
+    );
 }
 
 #[test]

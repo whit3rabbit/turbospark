@@ -16,7 +16,7 @@
 #![cfg(target_os = "macos")]
 
 use half::f16;
-use turbospark_gpu::{dequant_iq_gemv, IqBlockType, MetalContext};
+use turbospark_gpu::{dequant_iq_gemv, encode_embed_lookup_iq4_xs, IqBlockType, MetalContext};
 
 /// One LCG, so every fixture below is reproducible and independent of the
 /// random-number policy anywhere else.
@@ -161,6 +161,44 @@ fn iq4_xs_matches_the_cpu_reference() {
     let cpu = turbospark_compute::dequant_iq4_xs_gemv(&refs, &x_f32, n);
     let gpu = dequant_iq_gemv(&mut context, IqBlockType::Iq4Xs, &refs, &x_f16, n).unwrap();
     assert_matches("iq4_xs", &gpu, &cpu, n);
+}
+
+#[test]
+fn iq4_xs_embedding_lookup_matches_the_cpu_reference_for_selected_row() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let (vocab, d, token) = (7usize, 2 * 256, 5u32);
+    let rows: Vec<Vec<u8>> = (0..vocab)
+        .map(|row| iq4_xs_row(d, 127 + row as u32))
+        .collect();
+    let table: Vec<u8> = rows.iter().flatten().copied().collect();
+    let table_buffer = context.new_buffer_with_data(&table);
+    let out = context.new_output_buffer((d * std::mem::size_of::<u16>()) as u64);
+    let out_scale = 2.5f32;
+    let pass = context.begin_pass();
+    encode_embed_lookup_iq4_xs(
+        &mut context,
+        &pass,
+        (&table_buffer, 0),
+        (&out, 0),
+        token,
+        d as u32,
+        out_scale,
+    )
+    .expect("GPU dispatch succeeds");
+    pass.commit_and_wait();
+
+    let row_bytes = d / 256 * 136;
+    let row = &table[token as usize * row_bytes..(token as usize + 1) * row_bytes];
+    let want: Vec<f32> = turbospark_compute::quant_gguf_iq::dequantize_iq4_xs(row, d)
+        .into_iter()
+        .map(|value| value * out_scale)
+        .collect();
+    let got: Vec<f16> = {
+        let ptr = out.contents() as *const u16;
+        let bits = unsafe { std::slice::from_raw_parts(ptr, d) };
+        bits.iter().map(|&value| f16::from_bits(value)).collect()
+    };
+    assert_matches("IQ4_XS embedding row 5, scale 2.5", &got, &want, d);
 }
 
 #[test]

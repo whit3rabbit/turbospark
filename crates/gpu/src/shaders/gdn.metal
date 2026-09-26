@@ -318,6 +318,7 @@ kernel void gdn_qk_norm(
     constant uint& kHeads    [[buffer(1)]],
     constant uint& keyDim    [[buffer(2)]],
     constant uint& rowStride [[buffer(3)]],   // C, elements per row
+    constant float& rmsEpsilon [[buffer(4)]], // epsilon in mean-square space
     uint2 tg  [[threadgroup_position_in_grid]],
     uint2 tpos [[thread_position_in_threadgroup]],
     uint  simd_lane [[thread_index_in_simdgroup]],
@@ -350,7 +351,7 @@ kernel void gdn_qk_norm(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     const float mean = partial[0] / float(Dk);
-    const float invRms = rsqrt(mean + kGdnRmsEps);
+    const float invRms = rsqrt(mean + rmsEpsilon);
     const float scale = isQ ? (1.0f / float(Dk)) : rsqrt(float(Dk));
 
     for (uint i = tid; i < Dk; i += 128u) {

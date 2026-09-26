@@ -1,4 +1,5 @@
-//! Host-side dispatch for the three IQ GEMVs in `shaders/dequant_iq.metal`
+//! Host-side dispatch for the three IQ GEMVs and selected-row lookups in
+//! `shaders/dequant_iq.metal`
 //! (ROADMAP Phase S): `dequant_iq4_nl_gemv_simd`, `dequant_iq4_xs_gemv_simd`
 //! and `dequant_iq3_xxs_gemv_simd`.
 //!
@@ -19,11 +20,10 @@
 //! are the reason a caller cannot pass the wrong block size silently: each
 //! asserts its own element count.
 //!
-//! These GEMVs exist for PARITY, not because a resident tensor needs them
-//! today. The Phase S candidate carries its IQ types only in routed experts
-//! (`moe_gguf.rs`), and its resident core is Q8_0 and Q6_K. They are cheap,
-//! they are what a parity test can drive directly, and they are what a future
-//! checkpoint putting IQ4_NL in an attention projection would need.
+//! The Phase S candidate carries its IQ types in routed experts
+//! (`moe_gguf.rs`). Swift Qwen3.8 additionally keeps its token embedding at
+//! IQ4_XS, so that layout has a selected-row lookup alongside its GEMV and
+//! routed phase-1 kernel.
 
 use half::f16;
 use metal::FunctionConstantValues;
@@ -225,6 +225,36 @@ pub fn encode_embed_lookup_iq1_m(
 ) -> Result<(), GpuError> {
     assert_eq!(d as usize % IQ1_M_BLOCK_ELEMS, 0);
     let pipeline = context.pipeline(SOURCE, "embed_lookup_iq1_m", &no_function_constants(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(table.0, 0, table.1), (out.0, 1, out.1)],
+        &[
+            (u32_bytes(&token_id), 2),
+            (u32_bytes(&d), 3),
+            (crate::bytes::f32_bytes(&out_scale), 4),
+        ],
+        (d as u64, 1, 1),
+        (64, 1, 1),
+    );
+    Ok(())
+}
+
+/// Encodes a selected IQ4_XS embedding row into `out` (`d` halfs), scaled by
+/// `out_scale`. GGUF keeps each token row as `d / 256` contiguous 136-byte
+/// blocks; this lookup uses the same codebook and biased sub-block scale as
+/// the IQ4_XS GEMV.
+pub fn encode_embed_lookup_iq4_xs(
+    context: &mut MetalContext,
+    pass: &crate::context::PassEncoder,
+    table: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    token_id: u32,
+    d: u32,
+    out_scale: f32,
+) -> Result<(), GpuError> {
+    assert_eq!(d as usize % IQ4_XS_BLOCK_ELEMS, 0);
+    let pipeline =
+        context.pipeline(SOURCE, "embed_lookup_iq4_xs", &no_function_constants(), b"")?;
     pass.encode_threads_3d(
         &pipeline,
         &[(table.0, 0, table.1), (out.0, 1, out.1)],

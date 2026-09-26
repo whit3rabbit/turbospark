@@ -29,7 +29,7 @@
 
 use metal::{FunctionConstantValues, MTLDataType};
 
-use crate::bytes::u32_bytes;
+use crate::bytes::{f32_bytes, u32_bytes};
 use crate::context::{GpuError, MetalContext, PassEncoder};
 use crate::dequant_int4_gemv::Int4ResidentMatrix;
 
@@ -337,7 +337,27 @@ pub fn encode_gdn_qk_norm(
     conv_out: (&metal::Buffer, u64),
     rows: u32,
 ) -> Result<(), GpuError> {
+    encode_gdn_qk_norm_with_rms_epsilon(context, pass, shape, conv_out, rows, 1e-6)
+}
+
+/// Qwen4's published reference normalizes with `x / sqrt(sum(x*x) + eps)`.
+/// This kernel expresses the same operation as RMS in mean space, so callers
+/// that need that convention pass `eps / key_head_dim`. The older GDN families
+/// keep using [`encode_gdn_qk_norm`] and its historical mean-space epsilon.
+pub fn encode_gdn_qk_norm_with_rms_epsilon(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    shape: GdnShape,
+    conv_out: (&metal::Buffer, u64),
+    rows: u32,
+    rms_epsilon: f32,
+) -> Result<(), GpuError> {
     shape.validate()?;
+    if !rms_epsilon.is_finite() || rms_epsilon < 0.0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "gdn_qk_norm RMS epsilon must be finite and non-negative, got {rms_epsilon}"
+        )));
+    }
     let p = pipeline(context, "gdn_qk_norm")?;
     let (k_heads, key_dim, row_stride) = (shape.num_k_heads, shape.key_head_dim, shape.qkv_dim());
     pass.encode_threadgroups_3d(
@@ -347,6 +367,7 @@ pub fn encode_gdn_qk_norm(
             (u32_bytes(&k_heads), 1),
             (u32_bytes(&key_dim), 2),
             (u32_bytes(&row_stride), 3),
+            (f32_bytes(&rms_epsilon), 4),
         ],
         (2 * k_heads as u64, rows.max(1) as u64, 1),
         (NORM_THREADS, 1, 1),

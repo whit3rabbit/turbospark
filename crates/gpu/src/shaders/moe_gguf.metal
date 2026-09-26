@@ -676,3 +676,191 @@ kernel void moe_phase2_down_reduce_k8_mxfp4(
         y[d] = half(acc);
     }
 }
+
+// The Swift candidate uses these IQ codebooks on routed gate/up rows. Reuse
+// the row decoders from `dequant_iq.metal`, which is concatenated before
+// this file, to keep the dense and MoE readers on one format implementation.
+static inline float2 moe_iq2_s_gate_up_rows_simd(
+    device const uint8_t* gW, device const uint8_t* uW,
+    device const half* x, uint f, uint D, uint lane
+) {
+    const uint row_bytes = (D / 256) * 82;
+    return float2(
+        dequant_iq2_s_row_simd(gW + f * row_bytes, x, D, lane),
+        dequant_iq2_s_row_simd(uW + f * row_bytes, x, D, lane));
+}
+
+static inline float2 moe_iq2_xxs_gate_up_rows_simd(
+    device const uint8_t* gW, device const uint8_t* uW,
+    device const half* x, uint f, uint D, uint lane
+) {
+    const uint row_bytes = (D / 256) * 66;
+    return float2(
+        dequant_iq2_xxs_row_simd(gW + f * row_bytes, x, D, lane),
+        dequant_iq2_xxs_row_simd(uW + f * row_bytes, x, D, lane));
+}
+
+static inline float2 moe_iq1_m_gate_up_rows_simd(
+    device const uint8_t* gW, device const uint8_t* uW,
+    device const half* x, uint f, uint D, uint lane
+) {
+    const uint row_bytes = (D / 256) * 56;
+    return float2(
+        dequant_iq1_m_row_simd(gW + f * row_bytes, x, D, lane),
+        dequant_iq1_m_row_simd(uW + f * row_bytes, x, D, lane));
+}
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase1_gate_up_act_iq2_s(
+    device const RoutedBlobs& routed [[buffer(0)]],
+    constant ExpertOffsets& routed_offsets [[buffer(1)]],
+    device const half* x [[buffer(2)]], device half* acts [[buffer(3)]],
+    constant uint& D [[buffer(4)]], constant uint& F [[buffer(5)]],
+    constant uint& top_k [[buffer(6)]], uint tg_idx [[threadgroup_position_in_grid]],
+    uint sg_idx [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]
+) {
+    constexpr uint rows_per_tg = 8;
+    const uint DD = moe_fc_d(D), FF = moe_fc_f(F);
+    const uint rowg = tg_idx * rows_per_tg + sg_idx;
+    if (rowg >= moe_fc_top_k(top_k) * FF) return;
+    const uint slot = rowg / FF, f = rowg % FF;
+    device const uint8_t* base = routed.blob[slot];
+    const float2 gu = moe_iq2_s_gate_up_rows_simd(
+        base + routed_offsets.gate_W_off, base + routed_offsets.up_W_off, x, f, DD, lane);
+    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gu.x) * gu.y);
+}
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase1_gate_up_act_iq2_xxs(
+    device const RoutedBlobs& routed [[buffer(0)]],
+    constant ExpertOffsets& routed_offsets [[buffer(1)]],
+    device const half* x [[buffer(2)]], device half* acts [[buffer(3)]],
+    constant uint& D [[buffer(4)]], constant uint& F [[buffer(5)]],
+    constant uint& top_k [[buffer(6)]], uint tg_idx [[threadgroup_position_in_grid]],
+    uint sg_idx [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]
+) {
+    constexpr uint rows_per_tg = 8;
+    const uint DD = moe_fc_d(D), FF = moe_fc_f(F);
+    const uint rowg = tg_idx * rows_per_tg + sg_idx;
+    if (rowg >= moe_fc_top_k(top_k) * FF) return;
+    const uint slot = rowg / FF, f = rowg % FF;
+    device const uint8_t* base = routed.blob[slot];
+    const float2 gu = moe_iq2_xxs_gate_up_rows_simd(
+        base + routed_offsets.gate_W_off, base + routed_offsets.up_W_off, x, f, DD, lane);
+    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gu.x) * gu.y);
+}
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase1_gate_up_act_iq1_m(
+    device const RoutedBlobs& routed [[buffer(0)]],
+    constant ExpertOffsets& routed_offsets [[buffer(1)]],
+    device const half* x [[buffer(2)]], device half* acts [[buffer(3)]],
+    constant uint& D [[buffer(4)]], constant uint& F [[buffer(5)]],
+    constant uint& top_k [[buffer(6)]], uint tg_idx [[threadgroup_position_in_grid]],
+    uint sg_idx [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]
+) {
+    constexpr uint rows_per_tg = 8;
+    const uint DD = moe_fc_d(D), FF = moe_fc_f(F);
+    const uint rowg = tg_idx * rows_per_tg + sg_idx;
+    if (rowg >= moe_fc_top_k(top_k) * FF) return;
+    const uint slot = rowg / FF, f = rowg % FF;
+    device const uint8_t* base = routed.blob[slot];
+    const float2 gu = moe_iq1_m_gate_up_rows_simd(
+        base + routed_offsets.gate_W_off, base + routed_offsets.up_W_off, x, f, DD, lane);
+    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gu.x) * gu.y);
+}
+
+// Qwen4Exp's routed down projection uses Q2_0 and top-10. Keep this as a
+// dedicated ten-slot reducer so existing GGUF kernels retain their eight
+// slot reduction order and dispatch width.
+static inline float moe_q2_0_gemv_row_simd(
+    device const uint8_t* W,
+    device const half* x,
+    uint row,
+    uint N,
+    uint lane
+) {
+    const uint n_blocks = N / 64;
+    const uint row_bytes = n_blocks * 18;
+    device const uint8_t* W_row = W + row * row_bytes;
+    float acc = 0.0f;
+    for (uint b = 0; b < n_blocks; ++b) {
+        device const uint8_t* blk = W_row + b * 18;
+        const ushort raw = ushort(blk[0]) | (ushort(blk[1]) << 8);
+        const float d = float(as_type<half>(raw));
+        for (uint half_block = 0; half_block < 2; ++half_block) {
+            const uint e = lane + half_block * 32;
+            const uint packed = blk[2 + e / 4];
+            const uint q = (packed >> (2 * (e % 4))) & 3u;
+            const float w = (float(q) - 1.0f) * d;
+            acc = fma(w, float(x[b * 64 + e]), acc);
+        }
+    }
+    return simd_sum(acc);
+}
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void moe_phase1_gate_up_act_q2_0(
+    device const RoutedBlobs& routed          [[buffer(0)]],
+    constant ExpertOffsets&   routed_offsets  [[buffer(1)]],
+    device const half*        x               [[buffer(2)]],
+    device half*              acts            [[buffer(3)]],
+    constant uint&            D               [[buffer(4)]],
+    constant uint&            F               [[buffer(5)]],
+    constant uint&            top_k           [[buffer(6)]],
+    uint                      tg_idx          [[threadgroup_position_in_grid]],
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
+    uint                      lane            [[thread_index_in_simdgroup]]
+) {
+    constexpr uint rows_per_tg = 8;
+    const uint DD = moe_fc_d(D);
+    const uint FF = moe_fc_f(F);
+    const uint rowg = tg_idx * rows_per_tg + sg_idx;
+    if (rowg >= moe_fc_top_k(top_k) * FF) return;
+    const uint slot = rowg / FF;
+    const uint f = rowg % FF;
+
+    device const uint8_t* base = routed.blob[slot];
+    const ExpertOffsets re = routed_offsets;
+    const float gate = moe_q2_0_gemv_row_simd(
+        base + re.gate_W_off, x, f, DD, lane);
+    const float up = moe_q2_0_gemv_row_simd(
+        base + re.up_W_off, x, f, DD, lane);
+    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gate) * up);
+}
+
+[[kernel, max_total_threads_per_threadgroup(320)]]
+kernel void moe_phase2_down_reduce_k10_q2_0(
+    device const RoutedBlobs& routed          [[buffer(0)]],
+    constant ExpertOffsets&   routed_offsets  [[buffer(1)]],
+    device const half*        acts            [[buffer(2)]],
+    device const half*        routing_w       [[buffer(3)]],
+    device const half*        residual        [[buffer(4)]],
+    device half*              y               [[buffer(5)]],
+    constant uint&            D               [[buffer(6)]],
+    constant uint&            F               [[buffer(7)]],
+    uint                      d               [[threadgroup_position_in_grid]],
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],
+    uint                      lane            [[thread_index_in_simdgroup]]
+) {
+    threadgroup float partial[10];
+    const uint DD = moe_fc_d(D);
+    const uint FF = moe_fc_f(F);
+    if (d >= DD) return;
+
+    device const uint8_t* base = routed.blob[sg_idx];
+    const ExpertOffsets re = routed_offsets;
+    device const half* act_slot = acts + sg_idx * FF;
+    const float value = moe_q2_0_gemv_row_simd(
+        base + re.down_W_off, act_slot, d, FF, lane);
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (sg_idx == 0 && lane == 0) {
+        float acc = float(residual[d]);
+        acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
+        acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
+        acc += partial[8]; acc += partial[9];
+        y[d] = half(acc);
+    }
+}

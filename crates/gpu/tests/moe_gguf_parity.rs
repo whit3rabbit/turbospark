@@ -39,11 +39,15 @@ const GGUF_FIXED_SLOTS: usize = 8;
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
     Q8_0,
+    Q2_0,
     Q4K,
     Q6K,
     Iq3Xxs,
     Iq4Xs,
     Iq4Nl,
+    Iq2S,
+    Iq2Xxs,
+    Iq1M,
     /// ROADMAP M5. The only type here with BOTH phases and NEITHER a resident
     /// GEMV nor an embedding lookup: `gpt-oss` puts MXFP4 in all three of
     /// `ffn_{gate,up,down}_exps` and nowhere else at all.
@@ -55,7 +59,9 @@ impl Kind {
     fn block_elems(self) -> usize {
         match self {
             Kind::Q8_0 | Kind::Iq4Nl | Kind::Mxfp4 => 32,
+            Kind::Q2_0 => turbospark_compute::Q2_0_BLOCK_ELEMS,
             Kind::Q4K | Kind::Q6K | Kind::Iq3Xxs | Kind::Iq4Xs => 256,
+            Kind::Iq2S | Kind::Iq2Xxs | Kind::Iq1M => turbospark_compute::IQ_LOWBIT_BLOCK_ELEMS,
         }
     }
 
@@ -73,6 +79,7 @@ impl Kind {
         assert_eq!(cols % self.block_elems(), 0);
         match self {
             Kind::Q8_0 => turbospark_compute::quantize_q8_0(&deterministic_row(seed, cols)),
+            Kind::Q2_0 => self.synthetic_row(cols, seed),
             Kind::Q4K => turbospark_compute::quantize_q4_k(&deterministic_row(seed, cols)),
             Kind::Q6K => turbospark_compute::quantize_q6_k(&deterministic_row(seed, cols)),
             _ => self.synthetic_row(cols, seed),
@@ -123,10 +130,44 @@ impl Kind {
             return out;
         }
 
+        if self == Kind::Q2_0 {
+            let mut out = Vec::with_capacity(cols / 64 * 18);
+            for _ in 0..cols / 64 {
+                out.extend_from_slice(&0x2800u16.to_le_bytes());
+                for _ in 0..16 {
+                    out.push(byte());
+                }
+            }
+            return out;
+        }
+
+        if self == Kind::Iq1M {
+            let mut out = Vec::with_capacity(cols / 256 * turbospark_compute::IQ1_M_BLOCK_BYTES);
+            for _ in 0..cols / 256 {
+                for _ in 0..48 {
+                    out.push(byte());
+                }
+                // IQ1_M stores d in nibbles shared with its subscales.
+                // These four placements reconstruct f16 0x3000 (0.125).
+                let d_bits = 0x3000u16;
+                let scales = [
+                    (d_bits & 0x000f) << 12,
+                    ((d_bits >> 4) & 0x000f) << 12,
+                    ((d_bits >> 8) & 0x000f) << 12,
+                    ((d_bits >> 12) & 0x000f) << 12,
+                ];
+                for scale in scales {
+                    out.extend_from_slice(&scale.to_le_bytes());
+                }
+            }
+            return out;
+        }
+
         let d: u16 = match self {
             Kind::Iq3Xxs => 0x1800, // 2^-9;  max |w| = 7.75 * 62  * d = 0.94
             Kind::Iq4Xs => 0x0C00,  // 2^-12; max |w| = 32   * 127 * d = 0.99
             Kind::Iq4Nl => 0x2000,  // 2^-7;  max |w| =        127 * d = 0.99
+            Kind::Iq2S | Kind::Iq2Xxs => 0x2800,
             other => unreachable!("{other:?} has a quantizer"),
         };
         let (payload, per_block) = match self {
@@ -136,6 +177,8 @@ impl Kind {
             Kind::Iq4Xs => (134, 256),
             // f16 d, 64 grid indices, 32 bytes of sign-and-scale words.
             Kind::Iq3Xxs => (96, 256),
+            Kind::Iq2Xxs => (64, 256),
+            Kind::Iq2S => (80, 256),
             other => unreachable!("{other:?} has a quantizer"),
         };
         let mut out = Vec::new();
@@ -151,9 +194,13 @@ impl Kind {
     fn gemv(self, rows: &[&[u8]], x: &[f32], n: usize) -> Vec<f32> {
         match self {
             Kind::Q8_0 => turbospark_compute::dequant_q8_0_gemv(rows, x, n),
+            Kind::Q2_0 => turbospark_compute::dequant_q2_0_gemv(rows, x, n),
             Kind::Q4K => turbospark_compute::dequant_q4_k_gemv(rows, x, n),
             Kind::Q6K => turbospark_compute::dequant_q6_k_gemv(rows, x, n),
             Kind::Iq3Xxs => turbospark_compute::dequant_iq3_xxs_gemv(rows, x, n),
+            Kind::Iq2S => turbospark_compute::dequant_iq2_s_gemv(rows, x, n),
+            Kind::Iq2Xxs => turbospark_compute::dequant_iq2_xxs_gemv(rows, x, n),
+            Kind::Iq1M => turbospark_compute::dequant_iq1_m_gemv(rows, x, n),
             Kind::Iq4Xs => turbospark_compute::dequant_iq4_xs_gemv(rows, x, n),
             Kind::Iq4Nl => turbospark_compute::dequant_iq4_nl_gemv(rows, x, n),
             Kind::Mxfp4 => turbospark_compute::dequant_mxfp4_gemv(rows, x, n),
@@ -234,6 +281,27 @@ const MXFP4: Block = Block {
     gate_up: Kind::Mxfp4,
     down: Kind::Mxfp4,
     dims: (64, 96),
+};
+
+const IQ2S_Q2_0: Block = Block {
+    gate_up: Kind::Iq2S,
+    down: Kind::Q2_0,
+    dims: (256, 256),
+};
+const IQ2XXS_Q2_0: Block = Block {
+    gate_up: Kind::Iq2Xxs,
+    down: Kind::Q2_0,
+    dims: (256, 256),
+};
+const IQ1M_Q2_0: Block = Block {
+    gate_up: Kind::Iq1M,
+    down: Kind::Q2_0,
+    dims: (256, 256),
+};
+const Q2_0_ALL: Block = Block {
+    gate_up: Kind::Q2_0,
+    down: Kind::Q2_0,
+    dims: (256, 256),
 };
 
 fn deterministic_row(seed: u64, n: usize) -> Vec<f32> {
@@ -356,13 +424,18 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
         .map(|i| ((i as f32) * 0.11).cos() * 0.5)
         .collect();
     let residual16: Vec<f16> = residual32.iter().map(|&v| f16::from_f32(v)).collect();
-    let weights: Vec<f32> = (0..top_k).map(|e| 0.6 - 0.15 * e as f32).collect();
+    let weights: Vec<f32> = (0..top_k)
+        .map(|e| 0.9 - 0.5 * e as f32 / top_k as f32)
+        .collect();
 
     let mut expected: Vec<f32> = residual16.iter().map(|v| v.to_f32()).collect();
+    let mut contribution_l1 = vec![0.0f32; d_dim];
     for (e, (gate, up, down)) in experts.iter().enumerate() {
         let out = expert_reference(block, gate, up, down, &x32_rounded, use_silu);
-        for (dst, o) in expected.iter_mut().zip(out.iter()) {
-            *dst += weights[e] * o;
+        for (d, (dst, o)) in expected.iter_mut().zip(out.iter()).enumerate() {
+            let contribution = weights[e] * o;
+            *dst += contribution;
+            contribution_l1[d] += contribution.abs();
         }
     }
 
@@ -427,6 +500,10 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
             Kind::Q4K => turbospark_gpu::encode_moe_phase1_q4_k,
             Kind::Iq3Xxs => turbospark_gpu::encode_moe_phase1_iq3_xxs,
             Kind::Iq4Xs => turbospark_gpu::encode_moe_phase1_iq4_xs,
+            Kind::Iq2S => turbospark_gpu::encode_moe_phase1_iq2_s,
+            Kind::Iq2Xxs => turbospark_gpu::encode_moe_phase1_iq2_xxs,
+            Kind::Iq1M => turbospark_gpu::encode_moe_phase1_iq1_m,
+            Kind::Q2_0 => turbospark_gpu::encode_moe_phase1_q2_0,
             Kind::Iq4Nl => panic!("no IQ4_NL phase 1: no real file puts it in gate/up"),
             Kind::Q6K => panic!("no Q6_K phase 1: no real file puts it in gate/up"),
             Kind::Mxfp4 => unreachable!(),
@@ -462,9 +539,26 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
             false,
         )
         .expect("phase2");
+    } else if block.down == Kind::Q2_0 {
+        turbospark_gpu::encode_moe_phase2_q2_0_top10(
+            &mut context,
+            &pass,
+            &routed,
+            &offsets,
+            (&acts_buf, 0),
+            (&routing_buf, 0),
+            (&residual_buf, 0),
+            (&y_buf, 0),
+            d_dim as u32,
+            f_dim as u32,
+            top_k as u32,
+            use_silu,
+        )
+        .expect("phase2");
     } else {
         let phase2 = match block.down {
             Kind::Q8_0 => turbospark_gpu::encode_moe_phase2_q8_0,
+            Kind::Q2_0 => panic!("handled above"),
             Kind::Q4K => turbospark_gpu::encode_moe_phase2_q4_k,
             Kind::Iq4Nl => turbospark_gpu::encode_moe_phase2_iq4_nl,
             Kind::Q6K => turbospark_gpu::encode_moe_phase2_q6_k,
@@ -492,7 +586,15 @@ fn run_case(block: Block, use_silu: bool, top_k: usize) {
     for d in 0..d_dim {
         let want = expected[d];
         let diff = (got[d] - want).abs();
-        let tol = 5e-2_f32.max(want.abs() * 3e-2);
+        // Ten-expert sums can be cancellation-sensitive even with every
+        // routed term finite. Scale relative tolerance by the accumulated
+        // contribution magnitude in that case, while keeping the 3% bound.
+        let scale = if top_k > GGUF_FIXED_SLOTS {
+            contribution_l1[d]
+        } else {
+            want.abs()
+        };
+        let tol = 5e-2_f32.max(scale * 3e-2);
         assert!(
             diff <= tol,
             "{block:?} silu={use_silu} top_k={top_k} d={d}: got {} want {want} (diff {diff})",
@@ -577,6 +679,28 @@ fn nine_iq_slots_panics_rather_than_silently_truncating() {
 #[test]
 fn the_iq4_xs_over_q8_0_expert_matches_the_cpu_reference() {
     run_case(IQ4XS_MIX, false, 2);
+}
+
+/// The Swift Qwen4Exp model routes ten experts and places these three IQ
+/// formats on gate/up rows with Q2_0 on down rows.
+#[test]
+fn iq2_s_gate_up_and_q2_0_down_reduce_all_ten_slots() {
+    run_case(IQ2S_Q2_0, false, 10);
+}
+
+#[test]
+fn iq2_xxs_gate_up_and_q2_0_down_reduce_all_ten_slots() {
+    run_case(IQ2XXS_Q2_0, false, 10);
+}
+
+#[test]
+fn iq1_m_gate_up_and_q2_0_down_reduce_all_ten_slots() {
+    run_case(IQ1M_Q2_0, false, 10);
+}
+
+#[test]
+fn q2_0_gate_up_and_down_reduce_all_ten_slots() {
+    run_case(Q2_0_ALL, false, 10);
 }
 
 /// SiLU on an IQ pair. Gemma 4 is a GELU model so this is not the production
