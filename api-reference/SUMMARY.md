@@ -1,13 +1,11 @@
 # Table of contents
 
-* ```yaml
-  type: builtin:openapi
-  props:
-    models: true
-    downloadLink: true
-  dependencies:
-    spec:
-      ref:
-        kind: openapi
-        spec: gitbook-petstore
-  ```
+* [API reference](README.md)
+
+## Rust
+
+* [Rust library](rust.md)
+
+## Swift
+
+* [Swift bindings](swift.md)

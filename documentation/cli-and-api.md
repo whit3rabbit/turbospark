@@ -3,7 +3,9 @@ description: "Use the TurboSpark command-line tools and local HTTP API."
 icon: sliders
 ---
 
-# CLI and local API
+# Command line and local API
+
+The macOS app is the simplest way to chat. These commands are useful for scripts, testing an install, and connecting another app.
 
 ## Model commands
 
@@ -28,7 +30,7 @@ Start the server with a catalog model:
 turbospark-server --model gemma4
 ```
 
-By default, the server listens on `127.0.0.1:8080` and binds to loopback. Common routes include:
+By default, the server listens at `127.0.0.1:8080`. Common routes include:
 
 - `POST /v1/chat/completions` for OpenAI-compatible chat requests
 - `POST /v1/messages` for Anthropic-compatible messages requests
@@ -38,8 +40,8 @@ By default, the server listens on `127.0.0.1:8080` and binds to loopback. Common
 - `GET /v1/models` and `GET /v1/models/{model}` for model information
 - `GET /health` for liveness
 
-The server also has embeddings and Ollama-compatible routes. Which model capabilities are available depends on the loaded install. Each runner handles one generation at a time; `--pool-size` opens multiple runners when concurrent generation is needed.
+The server also has embeddings and Ollama-compatible routes. Available capabilities depend on the loaded install. Each runner handles one generation at a time; `--pool-size` opens multiple runners for concurrent generation.
 
-If you bind to a Tailscale address with `--bind tailnet`, configure API-key authentication. The server does not provide TLS. See [local API examples](call-the-local-api.md) for request bodies and headers.
+If you bind beyond loopback, configure API-key authentication. The server does not provide TLS. See [local API examples](call-the-local-api.md) for request bodies and headers.
 
 For full command options, see the [CLI and server reference in the source repository](https://github.com/whit3rabbit/turbospark/blob/main/docs/CLI.md).

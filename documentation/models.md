@@ -5,7 +5,7 @@ icon: compass
 
 # Supported models
 
-The model catalog is the source of truth for available aliases and their current support status. A model family being implemented does not mean every checkpoint in that family is ready to use.
+The model catalog is the source of truth for available aliases and their current support status. A model family being implemented does not mean every checkpoint in that family is ready to use. In the app, choose **Discover new models** from the model selector to browse the same catalog.
 
 List catalog entries and ask for a recommendation:
 

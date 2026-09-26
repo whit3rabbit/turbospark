@@ -4,25 +4,25 @@ description: "Send chat requests to the TurboSpark local HTTP server."
 
 # Call the local API
 
-Start the server with a model that is installed on this machine:
+Start the server with an installed model:
 
 ```sh
 turbospark-server --model gemma4
 ```
 
-The default address is `http://127.0.0.1:8080`. First, list the model IDs available from the running server:
+The default address is `http://127.0.0.1:8080`. List the models available from the running server:
 
 ```sh
 curl http://127.0.0.1:8080/v1/models
 ```
 
-Use an ID from that response in a request.
-
 ## OpenAI-compatible chat
+
+Use a model ID returned by `/v1/models`:
 
 ```sh
 curl http://127.0.0.1:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \\
+  -H "Content-Type: application/json" \
   -d '{
     "model": "gemma4",
     "messages": [{"role": "user", "content": "Write a short greeting."}],
@@ -34,8 +34,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 ```sh
 curl http://127.0.0.1:8080/v1/messages \
-  -H "Content-Type: application/json" \\
-  -H "anthropic-version: 2023-06-01" \\
+  -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
   -d '{
     "model": "gemma4",
     "max_tokens": 64,
@@ -43,8 +43,6 @@ curl http://127.0.0.1:8080/v1/messages \
   }'
 ```
 
-Replace `gemma4` with a model ID returned by `GET /v1/models`. The server also supports the OpenAI Responses API, raw prompt completions, Anthropic token counting, embeddings, and Ollama-compatible routes.
+If the server was started with an API key, send it as `Authorization: Bearer <key>` or `x-api-key: <key>`. The server also supports the OpenAI Responses API, raw prompt completions, token counting, embeddings, and Ollama-compatible routes.
 
-If the server was started with API-key authentication, send the same key as `Authorization: Bearer <key>` or `x-api-key: <key>`. `GET /health` does not require authentication.
-
-For memory, storage, and context guidance, read [memory and capacity](memory-and-capacity.md). For additional server flags and client behavior, see the [CLI and server reference](https://github.com/whit3rabbit/turbospark/blob/main/docs/CLI.md).
+For model sizing, see [memory and capacity](memory-and-capacity.md). For full flags and routes, see the [CLI and server reference](https://github.com/whit3rabbit/turbospark/blob/main/docs/CLI.md).
