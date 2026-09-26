@@ -1,27 +1,19 @@
 # Table of contents
 
-* [Welcome](README.md)
+* [TurboSpark](README.md)
 
-## Getting Started
+## Getting started
 
-* [Getting started](getting-started/getting-started.md)
-* [Quickstart](getting-started/quickstart.md)
-* [Your first project](getting-started/your-first-project.md)
+* [Install TurboSpark](install.md)
+* [Quickstart](quickstart.md)
 
-## Core concepts
+## Models and runtime
 
-* [Core concepts](core-concepts/core-concepts.md)
-* [Workspaces and projects](core-concepts/workspaces-and-projects.md)
-* [Permissions](core-concepts/permissions.md)
+* [Supported models](models.md)
+* [Memory and capacity](memory-and-capacity.md)
+* [Model install troubleshooting](model-install-troubleshooting.md)
 
-## Guides
+## CLI and API
 
-* [Guides](guides/guides.md)
-* [Custom domains](guides/custom-domains.md)
-* [Automations](guides/automations.md)
-
-## Reference
-
-* [Reference](reference/reference.md)
-* [Configuration](reference/configuration.md)
-* [Glossary](reference/glossary.md)
+* [CLI and local API](cli-and-api.md)
+* [Call the local API](call-the-local-api.md)
