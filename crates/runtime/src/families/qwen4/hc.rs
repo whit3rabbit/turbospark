@@ -1,8 +1,9 @@
 //! One hyper-connection call (`attn_hc`, `mlp_hc`, or the final
 //! `hyper_connection_mixer`): `mod.rs`'s "## Hyper-connections" pseudocode,
 //! verified against `Qwen4ExpTextGatedResidual.forward` in
-//! `modular_qwen4_exp.py` (`fc5c5bde8`) and matching it exactly -- unlike
-//! the PLE hash, this formula needed no correction.
+//! `modular_qwen4_exp.py` (`fc5c5bde8`). This runtime consumes llama.cpp GGUF
+//! weights, whose converter already folds centered norm weights into the
+//! stored scale, so the GPU path applies that scale directly.
 
 use model_io::ResidentIndex;
 
@@ -14,7 +15,7 @@ use crate::real_forward_utils::norm_view;
 /// Encodes one `Qwen4ExpTextGatedResidual.forward` call.
 ///
 /// `wide` is the `hc_count * hidden`-wide residual (`raw`), READ but never
-/// written here except by [`gpu::encode_rms_norm_bf16w_grouped_centered`]'s
+/// written here except by [`gpu::encode_rms_norm_bf16w_grouped`]'s
 /// destination (`qwen4.hc_normed`, a scratch buffer). The caller injects
 /// the sublayer's output back into `wide` separately
 /// (`gpu::encode_hc_inject_add`), after running the sublayer this call's
@@ -56,11 +57,10 @@ pub(crate) fn encode_hyper_connection(
     let wide_dim = hidden * hc_count;
     let name = |suffix: &str| format!("{name_prefix}.{suffix}");
 
-    // normed = hc_norm(raw): grouped RMS, group = hidden, CENTERED
-    // (`docs/QWEN4_PHASE0.md` item 9: every Qwen4ExpTextRMSNorm is
-    // centered).
+    // GGUF stores the already-shifted scale for hc_norm, so apply weight
+    // directly after reducing each hidden-width residual stream.
     let hc_norm_w = norm_view(weights, index, &name("hc_norm.weight"), wide_dim)?;
-    gpu::encode_rms_norm_bf16w_grouped_centered(
+    gpu::encode_rms_norm_bf16w_grouped(
         context,
         pass,
         wide,

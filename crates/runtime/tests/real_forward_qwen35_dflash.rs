@@ -43,14 +43,35 @@ const MAX_CONTEXT: usize = 4096;
 /// Greedy, the only mode the loop admits.
 const PROMPT: [i32; 8] = [5, 7, 9, 11, 13, 15, 17, 19];
 
-fn temp_dir() -> std::path::PathBuf {
+struct TempDir(std::path::PathBuf);
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = std::path::Path;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+fn temp_dir() -> TempDir {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!("turbospark-dflash-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
-    dir
+    TempDir(dir)
 }
 
-fn build() -> std::path::PathBuf {
+fn build() -> TempDir {
     let dir = temp_dir();
     build_synthetic_qwen_gdn_dense_install_with_dflash(&dir, VOCAB, LAYERS, "dflash-toy", 4)
         .expect("the dense install with a DFlash2 drafter writes");

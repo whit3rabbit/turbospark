@@ -19,7 +19,7 @@ use crate::real_forward_types::RealForwardError;
 /// cannot see. Add to both lists when the writer gains a tag. It is spelled
 /// out of the NAMED constants below rather than as bare literals for the same
 /// reason: a literal list is what let one go missing.
-pub(crate) const GGUF_BLOCK_DTYPES: [u8; 17] = [
+pub(crate) const GGUF_BLOCK_DTYPES: [u8; 18] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -37,6 +37,7 @@ pub(crate) const GGUF_BLOCK_DTYPES: [u8; 17] = [
     DTYPE_GGUF_IQ2_S,
     DTYPE_GGUF_IQ1_M,
     DTYPE_GGUF_Q3_K,
+    DTYPE_GGUF_Q2_0,
 ];
 /// GGUF Q8_0: a resident GEMV, an embedding lookup, and a routed-expert
 /// decode pair.
@@ -54,7 +55,7 @@ pub(crate) const DTYPE_GGUF_Q6_K: u8 = 8;
 pub(crate) const DTYPE_GGUF_Q4_0: u8 = 9;
 /// GGUF IQ3_XXS, IQ4_NL and IQ4_XS (ROADMAP Phase S). Each has a resident
 /// GEMV; on the routed path IQ3_XXS and IQ4_XS have a phase 1 and IQ4_NL a
-/// phase 2, which is the split the candidate checkpoint has and no more.
+/// phase 2. IQ4_XS also has an embedding lookup for the Swift Qwen3.8 tier.
 pub(crate) const DTYPE_GGUF_IQ3_XXS: u8 = 10;
 pub(crate) const DTYPE_GGUF_IQ4_NL: u8 = 11;
 pub(crate) const DTYPE_GGUF_IQ4_XS: u8 = 12;
@@ -83,6 +84,11 @@ pub(crate) const DTYPE_GGUF_IQ1_M: u8 = 23;
 /// Q4_K and its head at Q6_K. Tag 24 mirrors the writer, and for the same
 /// displaced reason -- ggml's own Q3_K id is 11, which IQ4_NL took first.
 pub(crate) const DTYPE_GGUF_Q3_K: u8 = 24;
+/// GGUF Q2_0, used on all routed matrices by the experimental Swift Q2_0
+/// tier and on routed down rows by its mixed-precision IQ2_XS tier.
+/// The resident path has no reader, so this tag belongs in the all-block
+/// guard above but not in [`EXECUTABLE_GGUF_DTYPES`].
+pub(crate) const DTYPE_GGUF_Q2_0: u8 = 25;
 /// The RAW (companion-less, unquantized) tag this port can read, and the only
 /// one: every consumer of an unquantized resident tensor -- `norm_view`,
 /// `read_bf16_host`, every kernel binding a `device const bfloat*` --
@@ -234,6 +240,14 @@ pub(crate) enum RoutedBlobLayout {
     /// and the first type whose two layouts differ across LAYERS of one model
     /// rather than across the phases of one expert.
     GgufQ6K,
+    /// GGUF Q2_0 routed rows; phase 2 has an exact top-10 reducer.
+    GgufQ2_0,
+    /// GGUF IQ2_S routed gate/up rows.
+    GgufIq2S,
+    /// GGUF IQ2_XXS routed gate/up rows.
+    GgufIq2Xxs,
+    /// GGUF IQ1_M routed gate/up rows.
+    GgufIq1M,
 }
 
 impl RoutedBlobLayout {
@@ -253,6 +267,10 @@ impl RoutedBlobLayout {
             "iq4_xs" => RoutedBlobLayout::GgufIq4Xs,
             "iq4_nl" => RoutedBlobLayout::GgufIq4Nl,
             "q6_k" => RoutedBlobLayout::GgufQ6K,
+            "q2_0" => RoutedBlobLayout::GgufQ2_0,
+            "iq2_s" => RoutedBlobLayout::GgufIq2S,
+            "iq2_xxs" => RoutedBlobLayout::GgufIq2Xxs,
+            "iq1_m" => RoutedBlobLayout::GgufIq1M,
             "mxfp4" => RoutedBlobLayout::GgufMxfp4,
             other => {
                 return Err(RealForwardError::Unsupported(format!(
@@ -282,6 +300,10 @@ impl RoutedBlobLayout {
             | RoutedBlobLayout::GgufIq4Nl
             | RoutedBlobLayout::GgufMxfp4
             | RoutedBlobLayout::GgufQ6K => (gpu::moe_gguf_source(), "moe_phase1_gate_up_act_q8_0"),
+            RoutedBlobLayout::GgufIq2S
+            | RoutedBlobLayout::GgufIq2Xxs
+            | RoutedBlobLayout::GgufIq1M => (gpu::moe_gguf_source(), "moe_phase1_gate_up_act_q8_0"),
+            RoutedBlobLayout::GgufQ2_0 => (gpu::moe_gguf_source(), "moe_phase1_gate_up_act_q2_0"),
         }
     }
 }
@@ -535,6 +557,52 @@ mod tests {
             size: 4,
             dtype: "mxfp4".to_string(),
         }
+    }
+
+    fn routed_dtype_layout(gate_up: &str, down: &str) -> PackedExpertsLayout {
+        let entry = |offset, dtype: &str| SubTensorEntry {
+            offset,
+            size: 64,
+            dtype: dtype.to_string(),
+        };
+        let mut sub_tensors = BTreeMap::new();
+        sub_tensors.insert("gate".to_string(), entry(0, gate_up));
+        sub_tensors.insert("up".to_string(), entry(64, gate_up));
+        sub_tensors.insert("down".to_string(), entry(128, down));
+        PackedExpertsLayout {
+            expert_stride: 192,
+            num_layers: 1,
+            experts_per_layer: 1,
+            layers: vec![LayerLayout {
+                layer: 0,
+                file: "layer_00.bin".to_string(),
+                expert_stride: 192,
+                experts: vec![ExpertEntry {
+                    expert: 0,
+                    offset: 0,
+                    size: 192,
+                    sub_tensors,
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn qwen4_exp_routed_gguf_dtypes_resolve_by_phase() {
+        for (gate_up, expected) in [
+            ("iq2_s", RoutedBlobLayout::GgufIq2S),
+            ("iq2_xxs", RoutedBlobLayout::GgufIq2Xxs),
+            ("iq1_m", RoutedBlobLayout::GgufIq1M),
+        ] {
+            let layout = routed_dtype_layout(gate_up, "q2_0");
+            let routed = routed_layouts_from_layout(&layout).expect("routed types resolve");
+            assert_eq!(routed[0].phase1, expected, "gate/up dtype {gate_up}");
+            assert_eq!(routed[0].phase2, RoutedBlobLayout::GgufQ2_0);
+        }
+        let q2_0 = routed_dtype_layout("q2_0", "q2_0");
+        let routed = routed_layouts_from_layout(&q2_0).expect("Q2_0 routes both phases");
+        assert_eq!(routed[0].phase1, RoutedBlobLayout::GgufQ2_0);
+        assert_eq!(routed[0].phase2, RoutedBlobLayout::GgufQ2_0);
     }
 
     /// A GGUF-shaped (non-planar) layer: three weight runs plus, as MXFP4

@@ -176,6 +176,24 @@ fn the_dtype_backstop_fires_even_if_the_manifest_is_forged() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Q2_0 has a routed phase-2 kernel but no resident GEMV or embedding path.
+/// A forged resident tag must therefore remain refused at open.
+#[test]
+fn a_resident_q2_0_tag_is_refused() {
+    let (dir, arch) = gguf_install(executable_shape());
+
+    let changed = retag_dtypes(&dir, 6, turbospark_repack::DTYPE_GGUF_Q2_0);
+    assert!(changed > 0, "the fixture carries no Q8_0 resident tensors");
+
+    let text = match RealForwardRunner::open(&dir, arch) {
+        Ok(_) => panic!("Q2_0 must not dispatch as a resident tensor"),
+        Err(e) => e.to_string(),
+    };
+    assert!(text.contains("GGUF block dtype"), "got: {text}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Opening is not running. This drives real decode steps through the whole
 /// Q8_0 path on real Metal hardware: the embedding lookup, the attention and
 /// shared-expert GEMVs, the routed-expert decode pair reading streamed

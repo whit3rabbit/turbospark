@@ -24,6 +24,9 @@ pub(crate) fn encode_moe_phase1_any(
         RoutedBlobLayout::GgufQ8_0 => gpu::encode_moe_phase1_q8_0(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
+        RoutedBlobLayout::GgufQ2_0 => gpu::encode_moe_phase1_q2_0(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        ),
         RoutedBlobLayout::GgufQ4K => gpu::encode_moe_phase1_q4_k(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
@@ -31,6 +34,15 @@ pub(crate) fn encode_moe_phase1_any(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
         RoutedBlobLayout::GgufIq4Xs => gpu::encode_moe_phase1_iq4_xs(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        ),
+        RoutedBlobLayout::GgufIq2S => gpu::encode_moe_phase1_iq2_s(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        ),
+        RoutedBlobLayout::GgufIq2Xxs => gpu::encode_moe_phase1_iq2_xxs(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        ),
+        RoutedBlobLayout::GgufIq1M => gpu::encode_moe_phase1_iq1_m(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
         // MXFP4 IS `gpt-oss` AND NOTHING ELSE, so the activation constants
@@ -100,6 +112,10 @@ pub(crate) fn encode_moe_phase2_any(
             use_silu,
         ),
         RoutedBlobLayout::GgufIq4Nl => gpu::encode_moe_phase2_iq4_nl(
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
+            use_silu,
+        ),
+        RoutedBlobLayout::GgufQ2_0 => gpu::encode_moe_phase2_q2_0_top10(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
             use_silu,
         ),

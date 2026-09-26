@@ -9,10 +9,12 @@
 //! pair; there is no `input_layernorm` or `post_attention_layernorm`
 //! tensor anywhere (the hyper-connection's own `hc_norm` is the pre-norm
 //! for its sublayer); one layer carries a 51.2B-parameter hashed n-gram
-//! embedding table read by 16 host-side row lookups a token; every norm in
-//! the model is CENTERED except the GDN gated norm's SIGMOID variant
-//! (`docs/QWEN4_PHASE0.md` item 9 -- the inverse of `muse_glimmer`'s
-//! assignment). Sharing `families/qwen/`'s flow for the parts that
+//! embedding table read by 16 host-side row lookups a token. Hugging Face
+//! expresses most RMSNorm weights as offsets from unity, but the llama.cpp
+//! GGUF converter folds that shift into the stored scale, so this runtime
+//! applies the GGUF scales directly. The GDN gated norm also uses a direct
+//! scale and the SIGMOID gate variant (`docs/QWEN4_PHASE0.md` item 9).
+//! Sharing `families/qwen/`'s flow for the parts that
 //! coincide would mean threading a `hc: Option<...>` and a wide-vs-narrow
 //! residual width through code four OTHER families and the MTP head
 //! already depend on staying exactly as it is (`crates/runtime` Gotcha
@@ -69,7 +71,7 @@
 //!
 //! ```text
 //! raw          = hyper_input                                    // [.., C*H]
-//! normed       = hc_norm(raw)                       // grouped RMS, group=H, CENTERED
+//! normed       = hc_norm(raw)                 // grouped RMS, group=H, direct GGUF scale
 //! w = silu(input_mix_weight_down(normed) / C)                   // C*H -> hc_lowrank (320)
 //! w = sigmoid(input_mix_weight_up(w))                           // 320 -> C*H
 //! mixed        = (w.view(C,H) * normed.view(C,H)).mean(dim=C)   // [.., H], MEAN not sum
@@ -87,7 +89,7 @@
 //! ```text
 //! rows   = ngram_hash(token_history)              // 16 row ids, model_io::ngram_hash
 //! emb    = concat(table[rows[h]] for h in 0..16)  // [.., 2560], host mmap + dequant
-//! key    = norm_key(key_proj(emb)).view(C, H)     // 2560 -> 10240, grouped centered norm
+//! key    = norm_key(key_proj(emb)).view(C, H)     // 2560 -> 10240, grouped scaled norm
 //! value  = value_proj(emb)                        // 2560 -> 2560
 //! query  = norm_query(hidden).view(C, H)          // hidden is the 10240 residual
 //! gate   = (key * query).sum(-1) / sqrt(H)        // [.., C, 1]
@@ -112,12 +114,12 @@
 //! Query-sparse attention, `docs/QWEN4_PHASE0.md` section 5. Attention
 //! proper is `families/qwen/attn.rs::encode_full_attention_block`'s exact
 //! shape (packed `[query; gate]` in `q_proj`, per-head `q_norm`/`k_norm`,
-//! `rope_neox_subdim` at `rotary_dim = 64`), CENTERED norms, 24 q heads
+//! `rope_neox_subdim` at `rotary_dim = 64`), direct GGUF scales, 24 q heads
 //! over 2 kv, `head_dim` 256, `theta` 1e7. In front of it sits the
 //! INDEXER: every token `index_qk_proj` projects 4 query heads and one raw
 //! key head of 128; the key goes into `gpu::QsaIndexerCacheManager`'s
 //! per-layer history and each newly completed block of 4 keys is pooled,
-//! centered-normed and roped at its first token's position
+//! per-head-scaled and roped at its first token's position
 //! (`gpu::encode_qsa_advance_blocks`). Below `index_top_k` complete blocks
 //! (`visible <= 2051`) selection is a no-op by construction and the dense
 //! kernel runs unchanged, so this flow's below-budget output is
@@ -138,10 +140,10 @@
 //! softmax normalizer and the top-k selection happen, and the normalizer
 //! cancels in the renormalization either way). No router bias here (unlike
 //! `gpt-oss`, where a bias WOULD break that equivalence), so the existing
-//! function is reused unchanged. The gated shared expert SEEDS phase 2's
-//! accumulator rather than being added to a finished routed sum, matching
-//! `families/qwen/moe.rs`'s existing choice for the identical reason (FP
-//! addition is not associative).
+//! function is reused unchanged. SlotStream's independent Qwen4 reference
+//! casts the routed expert sum to the model dtype before adding the gated
+//! shared expert. Preserve that FP16 boundary instead of carrying over the
+//! Qwen3 shared-seed reduction order.
 //!
 //! ## Deliberately unsupported in this cut, refused by name at open
 //!

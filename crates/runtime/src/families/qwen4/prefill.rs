@@ -312,6 +312,8 @@ impl RealForwardRunner {
                             (&scratch.normed, 0),
                             scratch,
                             layer,
+                            position,
+                            false,
                         )?;
                     } else {
                         // `&mut pass`: above the QSA budget this commits and

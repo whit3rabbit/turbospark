@@ -36,6 +36,8 @@ pub(crate) fn encode_linear_block(
     mixed: (&gpu::MetalBuffer, u64),
     scratch: &DecodeScratch,
     layer: usize,
+    position: usize,
+    capture_norm: bool,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hidden = arch.hidden_size as usize;
@@ -108,7 +110,51 @@ pub(crate) fn encode_linear_block(
         1, // this chain's own conv is undilated; PLE's is the dilated one.
     )
     .map_err(gpu_err)?;
-    gpu::encode_gdn_qk_norm(context, pass, shape, (&qwen4.gdn_conv_out, 0), 1).map_err(gpu_err)?;
+    let capture = if capture_norm {
+        qwen4
+            .gdn_norm_capture
+            .as_ref()
+            .filter(|capture| capture.claim_layer(layer, position))
+    } else {
+        None
+    };
+    if let Some(capture) = capture {
+        gpu::encode_dflash_copy_rows(
+            context,
+            pass,
+            (&qwen4.gdn_conv_out, 0),
+            (&capture.buffer, 0),
+            1,
+            shape.qkv_dim(),
+            shape.qkv_dim(),
+        )
+        .map_err(gpu_err)?;
+    }
+    // SlotStream's Qwen4 reference uses direct L2 normalization with eps
+    // 1e-6. This kernel computes RMS in mean space, so divide epsilon by Dk
+    // to preserve the reference's denominator. Other GDN families retain
+    // the shared kernel's historical epsilon via the default entrypoint.
+    gpu::encode_gdn_qk_norm_with_rms_epsilon(
+        context,
+        pass,
+        shape,
+        (&qwen4.gdn_conv_out, 0),
+        1,
+        1e-6 / shape.key_head_dim as f32,
+    )
+    .map_err(gpu_err)?;
+    if let Some(capture) = capture {
+        gpu::encode_dflash_copy_rows(
+            context,
+            pass,
+            (&qwen4.gdn_conv_out, 0),
+            (&capture.buffer, (qkv_dim * 2) as u64),
+            1,
+            shape.qkv_dim(),
+            shape.qkv_dim(),
+        )
+        .map_err(gpu_err)?;
+    }
 
     let a_log = norm_view(weights, index, &name("A_log"), v_heads)?;
     let dt_bias = norm_view(weights, index, &name("dt_bias"), v_heads)?;
@@ -313,7 +359,7 @@ pub(crate) fn encode_full_attention_block(
         ("k_norm.weight", (k_buf, k_off), num_kv),
     ] {
         let weight = norm_view(weights, index, &name(suffix), head_dim as usize)?;
-        gpu::encode_rms_norm_bf16w_perhead_centered(
+        gpu::encode_rms_norm_bf16w_perhead(
             context, pass, data, weight, data, heads, head_dim, RMS_EPS,
         )
         .map_err(gpu_err)?;
@@ -345,7 +391,7 @@ pub(crate) fn encode_full_attention_block(
     // --- Block selection, above budget only.
     let sparse = complete_blocks > qwen4.idx_block_topk && !qwen4.qsa_force_dense;
     if sparse {
-        // The indexer query: per-head centered norm, then the trunk's own
+        // The indexer query: per-head scaled norm, then the trunk's own
         // RoPE at the current position (one shared object in the reference,
         // `crates/compute/src/qsa_indexer.rs`'s module doc).
         let q_norm = norm_view(
@@ -354,7 +400,7 @@ pub(crate) fn encode_full_attention_block(
             &name("indexer.q_layernorm.weight"),
             idx_dim as usize,
         )?;
-        gpu::encode_rms_norm_bf16w_perhead_centered(
+        gpu::encode_rms_norm_bf16w_perhead(
             context,
             pass,
             (&qwen4.idx_qk, 0),

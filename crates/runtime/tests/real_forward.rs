@@ -25,14 +25,35 @@ use turbospark_runtime::{
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn temp_dir() -> PathBuf {
+struct TempDir(PathBuf);
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = std::path::Path;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+fn temp_dir() -> TempDir {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
         "turbospark-real-forward-{}-{n}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    TempDir(dir)
 }
 
 fn load_tokenizer() -> MfTokenizer {

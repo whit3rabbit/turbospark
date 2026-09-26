@@ -286,6 +286,13 @@ fn the_deepstack_adds_move_the_trunks_logits() {
     // deepstack mergers live and what the patch writes.
     let clone = std::env::temp_dir().join(format!("qwen3vl-vision-perturb-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&clone);
+    struct CleanupDir<'a>(&'a std::path::Path);
+    impl<'a> Drop for CleanupDir<'a> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.0);
+        }
+    }
+    let _cleanup = CleanupDir(&clone);
     std::fs::create_dir_all(clone.join("packed_vision")).expect("clone dir");
     for file in ["manifest.json", "preprocessor_config.json", "config.json"] {
         let src = install.join(file);

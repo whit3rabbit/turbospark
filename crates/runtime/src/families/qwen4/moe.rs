@@ -2,15 +2,16 @@
 //! Adapted from `families/qwen/moe.rs`, which this closely resembles: the
 //! same softmax-before-topk-with-renormalization router
 //! (`router_topk_gemma4` is algebraically identical, see `mod.rs`'s own
-//! note) and the same gated-shared-expert-seeds-phase-2 choice. **ONE
+//! note). Qwen4's reference adds the gated shared expert after the routed
+//! sum is rounded to FP16. **ONE
 //! STRUCTURAL DIFFERENCE**: this function writes its result into
-//! `qwen4.h2` and returns, WITHOUT a residual add -- `families/qwen/`'s
+//! `qwen4.h2` and returns, WITHOUT a wide residual add -- `families/qwen/`'s
 //! sibling adds directly to `scratch.x`, but this family's residual
 //! mechanism is the hyper-connection injection
 //! (`gpu::encode_hc_inject_add`), which the caller runs afterward using
 //! `mixed_hc`'s `raw`/`inject_w` outputs. Folding the add in here would
-//! bury a family-specific mechanism inside a function whose whole point is
-//! to be the ordinary part.
+//! The shared branch joins the routed result here; the wide-stream
+//! hyper-connection residual remains with the caller.
 
 use std::time::Instant;
 
@@ -148,6 +149,7 @@ pub(crate) fn encode_moe_layer(
     let (selected, route_weights) =
         router_topk_gemma4(&router_logits, top_k, &qwen4.per_expert_ones);
     if let Some(hist) = router_hist.as_mut() {
+        hist.record_router_logits(layer, &router_logits);
         hist.record(layer, &selected);
     }
     let mapped_active = mapped.buffers.get(layer).is_some_and(Option::is_some);
@@ -250,8 +252,8 @@ pub(crate) fn encode_moe_layer(
         pass.use_read_buffer(buffer);
     }
 
-    // Gated shared expert: SEEDS phase 2's accumulator (`mod.rs`'s own
-    // note; `docs/QWEN4_PHASE0.md` item 7).
+    // Compute the shared branch now, then join it after the routed sum has
+    // been rounded to FP16, matching SlotStream's Qwen4 reference.
     encode_gemv_any(
         context,
         pass,
@@ -341,7 +343,7 @@ pub(crate) fn encode_moe_layer(
         offsets,
         (&scratch.moe_acts, 0),
         (&scratch.routing_w, rw_off as u64),
-        (&qwen4.h1, 0),
+        (&qwen4.moe_zero, 0),
         (&qwen4.h2, 0),
         hidden as u32,
         moe_inter,
@@ -349,8 +351,11 @@ pub(crate) fn encode_moe_layer(
         use_silu,
     )
     .map_err(gpu_err)?;
+    gpu::encode_residual_add(context, pass, (&qwen4.h2, 0), (&qwen4.h1, 0), hidden as u32)
+        .map_err(gpu_err)?;
 
-    // NO residual add here -- see the module doc. `qwen4.h2` holds `moe(mixed)`.
+    // No wide-stream residual add here. h2 holds the complete MoE output;
+    // the caller applies the hyper-connection injection.
     // The cache slots this pass BOUND, so the caller can hand them to the
     // next token as `RoutedSlot::protect` while this command buffer is in
     // flight (`families/gemma4/moe.rs`'s identical return, one family over).

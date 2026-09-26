@@ -16,7 +16,8 @@
 //! because every one of them already operates at `H = 2560` -- the width
 //! of a hyper-connection's `mixed` output, never the wide stream itself.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use model_io::{ArchConfig, NgramContext, NgramTableLayout, ResidentBuffer, ResidentIndex};
 
@@ -28,6 +29,569 @@ use crate::real_forward_utils::entry;
 /// `(taps - 1) * dilation` for PLE's depthwise conv: `kernel_size=4`,
 /// `dilation=ngram_size=3` (`docs/QWEN4_PHASE0.md` item 4).
 pub(crate) const PLE_CONV_HISTORY: usize = 9;
+
+/// Opt-in first-GDN-layer input/output capture for comparing the runtime's
+/// Q/K normalization against an independent implementation.
+pub(crate) struct GdnNormCapture {
+    path: PathBuf,
+    pub(crate) buffer: gpu::MetalBuffer,
+    pub(crate) layer: usize,
+    qkv_width: usize,
+    key_heads: u32,
+    key_dim: u32,
+    value_heads: u32,
+    value_dim: u32,
+    requested_position: Option<usize>,
+    claimed: AtomicBool,
+    captured_position: AtomicUsize,
+    flushed: AtomicBool,
+}
+
+impl GdnNormCapture {
+    fn from_env(
+        context: &gpu::MetalContext,
+        arch: &ArchConfig,
+        shape: gpu::GdnShape,
+    ) -> Option<Self> {
+        let path = std::env::var_os("TURBOSPARK_QWEN4_GDN_NORM_CAPTURE")?;
+        let layer = arch
+            .full_attention_layer_mask
+            .iter()
+            .position(|&kind| kind == 2)?;
+        let requested_position = match std::env::var("TURBOSPARK_QWEN4_GDN_NORM_CAPTURE_POSITION") {
+            Ok(value) => match value.parse::<usize>() {
+                Ok(position) => Some(position),
+                Err(error) => {
+                    eprintln!(
+                        "[qwen4-gdn-capture] invalid capture position {value:?}: {error}; capture disabled"
+                    );
+                    return None;
+                }
+            },
+            Err(std::env::VarError::NotPresent) => None,
+            Err(error) => {
+                eprintln!("[qwen4-gdn-capture] cannot read capture position: {error}");
+                return None;
+            }
+        };
+        let qkv_width = shape.qkv_dim() as usize;
+        Some(Self {
+            path: PathBuf::from(path),
+            buffer: context.new_output_buffer((qkv_width * 4) as u64),
+            layer,
+            qkv_width,
+            key_heads: shape.num_k_heads,
+            key_dim: shape.key_head_dim,
+            value_heads: shape.num_v_heads,
+            value_dim: shape.value_head_dim,
+            requested_position,
+            claimed: AtomicBool::new(false),
+            captured_position: AtomicUsize::new(usize::MAX),
+            flushed: AtomicBool::new(false),
+        })
+    }
+
+    pub(crate) fn claim_layer(&self, layer: usize, position: usize) -> bool {
+        if layer != self.layer
+            || self
+                .requested_position
+                .is_some_and(|requested| requested != position)
+        {
+            return false;
+        }
+        if self
+            .claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        self.captured_position.store(position, Ordering::Release);
+        true
+    }
+
+    fn flush_if_captured(&self) {
+        if !self.claimed.load(Ordering::Acquire) || self.flushed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+
+        let data_path = self.path.with_extension("f16");
+        let values = gpu::read_buffer_f16(&self.buffer, 0, self.qkv_width * 2);
+        let mut bytes = Vec::with_capacity(values.len() * 2);
+        for value in values {
+            bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+        let data_name = data_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let header = format!(
+            "{{\n  \"format\": \"qwen4_gdn_norm_capture_v1\",\n  \"layer\": {},\n  \
+             \"position\": {},\n  \"key_heads\": {},\n  \"key_dim\": {},\n  \"value_heads\": {},\n  \
+             \"value_dim\": {},\n  \"qkv_width\": {},\n  \"dtype\": \"float16\",\n  \
+             \"layout\": \"[before:q,k,v][after:q,k,v]\",\n  \
+             \"reference_epsilon\": 1e-6,\n  \"mean_space_epsilon\": {:.9e},\n  \
+             \"data\": {}\n}}\n",
+            self.layer,
+            self.captured_position.load(Ordering::Acquire),
+            self.key_heads,
+            self.key_dim,
+            self.value_heads,
+            self.value_dim,
+            self.qkv_width,
+            1e-6 / self.key_dim as f32,
+            json_string(&data_name),
+        );
+        let write_result = (|| -> std::io::Result<()> {
+            if let Some(parent) = self
+                .path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&data_path, bytes)?;
+            std::fs::write(&self.path, header)
+        })();
+        match write_result {
+            Ok(()) => eprintln!(
+                "[qwen4-gdn-capture] wrote {} and {} for layer {}",
+                self.path.display(),
+                data_path.display(),
+                self.layer
+            ),
+            Err(error) => eprintln!(
+                "[qwen4-gdn-capture] failed writing {}: {error}",
+                self.path.display()
+            ),
+        }
+    }
+}
+
+/// Opt-in residual boundary capture for comparing the Qwen4 layer flow with
+/// SlotStream's independent layer reference.
+///
+/// The capture stores each requested layer's input (after PLE), attention
+/// join, and MoE join. The default is the first two layers, matching
+/// SlotStream's current_backend_reference.py --kind layers harness.
+#[repr(usize)]
+pub(crate) enum LayerBoundaryStage {
+    InputAfterPle = 0,
+    AfterAttentionJoin = 1,
+    AfterMoeJoin = 2,
+}
+
+pub(crate) struct LayerBoundaryCapture {
+    path: PathBuf,
+    pub(crate) buffer: gpu::MetalBuffer,
+    layers: usize,
+    wide_dim: usize,
+    requested_position: Option<usize>,
+    claimed: AtomicBool,
+    captured_position: AtomicUsize,
+    flushed: AtomicBool,
+}
+
+impl LayerBoundaryCapture {
+    fn from_env(context: &gpu::MetalContext, arch: &ArchConfig, wide_dim: usize) -> Option<Self> {
+        let path = std::env::var_os("TURBOSPARK_QWEN4_LAYER_CAPTURE")?;
+        let total_layers = usize::try_from(arch.num_layers).ok()?;
+        let layers = match std::env::var("TURBOSPARK_QWEN4_LAYER_CAPTURE_LAYERS") {
+            Ok(value) => match value.parse::<usize>() {
+                Ok(layers) if layers > 0 && layers <= total_layers => layers,
+                Ok(layers) => {
+                    eprintln!(
+                        "[qwen4-layer-capture] layer count {layers} is outside 1..={total_layers}; capture disabled"
+                    );
+                    return None;
+                }
+                Err(error) => {
+                    eprintln!(
+                        "[qwen4-layer-capture] invalid layer count {value:?}: {error}; capture disabled"
+                    );
+                    return None;
+                }
+            },
+            Err(std::env::VarError::NotPresent) => total_layers.min(2),
+            Err(error) => {
+                eprintln!("[qwen4-layer-capture] cannot read layer count: {error}");
+                return None;
+            }
+        };
+        if layers == 0 {
+            eprintln!("[qwen4-layer-capture] model has no layers; capture disabled");
+            return None;
+        }
+        let requested_position = match std::env::var("TURBOSPARK_QWEN4_LAYER_CAPTURE_POSITION") {
+            Ok(value) => match value.parse::<usize>() {
+                Ok(position) => Some(position),
+                Err(error) => {
+                    eprintln!(
+                            "[qwen4-layer-capture] invalid capture position {value:?}: {error}; capture disabled"
+                        );
+                    return None;
+                }
+            },
+            Err(std::env::VarError::NotPresent) => None,
+            Err(error) => {
+                eprintln!("[qwen4-layer-capture] cannot read capture position: {error}");
+                return None;
+            }
+        };
+        let byte_len = layers
+            .checked_mul(3)
+            .and_then(|count| count.checked_mul(wide_dim))
+            .and_then(|count| count.checked_mul(2));
+        let Some(byte_len) = byte_len else {
+            eprintln!("[qwen4-layer-capture] capture dimensions overflow; capture disabled");
+            return None;
+        };
+        if wide_dim > u32::MAX as usize {
+            eprintln!("[qwen4-layer-capture] residual width exceeds the GPU copy limit");
+            return None;
+        }
+        Some(Self {
+            path: PathBuf::from(path),
+            buffer: context.new_output_buffer(byte_len as u64),
+            layers,
+            wide_dim,
+            requested_position,
+            claimed: AtomicBool::new(false),
+            captured_position: AtomicUsize::new(usize::MAX),
+            flushed: AtomicBool::new(false),
+        })
+    }
+
+    pub(crate) fn claim_position(&self, position: usize) -> bool {
+        if self
+            .requested_position
+            .is_some_and(|requested| requested != position)
+        {
+            return false;
+        }
+        if self
+            .claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        self.captured_position.store(position, Ordering::Release);
+        true
+    }
+
+    /// Stage order: layer input after PLE, attention join, MoE join.
+    pub(crate) fn encode_stage(
+        &self,
+        context: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        layer: usize,
+        stage: LayerBoundaryStage,
+        source: (&gpu::MetalBuffer, u64),
+    ) -> Result<(), gpu::GpuError> {
+        if layer >= self.layers {
+            return Ok(());
+        }
+        let element_offset = (stage as usize)
+            .checked_mul(self.layers)
+            .and_then(|offset| offset.checked_add(layer))
+            .and_then(|offset| offset.checked_mul(self.wide_dim))
+            .expect("Qwen4 layer capture offset overflow");
+        gpu::encode_dflash_copy_rows(
+            context,
+            pass,
+            source,
+            (&self.buffer, (element_offset * 2) as u64),
+            1,
+            self.wide_dim as u32,
+            self.wide_dim as u32,
+        )
+    }
+
+    fn flush_if_captured(&self) {
+        if !self.claimed.load(Ordering::Acquire) || self.flushed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let data_path = self.path.with_extension("f16");
+        let value_count = self.layers * 3 * self.wide_dim;
+        let values = gpu::read_buffer_f16(&self.buffer, 0, value_count);
+        let mut bytes = Vec::with_capacity(values.len() * 2);
+        for value in values {
+            bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+        let data_name = data_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let header = format!(
+            "{{\n  \"format\": \"qwen4_layer_boundary_capture_v1\",\n  \
+             \"position\": {},\n  \"layers\": {},\n  \"wide_dim\": {},\n  \
+             \"dtype\": \"float16\",\n  \
+             \"layout\": \"[stage][layer][wide_dim]\",\n  \
+             \"stages\": [\"layer_input_after_ple\", \"after_attention_join\", \"after_moe_join\"],\n  \
+             \"reference\": \"SlotStream current_backend_reference.py --kind layers\",\n  \
+             \"data\": {}\n}}\n",
+            self.captured_position.load(Ordering::Acquire),
+            self.layers,
+            self.wide_dim,
+            json_string(&data_name),
+        );
+        let write_result = (|| -> std::io::Result<()> {
+            if let Some(parent) = self
+                .path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&data_path, bytes)?;
+            std::fs::write(&self.path, header)
+        })();
+        match write_result {
+            Ok(()) => eprintln!(
+                "[qwen4-layer-capture] wrote {} and {} for {} layer(s)",
+                self.path.display(),
+                data_path.display(),
+                self.layers
+            ),
+            Err(error) => eprintln!(
+                "[qwen4-layer-capture] failed writing {}: {error}",
+                self.path.display()
+            ),
+        }
+    }
+}
+
+/// Opt-in first-attention-block capture for comparing the Qwen4 attention
+/// hyper-connection and branch output against llama.cpp's eval callback.
+#[repr(usize)]
+pub(crate) enum AttentionIntermediateStage {
+    HcNormed = 0,
+    HcGate = 1,
+    HcMixed = 2,
+    BranchOutput = 3,
+    InjectGate = 4,
+    WideAfterJoin = 5,
+}
+
+pub(crate) struct AttentionIntermediateCapture {
+    path: PathBuf,
+    pub(crate) buffer: gpu::MetalBuffer,
+    layer: usize,
+    wide_dim: usize,
+    hidden_dim: usize,
+    hc_count: usize,
+    requested_position: Option<usize>,
+    claimed: AtomicBool,
+    captured_position: AtomicUsize,
+    flushed: AtomicBool,
+}
+
+impl AttentionIntermediateCapture {
+    fn from_env(
+        context: &gpu::MetalContext,
+        arch: &ArchConfig,
+        wide_dim: usize,
+        hidden_dim: usize,
+        hc_count: usize,
+    ) -> Option<Self> {
+        let path = std::env::var_os("TURBOSPARK_QWEN4_ATTENTION_CAPTURE")?;
+        let total_layers = usize::try_from(arch.num_layers).ok()?;
+        let layer = match std::env::var("TURBOSPARK_QWEN4_ATTENTION_CAPTURE_LAYER") {
+            Ok(value) => match value.parse::<usize>() {
+                Ok(layer) if layer < total_layers => layer,
+                Ok(layer) => {
+                    eprintln!(
+                        "[qwen4-attention-capture] layer {layer} is outside 0..{total_layers}; capture disabled"
+                    );
+                    return None;
+                }
+                Err(error) => {
+                    eprintln!(
+                        "[qwen4-attention-capture] invalid layer {value:?}: {error}; capture disabled"
+                    );
+                    return None;
+                }
+            },
+            Err(std::env::VarError::NotPresent) => 0,
+            Err(error) => {
+                eprintln!("[qwen4-attention-capture] cannot read layer: {error}");
+                return None;
+            }
+        };
+        let requested_position = match std::env::var("TURBOSPARK_QWEN4_ATTENTION_CAPTURE_POSITION")
+        {
+            Ok(value) => match value.parse::<usize>() {
+                Ok(position) => Some(position),
+                Err(error) => {
+                    eprintln!(
+                        "[qwen4-attention-capture] invalid position {value:?}: {error}; capture disabled"
+                    );
+                    return None;
+                }
+            },
+            Err(std::env::VarError::NotPresent) => None,
+            Err(error) => {
+                eprintln!("[qwen4-attention-capture] cannot read position: {error}");
+                return None;
+            }
+        };
+        if wide_dim > u32::MAX as usize || hidden_dim > wide_dim || hc_count > wide_dim {
+            eprintln!("[qwen4-attention-capture] invalid capture dimensions; capture disabled");
+            return None;
+        }
+        let byte_len = wide_dim
+            .checked_mul(6)
+            .and_then(|count| count.checked_mul(2))?;
+        let buffer = context.new_output_buffer(byte_len as u64);
+        gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; byte_len]);
+        Some(Self {
+            path: PathBuf::from(path),
+            buffer,
+            layer,
+            wide_dim,
+            hidden_dim,
+            hc_count,
+            requested_position,
+            claimed: AtomicBool::new(false),
+            captured_position: AtomicUsize::new(usize::MAX),
+            flushed: AtomicBool::new(false),
+        })
+    }
+
+    pub(crate) fn claim_position(&self, position: usize) -> bool {
+        if self
+            .requested_position
+            .is_some_and(|requested| requested != position)
+        {
+            return false;
+        }
+        if self
+            .claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        self.captured_position.store(position, Ordering::Release);
+        true
+    }
+
+    pub(crate) fn encode_stage(
+        &self,
+        context: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        layer: usize,
+        stage: AttentionIntermediateStage,
+        source: (&gpu::MetalBuffer, u64),
+    ) -> Result<(), gpu::GpuError> {
+        if layer != self.layer || !self.claimed.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let (stage_index, width) = match stage {
+            AttentionIntermediateStage::HcNormed => (0, self.wide_dim),
+            AttentionIntermediateStage::HcGate => (1, self.wide_dim),
+            AttentionIntermediateStage::HcMixed => (2, self.hidden_dim),
+            AttentionIntermediateStage::BranchOutput => (3, self.hidden_dim),
+            AttentionIntermediateStage::InjectGate => (4, self.hc_count),
+            AttentionIntermediateStage::WideAfterJoin => (5, self.wide_dim),
+        };
+        gpu::encode_dflash_copy_rows(
+            context,
+            pass,
+            source,
+            (&self.buffer, (stage_index * self.wide_dim * 2) as u64),
+            1,
+            width as u32,
+            width as u32,
+        )
+    }
+
+    fn flush_if_captured(&self) {
+        if !self.claimed.load(Ordering::Acquire) || self.flushed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let data_path = self.path.with_extension("f16");
+        let values = gpu::read_buffer_f16(&self.buffer, 0, self.wide_dim * 6);
+        let mut bytes = Vec::with_capacity(values.len() * 2);
+        for value in values {
+            bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+        let data_name = data_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let header = format!(
+            "{{\n  \"format\": \"qwen4_attention_intermediate_capture_v1\",\n  \
+             \"layer\": {},\n  \"position\": {},\n  \"wide_dim\": {},\n  \
+             \"hidden_dim\": {},\n  \"hc_count\": {},\n  \"dtype\": \"float16\",\n  \
+             \"layout\": \"[stage][wide_slot]\",\n  \
+             \"stages\": [\n    {{\"name\": \"hc_normed\", \"width\": {}}},\n    \
+             {{\"name\": \"hc_gate\", \"width\": {}}},\n    \
+             {{\"name\": \"hc_mixed\", \"width\": {}}},\n    \
+             {{\"name\": \"branch_output\", \"width\": {}}},\n    \
+             {{\"name\": \"inject_gate\", \"width\": {}}},\n    \
+             {{\"name\": \"wide_after_join\", \"width\": {}}}\n  ],\n  \
+             \"reference\": \"llama.cpp eval callback and SlotStream layer harness\",\n  \
+             \"data\": {}\n}}\n",
+            self.layer,
+            self.captured_position.load(Ordering::Acquire),
+            self.wide_dim,
+            self.hidden_dim,
+            self.hc_count,
+            self.wide_dim,
+            self.wide_dim,
+            self.hidden_dim,
+            self.hidden_dim,
+            self.hc_count,
+            self.wide_dim,
+            json_string(&data_name),
+        );
+        let write_result = (|| -> std::io::Result<()> {
+            if let Some(parent) = self
+                .path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&data_path, bytes)?;
+            std::fs::write(&self.path, header)
+        })();
+        match write_result {
+            Ok(()) => eprintln!(
+                "[qwen4-attention-capture] wrote {} and {} for layer {}",
+                self.path.display(),
+                data_path.display(),
+                self.layer
+            ),
+            Err(error) => eprintln!(
+                "[qwen4-attention-capture] failed writing {}: {error}",
+                self.path.display()
+            ),
+        }
+    }
+}
+
+fn json_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            character if character <= '\u{1f}' => {
+                out.push_str(&format!("\\u{:04x}", character as u32));
+            }
+            character => out.push(character),
+        }
+    }
+    out.push('"');
+    out
+}
 
 /// Per-open `qwen4_exp` decode state.
 pub(crate) struct RealQwen4State {
@@ -106,6 +670,9 @@ pub(crate) struct RealQwen4State {
     pub(crate) qsa_force_dense: bool,
     pub(crate) gdn_qkv_raw: gpu::MetalBuffer,
     pub(crate) gdn_conv_out: gpu::MetalBuffer,
+    pub(crate) gdn_norm_capture: Option<GdnNormCapture>,
+    pub(crate) layer_boundary_capture: Option<LayerBoundaryCapture>,
+    pub(crate) attention_intermediate_capture: Option<AttentionIntermediateCapture>,
     pub(crate) gdn_z: gpu::MetalBuffer,
     pub(crate) gdn_a: gpu::MetalBuffer,
     pub(crate) gdn_b: gpu::MetalBuffer,
@@ -143,19 +710,20 @@ pub(crate) struct RealQwen4State {
     /// buffer they never touch (matching `wide_x`'s own module-doc argument,
     /// one field over).
     pub(crate) moe_x: gpu::MetalBuffer,
-    /// The gated shared-expert output, which SEEDS phase 2's accumulator
-    /// (`docs/QWEN4_PHASE0.md` item 7, matching `families/qwen/moe.rs`'s
-    /// existing choice: FP addition is not associative, so seeding differs
-    /// from appending to a finished routed sum). Single-row: consumed by the
-    /// same token's own routed-loop iteration before the next token's plan
-    /// runs, never crossing to a different token's row.
-    pub(crate) h1: gpu::MetalBuffer,
-    /// Shared + routed, `moe(mixed)`'s final output -- the `out` the layer
-    /// pseudocode injects back into the wide stream. Single-row, same
-    /// reason as `h1`: read by the token's own `hc_inject_add` call
-    /// immediately after it is written, within that token's own routed-loop
+    /// The gated shared-expert output. SlotStream's Qwen4 reference adds it
+    /// after the routed sum has been rounded to the model dtype. Phase 2
+    /// therefore reads a separate zero vector; this value is added to its
+    /// output afterward. Single-row: consumed by this token's own routed
     /// iteration.
+    pub(crate) h1: gpu::MetalBuffer,
+    /// Shared + routed, moe(mixed)'s final output. The caller injects this
+    /// into the wide stream after the routed and shared branches have joined.
+    /// Single-row, consumed by this token's own hyper-connection call.
     pub(crate) h2: gpu::MetalBuffer,
+    /// Zero residual used to make phase 2 round the routed sum before the
+    /// separate gated shared-expert addition, matching SlotStream's Qwen4
+    /// reference. Immutable after state construction.
+    pub(crate) moe_zero: gpu::MetalBuffer,
     pub(crate) shared_gate_logit: gpu::MetalBuffer,
 
     /// PLE's concatenated n-gram lookup, `[hidden]` -- host dequant, GPU
@@ -588,6 +1156,8 @@ impl RealQwen4State {
         gpu::write_buffer_bytes(&router_ones, 0, &ones);
 
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
+        let moe_zero = halfs(hidden);
+        gpu::write_buffer_bytes(&moe_zero, 0, &vec![0u8; hidden * 2]);
         let hc_count = arch.hyper_connections.mult as usize;
         let hc_lowrank = arch.hyper_connections.lowrank as usize;
         let wide_dim = hidden * hc_count;
@@ -606,6 +1176,10 @@ impl RealQwen4State {
             .new_output_buffer(qsa_positions_bytes.expect("QSA positions length checked") as u64);
         let qsa_force_dense = std::env::var("TURBOSPARK_QSA_FORCE_DENSE").as_deref() == Ok("1");
         let ple_conv_tail = halfs(PLE_CONV_HISTORY * wide_dim);
+        let gdn_norm_capture = GdnNormCapture::from_env(context, arch, shape);
+        let layer_boundary_capture = LayerBoundaryCapture::from_env(context, arch, wide_dim);
+        let attention_intermediate_capture =
+            AttentionIntermediateCapture::from_env(context, arch, wide_dim, hidden, hc_count);
         gpu::write_buffer_bytes(
             &ple_conv_tail,
             0,
@@ -639,6 +1213,9 @@ impl RealQwen4State {
             qsa_force_dense,
             gdn_qkv_raw: halfs(qkv_dim),
             gdn_conv_out: halfs(qkv_dim),
+            gdn_norm_capture,
+            layer_boundary_capture,
+            attention_intermediate_capture,
             gdn_z: halfs(value_dim),
             gdn_a: halfs(v_heads),
             gdn_b: halfs(v_heads),
@@ -652,6 +1229,7 @@ impl RealQwen4State {
             moe_x: halfs(hidden * MAX_PREFILL_BATCH),
             h1: halfs(hidden),
             h2: halfs(hidden),
+            moe_zero,
             shared_gate_logit: halfs(1),
 
             ngram_emb: halfs(hidden * MAX_PREFILL_BATCH),
@@ -697,5 +1275,23 @@ impl RealQwen4State {
         self.ngram_context = NgramContext::new(self.ngram_context_len, self.eos_token_id);
         let tail_len = self.ple_conv_tail.length() as usize;
         gpu::write_buffer_bytes(&self.ple_conv_tail, 0, &vec![0u8; tail_len]);
+    }
+
+    pub(crate) fn flush_gdn_norm_capture(&self) {
+        if let Some(capture) = &self.gdn_norm_capture {
+            capture.flush_if_captured();
+        }
+    }
+
+    pub(crate) fn flush_layer_boundary_capture(&self) {
+        if let Some(capture) = &self.layer_boundary_capture {
+            capture.flush_if_captured();
+        }
+    }
+
+    pub(crate) fn flush_attention_intermediate_capture(&self) {
+        if let Some(capture) = &self.attention_intermediate_capture {
+            capture.flush_if_captured();
+        }
     }
 }

@@ -50,15 +50,36 @@ const BITS: u32 = 1;
 const GRID_H: usize = 4;
 const GRID_W: usize = 4;
 
-fn temp_dir() -> PathBuf {
+struct TempDir(PathBuf);
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = std::path::Path;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+fn temp_dir() -> TempDir {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir =
         std::env::temp_dir().join(format!("turbospark-vision-mv4-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
-    dir
+    TempDir(dir)
 }
 
-fn build() -> (PathBuf, model_io::ArchConfig) {
+fn build() -> (TempDir, model_io::ArchConfig) {
     let dir = temp_dir();
     let arch = build_synthetic_qwen_gdn_dense_install_with_vision_streamed(
         &dir,

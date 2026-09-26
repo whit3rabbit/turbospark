@@ -5,20 +5,20 @@ use model_io::ResidentIndex;
 
 use crate::real_forward_layout::{
     DTYPE_GGUF_IQ1_M, DTYPE_GGUF_IQ1_S, DTYPE_GGUF_IQ2_S, DTYPE_GGUF_IQ2_XS, DTYPE_GGUF_IQ2_XXS,
-    DTYPE_GGUF_IQ3_S, DTYPE_GGUF_Q2_K, DTYPE_GGUF_Q3_K, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K,
-    DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0, DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE, DTYPE_RAW_BF16,
+    DTYPE_GGUF_IQ3_S, DTYPE_GGUF_IQ3_XXS, DTYPE_GGUF_IQ4_NL, DTYPE_GGUF_IQ4_XS, DTYPE_GGUF_Q2_K,
+    DTYPE_GGUF_Q3_K, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0,
+    DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE, DTYPE_RAW_BF16,
 };
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{affine_group_size, entry, resident_matrix};
 
 pub(crate) use crate::real_forward_dispatch_moe::{encode_moe_phase1_any, encode_moe_phase2_any};
 
-/// Shape/size bounds for a block-quantized embedding table, shared by the
-/// Q4_K and Q3_K arms: the table must be `[vocab, hidden]`, `hidden` must
-/// tile whole superblocks, the byte run must be exactly `rows *
-/// row_bytes`, and the selected row must land inside it. A wrong stride or
-/// a hand-edited manifest fails here rather than reading a neighbouring
-/// token's row.
+/// Shape/size bounds for a block-quantized embedding table: the table must be
+/// `[vocab, hidden]`, `hidden` must tile whole superblocks, the byte run must
+/// be exactly `rows * row_bytes`, and the selected row must land inside it. A
+/// wrong stride or a hand-edited manifest fails here rather than reading a
+/// neighbouring token's row.
 fn validate_block_quant_embedding(
     e: &model_io::ResidentIndexEntry,
     name: &str,
@@ -93,14 +93,31 @@ fn validate_q4_k_embedding(
     )
 }
 
+fn validate_iq4_xs_embedding(
+    e: &model_io::ResidentIndexEntry,
+    name: &str,
+    token: u32,
+    hidden: u32,
+) -> Result<(), RealForwardError> {
+    validate_block_quant_embedding(
+        e,
+        name,
+        token,
+        hidden,
+        gpu::IQ4_XS_BLOCK_ELEMS,
+        gpu::IQ4_XS_BLOCK_BYTES,
+        "IQ4_XS",
+    )
+}
+
 /// Dispatches the embedding lookup matching the table's dtype tag: 4 =
 /// INT4-affine, 15 = 1-bit affine, plus the GGUF block types a real file puts
 /// an embedding table in.
 ///
 /// Shared by both real flows rather than written at each one, because it is a
 /// property of the tensor and not of the family: Qwen's Q4_K_M keeps
-/// `token_embd.weight` at Q4_K while Gemma's published GGUF is Q8_0
-/// throughout, and either family could meet either table.
+/// `token_embd.weight` at Q4_K, Gemma's published GGUF is Q8_0 throughout,
+/// and Swift Qwen3.8 keeps it at IQ4_XS.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_embed_any(
     context: &mut gpu::MetalContext,
@@ -137,6 +154,7 @@ pub(crate) fn encode_embed_any(
         DTYPE_GGUF_Q4_K => Some(gpu::Q4_K_BLOCK_ELEMS),
         DTYPE_GGUF_Q6_K => Some(gpu::Q6_K_BLOCK_ELEMS),
         DTYPE_GGUF_Q3_K => Some(gpu::Q3_K_BLOCK_ELEMS),
+        DTYPE_GGUF_IQ4_XS => Some(gpu::IQ4_XS_BLOCK_ELEMS),
         DTYPE_GGUF_IQ1_M => Some(gpu::IQ1_M_BLOCK_ELEMS),
         _ => None,
     };
@@ -161,6 +179,11 @@ pub(crate) fn encode_embed_any(
         DTYPE_GGUF_Q4_K => {
             validate_q4_k_embedding(e, name, token, hidden)?;
             gpu::encode_embed_lookup_q4_k(context, pass, table, out, token, hidden, embed_scale)
+                .map_err(RealForwardError::Gpu)
+        }
+        DTYPE_GGUF_IQ4_XS => {
+            validate_iq4_xs_embedding(e, name, token, hidden)?;
+            gpu::encode_embed_lookup_iq4_xs(context, pass, table, out, token, hidden, embed_scale)
                 .map_err(RealForwardError::Gpu)
         }
         // Same bounds check the Q4_K arm makes, for the same reason: the
@@ -471,9 +494,13 @@ pub(crate) fn encode_gemv_any(
             gpu::encode_dequant_q3_k_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
-        dtype @ (DTYPE_GGUF_IQ2_XXS | DTYPE_GGUF_IQ2_XS | DTYPE_GGUF_IQ1_S | DTYPE_GGUF_IQ3_S
+        dtype @ (DTYPE_GGUF_IQ3_XXS | DTYPE_GGUF_IQ4_NL | DTYPE_GGUF_IQ4_XS
+        | DTYPE_GGUF_IQ2_XXS | DTYPE_GGUF_IQ2_XS | DTYPE_GGUF_IQ1_S | DTYPE_GGUF_IQ3_S
         | DTYPE_GGUF_IQ2_S | DTYPE_GGUF_IQ1_M) => {
             let kind = match dtype {
+                DTYPE_GGUF_IQ3_XXS => gpu::IqBlockType::Iq3Xxs,
+                DTYPE_GGUF_IQ4_NL => gpu::IqBlockType::Iq4Nl,
+                DTYPE_GGUF_IQ4_XS => gpu::IqBlockType::Iq4Xs,
                 DTYPE_GGUF_IQ2_XXS => gpu::IqBlockType::Iq2Xxs,
                 DTYPE_GGUF_IQ2_XS => gpu::IqBlockType::Iq2Xs,
                 DTYPE_GGUF_IQ1_S => gpu::IqBlockType::Iq1S,
@@ -698,6 +725,38 @@ mod tests {
         assert!(validate_q4_k_embedding(&short, &short.name, 255, 256).is_err());
 
         assert!(validate_q4_k_embedding(&valid, &valid.name, 256, 256).is_err());
+    }
+
+    fn iq4_xs_embedding(rows: u32, cols: u32) -> model_io::ResidentIndexEntry {
+        model_io::ResidentIndexEntry {
+            name: "token_embd.weight".to_string(),
+            dtype: DTYPE_GGUF_IQ4_XS,
+            file_offset: 4096,
+            size_bytes: u64::from(rows)
+                * (u64::from(cols) / gpu::IQ4_XS_BLOCK_ELEMS as u64)
+                * gpu::IQ4_XS_BLOCK_BYTES as u64,
+            shape: (rows, cols, 0, 0),
+            scale_offset: 0,
+            scale_size: 0,
+            bias_offset: 0,
+            bias_size: 0,
+        }
+    }
+
+    #[test]
+    fn iq4_xs_embedding_validation_bounds_shape_size_and_selected_row() {
+        let valid = iq4_xs_embedding(7, 512);
+        validate_iq4_xs_embedding(&valid, &valid.name, 6, 512).unwrap();
+
+        let mut wrong_shape = valid.clone();
+        wrong_shape.shape.1 = 256;
+        assert!(validate_iq4_xs_embedding(&wrong_shape, &wrong_shape.name, 0, 512).is_err());
+
+        let mut short = valid.clone();
+        short.size_bytes -= gpu::IQ4_XS_BLOCK_BYTES as u64;
+        assert!(validate_iq4_xs_embedding(&short, &short.name, 6, 512).is_err());
+
+        assert!(validate_iq4_xs_embedding(&valid, &valid.name, 7, 512).is_err());
     }
 
     #[test]

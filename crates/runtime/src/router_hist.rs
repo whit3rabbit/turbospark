@@ -16,12 +16,19 @@
 //! passes, and no histogram can answer that. The counts stay in the same
 //! file and are recomputable from the trace, which is the capture's own
 //! cross-check.
+//!
+//! `TURBOSPARK_ROUTER_LOGITS_LAYER` plus `TURBOSPARK_ROUTER_LOGITS_PASS`
+//! capture one full f32 router-logit row into that JSON. Pass is the 0-based
+//! routed-forward count for that layer, so it lines up with token position in
+//! a one-token-at-a-time prefill probe.
 
 pub(crate) struct RouterHistogram {
     path: std::path::PathBuf,
     /// `counts[layer][expert]`; non-MoE layers never record and stay
     /// all-zero rows, so layer indices line up with the model's.
     counts: Vec<Vec<u64>>,
+    /// Number of routed forwards recorded for each layer.
+    passes: Vec<u64>,
     /// `trace[layer]` is the flat concatenation of that layer's top-k ids,
     /// one group of `top_k` per forward pass, in pass order. `Some` only
     /// under `TURBOSPARK_ROUTER_TRACE`.
@@ -53,8 +60,16 @@ pub(crate) struct RouterHistogram {
     /// against (AGENTS.md Gotcha 57: near-random means UNRELATED, so suspect
     /// the instrument before believing the finding).
     pilot_self_test: bool,
+    /// One optional raw router-logit row requested by layer and pass.
+    router_logits: Option<RouterLogitsCapture>,
     /// Learned from the first `record`, since `from_env` is not told it.
     top_k: usize,
+}
+
+struct RouterLogitsCapture {
+    layer: usize,
+    pass: usize,
+    values: Option<Vec<f32>>,
 }
 
 impl RouterHistogram {
@@ -70,12 +85,29 @@ impl RouterHistogram {
         let probe = std::env::var_os("TURBOSPARK_PILOT_PROBE");
         let pilot_self_test = probe.as_deref().is_some_and(|v| v == "self");
         let pred = probe.map(|_| vec![Vec::new(); num_layers]);
+        let router_logits = match (
+            std::env::var("TURBOSPARK_ROUTER_LOGITS_LAYER")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok()),
+            std::env::var("TURBOSPARK_ROUTER_LOGITS_PASS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok()),
+        ) {
+            (Some(layer), Some(pass)) if layer < num_layers => Some(RouterLogitsCapture {
+                layer,
+                pass,
+                values: None,
+            }),
+            _ => None,
+        };
         Some(Self {
             path: path.into(),
             counts: vec![vec![0; num_experts]; num_layers],
+            passes: vec![0; num_layers],
             trace,
             pred,
             pilot_self_test,
+            router_logits,
             top_k,
         })
     }
@@ -101,6 +133,20 @@ impl RouterHistogram {
         }
     }
 
+    /// Capture only the requested row; no serialization or allocation is
+    /// paid for when the opt-in layer/pass pair is absent or does not match.
+    pub(crate) fn record_router_logits(&mut self, layer: usize, logits: &[f32]) {
+        let Some(capture) = self.router_logits.as_mut() else {
+            return;
+        };
+        if capture.layer == layer
+            && capture.pass == self.passes[layer] as usize
+            && capture.values.is_none()
+        {
+            capture.values = Some(logits.to_vec());
+        }
+    }
+
     pub(crate) fn record(&mut self, layer: usize, selected: &[usize]) {
         for &expert in selected {
             self.counts[layer][expert] += 1;
@@ -111,6 +157,7 @@ impl RouterHistogram {
         if let Some(trace) = self.trace.as_mut() {
             trace[layer].extend(selected.iter().map(|&e| e as u32));
         }
+        self.passes[layer] += 1;
     }
 
     // Hand-rolled: nested integer arrays only, and this crate deliberately
@@ -124,15 +171,37 @@ impl RouterHistogram {
             self.top_k
         );
         push_rows(&mut out, self.counts.iter().map(|row| row.iter()));
+        out.push(']');
         if let Some(trace) = self.trace.as_ref() {
-            out.push_str("],\"trace\":[");
+            out.push_str(",\"trace\":[");
             push_rows(&mut out, trace.iter().map(|row| row.iter()));
+            out.push(']');
         }
         if let Some(pred) = self.pred.as_ref() {
-            out.push_str("],\"pred\":[");
+            out.push_str(",\"pred\":[");
             push_rows(&mut out, pred.iter().map(|row| row.iter()));
+            out.push(']');
         }
-        out.push_str("]}");
+        if let Some(capture) = self.router_logits.as_ref() {
+            out.push_str(&format!(
+                ",\"router_logits\":{{\"layer\":{},\"pass\":{},\"values\":",
+                capture.layer, capture.pass
+            ));
+            if let Some(values) = capture.values.as_ref() {
+                out.push('[');
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&value.to_string());
+                }
+                out.push(']');
+            } else {
+                out.push_str("null");
+            }
+            out.push('}');
+        }
+        out.push('}');
         out
     }
 }
@@ -180,9 +249,11 @@ mod tests {
         RouterHistogram {
             path: std::path::PathBuf::new(),
             counts: vec![vec![0; 3]; 2],
+            passes: vec![0; 2],
             trace: trace.then(|| vec![Vec::new(); 2]),
             pred: pilot.then(|| vec![Vec::new(); 2]),
             pilot_self_test: false,
+            router_logits: None,
             top_k: 0,
         }
     }
@@ -263,5 +334,26 @@ mod tests {
         // unit test touches no filesystem, as its siblings above do.
         std::mem::forget(on);
         std::mem::forget(off);
+    }
+
+    #[test]
+    fn router_logits_capture_targets_one_layer_and_pass() {
+        let mut hist = fixture(false);
+        hist.router_logits = Some(RouterLogitsCapture {
+            layer: 1,
+            pass: 1,
+            values: None,
+        });
+
+        hist.record_router_logits(0, &[9.0, 8.0, 7.0]);
+        hist.record(0, &[0, 1]);
+        hist.record_router_logits(1, &[6.0, 5.0, 4.0]);
+        hist.record(1, &[0, 1]);
+        hist.record_router_logits(1, &[3.5, 2.5, 1.5]);
+
+        assert!(hist
+            .to_json()
+            .contains("\"router_logits\":{\"layer\":1,\"pass\":1,\"values\":[3.5,2.5,1.5]}"));
+        std::mem::forget(hist);
     }
 }

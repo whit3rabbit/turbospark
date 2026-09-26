@@ -105,15 +105,26 @@ pub(crate) fn encode_ple_layer(
         let record = &table[offset..offset + record_bytes];
         let weight_bytes = qwen4.ngram_layout.weight_bytes as usize;
         let scale_bytes = qwen4.ngram_layout.scale_bytes as usize;
-        let (packed, rest) = record.split_at(weight_bytes);
-        let (scales, biases) = rest.split_at(scale_bytes);
-        let dequanted = compute::dequant_ngram_row(
-            packed,
-            scales,
-            biases,
-            head_dim,
-            qwen4.ngram_layout.group_size as usize,
-        );
+        let packed = &record[..weight_bytes];
+        let dequanted = match qwen4.ngram_layout.ggml_type.as_deref() {
+            Some("iq4_nl") => compute::quant_gguf_iq::dequantize_iq4_nl(packed, head_dim),
+            None => {
+                let rest = &record[weight_bytes..];
+                let (scales, biases) = rest.split_at(scale_bytes);
+                compute::dequant_ngram_row(
+                    packed,
+                    scales,
+                    biases,
+                    head_dim,
+                    qwen4.ngram_layout.group_size as usize,
+                )
+            }
+            Some(other) => {
+                return Err(RealForwardError::Unsupported(format!(
+                    "PLE n-gram row type {other:?} has no decoder"
+                )))
+            }
+        };
         emb.extend_from_slice(&dequanted);
     }
     if emb.len() != hidden {
@@ -141,7 +152,7 @@ pub(crate) fn encode_ple_layer(
         (&qwen4.ple_key, 0),
     )?;
     let norm_key_w = norm_view(weights, index, &name("norm_key.weight"), wide_dim)?;
-    gpu::encode_rms_norm_bf16w_grouped_centered(
+    gpu::encode_rms_norm_bf16w_grouped(
         context,
         pass,
         (&qwen4.ple_key, 0),
@@ -170,7 +181,7 @@ pub(crate) fn encode_ple_layer(
     // directly; there is no query projection (the checkpoint's own tensor
     // list has key_proj and value_proj only).
     let norm_query_w = norm_view(weights, index, &name("norm_query.weight"), wide_dim)?;
-    gpu::encode_rms_norm_bf16w_grouped_centered(
+    gpu::encode_rms_norm_bf16w_grouped(
         context,
         pass,
         wide,
@@ -195,11 +206,12 @@ pub(crate) fn encode_ple_layer(
     )
     .map_err(gpu_err)?;
 
-    // out = gv + silu(dilated_conv(norm_conv(gv))). The conv reads the
-    // NORMED gated value; its output joins the UN-normed `ple_gv`
-    // (`docs/QWEN4_PHASE0.md` item 4's own emphasis).
+    // out = gv + silu(dilated_conv(norm_conv(gv))). The shared GDN decode
+    // dispatch already applies SiLU to its convolution output; do not apply
+    // it again here. The conv reads the NORMED gated value, then joins the
+    // UN-normed `ple_gv` (`docs/QWEN4_PHASE0.md` item 4).
     let norm_conv_w = norm_view(weights, index, &name("norm_conv.weight"), wide_dim)?;
-    gpu::encode_rms_norm_bf16w_grouped_centered(
+    gpu::encode_rms_norm_bf16w_grouped(
         context,
         pass,
         (&qwen4.ple_gv, 0),
@@ -232,7 +244,6 @@ pub(crate) fn encode_ple_layer(
         (qwen4.ngram_context_len + 1) as u32,
     )
     .map_err(gpu_err)?;
-    gpu::encode_silu(context, pass, (&qwen4.ple_conv_out, 0), wide_dim as u32).map_err(gpu_err)?;
 
     // hidden += gv + conv_out (both wide), a PLAIN add per the pseudocode
     // above -- the caller's residual (`wide`) is written in place.

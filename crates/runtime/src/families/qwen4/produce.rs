@@ -15,6 +15,7 @@ use super::attn::{encode_full_attention_block, encode_linear_block};
 use super::hc::encode_hyper_connection;
 use super::moe;
 use super::ple::encode_ple_layer;
+use super::state::{AttentionIntermediateStage, LayerBoundaryStage};
 use super::{layer_tensor, TRUNK_PREFIX};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::encode_gemv_any;
@@ -62,6 +63,16 @@ impl RealForwardRunner {
                 "token id {token} outside vocab {vocab}"
             )));
         }
+        let capture_layer_boundaries = self
+            .real_qwen4
+            .as_ref()
+            .and_then(|qwen4| qwen4.layer_boundary_capture.as_ref())
+            .is_some_and(|capture| capture.claim_position(position));
+        let capture_attention_intermediates = self
+            .real_qwen4
+            .as_ref()
+            .and_then(|qwen4| qwen4.attention_intermediate_capture.as_ref())
+            .is_some_and(|capture| capture.claim_position(position));
 
         let embed_name = "language_model.model.embed_tokens.weight";
         let hc_count = self
@@ -147,6 +158,21 @@ impl RealForwardRunner {
                 )?;
             }
 
+            if capture_layer_boundaries {
+                qwen4
+                    .layer_boundary_capture
+                    .as_ref()
+                    .expect("capture was claimed above")
+                    .encode_stage(
+                        context,
+                        &pass,
+                        layer,
+                        LayerBoundaryStage::InputAfterPle,
+                        (&qwen4.wide_x, 0),
+                    )
+                    .map_err(gpu_err)?;
+            }
+
             // attn_hc: mixed, raw (= wide_x itself), inject_w
             encode_hyper_connection(
                 context,
@@ -161,6 +187,29 @@ impl RealForwardRunner {
                 true,
                 0,
             )?;
+            if capture_attention_intermediates {
+                let capture = qwen4
+                    .attention_intermediate_capture
+                    .as_ref()
+                    .expect("attention capture was claimed above");
+                for (stage, source) in [
+                    (AttentionIntermediateStage::HcNormed, &qwen4.hc_normed),
+                    (AttentionIntermediateStage::HcGate, &qwen4.hc_up),
+                ] {
+                    capture
+                        .encode_stage(context, &pass, layer, stage, (source, 0))
+                        .map_err(gpu_err)?;
+                }
+                capture
+                    .encode_stage(
+                        context,
+                        &pass,
+                        layer,
+                        AttentionIntermediateStage::HcMixed,
+                        (&scratch.normed, 0),
+                    )
+                    .map_err(gpu_err)?;
+            }
 
             if arch.layer_is_linear(layer) {
                 encode_linear_block(
@@ -173,6 +222,8 @@ impl RealForwardRunner {
                     (&scratch.normed, 0),
                     scratch,
                     layer,
+                    position,
+                    true,
                 )?;
             } else {
                 // `&mut pass`: above the QSA budget this commits and waits
@@ -193,6 +244,20 @@ impl RealForwardRunner {
                     position,
                 )?;
             }
+            if capture_attention_intermediates {
+                qwen4
+                    .attention_intermediate_capture
+                    .as_ref()
+                    .expect("attention capture was claimed above")
+                    .encode_stage(
+                        context,
+                        &pass,
+                        layer,
+                        AttentionIntermediateStage::BranchOutput,
+                        (&scratch.o, 0),
+                    )
+                    .map_err(gpu_err)?;
+            }
 
             gpu::encode_hc_inject_add(
                 context,
@@ -204,6 +269,44 @@ impl RealForwardRunner {
                 hidden as u32,
             )
             .map_err(gpu_err)?;
+            if capture_attention_intermediates {
+                let capture = qwen4
+                    .attention_intermediate_capture
+                    .as_ref()
+                    .expect("attention capture was claimed above");
+                capture
+                    .encode_stage(
+                        context,
+                        &pass,
+                        layer,
+                        AttentionIntermediateStage::InjectGate,
+                        (&qwen4.hc_inject, 0),
+                    )
+                    .map_err(gpu_err)?;
+                capture
+                    .encode_stage(
+                        context,
+                        &pass,
+                        layer,
+                        AttentionIntermediateStage::WideAfterJoin,
+                        (&qwen4.wide_x, 0),
+                    )
+                    .map_err(gpu_err)?;
+            }
+            if capture_layer_boundaries {
+                qwen4
+                    .layer_boundary_capture
+                    .as_ref()
+                    .expect("capture was claimed above")
+                    .encode_stage(
+                        context,
+                        &pass,
+                        layer,
+                        LayerBoundaryStage::AfterAttentionJoin,
+                        (&qwen4.wide_x, 0),
+                    )
+                    .map_err(gpu_err)?;
+            }
 
             // mlp_hc: mixed, raw (= updated wide_x), inject_w
             encode_hyper_connection(
@@ -275,6 +378,20 @@ impl RealForwardRunner {
                 hidden as u32,
             )
             .map_err(gpu_err)?;
+            if capture_layer_boundaries {
+                qwen4
+                    .layer_boundary_capture
+                    .as_ref()
+                    .expect("capture was claimed above")
+                    .encode_stage(
+                        context,
+                        &pass,
+                        layer,
+                        LayerBoundaryStage::AfterMoeJoin,
+                        (&qwen4.wide_x, 0),
+                    )
+                    .map_err(gpu_err)?;
+            }
 
             // The "routed cb" pass carries over as the NEXT layer's
             // "cb1" implicitly -- no commit and no new pass here. It is
@@ -324,6 +441,9 @@ impl RealForwardRunner {
         let t_wait = Instant::now();
         phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+        qwen4.flush_gdn_norm_capture();
+        qwen4.flush_layer_boundary_capture();
+        qwen4.flush_attention_intermediate_capture();
         self.kv.advance();
 
         if self.skip_head {
