@@ -125,7 +125,7 @@ fn a_planned_architecture_is_refused_with_what_it_would_need() {
         Verdict::Refused(why) => {
             assert!(why.contains("phi3"), "{why}");
             assert!(
-                why.contains("recognized but has no decode flow"),
+                why.contains("recognized but has no complete ingest-and-run path"),
                 "a PLANNED architecture must not read as an unknown one: {why}"
             );
             assert!(why.contains("docs/NEW_MODEL.md"), "{why}");

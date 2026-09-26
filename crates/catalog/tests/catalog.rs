@@ -7,6 +7,27 @@
 
 use turbospark_catalog::{Catalog, SourceKind, Status};
 
+struct TempDir(std::path::PathBuf);
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = std::path::Path;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
 #[test]
 fn the_embedded_catalog_parses_and_every_row_validates() {
     let catalog = Catalog::embedded().expect("the embedded models.json parses");
@@ -284,8 +305,9 @@ fn an_mtp_source_names_a_different_repository_from_the_trunk() {
 /// A user override merges by alias and is held to the same validation.
 #[test]
 fn a_user_override_replaces_a_row_and_is_validated() {
-    let dir = std::env::temp_dir().join(format!("turbospark-catalog-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir =
+        TempDir(std::env::temp_dir().join(format!("turbospark-catalog-{}", std::process::id())));
+    std::fs::create_dir_all(&*dir).unwrap();
 
     std::fs::write(
         dir.join("models.json"),
@@ -349,8 +371,10 @@ fn a_user_override_replaces_a_row_and_is_validated() {
 /// updated the fixture beside it.
 #[test]
 fn a_row_written_before_measured_existed_still_loads() {
-    let dir = std::env::temp_dir().join(format!("turbospark-catalog-old-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = TempDir(
+        std::env::temp_dir().join(format!("turbospark-catalog-old-{}", std::process::id())),
+    );
+    std::fs::create_dir_all(&*dir).unwrap();
     std::fs::write(
         dir.join("models.json"),
         r#"{"schema_version": 1, "models": [{

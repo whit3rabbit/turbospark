@@ -76,8 +76,8 @@ pub fn evaluate_gguf(
         return report;
     };
 
-    match repack::gguf_arch_support(&architecture) {
-        Some(ArchSupport::Supported(family)) => report.family = Some(family),
+    let family = match repack::gguf_arch_support(&architecture) {
+        Some(ArchSupport::Supported(family)) => family,
         _ => {
             // `describe_gguf_architecture` distinguishes recognized-but-
             // unported (with the clause naming what it needs) from unknown,
@@ -86,9 +86,10 @@ pub fn evaluate_gguf(
             report.refuse(repack::describe_gguf_architecture(&architecture));
             return report;
         }
-    }
+    };
+    report.family = Some(family);
 
-    report.types = type_shares(header);
+    report.types = type_shares(header, family);
     match repack::arch_from_gguf(header) {
         Ok(arch) => {
             report.expert_stride = gguf_expert_stride(header, &arch);
@@ -134,12 +135,20 @@ pub fn evaluate_gguf(
 
 /// Per-block-type tensor counts and byte shares, descending by bytes with
 /// unsized types last.
-fn type_shares(header: &repack::GgufHeader) -> Vec<TypeShare> {
-    let mut by_id: std::collections::BTreeMap<u32, (usize, Option<u64>)> =
+fn type_shares(header: &repack::GgufHeader, family: model_io::ModelFamily) -> Vec<TypeShare> {
+    let mut by_id: std::collections::BTreeMap<u32, (usize, Option<u64>, bool)> =
         std::collections::BTreeMap::new();
     for (name, info) in &header.tensors {
-        let slot = by_id.entry(info.ggml_type).or_insert((0, Some(0)));
+        let source_transcoded = TRANSCODED_GGML_TYPES.contains(&info.ggml_type)
+            || (family == model_io::ModelFamily::Qwen4Exp
+                && matches!(
+                    repack::map_gguf_name(name, family),
+                    Ok(repack::GgufMapping::Resident(ref canonical))
+                        if repack::qwen4exp_tensor_is_transcoded(canonical, info.ggml_type)
+                ));
+        let slot = by_id.entry(info.ggml_type).or_insert((0, Some(0), true));
         slot.0 += 1;
+        slot.2 &= source_transcoded;
         match (slot.1, info.byte_size(name)) {
             (Some(total), Ok(size)) => slot.1 = Some(total + size),
             _ => slot.1 = None,
@@ -147,11 +156,10 @@ fn type_shares(header: &repack::GgufHeader) -> Vec<TypeShare> {
     }
     let mut shares: Vec<TypeShare> = by_id
         .into_iter()
-        .map(|(id, (tensors, bytes))| {
+        .map(|(id, (tensors, bytes, transcoded))| {
             let name = repack::ggml_type_name(id)
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("type {id}"));
-            let transcoded = TRANSCODED_GGML_TYPES.contains(&id);
             let executable = transcoded
                 || model_io::EXECUTABLE_GGUF_TYPES.contains(&name.to_lowercase().as_str());
             TypeShare {
@@ -182,4 +190,102 @@ fn gguf_expert_stride(header: &repack::GgufHeader, arch: &ArchConfig) -> Option<
         }
     }
     (total > 0).then(|| total / arch.num_experts as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::type_shares;
+    use model_io::ModelFamily;
+    use repack::{GgufHeader, GgufTensorInfo};
+    use std::collections::BTreeMap;
+
+    fn header(entries: &[(&str, u32)]) -> GgufHeader {
+        let tensors = entries
+            .iter()
+            .enumerate()
+            .map(|(index, (name, ggml_type))| {
+                let elements = match ggml_type {
+                    2 | 6 => 32,
+                    42 => 64,
+                    _ => panic!("unexpected fixture type {ggml_type}"),
+                };
+                (
+                    (*name).to_string(),
+                    GgufTensorInfo {
+                        ggml_type: *ggml_type,
+                        dims: vec![elements],
+                        offset: (index * 32) as u64,
+                    },
+                )
+            })
+            .collect();
+        GgufHeader {
+            version: 3,
+            metadata: BTreeMap::new(),
+            tensors,
+            alignment: 32,
+            data_region_start: 0,
+        }
+    }
+
+    fn share<'a>(shares: &'a [super::TypeShare], name: &str) -> &'a super::TypeShare {
+        shares
+            .iter()
+            .find(|share| share.name == name)
+            .unwrap_or_else(|| panic!("missing {name} type share"))
+    }
+
+    #[test]
+    fn qwen4exp_resident_q4_and_q5_are_reported_as_transcoded() {
+        let header = header(&[
+            ("blk.0.ffn_down_shexp.weight", 2),
+            ("blk.1.ffn_down_shexp.weight", 6),
+        ]);
+        let shares = type_shares(&header, ModelFamily::Qwen4Exp);
+
+        for name in ["Q4_0", "Q5_0"] {
+            let share = share(&shares, name);
+            assert!(share.executable, "{name} is converted before runtime");
+            assert!(share.transcoded, "{name} has no runtime kernel");
+        }
+    }
+
+    #[test]
+    fn qwen4exp_q4_is_not_transcoded_when_it_occurs_in_routed_experts() {
+        let header = header(&[
+            ("blk.0.ffn_down_shexp.weight", 2),
+            ("blk.0.ffn_gate_exps.weight", 2),
+        ]);
+        let shares = type_shares(&header, ModelFamily::Qwen4Exp);
+        let share = share(&shares, "Q4_0");
+
+        assert!(!share.executable, "the routed Q4_0 source has no kernel");
+        assert!(
+            !share.transcoded,
+            "only resident tensors take the transcode path"
+        );
+    }
+
+    #[test]
+    fn qwen4exp_q2_keeps_its_kernel_classification_for_mixed_resident_and_routed_use() {
+        let header = header(&[
+            ("blk.0.attn_q.weight", 42),
+            ("blk.0.ffn_gate_exps.weight", 42),
+        ]);
+        let shares = type_shares(&header, ModelFamily::Qwen4Exp);
+        let share = share(&shares, "Q2_0");
+
+        assert!(share.executable, "Q2_0 routed experts have a kernel pair");
+        assert!(!share.transcoded, "the type share includes routed weights");
+    }
+
+    #[test]
+    fn q4_is_not_implicitly_transcoded_for_other_families() {
+        let header = header(&[("blk.0.attn_q.weight", 2)]);
+        let shares = type_shares(&header, ModelFamily::QwenGdnMoe);
+        let share = share(&shares, "Q4_0");
+
+        assert!(!share.executable);
+        assert!(!share.transcoded);
+    }
 }
