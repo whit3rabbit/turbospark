@@ -11,6 +11,98 @@ place costs seconds where a repack costs half an hour (`AGENTS.md` Gotcha 33).
 
 All commands run from the REPOSITORY ROOT, not from this directory.
 
+## Cross-engine mismatch: compare the first divergent boundary
+
+Use [SlotStream](https://github.com/carloslfu/slotstream) as a debugging
+reference when an independently run model disagrees with TurboSpark. Its
+[`current_backend_reference.py`](https://github.com/carloslfu/slotstream/blob/main/Tools/current_backend_reference.py)
+loads selected tensors and emits early Qwen4 layer outputs, while
+[`qwen4_exp.py`](https://github.com/carloslfu/slotstream/blob/main/Tools/reference/qwen4_exp.py#L2513-L2524)
+documents the GDN Q/K L2 normalization math. Follow the same sequence:
+
+1. Freeze the source artifact/revision, rendered prompt, token IDs, and dtype.
+2. Capture a narrow activation before and after the operation under suspicion.
+3. Recompute the expected output with a separate implementation and compare
+   at the same dtype boundary.
+4. Move to the next layer only after the current boundary agrees.
+
+Do not compare quantized GGUF activations directly to SlotStream's MLX
+safetensors outputs and call that parity. Use SlotStream to locate useful
+boundaries and verify equations. For the Qwen4 Q/K epsilon check, TurboSpark
+can emit a one-token capture and verify it with:
+
+```sh
+TURBOSPARK_QWEN4_GDN_NORM_CAPTURE=/tmp/qwen4-gdn.json \
+TURBOSPARK_QWEN4_GDN_NORM_CAPTURE_POSITION=61 \
+TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR=/tmp/turbospark-qwen4exp-swift-iq2-xs.gturbo \
+  cargo test -p turbospark-bench --test qwen4exp_swift_first_token_probe \
+  --release -- --ignored --nocapture
+python3 scripts/check_qwen4_gdn_norm_capture.py /tmp/qwen4-gdn.json
+```
+
+The capture is FP16 and covers the first GDN layer's `conv_out` immediately
+before and after Q/K normalization. It is an operator-level check, not a
+full-layer or model-quality comparison.
+
+Use the Qwen4 residual trace to compare layer entry after PLE, after the
+attention join, and after the MoE join. `after_moe_join` is the same boundary
+SlotStream writes as `layer_i.bin`. Set the requested layer count to 48 for a
+full Qwen4 trace. To compare a CLI chat run's rendered input with a direct
+probe, set `TURBOSPARK_DEBUG_PROMPT_IDS=1`; it prints the exact token IDs after
+chat-template rendering. This example also records TurboSpark's selected
+expert IDs:
+
+The public `turbospark run` command delegates generation to the sibling
+`turbospark-check` binary. When checking a release build after source edits,
+rebuild that peer (`cargo build -p turbospark-cli --release --bin
+turbospark-check`) or invoke it directly. Rebuilding only the wrapper can leave
+the generation path stale.
+
+```sh
+TURBOSPARK_QWEN4_LAYER_CAPTURE=/tmp/qwen4-layers.json \
+TURBOSPARK_QWEN4_LAYER_CAPTURE_LAYERS=48 \
+TURBOSPARK_QWEN4_LAYER_CAPTURE_POSITION=61 \
+TURBOSPARK_ROUTER_HIST=/tmp/qwen4-router.json \
+TURBOSPARK_ROUTER_TRACE=1 \
+TURBOSPARK_ROUTER_LOGITS_LAYER=23 \
+TURBOSPARK_ROUTER_LOGITS_PASS=61 \
+TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR=/tmp/turbospark-qwen4exp-swift-iq2-xs.gturbo \
+  cargo test -p turbospark-bench --test qwen4exp_swift_first_token_probe \
+  --release -- --ignored --nocapture
+```
+
+For an independent CPU trace of the same GGUF, build
+`scripts/capture_qwen4_llama_callback.cpp` against the llama.cpp revision used
+for the reference. It freezes the 62 prompt-token IDs from the Rust probe and
+captures the last prompt token's residual boundaries, router logits, routing
+weights, and selected experts. Use an empty output directory:
+
+```sh
+c++ -std=c++17 \
+  -I"$(brew --prefix llama.cpp)/include" \
+  -I"$(brew --prefix ggml)/include" \
+  scripts/capture_qwen4_llama_callback.cpp \
+  -L"$(brew --prefix llama.cpp)/lib" -L"$(brew --prefix ggml)/lib" \
+  -Wl,-rpath,"$(brew --prefix llama.cpp)/lib" \
+  -Wl,-rpath,"$(brew --prefix ggml)/lib" \
+  -lllama -lggml -lggml-base -o /tmp/qwen4-llama-capture
+/tmp/qwen4-llama-capture /path/to/model-00001-of-00002.gguf /tmp/qwen4-callback
+python3 scripts/check_qwen4_layer_boundary_capture.py /tmp/qwen4-layers.json \
+  --llama-callback-dir /tmp/qwen4-callback \
+  --router-trace-json /tmp/qwen4-router.json --router-trace-position 61
+```
+
+The TurboSpark trace is FP16 at one decode position. The llama.cpp callback
+files are float32 vectors for the final prompt token. The checker can also
+compare SlotStream outputs with `--reference-dir` and
+`--reference-position`. Compare as parity only when source weights and input
+token IDs match. Set `TURBOSPARK_ROUTER_LOGITS_LAYER` and
+`TURBOSPARK_ROUTER_LOGITS_PASS` together to save one raw f32 router row in the
+router JSON. Pass is the zero-based routed-forward count for that layer; it
+matches token position 61 for this one-token-at-a-time prompt. When present,
+the checker compares the row against llama.cpp's `ffn_moe_logits` callback
+tensor and prints both top-k orders. A matching layer boundary localizes a
+divergence; it does not establish model quality.
 ```sh
 # What is in a Hugging Face repo, before downloading any of it. Gotcha 47 says
 # to parse the config first and these are the mechanism: KB each, no clone and

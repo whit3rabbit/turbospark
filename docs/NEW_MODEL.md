@@ -417,6 +417,24 @@ opens through `RealForwardRunner::open` without touching decode.
       including the carried state and the `T < history` tail path). See
       `crates/gpu/tests/gdn_parity.rs`.
 
+### SlotStream as a cross-engine debugging reference
+
+When the first-token decision disagrees with an independent engine, use the
+[SlotStream Qwen4 reference](https://github.com/carloslfu/slotstream) as a
+debugging pattern: freeze the token IDs and source checkpoint, capture a small
+set of intermediate layer or operator outputs, and compare those against an
+independent implementation before changing later layers. Its
+[`current_backend_reference.py`](https://github.com/carloslfu/slotstream/blob/main/Tools/current_backend_reference.py)
+captures the first two Qwen4 layer outputs from selected checkpoint tensors;
+[`qwen4_exp.py`](https://github.com/carloslfu/slotstream/blob/main/Tools/reference/qwen4_exp.py#L2513-L2524)
+spells out the GDN Q/K L2 normalization equation.
+
+Treat that code as a reference method and formula source, not as evidence that
+TurboSpark matches it. SlotStream uses MLX and safetensors, while a TurboSpark
+GGUF install may carry quantized or transformed weights. Record the artifact,
+revision, token IDs, capture boundary, and dtype for each comparison. A layer
+match localizes a defect; it does not establish full-model quality or support.
+
 Gate: `cargo test -p turbospark-gpu` passes on the Metal device.
 
 ---

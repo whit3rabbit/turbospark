@@ -465,11 +465,11 @@ made on biased raw logits. Selection is unaffected (softmax is monotone), but
 the WEIGHTS are renormalized top-10 probabilities, and the renormalization is
 not optional. The router is a plain `[512, 2560]` matrix with no bias term.
 
-The shared expert is gated by a `[1, 2560]` linear through a sigmoid and
-ADDED to the routed sum. That is exactly the shape AGENTS.md Gotcha 8
-describes for `qwen3_5`: seed the batched phase-2 accumulator with the gated
-shared expert rather than adding it to a finished routed sum, because FP
-addition is not associative.
+The shared expert is gated by a [1, 2560] linear through a sigmoid and
+ADDED after the routed sum. SlotStream's Qwen4 reference casts the routed
+sum to the model dtype before adding the gated shared output; preserve that
+FP16 boundary in the runtime. This differs from Qwen3's shared-seeded
+phase-2 reduction, so do not reuse that family convention here.
 
 One expert at INT4 is ~2.5 MiB (`2 * 640 * 2560` gate_up plus
 `640 * 2560` down, at 4 bits plus scales), so the slot cache at 16 slots over
@@ -557,61 +557,42 @@ scalars.
 half**, which is the same question Gotcha 29 had to settle by correlation for
 Gemma's fused GGUF tensor, answered here by reading a converter instead.
 
-## 9. Norm inventory and conventions
+## 9. Norm inventory and checkpoint conventions
 
-**Every `Qwen4ExpTextRMSNorm` in the model is CENTERED**, `x * (1 + w)`, with
-the weight initialized to zeros:
+The Hugging Face model stores most `Qwen4ExpTextRMSNorm` parameters as offsets
+from unity, so its source equation is `x * (1 + w) / sqrt(mean(x^2) + eps)`.
+That is not the representation consumed by this runtime. The llama.cpp GGUF
+converter folds `1 + w` into each published GGUF scale; `GGUF -> GTurbo`
+repacking preserves those scale values. Applying a centered kernel after
+repacking adds unity a second time. Use direct-scale kernels for the GGUF
+weights in TurboSpark.
+
+SlotStream's `qwen4_exp.py` confirms the source-level conversion by listing
+these tensors in `CENTERED_NORMS` and shifting them during sanitization. The
+matching llama.cpp graph comments that the converter folded each scale to
+`(1 + w)` and multiplies the GGUF `hc_norm` values directly. The real IQ2_XS
+comparison below caught the double shift in TurboSpark's prior implementation.
+
+`linear_attn.norm.weight` is the separate GDN gated norm. It is a direct scale
+and applies its gate activation after normalization:
 
 ```
-output = x * rsqrt(mean(x^2) + eps)          # in FP32
-output = output * (1.0 + weight)
+h = h * rsqrt(mean(h^2) + eps); h = weight * h; h = h * sigmoid(gate)
 ```
 
-That covers `hc_norm` (x2 per layer, plus the final mixer), `q_norm`,
-`k_norm`, the indexer's `q_layernorm` and `k_layernorm`, and PLE's
-`norm_key` / `norm_query` / `norm_conv`.
-
-**The one exception is the GDN gated norm** (`Qwen4ExpTextRMSNormGated`,
-`linear_attn.norm.weight`), which is PLAIN `w`, weight initialized to ones,
-and applies its gate activation after the weight:
-
-```
-h = h * rsqrt(mean(h^2) + eps); h = weight * h; h = h * act(gate)
-```
-
-This is Gotcha 50 on a third family, with the assignment INVERTED relative to
-`muse_glimmer` (there the per-layer norms are centered and the final one is
-plain; here everything is centered except one).
-
-**mlx-vlm agrees, which is the part that makes this safe to build on.** Its
-`Qwen4ExpRMSNorm` computes `y * (1.0 + weight)` with the weight initialized
-to zeros, and its docstring reads "Qwen4 RMSNorm, whose checkpoint weights
-are centered at zero". So unlike `qwen3_5` -- where mlx-vlm's converter BAKES
-the `+1` into the published weights, which is exactly why the port's existing
-`qwen3_5` flow reads plain norms and is right to -- nothing bakes it here.
-Both references apply it at runtime. Reusing that flow's norm dispatch
-verbatim is therefore wrong for every norm in this model, and it would be
-wrong against an MLX conversion too, not only against raw safetensors.
-
-`rms_norm_eps` is 1e-06 throughout. There is only one epsilon.
-
-**Four norm shapes, and the port has clean analogues for two.**
+`rms_norm_eps` is 1e-06 throughout. The runtime norm inventory is:
 
 | shape | width / grouping | where |
 |---|---|---|
-| grouped centered | weight 10240, stat over each 2560 | `hc_norm` x2 per layer, the final mixer, PLE's `norm_key` / `norm_query` / `norm_conv` |
-| per-head centered | weight = head_dim, stat per head | `q_norm`, `k_norm` (256), indexer `q_layernorm` / `k_layernorm` (128) |
-| plain centered | weight = full width, one stat | MTP `pre_fc_norm_embedding` (2560), `pre_fc_norm_hidden` (10240) |
-| plain gated | weight = head_v_dim, one stat, no `+1` | GDN `linear_attn.norm`, times `sigmoid(z)` |
+| grouped direct scale | weight 10240, stat over each 2560 | `hc_norm` x2 per layer, final mixer, PLE `norm_key` / `norm_query` / `norm_conv` |
+| per-head direct scale | weight = head_dim, stat per head | `q_norm`, `k_norm` (256), indexer `q_layernorm` / `k_layernorm` (128) |
+| full-width direct scale | weight = full width, one stat | MTP `pre_fc_norm_embedding` (2560), `pre_fc_norm_hidden` (10240), if that path is added |
+| direct gated scale | weight = head_v_dim, one stat | GDN `linear_attn.norm`, times `sigmoid(z)` |
 
-Rows 2 and 4 map onto `rmsnorm_bf16w_perhead_centered` and the GDN gated norm
-the port already has (the latter needing only the sigmoid variant of
-decision 4). Row 3 is `rmsnorm_bf16w_centered`. **Row 1 is the new one**: it
-resembles `rmsnorm_bf16w_perhead_centered` but is not it, because there the
-weight is head-width and shared across heads while here it is a single
-10240-long vector applied element-wise across four 2560-wide statistics.
-Phase 2 owes a discrimination test proving a fixture can tell those two
-apart, per Gotcha 50's own closing rule.
+The grouped direct-scale kernel uses one statistic per hidden-width residual
+stream and a full-width scale vector. It must remain distinct from both the
+grouped centered kernel and the full-width direct-scale kernel: the reduction
+scope and scale convention are separate choices.
 
 ## 10. RoPE
 

@@ -198,18 +198,569 @@ land the remaining work (the shared-expert-gate generalization) as a new,
 forward-only commit (`27b666f`) with a message that names the split
 honestly, rather than attempt to un-mix a public commit.
 
-## GGUF ingestion: still explicitly out of scope
+## GGUF intake: Swift GSQ-RCO Q2_0-path artifacts, quality gate did not pass
 
-Unchanged from the handoff's own conclusion, re-confirmed rather than
-re-derived this session: `crates/repack/src/gguf_config/mod.rs` and
-`gguf_checkpoint/transcode.rs` both refuse `Qwen4Exp` by name, on purpose.
-GGUFs of this model exist (unsloth's and bartowski's), but nothing in this
-port has mapped its n-gram shards, hyper-connection tensors, or QSA indexer
-out of a GGUF file yet, so a mask derived today would be the one part of an
-install that looked right while the rest went missing. This is a real,
-separate multi-session bring-up, not a shortcut around anything in this
-page, and should not be started opportunistically while extending the
-decode flow.
+The original Qwen4Exp bring-up left GGUF intake out of scope. The request for
+`ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF` scopes that source path.
+This is the existing `Qwen4Exp` family, not a new decoder: the baseline and
+decode flow are wired through the safetensors intake above. The GGUF registry
+now admits `qwen4exp`; that means the generic decode path and type mapping are
+present, not that this exact artifact has passed generation or resource gates.
+
+The source revision is
+`b22d729eae29b5796f76fb70f91aef549b9fc52c`. Its IQ2_XS recovery capsule is
+14.9 MB and includes the original GGUF header, all tensor descriptors and
+shard offsets, without duplicating model weights. The published tiers are two
+shards each, 66.55 GB (Q2_0), 68.15 GB (IQ2_XS), and 75.97 GB (IQ3_XXS). The
+Q2_0 tier was the first full-artifact target. The network install streamed the
+complete payload and passed install validation. After the PLE index and Q5_K
+resident-type fixes below, the task-local install was repaired to match the
+corrected metadata and type tags, and all 50 manifest-listed files passed
+SHA-256 verification. The full writer was not rerun after those final fixes.
+The routed-header comparison below now finds that both Q2_0-path directories
+have IQ2_S at layer 0 gate where the pinned Q2_0 header says Q2_0. The earlier
+install and generation checks therefore do not prove a complete Q2_0 install.
+
+The first shard header declares `general.architecture=qwen4exp` and 75 metadata
+keys. The continuation shard carries split metadata and the remaining tensor
+descriptors; together the headers describe 1,224 tensors. Their inspected
+structural fields match the existing baseline: 48 layers, hidden width 2,560,
+512 experts with top-10 routing, 24 query heads, 2 KV heads, and a
+full-attention layer every four layers. The PLE table is one `IQ4_NL` tensor
+shaped `[160, 320001536]`; this differs from the 128 shard layout handled by
+the existing safetensors writer.
+
+The pinned Q2_0 headers expose additional source-layout gates. All 144 routed
+gate, up, and down tensors use Q2_0. Metal parity covers Q2_0 in both routed
+phases and all ten selected experts. A targeted mutation changed its signed
+level mapping from `(q - 1) * d` to `(q - 2) * d`; the all-Q2_0 ten-slot case
+failed with a 1.019 output difference at row 0. After restoring the shader,
+the all-Q2_0 case and three mixed IQ2*/Q2_0 ten-slot cases passed. Among
+1,079 resident tensors, 58 Q2_0,
+16 Q4_0, seven Q5_0, and one F16 tensor are converted to BF16 during repack;
+the Q2_0 resident tag remains refused by the runtime. The 36 `ssm_out` tensors
+have dimensions `[6144, 2560]` and use five formats: 17 IQ4_XS, three Q3_K,
+11 Q4_K, three Q5_K, and two Q6_K. Their 48 value heads are 128 columns wide,
+while each source block spans 256 elements. The repacker dequantizes these
+projections, permutes their columns, and writes BF16. Focused tests cover the
+Q2_0, Q3_K, Q4_K, Q5_K, Q6_K, IQ3_S, and IQ4_XS paths. Ordinary resident
+Q5_K tensors retain their packed type; only Q5_K `ssm_out` tensors are
+dequantized and permuted. IQ3_XXS, IQ4_NL, and IQ4_XS now reach their resident
+Metal GEMV kernels. The PLE tensor uses IQ4_NL blocks directly. Its writer
+streams whole rows in bounded 65,536-row ranges into an IQ4_NL row store, and
+the Qwen4Exp PLE reader validates and dequantizes that representation. GGUF
+`ple.layers` values are zero-based, so intake converts them to the internal
+one-based PLE layer IDs before runtime mapping.
+
+GGUF metadata derivation and explicit name mapping cover all 1,224 tensor
+descriptors in the pinned two-shard header. The network header check confirms
+their mappings, architecture fields, routed Q2_0 inventory, resident
+conversion counts, and `ssm_out` type distribution. Config and transcode
+behavior have focused synthetic tests. The full install gate streams the
+source shards, downloads the pinned tokenizer sidecars, validates the
+manifest, and checks installed-file SHA-256 values.
+
+The install directory then treated as the corrected Q2_0 install opened on
+Metal and generated tokens without runtime errors at a 2,048-token context
+with 16 expert-cache slots. The required 400-token greedy prose run, using
+the chat template with `--reasoning off`,
+temperature zero, and top-k one, stopped on EOS after 79 tokens and was
+incoherent. Repeating greedily with `--reasoning xhigh` stopped on EOS after
+one token. A sampled arithmetic prompt at the CLI defaults (temperature 0.2,
+top-k 64, top-p 0.95, seed 20260924) stopped on EOS after 33 tokens and was
+also incoherent. The earlier short greeting and arithmetic greedy probes had
+the same quality failure. These samples describe the install directory. The
+later routed-header comparison shows it does not match the pinned Q2_0 gate
+tensor type, so they are not quality results for either published tier.
+
+The [pinned source model card](https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF/blob/b22d729eae29b5796f76fb70f91aef549b9fc52c/README.md)
+labels Q2_0 experimental and recommends IQ2_XS for a similar size. Its
+reported KLD values are vendor measurements, not results from this port.
+The current [upstream model card](https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF)
+also lists IQ3_XXS. This bring-up records IQ2_XS and Q2_0 only; it has no
+IQ3_XXS install, source-fidelity, runtime, or resource result.
+This intake is text-only. The model card lists a separate 0.91 GB BF16 vision
+projector, which the install and runtime gates here do not include.
+The exact IQ2_XS shards now have a separate full-install gate in
+`qwen4exp_gguf_install_network.rs`; the pinned manifest loaded and all
+installed-file SHA-256 checks passed. Its first runtime open exposed an
+unimplemented IQ4_XS token-embedding lookup. A Metal selected-row kernel now
+decodes the existing 136-byte blocks, with parity against the CPU decoder and
+runtime row-size/bounds tests passing. The real IQ2_XS model then opened and
+ran on the Apple M4 Max at 2,048 context and 16 expert-cache slots.
+
+That run did not pass the generation gate. The greedy prose prompt at
+temperature zero and top-k one stopped at end-of-turn after 55 tokens and
+was incoherent. The sampled CLI-default run (temperature 0.2, top-k 64,
+top-p 0.95, seed 20260924) stopped after 25 tokens and was incoherent. The
+model-card sampling settings (temperature 1, top-k 20, top-p 0.95) with
+`--reasoning xhigh` stopped on EOS after 56 tokens and was incoherent. A
+short deterministic arithmetic prompt also returned incoherent text after 9
+tokens. No run reached the required 400-token coherent response. Existing
+Qwen4Exp baselines belong to REAP-288 and must not be applied to either Swift
+tier.
+
+The early-stop IQ2_XS results in this paragraph predate the SlotStream-guided
+GDN normalization and PLE activation fixes below. They are historical failure
+captures, not the current IQ2_XS CLI behavior. The current single-prompt
+generation result is recorded in the 48-layer follow-up; it does not replace
+the family quality gate or establish factual accuracy across the corpus.
+
+Static sizing for the IQ2_XS candidate at 2,048 context and 16 expert slots
+puts the routed slot capacity at 1,170,210,816 bytes (1,116 MiB): 16 slots x
+48 layers x the 1,523,712-byte expert stride. The 12 full-attention layers
+need 48 MiB of FP16 KV at that window. The 36 GDN layers need 110.1 MiB of
+FP32 delta state and FP16 conv tails. The QSA indexer needs 7.5 MiB for raw
+keys and pooled blocks, and PLE's conv tail needs 0.18 MiB. Those terms total
+about 1,282 MiB before the resident weight mapping, process baseline, and
+activation scratch. The 28,800,138,240-byte PLE row table is demand-paged;
+its mapped file size is not the resident-memory estimate. These are shape
+calculations, not a measured fit result.
+
+One `/usr/bin/time -l` smoke at the same context and slot settings reported a
+1,553.6 MiB peak physical footprint for 12 generated tokens, with no swap.
+This was a single pre-fix diagnostic run, not a memory oracle or throughput
+baseline. The 2026-09-26 follow-up below records a 462-token natural stop on
+the chat prompt and an exploratory two-case resource reading. This supports
+manual IQ2_XS use on those samples, but it does not establish factual quality
+across the corpus, a frozen Swift-specific resource row, or catalog eligibility.
+The header gate, install validation, and synthetic parity alone do not
+establish output quality or resource fit.
+
+On 2026-09-25, the release `real-generation-v1` benchmark was run on the
+directory at the Q2_0 path on an Apple M4 Max at 2,048 context, 1,024
+max-new, and 16 expert-cache slots. It used one fresh process per case,
+protocol sampling, and the dirty working tree at HEAD
+`ee600a8614b04c518dbcc9e3f0ff91c73cf39b3a`.
+AC power was checked before and after the pair; the pre-run host reported
+90.76% idle. The commands were:
+
+```sh
+cargo run --release -p turbospark-bench --bin turbospark-bench -- --model /tmp/turbospark-qwen4exp-swift-q2-0.gturbo --case short-explanation
+cargo run --release -p turbospark-bench --bin turbospark-bench -- --model /tmp/turbospark-qwen4exp-swift-q2-0.gturbo --case medium-review
+```
+
+The `short-explanation` interval was 00:06:25-00:06:41 CDT: 62 prompt
+tokens, 6.73 s prefill, 97 generated tokens, 9.41 s decode, 10.314 tok/s,
+and 1,467.3 MiB peak footprint; it stopped at `endOfTurn`. The
+`medium-review` interval was 00:07:36-00:08:22 CDT: 426 prompt tokens,
+43.93 s prefill, 26 generated tokens, 2.74 s decode, 9.501 tok/s, and
+1,631.7 MiB peak footprint; it stopped at `eos`. The short case is one
+reading and the medium case is one reading, so these are diagnostic samples,
+not a frozen row. The medium case also misses the memory oracle's required
+`endOfTurn` validity condition. This protocol run is not a memory oracle or
+quality gate, and the later routed-header check means these measurements
+cannot be attributed to a complete pinned Q2_0 install.
+
+Follow-up checks ruled out two vocabulary-path explanations for the bad text.
+A header-only check against the pinned HF sidecars found that both GGUF tiers
+embed the same 248,077 token strings by ID and the same chat template as the
+base tokenizer revision `0bd4fe22431372cdad1979267d3ab45aa7e6150a`. It read
+the pinned shard headers and tokenizer sidecars without downloading another
+weight payload. The opt-in
+`pinned_swift_ggufs_match_hf_tokenizer_sidecars` network test passed on
+2026-09-25 and reported all 248,077 HF token IDs and the chat template match
+for both Q2_0 and IQ2_XS. An ignored real-install probe of the sampled
+`medium-review` case decoded 26 tokens before EOS; every generated ID resolved
+in that tokenizer. Its test module example originally pointed the IQ2_XS
+environment variable at the Q2_0 install path, so the run's tier is not
+established from that command. The text was still incoherent. These checks
+rule out a mismatched token-to-string sidecar and emitted IDs outside the
+tokenizer, but do not establish full runtime parity with the upstream model.
+
+### V-head ordering correction, quality still fails (2026-09-25)
+
+The pinned [llama.cpp Qwen converter](https://github.com/ggml-org/llama.cpp/blob/035e22731a7fd70b9854b3a2d64ec68e9b1a45d3/conversion/qwen.py#L2489-L2751)
+reorders V heads by reshaping `[key_head, value_within_key, width]` and
+swapping the first two axes. Qwen3.8 has 16 key heads and 48 value heads, so
+the ratio is 3:1. The existing two-half interleave only matches that
+conversion when the ratio is 2:1. The GGUF walk now restores grouped runtime
+order using the architecture's actual K/V ratio, for both row and column
+axes and both raw and packed tensors. Focused tests cover the 2:1 and 3:1
+layouts. The formatter check and full release repack suite passed.
+
+The available Q2_0 install was not rewritten in place. An APFS clone at
+`/tmp/turbospark-qwen4exp-swift-q2-0-vheadfix.gturbo` was changed across its
+288 affected tensors (36 linear-attention layers x eight tensors), and its
+`model_weights.bin` checksum was updated. The original install remains
+unchanged. The clone opened on Metal, but the sampled `medium-review` probe
+stopped after three tokens at `endOfTurn` with `1 `. A greedy
+`short-explanation` run stopped after 11 tokens with incoherent text
+(`O`, followed by `An coastal writers Wetland,,`). A sampled
+`short-explanation` run at temperature 1, top-k 20, top-p 0.95, and xhigh
+reasoning stopped after six tokens; its output began with U+6B65 U+9AA4
+followed by `fair,/write,`. These runs used a 2,048-token context and 16
+expert-cache slots on an Apple M4 Max. This targeted clone only isolates the
+V-head layout change; it is not a fresh install from GGUF. The correction
+fixes a concrete conversion defect but does not pass the quality gate. The
+remaining generation failure is open, and neither Swift tier qualifies for
+catalog inclusion or a runnable-support claim.
+
+The clone path is the Q2_0 install path. The source header for its Q2_0-named
+first shard reports `general.file_type=41`; the IQ2_XS-named source shard
+reports `general.file_type=20`. Both tiers use the same routed-expert
+`ggmlTypes` list (`IQ2_S`, `Q2_0`, `IQ2_XXS`, `IQ1_M`), so the installed
+manifest's type inventory alone cannot distinguish these tiers. The
+llama.cpp runs below read the separate IQ2_XS source shards, so they were not
+using the same quantized weights as this TurboSpark clone.
+
+The actual `turbospark-check` path was also sampled on this corrected clone
+with the frozen `short-explanation` prompt, 2,048 context, 16 expert-cache
+slots, temperature 0.2, top-k 64, top-p 0.95, and seed 20260721. With
+`--reasoning low`, it stopped at `endOfTurn` after eight tokens and emitted
+incoherent text (`P APLACEable. HTML`). With the CLI's default
+`--reasoning off`, it stopped at `endOfTurn` after one token without readable
+text. Both used the CLI's default 128-token prefill chunks. These are
+diagnostic samples, not a quality gate, and changing reasoning effort did
+not recover usable generation.
+
+### Upstream llama.cpp diagnostic (2026-09-25)
+
+The two pinned IQ2_XS GGUF shards were assembled at
+`/tmp/turbospark-qwen4exp-swift-iq2-xs-upstream` from the complete local
+range cache. Every cached range passed its stored SHA-256 check, overlaps
+matched, and coverage reached both declared shard lengths. The range files
+were removed only after their bytes had been durably written to the assembled
+shards. This preserves the downloaded model bytes in the two GGUF files; the
+IQ2_XS range cache itself is no longer available for a later install walk.
+
+Homebrew `llama-cli` build `b11146-7fe450e19` loaded the source IQ2_XS
+shards with `--jinja`, `--cpu-moe`, `--lazy-mode on`, and no GPU layers. The
+diagnostic used the frozen `medium-review` prompt, the template's default
+xhigh reasoning, 2,048 context, temperature 0.2, top-k 64, top-p 0.95, seed
+20260722, and a 1,024-token output cap. It reached that cap without producing
+a final answer. The `short-explanation` prompt at the same settings and seed
+20260721 also reached the cap without a final answer. These source-level
+runs show that this xhigh / 1,024-token protocol is insufficient for these
+two prompts in llama.cpp; they do not explain TurboSpark's much earlier EOS
+or establish how a larger budget would behave. The source GGUF did complete
+a structured response to `short-explanation` under `--reasoning-effort low`
+with a 1,024-token cap, and under `--reasoning off` with a 512-token cap.
+Those CPU-only output samples do not pass a factual quality gate. Together
+with the TurboSpark low/off results above, they show that xhigh truncation
+alone does not explain TurboSpark's early EOS. The TurboSpark and llama.cpp
+samplers and compute backends differ. The TurboSpark install path also fails
+the pinned Q2_0 routed-type check, so these samples are not a controlled
+Q2_0-versus-IQ2_XS comparison or logit-parity evidence.
+The medium run used about 20 GiB RSS in sampled macOS `ps` output on a 36 GiB
+host; RSS is not comparable to the TurboSpark physical-footprint oracle.
+Neither engine's samples establish resource fit or throughput.
+
+The exact frozen `short-explanation` message used for TurboSpark's bad
+`--reasoning off` sample was rendered by both engines. TurboSpark's
+`apply_chat_template_with_reasoning(Off)` output and llama.cpp's
+`/apply-template` output were byte-identical. Tokenizing both rendered
+strings produced the same 62 token IDs, matching the actual runs' 62-token
+prefill. This uses llama.cpp's documented
+[`/apply-template` and `/tokenize` endpoints](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+with build `b11146-7fe450e19`. Prompt rendering and tokenization therefore do
+not explain the off-mode failure for this message. This does not compare
+logits, and it does not separate the differing quantizations, repack
+conversion, or runtime math.
+
+The cross-engine dump harness now accepts
+`TURBOSPARK_QWEN4EXP_INSTALL_DIR`, opens this family at its 2,048-token
+window, and records that window in `meta.json`. A real run against the
+corrected clone of the Q2_0-path artifact completed with 62 prompt tokens and
+512 answer tokens:
+574 IDs produced 573 rows x 248,320 logits in float16 (271.4 MiB). It used
+16 expert-cache slots and one warmup walk, and finished in 104.02 seconds.
+The output hash is
+`2f69b9b8e0e9a07fbc31ec873d428dbfecdf094125010c05fc10adfc797350fa`.
+This verifies the TurboSpark dump path only; it does not compare against
+llama.cpp.
+
+```sh
+TURBOSPARK_QWEN4EXP_INSTALL_DIR=/tmp/turbospark-qwen4exp-swift-q2-0-vheadfix.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/qwen4exp-q2-vheadfix \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+```
+
+An earlier IQ2_XS install attempt from the assembled local shards ran out of
+disk space while writing layer 28, with 46 GiB available before the attempt.
+The partial install was removed, so the same-tier replay remained unrun at
+that point. A later local-shard install and first-token comparison are
+recorded below.
+
+A full-matrix, cross-tier check now isolates the V-head conversion error in
+`blk.0.ssm_out.weight`. The pinned IQ2_XS source stores this as IQ4_XS, shape
+`[6144, 2560]`; all 15,728,640 values were dequantized and compared with the
+layer-0 BF16 `linear_attn.out_proj.weight` in both the original artifact at
+the Q2_0 path and its corrected clone. The old two-half mapping correlates at
+0.99999862 with the original install, while the architecture-derived
+16-key / 48-value grouped mapping correlates at 0.99999862 with the
+corrected clone. The
+cross-mapping correlations are 0.03637 and 0.03637, respectively; leaving
+the source tiled gives 0.03610 against the original and 0.03678 against the
+clone. This confirms that the old install used the wrong 2:1 mapping for the
+3:1 head ratio, and that the corrected mapping matches the source matrix.
+This is one resident tensor comparison across two quantization tiers, not
+same-tier IQ2_XS installation, logit parity, or a generation-quality pass;
+the corrected clone still fails coherence and length.
+
+Before the fresh Q2_0 install, its source-range cache was revalidated
+read-only: all 8,170 ranges matched their stored SHA-256 values, together
+covered both pinned shards (39,799,117,984 and 26,750,834,816 bytes) without
+gaps, and all 12 overlap comparisons were byte-identical. At that point the
+cache could support an upstream Q2_0 reference without another download, but
+assembling the two GGUF shards while retaining the cache required about
+66.55 GB of additional logical storage, above the then-available 34 GiB.
+The cache and install were later removed after the fresh fidelity gate below.
+
+The release model probe initially refused the pinned Q2_0 file because it
+treated Q4_0 and Q5_0 as runtime kernel requirements. All 16 Q4_0 and seven
+Q5_0 tensors in these shards are shared-expert down-projections: the GGUF
+name map places them in the resident index, and the Qwen4Exp repacker
+dequantizes them to BF16. The probe now reads that per-family, per-tensor
+conversion policy from repack and continues to refuse these types in routed
+experts, where they would reach unsupported dispatches. The live pinned
+release probe now reports `RUNNABLE` and labels both types `transcoded at
+repack`. This clears the header-level install eligibility check only; it
+does not establish generation quality, resource fit, a fresh install from
+the corrected writer, or catalog admission.
+
+An earlier PLE-only revision of the ignored
+`qwen4exp_gguf_ple_fidelity_network` test revalidated the existing Q2_0
+install's manifest against the pinned architecture, verified all 50
+manifest-listed files by SHA-256, and compared the installed PLE row store
+with the complete local source range cache. It read all 320,001,536 IQ4_NL
+rows (28,800,138,240 bytes) in 65,536-row chunks and matched every byte
+against `ngram_table/rows.bin`. That check completed in 122.29 seconds on
+2026-09-25 without assembling another shard or table. This is evidence for
+the PLE store only.
+
+The expanded gate now checks routed tensor types and sizes against the pinned
+GGUF header before reading payloads. It fails immediately at layer 0, expert
+0, gate for both the original Q2_0-path directory and its `vheadfix` clone:
+the source tensor is Q2_0 while both installed layouts record IQ2_S. Both
+manifests identify the model but have no `sourceSnapshotHash`, so the routed
+data cannot be tied to this pinned revision. The gate
+does not compare routed payloads or rerun the PLE check after this mismatch.
+Neither directory establishes source-to-install routed fidelity, real-model
+quality for a published tier, or catalog eligibility. A fresh pinned install
+was still needed for those results at that point.
+
+```sh
+TURBOSPARK_QWEN4EXP_GGUF_INSTALL_DIR=/tmp/turbospark-qwen4exp-swift-q2-0.gturbo \
+TURBOSPARK_QWEN4EXP_SOURCE_CACHE_DIR=/tmp/turbospark-qwen4exp-swift-q2-0.source-cache \
+  cargo test -p turbospark-repack --test qwen4exp_gguf_ple_fidelity_network \
+  --release -- --ignored --nocapture
+```
+
+### Fresh pinned Q2_0 install and fidelity (2026-09-25)
+
+The Q2_0 install was streamed again from pinned revision
+`b22d729eae29b5796f76fb70f91aef549b9fc52c` after the final intake fixes. The
+release `installs_the_real_swift_qwen38_q2_0_gguf` gate passed and reported
+`verified install`. The expanded fidelity gate then passed against the pinned
+source range cache: routed tensor types and sizes matched, all routed expert
+payload bytes matched (31 GiB checked), and all 320,001,536 PLE rows matched
+(28,800,138,240 bytes). This closes the prior source-to-install fidelity gap
+for Q2_0. The install and its range cache were removed after verification to
+make room for the recommended IQ2_XS tier; these checks can be repeated by
+streaming the pinned Q2_0 revision again.
+
+The exact Q2_0 install still failed real generation. On an Apple M4 Max at
+2,048 context, 16 expert-cache slots, and the frozen `short-explanation`
+message rendered through the chat template, greedy generation
+(`--max-new 400 --reasoning off --temperature 0.0001 --top-k 1 --seed 1`)
+stopped at `EndOfTurn` after one token with no readable answer. CLI-default
+sampling (`temperature 0.2`, `top-k 64`, `top-p 0.95`, seed `20260721`)
+stopped after three tokens and emitted `The answer`. Neither run approaches
+the required 400-token coherent response. Because this install now passes
+source fidelity, the quality failure cannot be attributed to the earlier
+IQ2_S-versus-Q2_0 artifact mismatch. Whether the cause is Q2_0 quality or a
+remaining GGUF/runtime defect is unresolved.
+
+The existing `qwen4exp_memory_oracle` was also run against this install as a
+resource diagnostic. It passed its REAP-288-calibrated 3,000 MiB ceiling and
+5 tok/s floor, with a 1,583 MiB session peak, 1,578.2/1,583.7 MiB case peaks,
+and no replay growth. Its cases generated only 3 and 15 tokens before
+`EndOfTurn`. These readings do not establish a Swift-specific frozen resource
+row, and the early stops do not clear the quality gate.
+
+### Fresh pinned IQ2_XS install and initial mismatch (2026-09-25)
+
+The IQ2_XS source shards assembled from the pinned revision were installed
+through a test-only local-shard source. The release install gate passed all
+installed-file SHA-256 checks. The expanded fidelity gate matched 35,454,976,000
+routed-expert bytes and all 320,001,536 PLE rows (28,800,138,240 bytes) to the
+source shards. This establishes routed and PLE source fidelity for IQ2_XS; it
+does not yet compare every resident tensor after repacking.
+
+At this initial checkpoint, before the fixes below, the exact 62-token
+`short-explanation` prompt was rendered and tokenized the same way in both
+engines. A direct TurboSpark logit probe ranked `O` (token 46, logit 11.671875)
+first. The CPU-only llama.cpp server, reading the same IQ2_XS source shards,
+ranked `Co` first with log-probability -0.0022366; its next candidate, `The`,
+had log-probability -8.0657. The logit magnitudes are from different engines
+and are not compared, but their top-token decisions diverged before sampling.
+TurboSpark's greedy generation then stopped after 11 tokens with incoherent
+text (`O`, followed by `An coastal writers Wetland,,`). This ruled out a
+sampler-only explanation but did not identify which tensor or operation was
+responsible.
+
+At this initial checkpoint, the IQ2_XS install and first-token probe established
+installability and a reproducible divergence, not coherent generation,
+resource fit, or catalog eligibility. The follow-up below fixes that first
+token mismatch and records a coherent stop. Catalog eligibility and a
+Swift-specific resource row remain open. The local-shard install and first-token
+probes are recorded in `crates/repack/tests/qwen4exp_gguf_install_network.rs`
+and `crates/bench/tests/qwen4exp_swift_first_token_probe.rs`.
+
+### SlotStream-guided GDN Q/K normalization check (2026-09-25)
+
+[SlotStream](https://github.com/carloslfu/slotstream) is the debugging guide
+for this mismatch. Its
+[`current_backend_reference.py`](https://github.com/carloslfu/slotstream/blob/main/Tools/current_backend_reference.py)
+captures early Qwen4 layer outputs, and its
+[`qwen4_exp.py`](https://github.com/carloslfu/slotstream/blob/main/Tools/reference/qwen4_exp.py#L2513-L2524)
+defines GDN normalization as `x / sqrt(sum(x*x) + 1e-6)`, followed by the
+query scale `1 / sqrt(Dk)`. In TurboSpark's RMS-mean kernel, the equivalent
+epsilon is `1e-6 / Dk`. The Qwen4 path now uses that value; the shared default
+still serves the older Qwen GDN families.
+
+The GPU parity test uses low-magnitude Q/K inputs so it distinguishes the two
+epsilon conventions, checks the direct L2 equation independently, and asserts
+that V is unchanged. To compare the actual IQ2_XS activation at the first GDN
+layer, set `TURBOSPARK_QWEN4_GDN_NORM_CAPTURE` while running
+`qwen4exp_swift_first_token_probe`. Set
+`TURBOSPARK_QWEN4_GDN_NORM_CAPTURE_POSITION=61` for the final token of its
+frozen 62-token prompt. Then run
+`scripts/check_qwen4_gdn_norm_capture.py` on the emitted JSON. The capture is
+one FP16 `conv_out` before/after pair; it validates this operation only.
+SlotStream's MLX/safetensors layer captures cannot serve as direct parity
+evidence for this quantized GGUF install.
+
+### SlotStream-guided layer-boundary capture (2026-09-25)
+
+The runtime now has an opt-in trace for the first two layers, matching
+SlotStream's early-layer debugging boundary. It captures the wide residual
+after any PLE update at layer entry, after the attention join, and after the
+MoE join. The last stage is the same output boundary that
+current_backend_reference.py writes to layer_0.bin and layer_1.bin.
+
+    TURBOSPARK_QWEN4_LAYER_CAPTURE=/tmp/qwen4-layers.json \
+    TURBOSPARK_QWEN4_LAYER_CAPTURE_LAYERS=2 \
+    TURBOSPARK_QWEN4_LAYER_CAPTURE_POSITION=61 \
+    TURBOSPARK_QWEN4EXP_IQ2_XS_INSTALL_DIR=/tmp/turbospark-qwen4exp-swift-iq2-xs.gturbo \
+      cargo test -p turbospark-bench --test qwen4exp_swift_first_token_probe \
+      --release -- --ignored --nocapture
+    python3 scripts/check_qwen4_layer_boundary_capture.py /tmp/qwen4-layers.json
+
+The capture is FP16 and writes a compact binary sidecar. The checker can
+compare after_moe_join vectors with SlotStream layer outputs through
+--reference-dir and --reference-position. Such a comparison is parity evidence
+only when the checkpoint weights and input token IDs match. In particular,
+SlotStream's default MLX model and this Swift IQ2_XS GGUF are different
+artifacts; their activation deltas cannot identify a TurboSpark defect by
+themselves.
+
+The focused Metal GDN suite passed 8/8 tests. The release-profile IQ2_XS probe
+captured layer 0 at position 61; the checker reported zero max error against
+the SlotStream equation and zero changed V elements out of 6,144. On the
+same frozen prompt, the first TurboSpark logit moved from token `O` (ID 46,
+11.671875) before the epsilon fix to `In` (ID 623, 12.25) after it. CPU
+llama.cpp still ranked `Co` first at this checkpoint. This confirmed that the
+epsilon defect affected the output but was not the only source of the
+cross-engine mismatch. The follow-up below traces all 48 layers and removes a
+PLE activation defect.
+
+### SlotStream-guided 48-layer follow-up and PLE fix (2026-09-25)
+
+The SlotStream boundary-by-boundary method exposed a second concrete runtime
+bug. `gpu::encode_gdn_conv_decode` already returns the SiLU-activated causal
+convolution output. Qwen4 PLE applied another SiLU in
+`crates/runtime/src/families/qwen4/ple.rs`; removing that duplicate activation
+makes the PLE branch match the CPU callback equation. This fix is covered by
+the release-profile real-model probe below, not by a full quality gate.
+
+On the frozen 62-token IQ2_XS prompt, TurboSpark selects `Co` first at logit
+24.09375, matching llama.cpp's top-1 token (`Co`, logit about 24.0274). Its
+12-token diagnostic continuation begins `Coastal wetlands ...`. At this
+checkpoint no longer post-fix response had been evaluated.
+
+The opt-in layer trace covers all 48 layers at prompt position 61. Against
+callback tensors from the same IQ2_XS GGUF, layer 1's post-PLE entry has RMSE
+3.51e-5. Error grows through layer 22 (after-MoE RMSE 2.33e-4), then jumps at
+layer 23's MoE join (1.22e-3). It reaches 3.68e-3 after layer 36's attention
+join and 1.87e-2 after layer 46's attention join. Cosine similarity at layer
+46 remains 0.99934, while the final layer 47 callback outputs were not
+captured. This is a cross-engine diagnostic trace, not full-forward parity.
+
+Across the 48 layers, 38 route lists match in order, 9 have the same set in a
+different order, and layer 28 differs by one expert at the top-k boundary.
+Raw router-logit captures localize both differences to near ties: layer 23
+logit RMSE is 0.00617 with cosine 0.9999995 and a CPU cutoff gap of 0.00144;
+layer 28 RMSE is 0.01125 with cosine 0.9999993 and a CPU cutoff gap of
+0.00572. These are cross-engine numeric differences around top-k cutoffs, not
+evidence of a faulty expert sorter. They can change expert order and reduction
+order, but the capture has not isolated another runtime defect. The repeatable
+capture and comparison commands are in
+`.claude/docs/diagnostics.md`, with the callback collector in
+`scripts/capture_qwen4_llama_callback.cpp` and the checker in
+`scripts/check_qwen4_layer_boundary_capture.py`.
+
+The Q2_0 artifact is a separate tier. The trace used IQ2_XS and did not reopen
+or pass the Q2_0 quality gate. At this checkpoint, IQ2_XS still needed a
+longer post-fix generation and resource check.
+
+### IQ2_XS CLI and resource follow-up (2026-09-26)
+
+The release `turbospark-check` peer and public `turbospark run` wrapper were
+rebuilt against the current source. Both rendered the frozen chat prompt to
+the same 62 token IDs as the direct probe and selected `Co` first. A 400-token
+cap cut the answer off mid-sentence. With the same greedy shaping and a
+650-token cap, the CLI reached `EndOfTurn` after 462 generated tokens at
+13.274 tok/s. The readable answer addresses vegetation drag, elevation and
+infiltration, two storm-related limits, and risk reduction versus complete
+protection. This is a real IQ2_XS integration smoke on an M4 Max, not a
+machine-scored factual-quality gate.
+
+The repeatable CLI command was:
+
+```sh
+TURBOSPARK_DEBUG_PROMPT_IDS=1 target/release/turbospark run \
+  /tmp/turbospark-qwen4exp-swift-iq2-xs.gturbo \
+  --messages-file /tmp/turbospark-qwen4-swift-short-messages.json \
+  --max-new 650 --max-context 2048 --temperature 0 --top-k 1 --top-p 0.95 \
+  --repetition-penalty 1 --expert-cache-slots 16 --prefill-chunk 128
+```
+
+The two-case `qwen4exp_memory_oracle` also passed on IQ2_XS with its existing
+REAP-288 bounds: 3,000 MiB and 5 tok/s. On M4 Max at 2,048 context and 16
+slots, `short-explanation` generated 484 tokens at 13.157 tok/s with a
+1,467.6 MiB case peak; `medium-review` generated 601 at 12.883 tok/s with a
+1,467.7 MiB case peak. Reported session peak was 1,467 MiB and the
+short-case replay changed peak by +0.00 MiB. This is one exploratory reading,
+not a frozen Swift-specific resource row.
+
+### Swift FFI integration on IQ2_XS (2026-09-26)
+
+From `swift/TurboSpark`,
+`TURBOSPARK_TEST_MODEL=/tmp/turbospark-qwen4exp-swift-iq2-xs.gturbo swift test
+--filter RealModel` passed on M4 Max: 9 passed, 6 skipped, in 58.7 seconds.
+The passing cases opened the install, streamed a coherent answer, reused KV
+across turns, cancelled an active decode, and served generated text through
+the in-process HTTP server. The coherence case stopped at its 120-token test
+cap. This is Swift-to-FFI-to-Metal integration evidence, not a full-answer,
+determinism, or release-quality result. The skipped cases require a separate
+drafter install or a vision-capable install and image.
+
+The follow-up `RealModelTests/testFixedSeedSamplingIsRepeatable` also passed:
+two same-session, non-greedy 48-token turns with seed `20260721` produced
+identical content, token counts, and stop reasons. A negative control with a
+different seed on the second turn produced different text and failed the
+content equality assertion as expected. This checks same-process seeded
+repeatability; it is not a frozen cross-session or cross-process baseline.
+
+IQ2_XS now runs through the public CLI and completes these prompts. Remaining
+gates are broader Swift-specific quality coverage, a cross-session or
+cross-process determinism baseline, repeated resource measurements before
+freezing a row, a post-fix Q2_0 generation check, and any IQ3_XXS integration.
+The router near-tie drift in layers 23 and 28 remains a cross-engine numerical
+difference; the direct logits do not point to a faulty sort. No Swift catalog
+entry is added by this smoke evidence.
 
 ## The memory oracle: this family's first frozen row (2026-09-04)
 
