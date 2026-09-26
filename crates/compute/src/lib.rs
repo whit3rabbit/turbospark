@@ -112,12 +112,14 @@ pub use quant_2bit::{
     INT2_ELEMENTS_PER_BYTE, TERNARY_GROUP_SIZE,
 };
 pub use quant_gguf::{
-    dequant_q2_k_gemv, dequant_q3_k_gemv, dequant_q4_k_gemv, dequant_q5_k_gemv, dequant_q6_k_gemv,
-    dequant_q8_0_gemv, dequantize_q2_k, dequantize_q3_k, dequantize_q4_k, dequantize_q5_k,
-    dequantize_q6_k, dequantize_q8_0, pearson, q3_k_decode_scales, quantize_q2_k, quantize_q3_k,
-    quantize_q4_k, quantize_q6_k, quantize_q8_0, Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
-    Q2_K_SUB_ELEMS, Q3_K_BLOCK_BYTES, Q3_K_BLOCK_ELEMS, Q3_K_SUB_ELEMS, Q4_K_BLOCK_BYTES,
-    Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS, Q5_K_SUB_ELEMS,
+    dequant_q2_0_gemv, dequant_q2_k_gemv, dequant_q3_k_gemv, dequant_q4_k_gemv, dequant_q5_k_gemv,
+    dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q2_0, dequantize_q2_k, dequantize_q3_k,
+    dequantize_q4_0, dequantize_q4_k, dequantize_q5_0, dequantize_q5_k, dequantize_q6_k,
+    dequantize_q8_0, pearson, q3_k_decode_scales, quantize_q2_k, quantize_q3_k, quantize_q4_k,
+    quantize_q6_k, quantize_q8_0, Q2_0_BLOCK_BYTES, Q2_0_BLOCK_ELEMS, Q2_K_BLOCK_BYTES,
+    Q2_K_BLOCK_ELEMS, Q2_K_SUB_ELEMS, Q3_K_BLOCK_BYTES, Q3_K_BLOCK_ELEMS, Q3_K_SUB_ELEMS,
+    Q4_0_BLOCK_BYTES, Q4_0_BLOCK_ELEMS, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS,
+    Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS, Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS, Q5_K_SUB_ELEMS,
     Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS, Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
 };
 pub use quant_gguf_iq::{
@@ -136,7 +138,7 @@ pub use quant_gguf_mxfp4::{
     dequant_mxfp4_gemv, dequantize_mxfp4, mxfp4_scale, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS,
     MXFP4_VALUES,
 };
-pub use rms_norm::{rms_norm, rms_norm_centered, rms_norm_grouped_centered};
+pub use rms_norm::{rms_norm, rms_norm_centered, rms_norm_grouped, rms_norm_grouped_centered};
 pub use rope::{
     mrope_component_selector, rope_mrope_interleaved, rope_neox, rope_neox_subdim, rope_paired,
     yarn_frequencies, YarnSpec,

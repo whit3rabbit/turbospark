@@ -42,13 +42,19 @@
 
 /// Pearson correlation helper for validating dequantized weight similarities.
 pub mod pearson;
+/// Q2_0 block quantization (64-element blocks with signed 2-bit levels).
+pub mod q2_0;
 /// Q2_K block quantization (256-element superblocks, 16 sub-blocks, asymmetric 2-bit weights).
 pub mod q2_k;
 /// Q3_K block quantization (256-element superblocks, 16 groups of 16, signed
 /// 2-bit levels through a high-bit run, packed 6-bit scales, super-scale last).
 pub mod q3_k;
+/// Q4_0 block quantization (32-element blocks with signed 4-bit levels).
+pub mod q4_0;
 /// Q4_K block quantization (256-element superblocks, 8 sub-blocks, asymmetric 4-bit weights).
 pub mod q4_k;
+/// Q5_0 block quantization (32-element blocks with signed 5-bit levels).
+pub mod q5_0;
 /// Q5_K block quantization (256-element superblocks, 8 sub-blocks, 5-bit weights with min scale).
 pub mod q5_k;
 /// Q6_K block quantization (256-element superblocks, 16 sub-blocks, 6-bit weights split into low/high nibbles).
@@ -57,6 +63,7 @@ pub mod q6_k;
 pub mod q8_0;
 
 pub use pearson::pearson;
+pub use q2_0::{dequant_q2_0_gemv, dequantize_q2_0, Q2_0_BLOCK_BYTES, Q2_0_BLOCK_ELEMS};
 pub use q2_k::{
     dequant_q2_k_gemv, dequantize_q2_k, quantize_q2_k, Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
     Q2_K_SUB_ELEMS,
@@ -65,10 +72,12 @@ pub use q3_k::{
     dequant_q3_k_gemv, dequantize_q3_k, q3_k_decode_scales, quantize_q3_k, Q3_K_BLOCK_BYTES,
     Q3_K_BLOCK_ELEMS, Q3_K_SUB_ELEMS,
 };
+pub use q4_0::{dequantize_q4_0, Q4_0_BLOCK_BYTES, Q4_0_BLOCK_ELEMS};
 pub use q4_k::{
     dequant_q4_k_gemv, dequantize_q4_k, quantize_q4_k, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS,
     Q4_K_SUB_ELEMS,
 };
+pub use q5_0::{dequantize_q5_0, Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS};
 pub use q5_k::{
     dequant_q5_k_gemv, dequantize_q5_k, Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS, Q5_K_SUB_ELEMS,
 };

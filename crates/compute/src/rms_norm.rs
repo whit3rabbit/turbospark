@@ -87,3 +87,28 @@ pub fn rms_norm_grouped_centered(x: &[f32], weight: &[f32], groups: usize, eps: 
     }
     out
 }
+
+/// `y[g*H+i] = x[g*H+i] * weight[g*H+i] / sqrt(mean(x[g*H..(g+1)*H]^2) + eps)`.
+/// Each group has an independent statistic; the scale vector spans the whole
+/// input and is applied at each element's global index.
+pub fn rms_norm_grouped(x: &[f32], weight: &[f32], groups: usize, eps: f32) -> Vec<f32> {
+    assert_eq!(x.len(), weight.len(), "x and weight must match length");
+    assert!(groups > 0, "groups must be nonzero");
+    assert_eq!(
+        x.len() % groups,
+        0,
+        "x.len() must be a whole number of groups"
+    );
+    let group_dim = x.len() / groups;
+    let mut out = Vec::with_capacity(x.len());
+    for group in 0..groups {
+        let lo = group * group_dim;
+        let hi = lo + group_dim;
+        let sum_sq: f32 = x[lo..hi].iter().map(|value| value * value).sum();
+        let inv_rms = 1.0 / (sum_sq / group_dim as f32 + eps).sqrt();
+        for index in lo..hi {
+            out.push(x[index] * weight[index] * inv_rms);
+        }
+    }
+    out
+}
