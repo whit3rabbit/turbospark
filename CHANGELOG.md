@@ -34,12 +34,18 @@ when this file gets updated relative to the version bump and the tag.
 - `swift/TurboSparkApp`: `ZImageMLXBenchmark` executable target under
   `Benchmarks/ZImageMLXBenchmark` for headless timing, model loading, and
   pipeline throughput evaluation.
+- `docs/ZIMAGE_TURBO_MLX_SPEED.md`: exploratory speed and schedule investigation
+  for 8-bit Z-Image-Turbo MLX generation on Apple M4 Max.
 - `docs/DESKTOP_FEATURE_PARITY.md`: comprehensive 530+ feature comparison
   matrix and architecture review evaluating `swift/TurboSparkApp` against
   ZCode v3.14.3 and Unsloth Desktop/Studio, documenting parity, implementation
   routes, and pinned hardware evidence.
 
 ### Changed
+- `swift/TurboSparkApp`: added `--prompt` and `--seed` options to `ZImageMLXBenchmark`
+  for custom prompt and repeatable seed evaluations.
+- `.gitignore`: ignored `docs/experiments` and `docs/verification` experiment
+  output directories.
 - `crates/runtime`: integrated QSA GPU block selection into Qwen4-Exp
   attention, prefill, and sequential decode paths with per-layer buffers,
   buffer barriers, sticky NaN detection, and count-from-buffer dispatches in

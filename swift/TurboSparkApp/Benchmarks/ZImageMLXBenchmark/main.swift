@@ -62,6 +62,8 @@ struct ZImageMLXBenchmark {
         var positional: [String] = []
         var steps = 9
         var guidance: Float = 0
+        var prompt = "A tiny red cabin beside a frozen lake at blue hour, pine forest, stars, cinematic lighting, wide composition, no text."
+        var seed: UInt64 = 42
 
         var iterator = CommandLine.arguments.makeIterator()
         _ = iterator.next()
@@ -77,6 +79,16 @@ struct ZImageMLXBenchmark {
                     fatalError("--guidance requires a non-negative number")
                 }
                 guidance = parsed
+            case "--prompt":
+                guard let value = iterator.next(), !value.isEmpty else {
+                    fatalError("--prompt requires non-empty text")
+                }
+                prompt = value
+            case "--seed":
+                guard let value = iterator.next(), let parsed = UInt64(value) else {
+                    fatalError("--seed requires an unsigned integer")
+                }
+                seed = parsed
             default:
                 positional.append(argument)
             }
@@ -84,7 +96,7 @@ struct ZImageMLXBenchmark {
 
         guard positional.count == 1 || positional.count == 2 else {
             fatalError(
-                "usage: ZImageMLXBenchmark <mlx-model-directory> [output.png] [--steps N] [--guidance F]")
+                "usage: ZImageMLXBenchmark <mlx-model-directory> [output.png] [--steps N] [--guidance F] [--prompt TEXT] [--seed N]")
         }
 
         let model = positional[0]
@@ -96,12 +108,12 @@ struct ZImageMLXBenchmark {
         var breakdown = StageBreakdown()
         var peakMemoryBytes: UInt64 = 0
         let request = ZImageGenerationRequest(
-            prompt: "A tiny red cabin beside a frozen lake at blue hour, pine forest, stars, cinematic lighting, wide composition, no text.",
+            prompt: prompt,
             width: 1024,
             height: 1024,
             steps: steps,
             guidanceScale: guidance,
-            seed: 42,
+            seed: seed,
             outputPath: outputURL,
             model: model,
             runtimeOptions: ZImageRuntimeOptions(residencyPolicy: .warm)

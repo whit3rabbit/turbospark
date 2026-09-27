@@ -61,3 +61,5 @@ ig2-work/
 *.log
 .zcodeignore
 .kiro/
+docs/experiments
+docs/verification

@@ -231,6 +231,12 @@ The stage split rules out text prefill as the hour-long cause. A GPU profiler
 trace was not captured, so this timing does not identify an individual MLX
 kernel as the remaining bottleneck.
 
+The subsequent 8-bit Swift MLX speed probes, including shorter schedules,
+residual caching, per-block timing, and the M4 Max check of the external
+`zimgturbo` kernels, are recorded in
+[the MLX speed investigation](ZIMAGE_TURBO_MLX_SPEED.md). They are exploratory
+and do not replace the nine-forward benchmark or quality gate.
+
 The SIMD-linear experiment replaced the tiled linear kernel's serial inner
 product and repeated threadgroup barriers with contiguous-K SIMD lanes and a
 single reduction. Its one native-run latency is 26.5% below the historical

@@ -47,11 +47,22 @@ swift run -c release --package-path swift/TurboSparkApp ZImageMLXBenchmark \
   "$TMPDIR/zimage-mlx.png"
 ```
 
-Pass `--steps N` and `--guidance F` to run a checkpoint outside the nine-step
-zero-guidance envelope, for example the base Z-Image rows, whose published
-regime is 50 steps with guidance 4. Comparisons must keep steps and guidance
-fixed; the base-model CFG workload runs two transformer forwards per step and
-is not comparable to any Turbo row.
+Pass `--steps N`, `--guidance F`, `--prompt TEXT`, and `--seed N` to run other
+cases. The fixed prompt and seed 42 remain the defaults. For an exploratory
+eight-forward image from the pinned 8-bit Turbo checkpoint:
+
+```sh
+swift run -c release --package-path swift/TurboSparkApp ZImageMLXBenchmark \
+  "$HOME/Library/Caches/TurboSpark/ImageMLX/andrevp-Z-Image-Turbo-MLX-8bit-c9f70995562299b1eda9b9145a94dd7a5a1ae0d6" \
+  "$TMPDIR/zimage-mlx-fast.png" \
+  --steps 8 --prompt "A tiny red cabin beside a frozen lake at blue hour" --seed 42
+```
+
+This command generates a PNG, but the eight-step schedule changes its pixels
+and is not the app's nine-forward default. Keep prompt, seed, steps, and
+guidance fixed for timing comparisons. The base Z-Image published regime is
+50 steps with guidance 4; its CFG workload runs two transformer forwards per
+step and is not comparable to a Turbo row.
 
 The executable prints elapsed time for each progress stage, a final
 `RESULT elapsed_s=... steps=... guidance=...` line, and a `BREAKDOWN` line
@@ -78,6 +89,9 @@ back-to-back on a quiet machine. This is a standalone pipeline timing, not a
 packaged app, quality, or memory gate.
 The current measurements and their comparison limits are recorded in
 [`ZIMAGE_TURBO.md`](ZIMAGE_TURBO.md#recommended-model-and-benchmark-record).
+The later 8-bit MLX denoise probes are in
+[`ZIMAGE_TURBO_MLX_SPEED.md`](ZIMAGE_TURBO_MLX_SPEED.md); they are single-run
+experiments, not frozen benchmark rows.
 
 ### Scripted
 
