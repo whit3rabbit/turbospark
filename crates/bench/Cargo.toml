@@ -13,19 +13,19 @@ name = "turbospark-bench"
 path = "src/main.rs"
 
 [dependencies]
-foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
-runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.1.0" }
-selection = { package = "turbospark-selection", path = "../selection", version = "0.1.0" }
-tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.2.0" }
+runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.2.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.2.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.2.0" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-repack = { package = "turbospark-repack", path = "../repack", version = "0.1.0" }
+repack = { package = "turbospark-repack", path = "../repack", version = "0.2.0" }
 # `ModelFamily`, for `real_model::protocol_parameters`'s exhaustive match
 # (the protocol's context window and generation budget are per-family), and
 # `hash_data` for tests/quality_common's golden output digests. Was a
 # dev-dependency until the resolver needed it in `src/`; a regular
 # dependency is visible to the tests too, so nothing moved out of reach.
-model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.2.0" }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # phys_footprint sampling for tests/memory_oracle.rs (proc_pid_rusage).
@@ -35,12 +35,12 @@ libc = "0.2"
 # `models.json` that it was calibrated from. Offline, no install, and NOT
 # `#[ignore]`d -- the whole point is that it reddens on the edit rather than
 # the next time somebody has a 13 GB install on disk.
-turbospark-catalog = { path = "../catalog", version = "0.1.0" }
+turbospark-catalog = { path = "../catalog", version = "0.2.0" }
 # `tests/vision_logit_dump.rs`: the mRoPE walk and the preprocessed-image type
 # it replays the reference's patch rows through. UNALIASED, unlike this
 # crate's `[dependencies]` block -- AGENTS.md Gotcha 1's exception, and it
 # matches `crates/runtime`'s own dev-dependency spelling for the same crate.
-turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
+turbospark-vision-io = { path = "../vision-io", version = "0.2.0" }
 # The same test's sidecar reader and writer. Already in the workspace tree
 # (`runtime`, `repack`, `catalog` and `server` all take it); nothing new
 # enters here.
@@ -52,4 +52,4 @@ serde_json = "1"
 # `src/memory.rs`'s sampler is the instrument every other memory number
 # in this repo comes from; duplicating that mach FFI to keep the test
 # next to the kernel is the drift this crate's oracle rows exist to avoid.
-gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.1.0" }
+gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.2.0" }

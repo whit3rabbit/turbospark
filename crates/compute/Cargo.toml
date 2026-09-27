@@ -14,4 +14,4 @@ path = "src/lib.rs"
 
 [dependencies]
 # Aliased so references are not confused with the standard library `core`.
-foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.2.0" }

@@ -14,7 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Shared primitives (TokenId). MIT, in-workspace.
-foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.2.0" }
 # Image decode. MIT OR Apache-2.0. `default-features = false` plus an explicit
 # codec list keeps this to the PURE-RUST decoders, which is what lets this
 # crate stay checkable for a non-macOS target (AGENTS.md Gotcha 8): the

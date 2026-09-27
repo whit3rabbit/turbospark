@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-26
+
 ### Added
 - `crates/gpu`: added GPU top-k block selection kernel (`qsa_topk.metal`,
   `qsa_topk.rs`) and state management (`qsa_indexer_state.rs`) for Qwen4-Exp

@@ -13,24 +13,24 @@ name = "turbospark_runtime"
 path = "src/lib.rs"
 
 [dependencies]
-foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
-selection = { package = "turbospark-selection", path = "../selection", version = "0.1.0" }
-tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.1.0" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.2.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.2.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.2.0" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.1.0" }
-model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
-compute = { package = "turbospark-compute", path = "../compute", version = "0.1.0" }
-streaming = { package = "turbospark-streaming", path = "../streaming", version = "0.1.0" }
+gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.2.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.2.0" }
+compute = { package = "turbospark-compute", path = "../compute", version = "0.2.0" }
+streaming = { package = "turbospark-streaming", path = "../streaming", version = "0.2.0" }
 # The vision tower's preprocessing and position tables (ROADMAP M-V4).
 # PORTABLE, and still declared here rather than as an unconditional
 # dependency: `src/vision/` is macOS-gated like every other consumer of
 # `gpu`, so a non-macOS build of this crate has nothing to call it from.
-turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
+turbospark-vision-io = { path = "../vision-io", version = "0.2.0" }
 half = "2"
 
 [dev-dependencies]
-turbospark-repack = { path = "../repack", version = "0.1.0" }
+turbospark-repack = { path = "../repack", version = "0.2.0" }
 # Test-only: `gguf_install_refused.rs` forges a manifest to reach the
 # resident-index dtype backstop behind it. Already a dependency of
 # model-io/repack/server, so this adds nothing to the dependency graph.

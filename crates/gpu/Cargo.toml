@@ -13,7 +13,7 @@ name = "turbospark_gpu"
 path = "src/lib.rs"
 
 [dependencies]
-foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.2.0" }
 # Real (non-dev) dependency since the TurboQuant KV-cache feature: the
 # Lloyd-Max codebook, sign vectors and midpoints this crate's
 # `kv_quant_tables.rs` builds at open are host-side computation with no
@@ -22,12 +22,12 @@ foundation = { package = "turbospark-core", path = "../core", version = "0.1.0" 
 # `turbospark-compute` in this crate remains test-only (CPU reference
 # kernels validating a Metal dispatch); this one builds real runtime state.
 
-turbospark-compute = { path = "../compute", version = "0.1.0" }
+turbospark-compute = { path = "../compute", version = "0.2.0" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33"
 half = "2"
-model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.1.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.2.0" }
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
@@ -35,4 +35,4 @@ half = "2"
 # Already a dependency above; repeated here so tests that build their own
 # FunctionConstantValues (the split-KV chunk bench) can name the types.
 metal = "0.33"
-turbospark-repack = { path = "../repack", version = "0.1.0" }
+turbospark-repack = { path = "../repack", version = "0.2.0" }
