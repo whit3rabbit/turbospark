@@ -9,6 +9,7 @@ struct ImageGenerationSettings: View {
         VStack(alignment: .leading, spacing: 18) {
             ImageModelControls(model: model, importing: $importing)
             Divider()
+            style
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 28) {
                     count
@@ -24,6 +25,13 @@ struct ImageGenerationSettings: View {
             .disabled(model.imageGenerationTask != nil)
         }
         .themedFont(.small)
+    }
+
+    private var style: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Style", bundle: .module).themedFont(.tiny, weight: .medium)
+            ImageStyleMenu(model: model)
+        }
     }
 
     private var count: some View {

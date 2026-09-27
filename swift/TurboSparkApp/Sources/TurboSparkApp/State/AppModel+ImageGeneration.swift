@@ -103,7 +103,57 @@ extension AppModel {
             chats[index].updatedAt = Date()
             persistChats()
         }
+        // The draft no longer carries the style text, so a later menu action
+        // must not try to strip it. `imageStyleID` stays: re-selecting the
+        // same style re-inserts its text into the empty draft.
+        appliedImageStyleID = nil
         startImageGeneration(options, chatID: chatID, count: imageCount)
+    }
+
+    /// Applies (or with nil clears) the image style and populates the prompt
+    /// field with its text.
+    ///
+    /// The style text is APPENDED after anything the user already wrote,
+    /// separated by a comma, so picking a style never discards a subject
+    /// description. Switching styles swaps the injected text rather than
+    /// stacking copies: the previously applied style's text is stripped first.
+    /// The write goes through `writePromptTextDirectly` because style text is
+    /// a programmatic insertion of hundreds of characters, which the
+    /// large-paste policy would otherwise treat as a pasted attachment.
+    public func setImageStyle(id: String?) {
+        let current = promptText
+        let base: String
+        if let appliedID = appliedImageStyleID,
+            let applied = AppImageStyleCatalog.style(id: appliedID) {
+            base = Self.removingAppliedStyleText(applied.prompt, from: current)
+        } else {
+            base = current
+        }
+        let trimmedBase = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id, let style = AppImageStyleCatalog.style(id: id) {
+            writePromptTextDirectly(
+                trimmedBase.isEmpty ? style.prompt : trimmedBase + ", " + style.prompt)
+            imageStyleID = id
+            appliedImageStyleID = id
+        } else {
+            if current != base {
+                writePromptTextDirectly(trimmedBase)
+            }
+            imageStyleID = nil
+            appliedImageStyleID = nil
+        }
+    }
+
+    /// Removes a previously injected style text from the draft, returning the
+    /// user's own text. Composition always appends the style last, so the
+    /// two removable shapes are the exact match and the ", " suffix. Anything
+    /// else means the user rewrote the draft: the whole text is theirs.
+    static func removingAppliedStyleText(_ styleText: String, from prompt: String) -> String {
+        if prompt == styleText { return "" }
+        if prompt.hasSuffix(", " + styleText) {
+            return String(prompt.dropLast(styleText.count + 2))
+        }
+        return prompt
     }
 
     public func regenerateImage() {

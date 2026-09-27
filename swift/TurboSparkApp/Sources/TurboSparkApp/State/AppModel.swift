@@ -99,6 +99,12 @@ public final class AppModel: ObservableObject {
     @Published public var imageSeedText: String = ""
     /// Multiple outputs run serially under one admission, keeping batch-one memory use.
     @Published public var imageCount: Int = 1
+    /// Image style chosen in the composer pickers; nil means "None".
+    @Published public var imageStyleID: String?
+    /// The style whose text is currently inserted in the draft. Diverges from
+    /// `imageStyleID` once a generation consumes the draft: the menu keeps the
+    /// last choice while the composer no longer carries its text.
+    @Published public var appliedImageStyleID: String?
     @Published public var imageBatchIndex: Int = 0
     @Published public var imageBatchCount: Int = 0
     /// The current image job is intentionally transient. A relaunch never

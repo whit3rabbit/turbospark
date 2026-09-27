@@ -48,6 +48,8 @@ struct ImageComposerView: View {
                     .help(Text("Image settings", bundle: .module))
                     .accessibilityLabel(Text("Image settings", bundle: .module))
 
+                    ImageStyleMenu(model: model)
+
                     Text(summary)
                         .foregroundStyle(.appSecondary)
                         .lineLimit(1)
