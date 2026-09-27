@@ -657,10 +657,6 @@ pub(crate) struct RealQwen4State {
     pub(crate) idx_qk: gpu::MetalBuffer,
     /// One FP32 score per complete block, `[max_context / idx_compress]`.
     pub(crate) qsa_scores: gpu::MetalBuffer,
-    /// The selected positions, `[idx_block_topk * idx_compress + idx_compress]`
-    /// `u32`s: the most block selection ever keeps (every chosen block plus
-    /// the ragged tail).
-    pub(crate) qsa_positions: gpu::MetalBuffer,
     /// DIAGNOSTIC: attend densely above budget as if the indexer selected
     /// everything. `TURBOSPARK_QSA_FORCE_DENSE=1` at open, or
     /// `RealForwardRunner::set_qsa_force_dense`. The only quantitative
@@ -879,15 +875,10 @@ impl RealQwen4State {
             .checked_mul(idx_head_dim as usize)
             .and_then(|len| len.checked_mul(2));
         let qsa_scores_bytes = (max_context / idx_compress as usize).max(1).checked_mul(4);
-        let qsa_positions_bytes = idx_block_topk
-            .checked_add(1)
-            .and_then(|len| len.checked_mul(idx_compress as usize))
-            .and_then(|len| len.checked_mul(4));
         if idx_projection_len.is_none()
             || qsa_raw_bytes.is_none()
             || qsa_pooled_bytes.is_none()
             || qsa_scores_bytes.is_none()
-            || qsa_positions_bytes.is_none()
         {
             return unsupported(
                 "qwen4_exp QSA indexer dimensions overflow host buffer arithmetic".to_string(),
@@ -1172,8 +1163,6 @@ impl RealQwen4State {
         let qsa = gpu::QsaIndexerCacheManager::new(context.device(), arch, max_context);
         let qsa_scores =
             context.new_output_buffer(qsa_scores_bytes.expect("QSA score length checked") as u64);
-        let qsa_positions = context
-            .new_output_buffer(qsa_positions_bytes.expect("QSA positions length checked") as u64);
         let qsa_force_dense = std::env::var("TURBOSPARK_QSA_FORCE_DENSE").as_deref() == Ok("1");
         let ple_conv_tail = halfs(PLE_CONV_HISTORY * wide_dim);
         let gdn_norm_capture = GdnNormCapture::from_env(context, arch, shape);
@@ -1209,7 +1198,6 @@ impl RealQwen4State {
             idx_block_topk,
             idx_qk: halfs(idx_projection_len),
             qsa_scores,
-            qsa_positions,
             qsa_force_dense,
             gdn_qkv_raw: halfs(qkv_dim),
             gdn_conv_out: halfs(qkv_dim),

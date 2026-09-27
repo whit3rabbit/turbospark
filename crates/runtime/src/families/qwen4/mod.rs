@@ -125,10 +125,10 @@
 //! kernel runs unchanged, so this flow's below-budget output is
 //! byte-identical to what it was before the indexer was wired. Above it the
 //! query is normed and roped, `qsa_score_blocks_fp16` scores every block,
-//! the pass is committed and waited on for the score readback,
-//! `compute::select_blocks` keeps the top `index_top_k` blocks plus the
-//! ragged tail, and `attention_decode_indexed_partial` attends over that
-//! position list. `TURBOSPARK_QSA_FORCE_DENSE=1` keeps the dense kernel
+//! `qsa_topk.metal` writes selected positions and a count, and
+//! `attention_decode_indexed_partial` reads both in the same command buffer.
+//! `compute::select_blocks` remains the CPU oracle.
+//! `TURBOSPARK_QSA_FORCE_DENSE=1` keeps the dense kernel
 //! above budget, as a diagnostic arm.
 //!
 //! ## MoE (`moe.rs`, every layer)
@@ -154,10 +154,8 @@
 //! `prefill_chunk_real_qwen4` loops the same per-token encoders sequential
 //! decode uses inside a `MAX_PREFILL_BATCH`-token micro-batch, one command
 //! buffer per layer, matching `families/gemma4/prefill.rs`'s shape. A prompt
-//! longer than the indexer budget still runs the QSA path's own per-token
-//! score readback above budget -- that mid-layer commit is unchanged and
-//! costs the same per token whether reached from the chunked driver or from
-//! sequential decode.
+//! longer than the indexer budget uses the GPU selector in each prefill
+//! micro-batch, with no QSA score readback or mid-layer wait.
 
 pub(crate) mod attn;
 pub(crate) mod hc;

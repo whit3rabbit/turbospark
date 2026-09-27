@@ -6,15 +6,13 @@
 //! see `mod.rs`'s "## GDN" / "## QSA-as-dense-attention" sections for what
 //! differs and why neither is shared code with that file.
 
-use std::time::Instant;
-
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::qwen4::state::RealQwen4State;
 use crate::families::qwen4::{layer_tensor, RMS_EPS};
 use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward_dispatch::encode_gemv_any;
-use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
+use crate::real_forward_types::{DecodeScratch, RealForwardError};
 use crate::real_forward_utils::{entry, norm_view, resident_matrix};
 
 /// Mask-2 layer: gated DeltaNet. Identical dataflow to
@@ -221,17 +219,13 @@ pub(crate) fn encode_linear_block(
 /// was before the indexer existed: dense causal attention, byte for byte,
 /// which is what keeps every frozen digest where it is. Above it: the
 /// indexer query is normed and roped, `qsa_score_blocks_fp16` scores every
-/// complete block, the pass is COMMITTED AND WAITED ON mid-layer for the
-/// score readback (the MoE router's own precedent, one layer down), the
-/// host runs `select_blocks`, and `attention_decode_indexed_partial`
-/// attends over the selected positions in place of the dense kernel.
-///
-/// `pass` is `&mut` for that mid-layer commit: the caller's encoder is
-/// swapped for a fresh one and keeps encoding into it afterwards.
+/// complete block, GPU top-k writes the ascending position list and count,
+/// and `attention_decode_indexed_partial` consumes them without a host
+/// readback.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_full_attention_block(
     context: &mut gpu::MetalContext,
-    pass: &mut gpu::PassEncoder,
+    pass: &gpu::PassEncoder,
     weights: &gpu::ResidentGpuWeights,
     index: &ResidentIndex,
     arch: &ArchConfig,
@@ -239,7 +233,6 @@ pub(crate) fn encode_full_attention_block(
     mixed: (&gpu::MetalBuffer, u64),
     scratch: &DecodeScratch,
     kv: &gpu::KvCacheManager,
-    phases: &mut PhaseCounters,
     layer: usize,
     position: usize,
 ) -> Result<(), RealForwardError> {
@@ -434,51 +427,35 @@ pub(crate) fn encode_full_attention_block(
         )
         .map_err(gpu_err)?;
 
-        // Top-k is a host round trip, as it is for the MoE router: commit
-        // what has been encoded so far and wait for the scores. The fresh
-        // encoder keeps the caller's label so the phase report reads the
-        // same; its GPU time lands in the same `cb1` bucket.
-        let done = std::mem::replace(pass, context.begin_pass_labeled("cb1 (attn+router)"));
-        let t_wait = Instant::now();
-        phases.cb1_gpu_nanos += (done.commit().wait_with_gpu_time() * 1e9) as u64;
-        phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
-
-        let scores = gpu::read_f32_buffer(&qwen4.qsa_scores, complete_blocks);
-        // AGENTS.md Gotcha 59: a NaN score would read as a top-ranked block
-        // in any sort; refuse it by name before `select_blocks` sees it.
-        if let Some(bad) = scores.iter().position(|s| !s.is_finite()) {
-            return Err(RealForwardError::Unsupported(format!(
-                "layer {layer} position {position}: QSA indexer score for block {bad} is not \
-                 finite ({}); the sparse path cannot select over it",
-                scores[bad]
-            )));
-        }
-        let mask =
-            compute::select_blocks(&scores, visible, compress as usize, qwen4.idx_block_topk);
-        let positions: Vec<u32> = mask
-            .iter()
-            .enumerate()
-            .filter(|(_, &selected)| selected)
-            .map(|(p, _)| p as u32)
-            .collect();
-        debug_assert!(positions.iter().all(|&p| (p as usize) < visible));
-        let capacity = (qwen4.qsa_positions.length() / 4) as usize;
-        if positions.is_empty() || positions.len() > capacity {
-            return Err(RealForwardError::Unsupported(format!(
-                "QSA selected {} positions against a {capacity}-entry buffer",
-                positions.len()
-            )));
-        }
-        // ONE position buffer for all QSA layers, written from the host
-        // while the previous layer's indexed attention may still be
-        // encoded: safe only because `produce.rs` commits and WAITS on
-        // every layer's pass at its router readback before the next layer
-        // encodes anything, so the dispatch that read the old list has
-        // completed by the time this overwrites it. A driver that stops
-        // waiting per layer (chunked prefill, a pipelined router) needs a
-        // buffer per QSA layer instead.
-        let bytes: Vec<u8> = positions.iter().flat_map(|p| p.to_le_bytes()).collect();
-        gpu::write_buffer_bytes(&qwen4.qsa_positions, 0, &bytes);
+        let selected_blocks = qwen4.idx_block_topk.min(complete_blocks);
+        let max_selected_positions = selected_blocks
+            .checked_mul(compress as usize)
+            .and_then(|n| n.checked_add(visible % compress as usize))
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| {
+                RealForwardError::Unsupported(
+                    "qwen4_exp QSA selected-position count exceeds the GPU limit".to_string(),
+                )
+            })?;
+        let block_topk = u32::try_from(qwen4.idx_block_topk).map_err(|_| {
+            RealForwardError::Unsupported(
+                "qwen4_exp QSA index_top_k exceeds the GPU limit".to_string(),
+            )
+        })?;
+        gpu::encode_qsa_topk_positions(
+            context,
+            pass,
+            &qwen4.qsa_scores,
+            qwen4.qsa.selection_ranks_buffer(layer),
+            qwen4.qsa.selected_positions_buffer(layer),
+            qwen4.qsa.selected_count_buffer(layer),
+            qwen4.qsa.selection_status_buffer(layer),
+            complete_blocks as u32,
+            visible as u32,
+            block_topk,
+            compress,
+        )
+        .map_err(gpu_err)?;
 
         // TurboQuant fork, matching `crate::kv_write::encode_attention_any`'s
         // dense-path fork -- kept separate here because the QSA sparse
@@ -495,14 +472,15 @@ pub(crate) fn encode_full_attention_block(
                     .tq_attn
                     .as_ref()
                     .expect("tq_attn is allocated whenever any layer is TurboQuant-quantized");
-                gpu::encode_attention_decode_indexed_tq(
+                gpu::encode_attention_decode_indexed_tq_from_count(
                     context,
                     pass,
                     (&scratch.q, 0),
                     k_cache,
                     v_cache,
-                    (&qwen4.qsa_positions, 0),
-                    positions.len() as u32,
+                    (qwen4.qsa.selected_positions_buffer(layer), 0),
+                    (qwen4.qsa.selected_count_buffer(layer), 0),
+                    max_selected_positions,
                     tq_scratch,
                     (&scratch.attn_out, 0),
                     head_dim,
@@ -514,14 +492,15 @@ pub(crate) fn encode_full_attention_block(
                 .map_err(gpu_err)?;
             }
             None => {
-                gpu::encode_attention_decode_indexed(
+                gpu::encode_attention_decode_indexed_from_count(
                     context,
                     pass,
                     (&scratch.q, 0),
                     k_cache,
                     v_cache,
-                    (&qwen4.qsa_positions, 0),
-                    positions.len() as u32,
+                    (qwen4.qsa.selected_positions_buffer(layer), 0),
+                    (qwen4.qsa.selected_count_buffer(layer), 0),
+                    max_selected_positions,
                     &scratch.attn,
                     (&scratch.attn_out, 0),
                     head_dim,

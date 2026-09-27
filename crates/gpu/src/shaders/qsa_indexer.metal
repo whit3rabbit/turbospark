@@ -7,9 +7,8 @@ using namespace metal;
 // `crates/compute/src/qsa_indexer.rs`'s CPU reference). PORT-LOCAL: the
 // Swift engine has no architecture with this mechanism. Matched to the CPU
 // reference and dispatched from `families/qwen4/attn.rs` since 2026-09-05
-// (pooling as blocks complete, scoring above the budget). Block SELECTION (top-k over `scores`) stays
-// host-side, matching this port's existing MoE router precedent (top-k is
-// already a host round trip there); no kernel for it exists here either.
+// (pooling as blocks complete, scoring above the budget). Block selection
+// runs in `qsa_topk.metal` so QSA scores never need a host readback.
 //
 // Norm (`rms_norm_centered`, per head) and RoPE (`rope_neox_subdim` at
 // `rotary_dim = 64`, `theta = 1e7` -- the SAME object the trunk's own QSA

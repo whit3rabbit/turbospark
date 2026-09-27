@@ -164,28 +164,74 @@ pub fn encode_attention_decode_indexed_tq(
     scale: f32,
     tables: &KvQuantTables,
 ) -> Result<(), GpuError> {
+    let count = context.new_output_buffer(4);
+    crate::context::write_buffer_bytes(&count, 0, &n_sel.to_le_bytes());
+    encode_attention_decode_indexed_tq_from_count(
+        context,
+        pass,
+        q,
+        k_buffer,
+        v_buffer,
+        positions,
+        (&count, 0),
+        n_sel,
+        scratch,
+        out,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        scale,
+        tables,
+    )
+}
+
+/// Sparse indexed attention with the selected-position count read from a
+/// GPU buffer. `max_sel` bounds the device count and fixes the split-KV
+/// shape; empty chunks exit using the count written by the GPU selector.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_attention_decode_indexed_tq_from_count(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    positions: (&metal::Buffer, u64),
+    selected_count: (&metal::Buffer, u64),
+    max_sel: u32,
+    scratch: &TqAttentionScratch,
+    out: (&metal::Buffer, u64),
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    scale: f32,
+    tables: &KvQuantTables,
+) -> Result<(), GpuError> {
     assert_eq!(num_q_heads % num_kv_heads, 0);
     assert!(head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM);
     assert_eq!(tables.full_head_dim as u32, head_dim);
     assert!(
-        n_sel > 0,
-        "indexed TQ attention needs at least one selected position"
+        max_sel > 0,
+        "indexed TQ attention needs a positive selected-position bound"
     );
     assert!(
-        positions.0.length() >= positions.1 + n_sel as u64 * 4,
-        "positions buffer too small for n_sel"
+        positions.0.length() >= positions.1 + max_sel as u64 * 4,
+        "positions buffer too small for max_sel"
+    );
+    assert!(
+        selected_count.0.length() >= selected_count.1 + 4,
+        "selected-count buffer too small"
     );
 
-    let num_chunks = chunks_for(n_sel);
-    let chunk_len = n_sel.div_ceil(num_chunks);
+    let num_chunks = chunks_for(max_sel);
+    let chunk_len = max_sel.div_ceil(num_chunks);
 
     let k_bits = tables.k.bits as u32;
     let v_bits = tables.v.bits as u32;
     let k_packed_words = model_io::tq_packed_words(head_dim as i64, tables.k.bits) as u32;
     let v_packed_words = model_io::tq_packed_words(head_dim as i64, tables.v.bits) as u32;
 
-    let min_k_bytes = n_sel as u64 * num_kv_heads as u64 * (1 + k_packed_words) as u64 * 4;
-    let min_v_bytes = n_sel as u64 * num_kv_heads as u64 * (1 + v_packed_words) as u64 * 4;
+    let min_k_bytes = max_sel as u64 * num_kv_heads as u64 * (1 + k_packed_words) as u64 * 4;
+    let min_v_bytes = max_sel as u64 * num_kv_heads as u64 * (1 + v_packed_words) as u64 * 4;
     assert!(k_buffer.length() >= min_k_bytes, "K buffer too small");
     assert!(v_buffer.length() >= min_v_bytes, "V buffer too small");
 
@@ -205,6 +251,7 @@ pub fn encode_attention_decode_indexed_tq(
             (&scratch.d, 4, 0),
             (&scratch.o, 5, 0),
             (positions.0, 9, positions.1),
+            (selected_count.0, 10, selected_count.1),
             (&tables.k.signs, 16, 0),
             (&tables.k.codebook, 17, 0),
             (&tables.v.codebook, 18, 0),
@@ -213,7 +260,6 @@ pub fn encode_attention_decode_indexed_tq(
             (u32_bytes(&head_dim), 6),
             (u32_bytes(&num_q_heads), 7),
             (u32_bytes(&num_kv_heads), 8),
-            (u32_bytes(&n_sel), 10),
             (u32_bytes(&chunk_len), 11),
             (u32_bytes(&num_chunks), 12),
             (f32_bytes(&scale), 13),
@@ -221,6 +267,7 @@ pub fn encode_attention_decode_indexed_tq(
             (u32_bytes(&v_bits), 15),
             (u32_bytes(&k_packed_words), 19),
             (u32_bytes(&v_packed_words), 20),
+            (u32_bytes(&max_sel), 21),
         ],
         (num_q_heads * num_chunks) as u64,
         THREADS_PER_GROUP,

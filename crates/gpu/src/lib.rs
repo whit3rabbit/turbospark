@@ -130,6 +130,8 @@ mod qsa_indexer;
 #[cfg(target_os = "macos")]
 mod qsa_indexer_state;
 #[cfg(target_os = "macos")]
+mod qsa_topk;
+#[cfg(target_os = "macos")]
 mod resident_metal;
 #[cfg(target_os = "macos")]
 mod rms_norm;
@@ -145,10 +147,14 @@ pub use attention_decode::{
     attention_decode, encode_attention_decode, AttentionScratch, MAX_DECODE_ATTENTION_HEAD_DIM,
 };
 #[cfg(target_os = "macos")]
-pub use attention_indexed::{attention_decode_indexed, encode_attention_decode_indexed};
+pub use attention_indexed::{
+    attention_decode_indexed, encode_attention_decode_indexed,
+    encode_attention_decode_indexed_from_count,
+};
 #[cfg(target_os = "macos")]
 pub use attention_tq::{
-    encode_attention_decode_indexed_tq, encode_attention_decode_tq, TqAttentionScratch,
+    encode_attention_decode_indexed_tq, encode_attention_decode_indexed_tq_from_count,
+    encode_attention_decode_tq, TqAttentionScratch,
 };
 #[cfg(target_os = "macos")]
 pub use bytes::{read_f32_buffer, read_f32_buffer_at};
@@ -315,6 +321,8 @@ pub use qsa_indexer::{
 };
 #[cfg(target_os = "macos")]
 pub use qsa_indexer_state::QsaIndexerCacheManager;
+#[cfg(target_os = "macos")]
+pub use qsa_topk::encode_qsa_topk_positions;
 #[cfg(target_os = "macos")]
 pub use resident_metal::{wrap_page_aligned_no_copy, ResidentGpuWeights};
 #[cfg(target_os = "macos")]

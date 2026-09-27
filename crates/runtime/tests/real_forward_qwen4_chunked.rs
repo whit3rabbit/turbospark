@@ -4,8 +4,8 @@
 //! `real_forward_gemma4_chunked.rs` -- loop the EXISTING per-token kernels
 //! inside a micro-batch, batching command buffers rather than GEMVs
 //! (`crates/runtime/src/families/qwen4/prefill.rs`'s header has the full
-//! design argument, including why the QSA indexer's shared position buffer
-//! and the GDN/PLE recurrent state are unaffected by chunking).
+//! design argument, including how per-layer GPU QSA selection buffers and
+//! the GDN/PLE recurrent state are preserved across chunking).
 //!
 //! **The bar is byte-identity against the SEQUENTIAL path, not coherence**,
 //! exactly as every other chunked test in this crate establishes: every case

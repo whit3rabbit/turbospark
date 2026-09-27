@@ -9,9 +9,10 @@
 //! that restraint is the whole design). Pass 2 is attention.metal's OWN
 //! `attention_decode_combine`, unchanged, reading the same `(m, d, o)`
 //! partial layout out of the same [`AttentionScratch`] the dense path uses.
-//! Chunking follows [`chunks_for`] over the LIST LENGTH, so with the identity
-//! list the dispatch is the dense dispatch and `tests/attention_indexed_parity.rs`
-//! asserts the outputs are bit-identical.
+//! Chunking follows [`chunks_for`] over the maximum list length. The from-count
+//! entry point gets the live length from a GPU buffer and skips empty chunks;
+//! with the identity list the dispatch is the dense dispatch and
+//! `tests/attention_indexed_parity.rs` asserts bit-identical outputs.
 //!
 //! Matches `turbospark_compute::indexed_attention` (a gather followed by the
 //! dense CPU reference) within FP16 tolerance.
@@ -32,7 +33,8 @@ const THREADS_PER_GROUP: u64 = 256; // kIdxAttnThreads, == attention.metal's kAt
 /// read in place from LINEAR `[stored_tokens, num_kv_heads, head_dim]`
 /// buffers (a `KvCacheManager` full layer's, offset 0); `positions` is a
 /// `[n_sel]` `u32` list of the rows to attend over, each `< stored_tokens`;
-/// output `[num_q_heads, head_dim]` FP16 to `out`.
+/// output `[num_q_heads, head_dim]` FP16 to `out`. This compatibility wrapper
+/// writes `n_sel` to a small count buffer before dispatching.
 ///
 /// No ring addressing: the one family this serves has no sliding-window
 /// layers, and a ring would need the list's entries mapped through
@@ -58,24 +60,71 @@ pub fn encode_attention_decode_indexed(
     num_kv_heads: u32,
     scale: f32,
 ) -> Result<(), GpuError> {
+    let count = context.new_output_buffer(4);
+    crate::context::write_buffer_bytes(&count, 0, &n_sel.to_le_bytes());
+    encode_attention_decode_indexed_from_count(
+        context,
+        pass,
+        q,
+        k_buffer,
+        v_buffer,
+        positions,
+        (&count, 0),
+        n_sel,
+        scratch,
+        out,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        scale,
+    )
+}
+
+/// Encodes indexed attention with the selected-position count read from a
+/// GPU buffer. `max_sel` bounds the GPU count and fixes the split-KV shape;
+/// the kernel exits empty chunks using the device-written count.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_attention_decode_indexed_from_count(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    positions: (&metal::Buffer, u64),
+    selected_count: (&metal::Buffer, u64),
+    max_sel: u32,
+    scratch: &AttentionScratch,
+    out: (&metal::Buffer, u64),
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    scale: f32,
+) -> Result<(), GpuError> {
     assert_eq!(num_q_heads % num_kv_heads, 0);
     assert!(head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM);
     assert!(
-        n_sel > 0,
-        "indexed attention needs at least one selected position"
+        max_sel > 0,
+        "indexed attention needs a positive selected-position bound"
     );
     assert!(
-        positions.0.length() >= positions.1 + n_sel as u64 * 4,
-        "positions buffer too small for n_sel"
+        positions.0.length() >= positions.1 + max_sel as u64 * 4,
+        "positions buffer too small for max_sel"
     );
-    let min_kv_bytes = n_sel as u64 * num_kv_heads as u64 * head_dim as u64 * 2;
-    assert!(k_buffer.length() >= min_kv_bytes, "K buffer too small");
-    assert!(v_buffer.length() >= min_kv_bytes, "V buffer too small");
+    assert!(
+        selected_count.0.length() >= selected_count.1 + 4,
+        "selected-count buffer too small"
+    );
+    assert!(
+        k_buffer.length() >= max_sel as u64 * num_kv_heads as u64 * head_dim as u64 * 2,
+        "K buffer too small"
+    );
+    assert!(
+        v_buffer.length() >= max_sel as u64 * num_kv_heads as u64 * head_dim as u64 * 2,
+        "V buffer too small"
+    );
 
-    let num_chunks = chunks_for(n_sel);
-    // Ceiling division, as the dense host does: the LAST chunk is the short
-    // one, and no list entry falls past the final chunk's end.
-    let chunk_len = n_sel.div_ceil(num_chunks);
+    let num_chunks = chunks_for(max_sel);
+    let chunk_len = max_sel.div_ceil(num_chunks);
 
     let partial_pipeline = context.pipeline(
         SOURCE,
@@ -93,15 +142,16 @@ pub fn encode_attention_decode_indexed(
             (&scratch.d, 4, 0),
             (&scratch.o, 5, 0),
             (positions.0, 9, positions.1),
+            (selected_count.0, 10, selected_count.1),
         ],
         &[
             (u32_bytes(&head_dim), 6),
             (u32_bytes(&num_q_heads), 7),
             (u32_bytes(&num_kv_heads), 8),
-            (u32_bytes(&n_sel), 10),
             (u32_bytes(&chunk_len), 11),
             (u32_bytes(&num_chunks), 12),
             (f32_bytes(&scale), 13),
+            (u32_bytes(&max_sel), 14),
         ],
         (num_q_heads * num_chunks) as u64,
         THREADS_PER_GROUP,

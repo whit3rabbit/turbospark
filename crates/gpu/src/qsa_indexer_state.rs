@@ -40,6 +40,18 @@ pub struct QsaIndexerCacheManager {
     /// RoPE'd block rows, `index_kv_heads == 1` so one row per block.
     /// Filled incrementally -- see [`Self::pooled_block_count`].
     pooled_blocks: Vec<Option<metal::Buffer>>,
+    /// Per-layer GPU scratch containing the score rank of each complete
+    /// block. `u32::MAX` marks a NaN score.
+    selection_ranks: Vec<Option<metal::Buffer>>,
+    /// Per-layer ascending selected token positions. Each QSA layer owns its
+    /// list because multiple layers can be in flight before the next host
+    /// readback.
+    selected_positions: Vec<Option<metal::Buffer>>,
+    /// Per-layer GPU-written selected-position count.
+    selected_count: Vec<Option<metal::Buffer>>,
+    /// Per-layer sticky NaN-score flag, cleared at the beginning of
+    /// each decode token or prefill chunk.
+    selection_status: Vec<Option<metal::Buffer>>,
     /// How many of a layer's COMPLETE blocks are already pooled, normed and
     /// roped, i.e. how far into `pooled_blocks` real data has been written.
     /// mlx-vlm's own "first_new_block" cursor
@@ -103,17 +115,40 @@ impl QsaIndexerCacheManager {
             .checked_mul(pooled_stride)
             .expect("QSA pooled allocation overflows usize")
             .max(1) as u64;
+        let index_top_k = usize::try_from(ca.index_top_k)
+            .expect("QSA index_top_k must be non-negative before state allocation");
+        let selected_blocks = index_top_k.min(max_complete_blocks);
+        let selected_positions_len = selected_blocks
+            .checked_add(1)
+            .and_then(|count| count.checked_mul(compress_ratio))
+            .expect("QSA selected-position allocation overflows usize");
+        let selected_positions_bytes = selected_positions_len
+            .checked_mul(std::mem::size_of::<u32>())
+            .expect("QSA selected-position allocation overflows usize")
+            .max(std::mem::size_of::<u32>()) as u64;
+        let selection_ranks_bytes = max_complete_blocks
+            .checked_mul(std::mem::size_of::<u32>())
+            .expect("QSA rank allocation overflows usize")
+            .max(std::mem::size_of::<u32>()) as u64;
 
         let num_layers = config.num_layers as usize;
         let mut raw_keys = Vec::with_capacity(num_layers);
         let mut pooled_blocks = Vec::with_capacity(num_layers);
         let mut pooled_block_count = Vec::with_capacity(num_layers);
+        let mut selection_ranks = Vec::with_capacity(num_layers);
+        let mut selected_positions = Vec::with_capacity(num_layers);
+        let mut selected_count = Vec::with_capacity(num_layers);
+        let mut selection_status = Vec::with_capacity(num_layers);
 
         for layer in 0..num_layers {
             if !config.layer_is_full(layer) {
                 raw_keys.push(None);
                 pooled_blocks.push(None);
                 pooled_block_count.push(0);
+                selection_ranks.push(None);
+                selected_positions.push(None);
+                selected_count.push(None);
+                selection_status.push(None);
                 continue;
             }
             raw_keys.push(Some(
@@ -123,12 +158,29 @@ impl QsaIndexerCacheManager {
                 device.new_buffer(pooled_len, MTLResourceOptions::StorageModeShared),
             ));
             pooled_block_count.push(0);
+            selection_ranks.push(Some(
+                device.new_buffer(selection_ranks_bytes, MTLResourceOptions::StorageModeShared),
+            ));
+            selected_positions.push(Some(device.new_buffer(
+                selected_positions_bytes,
+                MTLResourceOptions::StorageModeShared,
+            )));
+            selected_count.push(Some(
+                device.new_buffer(4, MTLResourceOptions::StorageModeShared),
+            ));
+            selection_status.push(Some(
+                device.new_buffer(4, MTLResourceOptions::StorageModeShared),
+            ));
         }
 
         Self {
             raw_keys,
             pooled_blocks,
             pooled_block_count,
+            selection_ranks,
+            selected_positions,
+            selected_count,
+            selection_status,
             index_head_dim,
             index_kv_heads,
             compress_ratio,
@@ -209,6 +261,57 @@ impl QsaIndexerCacheManager {
         self.pooled_blocks[layer]
             .as_ref()
             .expect("layer is not a QSA layer")
+    }
+
+    /// Scratch rank buffer for GPU QSA block selection at `layer`.
+    pub fn selection_ranks_buffer(&self, layer: usize) -> &metal::Buffer {
+        self.selection_ranks[layer]
+            .as_ref()
+            .expect("layer is not a QSA layer")
+    }
+
+    /// Position list written by GPU QSA block selection at `layer`.
+    pub fn selected_positions_buffer(&self, layer: usize) -> &metal::Buffer {
+        self.selected_positions[layer]
+            .as_ref()
+            .expect("layer is not a QSA layer")
+    }
+
+    /// Count of valid entries in [`Self::selected_positions_buffer`].
+    pub fn selected_count_buffer(&self, layer: usize) -> &metal::Buffer {
+        self.selected_count[layer]
+            .as_ref()
+            .expect("layer is not a QSA layer")
+    }
+
+    /// Sticky flag set by the GPU selector if any score is NaN.
+    pub fn selection_status_buffer(&self, layer: usize) -> &metal::Buffer {
+        self.selection_status[layer]
+            .as_ref()
+            .expect("layer is not a QSA layer")
+    }
+
+    /// Clears selection errors before encoding a decode token or prefill
+    /// chunk. The caller must only do this after earlier GPU work using these
+    /// buffers has completed.
+    pub fn clear_selection_errors(&self) {
+        for status in self.selection_status.iter().flatten() {
+            write_into(status, 0, &[0; 4]);
+        }
+    }
+
+    /// Returns the first QSA layer whose completed GPU selection saw a NaN
+    /// score. Call only after a normal command-buffer wait.
+    pub fn first_nan_score_layer(&self) -> Option<usize> {
+        self.selection_status
+            .iter()
+            .enumerate()
+            .find_map(|(layer, status)| {
+                let status = status.as_ref()?;
+                let bytes = crate::context::read_buffer_bytes(status, 0, 4);
+                (u32::from_le_bytes(bytes.try_into().expect("four-byte QSA status")) != 0)
+                    .then_some(layer)
+            })
     }
 
     /// How many of `layer`'s complete blocks are already pooled, normed and

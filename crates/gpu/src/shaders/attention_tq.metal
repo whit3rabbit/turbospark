@@ -254,8 +254,8 @@ void attention_decode_indexed_partial_tq(
     constant     uint&  head_dim      [[buffer(6)]],
     constant     uint&  num_q_heads   [[buffer(7)]],
     constant     uint&  num_kv_heads  [[buffer(8)]],
-    device const uint*  positions     [[buffer(9)]],   // [n_sel]
-    constant     uint&  n_sel         [[buffer(10)]],
+    device const uint*  positions     [[buffer(9)]],   // [max_sel]
+    device const uint*  selected_count [[buffer(10)]],
     constant     uint&  chunk_len     [[buffer(11)]],
     constant     uint&  num_chunks    [[buffer(12)]],
     constant     float& scale         [[buffer(13)]],
@@ -266,6 +266,7 @@ void attention_decode_indexed_partial_tq(
     device const float* v_codebook    [[buffer(18)]],
     constant     uint&  k_packed_words [[buffer(19)]],
     constant     uint&  v_packed_words [[buffer(20)]],
+    constant     uint&  max_sel        [[buffer(21)]],
     uint tg_id           [[threadgroup_position_in_grid]],
     uint lid             [[thread_position_in_threadgroup]],
     uint lsize           [[threads_per_threadgroup]],
@@ -283,7 +284,15 @@ void attention_decode_indexed_partial_tq(
 
     const uint q_head = tg_id / NC;
     const uint chunk  = tg_id % NC;
+    const uint n_sel = min(selected_count[0], max_sel);
     const uint i_start = chunk * chunk_len;
+    const uint base = uint(q_head) * NC + chunk;
+    if (i_start >= n_sel) {
+        if (lid == 0) { m_out[base] = -INFINITY; d_out[base] = 0.0f; }
+        device float* empty_o_row = o_out + base * HD;
+        for (uint i = lid; i < HD; i += lsize) { empty_o_row[i] = 0.0f; }
+        return;
+    }
     uint i_end = i_start + chunk_len;
     if (i_end > n_sel) { i_end = n_sel; }
 
@@ -340,7 +349,6 @@ void attention_decode_indexed_partial_tq(
         m_run = m_new;
     }
 
-    const uint base = uint(q_head) * NC + chunk;
     if (lid == 0) { m_out[base] = m_run; d_out[base] = d_run; }
     device float* o_row = o_out + base * HD;
     uint slot = 0;

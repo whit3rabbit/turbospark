@@ -2,10 +2,9 @@
 //! `mod.rs`'s "## decoder layer" pseudocode, encoded directly: PLE at its
 //! one layer, two hyper-connection calls per layer (each read/inject
 //! replacing a plain residual add), a mid-layer commit ONLY for the MoE
-//! router readback (matching `families/qwen/produce.rs`'s shape), plus, on a
-//! QSA layer ABOVE the indexer budget, a second commit inside
-//! `encode_full_attention_block` for the block-score readback (GDN and
-//! below-budget QSA are host-readback-free).
+//! router readback (matching `families/qwen/produce.rs`'s shape). QSA block
+//! selection stays in the GPU command buffer, including above the indexer
+//! budget.
 
 use std::time::Instant;
 
@@ -80,6 +79,11 @@ impl RealForwardRunner {
             .as_ref()
             .expect("real qwen4 state present")
             .hc_count;
+        self.real_qwen4
+            .as_ref()
+            .expect("real qwen4 state present")
+            .qsa
+            .clear_selection_errors();
 
         let mut pass = self.context.begin_pass_labeled("cb1 (attn+router)");
 
@@ -226,12 +230,9 @@ impl RealForwardRunner {
                     true,
                 )?;
             } else {
-                // `&mut pass`: above the QSA budget this commits and waits
-                // mid-layer for the indexer's score readback and hands back
-                // a fresh encoder (`attn.rs`'s own doc).
                 encode_full_attention_block(
                     context,
-                    &mut pass,
+                    &pass,
                     weights,
                     index,
                     &arch,
@@ -239,7 +240,6 @@ impl RealForwardRunner {
                     (&scratch.normed, 0),
                     scratch,
                     kv,
-                    phases,
                     layer,
                     position,
                 )?;
@@ -441,6 +441,11 @@ impl RealForwardRunner {
         let t_wait = Instant::now();
         phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+        if let Some(layer) = qwen4.qsa.first_nan_score_layer() {
+            return Err(RealForwardError::Unsupported(format!(
+                "layer {layer}: QSA indexer produced a NaN block score"
+            )));
+        }
         qwen4.flush_gdn_norm_capture();
         qwen4.flush_layer_boundary_capture();
         qwen4.flush_attention_intermediate_capture();

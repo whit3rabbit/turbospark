@@ -7,8 +7,8 @@ using namespace metal;
 // with this mechanism. Built for `qwen4_exp`'s QSA (query-sparse attention),
 // whose indexer selects `block_topk` blocks of `compress_ratio` tokens plus
 // the ragged tail once the context exceeds `indexer_budget`
-// (`docs/QWEN4_PHASE0.md` section 5); the host turns that boolean mask into
-// the sorted `positions` list this kernel walks.
+// (`docs/QWEN4_PHASE0.md` section 5); the GPU selector writes the sorted
+// `positions` list this kernel walks.
 //
 // THIS IS `attention_decode_partial` (attention.metal) WITH ONE CHANGE, AND
 // THE CHANGE IS DELIBERATELY THE ONLY ONE. The block reduction, the online
@@ -40,8 +40,8 @@ using namespace metal;
 //   m_out/d_out/o_out : the split-KV partials, [num_q_heads * num_chunks (* head_dim)]
 //
 // Chunking: list indices, not positions. Chunk c owns [c*chunk_len,
-// min((c+1)*chunk_len, n_sel)); the host derives chunk_len and num_chunks
-// from n_sel exactly as the dense host derives them from the position range.
+// min((c+1)*chunk_len, n_sel)); the host derives fixed split geometry from
+// max_sel and the GPU-written count controls each chunk's active range.
 // ============================================================================
 
 constant constexpr uint kIdxAttnThreads       = 256;
@@ -82,11 +82,12 @@ void attention_decode_indexed_partial(
     constant     uint&  head_dim      [[buffer(6)]],
     constant     uint&  num_q_heads   [[buffer(7)]],
     constant     uint&  num_kv_heads  [[buffer(8)]],
-    device const uint*  positions     [[buffer(9)]],   // [n_sel]
-    constant     uint&  n_sel         [[buffer(10)]],
+    device const uint*  positions     [[buffer(9)]],   // [max_sel]
+    device const uint*  selected_count [[buffer(10)]],
     constant     uint&  chunk_len     [[buffer(11)]],
     constant     uint&  num_chunks    [[buffer(12)]],
     constant     float& scale         [[buffer(13)]],
+    constant     uint&  max_sel       [[buffer(14)]],
     uint tg_id           [[threadgroup_position_in_grid]],
     uint lid             [[thread_position_in_threadgroup]],
     uint lsize           [[threads_per_threadgroup]],
@@ -104,9 +105,17 @@ void attention_decode_indexed_partial(
 
     const uint q_head = tg_id / NC;
     const uint chunk  = tg_id % NC;
-    // The ONE difference from attention_decode_partial: the range is over
-    // LIST INDICES, and each index dereferences `positions`.
+    const uint n_sel = min(selected_count[0], max_sel);
     const uint i_start = chunk * chunk_len;
+    const uint base = uint(q_head) * NC + chunk;
+    if (i_start >= n_sel) {
+        if (lid == 0) { m_out[base] = -INFINITY; d_out[base] = 0.0f; }
+        device float* empty_o_row = o_out + base * HD;
+        for (uint e = lid; e < HD; e += lsize) { empty_o_row[e] = 0.0f; }
+        return;
+    }
+
+    // The range is over LIST INDICES, and each index dereferences positions.
     uint i_end = i_start + chunk_len;
     if (i_end > n_sel) { i_end = n_sel; }
 
@@ -155,7 +164,6 @@ void attention_decode_indexed_partial(
         m_run = m_new;
     }
 
-    const uint base = uint(q_head) * NC + chunk;
     if (lid == 0) { m_out[base] = m_run; d_out[base] = d_run; }
     device float* o_row = o_out + base * HD;
     uint slot = 0;

@@ -154,6 +154,22 @@ impl PassEncoder {
         }
     }
 
+    /// Encodes a compute-pass memory barrier for the given buffers. Use this
+    /// when a later dispatch in the same pass reads data written by an
+    /// earlier dispatch.
+    pub fn memory_barrier_with_buffers(&self, buffers: &[&metal::Buffer]) {
+        let resources: Vec<&metal::ResourceRef> = buffers
+            .iter()
+            .map(|buffer| {
+                let resource: &metal::ResourceRef = buffer;
+                resource
+            })
+            .collect();
+        self.encoder
+            .borrow()
+            .memory_barrier_with_resources(&resources);
+    }
+
     /// Ends encoding, commits, and blocks until the GPU finishes. Shared-
     /// storage outputs are CPU-readable after this returns.
     pub fn commit_and_wait(self) {

@@ -1,8 +1,8 @@
 //! Host-side dispatch for `shaders/qsa_indexer.metal` (`qwen4_exp`'s QSA
 //! block indexer: pooling and scoring; PORT-LOCAL, `docs/QWEN4_PHASE0.md`
 //! section 5). Matched to `turbospark_compute::qsa_indexer`'s CPU
-//! reference. Block SELECTION (top-k) stays host-side, matching this
-//! port's existing MoE router precedent -- no kernel for it here.
+//! reference. Block selection is dispatched by `qsa_topk.rs`, which keeps
+//! scores and the selected position list on the GPU.
 
 use metal::FunctionConstantValues;
 

@@ -1,8 +1,8 @@
 //! CPU reference for `qwen4_exp`'s QSA (query-sparse attention) block
 //! indexer (`docs/QWEN4_PHASE0.md` section 5). PORT-LOCAL. The GPU twins
 //! of `pool_blocks_mean` and `score_blocks` (`crates/gpu`'s `qsa_indexer.metal`)
-//! and `select_blocks` ITSELF, on the host, run in `families/qwen4/attn.rs`
-//! since 2026-09-05.
+//! run in `families/qwen4/attn.rs`; GPU block selection mirrors
+//! `select_blocks` through `crates/gpu`'s `qsa_topk.metal`.
 //!
 //! **SCOPE, READ BEFORE EXTENDING.** Section 5's pseudocode is:
 //!

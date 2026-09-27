@@ -2,7 +2,8 @@
 //! `families/gemma4/prefill.rs` -- loop the EXISTING per-token kernels
 //! inside a micro-batch of at most [`MAX_PREFILL_BATCH`] tokens, one command
 //! buffer per layer for the attention-and-router half, then a per-token
-//! routed-MoE loop pipelined the same way gemma4's is. No new kernel.
+//! routed-MoE loop pipelined the same way gemma4's is. QSA uses the GPU
+//! selector in the same command stream as indexed attention.
 //!
 //! **Five buffers had to widen to `MAX_PREFILL_BATCH` rows for this to be
 //! correct, not just fast.** Four are documented at their declaration in
@@ -17,18 +18,10 @@
 //! by the last token's, were either single-row). The fifth, PLE's
 //! `ngram_emb`, is a different and sharper case entirely -- see below.
 //!
-//! **The QSA indexer needs no new buffer or signature change at all.**
-//! `encode_full_attention_block` already takes `pass: &mut PassEncoder` and
-//! already handles its own above-budget mid-layer commit internally
-//! (`attn.rs`'s own doc); calling it once per token, in increasing `t`
-//! order, inside this driver's per-layer loop reproduces that exactly. The
-//! shared `qsa_positions` buffer (`RealQwen4State`, one buffer for every QSA
-//! layer) stays safe as long as this driver preserves gemma4's own ordering:
-//! a layer's whole attention-and-router half commits and WAITS before that
-//! layer's routed loop starts, and the next layer's pass is not created
-//! until the current layer's routed loop finishes -- so no two QSA layers'
-//! writes to the shared buffer are ever in flight at once
-//! (`crates/runtime/CLAUDE.md` Gotcha 34).
+//! **QSA selection stays on the GPU.** `encode_full_attention_block` writes
+//! each layer's positions and count into per-layer buffers, then indexed
+//! attention reads them from the same command stream. There is no score
+//! readback or QSA-specific mid-layer wait.
 //!
 //! **GDN needs no change.** `encode_linear_block`'s kernels take no position
 //! argument and advance `qwen4.gdn`'s recurrent state in place; calling it
@@ -214,6 +207,11 @@ impl RealForwardRunner {
             .as_ref()
             .expect("real qwen4 state present")
             .hc_count;
+        self.real_qwen4
+            .as_ref()
+            .expect("real qwen4 state present")
+            .qsa
+            .clear_selection_errors();
         let wide_dim = hidden * hc_count;
 
         let mut pass = self.context.begin_pass_labeled("chunk cb1 (attn+router)");
@@ -243,18 +241,15 @@ impl RealForwardRunner {
         for layer in 0..arch.num_layers as usize {
             {
                 // The attention-and-router half: every token of the
-                // micro-batch, in order, into ONE evolving pass. QSA's own
-                // internal above-budget mid-layer commit (`attn.rs`) may
-                // swap `pass` out and back in transparently; nothing here
-                // needs to know when that happens.
-                let (context, weights, index, scratch, kv, qwen4, phases) = (
+                // micro-batch, in order, into ONE evolving pass. GPU QSA
+                // selection and indexed attention stay in this pass.
+                let (context, weights, index, scratch, kv, qwen4) = (
                     &mut self.context,
                     &self.weights,
                     &self.index,
                     &self.scratch,
                     &mut self.kv,
                     self.real_qwen4.as_mut().expect("checked above"),
-                    &mut self.phases,
                 );
 
                 if layer == qwen4.ple_layer {
@@ -316,13 +311,9 @@ impl RealForwardRunner {
                             false,
                         )?;
                     } else {
-                        // `&mut pass`: above the QSA budget this commits and
-                        // waits mid-layer for the indexer's score readback
-                        // and hands back a fresh encoder (`attn.rs`'s own
-                        // doc) -- unmodified from the sequential path.
                         encode_full_attention_block(
                             context,
-                            &mut pass,
+                            &pass,
                             weights,
                             index,
                             &arch,
@@ -330,7 +321,6 @@ impl RealForwardRunner {
                             (&scratch.normed, 0),
                             scratch,
                             kv,
-                            phases,
                             layer,
                             position,
                         )?;
@@ -555,6 +545,12 @@ impl RealForwardRunner {
         let t_wait = Instant::now();
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+        let qwen4 = self.real_qwen4.as_ref().expect("checked above");
+        if let Some(layer) = qwen4.qsa.first_nan_score_layer() {
+            return Err(RealForwardError::Unsupported(format!(
+                "layer {layer}: QSA indexer produced a NaN block score"
+            )));
+        }
         self.kv.advance_by(m);
 
         if !want_head {

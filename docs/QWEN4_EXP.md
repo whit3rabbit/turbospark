@@ -2025,3 +2025,36 @@ its own goal, and a numerics-critical kernel deserves better than a
 session tail): the item stays open in the ROADMAP with this profile as
 its completed first half, and the build owes a re-pull (~1h45 at the
 h2-observed rate, or ~50 min if the transport observation above holds).
+
+## QSA GPU block selection implemented (2026-09-26)
+
+ROADMAP P2.1's GPU selection kernel is now wired into sequential decode and
+chunked prefill. `qsa_topk.metal` ranks complete blocks on the GPU using the
+CPU oracle's descending-score ordering and lower-block-index tie break, then
+writes selected token positions in ascending order and appends the ragged
+tail. `compute::select_blocks` remains the CPU oracle. FP16 and TurboQuant
+indexed-attention kernels read the GPU-written count and list in the same
+command buffer. Each QSA layer owns its rank, position, count, and sticky NaN
+status buffers.
+
+The score readback and QSA-specific commit-and-wait are removed. Explicit
+Metal buffer barriers connect score generation, ranking, compaction, and
+attention. The NaN status is checked after the existing command-buffer wait;
+the MoE router's separate readback remains unchanged. Below-budget decoding
+still uses the dense path unchanged.
+
+Focused Metal checks passed on 2026-09-26: QSA selector parity (ties, ragged
+tail, top-k above block count, infinities, and NaN refusal), indexed FP16
+parity (6 tests), indexed TurboQuant parity (12 tests), all 18 synthetic
+Qwen4 decode tests, and all 8 chunked-prefill tests. The NaN refusal test
+detected a temporary mutation that removed the `isnan` guard; after restoring
+it, the selector suite passed again. `cargo clippy -p turbospark-gpu -p turbospark-runtime --tests`,
+`cargo fmt --all --check`, and `git diff --check` passed.
+
+This verifies selection semantics and runtime wiring, not the performance
+claim. The 2026-09-18 real-hardware result remains the baseline: sparse was
+6.0-8.5 ms per decode token slower than force-dense near 2.5K context. No
+post-change real-checkpoint throughput, quality, or memory gate was run; the
+checkpoint was removed and current disk headroom is not enough to restore its
+68 GiB install. Measure those gates before claiming sparse decoding is faster
+or changing its release status.
