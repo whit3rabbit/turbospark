@@ -14,6 +14,19 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `crates/gpu`: added GPU top-k block selection kernel (`qsa_topk.metal`,
+  `qsa_topk.rs`) and state management (`qsa_indexer_state.rs`) for Qwen4-Exp
+  QSA attention, eliminating host-side commit-and-wait synchronization in
+  sequential decode and chunked prefill.
+- `crates/catalog`, `crates/cli`, `crates/ffi`, `crates/image`: added intake
+  and builder support for mflux-converted Z-Image repositories
+  (`deepsweet/Z-Image-Turbo-6B-MLX-Q4` and `deepsweet/Z-Image-6B-MLX-Q8`),
+  synthesizing missing family/quantization configs and supporting
+  `model.safetensors.index.json` component naming.
+- `swift/TurboSparkApp`: added bundled image style preset catalog
+  (`image-styles.json`), `AppImageStyle`, style picker menu
+  (`ImageStylePicker`), and favorites persistence store
+  (`ImageStyleFavoriteStore`) with multi-language localization.
 - `swift/TurboSparkApp`: in-process Apple MLX Swift integration for Z-Image
   Turbo generation. Vendored `Z-Image.swift` under
   `swift/TurboSparkApp/Vendor/ZImage` to provide standalone, hermetic builds
@@ -27,6 +40,17 @@ when this file gets updated relative to the version bump and the tag.
   routes, and pinned hardware evidence.
 
 ### Changed
+- `crates/runtime`: integrated QSA GPU block selection into Qwen4-Exp
+  attention, prefill, and sequential decode paths with per-layer buffers,
+  buffer barriers, sticky NaN detection, and count-from-buffer dispatches in
+  indexed FP16 and TurboQuant Metal kernels.
+- `swift/TurboSparkApp`: enhanced ZImage weights mapping and canonicalization
+  for mflux-converted models, including conditional NHWC transpose for VAE
+  convolutions, module key canonicalization, and packed affine tensor
+  restoration.
+- `swift/TurboSparkApp`: integrated image style selection into
+  `ImageComposerView` and `ImageGenerationSettings`, appending selected style
+  prompts non-destructively to user drafts.
 - `swift/TurboSparkApp`: migrated app image generation dispatch from the
   legacy native image session to `MLXImageGenerationSession` using the
   vendored ZImage MLX pipeline, with multi-stage progress reporting (prompt
@@ -39,6 +63,12 @@ when this file gets updated relative to the version bump and the tag.
   MLX pipeline benchmarks on Apple M4 Max (57.61 s median across 3 runs for
   1024x1024 9-step generation, achieving roughly 63x speedup over the
   3,608 s native packed experiment).
+- `docs/QWEN4_EXP.md`: documented QSA GPU selection kernel implementation and
+  parity gates.
+- `ROADMAP.md`: reconciled completed Priority 1 items and updated active
+  disk artifacts.
+- `AGENTS.md`: documented Agentic SDLC and Kiro-style Spec-Driven Development
+  workflow.
 
 ## [0.1.0] - 2026-09-20
 

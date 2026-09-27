@@ -60,3 +60,4 @@ ig2-work/
 .build/
 *.log
 .zcodeignore
+.kiro/
