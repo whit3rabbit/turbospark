@@ -2,6 +2,15 @@ import Foundation
 import TurboSpark
 
 extension AppModel {
+    func imageGenerateOptions(prompt: String, seed: UInt64) -> ImageGenerateOptions {
+        ImageGenerateOptions(
+            prompt: prompt,
+            seed: seed,
+            width: imageResolution.width,
+            height: imageResolution.height,
+            steps: imageSchedulerSteps)
+    }
+
     public var savedImageArtifacts: [AppArtifact] {
         chats
             .flatMap(\.artifacts)
@@ -19,7 +28,9 @@ extension AppModel {
     public var imageProgressFraction: Double? {
         guard let job = imageJob else { return nil }
         let singleProgress: Double
-        if let stage = job.stage {
+        if job.status == .completed && job.savedPath != nil {
+            singleProgress = 1.0
+        } else if let stage = job.stage {
             switch stage {
             case "text_encoder":
                 let frac = job.total > 0 ? Double(job.completed) / Double(job.total) : 0.0
@@ -27,6 +38,8 @@ extension AppModel {
             case "transformer":
                 let frac = job.total > 0 ? Double(job.completed) / Double(job.total) : 0.0
                 singleProgress = 0.05 + 0.90 * min(1.0, max(0.0, frac))
+            case "loading_model":
+                singleProgress = 0.0
             case "vae_decoder":
                 let frac = job.total > 0 ? Double(job.completed) / Double(job.total) : 0.0
                 singleProgress = 0.95 + 0.04 * min(1.0, max(0.0, frac))
@@ -82,16 +95,7 @@ extension AppModel {
             showToast("Seed must be an unsigned integer or blank for random.", style: .warning)
             return
         }
-        guard let size = imageSupportedSize else {
-            showToast("Select an image model with a supported size first.", style: .warning)
-            return
-        }
-        let options = ImageGenerateOptions(
-            prompt: prompt,
-            seed: seed,
-            width: size.width,
-            height: size.height,
-            steps: imageSchedulerSteps)
+        let options = imageGenerateOptions(prompt: prompt, seed: seed)
         let chatID = selectedChatID
         materializeDraftChatIfNeeded()
         if selectedChatIndex == nil {

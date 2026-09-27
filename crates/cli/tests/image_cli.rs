@@ -36,7 +36,7 @@ fn help_identifies_native_default_and_reference_escape_hatch() {
 #[test]
 fn invalid_request_is_rejected_before_model_io() {
     for (flag, value, expected) in [
-        ("--width", "512", "outside the IG2 envelope"),
+        ("--width", "500", "image dimensions"),
         ("--steps", "8", "unsupported image request envelope"),
     ] {
         let (code, _, stderr) = run(&[
@@ -59,6 +59,57 @@ fn invalid_request_is_rejected_before_model_io() {
             "{stderr}"
         );
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn alternate_dimensions_pass_native_preflight_before_model_io() {
+    let (code, _, stderr) = run(&[
+        "generate",
+        "--model",
+        "/does/not/exist",
+        "--prompt",
+        "a lighthouse",
+        "--output",
+        "/tmp/image-cli-alternate-size.png",
+        "--width",
+        "768",
+        "--height",
+        "1024",
+        "--backend",
+        "native",
+    ]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("failed to read image manifest"), "{stderr}");
+    assert!(!stderr.contains("image dimensions"), "{stderr}");
+}
+
+#[test]
+fn reference_backend_rejects_alternate_dimensions_before_model_io() {
+    let (code, _, stderr) = run(&[
+        "generate",
+        "--model",
+        "/does/not/exist",
+        "--prompt",
+        "a lighthouse",
+        "--output",
+        "/tmp/image-cli-reference-size.png",
+        "--width",
+        "768",
+        "--height",
+        "1024",
+        "--backend",
+        "reference",
+    ]);
+    assert_eq!(code, 1);
+    assert!(
+        stderr.contains("reference image backend only supports 1024x1024"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("failed to read image manifest"),
+        "{stderr}"
+    );
 }
 
 #[test]

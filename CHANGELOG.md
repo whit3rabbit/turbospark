@@ -13,6 +13,27 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- `crates/image`, `crates/ffi`, `crates/cli`: added support and preflight
+  validation for bounded image resolutions (sides from 512 to 1024 pixels in
+  multiples of 16, up to 1024x1024 total pixels) with dynamic latent shaping
+  and VAE decoding in `MetalImageBackend`, while keeping the CPU reference
+  backend pinned to 1024x1024 as a diagnostic-only path.
+- `crates/cli`: added multi-stage progress bar in `turbospark image generate`
+  displaying real-time progress across prompt encoding, denoising steps, VAE
+  decoding, and PNG writing.
+- `swift/TurboSparkApp`: added `ImageResolutionPreset` with square (512, 768,
+  1024), 4:3, and 16:9 portrait and landscape options, decoupled resolution
+  selection from the installed model, added an image size picker to
+  `ImageGenerationSettings`, and updated progress tracking and tests.
+
+### Changed
+- `swift/TurboSparkApp/Vendor/ZImage`: updated `ZImagePipeline` denoising loop
+  to fire progress notifications upon step completion.
+- `docs/CLI.md`, `docs/IMAGE_GENERATION.md`, `docs/ZIMAGE_TURBO.md`: documented
+  the bounded image resolution envelope and clarified that pinned quality and
+  hardware resource evidence remains specific to the 1024x1024 baseline.
+
 ## [0.2.0] - 2026-09-26
 
 ### Added

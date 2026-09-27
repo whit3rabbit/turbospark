@@ -25,6 +25,18 @@ pub const IMAGE_ENGINE_REVISION: &str = "ig2-runtime-v1";
 pub const IMAGE_QUANTIZATION: &str = "four-bit-linear-weights-group-64";
 pub const IMAGE_MLX_QUANTIZATION: &str = "mlx-affine-linear-weights-group-64";
 pub const IMAGE_UNQUANTIZED: &str = "unquantized";
+pub const IMAGE_MIN_DIMENSION: u32 = 512;
+pub const IMAGE_MAX_DIMENSION: u32 = IMAGE_WIDTH;
+pub const IMAGE_DIMENSION_ALIGNMENT: u32 = 16;
+pub const IMAGE_MAX_PIXELS: u64 = IMAGE_WIDTH as u64 * IMAGE_HEIGHT as u64;
+
+pub fn is_supported_image_dimensions(width: u32, height: u32) -> bool {
+    (IMAGE_MIN_DIMENSION..=IMAGE_MAX_DIMENSION).contains(&width)
+        && (IMAGE_MIN_DIMENSION..=IMAGE_MAX_DIMENSION).contains(&height)
+        && width % IMAGE_DIMENSION_ALIGNMENT == 0
+        && height % IMAGE_DIMENSION_ALIGNMENT == 0
+        && u64::from(width) * u64::from(height) <= IMAGE_MAX_PIXELS
+}
 
 /// Return the quantization label carried by an installed image manifest.
 ///
@@ -377,10 +389,15 @@ impl ImageRequest {
         if self.prompt.trim().is_empty() {
             return Err("image request prompt cannot be empty".to_string());
         }
-        if (self.width, self.height) != (IMAGE_WIDTH, IMAGE_HEIGHT) {
+        if !is_supported_image_dimensions(self.width, self.height) {
             return Err(format!(
-                "image dimensions {}x{} are outside the IG2 envelope of {}x{}",
-                self.width, self.height, IMAGE_WIDTH, IMAGE_HEIGHT
+                "image dimensions {}x{} must use sides from {} to {} pixels, multiples of {}, and at most {} total pixels",
+                self.width,
+                self.height,
+                IMAGE_MIN_DIMENSION,
+                IMAGE_MAX_DIMENSION,
+                IMAGE_DIMENSION_ALIGNMENT,
+                IMAGE_MAX_PIXELS
             ));
         }
         if self.batch != IMAGE_BATCH
@@ -667,6 +684,48 @@ mod tests {
         let mut mixed = request();
         mixed.quantization = "mlx-affine-linear-weights-group-64-bits-2-3-4-5-6-8".to_string();
         mixed.validate().expect("mixed MLX image request label");
+    }
+
+    #[test]
+    fn image_requests_accept_bounded_resolutions() {
+        for (width, height) in [
+            (512, 512),
+            (768, 768),
+            (768, 1024),
+            (1024, 768),
+            (576, 1024),
+            (1024, 576),
+            (1024, 1024),
+        ] {
+            let mut request = request();
+            request.width = width;
+            request.height = height;
+            request
+                .validate()
+                .unwrap_or_else(|error| panic!("{width}x{height}: {error}"));
+        }
+    }
+
+    #[test]
+    fn image_requests_reject_dimensions_outside_the_safe_geometry() {
+        for (width, height) in [
+            (496, 512),
+            (512, 500),
+            (520, 512),
+            (512, 520),
+            (1040, 512),
+            (512, 1040),
+            (0, 512),
+        ] {
+            let mut request = request();
+            request.width = width;
+            request.height = height;
+            let error = request.validate().expect_err("invalid image dimensions");
+            assert!(
+                error.contains("image dimensions"),
+                "{width}x{height}: {error}"
+            );
+        }
     }
 
     #[test]

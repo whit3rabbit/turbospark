@@ -7,6 +7,9 @@ standalone MLX pipeline measured a 57.61-second median across three runs on
 Apple M4 Max. The packaged app and UI gate for this new route remains
 unverified. IG5 remains open for measured optimization work on the native
 runtime.
+The CLI and app now expose bounded image dimensions from 512 through 1024 per
+side, aligned to 16 pixels and capped at the existing 1024-by-1024 pixel area.
+This does not extend the pinned quality or hardware evidence beyond 1024 square.
 This page is both the summary of what was learned from Z-Image-Turbo and the
 reusable process for bringing up another image-generation model in this
 repository.

@@ -99,6 +99,8 @@ public final class AppModel: ObservableObject {
     @Published public var imageSeedText: String = ""
     /// Multiple outputs run serially under one admission, keeping batch-one memory use.
     @Published public var imageCount: Int = 1
+    /// Output geometry is selected independently of the install's default dimensions.
+    @Published var imageResolution: ImageResolutionPreset = .square1024
     /// Image style chosen in the composer pickers; nil means "None".
     @Published public var imageStyleID: String?
     /// The style whose text is currently inserted in the draft. Diverges from

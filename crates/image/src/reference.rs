@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tokenizer::MfTokenizer;
 
 use crate::conditioning::{frame_prompt, load_tokenizer, tokenize_prompt};
-use crate::install::ImageManifest;
+use crate::install::{ImageManifest, IMAGE_HEIGHT, IMAGE_WIDTH};
 use crate::pipeline::ZImageTransformer;
 use crate::runtime::{CancellationToken, ImageBackend, ImageRequest, IMAGE_CANCELLED};
 use crate::scheduler::FlowMatchEulerScheduler;
@@ -107,6 +107,11 @@ impl ImageBackend for CpuReferenceBackend {
         cancellation: &CancellationToken,
         progress: &mut dyn FnMut(u32, u32),
     ) -> Result<Vec<f32>, String> {
+        if (request.width, request.height) != (IMAGE_WIDTH, IMAGE_HEIGHT) {
+            return Err(format!(
+                "CPU image reference backend only supports {IMAGE_WIDTH}x{IMAGE_HEIGHT}"
+            ));
+        }
         let transformer =
             ZImageTransformer::open_packed(&component_path(&self.root, "transformer"))?;
         let mut latent = seeded_noise(request.seed, 16 * 128 * 128);
@@ -186,4 +191,42 @@ fn uniform(state: &mut u64) -> f64 {
     *state ^= *state >> 9;
     *state ^= *state << 8;
     (*state as f64) / (u64::MAX as f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reference_backend_refuses_alternate_dimensions_before_loading_weights() {
+        let mut backend = CpuReferenceBackend {
+            root: PathBuf::from("/missing-image-install"),
+            tokenizer: None,
+        };
+        let request = ImageRequest {
+            model_id: "test".to_string(),
+            model_revision: "test".to_string(),
+            component_revisions: Default::default(),
+            prompt: "a lighthouse".to_string(),
+            width: 768,
+            height: 1024,
+            batch: 1,
+            scheduler_steps: 9,
+            guidance_scale: 0.0,
+            seed: 42,
+            quantization: "test".to_string(),
+            noise_provenance: "test".to_string(),
+        };
+        let error = backend
+            .denoise(
+                &[],
+                &request,
+                &FlowMatchEulerScheduler::default(),
+                &CancellationToken::new(),
+                &mut |_, _| {},
+            )
+            .expect_err("CPU reference geometry is fixed at 1024x1024");
+
+        assert!(error.contains("only supports 1024x1024"), "{error}");
+    }
 }

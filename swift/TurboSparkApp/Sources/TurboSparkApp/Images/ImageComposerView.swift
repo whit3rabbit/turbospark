@@ -153,6 +153,8 @@ struct ImageComposerView: View {
             return String(localized: "Waiting", bundle: .module)
         }
         switch stage {
+        case "loading_model":
+            return String(localized: "Loading model", bundle: .module)
         case "text_encoder":
             return "Encoding prompt"
         case "transformer":

@@ -44,7 +44,7 @@ turbospark <command> [flags...]
 | | `turbospark recommend` | Rank catalog models by fit for current hardware |
 | | `turbospark auth` | Inspect, set, or clear Hugging Face credentials |
 | | `turbospark path <alias>` | Print install directory |
-| **Image** | `turbospark image generate [options]` | Generate one 1024x1024 PNG, using native Metal on macOS by default |
+| **Image** | `turbospark image generate [options]` | Generate a bounded-size Z-Image-Turbo PNG, using native Metal on macOS by default |
 | | `turbospark image pack [options]` | Pack a local Diffusers image export into the separate image install format |
 | **Bench** | `turbospark bench [options]` | Run benchmark harness |
 
@@ -66,15 +66,17 @@ turbospark image pack \
   --model-revision f332072aa78be7aecdf3ee76d5c247082da564a6
 ```
 
-The image command supports the frozen 1024-by-1024, batch-one, nine-step
-Z-Image-Turbo envelope. `--seed` is optional and is randomized when omitted.
-`--width`, `--height`, and `--steps` are validated against the selected
-install before model I/O; there is no separate validation switch. Native Metal
-is the default on macOS. The CPU backend is available only as an explicit
-`--backend reference` diagnostic path. A completed output is never overwritten,
-and failed or cancelled output is not published. Image installs use their own
-manifest and image namespace; they are not text model rows and are not opened
-by `turbospark-check`. Existing legacy `.image.gturbo` installs remain readable.
+The image command defaults to 1024-by-1024, batch one, and nine scheduler
+steps. Native Metal accepts sides from 512 through 1024 pixels in multiples of
+16, with total area capped at 1024-by-1024. Set `--width` and `--height` to
+choose another size; `--seed` is optional and is randomized when omitted.
+Dimensions and steps are validated before model I/O. Native Metal is the
+default on macOS. The explicit `--backend reference` diagnostic path supports
+1024-by-1024 only. Quality and hardware qualification remains specific to the
+1024-by-1024 case. A completed output is never overwritten, and failed or
+cancelled output is not published. Image installs use their own manifest and
+image namespace; they are not text model rows and are not opened by
+`turbospark-check`. Existing legacy `.image.gturbo` installs remain readable.
 
 ### oMLX compatibility
 

@@ -17,13 +17,15 @@ use image::{
     ImageInstallSpec, ImageManifest, ImageProgress, ImageRequest, IMAGE_HEIGHT, IMAGE_QUANTIZATION,
     IMAGE_STEPS, IMAGE_WIDTH,
 };
+use indicatif::{ProgressBar, ProgressStyle};
 
 const USAGE: &str = "\
 usage: turbospark-image generate --model MODEL --prompt TEXT --output PNG [OPTIONS]
        turbospark-image pack --source ROOT --output INSTALL --model-id ID --model-revision REV
 
-Generates one 1024x1024 PNG using native Metal on macOS. The CPU reference
-backend is diagnostic-only and must be selected explicitly.
+Generates one PNG using native Metal on macOS. The default is 1024x1024; sizes
+from 512 to 1024 pixels per side are supported in multiples of 16, up to
+1024x1024 total pixels. The CPU reference backend is diagnostic-only.
 
 Required:
     --model PATH|ALIAS        complete image install, or its local-store alias
@@ -32,11 +34,12 @@ Required:
 
 Options:
     --seed U64                explicit seed, generated when omitted
-    --width 1024              only 1024 is supported in IG2
-    --height 1024             only 1024 is supported in IG2
+    --width PIXELS            output width (512..=1024, multiple of 16)
+    --height PIXELS           output height (512..=1024, multiple of 16)
     --steps 9                 only 9 scheduler steps are supported in IG2
     --backend native|reference
                               native Metal (default), or explicit CPU reference
+                              (reference backend supports 1024x1024 only)
     --help                    print this help
 
 Pack source components into a complete checked image install:
@@ -181,6 +184,12 @@ fn run_generate(args: &[String]) -> Result<(), String> {
         noise_provenance: noise_provenance.clone(),
     };
     preflight.validate()?;
+    if backend_name == "reference" && (width, height) != (IMAGE_WIDTH, IMAGE_HEIGHT) {
+        return Err(format!(
+            "reference image backend only supports {}x{}",
+            IMAGE_WIDTH, IMAGE_HEIGHT
+        ));
+    }
     if output.exists() {
         return Err(format!(
             "refusing to overwrite existing output {}",
@@ -259,22 +268,79 @@ fn run_generate(args: &[String]) -> Result<(), String> {
         }
     });
 
-    let result = generate(backend.as_mut(), &request, &cancellation, print_progress);
+    let progress_bar = ImageProgressBar::new();
+    let result = generate(backend.as_mut(), &request, &cancellation, |progress| {
+        progress_bar.update(progress)
+    });
     done.store(true, Ordering::Release);
     watcher
         .join()
         .map_err(|_| "cancellation watcher thread failed".to_string())?;
-    let result = result?;
-    write_new_file(&output, &result.png)?;
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            progress_bar.finish(false);
+            return Err(error);
+        }
+    };
+    if let Err(error) = write_new_file(&output, &result.png) {
+        progress_bar.finish(false);
+        return Err(error);
+    }
+    progress_bar.finish(true);
     println!("{}", output.display());
     Ok(())
 }
 
-fn print_progress(progress: ImageProgress) {
-    eprintln!(
-        "image {:?}: {}/{}",
-        progress.stage, progress.completed, progress.total
-    );
+struct ImageProgressBar {
+    bar: ProgressBar,
+}
+
+impl ImageProgressBar {
+    fn new() -> Self {
+        let bar = ProgressBar::new(1000);
+        let style = ProgressStyle::with_template(
+            "[{elapsed_precise}] [{bar:40.cyan/blue}] {percent:>3}% {msg}",
+        )
+        .unwrap_or_else(|_| ProgressStyle::default_bar());
+        bar.set_style(style);
+        Self { bar }
+    }
+
+    fn update(&self, progress: ImageProgress) {
+        self.bar.set_position(progress_position(progress));
+        self.bar.set_message(progress_message(progress));
+    }
+
+    fn finish(&self, succeeded: bool) {
+        if succeeded {
+            self.bar.finish_with_message("Image generated");
+        } else {
+            self.bar.abandon_with_message("Image generation stopped");
+        }
+    }
+}
+
+fn progress_position(progress: ImageProgress) -> u64 {
+    let (start, span) = match progress.stage {
+        image::ImageStage::TextEncoder => (0, 50),
+        image::ImageStage::Transformer => (50, 900),
+        image::ImageStage::VaeDecoder => (950, 40),
+        image::ImageStage::PngEncode => (990, 10),
+    };
+    let total = u64::from(progress.total.max(1));
+    let completed = u64::from(progress.completed.min(progress.total));
+    start + span * completed / total
+}
+
+fn progress_message(progress: ImageProgress) -> String {
+    let stage = match progress.stage {
+        image::ImageStage::TextEncoder => "Encoding prompt",
+        image::ImageStage::Transformer => "Denoising",
+        image::ImageStage::VaeDecoder => "Decoding image",
+        image::ImageStage::PngEncode => "Saving image",
+    };
+    format!("{stage} {}/{}", progress.completed, progress.total)
 }
 
 fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -365,6 +431,46 @@ extern "C" fn handle_sigint(_: libc::c_int) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn progress(stage: image::ImageStage, completed: u32, total: u32) -> ImageProgress {
+        ImageProgress {
+            stage,
+            completed,
+            total,
+        }
+    }
+
+    #[test]
+    fn progress_bar_advances_through_each_generation_stage() {
+        assert_eq!(
+            progress_position(progress(image::ImageStage::TextEncoder, 1, 1)),
+            50
+        );
+        assert_eq!(
+            progress_position(progress(image::ImageStage::Transformer, 1, 9)),
+            150
+        );
+        assert_eq!(
+            progress_position(progress(image::ImageStage::Transformer, 9, 9)),
+            950
+        );
+        assert_eq!(
+            progress_position(progress(image::ImageStage::VaeDecoder, 1, 1)),
+            990
+        );
+        assert_eq!(
+            progress_position(progress(image::ImageStage::PngEncode, 1, 1)),
+            1000
+        );
+    }
+
+    #[test]
+    fn progress_message_names_the_current_stage_and_count() {
+        assert_eq!(
+            progress_message(progress(image::ImageStage::Transformer, 3, 9)),
+            "Denoising 3/9"
+        );
+    }
 
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("turbospark-image-{name}-{}", std::process::id()))

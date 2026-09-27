@@ -42,7 +42,7 @@ final class ImageGenerationTests: XCTestCase {
         XCTAssertEqual(roundTrip.imageRequest?.options.seed, 42)
     }
 
-    func testImageSizeComesFromTheSelectedInstall() {
+    func testImageSizeCanBeSelectedIndependentlyOfTheInstall() {
         let model = AppModel()
         model.imageModels = [ImageInstalledModel(
             alias: "z-image-turbo",
@@ -55,13 +55,77 @@ final class ImageGenerationTests: XCTestCase {
             quantization: "mlx-affine-linear-weights-group-64-bits-4")]
         model.selectImageModel(model.imageModels[0])
 
-        XCTAssertEqual(model.imageSupportedSize?.width, 1024)
-        XCTAssertEqual(model.imageSupportedSize?.height, 1024)
+        XCTAssertEqual(model.imageResolution, .square1024)
         XCTAssertEqual(model.imageSizeLabel, "1024 x 1024")
+        model.imageResolution = .landscape16x9
+        XCTAssertEqual(model.imageResolution.width, 1024)
+        XCTAssertEqual(model.imageResolution.height, 576)
+        XCTAssertEqual(model.imageSizeLabel, "1024 x 576")
         XCTAssertEqual(model.imageSchedulerSteps, 9)
         XCTAssertEqual(
             model.selectedImageModel?.quantization,
             "mlx-affine-linear-weights-group-64-bits-4")
+    }
+
+    func testSelectedResolutionIsCopiedIntoTheGenerationRequest() {
+        let model = AppModel()
+        model.imageResolution = .square768
+
+        let options = model.imageGenerateOptions(prompt: "a red kite", seed: 42)
+
+        XCTAssertEqual(options.width, 768)
+        XCTAssertEqual(options.height, 768)
+    }
+
+    func testImageResolutionPresetsStayWithinTheSupportedNativeBounds() {
+        for resolution in ImageResolutionPreset.allCases {
+            XCTAssertGreaterThanOrEqual(resolution.width, 512)
+            XCTAssertGreaterThanOrEqual(resolution.height, 512)
+            XCTAssertLessThanOrEqual(resolution.width, 1024)
+            XCTAssertLessThanOrEqual(resolution.height, 1024)
+            XCTAssertEqual(resolution.width % 16, 0)
+            XCTAssertEqual(resolution.height % 16, 0)
+            XCTAssertLessThanOrEqual(
+                UInt64(resolution.width) * UInt64(resolution.height),
+                1024 * 1024)
+        }
+    }
+
+    func testDenoisingProgressMovesTheVisibleBarForward() throws {
+        let chatID = UUID()
+        let options = ImageGenerateOptions(prompt: "a red kite", seed: 42)
+        var job = AppImageJob(
+            chatID: chatID,
+            options: options,
+            status: .generating,
+            stage: "transformer",
+            completed: 1,
+            total: 9)
+        let model = AppModel()
+        model.imageJob = job
+        let firstStep = try XCTUnwrap(model.imageProgressFraction)
+
+        job.completed = 5
+        model.imageJob = job
+        let fifthStep = try XCTUnwrap(model.imageProgressFraction)
+
+        XCTAssertGreaterThan(fifthStep, firstStep)
+        XCTAssertEqual(firstStep, 0.15, accuracy: 0.0001)
+        XCTAssertEqual(fifthStep, 0.55, accuracy: 0.0001)
+    }
+
+    func testSavedImageCompletesTheVisibleProgressBar() throws {
+        let model = AppModel()
+        model.imageJob = AppImageJob(
+            chatID: UUID(),
+            options: ImageGenerateOptions(prompt: "a red kite", seed: 42),
+            status: .completed,
+            stage: "png_encode",
+            completed: 1,
+            total: 1,
+            savedPath: "/tmp/turbospark-image.png")
+
+        XCTAssertEqual(try XCTUnwrap(model.imageProgressFraction), 1.0)
     }
 
     func testImageInstallDecodesTheObservedMlxWidth() throws {
@@ -335,6 +399,6 @@ final class ImageGenerationTests: XCTestCase {
         model.reconcileImageSelection()
 
         XCTAssertEqual(model.selectedImageModel?.alias, "z-image-turbo-mlx-4bit")
-        XCTAssertEqual(model.imageSupportedSize?.width, 1024)
+        XCTAssertEqual(model.imageResolution, .square1024)
     }
 }

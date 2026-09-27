@@ -47,15 +47,16 @@ struct ImageGenerationSettings: View {
     private var size: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Image size", bundle: .module).themedFont(.tiny, weight: .medium)
-            HStack(spacing: 6) {
-                Image(systemName: "square")
-                Text("Default", bundle: .module)
-                Text(model.imageSupportedSize == nil ? "1024 x 1024" : model.imageSizeLabel)
-                    .monospacedDigit()
+            Picker(selection: $model.imageResolution) {
+                ForEach(ImageResolutionPreset.allCases) { resolution in
+                    Text(resolution.label).tag(resolution)
+                }
+            } label: {
+                Text("Image size", bundle: .module)
             }
-            .fixedSize()
-            Text("This model supports its default size only.", bundle: .module)
-                .themedFont(.tiny).foregroundStyle(.appSecondary)
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(minWidth: 130, alignment: .leading)
         }
     }
 

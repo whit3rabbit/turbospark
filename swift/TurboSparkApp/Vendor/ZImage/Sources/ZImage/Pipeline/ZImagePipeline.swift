@@ -817,7 +817,6 @@ public final class ZImagePipeline: @unchecked Sendable {
       }
       for stepIndex in 0..<request.steps {
         try Task.checkCancellation()
-        progressHandler?(GenerationProgress(stage: .denoising, stepIndex: stepIndex, totalSteps: request.steps))
         let timestep = timestepsArray[stepIndex]
         let normalizedTimestep = (1000.0 - timestep) / 1000.0
         let timestepArray = MLXArray([normalizedTimestep], [1])
@@ -859,6 +858,8 @@ public final class ZImagePipeline: @unchecked Sendable {
           latents,
           name: "latents after denoising step \(stepIndex + 1)"
         )
+        progressHandler?(GenerationProgress(
+          stage: .denoising, stepIndex: stepIndex + 1, totalSteps: request.steps))
       }
       transformer.clearCache()
     }

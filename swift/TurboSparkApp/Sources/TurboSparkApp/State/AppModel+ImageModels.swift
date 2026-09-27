@@ -257,22 +257,12 @@ extension AppModel {
         imageModels.first { $0.path == imageModelPath }
     }
 
-    /// Sizes are owned by the selected install. An arbitrary side-loaded path
-    /// cannot be generated until the app has a supported MLX model identity.
-    public var imageSupportedSize: (width: UInt32, height: UInt32)? {
-        if let selectedImageModel {
-            return (selectedImageModel.width, selectedImageModel.height)
-        }
-        return imageModelPath.isEmpty ? nil : (1024, 1024)
-    }
-
     public var imageSchedulerSteps: UInt32 {
         selectedImageModel?.schedulerSteps ?? 9
     }
 
     public var imageSizeLabel: String {
-        guard let size = imageSupportedSize else { return "Select an image model" }
-        return "\(size.width) x \(size.height)"
+        imageResolution.label
     }
 
     /// Drops the resident image session to reclaim physical memory.

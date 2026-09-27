@@ -1,6 +1,6 @@
 import Foundation
 
-/// The fixed IG4 image-generation envelope.
+/// One image-generation request. Width and height are pixel dimensions.
 public struct ImageGenerateOptions: Codable, Sendable, Equatable {
     public var prompt: String
     public var seed: UInt64

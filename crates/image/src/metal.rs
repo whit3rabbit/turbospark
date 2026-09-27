@@ -1,4 +1,4 @@
-//! Native Metal backend for the Z-Image-Turbo IG2 envelope.
+//! Native Metal backend for bounded-size Z-Image-Turbo generation.
 //!
 //! The backend owns one queue and maps only the component currently being
 //! executed. Packed tensor rows stay in their verified `tensors.bin` mapping;
@@ -40,6 +40,7 @@ const VAE_COMPONENT: &str = "components/vae_decoder";
 const IMAGE_CANCELLED: &str = "image generation cancelled";
 const ROPE_THETA: f32 = 1_000_000.0;
 const TRANSFORMER_EPS: f32 = 1e-5;
+const VAE_SPATIAL_DIVISOR: usize = 8;
 const FIRST_STEP_MAIN_TRACE_BLOCKS: [usize; 7] = [0, 15, 16, 20, 24, 28, 29];
 
 fn max_stream_block_span(store: &crate::packed::PackedTensorStore) -> Result<u64, String> {
@@ -1588,7 +1589,9 @@ impl MetalImageBackend {
         let component = self.component(TRANSFORMER_COMPONENT)?;
         let cap_len = conditioning.len() / Z_IMAGE_CAP_DIM;
         let cap_padded_len = round_up(cap_len, SEQ_MULTI_OF)?;
-        let latent_count = LATENT_CHANNELS * 128 * 128;
+        let latent_height = request.height as usize / VAE_SPATIAL_DIVISOR;
+        let latent_width = request.width as usize / VAE_SPATIAL_DIVISOR;
+        let latent_count = LATENT_CHANNELS * latent_height * latent_width;
         let mut latent = match options.initial_noise {
             Some(noise) => {
                 if noise.len() != latent_count {
@@ -1605,8 +1608,8 @@ impl MetalImageBackend {
             &latent,
             LATENT_CHANNELS,
             1,
-            128,
-            128,
+            latent_height,
+            latent_width,
             DEFAULT_PATCH_SIZE,
             DEFAULT_F_PATCH_SIZE,
         )?;
@@ -1799,8 +1802,8 @@ impl MetalImageBackend {
                     &latent,
                     LATENT_CHANNELS,
                     1,
-                    128,
-                    128,
+                    latent_height,
+                    latent_width,
                     DEFAULT_PATCH_SIZE,
                     DEFAULT_F_PATCH_SIZE,
                 )?;
@@ -1861,11 +1864,17 @@ impl MetalImageBackend {
         cancellation: &CancellationToken,
         progress: &mut dyn FnMut(u32, u32),
     ) -> Result<Vec<f32>, String> {
-        if (width, height) != (1024, 1024) {
-            return Err("native image VAE only supports 1024x1024".to_string());
+        if !crate::runtime::is_supported_image_dimensions(width, height) {
+            return Err(format!(
+                "native image VAE does not support dimensions {width}x{height}"
+            ));
         }
-        if latents.len() != LATENT_CHANNELS * 128 * 128 {
-            return Err("native image VAE expects a [16, 128, 128] latent".to_string());
+        let latent_height = height as usize / VAE_SPATIAL_DIVISOR;
+        let latent_width = width as usize / VAE_SPATIAL_DIVISOR;
+        if latents.len() != LATENT_CHANNELS * latent_height * latent_width {
+            return Err(format!(
+                "native image VAE expects a [16, {latent_height}, {latent_width}] latent"
+            ));
         }
         Self::cancelled(cancellation)?;
         let component = self.component(VAE_COMPONENT)?;
@@ -1882,8 +1891,8 @@ impl MetalImageBackend {
             Some(component.weight("decoder.conv_in.bias", &[512])?),
             &input,
             16,
-            128,
-            128,
+            latent_height,
+            latent_width,
             512,
             3,
             1,
@@ -1896,22 +1905,22 @@ impl MetalImageBackend {
             "decoder.mid_block.resnets.0",
             512,
             512,
-            128,
-            128,
+            latent_height,
+            latent_width,
         )?;
-        current = self.vae_attention(&component, current, 128, 128)?;
+        current = self.vae_attention(&component, current, latent_height, latent_width)?;
         current = self.vae_resnet(
             &component,
             current,
             "decoder.mid_block.resnets.1",
             512,
             512,
-            128,
-            128,
+            latent_height,
+            latent_width,
         )?;
 
-        let mut cur_height = 128;
-        let mut cur_width = 128;
+        let mut cur_height = latent_height;
+        let mut cur_width = latent_width;
         for (block, &(in_channels, out_channels, has_upsampler)) in [
             (512, 512, true),
             (512, 512, true),

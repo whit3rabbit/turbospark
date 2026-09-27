@@ -280,8 +280,9 @@ void ts_image_session_close(TsImageSession *s);
 void ts_image_session_cancel(const TsImageSession *s);
 
 /* Generates one PNG. options_json is `{ "prompt", "seed", "width",
- * "height", "steps" }`; width, height and steps default to the supported
- * IG2 envelope. On success metadata_json is an owned JSON string released by
+ * "height", "steps" }`; width and height default to 1024 and accept sides
+ * from 512 through 1024 in multiples of 16, with at most 1024x1024 pixels.
+ * Steps default to 9. On success metadata_json is an owned JSON string released by
  * ts_string_free. A completed result has status "completed" and a PNG; a
  * canceled result has status "cancelled" and a zero-length PNG. */
 int32_t ts_image_generate(const TsImageSession *s, const char *options_json,

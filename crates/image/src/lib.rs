@@ -57,10 +57,12 @@ pub use reference::CpuReferenceBackend;
 pub use rope::{RopeEmbedder, DEFAULT_AXES_DIMS, DEFAULT_AXES_LENS, DEFAULT_ROPE_THETA};
 pub use runtime::{
     admit_image_budget, generate, generate_with_memory_budget, image_quantization_label,
-    CancellationToken, ImageBackend, ImageBudgetError, ImageMemoryBudget, ImageMemoryPlan,
-    ImageMetadata, ImageProgress, ImageRequest, ImageResult, ImageStage, ImageWorkLease,
-    ImageWorkTracker, SchedulerMetadata, SequentialImageSlots, IMAGE_CANCELLED,
-    IMAGE_ENGINE_REVISION, IMAGE_MLX_QUANTIZATION, IMAGE_QUANTIZATION, IMAGE_UNQUANTIZED,
+    is_supported_image_dimensions, CancellationToken, ImageBackend, ImageBudgetError,
+    ImageMemoryBudget, ImageMemoryPlan, ImageMetadata, ImageProgress, ImageRequest, ImageResult,
+    ImageStage, ImageWorkLease, ImageWorkTracker, SchedulerMetadata, SequentialImageSlots,
+    IMAGE_CANCELLED, IMAGE_DIMENSION_ALIGNMENT, IMAGE_ENGINE_REVISION, IMAGE_MAX_DIMENSION,
+    IMAGE_MAX_PIXELS, IMAGE_MIN_DIMENSION, IMAGE_MLX_QUANTIZATION, IMAGE_QUANTIZATION,
+    IMAGE_UNQUANTIZED,
 };
 pub use scheduler::FlowMatchEulerScheduler;
 pub use text_encoder::{encode_tokens, ShardedSafetensors};

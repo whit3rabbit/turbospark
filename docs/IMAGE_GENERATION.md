@@ -8,6 +8,16 @@ the packaged app and UI gate for the new route remains unverified. See
 [ZIMAGE_TURBO.md](ZIMAGE_TURBO.md) for the speed comparison and current
 recommendation. IG5 remains open for measured optimization work on the native
 runtime.
+
+Current size-selection status: the CLI and Swift app accept image sides from
+512 through 1024 pixels, in multiples of 16, with a maximum total area of
+1024-by-1024. The Swift menu offers square, 4:3, and 16:9 presets; the CLI
+accepts any dimensions in that bounded envelope. The official
+[Z-Image-Turbo Diffusers example](https://github.com/Tongyi-MAI/Z-Image#quick-start)
+passes explicit `height` and `width` values but demonstrates 1024-by-1024.
+Alternate dimensions now have dynamic shapes in the implementation, but have
+not passed real-model image-quality or hardware resource gates. The frozen
+parity, quality, and resource evidence below remains specific to 1024-by-1024.
 [Phase 0 evidence](IMAGE_GENERATION_PHASE0.md) records pinned inputs,
 real-image captures, and component comparisons.
 The reusable bring-up process and the lessons from this model are summarized
@@ -844,12 +854,14 @@ the composer up. Model and quantization are separate controls, with Z-Image
 Turbo exports grouped together. Organize adds prompt search and bulk selection.
 Thumbnails open a previous/next carousel; missing files retain a removable row.
 
-New requests default to one image at the selected install's default size.
-Z-Image Turbo currently permits only 1024-by-1024, so the size control explains
-that limit instead of offering unsupported dimensions. Selecting two to four
-images runs single-image requests serially under one coordinator admission,
-with successive seeds and unchanged native dimensions. Each result saves before
-the next request starts; cancellation or save failure stops the remainder.
+New requests default to one 1024-by-1024 image. Settings offers square sizes
+of 512, 768, and 1024 pixels, plus 4:3 and 16:9 landscape and portrait sizes.
+The CLI accepts any width and height in the same bounded envelope. The CPU
+reference backend remains 1024-by-1024 only. Alternate sizes are not covered by
+the pinned real-model quality or hardware resource gates. Selecting two to
+four images runs single-image requests serially under one coordinator
+admission, with successive seeds and the chosen dimensions. Each result saves
+before the next request starts; cancellation or save failure stops the remainder.
 An unsaved result stays visible with Save and Remove actions and blocks another
 request until resolved. Move to Trash only touches this profile's generated
 image directory and removes the matching artifact and transcript image paths
