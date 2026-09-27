@@ -69,9 +69,11 @@ public struct ZImageWeightsMapper {
     if hasQuantization() {
       var tensors = try loadQuantizedComponent("vae")
       if let targetDtype = dtype {
-        // Honor requested dtype even for quantized snapshots
+        // Honor requested dtype even for quantized snapshots, but keep the
+        // packed affine planes as U32 so the dequantization pass in
+        // ZImageWeightsMapping can restore them faithfully.
         for (k, v) in tensors {
-          if v.dtype != targetDtype {
+          if v.dtype != targetDtype, v.dtype != .uint32 {
             tensors[k] = v.asType(targetDtype)
           }
         }

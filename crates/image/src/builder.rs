@@ -17,6 +17,21 @@ const COMPONENTS_DIR: &str = "components";
 const TEXT_ENCODER_INDEX: &str = "model.safetensors.index.json";
 const TRANSFORMER_INDEX: &str = "diffusion_pytorch_model.safetensors.index.json";
 const VAE_INDEX: &str = "diffusion_pytorch_model.safetensors.index.json";
+/// mflux-converted repositories (for example the deepsweet Z-Image rows) name
+/// their transformer and VAE indexes like the text encoder does.
+const MFLUX_INDEX: &str = "model.safetensors.index.json";
+
+/// Resolve the safetensors index name for one component, accepting both the
+/// Diffusers shard spelling and the mflux spelling.
+fn resolve_component_index(component_dir: &Path, preferred: &str) -> String {
+    if component_dir.join(preferred).is_file() {
+        return preferred.to_string();
+    }
+    if component_dir.join(MFLUX_INDEX).is_file() {
+        return MFLUX_INDEX.to_string();
+    }
+    preferred.to_string()
+}
 
 /// Source tree expected by [`build_image_install`].
 ///
@@ -115,7 +130,7 @@ fn build_staged(
     )?;
 
     let mut component_reports = BTreeMap::new();
-    for (name, source_dir, index_name) in [
+    for (name, source_dir, preferred_index) in [
         ("text_encoder", "text_encoder", TEXT_ENCODER_INDEX),
         ("transformer", "transformer", TRANSFORMER_INDEX),
         (
@@ -129,11 +144,10 @@ fn build_staged(
         ),
     ] {
         progress(&format!("packing {name}"));
-        let report = crate::packed::pack_component(
-            &spec.source_root.join(source_dir),
-            index_name,
-            &components.join(name),
-        )?;
+        let component_path = spec.source_root.join(source_dir);
+        let index_name = resolve_component_index(&component_path, preferred_index);
+        let report =
+            crate::packed::pack_component(&component_path, &index_name, &components.join(name))?;
         component_reports.insert(name.to_string(), report);
     }
 

@@ -36,12 +36,12 @@ pub(super) fn materialize(
             .checked_add(client.download_to(&repo.file_url(&remote), &local)?)
             .ok_or_else(|| "image source download byte count overflowed u64".to_string())?;
     }
+    catalog::normalize_mflux_source(repo, destination)?;
     Ok(bytes)
 }
 
 fn select_files(files: &[String]) -> Result<Vec<String>, String> {
     let mut selected = Vec::new();
-    let mut has_scheduler = false;
     let mut components = [false; 3];
     for file in files {
         let path = Path::new(file);
@@ -68,9 +68,6 @@ fn select_files(files: &[String]) -> Result<Vec<String>, String> {
         };
         let is_weight = component.is_some() && name.ends_with(".safetensors");
         if is_metadata || is_tokenizer || is_weight {
-            if name == "scheduler/scheduler_config.json" || name == "scheduler/config.json" {
-                has_scheduler = true;
-            }
             if is_weight {
                 let index = component.expect("weight paths have a component");
                 components[index] = true;
@@ -78,9 +75,9 @@ fn select_files(files: &[String]) -> Result<Vec<String>, String> {
             selected.push(file.clone());
         }
     }
-    if !has_scheduler {
-        return Err("image repository is missing scheduler/scheduler_config.json".to_string());
-    }
+    // A missing scheduler config is tolerated for mflux-converted
+    // repositories; `catalog::normalize_mflux_source` synthesizes the family
+    // config or fails after download. Components still must all be present.
     for (name, present) in [
         ("text_encoder", components[0]),
         ("transformer", components[1]),
@@ -189,5 +186,24 @@ mod tests {
         ];
         let error = select_files(&unsafe_file).expect_err("parent path must be refused");
         assert!(error.contains("unsafe"), "{error}");
+    }
+
+    #[test]
+    fn selects_the_mflux_layout_without_a_scheduler_config() {
+        let files = vec![
+            "README.md".to_string(),
+            "tokenizer/chat_template.jinja".to_string(),
+            "tokenizer/tokenizer.json".to_string(),
+            "tokenizer/tokenizer_config.json".to_string(),
+            "text_encoder/0.safetensors".to_string(),
+            "text_encoder/model.safetensors.index.json".to_string(),
+            "transformer/0.safetensors".to_string(),
+            "transformer/model.safetensors.index.json".to_string(),
+            "vae/0.safetensors".to_string(),
+            "vae/model.safetensors.index.json".to_string(),
+        ];
+        let selected = select_files(&files).expect("mflux source");
+        assert_eq!(selected.len(), 9);
+        assert!(selected.contains(&"tokenizer/chat_template.jinja".to_string()));
     }
 }

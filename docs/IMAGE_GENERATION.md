@@ -121,6 +121,35 @@ format.
 | 8-bit | `z-image-turbo-mlx-8bit` | 11.37 GB | 8-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-8bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-8bit) |
 | 4-bit (IG2 baseline) | `z-image-turbo-mlx-4bit` | 6.48 GB | 4-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit) |
 | 2-bit | `z-image-turbo-mlx-2bit` | 4.04 GB | 2-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-2bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-2bit) |
+| Turbo 4-bit (mflux Q4) | `z-image-turbo-mlx-q4` | 5.90 GB | 4-bit, group size 64 | [`deepsweet/Z-Image-Turbo-6B-MLX-Q4`](https://huggingface.co/deepsweet/Z-Image-Turbo-6B-MLX-Q4) |
+| Base 8-bit (mflux Q8) | `z-image-mlx-q8` | 10.99 GB | 8-bit, group size 64 | [`deepsweet/Z-Image-6B-MLX-Q8`](https://huggingface.co/deepsweet/Z-Image-6B-MLX-Q8) |
+
+### mflux-converted sources (deepsweet rows)
+
+The two `deepsweet` rows are mflux v0.17.5 conversions and use a different
+source layout: per-component `model.safetensors.index.json` files with
+numbered `0.safetensors` shards, no scheduler or component config JSONs, and
+no `quantize_config.json`. `catalog::normalize_mflux_source` synthesizes the
+missing family configs (scheduler shift 3.0 for Turbo, 6.0 for the base
+model), a `quantize_config.json`, and a `quantization.json` manifest from the
+`quantization_level` in the transformer index metadata. The builder accepts
+the mflux index spelling for the transformer and VAE components.
+
+The conversions also differ from the Diffusers-layout rows at the tensor-name
+level, and the vendored Swift MLX pipeline canonicalizes them at load:
+text-encoder keys arrive without the `model.` prefix, the timestep MLP ships
+as quantized `t_embedder.linear1`/`linear2` (canonical `t_embedder.mlp.0`/
+`mlp.2`), the final-layer adaLN Sequential is indexed at 0 (canonical 1),
+`cap_embedder.1` ships quantized, and the VAE stores convs already in MLX
+NHWC layout with quantized mid-block attention linears and an inner `conv`/
+`norm` segment on the boundary modules. The base-model row (`z-image-mlx-q8`)
+is the non-distilled Z-Image: its published quality regime is 50 steps with
+guidance 4 (classifier-free guidance), unlike the nine-step zero-guidance
+Turbo envelope that the packed install's `supported` block records.
+
+The `q4` and `q8` installer gates both passed on 2026-09-26 with their
+expected observed-width labels, and both rows generate correct images through
+the vendored Swift MLX pipeline.
 
 The pinned header-only intake gate covers these four revisions and checks the
 published transformer layout before any payload download. It confirms U32

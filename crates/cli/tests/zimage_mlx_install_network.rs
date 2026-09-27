@@ -27,7 +27,7 @@ struct Variant {
     quantization: &'static str,
 }
 
-const VARIANTS: [Variant; 4] = [
+const VARIANTS: [Variant; 6] = [
     Variant {
         name: "2bit",
         alias: "z-image-turbo-mlx-2bit",
@@ -55,6 +55,20 @@ const VARIANTS: [Variant; 4] = [
         repo: "andrevp/Z-Image-Turbo-MLX",
         revision: "e186d7d65d66883270671fcee05324178928ea03",
         quantization: "unquantized",
+    },
+    Variant {
+        name: "q4",
+        alias: "z-image-turbo-mlx-q4",
+        repo: "deepsweet/Z-Image-Turbo-6B-MLX-Q4",
+        revision: "f4ddfcec21b9aab1b0e72c3da877d392234f3fbb",
+        quantization: "mlx-affine-linear-weights-group-64-bits-4",
+    },
+    Variant {
+        name: "q8",
+        alias: "z-image-mlx-q8",
+        repo: "deepsweet/Z-Image-6B-MLX-Q8",
+        revision: "730ad68a2f35d8b6f6263aaa1ba7b605d6bb8d6a",
+        quantization: "mlx-affine-linear-weights-group-64-bits-8",
     },
 ];
 
@@ -111,7 +125,7 @@ fn peak_rss_bytes(stderr: &[u8]) -> u64 {
 fn installs_one_selected_published_zimage_mlx_variant() {
     let Some(variant_name) = std::env::var_os("TURBOSPARK_ZIMAGE_MLX_VARIANT") else {
         eprintln!(
-            "set TURBOSPARK_ZIMAGE_MLX_VARIANT to 2bit, 4bit, 8bit, or fp16; skipping full install"
+            "set TURBOSPARK_ZIMAGE_MLX_VARIANT to 2bit, 4bit, 8bit, fp16, q4, or q8; skipping full install"
         );
         return;
     };

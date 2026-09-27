@@ -118,5 +118,43 @@
       "vae/config.json",
       "vae/diffusion_pytorch_model.safetensors"
     ]
+  },
+  {
+    "alias": "z-image-turbo-mlx-q4",
+    "model_id": "deepsweet/Z-Image-Turbo-6B-MLX-Q4",
+    "revision": "f4ddfcec21b9aab1b0e72c3da877d392234f3fbb",
+    "required_files": [
+      "tokenizer/chat_template.jinja",
+      "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json",
+      "text_encoder/0.safetensors",
+      "text_encoder/1.safetensors",
+      "text_encoder/model.safetensors.index.json",
+      "transformer/0.safetensors",
+      "transformer/1.safetensors",
+      "transformer/model.safetensors.index.json",
+      "vae/0.safetensors",
+      "vae/model.safetensors.index.json"
+    ]
+  },
+  {
+    "alias": "z-image-mlx-q8",
+    "model_id": "deepsweet/Z-Image-6B-MLX-Q8",
+    "revision": "730ad68a2f35d8b6f6263aaa1ba7b605d6bb8d6a",
+    "required_files": [
+      "tokenizer/chat_template.jinja",
+      "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json",
+      "text_encoder/0.safetensors",
+      "text_encoder/1.safetensors",
+      "text_encoder/model.safetensors.index.json",
+      "transformer/0.safetensors",
+      "transformer/1.safetensors",
+      "transformer/2.safetensors",
+      "transformer/3.safetensors",
+      "transformer/model.safetensors.index.json",
+      "vae/0.safetensors",
+      "vae/model.safetensors.index.json"
+    ]
   }
 ]

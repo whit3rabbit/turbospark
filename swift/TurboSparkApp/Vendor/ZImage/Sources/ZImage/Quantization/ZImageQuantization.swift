@@ -429,6 +429,27 @@ public struct ZImageQuantizer {
           block, prefix: "context_refiner.\(i)", availableKeys: availableKeys,
           defaultSpec: defaultSpec, manifest: manifest, tensorNameTransform: tensorNameTransform)
       }
+
+      // Some mflux conversions quantize the timestep MLP. The remaining
+      // x-embedder, cap-embedder, and final-layer linears stay dense and are
+      // restored by the auxiliary dequantization pass in ZImageWeightsMapping.
+      // The timestep embedder is quantized directly because the module tree
+      // contains tuple and dictionary containers that the generic quantize
+      // reflection cannot enumerate.
+      let mode: QuantizationMode = defaultSpec.2 == "mxfp4" ? .mxfp4 : .affine
+      var moduleUpdates: [String: Module] = [:]
+      let linears = transformer.tEmbedder.mlp
+      if availableKeys.contains("t_embedder.mlp.0.scales"), !(linears.0 is QuantizedLinear) {
+        moduleUpdates["t_embedder.mlp.0"] = QuantizedLinear(
+          linears.0, groupSize: defaultSpec.0, bits: defaultSpec.1, mode: mode)
+      }
+      if availableKeys.contains("t_embedder.mlp.2.scales"), !(linears.2 is QuantizedLinear) {
+        moduleUpdates["t_embedder.mlp.2"] = QuantizedLinear(
+          linears.2, groupSize: defaultSpec.0, bits: defaultSpec.1, mode: mode)
+      }
+      if !moduleUpdates.isEmpty {
+        transformer.update(modules: ModuleChildren.unflattened(moduleUpdates))
+      }
       return
     }
 

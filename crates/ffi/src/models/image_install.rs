@@ -97,14 +97,16 @@ pub(crate) fn install(
     // The Swift MLX runtime consumes the original safetensors tree. Keep it
     // beside the packed install so MLX-backed models do not download a second
     // copy into the Hugging Face cache. The packed install remains available
-    // to the native runtime as a fallback.
-    let mlx_source_path = if entry.model_id.starts_with("andrevp/") {
-        let _ = std::fs::remove_dir_all(source.join(".download-cache"));
-        source.canonicalize().ok()
-    } else {
-        let _ = std::fs::remove_dir_all(&source);
-        None
-    };
+    // to the native runtime as a fallback. deepsweet rows are mflux
+    // conversions whose trees the catalog normalizes for the same purpose.
+    let mlx_source_path =
+        if entry.model_id.starts_with("andrevp/") || entry.model_id.starts_with("deepsweet/") {
+            let _ = std::fs::remove_dir_all(source.join(".download-cache"));
+            source.canonicalize().ok()
+        } else {
+            let _ = std::fs::remove_dir_all(&source);
+            None
+        };
     let manifest = image::ImageManifest::load(&report.output_root)?;
     manifest.validate()?;
     let path = report
@@ -131,7 +133,7 @@ fn quantization_label(alias: &str) -> String {
     }
     alias
         .rsplit_once('-')
-        .and_then(|(_, bits)| bits.strip_suffix("bit"))
+        .and_then(|(_, bits)| bits.strip_suffix("bit").or_else(|| bits.strip_prefix('q')))
         .and_then(|bits| bits.parse::<u8>().ok())
         .map(|bits| format!("mlx-affine-linear-weights-group-64-bits-{bits}"))
         .unwrap_or_else(|| "unquantized".to_string())
@@ -148,5 +150,13 @@ mod tests {
             "mlx-affine-linear-weights-group-64-bits-2"
         );
         assert_eq!(quantization_label("z-image-turbo-mlx-fp16"), "unquantized");
+        assert_eq!(
+            quantization_label("z-image-turbo-mlx-q4"),
+            "mlx-affine-linear-weights-group-64-bits-4"
+        );
+        assert_eq!(
+            quantization_label("z-image-mlx-q8"),
+            "mlx-affine-linear-weights-group-64-bits-8"
+        );
     }
 }

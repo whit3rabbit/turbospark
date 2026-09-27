@@ -25,6 +25,9 @@ public final class QwenTokenizer {
   private let prefixTokens: [Int]
   private let suffixTokens: [Int]
   private let tokenizer: Tokenizer
+  /// Chat template shipped as a sibling chat_template.jinja file (mflux
+  /// conversions) instead of a tokenizer_config.json key.
+  private let chatTemplateOverride: String?
 
   public let padTokenId: Int
   public let maxLength: Int
@@ -45,6 +48,7 @@ public final class QwenTokenizer {
     imageTokenId: Int? = nil,
     visionStartTokenId: Int? = nil,
     visionEndTokenId: Int? = nil,
+    chatTemplateOverride: String? = nil,
     encode: @escaping (String) -> [Int]
   ) {
     self.padTokenId = padTokenId
@@ -52,6 +56,7 @@ public final class QwenTokenizer {
     self.prefixTokens = prefixTokens
     self.suffixTokens = suffixTokens
     self.tokenizer = tokenizer
+    self.chatTemplateOverride = chatTemplateOverride
     self.imageTokenId = imageTokenId
     self.visionStartTokenId = visionStartTokenId
     self.visionEndTokenId = visionEndTokenId
@@ -87,6 +92,8 @@ public final class QwenTokenizer {
         }
       }
     }
+
+    let chatTemplateOverride = Self.loadChatTemplateOverride(from: tokenizerDirectory)
 
     let tokenizer: Tokenizer
     if FileManager.default.fileExists(atPath: tokenizerDataURL.path) {
@@ -127,10 +134,20 @@ public final class QwenTokenizer {
       tokenizer: tokenizer,
       imageTokenId: addedTokens["<|image_pad|>"],
       visionStartTokenId: addedTokens["<|vision_start|>"],
-      visionEndTokenId: addedTokens["<|vision_end|>"]
+      visionEndTokenId: addedTokens["<|vision_end|>"],
+      chatTemplateOverride: chatTemplateOverride
     ) { text in
       tokenizer.encode(text: text)
     }
+  }
+
+  private static func loadChatTemplateOverride(from directory: URL) -> String? {
+    let jinjaURL = directory.appending(path: "chat_template.jinja")
+    guard FileManager.default.fileExists(atPath: jinjaURL.path),
+      let template = try? String(contentsOf: jinjaURL, encoding: .utf8),
+      !template.isEmpty
+    else { return nil }
+    return template
   }
 
   private static func decodeConfig(fileURL: URL) throws -> Config {
@@ -268,7 +285,12 @@ public final class QwenTokenizer {
       let messages: [Message] = [
         ["role": "user", "content": prompt]
       ]
-      let tokens = try tokenizer.applyChatTemplate(messages: messages)
+      let tokens =
+        if let chatTemplateOverride {
+          try tokenizer.applyChatTemplate(messages: messages, chatTemplate: chatTemplateOverride)
+        } else {
+          try tokenizer.applyChatTemplate(messages: messages)
+        }
       let trimmed = Self.trim(tokens, maxLength: targetLength, prefixCount: 0, suffixCount: 0)
       let (ids, mask) = Self.prepareSequence(
         tokens: trimmed,
