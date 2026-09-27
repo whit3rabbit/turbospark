@@ -47,11 +47,35 @@ swift run -c release --package-path swift/TurboSparkApp ZImageMLXBenchmark \
   "$TMPDIR/zimage-mlx.png"
 ```
 
-The executable prints elapsed time for each progress stage and a final
-`RESULT elapsed_s=...` line. For a report, run three fresh processes and
-record each result, median, and range. Use the same model revision and do not
-include the first download or Swift package build when comparing a run. This
-is a standalone pipeline timing, not a packaged app, quality, or memory gate.
+Pass `--steps N` and `--guidance F` to run a checkpoint outside the nine-step
+zero-guidance envelope, for example the base Z-Image rows, whose published
+regime is 50 steps with guidance 4. Comparisons must keep steps and guidance
+fixed; the base-model CFG workload runs two transformer forwards per step and
+is not comparable to any Turbo row.
+
+The executable prints elapsed time for each progress stage, a final
+`RESULT elapsed_s=... steps=... guidance=...` line, and a `BREAKDOWN` line
+with per-stage wall-clock seconds and the peak `phys_footprint` watermark:
+
+- `denoise_s` covers the scheduler loop. MLX materializes quantized weights
+  lazily on first use, so weight I/O and dequantization land here (in the
+  first step), not in a load bucket.
+- `text_encode_s` covers tokenizer plus text-encoder weight loading and the
+  prompt encode.
+- `vae_decode_s` covers the latent-to-pixel decode.
+- `png_encode_s` covers PNG encoding and the file write.
+- `load_weights_s` covers config and weight reads that happen before the
+  first progress boundary; with MLX lazy loading it is usually near zero.
+- `peak_phys_gb` is the sampled macOS `phys_footprint` high-water mark for
+  the process, including MLX wired buffers. It is the memory requirement
+  figure the app's download tiers are fit against.
+
+For a report, run three fresh processes and record each result, median, and
+range. Use the same model revision and do not include the first download or
+Swift package build when comparing a run. Machine load swings wall times by
+tens of percent while outputs stay byte-identical, so compare only blocks run
+back-to-back on a quiet machine. This is a standalone pipeline timing, not a
+packaged app, quality, or memory gate.
 The current measurements and their comparison limits are recorded in
 [`ZIMAGE_TURBO.md`](ZIMAGE_TURBO.md#recommended-model-and-benchmark-record).
 

@@ -53,6 +53,10 @@ public enum ZImageModelRegistry {
     if normalized == ZImageKnownModel.zImage.id { return .zImage }
     if normalized == ZImageKnownModel.zImageTurbo8bit.id { return .zImageTurbo8bit }
     if normalized == "mzbac/Z-Image-Turbo-8bit" { return .zImageTurbo8bit }  // common alternative capitalization
+    // Curated mflux conversions. The Q4 row is the Turbo distillation; the
+    // Q8 row is the base model and keeps the base preset (50 steps, CFG).
+    if normalized == "deepsweet/Z-Image-Turbo-6B-MLX-Q4" { return .zImageTurbo }
+    if normalized == "deepsweet/Z-Image-6B-MLX-Q8" { return .zImage }
     return nil
   }
 

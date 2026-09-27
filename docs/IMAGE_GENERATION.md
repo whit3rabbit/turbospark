@@ -115,14 +115,27 @@ quality baseline, but is no longer the default recommendation on 32 GB or more.
 All four upstream variants use the same source adapter and image install
 format.
 
-| Variant | Install alias | Size | Quantization | Link |
-| --- | --- | ---: | --- | --- |
-| Full precision (fp16) | `z-image-turbo-mlx-fp16` | 20.54 GB | None | [`andrevp/Z-Image-Turbo-MLX`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX) |
-| 8-bit | `z-image-turbo-mlx-8bit` | 11.37 GB | 8-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-8bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-8bit) |
-| 4-bit (IG2 baseline) | `z-image-turbo-mlx-4bit` | 6.48 GB | 4-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit) |
-| 2-bit | `z-image-turbo-mlx-2bit` | 4.04 GB | 2-bit, group size 64 | [`andrevp/Z-Image-Turbo-MLX-2bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-2bit) |
-| Turbo 4-bit (mflux Q4) | `z-image-turbo-mlx-q4` | 5.90 GB | 4-bit, group size 64 | [`deepsweet/Z-Image-Turbo-6B-MLX-Q4`](https://huggingface.co/deepsweet/Z-Image-Turbo-6B-MLX-Q4) |
-| Base 8-bit (mflux Q8) | `z-image-mlx-q8` | 10.99 GB | 8-bit, group size 64 | [`deepsweet/Z-Image-6B-MLX-Q8`](https://huggingface.co/deepsweet/Z-Image-6B-MLX-Q8) |
+| Variant | Install alias | Size | Quantization | Peak memory | Link |
+| --- | --- | ---: | --- | ---: | --- |
+| Full precision (fp16) | `z-image-turbo-mlx-fp16` | 20.54 GB | None | not measured | [`andrevp/Z-Image-Turbo-MLX`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX) |
+| 8-bit | `z-image-turbo-mlx-8bit` | 11.37 GB | 8-bit, group size 64 | 12.8 GiB | [`andrevp/Z-Image-Turbo-MLX-8bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-8bit) |
+| 4-bit (IG2 baseline) | `z-image-turbo-mlx-4bit` | 6.48 GB | 4-bit, group size 64 | ~8.5 GiB (est.) | [`andrevp/Z-Image-Turbo-MLX-4bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-4bit) |
+| 2-bit | `z-image-turbo-mlx-2bit` | 4.04 GB | 2-bit, group size 64 | ~5.5 GiB (est.) | [`andrevp/Z-Image-Turbo-MLX-2bit`](https://huggingface.co/andrevp/Z-Image-Turbo-MLX-2bit) |
+| Turbo 4-bit (mflux Q4) | `z-image-turbo-mlx-q4` | 5.90 GB | 4-bit, group size 64 | 8.5 GiB | [`deepsweet/Z-Image-Turbo-6B-MLX-Q4`](https://huggingface.co/deepsweet/Z-Image-Turbo-6B-MLX-Q4) |
+| Base 8-bit (mflux Q8) | `z-image-mlx-q8` | 10.99 GB | 8-bit, group size 64 | 18.2 GiB | [`deepsweet/Z-Image-6B-MLX-Q8`](https://huggingface.co/deepsweet/Z-Image-6B-MLX-Q8) |
+
+Peak memory is the sampled `phys_footprint` high-water mark of the
+`ZImageMLXBenchmark` process at the 1024 x 1024 nine-step envelope on M4 Max
+(see [`BENCHMARKING.md`](BENCHMARKING.md#image-generation-macos-mlx)); values
+marked est. are inferred from same-width measurements, not run. The base-model
+row peaks above the 8-bit Turbo row because its fully quantized text encoder
+and CFG-ready buffers dominate. Wall-clock speed is close across widths (the
+denoise loop is attention-dominated and MLX fuses dequant into the matmul);
+the footprint, not the speed, is what separates the rows. The app's download
+tiers in `AppModel+ImageModels.recommendedZImageAliases` fit against these
+peaks: below 16 GiB of physical memory only the 2-bit row is offered, 16 to
+31 GiB offers the 4-bit rows, and 32 GiB or more offers the 8-bit and
+base-model rows, best-fit first.
 
 ### mflux-converted sources (deepsweet rows)
 

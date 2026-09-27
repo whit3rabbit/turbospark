@@ -104,16 +104,24 @@ final class ImageGenerationTests: XCTestCase {
         XCTAssertEqual(eightGB, ["z-image-turbo-mlx-2bit"])
         XCTAssertEqual(
             sixteenGB,
-            ["z-image-turbo-mlx-4bit", "z-image-turbo-mlx-2bit"])
+            [
+                "z-image-turbo-mlx-4bit",
+                "z-image-turbo-mlx-q4",
+                "z-image-turbo-mlx-2bit",
+            ])
         XCTAssertEqual(
             thirtyTwoGB,
             [
                 "z-image-turbo-mlx-8bit",
+                "z-image-mlx-q8",
                 "z-image-turbo-mlx-4bit",
+                "z-image-turbo-mlx-q4",
                 "z-image-turbo-mlx-2bit",
             ])
         XCTAssertTrue(
             sixteenGB.allSatisfy { AppModel.testedZImageAliases.contains($0) })
+        XCTAssertTrue(
+            thirtyTwoGB.allSatisfy { AppModel.testedZImageAliases.contains($0) })
     }
 
     func testInstalledZImageDetectionUsesTheValidatedImageIdentity() {

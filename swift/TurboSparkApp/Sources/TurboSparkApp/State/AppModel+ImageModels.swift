@@ -47,6 +47,8 @@ extension AppModel {
             "andrevp/Z-Image-Turbo-MLX-2bit",
             "andrevp/Z-Image-Turbo-MLX-4bit",
             "andrevp/Z-Image-Turbo-MLX-8bit",
+            "deepsweet/Z-Image-Turbo-6B-MLX-Q4",
+            "deepsweet/Z-Image-6B-MLX-Q8",
         ].contains(modelID)
     }
 
@@ -56,22 +58,42 @@ extension AppModel {
         "z-image-turbo-mlx-2bit",
         "z-image-turbo-mlx-4bit",
         "z-image-turbo-mlx-8bit",
+        "z-image-turbo-mlx-q4",
+        "z-image-mlx-q8",
     ]
 
     /// Returns MLX choices ranked for this machine; the first is the default.
     /// The ordering is intentional: the first row is the default suggestion,
     /// and the remaining rows give users a useful quality/footprint choice.
+    ///
+    /// The tiers are memory-fit gates, not speed claims. Measured peak
+    /// `phys_footprint` at the supported 1024x1024 nine-step envelope
+    /// (M4 Max, warm residency): 12.8 GiB for `z-image-turbo-mlx-8bit`,
+    /// 18.2 GiB for `z-image-mlx-q8` (the base model's quantized text
+    /// encoder and CFG-ready buffers push it above the 8-bit Turbo row),
+    /// 8.5 GiB for `z-image-turbo-mlx-q4` (4-bit rows generally land near
+    /// 8-9 GiB), and roughly 5-6 GiB for the 2-bit row. The 16 GiB tier
+    /// keeps at least a 2x margin over the 4-bit peak for the system and
+    /// the app; the 32 GiB tier admits the 8-bit and base-model rows with
+    /// the same margin. Speed is close enough across widths that fit, so
+    /// the tier orders by quality/footprint trade.
     public static func recommendedZImageAliases(physicalMemoryBytes: UInt64) -> [String] {
         let gib = physicalMemoryBytes / (1024 * 1024 * 1024)
         if gib >= 32 {
             return [
                 "z-image-turbo-mlx-8bit",
+                "z-image-mlx-q8",
                 "z-image-turbo-mlx-4bit",
+                "z-image-turbo-mlx-q4",
                 "z-image-turbo-mlx-2bit",
             ]
         }
         if gib >= 16 {
-            return ["z-image-turbo-mlx-4bit", "z-image-turbo-mlx-2bit"]
+            return [
+                "z-image-turbo-mlx-4bit",
+                "z-image-turbo-mlx-q4",
+                "z-image-turbo-mlx-2bit",
+            ]
         }
         return ["z-image-turbo-mlx-2bit"]
     }
