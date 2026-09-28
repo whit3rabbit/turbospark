@@ -134,7 +134,11 @@ fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
             let source = manifest.source.as_object()?;
             let model_id = source.get("model_id")?.as_str()?.to_string();
             let revision = source.get("model_revision")?.as_str()?.to_string();
-            let source_path = if model_id.starts_with("andrevp/") {
+            let source_path = if model_id.starts_with("andrevp/")
+                || model_id.starts_with("deepsweet/")
+                || model_id.starts_with("mlx-community/")
+                || model_id.starts_with("baa-ai/Krea-2-Turbo")
+            {
                 path.parent()
                     .map(|parent| parent.join(format!(".{alias}.{revision}.image-source")))
                     .filter(|source| source.is_dir())

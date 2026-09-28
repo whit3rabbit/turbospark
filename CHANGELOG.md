@@ -14,6 +14,28 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `swift/TurboSparkApp/Vendor/QwenImage`: original Swift + MLX port of the
+  Qwen-Image-2.1 text-to-image pipeline (Qwen3-VL text encoder, single-stream
+  block-causal DiT with prefix KV cache, RMS-norm VAE decoder, flow-match
+  Euler scheduler with dynamic exponential shifting), with component-level
+  parity tests against the diffusers formulas and a pinned-provenance
+  `UPSTREAM.md`.
+- `swift/TurboSparkApp`: Qwen-Image-2.1 generation in the app through
+  `QwenImageGenerationSession`, family dispatch by model ID, the
+  "Qwen-Image 2.1" model family row, and a 32 GiB memory tier for the
+  `qwen-image-2.1-mlx-4bit` download recommendation.
+- `swift/TurboSparkApp`: `QwenImageMLXBenchmark` executable target mirroring
+  the `ZImageMLXBenchmark` timing and peak-memory contract.
+- `crates/catalog`, `crates/image`, `crates/ffi`: added the
+  `qwen-image-2.1-mlx-4bit` catalog row pinning
+  `mlx-community/Qwen-Image-2.1-MLX-4bit` at revision
+  `4db4e8c0c0e7a1debf0320415bec8388e888494c`, a per-family image install
+  envelope (40 steps, one forward per step, guidance 1.0, 64-channel
+  latents), `processor/` layout intake, and `mlx-community/` source
+  retention.
+- `docs/QWEN_IMAGE_21_MLX.md`: implementation and evidence record for the
+  new family, including the head-to-head benchmark against the Z-Image
+  Turbo MLX rows.
 - `crates/image`, `crates/ffi`, `crates/cli`: added support and preflight
   validation for bounded image resolutions (sides from 512 to 1024 pixels in
   multiples of 16, up to 1024x1024 total pixels) with dynamic latent shaping
@@ -27,12 +49,26 @@ when this file gets updated relative to the version bump and the tag.
   selection from the installed model, added an image size picker to
   `ImageGenerationSettings`, and updated progress tracking and tests.
 
+- `crates/catalog`, `crates/image`, `crates/ffi`, `swift/TurboSparkApp`: added
+  scaffolding and intake validation for `baa-ai/Krea-2-Turbo-RAM-9GB-MLX`
+  pinned at revision `58d4ebf1d13c3b086bde5ee45c038b299347dae9`, including
+  the catalog entry, manifest envelope (8 steps, guidance 1.0, 1024 prompt
+  bound), required file list, and Swift `Krea2RAMQuantization` validation for
+  `ram_bits.json` 4/5/6/8-bit module assignments and safetensors shard layout.
+- `ROADMAP.md`: added priority item tracking Krea 2 Turbo Native MLX bring-up
+  status, safety requirements, and remaining pipeline integration tasks.
+
 ### Changed
 - `swift/TurboSparkApp/Vendor/ZImage`: updated `ZImagePipeline` denoising loop
   to fire progress notifications upon step completion.
 - `docs/CLI.md`, `docs/IMAGE_GENERATION.md`, `docs/ZIMAGE_TURBO.md`: documented
   the bounded image resolution envelope and clarified that pinned quality and
   hardware resource evidence remains specific to the 1024x1024 baseline.
+
+### Fixed
+- `swift/TurboSparkApp`: parenthesized optional existential type in
+  `AppModel.swift` as `(any ImageGenerationSession)?` to satisfy Swift 6 and
+  Xcode 16 syntax requirements on macos-15 packaging runners.
 
 ## [0.2.0] - 2026-09-26
 

@@ -120,7 +120,11 @@ and [`uqer1244/MLX-z-image`](https://huggingface.co/uqer1244/MLX-z-image) are
 accepted through the image-only source adapter. The pinned andrevp 2-bit,
 4-bit, 8-bit, and fp16 variants are also available as image aliases:
 `z-image-turbo-mlx-2bit`, `z-image-turbo-mlx-4bit`,
-`z-image-turbo-mlx-8bit`, and `z-image-turbo-mlx-fp16`. It recognizes MLX affine U32
+`z-image-turbo-mlx-8bit`, and `z-image-turbo-mlx-fp16`. The Qwen-Image-2.1
+family installs from the same image namespace as
+`qwen-image-2.1-mlx-4bit` (pinned `mlx-community` 4-bit export; Swift app
+generation only in this first cut, see
+[QWEN_IMAGE_21_MLX.md](QWEN_IMAGE_21_MLX.md)). It recognizes MLX affine U32
 weight planes and F16 or BF16 `.scales` and `.biases` companions at 2, 3, 4,
 5, 6, and 8 bits, with group size 64, then writes the repository's separate
 image install format. The full installer gates pass for the published 2-bit,

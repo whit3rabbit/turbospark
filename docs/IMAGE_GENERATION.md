@@ -9,6 +9,12 @@ the packaged app and UI gate for the new route remains unverified. See
 recommendation. IG5 remains open for measured optimization work on the native
 runtime.
 
+A second MLX image family ships alongside this one: Qwen-Image-2.1 (4-bit,
+text-to-image, batch one, true-CFG off) runs through its own vendored Swift
+package in the app. Its implementation record, verification evidence, and
+the head-to-head benchmark against the Z-Image Turbo MLX rows are in
+[QWEN_IMAGE_21_MLX.md](QWEN_IMAGE_21_MLX.md).
+
 Current size-selection status: the CLI and Swift app accept image sides from
 512 through 1024 pixels, in multiples of 16, with a maximum total area of
 1024-by-1024. The Swift menu offers square, 4:3, and 16:9 presets; the CLI

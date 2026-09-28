@@ -62,20 +62,20 @@ struct ImageModelManagerView: View {
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            ForEach(model.recommendedZImageSources) { source in
+            ForEach(model.recommendedImageModelSources) { source in
                 curatedRow(source, recommended: true)
             }
 
             HStack {
                 Text(
-                    model.hasInstalledZImageModel
+                    model.hasInstalledMLXImageModel
                         ? "A curated Z-Image install is available."
                         : "No curated Z-Image model is downloaded yet.",
                     bundle: .module
                 )
                 .themedFont(.tiny)
                 .foregroundStyle(
-                    model.hasInstalledZImageModel ? Color.green : Color.secondary)
+                    model.hasInstalledMLXImageModel ? Color.green : Color.secondary)
                 Spacer()
                 Button {
                     model.activeSection = .images
@@ -137,7 +137,7 @@ struct ImageModelManagerView: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            if !AppModel.supportsMLXZImage(modelID: image.modelID) {
+            if !AppModel.supportsMLXImageModel(modelID: image.modelID) {
                 Label("MLX required", systemImage: "exclamationmark.triangle")
                     .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(.appSecondary)
@@ -176,7 +176,7 @@ struct ImageModelManagerView: View {
 
     private func curatedRow(_ source: ImageCatalogEntry, recommended: Bool) -> some View {
         let installed = model.imageModels.first { $0.alias == source.alias }
-        let isTested = AppModel.testedZImageAliases.contains(source.alias)
+        let isTested = AppModel.testedImageModelAliases.contains(source.alias)
         return HStack(spacing: 10) {
             Image(systemName: installed == nil ? "arrow.down.circle" : "checkmark.circle.fill")
                 .foregroundStyle(installed == nil ? Color.accentColor : Color.green)
@@ -266,7 +266,7 @@ struct ImageModelRecommendationSheet: View {
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            ForEach(model.recommendedZImageSources) { source in
+            ForEach(model.recommendedImageModelSources) { source in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text(source.alias)

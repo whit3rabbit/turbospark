@@ -13,6 +13,7 @@ struct ImageCatalogRow {
     #[serde(rename = "modelID")]
     model_id: String,
     revision: String,
+    family: String,
     quantization: String,
 }
 
@@ -40,6 +41,7 @@ pub(crate) fn catalog_json() -> Result<String, String> {
             alias: entry.alias.clone(),
             model_id: entry.model_id.clone(),
             revision: entry.revision.clone(),
+            family: catalog::image_family_for_model_id(&entry.model_id).to_string(),
             quantization: quantization_label(&entry.alias),
         })
         .collect::<Vec<_>>();
@@ -98,15 +100,19 @@ pub(crate) fn install(
     // beside the packed install so MLX-backed models do not download a second
     // copy into the Hugging Face cache. The packed install remains available
     // to the native runtime as a fallback. deepsweet rows are mflux
-    // conversions whose trees the catalog normalizes for the same purpose.
-    let mlx_source_path =
-        if entry.model_id.starts_with("andrevp/") || entry.model_id.starts_with("deepsweet/") {
-            let _ = std::fs::remove_dir_all(source.join(".download-cache"));
-            source.canonicalize().ok()
-        } else {
-            let _ = std::fs::remove_dir_all(&source);
-            None
-        };
+    // conversions whose trees the catalog normalizes for the same purpose,
+    // and the Qwen-Image-2.1 row keeps the mlx-community processor layout.
+    let mlx_source_path = if entry.model_id.starts_with("andrevp/")
+        || entry.model_id.starts_with("deepsweet/")
+        || entry.model_id.starts_with("mlx-community/")
+        || entry.model_id.starts_with("baa-ai/Krea-2-Turbo")
+    {
+        let _ = std::fs::remove_dir_all(source.join(".download-cache"));
+        source.canonicalize().ok()
+    } else {
+        let _ = std::fs::remove_dir_all(&source);
+        None
+    };
     let manifest = image::ImageManifest::load(&report.output_root)?;
     manifest.validate()?;
     let path = report

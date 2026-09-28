@@ -9,6 +9,7 @@ mod builder_files;
 #[path = "builder_manifest.rs"]
 mod builder_manifest;
 
+use crate::install::{image_family_for_model_id, ImageFamily};
 use crate::packed::PackedTensorReport;
 use builder_files::{collect_paths, copy_tree, future_canonical_path, staging_path, write_receipt};
 use builder_manifest::make_manifest;
@@ -124,27 +125,50 @@ fn build_staged(
     let components = staging.join(COMPONENTS_DIR);
     fs::create_dir(&components)
         .map_err(|e| format!("failed to create components directory: {e}"))?;
+    // Qwen-Image-2.1 snapshots carry the tokenizer assets under `processor/`
+    // the way Diffusers names the component in its processor-era layout.
+    let tokenizer_source = if spec.source_root.join("tokenizer").is_dir() {
+        "tokenizer"
+    } else {
+        "processor"
+    };
     copy_tree(
-        &spec.source_root.join("tokenizer"),
+        &spec.source_root.join(tokenizer_source),
         &components.join("tokenizer"),
     )?;
 
     let mut component_reports = BTreeMap::new();
-    for (name, source_dir, preferred_index) in [
-        ("text_encoder", "text_encoder", TEXT_ENCODER_INDEX),
-        ("transformer", "transformer", TRANSFORMER_INDEX),
+    let krea2 = image_family_for_model_id(&spec.model_id) == ImageFamily::Krea2Turbo;
+    let transformer_source = if krea2 {
+        spec.source_root.clone()
+    } else {
+        spec.source_root.join("transformer")
+    };
+    let transformer_index = if krea2 {
+        MFLUX_INDEX
+    } else {
+        TRANSFORMER_INDEX
+    };
+    let components_to_pack = [
+        (
+            "text_encoder",
+            spec.source_root.join("text_encoder"),
+            TEXT_ENCODER_INDEX,
+        ),
+        ("transformer", transformer_source, transformer_index),
         (
             "vae_decoder",
-            if spec.source_root.join("vae").is_dir() {
-                "vae"
-            } else {
-                "vae_decoder"
-            },
+            spec.source_root
+                .join(if spec.source_root.join("vae").is_dir() {
+                    "vae"
+                } else {
+                    "vae_decoder"
+                }),
             VAE_INDEX,
         ),
-    ] {
+    ];
+    for (name, component_path, preferred_index) in components_to_pack {
         progress(&format!("packing {name}"));
-        let component_path = spec.source_root.join(source_dir);
         let index_name = resolve_component_index(&component_path, preferred_index);
         let report =
             crate::packed::pack_component(&component_path, &index_name, &components.join(name))?;

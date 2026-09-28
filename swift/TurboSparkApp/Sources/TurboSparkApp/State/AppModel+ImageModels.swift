@@ -6,9 +6,9 @@ extension AppModel {
     /// becomes available after the user has already opened that workspace.
     var shouldRecommendImageModel: Bool {
         activeSection == .images
-            && !hasSupportedSelectedZImageModel
-            && !hasInstalledZImageModel
-            && !recommendedZImageSources.isEmpty
+            && !hasSupportedSelectedImageModel
+            && !hasInstalledMLXImageModel
+            && !recommendedImageModelSources.isEmpty
     }
 
     /// Image installs stay separate from the text catalog. The path remains a
@@ -21,7 +21,7 @@ extension AppModel {
 
     public var canGenerateImage: Bool {
         !imageModelPath.isEmpty
-            && hasSupportedSelectedZImageModel
+            && hasSupportedSelectedImageModel
             && !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && canStartImageGeneration
     }
@@ -31,35 +31,37 @@ extension AppModel {
     }
 
     /// True when an installed MLX checkpoint supported by the app is available.
-    public var hasInstalledZImageModel: Bool {
+    public var hasInstalledMLXImageModel: Bool {
         imageModels.contains {
-            Self.supportsMLXZImage(modelID: $0.modelID)
+            Self.supportsMLXImageModel(modelID: $0.modelID)
         }
     }
 
-    var hasSupportedSelectedZImageModel: Bool {
+    var hasSupportedSelectedImageModel: Bool {
         guard let selectedImageModel else { return false }
-        return Self.supportsMLXZImage(modelID: selectedImageModel.modelID)
+        return Self.supportsMLXImageModel(modelID: selectedImageModel.modelID)
     }
 
-    static func supportsMLXZImage(modelID: String) -> Bool {
+    static func supportsMLXImageModel(modelID: String) -> Bool {
         [
             "andrevp/Z-Image-Turbo-MLX-2bit",
             "andrevp/Z-Image-Turbo-MLX-4bit",
             "andrevp/Z-Image-Turbo-MLX-8bit",
             "deepsweet/Z-Image-Turbo-6B-MLX-Q4",
             "deepsweet/Z-Image-6B-MLX-Q8",
+            "mlx-community/Qwen-Image-2.1-MLX-4bit",
         ].contains(modelID)
     }
 
     /// The MLX variants whose pinned install gates have passed. Native and
     /// unqualified sources stay out of every Swift app download surface.
-    public static let testedZImageAliases = [
+    public static let testedImageModelAliases = [
         "z-image-turbo-mlx-2bit",
         "z-image-turbo-mlx-4bit",
         "z-image-turbo-mlx-8bit",
         "z-image-turbo-mlx-q4",
         "z-image-mlx-q8",
+        "qwen-image-2.1-mlx-4bit",
     ]
 
     /// Returns MLX choices ranked for this machine; the first is the default.
@@ -76,13 +78,16 @@ extension AppModel {
     /// keeps at least a 2x margin over the 4-bit peak for the system and
     /// the app; the 32 GiB tier admits the 8-bit and base-model rows with
     /// the same margin. Speed is close enough across widths that fit, so
-    /// the tier orders by quality/footprint trade.
-    public static func recommendedZImageAliases(physicalMemoryBytes: UInt64) -> [String] {
+    /// the tier orders by quality/footprint trade. The Qwen-Image-2.1 row
+    /// measured 25.9 GiB at its 1024x1024 envelope, so it joins the 32 GiB
+    /// tier only.
+    public static func recommendedImageModelAliases(physicalMemoryBytes: UInt64) -> [String] {
         let gib = physicalMemoryBytes / (1024 * 1024 * 1024)
         if gib >= 32 {
             return [
                 "z-image-turbo-mlx-8bit",
                 "z-image-mlx-q8",
+                "qwen-image-2.1-mlx-4bit",
                 "z-image-turbo-mlx-4bit",
                 "z-image-turbo-mlx-q4",
                 "z-image-turbo-mlx-2bit",
@@ -98,17 +103,17 @@ extension AppModel {
         return ["z-image-turbo-mlx-2bit"]
     }
 
-    public var recommendedZImageSources: [ImageCatalogEntry] {
+    public var recommendedImageModelSources: [ImageCatalogEntry] {
         let memory = telemetry?.physicalMemoryBytes ?? 16 * 1024 * 1024 * 1024
         let byAlias = Dictionary(imageCatalog.map { ($0.alias, $0) }, uniquingKeysWith: { first, _ in first })
-        return Self.recommendedZImageAliases(physicalMemoryBytes: memory)
+        return Self.recommendedImageModelAliases(physicalMemoryBytes: memory)
             .compactMap { byAlias[$0] }
     }
 
     /// Every setup surface uses the same tested, memory-ranked download order.
     var imageDownloadChoices: [ImageCatalogEntry] {
-        let tested = imageCatalog.filter { Self.testedZImageAliases.contains($0.alias) }
-        let preferred = recommendedZImageSources.map(\.alias)
+        let tested = imageCatalog.filter { Self.testedImageModelAliases.contains($0.alias) }
+        let preferred = recommendedImageModelSources.map(\.alias)
         return tested.sorted {
             let left = preferred.firstIndex(of: $0.alias) ?? preferred.count
             let right = preferred.firstIndex(of: $1.alias) ?? preferred.count
@@ -119,9 +124,9 @@ extension AppModel {
     /// Downloads a supported MLX source through the catalog install ABI.
     /// The source is packed and verified before it becomes selectable.
     public func installImageModel(_ source: ImageCatalogEntry) {
-        guard Self.testedZImageAliases.contains(source.alias),
-              Self.supportsMLXZImage(modelID: source.modelID) else {
-            showToast("Only supported MLX Z-Image models can be installed in the app.", style: .warning)
+        guard Self.testedImageModelAliases.contains(source.alias),
+              Self.supportsMLXImageModel(modelID: source.modelID) else {
+            showToast("Only supported MLX image models can be installed in the app.", style: .warning)
             return
         }
         guard !imageModels.contains(where: { $0.alias == source.alias }) else {

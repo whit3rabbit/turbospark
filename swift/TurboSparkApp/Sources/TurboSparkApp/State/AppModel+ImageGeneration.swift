@@ -1,7 +1,13 @@
 import Foundation
+import QwenImage
 import TurboSpark
 
 extension AppModel {
+    /// The Qwen-Image-2.1 family runs on its own vendored pipeline.
+    static func isQwenImageModel(_ modelID: String) -> Bool {
+        modelID.hasPrefix("mlx-community/Qwen-Image-2.1")
+    }
+
     func imageGenerateOptions(prompt: String, seed: UInt64) -> ImageGenerateOptions {
         ImageGenerateOptions(
             prompt: prompt,
@@ -76,7 +82,7 @@ extension AppModel {
             showToast("Select an image .gturbo install first.", style: .warning)
             return
         }
-        guard hasSupportedSelectedZImageModel else {
+        guard hasSupportedSelectedImageModel else {
             showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
             return
         }
@@ -166,7 +172,7 @@ extension AppModel {
             showToast("Select an image .gturbo install first.", style: .warning)
             return
         }
-        guard hasSupportedSelectedZImageModel else {
+        guard hasSupportedSelectedImageModel else {
             showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
             return
         }
@@ -183,7 +189,7 @@ extension AppModel {
             showToast("Select an image .gturbo install first.", style: .warning)
             return
         }
-        guard hasSupportedSelectedZImageModel else {
+        guard hasSupportedSelectedImageModel else {
             showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
             return
         }
@@ -221,7 +227,7 @@ extension AppModel {
         _ options: ImageGenerateOptions, chatID: UUID, count: Int = 1
     ) {
         guard imageGenerationTask == nil else { return }
-        guard hasSupportedSelectedZImageModel else {
+        guard hasSupportedSelectedImageModel else {
             showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
             return
         }
@@ -253,13 +259,15 @@ extension AppModel {
             do {
                 try Task.checkCancellation()
                 guard let selected = self.selectedImageModel,
-                      Self.supportsMLXZImage(modelID: selected.modelID) else {
+                      Self.supportsMLXImageModel(modelID: selected.modelID) else {
                     throw TurboSparkError(
                         code: .open,
-                        message: "Select a supported MLX Z-Image model from the curated list.")
+                        message: "Select a supported MLX image model from the curated list.")
                 }
                 if self.imageSession == nil || self.imageSessionPath != modelPath {
-                    self.imageSession = MLXImageGenerationSession(model: selected)
+                    self.imageSession = Self.isQwenImageModel(selected.modelID)
+                        ? try QwenImageGenerationSession(model: selected)
+                        : MLXImageGenerationSession(model: selected)
                     self.imageSessionPath = modelPath
                 }
                 guard let session = self.imageSession else {

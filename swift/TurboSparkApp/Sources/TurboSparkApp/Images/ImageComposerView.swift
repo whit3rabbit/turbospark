@@ -117,15 +117,15 @@ struct ImageComposerView: View {
 
     private var summary: String {
         let unsupportedSelection = !model.imageModelPath.isEmpty
-            && !model.hasSupportedSelectedZImageModel
+            && !model.hasSupportedSelectedImageModel
         let name = model.selectedImageModel.map { ImageModelPresentation.family($0.modelID) }
             ?? (model.imageModelPath.isEmpty ? "" : URL(fileURLWithPath: model.imageModelPath).lastPathComponent)
         let quant = unsupportedSelection
             ? "MLX required"
             : (model.selectedImageModel.map { ImageModelPresentation.quantization($0.quantization) } ?? "")
         let parts = [
-            name.isEmpty ? (model.hasInstalledZImageModel ? "" : "Z-Image Turbo") : name,
-            quant.isEmpty ? (model.hasInstalledZImageModel ? "" : String(localized: "Download", bundle: .module)) : quant,
+            name.isEmpty ? (model.hasInstalledMLXImageModel ? "" : "Z-Image Turbo") : name,
+            quant.isEmpty ? (model.hasInstalledMLXImageModel ? "" : String(localized: "Download", bundle: .module)) : quant,
             model.imageModelPath.isEmpty ? "" : model.imageSizeLabel,
             String(localized: "\(model.imageCount) image(s)", bundle: .module)
         ].filter { !$0.isEmpty }

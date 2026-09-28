@@ -1,10 +1,15 @@
 import SwiftUI
 import TurboSpark
 
-/// Group variants by model identity, with Z-Image's curated exports sharing one row.
+/// Group variants by model identity, with each family's curated exports
+/// sharing one row.
 enum ImageModelPresentation {
     static func family(_ modelID: String) -> String {
-        if modelID.lowercased().contains("z-image-turbo") || modelID.lowercased().contains("z-image") {
+        let lowered = modelID.lowercased()
+        if lowered.contains("qwen-image") {
+            return "Qwen-Image 2.1"
+        }
+        if lowered.contains("z-image-turbo") || lowered.contains("z-image") {
             return "Z-Image Turbo"
         }
         return modelID
@@ -41,7 +46,7 @@ struct ImageModelControls: View {
 
     private var installed: [ImageInstalledModel] {
         model.imageModels.filter {
-            AppModel.supportsMLXZImage(modelID: $0.modelID)
+            AppModel.supportsMLXImageModel(modelID: $0.modelID)
                 && ImageModelPresentation.family($0.modelID) == family
         }
     }
@@ -62,7 +67,7 @@ struct ImageModelControls: View {
                         Button {
                             browsingFamily = name
                             if let first = model.imageModels.first(where: {
-                                AppModel.supportsMLXZImage(modelID: $0.modelID)
+                                AppModel.supportsMLXImageModel(modelID: $0.modelID)
                                     && ImageModelPresentation.family($0.modelID) == name
                             }) { model.selectImageModel(first) }
                         } label: { Text(name) }
@@ -106,7 +111,7 @@ struct ImageModelControls: View {
                 } label: {
                     HStack(spacing: 4) {
                         if let selected = model.selectedImageModel,
-                           AppModel.supportsMLXZImage(modelID: selected.modelID),
+                           AppModel.supportsMLXImageModel(modelID: selected.modelID),
                            ImageModelPresentation.family(selected.modelID) == family {
                             Text(ImageModelPresentation.quantization(selected.quantization))
                         } else if let firstSource = sources.first {

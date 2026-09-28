@@ -8,6 +8,7 @@ let package = Package(
     dependencies: [
         .package(path: "../TurboSpark"),
         .package(path: "Vendor/ZImage"),
+        .package(path: "Vendor/QwenImage"),
         .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", from: "4.10.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
         .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.5.0"),
@@ -19,6 +20,7 @@ let package = Package(
             dependencies: [
                 .product(name: "TurboSpark", package: "TurboSpark"),
                 .product(name: "ZImage", package: "zimage"),
+                .product(name: "QwenImage", package: "qwenimage"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 .product(name: "Syntext", package: "syntext"),
@@ -50,6 +52,11 @@ let package = Package(
             name: "ZImageMLXBenchmark",
             dependencies: [.product(name: "ZImage", package: "zimage")],
             path: "Benchmarks/ZImageMLXBenchmark"
+        ),
+        .executableTarget(
+            name: "QwenImageMLXBenchmark",
+            dependencies: [.product(name: "QwenImage", package: "qwenimage")],
+            path: "Benchmarks/QwenImageMLXBenchmark"
         ),
         .testTarget(
             name: "TurboSparkAppTests",

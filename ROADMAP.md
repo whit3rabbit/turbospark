@@ -119,6 +119,17 @@ Adding missing high-demand model families, specialized Metal kernels, and archit
 - **Remaining**: Resolve repetition, pass release smokes, review/freeze quality and quiet-machine performance baselines, add exact artifact to catalog, and promote support.
 - **Deferred**: Safetensors/FP8 intake, mapped expert residency, native tool-call parsing, MTP, vision, and later MiniMax variants.
 
+#### 8. Krea 2 Turbo Native MLX Bring-up (BAA Mixed Precision)
+- **Status**: The current checkout has uncommitted catalog and intake scaffolding for `baa-ai/Krea-2-Turbo-RAM-9GB-MLX` at revision `58d4ebf1d13c3b086bde5ee45c038b299347dae9`. It validates required source files and mixed 4/5/6/8-bit assignments. The image manifest marks the native runtime gate as pending, and the app does not offer Krea for installation or generation. This is not model support.
+- **Why Open**: `MLXImageGenerationSession` still constructs `ZImagePipeline`; Krea needs its own Swift path for the Qwen3-VL text encoder, Krea transformer, Qwen-Image VAE, and BAA per-layer quantization map. Do not add a Python sidecar.
+- **Remaining**:
+  - Implement the separate Swift MLX Krea pipeline and apply every `ram_bits.json` width to its matching layer. Validate the full pinned source layout, tensor shapes, unsupported widths, and missing or unassigned layers.
+  - Connect family-aware app selection, installation, progress, and cancellation. Show the Krea 2 Community License before installation, preserve `LICENSE.pdf` and `Notice` with the installed model, and ship an output safety filter enabled by default.
+  - Display the publisher's 24 GB unified-memory guidance. Do not present the transformer's "9 GB" label as app memory or automatically recommend Krea until full-process measurements qualify it.
+  - Compare quantized layer values, transformer outputs, and seeded images against a pinned Krea reference. Exercise install, selection, progress, cancellation, safety filtering, and existing Z-Image behavior.
+  - On an M4 Max, run three fresh app generations at 1024x1024 and 8 steps. Record stage timings and peak `phys_footprint`; leave speed and memory fit unqualified until those measurements pass.
+- **Reference**: [BAA Krea 2 checkpoint](https://huggingface.co/baa-ai/Krea-2-Turbo-RAM-9GB-MLX), [Krea 2 Community License](https://github.com/krea-ai/krea-2/blob/main/docs/KREA-2-COMMUNITY-LICENSE), [Krea 2 technical report](https://www.krea.ai/blog/krea-2-technical-report).
+
 ---
 
 ### Priority 3: Long-Term Extensions & Platform Expansion

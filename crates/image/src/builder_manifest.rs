@@ -6,9 +6,8 @@ use std::path::Path;
 
 use super::builder_files::collect_files;
 use crate::install::{
-    required_metadata_for, ImageComponent, ImageManifest, ImageSupported, IMAGE_BATCH,
-    IMAGE_CAPABILITY, IMAGE_FORWARDS, IMAGE_GUIDANCE, IMAGE_HEIGHT, IMAGE_MANIFEST_MAGIC,
-    IMAGE_MANIFEST_SCHEMA, IMAGE_PROMPT_MAX_TOKENS, IMAGE_STEPS, IMAGE_WIDTH,
+    image_family_for_model_id, required_metadata_for, ImageComponent, ImageFamily, ImageManifest,
+    IMAGE_CAPABILITY, IMAGE_MANIFEST_MAGIC, IMAGE_MANIFEST_SCHEMA,
 };
 use crate::packed::{PackedIndex, PackedTensorReport, PACKED_INDEX_NAME};
 
@@ -30,16 +29,18 @@ pub(super) fn make_manifest(
         .get("vae_decoder")
         .ok_or_else(|| "VAE pack report is missing".to_string())?;
 
+    let family = image_family_for_model_id(&spec.model_id);
+
     let mut components = BTreeMap::new();
     components.insert(
         "tokenizer".to_string(),
-        component("text_encoder_stage", tokenizer_metadata(staging)?),
+        component("text_encoder_stage", tokenizer_metadata(staging, family)?),
     );
     components.insert(
         "text_encoder".to_string(),
         component(
             "text_encoder_stage",
-            text_encoder_metadata(&spec.model_revision, text, &indices["text_encoder"]),
+            text_encoder_metadata(&spec.model_revision, family, text, &indices["text_encoder"]),
         ),
     );
     components.insert(
@@ -51,13 +52,13 @@ pub(super) fn make_manifest(
     );
     components.insert(
         "scheduler".to_string(),
-        component("pipeline_control", scheduler_metadata(staging)?),
+        component("pipeline_control", scheduler_metadata(staging, family)?),
     );
     components.insert(
         "vae_decoder".to_string(),
         component(
             "vae_stage",
-            vae_metadata(&spec.model_revision, vae, &indices["vae_decoder"]),
+            vae_metadata(&spec.model_revision, family, vae, &indices["vae_decoder"]),
         ),
     );
 
@@ -66,29 +67,27 @@ pub(super) fn make_manifest(
         version: IMAGE_MANIFEST_SCHEMA,
         capability: IMAGE_CAPABILITY.to_string(),
         source: serde_json::json!({
+            "family": family.to_string(),
             "model_id": &spec.model_id,
             "model_revision": &spec.model_revision,
-            "license": "Apache-2.0",
+            "license": family.license(),
         }),
-        supported: ImageSupported {
-            width: IMAGE_WIDTH,
-            height: IMAGE_HEIGHT,
-            batch: IMAGE_BATCH,
-            scheduler_steps: IMAGE_STEPS,
-            transformer_forwards: IMAGE_FORWARDS,
-            guidance_scale: IMAGE_GUIDANCE,
-            prompt_max_tokens: IMAGE_PROMPT_MAX_TOKENS,
-            latent_shape: vec![1, 16, 128, 128],
-        },
+        supported: family.supported(),
         components,
         files: collect_files(staging, reports)?,
         verification: serde_json::json!({
             "hash": "sha256",
             "packed_index": "tensor_inventory_sha256",
-            "runtime_gate": "ig1-captured-inputs-and-real-vae",
+            "runtime_gate": match family {
+                ImageFamily::Krea2Turbo => "pending-native-krea2-runtime",
+                _ => "ig1-captured-inputs-and-real-vae",
+            },
         }),
         resource_envelope: serde_json::json!({
-            "reference_contract": "docs/verification/z-image-ig0-resource-contract.json",
+            "reference_contract": match family {
+                ImageFamily::Krea2Turbo => "pending-krea2-device-measurements",
+                _ => "docs/verification/z-image-ig0-resource-contract.json",
+            },
             "ownership": "one-heavyweight-stage-at-a-time",
         }),
     })
@@ -116,7 +115,10 @@ fn component(owner: &str, mut metadata: BTreeMap<String, serde_json::Value>) -> 
     }
 }
 
-fn tokenizer_metadata(staging: &Path) -> Result<BTreeMap<String, serde_json::Value>, String> {
+fn tokenizer_metadata(
+    staging: &Path,
+    family: ImageFamily,
+) -> Result<BTreeMap<String, serde_json::Value>, String> {
     let mut assets = BTreeMap::new();
     for file in
         super::builder_files::collect_paths(&staging.join(COMPONENTS_DIR).join("tokenizer"))?
@@ -134,6 +136,14 @@ fn tokenizer_metadata(staging: &Path) -> Result<BTreeMap<String, serde_json::Val
     if assets.is_empty() {
         return Err("image tokenizer source contains no files".to_string());
     }
+    let (chat_template, max_tokens, padding_policy) = match family {
+        ImageFamily::ZImage => ("tokenizer_config.json:chat_template", 512, "right_pad"),
+        // The Qwen-Image-2.1 processor layout ships the template as a sibling
+        // Jinja file instead of an embedded tokenizer_config field, and the
+        // pipeline left-pads its prompt batch.
+        ImageFamily::QwenImage21 => ("chat_template.jinja", 1024, "left_pad"),
+        ImageFamily::Krea2Turbo => ("chat_template.jinja", 1024, "left_pad"),
+    };
     Ok(BTreeMap::from([
         ("component_name".to_string(), serde_json::json!("tokenizer")),
         (
@@ -143,21 +153,32 @@ fn tokenizer_metadata(staging: &Path) -> Result<BTreeMap<String, serde_json::Val
         ("asset_sha256".to_string(), serde_json::json!(assets)),
         (
             "chat_template".to_string(),
-            serde_json::json!("tokenizer_config.json:chat_template"),
+            serde_json::json!(chat_template),
         ),
         ("enable_thinking".to_string(), serde_json::json!(true)),
         (
             "truncation_policy".to_string(),
             serde_json::json!("right_truncate"),
         ),
-        ("padding_policy".to_string(), serde_json::json!("right_pad")),
-        ("max_tokens".to_string(), serde_json::json!(512)),
+        (
+            "padding_policy".to_string(),
+            serde_json::json!(padding_policy),
+        ),
+        ("max_tokens".to_string(), serde_json::json!(max_tokens)),
     ]))
 }
 
-fn scheduler_metadata(staging: &Path) -> Result<BTreeMap<String, serde_json::Value>, String> {
+fn scheduler_metadata(
+    staging: &Path,
+    family: ImageFamily,
+) -> Result<BTreeMap<String, serde_json::Value>, String> {
     let path = staging.join(COMPONENTS_DIR).join("scheduler/config.json");
     let bytes = fs::read(&path).map_err(|e| format!("failed to read scheduler config: {e}"))?;
+    let (shift, evaluation_count, guidance_policy) = match family {
+        ImageFamily::ZImage => (3.0, 9, "zero"),
+        ImageFamily::QwenImage21 => (1.0, 40, "true-cfg-default-off"),
+        ImageFamily::Krea2Turbo => (1.0, 8, "mflux-krea-guidance-1"),
+    };
     Ok(BTreeMap::from([
         ("component_name".to_string(), serde_json::json!("scheduler")),
         (
@@ -165,10 +186,16 @@ fn scheduler_metadata(staging: &Path) -> Result<BTreeMap<String, serde_json::Val
             serde_json::json!(model_io::hash_data(&bytes)),
         ),
         ("num_train_timesteps".to_string(), serde_json::json!(1000)),
-        ("shift".to_string(), serde_json::json!(3.0)),
+        ("shift".to_string(), serde_json::json!(shift)),
         ("sigma_endpoints".to_string(), serde_json::json!([1.0, 0.0])),
-        ("evaluation_count".to_string(), serde_json::json!(9)),
-        ("guidance_policy".to_string(), serde_json::json!("zero")),
+        (
+            "evaluation_count".to_string(),
+            serde_json::json!(evaluation_count),
+        ),
+        (
+            "guidance_policy".to_string(),
+            serde_json::json!(guidance_policy),
+        ),
         (
             "noise_provenance".to_string(),
             serde_json::json!("request-seed"),
@@ -178,9 +205,17 @@ fn scheduler_metadata(staging: &Path) -> Result<BTreeMap<String, serde_json::Val
 
 fn text_encoder_metadata(
     revision: &str,
+    family: ImageFamily,
     report: &PackedTensorReport,
     index: &PackedIndex,
 ) -> BTreeMap<String, serde_json::Value> {
+    // Z-Image reads the second-to-last hidden state; the Qwen-Image-2.1
+    // pipeline reads the last decoder state before the final norm.
+    let hidden_state_output = match family {
+        ImageFamily::ZImage => "hidden_states[-2]",
+        ImageFamily::QwenImage21 => "hidden_states[-1]-pre-final-norm",
+        ImageFamily::Krea2Turbo => "qwen3-vl-mflux-text-fusion",
+    };
     BTreeMap::from([
         (
             "component_name".to_string(),
@@ -196,7 +231,7 @@ fn text_encoder_metadata(
         ),
         (
             "hidden_state_output".to_string(),
-            serde_json::json!("hidden_states[-2]"),
+            serde_json::json!(hidden_state_output),
         ),
         ("causal_mask".to_string(), serde_json::json!("causal")),
         ("qk_norm_epsilon".to_string(), serde_json::json!(1e-6)),
@@ -294,9 +329,29 @@ fn transformer_metadata(
 
 fn vae_metadata(
     revision: &str,
+    family: ImageFamily,
     report: &PackedTensorReport,
     index: &PackedIndex,
 ) -> BTreeMap<String, serde_json::Value> {
+    let (latent_layout, normalization, scale_and_shift) = match family {
+        ImageFamily::ZImage => (
+            "[16,height,width]",
+            "group-norm-32",
+            serde_json::json!({"scale": 0.3611, "shift": 0.1159}),
+        ),
+        // The Qwen-Image-2.1 VAE normalizes latents per channel with the
+        // mean/std vectors carried by its own config instead of one scalar.
+        ImageFamily::QwenImage21 => (
+            "[64,height,width]",
+            "rms-norm-and-per-channel-latent-stats",
+            serde_json::json!({"latents_mean": "vae-config", "latents_std": "vae-config"}),
+        ),
+        ImageFamily::Krea2Turbo => (
+            "[16,height,width]",
+            "rms-norm-and-per-channel-latent-stats",
+            serde_json::json!({"latents_mean": "vae-config", "latents_std": "vae-config"}),
+        ),
+    };
     BTreeMap::from([
         (
             "component_name".to_string(),
@@ -312,16 +367,13 @@ fn vae_metadata(
         ),
         (
             "latent_layout".to_string(),
-            serde_json::json!("[16,height,width]"),
+            serde_json::json!(latent_layout),
         ),
         (
             "normalization".to_string(),
-            serde_json::json!("group-norm-32"),
+            serde_json::json!(normalization),
         ),
-        (
-            "scale_and_shift".to_string(),
-            serde_json::json!({"scale": 0.3611, "shift": 0.1159}),
-        ),
+        ("scale_and_shift".to_string(), scale_and_shift),
         ("output_range".to_string(), serde_json::json!("[-1,1]")),
         (
             "pixel_conversion".to_string(),

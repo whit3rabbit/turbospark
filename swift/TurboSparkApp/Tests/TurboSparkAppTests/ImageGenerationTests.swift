@@ -157,12 +157,12 @@ final class ImageGenerationTests: XCTestCase {
         XCTAssertNotEqual(canonical.id, legacy.id)
     }
 
-    func testZImageRecommendationsFollowPhysicalMemoryAndPreferTestedMlxRows() {
-        let eightGB = AppModel.recommendedZImageAliases(
+    func testImageRecommendationsFollowPhysicalMemoryAndPreferTestedMlxRows() {
+        let eightGB = AppModel.recommendedImageModelAliases(
             physicalMemoryBytes: 8 * 1024 * 1024 * 1024)
-        let sixteenGB = AppModel.recommendedZImageAliases(
+        let sixteenGB = AppModel.recommendedImageModelAliases(
             physicalMemoryBytes: 16 * 1024 * 1024 * 1024)
-        let thirtyTwoGB = AppModel.recommendedZImageAliases(
+        let thirtyTwoGB = AppModel.recommendedImageModelAliases(
             physicalMemoryBytes: 32 * 1024 * 1024 * 1024)
 
         XCTAssertEqual(eightGB, ["z-image-turbo-mlx-2bit"])
@@ -178,17 +178,18 @@ final class ImageGenerationTests: XCTestCase {
             [
                 "z-image-turbo-mlx-8bit",
                 "z-image-mlx-q8",
+                "qwen-image-2.1-mlx-4bit",
                 "z-image-turbo-mlx-4bit",
                 "z-image-turbo-mlx-q4",
                 "z-image-turbo-mlx-2bit",
             ])
         XCTAssertTrue(
-            sixteenGB.allSatisfy { AppModel.testedZImageAliases.contains($0) })
+            sixteenGB.allSatisfy { AppModel.testedImageModelAliases.contains($0) })
         XCTAssertTrue(
-            thirtyTwoGB.allSatisfy { AppModel.testedZImageAliases.contains($0) })
+            thirtyTwoGB.allSatisfy { AppModel.testedImageModelAliases.contains($0) })
     }
 
-    func testInstalledZImageDetectionUsesTheValidatedImageIdentity() {
+    func testInstalledImageDetectionUsesTheValidatedImageIdentity() {
         let model = AppModel()
         model.imageModels = [ImageInstalledModel(
             alias: "custom-image",
@@ -199,7 +200,18 @@ final class ImageGenerationTests: XCTestCase {
             height: 1024,
             schedulerSteps: 9)]
 
-        XCTAssertTrue(model.hasInstalledZImageModel)
+        XCTAssertTrue(model.hasInstalledMLXImageModel)
+    }
+
+    func testQwenImageInstallIsSupportedAndRoutedToItsOwnFamily() {
+        XCTAssertTrue(
+            AppModel.supportsMLXImageModel(modelID: "mlx-community/Qwen-Image-2.1-MLX-4bit"))
+        XCTAssertTrue(AppModel.testedImageModelAliases.contains("qwen-image-2.1-mlx-4bit"))
+        XCTAssertTrue(AppModel.isQwenImageModel("mlx-community/Qwen-Image-2.1-MLX-4bit"))
+        XCTAssertFalse(AppModel.isQwenImageModel("andrevp/Z-Image-Turbo-MLX-4bit"))
+        XCTAssertEqual(
+            ImageModelPresentation.family("mlx-community/Qwen-Image-2.1-MLX-4bit"),
+            "Qwen-Image 2.1")
     }
 
     func testImageJobStartsWaitingAndCarriesTheRequest() {
@@ -381,7 +393,6 @@ final class ImageGenerationTests: XCTestCase {
         XCTAssertEqual(ImageModelPresentation.family("andrevp/z-image-mlx"), "Z-Image Turbo")
         XCTAssertEqual(ImageModelPresentation.family("custom-model"), "custom-model")
     }
-
     func testReconcileImageSelectionAutoSelectsInstalledModelWhenEmpty() {
         let model = AppModel()
         let image = ImageInstalledModel(

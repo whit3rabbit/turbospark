@@ -7,10 +7,14 @@ final class DownloadManagerTests: XCTestCase {
     private func makeModel() -> AppModel {
         let model = AppModel()
         // Queue unit tests do not share the signed-in profile's download
-        // history. Persistence behavior has its own temporary-vault suite.
+        // history or installed image models; a developer machine with a
+        // real install of the fixture alias would otherwise take the
+        // already-installed path instead of the queue path. Persistence
+        // behavior has its own temporary-vault suite.
         model.downloadHistoryWritable = false
         model.modelDownloads = []
         model.activeModelDownloadID = nil
+        model.imageModels = []
         return model
     }
 
@@ -123,7 +127,7 @@ final class DownloadManagerTests: XCTestCase {
         model.beginModelDownload(.catalog(alias: "qwen36"))
         model.isInstallingModel = true
         let source = try JSONDecoder().decode(ImageCatalogEntry.self, from: Data(
-            #"{"alias":"z-image-turbo-mlx-8bit","modelID":"fixture/Z-Image","revision":"pinned","quantization":"8-bit"}"#.utf8))
+            #"{"alias":"z-image-turbo-mlx-8bit","modelID":"andrevp/Z-Image-Turbo-MLX-8bit","revision":"pinned","quantization":"8-bit"}"#.utf8))
 
         model.installImageModel(source)
         model.installImageModel(source)

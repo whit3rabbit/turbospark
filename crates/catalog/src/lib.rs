@@ -43,7 +43,8 @@ pub use entry::{
 };
 pub use hf::{hf_endpoint, set_hf_endpoint_override, Client, PopularRepo, RepoFile, RepoRef};
 pub use image::{
-    materialize_image_source, normalize_mflux_source, ImageCatalog, ImageCatalogEntry,
+    image_family_for_model_id, materialize_image_source, normalize_mflux_source,
+    validate_krea2_ram_bits, ImageCatalog, ImageCatalogEntry,
 };
 pub use install::{
     gate, human_bytes, install, install_with_byte_progress, record, ByteProgressCallback,

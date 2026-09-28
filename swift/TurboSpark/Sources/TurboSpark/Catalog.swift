@@ -117,6 +117,7 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
     /// Original Diffusers-style source retained for the MLX runtime adapter.
     /// Older packed installs do not carry this field and use the Hub cache.
     public let sourcePath: String?
+    public var family: String { ImageModelFamily.family(for: modelID) }
 
     public init(
         alias: String,
@@ -168,6 +169,22 @@ public struct ImageCatalogEntry: Decodable, Sendable, Identifiable, Equatable {
     public let modelID: String
     public let revision: String
     public let quantization: String
+    public let family: String?
+
+    public var resolvedFamily: String { family ?? ImageModelFamily.family(for: modelID) }
+}
+
+/// Family routing for image catalog metadata and session selection.
+public enum ImageModelFamily {
+    public static func family(for modelID: String) -> String {
+        if modelID.hasPrefix("baa-ai/Krea-2-Turbo") {
+            return "krea-2-turbo"
+        }
+        if modelID.hasPrefix("mlx-community/Qwen-Image-2.1") {
+            return "qwen-image-2.1"
+        }
+        return "z-image"
+    }
 }
 
 /// What an install will cost, before it starts.

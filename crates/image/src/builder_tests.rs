@@ -208,6 +208,91 @@ fn builds_fp16_source_through_complete_install() {
     fs::remove_dir_all(root).expect("remove test directory");
 }
 
+#[test]
+fn builds_the_qwen_image_21_layout_through_complete_install() {
+    let root = temporary_directory();
+    let source = root.join("source");
+    let output = root.join("image.gturbo");
+    // The Qwen-Image-2.1 processor layout: tokenizer assets under
+    // `processor/` with a sibling chat template, a root model_index.json, and
+    // `model.safetensors.index.json` spellings for every component.
+    fs::create_dir_all(source.join("processor")).expect("create processor source");
+    fs::create_dir_all(source.join("scheduler")).expect("create scheduler source");
+    fs::write(source.join("processor/tokenizer.json"), b"tokenizer").expect("write tokenizer");
+    fs::write(
+        source.join("processor/tokenizer_config.json"),
+        b"{\"model_type\": \"qwen3_vl\"}",
+    )
+    .expect("write tokenizer config");
+    fs::write(source.join("processor/chat_template.jinja"), b"template")
+        .expect("write chat template");
+    fs::write(
+        source.join("model_index.json"),
+        b"{\"_class_name\": \"QwenImage21Pipeline\"}",
+    )
+    .expect("write model index");
+    fs::write(
+        source.join("scheduler/scheduler_config.json"),
+        b"{\"shift\": 1.0, \"use_dynamic_shifting\": true}",
+    )
+    .expect("write scheduler");
+    write_safetensors_source(&source.join("text_encoder"), TEXT_ENCODER_INDEX);
+    write_safetensors_source(&source.join("transformer"), MFLUX_INDEX);
+    write_safetensors_source(&source.join("vae"), MFLUX_INDEX);
+
+    build_image_install(&ImageInstallSpec {
+        source_root: source,
+        output_root: output.clone(),
+        model_id: "mlx-community/Qwen-Image-2.1-MLX-4bit".to_string(),
+        model_revision: "synthetic-qwen".to_string(),
+    })
+    .expect("build Qwen image install");
+
+    let manifest = ImageManifest::load(&output).expect("load Qwen manifest");
+    assert_eq!(
+        manifest.source["license"],
+        serde_json::json!("qwen-research")
+    );
+    assert_eq!(manifest.supported.scheduler_steps, 40);
+    assert_eq!(manifest.supported.transformer_forwards, 40);
+    assert_eq!(manifest.supported.guidance_scale, 1.0);
+    assert_eq!(manifest.supported.prompt_max_tokens, 1024);
+    assert_eq!(manifest.supported.latent_shape, vec![1, 64, 64, 64]);
+    assert_eq!(
+        manifest.components["scheduler"].metadata["evaluation_count"],
+        serde_json::json!(40)
+    );
+    assert_eq!(
+        manifest.components["tokenizer"].metadata["chat_template"],
+        serde_json::json!("chat_template.jinja")
+    );
+    assert_eq!(
+        manifest.components["tokenizer"].metadata["padding_policy"],
+        serde_json::json!("left_pad")
+    );
+    assert_eq!(
+        manifest.components["text_encoder"].metadata["hidden_state_output"],
+        serde_json::json!("hidden_states[-1]-pre-final-norm")
+    );
+    assert_eq!(
+        manifest.components["vae_decoder"].metadata["latent_layout"],
+        serde_json::json!("[64,height,width]")
+    );
+    manifest
+        .verify_files(&output)
+        .expect("verify Qwen image install");
+
+    // A Qwen manifest carrying Z-Image envelope values must be rejected, so
+    // the family envelope cannot be loosened by mixing rows.
+    let mut forged = manifest.clone();
+    forged.supported.scheduler_steps = 9;
+    let error = forged
+        .validate()
+        .expect_err("mixed-family envelope must be rejected");
+    assert!(error.contains("unsupported image envelope"), "got {error}");
+    fs::remove_dir_all(root).expect("remove test directory");
+}
+
 fn write_common_source_tree(source: &Path) {
     fs::create_dir_all(source.join("tokenizer")).expect("create tokenizer source");
     fs::create_dir_all(source.join("scheduler")).expect("create scheduler source");

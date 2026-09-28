@@ -26,6 +26,96 @@ pub const IMAGE_FORWARDS: u32 = 9;
 pub const IMAGE_GUIDANCE: f32 = 0.0;
 pub const IMAGE_PROMPT_MAX_TOKENS: u32 = 512;
 
+/// Qwen-Image-2.1 defaults: 40 scheduler steps with true CFG off by default,
+/// a wider prompt bound, and a 64-channel latent grid at 16x compression.
+pub const QWEN_IMAGE_21_STEPS: u32 = 40;
+pub const QWEN_IMAGE_21_GUIDANCE: f32 = 1.0;
+pub const QWEN_IMAGE_21_PROMPT_MAX_TOKENS: u32 = 1024;
+
+/// Krea 2 Turbo's distilled sampling envelope from its pinned BAA recipe.
+pub const KREA_2_TURBO_STEPS: u32 = 8;
+pub const KREA_2_TURBO_GUIDANCE: f32 = 1.0;
+pub const KREA_2_TURBO_PROMPT_MAX_TOKENS: u32 = 1024;
+
+/// Install families with distinct supported envelopes. Each row keeps its
+/// own step count, guidance policy, prompt bound, and latent geometry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFamily {
+    ZImage,
+    QwenImage21,
+    Krea2Turbo,
+}
+
+/// The family a catalog model id belongs to. Unknown ids stay on the Z-Image
+/// envelope so an unpinned source cannot loosen validation by naming a new
+/// family.
+pub fn image_family_for_model_id(model_id: &str) -> ImageFamily {
+    if model_id.starts_with("baa-ai/Krea-2-Turbo") {
+        ImageFamily::Krea2Turbo
+    } else if model_id.starts_with("mlx-community/Qwen-Image-2.1") {
+        ImageFamily::QwenImage21
+    } else {
+        ImageFamily::ZImage
+    }
+}
+
+impl ImageFamily {
+    /// The supported envelope admitted by [`ImageManifest::validate`].
+    pub fn supported(self) -> ImageSupported {
+        match self {
+            ImageFamily::ZImage => ImageSupported {
+                width: IMAGE_WIDTH,
+                height: IMAGE_HEIGHT,
+                batch: IMAGE_BATCH,
+                scheduler_steps: IMAGE_STEPS,
+                transformer_forwards: IMAGE_FORWARDS,
+                guidance_scale: IMAGE_GUIDANCE,
+                prompt_max_tokens: IMAGE_PROMPT_MAX_TOKENS,
+                latent_shape: vec![1, 16, 128, 128],
+            },
+            ImageFamily::QwenImage21 => ImageSupported {
+                width: IMAGE_WIDTH,
+                height: IMAGE_HEIGHT,
+                batch: IMAGE_BATCH,
+                scheduler_steps: QWEN_IMAGE_21_STEPS,
+                transformer_forwards: QWEN_IMAGE_21_STEPS,
+                guidance_scale: QWEN_IMAGE_21_GUIDANCE,
+                prompt_max_tokens: QWEN_IMAGE_21_PROMPT_MAX_TOKENS,
+                latent_shape: vec![1, 64, 64, 64],
+            },
+            ImageFamily::Krea2Turbo => ImageSupported {
+                width: IMAGE_WIDTH,
+                height: IMAGE_HEIGHT,
+                batch: IMAGE_BATCH,
+                scheduler_steps: KREA_2_TURBO_STEPS,
+                transformer_forwards: KREA_2_TURBO_STEPS,
+                guidance_scale: KREA_2_TURBO_GUIDANCE,
+                prompt_max_tokens: KREA_2_TURBO_PROMPT_MAX_TOKENS,
+                latent_shape: vec![1, 16, 128, 128],
+            },
+        }
+    }
+
+    /// The source license recorded in the manifest for this family.
+    pub fn license(self) -> &'static str {
+        match self {
+            ImageFamily::ZImage => "Apache-2.0",
+            ImageFamily::QwenImage21 => "qwen-research",
+            ImageFamily::Krea2Turbo => "Krea 2 Community License Agreement",
+        }
+    }
+}
+
+impl std::fmt::Display for ImageFamily {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            ImageFamily::ZImage => "z-image",
+            ImageFamily::QwenImage21 => "qwen-image-2.1",
+            ImageFamily::Krea2Turbo => "krea-2-turbo",
+        })
+    }
+}
+
 pub const COMPONENT_ORDER: [&str; 5] = [
     "tokenizer",
     "text_encoder",
@@ -120,7 +210,20 @@ impl ImageManifest {
             .map_err(|e| format!("failed to parse image manifest {}: {e}", path.display()))
     }
 
-    /// Validate the frozen IG2 admission envelope without touching payloads.
+    /// The family whose envelope this manifest declares through its source
+    /// model id. Manifests without a model id stay on the Z-Image envelope.
+    fn family(&self) -> ImageFamily {
+        self.source
+            .get("model_id")
+            .and_then(serde_json::Value::as_str)
+            .map(image_family_for_model_id)
+            .unwrap_or(ImageFamily::ZImage)
+    }
+
+    /// Validate the frozen admission envelope without touching payloads. The
+    /// envelope is per-family: a Z-Image manifest keeps the IG2 contract, a
+    /// Qwen-Image-2.1 manifest carries its own steps, guidance, prompt bound,
+    /// and latent shape.
     pub fn validate(&self) -> Result<ImageManifestValidation, String> {
         if self.magic != IMAGE_MANIFEST_MAGIC {
             return Err(format!(
@@ -141,18 +244,36 @@ impl ImageManifest {
             ));
         }
 
+        if let Some(family) = self
+            .source
+            .get("family")
+            .and_then(serde_json::Value::as_str)
+        {
+            let expected = self.family().to_string();
+            if family != expected {
+                return Err(format!(
+                    "image manifest declares family {family:?}, expected {expected:?} from its model id"
+                ));
+            }
+        }
+
         let supported = &self.supported;
-        if (supported.width, supported.height) != (IMAGE_WIDTH, IMAGE_HEIGHT) {
+        let envelope = self.family().supported();
+        if (supported.width, supported.height) != (envelope.width, envelope.height) {
             return Err(format!(
-                "image dimensions {}x{} are outside the IG2 envelope of {}x{}",
-                supported.width, supported.height, IMAGE_WIDTH, IMAGE_HEIGHT
+                "image dimensions {}x{} are outside the {} envelope of {}x{}",
+                supported.width,
+                supported.height,
+                self.family(),
+                envelope.width,
+                envelope.height
             ));
         }
-        if supported.batch != IMAGE_BATCH
-            || supported.scheduler_steps != IMAGE_STEPS
-            || supported.transformer_forwards != IMAGE_FORWARDS
-            || supported.guidance_scale.to_bits() != IMAGE_GUIDANCE.to_bits()
-            || supported.prompt_max_tokens != IMAGE_PROMPT_MAX_TOKENS
+        if supported.batch != envelope.batch
+            || supported.scheduler_steps != envelope.scheduler_steps
+            || supported.transformer_forwards != envelope.transformer_forwards
+            || supported.guidance_scale.to_bits() != envelope.guidance_scale.to_bits()
+            || supported.prompt_max_tokens != envelope.prompt_max_tokens
         {
             return Err(format!(
                 "unsupported image envelope: batch={}, steps={}, forwards={}, guidance={}, prompt_max_tokens={}",
@@ -163,10 +284,10 @@ impl ImageManifest {
                 supported.prompt_max_tokens
             ));
         }
-        if supported.latent_shape != [1, 16, 128, 128] {
+        if supported.latent_shape != envelope.latent_shape {
             return Err(format!(
-                "unsupported latent shape {:?}, expected [1, 16, 128, 128]",
-                supported.latent_shape
+                "unsupported latent shape {:?}, expected {:?}",
+                supported.latent_shape, envelope.latent_shape
             ));
         }
 

@@ -101,7 +101,7 @@ struct ImageGalleryActions: View {
         }
         .disabled(
             !model.canStartImageGeneration
-                || !model.hasSupportedSelectedZImageModel
+                || !model.hasSupportedSelectedImageModel
                 || model.imageModelPath.isEmpty
                 || artifact.imageRequest == nil)
         Divider()

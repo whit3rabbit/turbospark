@@ -156,5 +156,59 @@
       "vae/0.safetensors",
       "vae/model.safetensors.index.json"
     ]
+  },
+  {
+    "alias": "qwen-image-2.1-mlx-4bit",
+    "model_id": "mlx-community/Qwen-Image-2.1-MLX-4bit",
+    "revision": "4db4e8c0c0e7a1debf0320415bec8388e888494c",
+    "required_files": [
+      "model_index.json",
+      "processor/added_tokens.json",
+      "processor/chat_template.jinja",
+      "processor/merges.txt",
+      "processor/preprocessor_config.json",
+      "processor/special_tokens_map.json",
+      "processor/tokenizer.json",
+      "processor/tokenizer_config.json",
+      "processor/video_preprocessor_config.json",
+      "processor/vocab.json",
+      "scheduler/scheduler_config.json",
+      "text_encoder/config.json",
+      "text_encoder/model.safetensors",
+      "text_encoder/model.safetensors.index.json",
+      "transformer/config.json",
+      "transformer/model.safetensors",
+      "transformer/model.safetensors.index.json",
+      "vae/config.json",
+      "vae/model.safetensors",
+      "vae/model.safetensors.index.json"
+    ]
+  },
+  {
+    "alias": "krea-2-turbo-mlx-mixed-precision",
+    "model_id": "baa-ai/Krea-2-Turbo-RAM-9GB-MLX",
+    "revision": "58d4ebf1d13c3b086bde5ee45c038b299347dae9",
+    "family": "krea-2-turbo",
+    "required_files": [
+      "0.safetensors",
+      "1.safetensors",
+      "2.safetensors",
+      "3.safetensors",
+      "4.safetensors",
+      "LICENSE.pdf",
+      "Notice",
+      "model.safetensors.index.json",
+      "ram_bits.json",
+      "text_encoder/0.safetensors",
+      "text_encoder/1.safetensors",
+      "text_encoder/2.safetensors",
+      "text_encoder/3.safetensors",
+      "text_encoder/model.safetensors.index.json",
+      "tokenizer/chat_template.jinja",
+      "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json",
+      "vae/0.safetensors",
+      "vae/model.safetensors.index.json"
+    ]
   }
 ]
