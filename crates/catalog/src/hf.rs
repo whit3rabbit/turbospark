@@ -19,6 +19,14 @@
 //!   cost a 20-minute re-stream (AGENTS.md Gotcha 47).
 
 use serde::Deserialize;
+use std::io::Read;
+
+/// Upper bound for metadata and sidecar responses collected in memory.
+///
+/// These endpoints normally return KB-scale JSON. Keeping a generous bound
+/// prevents a publisher-controlled response from exhausting the process while
+/// leaving repository listings with many files enough room.
+const SMALL_FILE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 /// An in-process override for [`hf_endpoint`], set by [`set_hf_endpoint_override`].
 ///
@@ -291,10 +299,7 @@ impl Client {
         let response = self.send_retrying(url)?;
         let status = response.status().as_u16();
         match status {
-            200 => response
-                .bytes()
-                .map(|b| b.to_vec())
-                .map_err(|e| format!("reading {url}: {e}")),
+            200 => read_small_body(response, url),
             401 | 403 if !self.has_token() => Err(format!(
                 "GET {url}: HTTP {status}. This repository is gated and no HF_TOKEN \
                  is set; accept its licence on huggingface.co, then export a token."
@@ -316,10 +321,7 @@ impl Client {
     pub fn get_optional(&self, url: &str) -> Result<Option<Vec<u8>>, String> {
         let response = self.send_retrying(url)?;
         match response.status().as_u16() {
-            200 => response
-                .bytes()
-                .map(|b| Some(b.to_vec()))
-                .map_err(|e| format!("reading {url}: {e}")),
+            200 => read_small_body(response, url).map(Some),
             404 => Ok(None),
             other => Err(format!("GET {url}: HTTP {other}")),
         }
@@ -471,6 +473,39 @@ impl Client {
     }
 }
 
+/// Read a metadata response without trusting either a declared length or a
+/// chunked body to stay small. The extra byte distinguishes an exactly-full
+/// valid response from an oversized one without buffering the remainder.
+fn read_small_body(response: reqwest::blocking::Response, url: &str) -> Result<Vec<u8>, String> {
+    let declared_length = response.content_length();
+    read_bounded(response, declared_length, SMALL_FILE_MAX_BYTES, url)
+}
+
+fn read_bounded(
+    reader: impl std::io::Read,
+    declared_length: Option<u64>,
+    limit: u64,
+    url: &str,
+) -> Result<Vec<u8>, String> {
+    if declared_length.is_some_and(|length| length > limit) {
+        return Err(format!(
+            "reading {url}: response exceeds the {limit}-byte metadata limit"
+        ));
+    }
+
+    let mut body = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut body)
+        .map_err(|e| format!("reading {url}: {e}"))?;
+    if body.len() as u64 > limit {
+        return Err(format!(
+            "reading {url}: response exceeds the {limit}-byte metadata limit"
+        ));
+    }
+    Ok(body)
+}
+
 /// Whether a non-2xx status is the server asking to be retried later, rather
 /// than a verdict about the request. Mirrors
 /// `repack::ranged_download::http::throttled_status` exactly (429 plus the
@@ -513,7 +548,23 @@ fn base_model(value: serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{base_model, throttle_backoff, throttled_status};
+    use super::{base_model, read_bounded, throttle_backoff, throttled_status};
+
+    #[test]
+    fn bounded_reads_reject_declared_and_streamed_overflow() {
+        let url = "https://example.invalid/config.json";
+
+        let declared = read_bounded(std::io::Cursor::new([]), Some(5), 4, url);
+        assert!(declared.unwrap_err().contains("4-byte metadata limit"));
+
+        let streamed = read_bounded(std::io::Cursor::new([0_u8; 5]), None, 4, url);
+        assert!(streamed.unwrap_err().contains("4-byte metadata limit"));
+
+        assert_eq!(
+            read_bounded(std::io::Cursor::new([1_u8; 4]), None, 4, url).unwrap(),
+            vec![1_u8; 4]
+        );
+    }
 
     /// 429 and the 5xx pair retry; nothing else does -- the exact set
     /// `repack`'s own `throttled_status` uses, which is what lets this
