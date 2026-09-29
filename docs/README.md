@@ -13,6 +13,7 @@ the evidence that supports the claim.
 | Measure throughput, memory, power, or quality | [`BENCHMARKING.md`](BENCHMARKING.md) |
 | Read the frozen Swift comparison and other measured rows | [`BENCHMARKS.md`](BENCHMARKS.md) |
 | Find, probe, or install a model | [`MODELS.md`](MODELS.md) |
+| Pick an abliterated or uncensored alternative for a catalog model | [`ABLITERATED_MODELS.md`](ABLITERATED_MODELS.md) |
 | Add or assess a model family | [`MODEL_FAMILY.md`](MODEL_FAMILY.md) and [`NEW_MODEL.md`](NEW_MODEL.md) |
 | Use the command-line tools | [`CLI.md`](CLI.md) |
 | Configure environment variables | [`ENV.md`](ENV.md) |
