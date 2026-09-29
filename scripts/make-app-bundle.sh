@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Assembles swift/TurboSparkApp's bare SwiftPM executable into a real
-# TurboSpark.app bundle, with the three CLI binaries inside it.
+# TurboSpark.app bundle, with the three CLI binaries and openkindd inside it.
 #
 # WHY THIS SCRIPT EXISTS: `swift build` emits an executable and a resource
 # bundle side by side in `.build/release`, not an `.app` (swift/CLAUDE.md
@@ -73,6 +73,28 @@ sparkle_public_ed_key="O+w+eDlUPQQa1Y+quYgz9BiJljUdS01KeafmpSzoZ3g="
 
 app="$out_dir/TurboSpark.app"
 contents="$app/Contents"
+openkind_revision="${OPENKIND_RELEASE_REVISION:-}"
+openkind_url="${OPENKIND_PACKAGE_URL:-https://github.com/whit3rabbit/opendecision.git}"
+openkind_bin="${OPENKINDD_BINARY:-}"
+openkind_build_dir=""
+
+if [ "$skip_build" -eq 0 ]; then
+  [[ "$openkind_revision" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "OPENKIND_RELEASE_REVISION must be an exact published 40-character commit for app bundles" >&2
+    exit 1
+  }
+  openkind_build_dir="$(mktemp -d)"
+  trap 'rm -rf "$openkind_build_dir"' EXIT
+  git clone -q --filter=blob:none "$openkind_url" "$openkind_build_dir/openkind"
+  git -C "$openkind_build_dir/openkind" checkout -q "$openkind_revision"
+  [ "$(git -C "$openkind_build_dir/openkind" rev-parse HEAD)" = "$openkind_revision" ] || {
+    echo "OpenKind revision mismatch" >&2; exit 1;
+  }
+  cargo build --release --locked --features mlx -p openkind-server \
+    --manifest-path "$openkind_build_dir/openkind/Cargo.toml"
+  openkind_bin="$openkind_build_dir/openkind/target/release/openkindd"
+fi
+[ -x "$openkind_bin" ] || { echo "openkindd binary missing; set OPENKINDD_BINARY for --skip-build" >&2; exit 1; }
 
 if [ "$skip_build" -eq 0 ]; then
   echo "==> staging the FFI staticlib (crates/ffi -> SwiftPM)"
@@ -98,6 +120,10 @@ rm -rf "$app"
 mkdir -p "$contents/MacOS" "$contents/Resources" "$contents/Frameworks"
 
 cp "$exe" "$contents/MacOS/TurboSparkApp"
+cp "$openkind_bin" "$contents/MacOS/openkindd"
+if [ "$skip_build" -eq 0 ]; then
+  printf '%s\n' "$openkind_revision" > "$contents/Resources/OpenKindRevision.txt"
+fi
 
 # `Bundle.module` resolves against Bundle.main.resourceURL in a real bundle, so
 # Contents/Resources is where SwiftPM's generated resource bundles have to
@@ -212,7 +238,7 @@ echo "==> codesign (identity: ${identity})"
 # Inner executables first, then the bundle: a signature over the bundle seals
 # what is inside it, so signing the wrapper before its contents invalidates
 # itself. `--deep` is deprecated by Apple for exactly this reason.
-for bin in turbospark-check turbospark-model turbospark-server; do
+for bin in turbospark-check turbospark-model turbospark-server openkindd; do
   codesign --force --timestamp=none --sign "$identity" "$contents/MacOS/$bin"
 done
 

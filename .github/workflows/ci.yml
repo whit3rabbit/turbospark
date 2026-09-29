@@ -105,6 +105,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build TurboSpark.app
+        env:
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION }}
         run: ./scripts/make-app-bundle.sh
 
       # make-dmg.sh mounts what it built and asserts the contents; a green

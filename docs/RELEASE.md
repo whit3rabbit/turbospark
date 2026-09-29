@@ -138,12 +138,20 @@ close that gap, and CI calls exactly these, so a local `make dmg` and a
 release build the same thing:
 
 ```sh
-make app-bundle   # scripts/make-app-bundle.sh -> dist/TurboSpark.app
-make dmg          # scripts/make-dmg.sh        -> dist/TurboSpark-<ver>-arm64.dmg
+OPENKIND_RELEASE_REVISION=<published-40-character-commit> make app-bundle
+OPENKIND_RELEASE_REVISION=<same-commit> make dmg
 ```
 
-`make-app-bundle.sh` builds all three halves (the FFI staticlib via
-`scripts/swift-lib.sh`, the CLI and server via cargo, the app via SwiftPM),
+`OPENKIND_RELEASE_REVISION` pins the Swift package and the bundled `openkindd`
+to the same published commit. The script refuses an unpinned release bundle.
+Set the same commit as the `OPENKIND_RELEASE_REVISION` GitHub Actions variable
+for CI and the release workflow.
+Development builds use the sibling `../openkind` Swift package and can set
+`OPENKINDD_BINARY` to a locally built daemon for the TypeSafe pane.
+
+`make-app-bundle.sh` builds the FFI staticlib via `scripts/swift-lib.sh`,
+the TurboSpark CLI and server via cargo, the app via SwiftPM, and OpenKind
+from the pinned commit,
 then assembles:
 
 ```
@@ -154,9 +162,11 @@ TurboSpark.app/Contents/
 |   +-- TurboSparkApp          # CFBundleExecutable
 |   +-- turbospark-check       # the CLI, where the cask links it from
 |   +-- turbospark-model
-|   \-- turbospark-server
+|   +-- turbospark-server
+|   \-- openkindd              # TypeSafe loopback daemon
 \-- Resources/
-    \-- TurboSparkApp_TurboSparkApp.bundle   # Bundle.module's resources
+    +-- TurboSparkApp_TurboSparkApp.bundle   # Bundle.module's resources
+    \-- OpenKindRevision.txt   # exact package and daemon commit
 ```
 
 Three facts about that layout that are decisions rather than defaults:
@@ -182,7 +192,8 @@ Three facts about that layout that are decisions rather than defaults:
 
 `make-dmg.sh` wraps the bundle with an `/Applications` symlink, then
 **mounts the image it just built and checks it**: main executable present,
-all three CLI binaries present, a resource `.bundle` in `Contents/Resources`,
+all three TurboSpark CLI binaries and `openkindd` present, the OpenKind revision
+record and a resource `.bundle` in `Contents/Resources`,
 and `codesign --verify --deep --strict` on the mounted copy. That check is the
 reason the script exists rather than a one-line `hdiutil` call in the
 workflow -- `hdiutil create` exits 0 over a staging directory missing the

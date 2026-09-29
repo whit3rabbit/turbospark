@@ -85,6 +85,14 @@ mounted="$mount_point/TurboSpark.app"
 for bin in turbospark-check turbospark-model turbospark-server; do
   [ -x "$mounted/Contents/MacOS/$bin" ] || { echo "CLI binary $bin missing from the bundle" >&2; exit 1; }
 done
+[ -x "$mounted/Contents/MacOS/openkindd" ] || { echo "openkindd missing from the bundle" >&2; exit 1; }
+[ -s "$mounted/Contents/Resources/OpenKindRevision.txt" ] || { echo "OpenKind revision missing from the bundle" >&2; exit 1; }
+if [ -n "${OPENKIND_RELEASE_REVISION:-}" ]; then
+  [ "$(cat "$mounted/Contents/Resources/OpenKindRevision.txt")" = "$OPENKIND_RELEASE_REVISION" ] || {
+    echo "OpenKind revision in the mounted bundle does not match the release pin" >&2
+    exit 1
+  }
+fi
 # Bundle.module's resources. An app without these starts and then renders no
 # provider logos and no built-in prompts -- it does not crash, which is why
 # this is asserted rather than left to a launch test.

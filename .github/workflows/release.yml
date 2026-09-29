@@ -106,6 +106,7 @@ jobs:
       - name: Build app bundle (also builds the CLI and the server)
         env:
           VER: ${{ needs.check-version.outputs.version }}
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION }}
         run: ./scripts/make-app-bundle.sh --version "${VER}"
 
       - name: Stage CLI zip
