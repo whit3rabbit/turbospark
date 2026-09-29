@@ -1,5 +1,17 @@
 // swift-tools-version: 5.9
 import PackageDescription
+import Foundation
+
+// Development uses the sibling checkout. Release packaging sets one exact
+// revision for both this Swift client and its bundled daemon.
+let openKindRevision = ProcessInfo.processInfo.environment["OPENKIND_RELEASE_REVISION"]
+let openKindURL = ProcessInfo.processInfo.environment["OPENKIND_PACKAGE_URL"]
+    ?? "https://github.com/whit3rabbit/opendecision.git"
+let openKindIdentity = URL(string: openKindURL)?.deletingPathExtension().lastPathComponent.lowercased()
+    ?? "opendecision"
+let openKindDependency: Package.Dependency = openKindRevision.map {
+    .package(url: openKindURL, revision: $0)
+} ?? .package(path: "../../../openkind")
 
 let package = Package(
     name: "TurboSparkApp",
@@ -7,6 +19,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(path: "../TurboSpark"),
+        openKindDependency,
         .package(path: "Vendor/ZImage"),
         .package(path: "Vendor/QwenImage"),
         .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", from: "4.10.0"),
@@ -19,6 +32,7 @@ let package = Package(
             name: "TurboSparkApp",
             dependencies: [
                 .product(name: "TurboSpark", package: "TurboSpark"),
+                .product(name: "OpenKind", package: openKindRevision == nil ? "openkind" : openKindIdentity),
                 .product(name: "ZImage", package: "zimage"),
                 .product(name: "QwenImage", package: "qwenimage"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),

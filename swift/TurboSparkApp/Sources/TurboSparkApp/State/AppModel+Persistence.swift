@@ -517,6 +517,8 @@ extension AppModel {
         // First, so the engine stops answering requests for a model that is
         // about to be released (`swift/CLAUDE.md` Gotcha 26).
         stopServer()
+        typeSafeServer?.terminate()
+        typeSafeServer = nil
         stopServerPolling()
 
         // Deliberately NOT `unloadModel()`: that refuses while `generating`,

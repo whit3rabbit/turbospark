@@ -237,7 +237,8 @@ extension AppModel {
     /// manifest and resolves the path, so the app never removes an arbitrary
     /// folder selected by a user.
     public func deleteImageModel(_ image: ImageInstalledModel) {
-        guard !isInstallingImageModel, !generating else { return }
+        guard !isInstallingImageModel, !generating,
+              serverImageAttachedModel?.path != image.path else { return }
         let wasSelected = imageModelPath == image.path
         if imageSessionPath == image.path {
             imageSession?.cancel()
@@ -272,7 +273,7 @@ extension AppModel {
 
     /// Drops the resident image session to reclaim physical memory.
     public func unloadImageModel() {
-        guard canUnloadImageModel else { return }
+        guard canUnloadImageModel, serverImageTasks.isEmpty else { return }
         imageSession?.cancel()
         imageSession = nil
         imageSessionPath = nil

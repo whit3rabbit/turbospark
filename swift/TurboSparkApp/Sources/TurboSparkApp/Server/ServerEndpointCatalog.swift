@@ -77,6 +77,12 @@ public enum ServerEndpointCatalog {
             method: "POST", path: "/v1/completions", family: .openAI,
             summary: "Legacy raw prompt, with no chat template applied.", streams: true),
         ServerEndpoint(
+            method: "POST", path: "/v1/images/generations", family: .openAI,
+            summary: "Prompt to PNG. Requires an attached image model; returns base64 JSON.", streams: false),
+        ServerEndpoint(
+            method: "POST", path: "/v1/images/edits", family: .openAI,
+            summary: "Unsupported. Returns a clear 501 error; image edits are not available.", streams: false),
+        ServerEndpoint(
             method: "POST", path: "/v1/responses", family: .openAI,
             summary: "The Responses API, item-shaped.", streams: true),
         ServerEndpoint(

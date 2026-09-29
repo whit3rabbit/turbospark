@@ -1,6 +1,6 @@
 # TurboSparkApp
 
-Native macOS SwiftUI desktop chat and autonomous agent application for TurboSpark. Runs in-process on Apple Silicon with direct access to Metal inference pipelines, featuring multi-turn conversation persistence, native tool execution, Model Context Protocol (MCP) server support, Syntext code search, and an embedded OpenAI/Anthropic-compatible HTTP API server.
+Native macOS SwiftUI desktop chat and autonomous agent application for TurboSpark. Text and Image generation use in-process Metal pipelines. The API workspace also manages a separate loopback OpenKind service for TypeSafe requests. The app includes multi-turn conversation persistence, native tool execution, Model Context Protocol (MCP) server support, and Syntext code search.
 
 ## Platform Requirements
 
@@ -25,7 +25,7 @@ swift/TurboSparkApp/
 |   +-- Installation/                 # Model catalog browser, download manager, probe sheets
 |   +-- Presentation/                 # Markdown rendering, syntax highlighting, document parsing
 |   +-- Resources/                    # Bundled prompts, logos, risk classifier weights
-|   +-- Server/                       # Embedded API server UI, metrics store, endpoint catalog
+|   +-- Server/                       # Text/Image API and TypeSafe playground UI
 |   +-- State/                        # AppModel state coordinator, goals, compaction, storage
 |   +-- Theme/                        # Typography, colors, accessibility, Reduce Transparency
 |   \-- Tools/                        # Agent tool execution, MCP client, Syntext search, sandbox
@@ -121,10 +121,14 @@ The `AppModel` coordinator acts as the single source of truth:
 - Popover breakdown separating system prompts, active project memory, chat turns, tool schemas, and file attachments.
 - Message alternate branching and regeneration controls (`SWIFT_MESSAGE_EDITING.md`).
 
-### 5. Embedded API Server (`Server/`)
-- Host an OpenAI/Anthropic compatible endpoint directly from the GUI app.
-- Shares the GPU-resident model session without duplicating memory.
-- Provides real-time metrics dashboards, request queues, and endpoint monitoring.
+### 5. API Workspace (`Server/`)
+- Text hosts the existing chat and completion endpoints. Image adds a
+  prompt-to-PNG endpoint on the same TurboSpark listener and API key.
+- TypeSafe starts a separate OpenKind daemon with its own loopback URL and
+  Keychain key. Its native playground builds Noul, Choice, and Score requests
+  or accepts raw JSON, then shows typed answers and local timing results.
+- The workspace retains metrics, request queues, and endpoint monitoring.
+  See [Swift API workspace](../docs/SWIFT_API_WORKSPACE.md).
 
 ---
 

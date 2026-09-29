@@ -154,19 +154,30 @@ private enum MLXImageModelSnapshot {
         if fm.fileExists(atPath: quantizationManifest.path) {
             return source.path
         }
-        guard fm.fileExists(atPath: quantizeConfig.path) else {
-            return source.path
+        // Curated MLX exports may declare quantization in component configs
+        // instead of a root manifest. Without a manifest the vendor loader
+        // applies packed tensors to dense layers and crashes during denoising.
+        let configs = [
+            quantizeConfig,
+            source.appendingPathComponent("transformer/config.json"),
+            source.appendingPathComponent("text_encoder/config.json")
+        ]
+        var resolved: (bits: Int, groupSize: Int)?
+        for config in configs where fm.fileExists(atPath: config.path) {
+            let data = try Data(contentsOf: config)
+            let document = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            guard let quantization = document?["quantization"] as? [String: Any] else { continue }
+            guard let bits = quantization["bits"] as? Int,
+                  let groupSize = quantization["group_size"] as? Int,
+                  (2...8).contains(bits), groupSize > 0 else {
+                throw MLXImageModelSnapshotError.invalidQuantizationConfig(config.path)
+            }
+            if let resolved, (resolved.bits != bits || resolved.groupSize != groupSize) {
+                throw MLXImageModelSnapshotError.invalidQuantizationConfig(config.path)
+            }
+            resolved = (bits, groupSize)
         }
-
-        let data = try Data(contentsOf: quantizeConfig)
-        guard
-            let document = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let quantization = document["quantization"] as? [String: Any],
-            let bits = quantization["bits"] as? Int,
-            let groupSize = quantization["group_size"] as? Int
-        else {
-            throw MLXImageModelSnapshotError.invalidQuantizationConfig(quantizeConfig.path)
-        }
+        guard let resolved else { return source.path }
 
         for component in ["transformer", "text_encoder", "vae", "tokenizer"] {
             var isDirectory: ObjCBool = false
@@ -206,8 +217,8 @@ private enum MLXImageModelSnapshot {
         let manifest: [String: Any] = [
             "model_id": modelID,
             "revision": revision,
-            "group_size": groupSize,
-            "bits": bits,
+            "group_size": resolved.groupSize,
+            "bits": resolved.bits,
             "mode": "affine",
             "layers": []
         ]

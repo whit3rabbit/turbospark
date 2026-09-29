@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import SwiftUI
 import TurboSpark
+import OpenKind
 
 /// Primary application model and state coordinator for the TurboSpark macOS
 /// application.
@@ -115,6 +116,9 @@ public final class AppModel: ObservableObject {
     @Published public var imageJob: AppImageJob?
     var imageSession: (any ImageGenerationSession)?
     var imageSessionPath: String?
+    @Published public var serverImageAttachedModel: ImageInstalledModel?
+    @Published public var serverImageProgress: String = "Idle"
+    var serverImageTasks: [UInt64: Task<Void, Never>] = [:]
     var imageGenerationTask: Task<Void, Never>?
     var imageInstallTask: Task<Void, Never>?
     @Published public var isInstallingImageModel: Bool = false
@@ -132,6 +136,13 @@ public final class AppModel: ObservableObject {
     /// form: it used to be `stopServer()`, which is now the wrong tool
     /// (stopping a whole server to unload one of its models).
     @Published public var server: TurboSparkServer?
+    @Published public var typeSafeServer: OpenKindServer?
+    @Published public var typeSafeBusy = false
+    @Published public var typeSafePort = "18080"
+    @Published public var typeSafeAPIKeyInput = TypeSafeKeychain.loadKey() ?? ""
+    @Published public var typeSafeHealth = "Stopped"
+    @Published public var typeSafeModels: [LocalModel] = []
+    @Published public var typeSafeError: String?
     /// Whether `startServer()`/`stopServer()` is in flight.
     @Published public var serverBusy: Bool = false
     /// A stop pressed while a start was still binding (state#28).

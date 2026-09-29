@@ -223,6 +223,34 @@ extension AppModel {
         }
     }
 
+    /// An API test stays in memory until the user adds it to the image gallery.
+    @discardableResult
+    public func saveAPIImageToGallery(
+        png: Data, prompt: String, seed: UInt64, width: UInt32, height: UInt32
+    ) -> Bool {
+        guard !isInGhostChat else {
+            showToast("Saving is unavailable in a temporary chat.", style: .warning)
+            return false
+        }
+        let chatID = selectedChatID
+        materializeDraftChatIfNeeded()
+        if selectedChatIndex == nil {
+            chats.insert(AppChat(id: chatID, projectID: selectedProjectID), at: 0)
+        }
+        let options = ImageGenerateOptions(prompt: prompt, seed: seed, width: width, height: height)
+        let job = AppImageJob(chatID: chatID, options: options)
+        do {
+            let asset = try ManagedAssetStore.shared.store(
+                data: png, fileName: "\(job.id.uuidString).png", mimeType: "image/png")
+            registerSavedImage(job: job, asset: asset)
+            showToast("Image saved to gallery", style: .success)
+            return true
+        } catch {
+            showToast("Could not save image: \(error.localizedDescription)", style: .error)
+            return false
+        }
+    }
+
     private func startImageGeneration(
         _ options: ImageGenerateOptions, chatID: UUID, count: Int = 1
     ) {
@@ -238,7 +266,6 @@ extension AppModel {
         imageJob = job
         generating = true
         isCancellationPending = false
-        let modelPath = imageModelPath
         imageGenerationTask = Task { [weak self] in
             let coordinator = ImageJobCoordinator.shared
             let acquired = await coordinator.acquire()
@@ -264,15 +291,7 @@ extension AppModel {
                         code: .open,
                         message: "Select a supported MLX image model from the curated list.")
                 }
-                if self.imageSession == nil || self.imageSessionPath != modelPath {
-                    self.imageSession = Self.isQwenImageModel(selected.modelID)
-                        ? try QwenImageGenerationSession(model: selected)
-                        : MLXImageGenerationSession(model: selected)
-                    self.imageSessionPath = modelPath
-                }
-                guard let session = self.imageSession else {
-                    throw TurboSparkError(code: .open, message: "image session did not open")
-                }
+                let session = try self.sharedImageSession(for: selected)
                 try await ImageGenerationSequence.run(requests) { index, request in
                     self.imageBatchIndex = index + 1
                     self.imageJob = AppImageJob(

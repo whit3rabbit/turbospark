@@ -8,6 +8,9 @@ evidence in the linked project docs. Do not turn this file into a changelog.
 
 - Read the nearest crate or app instructions before changing code:
   `crates/<name>/AGENTS.md` or `swift/AGENTS.md`.
+- Read [API workspace](docs/API_WORKSPACE.md) when changing Text, Image, or
+  TypeSafe serving. Text and Image share the TurboSpark listener; TypeSafe
+  owns a separate loopback OpenKind daemon and Keychain key.
 - Read `docs/DEVELOPMENT.md` before setup or build failures.
 - Read `docs/TESTING.md` before adding or changing tests.
 - Read `docs/BENCHMARKING.md` and `docs/BENCHMARKS.md` before quoting or

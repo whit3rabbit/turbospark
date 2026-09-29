@@ -42,7 +42,7 @@ struct ServerHeaderBandView: View {
                 summaryRow(info)
             }
 
-            if isRunning, (info?.models.isEmpty ?? true) {
+            if isRunning, (info?.models.isEmpty ?? true) && (info?.imageModels.isEmpty ?? true) {
                 // **NAMED RATHER THAN LEFT TO BE DISCOVERED BY A 503.** A
                 // bound server with nothing attached is a real and useful
                 // state, and it is also the one a person is most likely to
@@ -76,20 +76,21 @@ struct ServerHeaderBandView: View {
     /// when it does not yet.
     private var stateColor: Color {
         guard isRunning else { return .secondary }
-        if info?.models.isEmpty ?? true { return .orange }
+        if (info?.models.isEmpty ?? true) && (info?.imageModels.isEmpty ?? true) { return .orange }
         return model.serverMetrics.totalErrors > 0 ? .yellow : .green
     }
 
     private var stateTitle: String {
         guard isRunning else { return "Server stopped" }
-        return (info?.models.isEmpty ?? true) ? "Running, no model" : "Running"
+        return (info?.models.isEmpty ?? true) && (info?.imageModels.isEmpty ?? true)
+            ? "Running, no model" : "Running"
     }
 
     private var stateSubtitle: String {
         guard isRunning, let info else {
             return "Serve your loaded models over HTTP to any app on this machine."
         }
-        let models = info.models.count
+        let models = info.models.count + info.imageModels.count
         let noun = models == 1 ? "model" : "models"
         return "\(models) \(noun) - up \(uptimeText(info.uptimeSeconds))"
     }

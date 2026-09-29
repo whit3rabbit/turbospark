@@ -1,5 +1,8 @@
 # Native image generation: Z-Image-Turbo
 
+The app's prompt-to-PNG HTTP endpoint and API workspace are described in
+[API_WORKSPACE.md](API_WORKSPACE.md).
+
 Status: IG0, IG1, IG2, IG3, and IG4 are closed for the pinned native
 1024-by-1024 case. The historical native Swift app gate passed its recorded
 contract, but the app now routes supported Z-Image generation through MLX.

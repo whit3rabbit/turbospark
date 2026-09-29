@@ -4,24 +4,40 @@ import SwiftUI
 struct ServerPaneView: View {
     @ObservedObject var model: AppModel
     @State private var tab = 0
+    @State private var apiTab: APIWorkspaceTab = .text
     @AppStorage("TurboSpark.server.consoleHeight") private var consoleHeight = 300.0
     @State private var dragHeight: Double?
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
+                APIWorkspaceSelector(selection: $apiTab)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        ServerHeaderBandView(model: model)
-                        ServerConnectionView(model: model)
-                        ServerLoadedModelsView(model: model)
-                        ServerLiveChartsView(model: model)
-                        DisclosureGroup {
-                            ServerChartsView(model: model).padding(.top, 12)
-                        } label: { Text("Traffic", bundle: .module) }
-                        DisclosureGroup {
-                            ServerConnectCardView(model: model).padding(.top, 12)
-                        } label: { Text("Connect an app", bundle: .module) }
+                        switch apiTab {
+                        case .text:
+                            ServerHeaderBandView(model: model)
+                            ServerConnectionView(model: model)
+                            ServerLoadedModelsView(model: model)
+                            ServerLiveChartsView(model: model)
+                            DisclosureGroup {
+                                ServerChartsView(model: model).padding(.top, 12)
+                            } label: { Text("Traffic", bundle: .module) }
+                            DisclosureGroup {
+                                ServerConnectCardView(model: model).padding(.top, 12)
+                            } label: { Text("Connect an app", bundle: .module) }
+                        case .image:
+                            ImageAPIPaneView(model: model)
+                        case .typeSafe:
+                            TypeSafeAPIPaneView(model: model)
+                        }
+                        if apiTab != .text {
+                            DisclosureGroup {
+                                ServerChartsView(model: model).padding(.top, 12)
+                            } label: { Text("Traffic", bundle: .module) }
+                        }
                     }
                     .padding(20)
                 }

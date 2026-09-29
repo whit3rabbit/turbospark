@@ -16,6 +16,7 @@ Short seams. Verify each one before release.
 - [Swift storage](docs/storage.md)
 - [Swift localization](docs/SWIFT_LOCALIZATION.md)
 - [Swift keyboard and accessibility](docs/KEYBOARD_SHORTCUTS.md)
+- [Swift API workspace](docs/SWIFT_API_WORKSPACE.md)
 - [Automatic app updates](docs/AUTO_UPDATE.md)
 - [Download manager](docs/DOWNLOAD_MANAGER.md)
 - [Rust binding contract](../docs/SWIFT_BINDINGS.md)
@@ -47,6 +48,18 @@ staging files changed.
   DMG contents, not only the packager exit code.
 - Localization changes go through the string catalog and parity workflow.
   Do not add ad hoc strings to a view.
+- The API destination has three modes. Text and Image share the TurboSpark
+  Rust listener, address, and key. TypeSafe manages a separate loopback
+  `openkindd` process, URL, and Keychain key through the OpenKind Swift
+  package. Keep its native playground on the typed `SystemRequest` client;
+  form and raw JSON must produce the same request contract.
+- The Image API and Images screen share one resident MLX image session and
+  serialize generation through `ImageJobCoordinator`. Stop and detach must
+  cancel queued and active served image jobs. Keep base64 PNGs out of traffic
+  text previews.
+- The app bundle and mounted DMG must contain an executable `openkindd`.
+  Pin the OpenKind Swift package and daemon to the same published revision
+  for release; a sibling package path is for development only.
 - Keep user data and model storage scoped through the documented profile and
   storage abstractions. Do not invent another `~/.turbospark` path.
 - Accessibility and keyboard changes must follow the existing shortcuts and

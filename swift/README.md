@@ -4,7 +4,7 @@ This directory contains the Swift packages and native desktop application for Tu
 1. **`TurboSpark`**: The core SwiftPM library package providing idiomatic Swift async/await bindings over the in-process C ABI (`crates/ffi`).
 2. **`TurboSparkApp`**: The native macOS SwiftUI desktop chat and model management application, featuring a multi-turn agent runtime, native tool execution, Model Context Protocol (MCP) client, Syntext code search, and an embedded API server.
 
-`TurboSpark` runs on macOS 13.0+ (Ventura) and `TurboSparkApp` runs on macOS 14.0+ (Sonoma), both on Apple Silicon. Both link against the native Metal inference engine in-process with zero HTTP or IPC overhead.
+`TurboSpark` runs on macOS 13.0+ (Ventura) and `TurboSparkApp` runs on macOS 14.0+ (Sonoma), both on Apple Silicon. Text and Image inference use the in-process Metal engine. The TypeSafe API pane manages a separate loopback OpenKind daemon.
 
 ---
 
@@ -33,7 +33,7 @@ swift/
     |   +-- Installation/            # Model catalog downloader, ModelDetailPaneView, probe
     |   +-- Presentation/            # Markdown rendering, document text extraction (PDF/Word/Excel)
     |   +-- Resources/               # App prompts, bundled logos, command gate weights, soul prompts
-    |   +-- Server/                  # Embedded API server pane, metrics store, endpoint catalog
+    |   +-- Server/                  # Text/Image server and TypeSafe playground UI
     |   +-- State/                   # AppModel state coordinator, multi-profile storage, compaction
     |   +-- Theme/                  # Typography, colors, appearance tokens, dock icon, accessibility
     |   \-- Tools/                   # Agent tools, MCP client, Syntext search, sandbox, command gate
@@ -188,18 +188,22 @@ for try await event in TurboSparkCatalog.install("gemma4") {
 }
 ```
 
-### In-Process Local API Server
+### Local Text and Image API server
 
 ```swift
 import TurboSpark
 
-// Start an OpenAI/Anthropic-compatible server on loopback
+// Start the TurboSpark server on loopback
 let server = try TurboSparkServer.start(options: ServerOptions(port: 8080))
 try server.attach(session: session)
 if let url = server.baseURL {
     print("API server listening at \(url)/v1/chat/completions")
 }
 ```
+
+The app's API workspace also includes Image generation and a separate
+TypeSafe OpenKind service with a native playground. See
+[Swift API workspace](docs/SWIFT_API_WORKSPACE.md).
 
 ---
 

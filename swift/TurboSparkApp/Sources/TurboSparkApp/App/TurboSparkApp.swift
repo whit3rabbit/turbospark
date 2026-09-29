@@ -186,7 +186,7 @@ struct TurboSparkApp: App {
                 Button {
                     model.activeSection = .server
                 } label: {
-                    Text("Server", bundle: .module)
+                    Text("API", bundle: .module)
                 }
                 .keyboardShortcut("6", modifiers: .command)
 

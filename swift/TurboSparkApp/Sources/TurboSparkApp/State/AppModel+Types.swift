@@ -38,7 +38,7 @@ extension AppModel {
             case .files: return "Files"
             case .modelManager: return "Installed"
             case .modelHub: return "Discover"
-            case .server: return "Server"
+            case .server: return "API"
             }
         }
         public var systemImage: String {
