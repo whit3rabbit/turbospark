@@ -38,6 +38,7 @@ mod models;
 #[cfg(target_os = "macos")]
 mod open;
 mod server;
+mod server_image;
 mod server_model;
 mod server_registry;
 mod server_transport;

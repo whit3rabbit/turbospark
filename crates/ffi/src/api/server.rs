@@ -1,6 +1,7 @@
 //! In-process HTTP server C ABI entry points.
 
 use std::os::raw::{c_char, c_int};
+use turbospark_server::ImageError;
 
 use crate::abi::{self, guard_result, parse_json_or_default};
 use crate::server::{self, Server};
@@ -256,6 +257,79 @@ pub unsafe extern "C" fn ts_server_poll_events_json(
         let json = serde_json::to_string(&server.drain_events(limit))
             .map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
         strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Registers one Swift-owned image model on the running HTTP listener.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_attach_image_model(
+    ptr: *const TsServer,
+    model_id: *const c_char,
+) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let id = strings::required(model_id, "modelId")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        server
+            .image_bridge()
+            .attach(id.to_string())
+            .map_err(|e| (abi::TS_ERR_OPEN, e))
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_detach_image_model(ptr: *const TsServer) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        server
+            .image_bridge()
+            .detach()
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Drains start and cancellation events for the Swift image worker.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_poll_image_events_json(
+    ptr: *const TsServer,
+    max: u32,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let events = server.image_bridge().drain(max as usize);
+        let json = serde_json::to_string(&events).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Copies one PNG into the waiting HTTP response, or completes with an error.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_complete_image_request(
+    ptr: *const TsServer,
+    request_id: u64,
+    png: *const u8,
+    png_len: usize,
+    error_message: *const c_char,
+) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let result = if !error_message.is_null() {
+            let message = strings::required(error_message, "errorMessage")
+                .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+            Err(ImageError::Failed(message.to_string()))
+        } else if png.is_null() || png_len == 0 {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "PNG bytes are required".into(),
+            ));
+        } else {
+            Ok(std::slice::from_raw_parts(png, png_len).to_vec())
+        };
+        server
+            .image_bridge()
+            .complete(request_id, result)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
 

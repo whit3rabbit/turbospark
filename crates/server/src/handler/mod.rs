@@ -215,9 +215,13 @@ pub(crate) fn gen_error_response(e: GenError) -> Response {
 /// authentication and exists only as a liveness/readiness probe.
 pub async fn health(State(state): State<crate::ServerState>) -> Response {
     let rows = state.registry.rows();
+    let images_ready = state
+        .image_provider
+        .as_ref()
+        .is_some_and(|provider| !provider.models().is_empty());
     Json(serde_json::json!({
         "status": "ok",
-        "state": if rows.is_empty() { "empty" } else { "ready" },
+        "state": if rows.is_empty() && !images_ready { "empty" } else { "ready" },
     }))
     .into_response()
 }
@@ -227,23 +231,41 @@ pub async fn health(State(state): State<crate::ServerState>) -> Response {
 /// reads.
 pub async fn models(State(state): State<crate::ServerState>) -> Response {
     let created = now_unix();
-    Json(serde_json::json!({
-        "object": "list",
-        "data": state.registry.rows().into_iter().flat_map(|row| {
+    let mut data = state
+        .registry
+        .rows()
+        .into_iter()
+        .flat_map(|row| {
             let max_context = row.max_context;
-            row.ids().map(|id| serde_json::json!({
-                "id": id,
+            row.ids()
+                .map(|id| {
+                    serde_json::json!({
+                        "id": id,
+                        "display_name": id,
+                        "object": "model",
+                        "created": created,
+                        "owned_by": "mference",
+                        "context_window": max_context,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    if let Some(provider) = &state.image_provider {
+        data.extend(provider.models().into_iter().map(|id| {
+            serde_json::json!({
                 "display_name": id,
+                "id": id,
                 "object": "model",
                 "created": created,
-                "owned_by": "mference",
-                // Not OpenAI's, and deliberately additive: a picker that can
-                // show the window a model was OPENED at saves a user guessing,
-                // and the number is per-session rather than per-checkpoint
-                // (AGENTS.md Gotcha 55) so nothing else can state it.
-                "context_window": max_context,
-            })).collect::<Vec<_>>()
-        }).collect::<Vec<_>>(),
+                "owned_by": "turbospark",
+                "capabilities": ["image_generation"],
+            })
+        }));
+    }
+    Json(serde_json::json!({
+        "object": "list",
+        "data": data,
     }))
     .into_response()
 }
@@ -271,6 +293,19 @@ pub async fn model_detail(
             "created": now_unix(),
             "owned_by": "mference",
             "context_window": max_context,
+        }))
+        .into_response()
+    } else if state
+        .image_provider
+        .as_ref()
+        .is_some_and(|provider| provider.models().contains(&model_id))
+    {
+        Json(serde_json::json!({
+            "id": model_id,
+            "object": "model",
+            "created": now_unix(),
+            "owned_by": "turbospark",
+            "capabilities": ["image_generation"],
         }))
         .into_response()
     } else {

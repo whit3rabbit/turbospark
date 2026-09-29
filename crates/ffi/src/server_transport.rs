@@ -54,7 +54,7 @@ impl Traffic {
         }
     }
 
-    fn wrap(self: &Arc<Self>, body: Body, incoming: bool, id: u64) -> Body {
+    fn wrap(self: &Arc<Self>, body: Body, incoming: bool, id: u64, preview: bool) -> Body {
         let traffic = Arc::clone(self);
         // Only a bounded prefix per body is eligible for preview. Counters
         // continue for the whole stream, including after preview truncation.
@@ -67,7 +67,7 @@ impl Traffic {
                     &traffic.sent
                 };
                 counter.fetch_add(bytes.len() as u64, Ordering::Relaxed);
-                if traffic.capture && remaining > 0 && !bytes.is_empty() {
+                if traffic.capture && preview && remaining > 0 && !bytes.is_empty() {
                     let length = bytes.len().min(remaining).min(256);
                     remaining -= bytes.len().min(remaining);
                     let direction = if incoming { "IN" } else { "OUT" };
@@ -96,10 +96,11 @@ pub(crate) async fn observe(
     next: Next,
 ) -> Response {
     let id = traffic.next_id.fetch_add(1, Ordering::Relaxed);
+    let preview_response = request.uri().path() != "/v1/images/generations";
     let (parts, body) = request.into_parts();
-    let request = Request::from_parts(parts, traffic.wrap(body, true, id));
+    let request = Request::from_parts(parts, traffic.wrap(body, true, id, true));
     let (parts, body) = next.run(request).await.into_parts();
-    Response::from_parts(parts, traffic.wrap(body, false, id))
+    Response::from_parts(parts, traffic.wrap(body, false, id, preview_response))
 }
 
 #[cfg(test)]
@@ -109,10 +110,10 @@ mod tests {
     #[tokio::test]
     async fn counts_consumed_bytes_without_changing_bodies_or_capturing_by_default() {
         let traffic = Arc::new(Traffic::new(false));
-        let body = traffic.wrap(Body::from("request"), true, 0);
+        let body = traffic.wrap(Body::from("request"), true, 0, true);
         assert_eq!(traffic.snapshot().received_bytes, 0);
         assert_eq!(axum::body::to_bytes(body, 100).await.unwrap(), "request");
-        let body = traffic.wrap(Body::from("response"), false, 0);
+        let body = traffic.wrap(Body::from("response"), false, 0, true);
         assert_eq!(axum::body::to_bytes(body, 100).await.unwrap(), "response");
         let snapshot = traffic.snapshot();
         assert_eq!(snapshot.received_bytes, 7);
@@ -124,7 +125,7 @@ mod tests {
     async fn previews_are_bounded_while_full_body_bytes_are_counted() {
         let traffic = Arc::new(Traffic::new(true));
         for id in 0..70 {
-            let body = traffic.wrap(Body::from("x".repeat(500)), false, id);
+            let body = traffic.wrap(Body::from("x".repeat(500)), false, id, true);
             assert_eq!(axum::body::to_bytes(body, 1000).await.unwrap().len(), 500);
         }
         let snapshot = traffic.snapshot();
@@ -133,5 +134,16 @@ mod tests {
         assert!(snapshot.previews[0].starts_with("OUT #6: "));
         assert!(snapshot.previews[0].ends_with(" [truncated]"));
         assert!(snapshot.previews.iter().all(|s| s.len() < 300));
+    }
+
+    #[tokio::test]
+    async fn image_response_bytes_are_counted_without_previewing_base64() {
+        let traffic = Arc::new(Traffic::new(true));
+        let encoded = "data:[{\"b64_json\":\"secret-image-bytes\"}]";
+        let body = traffic.wrap(Body::from(encoded), false, 4, false);
+        assert_eq!(axum::body::to_bytes(body, 1000).await.unwrap(), encoded);
+        let snapshot = traffic.snapshot();
+        assert_eq!(snapshot.sent_bytes, encoded.len() as u64);
+        assert!(snapshot.previews.is_empty());
     }
 }

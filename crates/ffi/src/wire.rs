@@ -686,6 +686,7 @@ pub struct ServerInfo {
     /// intentionally absent here, so a host can keep using the id returned
     /// by attach to identify and detach its session.
     pub models: Vec<String>,
+    pub image_models: Vec<String>,
     pub auth_enabled: bool,
     /// Seconds since `ts_server_start` returned. From a monotonic clock, so
     /// it is unaffected by the wall clock moving under a long-running host.

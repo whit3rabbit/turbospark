@@ -22,6 +22,7 @@ mod embeddings;
 mod encoder_model;
 mod guardrails;
 mod handler;
+mod images;
 mod messages;
 mod model;
 pub mod observe;
@@ -65,6 +66,7 @@ pub use encoder_model::RealEncoderModel;
 pub use guardrails::GuardrailConfig;
 /// Shared application state for request handling.
 pub use handler::AppState;
+pub use images::{ImageError, ImageGenerateRequest, ImageProvider};
 /// Trait and canned test backend for chat generation.
 pub use model::{ChatModel, ScriptedChatModel};
 pub use queue::{GenerationPermit, GenerationQueue};
@@ -118,6 +120,7 @@ pub struct ServerState {
     pub(crate) registry: Arc<dyn registry::ModelRegistry>,
     pub(crate) observer: Option<Arc<dyn observe::ServerObserver>>,
     pub(crate) ids: Arc<observe::RequestIds>,
+    pub(crate) image_provider: Option<Arc<dyn ImageProvider>>,
 }
 
 impl ServerState {
@@ -126,7 +129,13 @@ impl ServerState {
             registry,
             observer: None,
             ids: Arc::new(observe::RequestIds::default()),
+            image_provider: None,
         }
+    }
+
+    pub fn with_image_provider(mut self, provider: Arc<dyn ImageProvider>) -> Self {
+        self.image_provider = Some(provider);
+        self
     }
 }
 
@@ -181,6 +190,8 @@ pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterO
         .route("/v1/chat/completions", post(handler::chat_completions))
         .route("/v1/completions", post(completions::completions))
         .route("/v1/responses", post(responses::responses))
+        .route("/v1/images/generations", post(images::generations))
+        .route("/v1/images/edits", post(images::edits_unsupported))
         .route("/v1/messages", post(messages::messages))
         .route("/v1/messages/count_tokens", post(messages::count_tokens))
         .route("/v1/models", get(handler::models))

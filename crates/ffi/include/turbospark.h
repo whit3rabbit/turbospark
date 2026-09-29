@@ -741,6 +741,17 @@ int32_t ts_server_info_json(const TsServer *server, char **out);
 int32_t ts_server_poll_events_json(const TsServer *server, uint32_t max,
                                    char **out);
 
+/* One Swift-owned image model can be attached to the same authenticated
+ * listener as text. Image events are drained by the host worker, which sends
+ * a PNG or an error back by request id. A disconnect emits a cancel event. */
+int32_t ts_server_attach_image_model(const TsServer *server, const char *model_id);
+int32_t ts_server_detach_image_model(const TsServer *server);
+int32_t ts_server_poll_image_events_json(const TsServer *server, uint32_t max,
+                                          char **out);
+int32_t ts_server_complete_image_request(const TsServer *server, uint64_t request_id,
+                                         const uint8_t *png, size_t png_len,
+                                         const char *error_message);
+
 /* ---- model management (available on every platform) ---- */
 
 /* Returns the active model store root. The caller owns the result. */

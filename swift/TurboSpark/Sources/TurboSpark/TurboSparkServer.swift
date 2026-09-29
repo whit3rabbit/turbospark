@@ -105,6 +105,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// Aliases stay out of this field so a host can use an attach result to
     /// identify and detach exactly one session.
     public let models: [String]
+    public let imageModels: [String]
     public let authEnabled: Bool
     /// Seconds since the server started, from a monotonic clock.
     public let uptimeSeconds: UInt64
@@ -112,7 +113,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// Spelled out because a hand-written `init(from:)` suppresses the
     /// synthesized one.
     private enum CodingKeys: String, CodingKey {
-        case port, host, modelId, models, authEnabled, uptimeSeconds, traffic
+        case port, host, modelId, models, imageModels, authEnabled, uptimeSeconds, traffic
     }
 
     /// Decoded tolerantly for the two fields added after this struct
@@ -128,6 +129,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
         modelId = try c.decode(String.self, forKey: .modelId)
         models = try c.decodeIfPresent([String].self, forKey: .models)
             ?? (modelId.isEmpty ? [] : [modelId])
+        imageModels = try c.decodeIfPresent([String].self, forKey: .imageModels) ?? []
         authEnabled = try c.decode(Bool.self, forKey: .authEnabled)
         uptimeSeconds = try c.decodeIfPresent(UInt64.self, forKey: .uptimeSeconds) ?? 0
     }
@@ -279,6 +281,33 @@ public struct ServerEventBatch: Decodable, Sendable, Equatable {
 /// from `deinit`) without double-freeing the underlying C handle -- the C
 /// layer itself has no way to tell a second `ts_server_stop` on the same
 /// pointer apart from the first, so this type is what keeps that invariant.
+public struct ServerImageRequest: Decodable, Sendable {
+    public let model: String
+    public let prompt: String
+    public let width: UInt32
+    public let height: UInt32
+    public let seed: UInt64
+}
+
+public enum ServerImageEvent: Decodable, Sendable {
+    case start(id: UInt64, request: ServerImageRequest)
+    case cancel(id: UInt64)
+
+    private enum CodingKeys: String, CodingKey { case kind, id, request }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try values.decode(String.self, forKey: .kind)
+        let id = try values.decode(UInt64.self, forKey: .id)
+        switch kind {
+        case "start": self = .start(id: id, request: try values.decode(ServerImageRequest.self, forKey: .request))
+        case "cancel": self = .cancel(id: id)
+        default: throw DecodingError.dataCorruptedError(
+            forKey: .kind, in: values, debugDescription: "unknown image event")
+        }
+    }
+}
+
 public final class TurboSparkServer: @unchecked Sendable {
     private struct Handle: @unchecked Sendable { let raw: OpaquePointer }
     private let handle: Handle
@@ -342,6 +371,48 @@ public final class TurboSparkServer: @unchecked Sendable {
         try checkRunning()
         return try modelPath.withCString { path in
             try takeString { ts_server_attach_embedding_model(handle.raw, path, $0) }
+        }
+    }
+
+    public func attachImageModel(id: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        try id.withCString { try check(ts_server_attach_image_model(handle.raw, $0)) }
+    }
+
+    public func detachImageModel() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        try check(ts_server_detach_image_model(handle.raw))
+    }
+
+    public func pollImageEvents(max: UInt32 = 32) -> [ServerImageEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !stopped,
+              let json = try? takeString({ ts_server_poll_image_events_json(handle.raw, max, $0) }),
+              let events = try? decode([ServerImageEvent].self, from: json)
+        else { return [] }
+        return events
+    }
+
+    public func completeImageRequest(id: UInt64, png: Data?, error: String? = nil) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        if let error {
+            try error.withCString {
+                try check(ts_server_complete_image_request(handle.raw, id, nil, 0, $0))
+            }
+        } else if let png {
+            try png.withUnsafeBytes { bytes in
+                try check(ts_server_complete_image_request(
+                    handle.raw, id, bytes.bindMemory(to: UInt8.self).baseAddress, png.count, nil))
+            }
+        } else {
+            throw TurboSparkError(code: .invalidArgument, message: "image result is empty")
         }
     }
 

@@ -87,6 +87,7 @@ pub struct Server {
     /// lose models without rebinding.
     registry: Arc<LiveRegistry>,
     events: Arc<EventRing>,
+    image_bridge: Arc<crate::server_image::ImageBridge>,
     /// Set BEFORE the graceful-shutdown signal is sent, and read from every
     /// `FfiChatModel` this server has attached (`attach` clones it in).
     /// Axum's graceful shutdown waits for in-flight connections to finish and
@@ -149,8 +150,14 @@ impl Server {
         let auth_enabled = api_key.is_some();
         let registry = Arc::new(LiveRegistry::default());
         let events = Arc::new(EventRing::default());
+        let image_bridge = Arc::new(crate::server_image::ImageBridge::default());
         let router = turbospark_server::build_router_with_options(
-            Arc::clone(&registry) as Arc<dyn turbospark_server::registry::ModelRegistry>,
+            turbospark_server::ServerState::new(
+                Arc::clone(&registry) as Arc<dyn turbospark_server::registry::ModelRegistry>
+            )
+            .with_image_provider(
+                Arc::clone(&image_bridge) as Arc<dyn turbospark_server::ImageProvider>
+            ),
             turbospark_server::RouterOptions {
                 api_key,
                 observer: Some(
@@ -262,6 +269,7 @@ impl Server {
             traffic,
             registry,
             events,
+            image_bridge,
             stopping: Arc::new(AtomicBool::new(false)),
             shutdown: Some(shutdown_tx),
             thread: Some(thread),
@@ -339,6 +347,10 @@ impl Server {
         removed
     }
 
+    pub(crate) fn image_bridge(&self) -> &crate::server_image::ImageBridge {
+        &self.image_bridge
+    }
+
     /// Takes up to `max` buffered events, with however many were dropped
     /// since the last call.
     pub(crate) fn drain_events(&self, max: usize) -> crate::wire::ServerEvents {
@@ -358,6 +370,7 @@ impl Server {
             // has nothing attached, which is a state a host can start one in.
             model_id: ids.first().cloned().unwrap_or_default(),
             models: ids,
+            image_models: self.image_bridge.model().into_iter().collect(),
             auth_enabled: self.auth_enabled,
             uptime_seconds: self.started.elapsed().as_secs(),
             traffic: self.traffic.snapshot(),
@@ -380,6 +393,7 @@ impl Server {
     /// the server task is dropped after `SHUTDOWN_GRACE_PERIOD` as a backstop.
     fn stop(&mut self) {
         self.stopping.store(true, Ordering::Release);
+        self.image_bridge.stop();
         if let Some(tx) = self.shutdown.take() {
             // A dropped receiver (the thread already exited on its own,
             // e.g. a bind race elsewhere tore the listener down) means

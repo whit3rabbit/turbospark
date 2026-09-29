@@ -2213,6 +2213,7 @@ version = "0.2.0"
 dependencies = [
  "anyllm_translate",
  "axum",
+ "base64 0.22.1",
  "forge-guardrails",
  "futures",
  "image",
