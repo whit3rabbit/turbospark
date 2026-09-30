@@ -57,7 +57,7 @@ extension AppSettingsView {
         public var keywords: [String] {
             switch self {
             case .general:
-                return ["language", "locale", "localization", "keyboard", "readability", "text size", "hugging face", "hf", "token", "auth", "authentication", "api key", "ghost", "temporary chats", "compaction", "summarize", "menu bar", "background"]
+                return ["language", "locale", "localization", "keyboard", "readability", "text size", "hugging face", "hf", "token", "auth", "authentication", "api key", "ghost", "temporary chats", "compaction", "summarize", "menu bar", "background", "chat runtime", "continue responses", "pinned instructions", "tool results", "token savings"]
             case .profiles:
                 return ["profiles", "users", "accounts", "switch user", "multi user", "backup", "export", "import", "restore"]
             case .appearance:

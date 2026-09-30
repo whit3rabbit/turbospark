@@ -56,6 +56,8 @@ struct GeneralSettingsPaneView: View {
 
             compactionSection
 
+            chatRuntimeSection
+
             agentEfficiencySection
 
             codeSearchSection
@@ -236,6 +238,81 @@ struct GeneralSettingsPaneView: View {
             .settingsControl("Context Compaction", pane: .general, timing: .immediate)
     }
 
+    private var chatRuntimeSection: some View {
+        let controls = ChatRuntimeSettingsBindings(model: model)
+        return Section(header: Text("Chat Runtime", bundle: .module)) {
+            Toggle(isOn: controls.microcompactEnabled) {
+                Text("Compact older tool results", bundle: .module)
+            }
+            .settingsControl("Compact older tool results", pane: .general, timing: .nextTurn)
+            Text(
+                "Older tool-result bodies are shortened only in model requests. The saved transcript remains unchanged.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+
+            HStack {
+                Text("Minimum token savings (64-4,096 tokens)", bundle: .module)
+                    .settingsControl("Minimum token savings (64-4,096 tokens)", pane: .general, timing: .nextTurn)
+                Spacer()
+                TextField(
+                    "64",
+                    value: controls.microcompactMinimumSavingsTokens,
+                    format: .number.grouping(.never)
+                )
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 100)
+                .accessibilityLabel(Text("Minimum token savings (64-4,096 tokens)", bundle: .module))
+                Text("tokens", bundle: .module)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.appSecondary)
+            }
+
+            Toggle(isOn: controls.autoContinuationEnabled) {
+                Text("Continue responses after output limits", bundle: .module)
+            }
+            .settingsControl("Continue responses after output limits", pane: .general, timing: .nextTurn)
+            Text(
+                "TurboSpark makes up to three follow-up requests when a response stops at the output limit.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+
+            Toggle(isOn: controls.instructionPinningEnabled) {
+                Text("Include pinned instructions in model requests", bundle: .module)
+            }
+            .settingsControl("Include pinned instructions in model requests", pane: .general, timing: .nextTurn)
+            Text(
+                "Pinned user messages are added in transcript order, up to the token ceiling. Set the ceiling to zero to disable injection.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+
+            HStack {
+                Text("Maximum pinned instruction tokens (0-2,048 tokens)", bundle: .module)
+                    .settingsControl("Maximum pinned instruction tokens (0-2,048 tokens)", pane: .general, timing: .nextTurn)
+                Spacer()
+                TextField(
+                    "0",
+                    value: controls.instructionPinTokenCeiling,
+                    format: .number.grouping(.never)
+                )
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 100)
+                .accessibilityLabel(Text("Maximum pinned instruction tokens (0-2,048 tokens)", bundle: .module))
+                Text("tokens", bundle: .module)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.appSecondary)
+            }
+        }
+        .settingsControl("Chat Runtime", pane: .general, timing: .nextTurn)
+    }
+
     private var agentEfficiencySection: some View {
         Section(header: Text("Agent Efficiency", bundle: .module)) {
             Toggle(isOn: efficiencyBinding(\.actionFusionEnabled)) {
@@ -264,5 +341,56 @@ struct GeneralSettingsPaneView: View {
                 model[keyPath: keyPath] = value
                 model.persistSettingsDebounced()
             })
+    }
+}
+
+/// The bindings used by the General Settings controls also give the settings
+/// seam a small, direct test surface for both directions of the UI contract.
+@MainActor
+struct ChatRuntimeSettingsBindings {
+    let microcompactEnabled: Binding<Bool>
+    let autoContinuationEnabled: Binding<Bool>
+    let instructionPinningEnabled: Binding<Bool>
+    let microcompactMinimumSavingsTokens: Binding<Int>
+    let instructionPinTokenCeiling: Binding<Int>
+
+    init(model: AppModel) {
+        microcompactEnabled = Binding(
+            get: { model.microcompactEnabled },
+            set: { value in
+                model.microcompactEnabled = value
+                model.persistSettingsDebounced()
+            }
+        )
+        autoContinuationEnabled = Binding(
+            get: { model.autoContinuationEnabled },
+            set: { value in
+                model.autoContinuationEnabled = value
+                model.persistSettingsDebounced()
+            }
+        )
+        instructionPinningEnabled = Binding(
+            get: { model.instructionPinningEnabled },
+            set: { value in
+                model.instructionPinningEnabled = value
+                model.persistSettingsDebounced()
+            }
+        )
+        microcompactMinimumSavingsTokens = Binding(
+            get: { model.microcompactMinimumSavingsTokens },
+            set: { value in
+                model.microcompactMinimumSavingsTokens = MacAppSettings
+                    .clampMicrocompactMinimumSavingsTokens(value)
+                model.persistSettingsDebounced()
+            }
+        )
+        instructionPinTokenCeiling = Binding(
+            get: { model.instructionPinTokenCeiling },
+            set: { value in
+                model.instructionPinTokenCeiling = MacAppSettings
+                    .clampInstructionPinTokenCeiling(value)
+                model.persistSettingsDebounced()
+            }
+        )
     }
 }

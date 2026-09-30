@@ -177709,6 +177709,1447 @@
           }
         }
       }
+    },
+    "Chat Runtime": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إعدادات تشغيل المحادثة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat-Laufzeit"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat Runtime"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiempo de ejecución del chat"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exécution du chat"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הגדרות זמן ריצה לצ׳אט"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "चैट रनटाइम"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime Chat"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime della chat"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットの実行時設定"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채팅 실행 설정"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chatuitvoering"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Działanie czatu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Execução do chat"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Среда выполнения чата"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chattkörning"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sohbet çalışma zamanı"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Середовище виконання чату"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cấu hình thời gian chạy cuộc trò chuyện"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天运行时设置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天執行設定"
+          }
+        }
+      }
+    },
+    "Compact older tool results": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ضغط نتائج الأدوات القديمة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ältere Tool-Ergebnisse komprimieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compact older tool results"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprimir resultados antiguos de herramientas"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compresser les anciens résultats d’outils"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "דחיסת תוצאות ישנות של כלים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पुराने टूल नतीजों को संक्षिप्त करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ringkas hasil alat yang lama"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprimi i vecchi risultati degli strumenti"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "古いツールの結果を圧縮"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오래된 도구 결과 압축"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oudere toolresultaten inkorten"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skracaj starsze wyniki narzędzi"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compactar resultados antigos das ferramentas"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сжимать старые результаты инструментов"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Komprimera äldre verktygsresultat"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eski araç sonuçlarını sıkıştır"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Стискати старі результати інструментів"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rút gọn kết quả công cụ cũ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "压缩较早的工具结果"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "壓縮較早的工具結果"
+          }
+        }
+      }
+    },
+    "Continue responses after output limits": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "متابعة الردود بعد حد الإخراج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antworten nach Erreichen des Ausgabelimits fortsetzen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue responses after output limits"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuar respuestas al alcanzar el límite de salida"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuer les réponses après la limite de sortie"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "להמשיך תשובות לאחר מגבלת הפלט"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आउटपुट सीमा के बाद जवाब जारी रखें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lanjutkan jawaban setelah batas keluaran"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continua le risposte dopo il limite di output"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出力上限に達した後も回答を続ける"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "출력 한도 후 응답 계속하기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antwoorden voortzetten na uitvoerlimiet"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kontynuuj odpowiedzi po osiągnięciu limitu wyjścia"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuar respostas após o limite de saída"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Продолжать ответы после достижения лимита вывода"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fortsätt svar efter utmatningsgränsen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Çıktı sınırından sonra yanıtları sürdür"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Продовжувати відповіді після досягнення ліміту виводу"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiếp tục trả lời sau giới hạn đầu ra"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在输出达到上限后继续回答"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在輸出達到上限後繼續回答"
+          }
+        }
+      }
+    },
+    "Include pinned instructions in model requests": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تضمين التعليمات المثبتة في طلبات النموذج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Angeheftete Anweisungen in Modellanfragen aufnehmen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Include pinned instructions in model requests"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incluir instrucciones fijadas en las solicitudes al modelo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inclure les instructions épinglées dans les requêtes au modèle"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לכלול הוראות מוצמדות בבקשות למודל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल अनुरोधों में पिन किए गए निर्देश शामिल करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sertakan instruksi yang disematkan dalam permintaan model"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Includi le istruzioni fissate nelle richieste al modello"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定した指示をモデルへのリクエストに含める"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "고정된 지침을 모델 요청에 포함"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vastgezette instructies opnemen in modelverzoeken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dołączaj przypięte instrukcje do żądań modelu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incluir instruções fixadas nas solicitações ao modelo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Включать закрепленные инструкции в запросы к модели"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inkludera fästa instruktioner i modellförfrågningar"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sabitlenmiş talimatları model isteklerine ekle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Додавати закріплені інструкції до запитів моделі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bao gồm hướng dẫn đã ghim trong yêu cầu gửi đến mô hình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将固定的指令包含在模型请求中"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將釘選的指示包含在模型請求中"
+          }
+        }
+      }
+    },
+    "Maximum pinned instruction tokens": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الحد الأقصى لرموز التعليمات المثبتة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximale Tokenzahl für angeheftete Anweisungen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximum pinned instruction tokens"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Máximo de tokens para instrucciones fijadas"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nombre maximal de jetons pour les instructions épinglées"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מספר האסימונים המרבי להוראות מוצמדות"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पिन किए गए निर्देशों के अधिकतम टोकन"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maksimum token instruksi yang disematkan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Numero massimo di token per le istruzioni fissate"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定した指示の最大トークン数"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "고정된 지침의 최대 토큰 수"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximum aantal tokens voor vastgezette instructies"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maksymalna liczba tokenów przypiętych instrukcji"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Máximo de tokens para instruções fixadas"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Максимум токенов для закрепленных инструкций"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximalt antal token för fästa instruktioner"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sabitlenmiş talimatlar için en fazla belirteç"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Максимум токенів для закріплених інструкцій"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Số token tối đa cho hướng dẫn đã ghim"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定指令的令牌上限"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "釘選指示的權杖上限"
+          }
+        }
+      }
+    },
+    "Minimum token savings": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الحد الأدنى لتوفير الرموز"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimale Token-Einsparung"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimum token savings"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ahorro mínimo de tokens"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Économie minimale de jetons"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "חיסכון מינימלי באסימונים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "न्यूनतम टोकन बचत"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penghematan token minimum"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Risparmio minimo di token"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最小トークン節約量"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최소 토큰 절감량"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimale tokenbesparing"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimalna oszczędność tokenów"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Economia mínima de tokens"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Минимальная экономия токенов"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minsta tokenbesparing"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En az belirteç tasarrufu"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Мінімальна економія токенів"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mức tiết kiệm token tối thiểu"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最低令牌节省量"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最低權杖節省量"
+          }
+        }
+      }
+    },
+    "Older tool-result bodies are shortened only in model requests. The saved transcript remains unchanged.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يتم اختصار نص نتائج الأدوات القديمة فقط في طلبات النموذج. يظل النص المحفوظ دون تغيير."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nur die Inhalte älterer Tool-Ergebnisse werden in Modellanfragen gekürzt. Das gespeicherte Transkript bleibt unverändert."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Older tool-result bodies are shortened only in model requests. The saved transcript remains unchanged."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo se acorta el contenido de los resultados antiguos de herramientas en las solicitudes al modelo. La transcripción guardada no cambia."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seuls les contenus des anciens résultats d’outils sont raccourcis dans les requêtes au modèle. La transcription enregistrée reste inchangée."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "רק תוכן התוצאות הישנות של כלים מתקצר בבקשות למודל. התמליל השמור נשאר ללא שינוי."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल अनुरोधों में केवल पुराने टूल नतीजों का मुख्य भाग छोटा किया जाता है। सहेजी गई बातचीत नहीं बदलती।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hanya isi hasil alat yang lama dipersingkat dalam permintaan ke model. Transkrip yang disimpan tetap sama."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nelle richieste al modello vengono abbreviati solo i contenuti dei vecchi risultati degli strumenti. La trascrizione salvata non cambia."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルへのリクエストでは、古いツール結果の本文だけを短縮します。保存された文字起こしは変更されません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 요청에서는 오래된 도구 결과의 내용만 줄입니다. 저장된 대화 기록은 변경되지 않습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alleen de inhoud van oudere toolresultaten wordt ingekort in modelverzoeken. Het opgeslagen transcript blijft ongewijzigd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "W żądaniach do modelu skracana jest tylko treść starszych wyników narzędzi. Zapisany transkrypt pozostaje bez zmian."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Somente o conteúdo de resultados antigos das ferramentas é encurtado nas solicitações ao modelo. A transcrição salva permanece igual."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В запросах к модели сокращается только содержимое старых результатов инструментов. Сохраненная стенограмма остается неизменной."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Endast innehållet i äldre verktygsresultat kortas i modellförfrågningar. Den sparade transkriptionen ändras inte."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model isteklerinde yalnızca eski araç sonuçlarının içeriği kısaltılır. Kaydedilen döküm değişmeden kalır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У запитах до моделі скорочується лише вміст старих результатів інструментів. Збережений транскрипт не змінюється."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chỉ phần nội dung của kết quả công cụ cũ được rút gọn trong yêu cầu gửi đến mô hình. Bản ghi đã lưu không thay đổi."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在发给模型的请求中，仅缩短较早工具结果的正文。已保存的对话记录保持不变。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在傳送給模型的請求中，只會縮短較早工具結果的內容。已儲存的對話記錄維持不變。"
+          }
+        }
+      }
+    },
+    "Pinned user messages are added in transcript order, up to the token ceiling. Set the ceiling to zero to disable injection.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تُضاف رسائل المستخدم المثبتة بترتيب المحادثة حتى حد الرموز. اضبط الحد على صفر لتعطيل الإضافة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Angeheftete Benutzernachrichten werden in der Reihenfolge des Transkripts bis zum Token-Limit eingefügt. Setzen Sie das Limit auf null, um die Einfügung zu deaktivieren."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pinned user messages are added in transcript order, up to the token ceiling. Set the ceiling to zero to disable injection."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los mensajes de usuario fijados se añaden en el orden de la transcripción hasta alcanzar el límite de tokens. Establece el límite en cero para desactivar la inclusión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les messages utilisateur épinglés sont ajoutés dans l’ordre de la transcription, jusqu’à la limite de jetons. Réglez cette limite sur zéro pour désactiver l’injection."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הודעות משתמש מוצמדות מתווספות לפי סדר התמליל, עד לתקרת האסימונים. יש להגדיר את התקרה לאפס כדי להשבית הוספה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पिन किए गए उपयोगकर्ता संदेश बातचीत के क्रम में टोकन सीमा तक जोड़े जाते हैं। जोड़ना बंद करने के लिए सीमा शून्य करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pesan pengguna yang disematkan ditambahkan sesuai urutan transkrip hingga batas token. Atur batas ke nol untuk menonaktifkan penyisipan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I messaggi utente fissati vengono aggiunti nell’ordine della trascrizione, fino al limite di token. Imposta il limite a zero per disattivare l’inserimento."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定したユーザーメッセージは、トークン上限に達するまで文字起こしの順に追加されます。追加を無効にするには、上限をゼロに設定します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "고정된 사용자 메시지는 토큰 한도까지 대화 기록 순서대로 추가됩니다. 추가를 끄려면 한도를 0으로 설정하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vastgezette gebruikersberichten worden in transcriptvolgorde toegevoegd, tot aan de tokenlimiet. Stel de limiet in op nul om invoeging uit te schakelen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przypięte wiadomości użytkownika są dodawane w kolejności transkryptu do limitu tokenów. Ustaw limit na zero, aby wyłączyć wstawianie."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As mensagens de usuário fixadas são adicionadas na ordem da transcrição, até o limite de tokens. Defina o limite como zero para desativar a inclusão."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрепленные сообщения пользователя добавляются в порядке стенограммы до лимита токенов. Установите лимит в ноль, чтобы отключить добавление."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fästa användarmeddelanden läggs till i transkriptordning upp till tokengränsen. Sätt gränsen till noll för att inaktivera infogning."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sabitlenmiş kullanıcı mesajları, belirteç sınırına kadar döküm sırasıyla eklenir. Eklemeyi kapatmak için sınırı sıfır yapın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закріплені повідомлення користувача додаються в порядку транскрипту до ліміту токенів. Установіть нуль, щоб вимкнути додавання."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tin nhắn người dùng đã ghim được thêm theo thứ tự bản ghi, tối đa đến giới hạn token. Đặt giới hạn bằng không để tắt việc chèn."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定的用户消息会按对话记录顺序添加，直到达到令牌上限。将上限设为零可禁用注入。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "釘選的使用者訊息會依對話記錄順序加入，直到達到權杖上限。將上限設為零即可停用注入。"
+          }
+        }
+      }
+    },
+    "TurboSpark makes up to three follow-up requests when a response stops at the output limit.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يرسل TurboSpark ما يصل إلى ثلاثة طلبات متابعة عندما يتوقف الرد عند حد الإخراج."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark sendet bis zu drei Folgeanfragen, wenn eine Antwort am Ausgabelimit endet."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark makes up to three follow-up requests when a response stops at the output limit."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark realiza hasta tres solicitudes adicionales si una respuesta se detiene al alcanzar el límite de salida."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark effectue jusqu’à trois requêtes supplémentaires lorsqu’une réponse s’arrête à la limite de sortie."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark שולח עד שלוש בקשות המשך כשהתשובה נעצרת במגבלת הפלט."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "जवाब आउटपुट सीमा पर रुकने पर TurboSpark अधिकतम तीन अतिरिक्त अनुरोध करता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark mengirim hingga tiga permintaan lanjutan saat jawaban berhenti pada batas keluaran."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark invia fino a tre richieste successive se una risposta si interrompe al limite di output."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回答が出力上限で止まると、TurboSpark は最大 3 回まで追加リクエストを送信します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "응답이 출력 한도에서 멈추면 TurboSpark가 최대 세 번 추가 요청을 보냅니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark doet maximaal drie vervolgverzoeken wanneer een antwoord stopt bij de uitvoerlimiet."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark wysyła maksymalnie trzy kolejne żądania, gdy odpowiedź zatrzyma się na limicie wyjścia."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O TurboSpark faz até três solicitações adicionais quando uma resposta para no limite de saída."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark отправляет до трех дополнительных запросов, если ответ останавливается на лимите вывода."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark gör upp till tre följdförfrågningar när ett svar stannar vid utmatningsgränsen."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir yanıt çıktı sınırında durduğunda TurboSpark en fazla üç ek istek gönderir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark надсилає до трьох додаткових запитів, коли відповідь зупиняється на ліміті виводу."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark gửi tối đa ba yêu cầu tiếp theo khi câu trả lời dừng ở giới hạn đầu ra."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果回答在输出达到上限时停止，TurboSpark 最多会再发送三次请求。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果回答在輸出達到上限時停止，TurboSpark 最多會再傳送三次請求。"
+          }
+        }
+      }
+    },
+    "Minimum token savings (64-4,096 tokens)": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الحد الأدنى لتوفير الرموز (64-4,096 رمزًا)"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimale Token-Einsparung (64-4,096 Token)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimum token savings (64-4,096 tokens)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ahorro mínimo de tokens (64-4,096 tokens)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Économie minimale de jetons (64-4,096 jetons)"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "חיסכון מינימלי באסימונים (64-4,096 אסימונים)"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "न्यूनतम टोकन बचत (64-4,096 टोकन)"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penghematan token minimum (64-4,096 token)"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Risparmio minimo di token (64-4,096 token)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最小トークン節約量 (64-4,096 トークン)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최소 토큰 절감량 (64-4,096 토큰)"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimale tokenbesparing (64-4,096 tokens)"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimalna oszczędność tokenów (64-4,096 tokenów)"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Economia mínima de tokens (64-4,096 tokens)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Минимальная экономия токенов (64-4,096 токенов)"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minsta tokenbesparing (64-4,096 token)"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En az belirteç tasarrufu (64-4,096 belirteç)"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Мінімальна економія токенів (64-4,096 токенів)"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mức tiết kiệm token tối thiểu (64-4,096 token)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最低令牌节省量 (64-4,096 个令牌)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最低權杖節省量 (64-4,096 個權杖)"
+          }
+        }
+      }
+    },
+    "Maximum pinned instruction tokens (0-2,048 tokens)": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الحد الأقصى لرموز التعليمات المثبتة (0-2,048 رمزًا)"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximale Tokenzahl für angeheftete Anweisungen (0-2,048 Token)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximum pinned instruction tokens (0-2,048 tokens)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Máximo de tokens para instrucciones fijadas (0-2,048 tokens)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nombre maximal de jetons pour les instructions épinglées (0-2,048 jetons)"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מספר האסימונים המרבי להוראות מוצמדות (0-2,048 אסימונים)"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पिन किए गए निर्देशों के अधिकतम टोकन (0-2,048 टोकन)"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maksimum token instruksi yang disematkan (0-2,048 token)"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Numero massimo di token per le istruzioni fissate (0-2,048 token)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定した指示の最大トークン数 (0-2,048 トークン)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "고정된 지침의 최대 토큰 수 (0-2,048 토큰)"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximum aantal tokens voor vastgezette instructies (0-2,048 tokens)"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maksymalna liczba tokenów przypiętych instrukcji (0-2,048 tokenów)"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Máximo de tokens para instruções fixadas (0-2,048 tokens)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Максимум токенов для закрепленных инструкций (0-2,048 токенов)"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximalt antal token för fästa instruktioner (0-2,048 token)"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sabitlenmiş talimatlar için en fazla belirteç (0-2,048 belirteç)"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Максимум токенів для закріплених інструкцій (0-2,048 токенів)"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Số token tối đa cho hướng dẫn đã ghim (0-2,048 token)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定指令的令牌上限 (0-2,048 个令牌)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "釘選指示的權杖上限 (0-2,048 個權杖)"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
