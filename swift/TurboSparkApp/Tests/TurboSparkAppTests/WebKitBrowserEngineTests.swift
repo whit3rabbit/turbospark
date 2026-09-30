@@ -223,6 +223,270 @@ final class WebKitBrowserEngineTests: XCTestCase {
         XCTAssertNil(BrowserNavigationDestination(url: URL(string: "https://user@example.com/path")!))
     }
 
+    func testNativeDialogsAutomaticallyAcceptAllKinds() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .autoAccept)
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+
+        for kind in BrowserJavaScriptDialogKind.allCases {
+            var callbackDecision: BrowserDialogDecision?
+            _ = engine.handleJavaScriptDialog(
+                tabID: tabID,
+                kind: kind,
+                message: "private page message",
+                defaultText: "suggested"
+            ) { callbackDecision = $0 }
+
+            XCTAssertEqual(callbackDecision, .accept(promptText: kind == .prompt ? "suggested" : nil))
+            XCTAssertEqual(events.last?.kind, kind)
+            XCTAssertEqual(events.last?.message, "private page message")
+            XCTAssertEqual(events.last?.resolution, .accepted)
+        }
+        XCTAssertTrue(engine.pendingDialogs.isEmpty)
+    }
+
+    func testNativeDialogsAutomaticallyDismissAllKinds() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .autoDismiss)
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+
+        for kind in BrowserJavaScriptDialogKind.allCases {
+            var callbackDecision: BrowserDialogDecision?
+            _ = engine.handleJavaScriptDialog(
+                tabID: tabID,
+                kind: kind,
+                message: "private page message",
+                defaultText: "suggested"
+            ) { callbackDecision = $0 }
+
+            XCTAssertEqual(callbackDecision, .dismiss)
+            XCTAssertEqual(events.last?.kind, kind)
+            XCTAssertEqual(events.last?.resolution, .dismissed)
+        }
+        XCTAssertTrue(engine.pendingDialogs.isEmpty)
+    }
+
+    func testAskPolicyLeavesEachWebKitCallbackPendingUntilAppDecision() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .ask)
+        var callbackDecisions: [BrowserDialogDecision] = []
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+        var requestIDs: [UUID] = []
+
+        for kind in BrowserJavaScriptDialogKind.allCases {
+            let requestID = try XCTUnwrap(engine.handleJavaScriptDialog(
+                tabID: tabID,
+                kind: kind,
+                message: "ask \(kind.rawValue)",
+                defaultText: "suggested"
+            ) { callbackDecisions.append($0) })
+            requestIDs.append(requestID)
+        }
+
+        XCTAssertEqual(engine.pendingDialogs.map(\.kind), BrowserJavaScriptDialogKind.allCases)
+        XCTAssertTrue(callbackDecisions.isEmpty, "The engine must return while app-owned approval is pending.")
+        XCTAssertTrue(events.isEmpty)
+
+        for (requestID, kind) in zip(requestIDs, BrowserJavaScriptDialogKind.allCases) {
+            XCTAssertTrue(engine.resolvePendingDialog(
+                requestID,
+                decision: .accept(promptText: kind == .prompt ? "entered" : nil)
+            ))
+        }
+
+        XCTAssertEqual(callbackDecisions, BrowserJavaScriptDialogKind.allCases.map {
+            .accept(promptText: $0 == .prompt ? "entered" : nil)
+        })
+        XCTAssertEqual(events.map(\.resolution), Array(repeating: .accepted, count: 3))
+        XCTAssertTrue(engine.pendingDialogs.isEmpty)
+    }
+
+    func testWebKitConfirmDelegateBridgesAskDecisionBackToJavaScript() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        let (engine, tabID) = makeDialogEngine(policy: .ask)
+        try engine.navigate(to: server.url("/ok"), in: tabID)
+        let pageLoaded = await waitUntil { engine.tabStates[tabID]?.loadState == .loaded }
+        XCTAssertTrue(pageLoaded)
+        let webView = try XCTUnwrap(engine.webView(for: tabID))
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+
+        let confirmation = Task { try await webView.evaluateJavaScript("window.confirm('confirm text')") }
+        let requestAppeared = await waitUntil {
+            engine.pendingDialogs.first?.message == "confirm text"
+        }
+        XCTAssertTrue(requestAppeared)
+        let request = try XCTUnwrap(engine.pendingDialogs.first)
+        XCTAssertTrue(engine.resolvePendingDialog(request.id, decision: .accept(promptText: nil)))
+
+        let confirmationResult = try await confirmation.value as? Bool
+        XCTAssertEqual(confirmationResult, true)
+        XCTAssertEqual(events.single?.message, "confirm text")
+        XCTAssertEqual(events.single?.resolution, .accepted)
+    }
+
+    func testAskPolicyCanDismissEveryDialogKindFromAppOwnedUI() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .ask)
+        var callbackDecisions: [BrowserDialogDecision] = []
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+
+        for kind in BrowserJavaScriptDialogKind.allCases {
+            let requestID = try XCTUnwrap(engine.handleJavaScriptDialog(
+                tabID: tabID,
+                kind: kind,
+                message: "dismiss \(kind.rawValue)"
+            ) { callbackDecisions.append($0) })
+            XCTAssertTrue(engine.resolvePendingDialog(requestID, decision: .dismiss))
+        }
+
+        XCTAssertEqual(callbackDecisions, Array(repeating: .dismiss, count: 3))
+        XCTAssertEqual(events.map(\.resolution), Array(repeating: .dismissed, count: 3))
+        XCTAssertTrue(engine.pendingDialogs.isEmpty)
+    }
+
+    func testDialogResolutionCompletesCallbackExactlyOnceAndRejectsLateDecision() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .ask)
+        var callbackCount = 0
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+        let requestID = try XCTUnwrap(engine.handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .confirm,
+            message: "continue?"
+        ) { _ in callbackCount += 1 })
+
+        XCTAssertTrue(engine.resolvePendingDialog(requestID, decision: .accept(promptText: nil)))
+        XCTAssertFalse(engine.resolvePendingDialog(requestID, decision: .dismiss))
+        XCTAssertFalse(engine.cancelPendingDialog(requestID, reason: .cancelled))
+        XCTAssertEqual(callbackCount, 1)
+        XCTAssertEqual(events.count, 1)
+    }
+
+    func testExplicitDialogCancellationSafelyDismissesAndRejectsLateDecision() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .ask)
+        var callbackDecisions: [BrowserDialogDecision] = []
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+        let requestID = try XCTUnwrap(engine.handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .prompt,
+            message: "name?",
+            defaultText: "guest"
+        ) { callbackDecisions.append($0) })
+
+        XCTAssertTrue(engine.cancelPendingDialog(requestID, reason: .cancelled))
+        XCTAssertFalse(engine.resolvePendingDialog(requestID, decision: .accept(promptText: "late")))
+        XCTAssertEqual(callbackDecisions, [.dismiss])
+        XCTAssertEqual(events.single?.resolution, .cancelled)
+    }
+
+    func testDialogTimeoutSafelyDismissesAndRejectsLateDecision() async throws {
+        let (engine, tabID) = makeDialogEngine(policy: .ask, timeout: 0.01)
+        var callbackDecisions: [BrowserDialogDecision] = []
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+        let requestID = try XCTUnwrap(engine.handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .confirm,
+            message: "continue?"
+        ) { callbackDecisions.append($0) })
+
+        let timedOut = await waitUntil { events.single?.resolution == .timedOut }
+        XCTAssertTrue(timedOut)
+        XCTAssertFalse(engine.resolvePendingDialog(requestID, decision: .accept(promptText: nil)))
+        XCTAssertEqual(callbackDecisions, [.dismiss])
+    }
+
+    func testClosingTabSafelyDismissesItsPendingDialog() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .ask)
+        var callbackDecisions: [BrowserDialogDecision] = []
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+        let requestID = try XCTUnwrap(engine.handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .alert,
+            message: "notice"
+        ) { callbackDecisions.append($0) })
+
+        try engine.closeTab(tabID)
+
+        XCTAssertFalse(engine.resolvePendingDialog(requestID, decision: .accept(promptText: nil)))
+        XCTAssertEqual(callbackDecisions, [.dismiss])
+        XCTAssertEqual(events.single?.resolution, .tabClosed)
+    }
+
+    func testDirectTakeoverSafelyDismissesPendingDialog() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .ask)
+        var callbackDecisions: [BrowserDialogDecision] = []
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+        let requestID = try XCTUnwrap(engine.handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .confirm,
+            message: "continue?"
+        ) { callbackDecisions.append($0) })
+
+        engine.prepareForDirectUserInput(in: tabID)
+
+        XCTAssertFalse(engine.resolvePendingDialog(requestID, decision: .accept(promptText: nil)))
+        XCTAssertEqual(callbackDecisions, [.dismiss])
+        XCTAssertEqual(events.single?.resolution, .userTakeover)
+    }
+
+    func testContentProcessFailureSafelyDismissesPendingDialog() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .ask)
+        var callbackDecisions: [BrowserDialogDecision] = []
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+        let requestID = try XCTUnwrap(engine.handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .prompt,
+            message: "name?"
+        ) { callbackDecisions.append($0) })
+        let webView = try XCTUnwrap(engine.webView(for: tabID))
+
+        engine.webViewWebContentProcessDidTerminate(webView)
+
+        XCTAssertFalse(engine.resolvePendingDialog(requestID, decision: .accept(promptText: "late")))
+        XCTAssertEqual(callbackDecisions, [.dismiss])
+        XCTAssertEqual(events.single?.resolution, .engineFailure)
+    }
+
+    func testNavigationFailureSafelyDismissesPendingDialog() throws {
+        let (engine, tabID) = makeDialogEngine(policy: .ask)
+        var callbackDecisions: [BrowserDialogDecision] = []
+        var events: [BrowserDialogResult] = []
+        engine.onDialogResolved = { events.append($0) }
+        let requestID = try XCTUnwrap(engine.handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .alert,
+            message: "notice"
+        ) { callbackDecisions.append($0) })
+        let webView = try XCTUnwrap(engine.webView(for: tabID))
+
+        engine.webView(webView, didFail: nil, withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+
+        XCTAssertFalse(engine.resolvePendingDialog(requestID, decision: .accept(promptText: nil)))
+        XCTAssertEqual(callbackDecisions, [.dismiss])
+        XCTAssertEqual(events.single?.resolution, .engineFailure)
+    }
+
+    private func makeDialogEngine(
+        policy: BrowserDialogPolicy,
+        timeout: TimeInterval = 60
+    ) -> (engine: WebKitBrowserEngine, tabID: BrowserTabID) {
+        let store = BrowserTabStore()
+        let engine = WebKitBrowserEngine(
+            tabStore: store,
+            authorizeNavigation: { _ in .allow },
+            dialogPolicyProvider: { policy },
+            dialogDecisionTimeout: timeout
+        )
+        let tabID = engine.createTab(owner: .agent)
+        return (engine, tabID)
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 5,
         condition: @MainActor () -> Bool
@@ -234,4 +498,8 @@ final class WebKitBrowserEngineTests: XCTestCase {
         }
         return condition()
     }
+}
+
+private extension Array {
+    var single: Element? { count == 1 ? first : nil }
 }

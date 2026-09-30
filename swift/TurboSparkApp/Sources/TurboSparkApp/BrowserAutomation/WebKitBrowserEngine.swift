@@ -46,6 +46,82 @@ public enum BrowserNavigationAuthorizationDecision: Equatable, Sendable {
     case deny
 }
 
+public enum BrowserJavaScriptDialogKind: String, CaseIterable, Equatable, Sendable {
+    case alert
+    case confirm
+    case prompt
+}
+
+public enum BrowserDialogDecision: Equatable, Sendable {
+    case accept(promptText: String?)
+    case dismiss
+}
+
+public enum BrowserDialogResolution: Equatable, Sendable {
+    case accepted
+    case dismissed
+    case cancelled
+    case timedOut
+    case tabClosed
+    case userTakeover
+    case engineFailure
+}
+
+public enum BrowserDialogCancellationReason: Equatable, Sendable {
+    case cancelled
+    case timedOut
+}
+
+public struct BrowserDialogRequest: Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public let tabID: BrowserTabID
+    public let kind: BrowserJavaScriptDialogKind
+    public let message: String
+    public let defaultText: String?
+    public let sourceOrigin: BrowserOrigin?
+
+    public init(
+        id: UUID,
+        tabID: BrowserTabID,
+        kind: BrowserJavaScriptDialogKind,
+        message: String,
+        defaultText: String?,
+        sourceOrigin: BrowserOrigin?
+    ) {
+        self.id = id
+        self.tabID = tabID
+        self.kind = kind
+        self.message = message
+        self.defaultText = defaultText
+        self.sourceOrigin = sourceOrigin
+    }
+}
+
+public struct BrowserDialogResult: Equatable, Sendable {
+    public let requestID: UUID
+    public let tabID: BrowserTabID
+    public let kind: BrowserJavaScriptDialogKind
+    public let message: String
+    public let resolution: BrowserDialogResolution
+
+    public init(
+        requestID: UUID,
+        tabID: BrowserTabID,
+        kind: BrowserJavaScriptDialogKind,
+        message: String,
+        resolution: BrowserDialogResolution
+    ) {
+        self.requestID = requestID
+        self.tabID = tabID
+        self.kind = kind
+        self.message = message
+        self.resolution = resolution
+    }
+}
+
+public typealias BrowserDialogPolicyProvider = @MainActor () -> BrowserDialogPolicy
+public typealias BrowserDialogResolutionHandler = @MainActor (BrowserDialogResult) -> Void
+
 public struct BrowserEngineTabState: Equatable, Sendable {
     public let tabID: BrowserTabID
     public var address: String?
@@ -130,6 +206,28 @@ private final class BrowserNavigationPolicyGate {
 }
 
 @MainActor
+private final class BrowserDialogGate {
+    let request: BrowserDialogRequest
+    private var completion: ((BrowserDialogDecision) -> Void)?
+    var timeoutTask: Task<Void, Never>?
+
+    init(request: BrowserDialogRequest, completion: @escaping (BrowserDialogDecision) -> Void) {
+        self.request = request
+        self.completion = completion
+    }
+
+    @discardableResult
+    func resolve(_ decision: BrowserDialogDecision) -> Bool {
+        guard let completion else { return false }
+        self.completion = nil
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        completion(decision)
+        return true
+    }
+}
+
+@MainActor
 private final class ManagedBrowserTab {
     let webView: BrowserTakeoverWebView
     var observations: [NSKeyValueObservation] = []
@@ -148,23 +246,37 @@ private final class ManagedBrowserTab {
 @MainActor
 public final class WebKitBrowserEngine: NSObject, ObservableObject {
     @Published public private(set) var tabStates: [BrowserTabID: BrowserEngineTabState] = [:]
+    @Published public private(set) var pendingDialogs: [BrowserDialogRequest] = []
 
     public let tabStore: BrowserTabStore
+    public var onDialogResolved: BrowserDialogResolutionHandler?
 
     private let authorizeNavigation: BrowserNavigationAuthorizer
     private let onUserTakeover: BrowserUserTakeoverHandler
+    private let dialogPolicyProvider: BrowserDialogPolicyProvider
+    private let dialogDecisionTimeout: TimeInterval
     private var managedTabs: [BrowserTabID: ManagedBrowserTab] = [:]
     private var tabIDsByWebView: [ObjectIdentifier: BrowserTabID] = [:]
     private var pendingPolicyGates: [BrowserTabID: [UUID: BrowserNavigationPolicyGate]] = [:]
+    private var pendingDialogGates: [BrowserTabID: [UUID: BrowserDialogGate]] = [:]
 
     public init(
         tabStore: BrowserTabStore,
         authorizeNavigation: @escaping BrowserNavigationAuthorizer,
-        onUserTakeover: @escaping BrowserUserTakeoverHandler = { _ in }
+        onUserTakeover: @escaping BrowserUserTakeoverHandler = { _ in },
+        dialogPolicyProvider: @escaping BrowserDialogPolicyProvider = {
+            MacAppSettingsFileStore.load().browser.dialogPolicy
+        },
+        dialogDecisionTimeout: TimeInterval = 60
     ) {
         self.tabStore = tabStore
         self.authorizeNavigation = authorizeNavigation
         self.onUserTakeover = onUserTakeover
+        self.dialogPolicyProvider = dialogPolicyProvider
+        self.dialogDecisionTimeout = min(
+            max(0, dialogDecisionTimeout.isFinite ? dialogDecisionTimeout : 60),
+            60
+        )
         super.init()
 
         for tab in tabStore.tabs {
@@ -222,9 +334,14 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
 
     /// Called by the hosted WebView before forwarding a direct mouse, keyboard, or scroll event.
     public func prepareForDirectUserInput(in tabID: BrowserTabID) {
-        guard let tab = tabStore.tab(id: tabID), tab.owner == .agent else { return }
+        guard let tab = tabStore.tab(id: tabID) else { return }
 
-        onUserTakeover(tabID)
+        if tab.owner == .agent {
+            onUserTakeover(tabID)
+        }
+        dismissPendingDialogs(for: tabID, resolution: .userTakeover)
+        guard tab.owner == .agent else { return }
+
         cancelPendingPolicyGates(for: tabID)
         try? tabStore.transferOwnershipToUser(of: tabID)
         refreshStoredTabState(tabID)
@@ -232,6 +349,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
 
     public func stopLoading(in tabID: BrowserTabID) {
         guard let managedTab = managedTabs[tabID] else { return }
+        dismissPendingDialogs(for: tabID, resolution: .cancelled)
         managedTab.webView.stopLoading()
         let message = "Navigation was stopped."
         if tabStore.tab(id: tabID)?.loadState == .loading {
@@ -248,6 +366,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         guard let managedTab = managedTabs[tabID] else {
             throw BrowserTabStoreError.tabNotFound(tabID)
         }
+        dismissPendingDialogs(for: tabID, resolution: .tabClosed)
         cancelPendingPolicyGates(for: tabID)
         managedTab.snapshotService?.invalidate()
         managedTab.observations.removeAll()
@@ -472,8 +591,77 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         recordWebKitFailure(error, for: webView)
     }
 
+    public func webView(
+        _ webView: WKWebView,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping () -> Void
+    ) {
+        guard let tabID = tabID(for: webView), managedTabs[tabID] != nil else {
+            completionHandler()
+            return
+        }
+        _ = handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .alert,
+            message: message,
+            sourceOrigin: sourceOrigin(for: frame, webView: webView)
+        ) { _ in completionHandler() }
+    }
+
+    public func webView(
+        _ webView: WKWebView,
+        runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        guard let tabID = tabID(for: webView), managedTabs[tabID] != nil else {
+            completionHandler(false)
+            return
+        }
+        _ = handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .confirm,
+            message: message,
+            sourceOrigin: sourceOrigin(for: frame, webView: webView)
+        ) { decision in
+            if case .accept = decision {
+                completionHandler(true)
+            } else {
+                completionHandler(false)
+            }
+        }
+    }
+
+    public func webView(
+        _ webView: WKWebView,
+        runJavaScriptTextInputPanelWithPrompt prompt: String,
+        defaultText: String?,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (String?) -> Void
+    ) {
+        guard let tabID = tabID(for: webView), managedTabs[tabID] != nil else {
+            completionHandler(nil)
+            return
+        }
+        _ = handleJavaScriptDialog(
+            tabID: tabID,
+            kind: .prompt,
+            message: prompt,
+            defaultText: defaultText,
+            sourceOrigin: sourceOrigin(for: frame, webView: webView)
+        ) { decision in
+            if case let .accept(promptText) = decision {
+                completionHandler(promptText ?? "")
+            } else {
+                completionHandler(nil)
+            }
+        }
+    }
+
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard let tabID = tabID(for: webView), let managedTab = managedTabs[tabID] else { return }
+        dismissPendingDialogs(for: tabID, resolution: .engineFailure)
         cancelPendingPolicyGates(for: tabID)
         managedTab.pendingResponseOrigins.removeAll()
         managedTab.explicitNavigationURLs.removeAll()
@@ -486,6 +674,74 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
             state.loadError = "The browser content process terminated."
             state.navigationError = .engineCrashed
         }
+    }
+
+    /// Routes a WebKit dialog through the configured policy and keeps its callback
+    /// pending only while the app owns an ask-policy request.
+    @discardableResult
+    func handleJavaScriptDialog(
+        tabID: BrowserTabID,
+        kind: BrowserJavaScriptDialogKind,
+        message: String,
+        defaultText: String? = nil,
+        sourceOrigin: BrowserOrigin? = nil,
+        completion: @escaping (BrowserDialogDecision) -> Void
+    ) -> UUID? {
+        guard managedTabs[tabID] != nil else {
+            completion(.dismiss)
+            return nil
+        }
+
+        let request = BrowserDialogRequest(
+            id: UUID(),
+            tabID: tabID,
+            kind: kind,
+            message: message,
+            defaultText: defaultText,
+            sourceOrigin: sourceOrigin
+        )
+        let gate = BrowserDialogGate(request: request, completion: completion)
+
+        switch dialogPolicyProvider() {
+        case .autoAccept:
+            finishDialog(
+                gate,
+                decision: .accept(promptText: kind == .prompt ? defaultText : nil),
+                resolution: .accepted
+            )
+        case .autoDismiss:
+            finishDialog(gate, decision: .dismiss, resolution: .dismissed)
+        case .ask:
+            pendingDialogGates[tabID, default: [:]][request.id] = gate
+            pendingDialogs.append(request)
+            scheduleDialogTimeout(for: gate)
+        }
+        return request.id
+    }
+
+    /// Resolves an ask-policy dialog from app-owned UI without starting another tool call.
+    @discardableResult
+    public func resolvePendingDialog(_ requestID: UUID, decision: BrowserDialogDecision) -> Bool {
+        guard let gate = pendingDialog(for: requestID) else { return false }
+        let resolution: BrowserDialogResolution
+        switch decision {
+        case .accept:
+            resolution = .accepted
+        case .dismiss:
+            resolution = .dismissed
+        }
+        return finishDialog(gate, decision: decision, resolution: resolution)
+    }
+
+    /// Safe dismissal entry point for command cancellation and its deadline.
+    @discardableResult
+    public func cancelPendingDialog(
+        _ requestID: UUID,
+        reason: BrowserDialogCancellationReason
+    ) -> Bool {
+        guard let gate = pendingDialog(for: requestID) else { return false }
+        let resolution: BrowserDialogResolution = reason == .timedOut ? .timedOut : .cancelled
+        return finishDialog(gate, decision: .dismiss, resolution: resolution)
     }
 
     public func webView(
@@ -627,6 +883,63 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         }
     }
 
+    private func pendingDialog(for requestID: UUID) -> BrowserDialogGate? {
+        pendingDialogGates.values.lazy.compactMap { $0[requestID] }.first
+    }
+
+    @discardableResult
+    private func finishDialog(
+        _ gate: BrowserDialogGate,
+        decision: BrowserDialogDecision,
+        resolution: BrowserDialogResolution
+    ) -> Bool {
+        guard gate.resolve(decision) else { return false }
+        let request = gate.request
+        pendingDialogGates[request.tabID]?.removeValue(forKey: request.id)
+        if pendingDialogGates[request.tabID]?.isEmpty == true {
+            pendingDialogGates.removeValue(forKey: request.tabID)
+        }
+        pendingDialogs.removeAll { $0.id == request.id }
+        onDialogResolved?(BrowserDialogResult(
+            requestID: request.id,
+            tabID: request.tabID,
+            kind: request.kind,
+            message: request.message,
+            resolution: resolution
+        ))
+        return true
+    }
+
+    private func scheduleDialogTimeout(for gate: BrowserDialogGate) {
+        let timeoutNanoseconds = UInt64(dialogDecisionTimeout * 1_000_000_000)
+        gate.timeoutTask = Task { @MainActor [weak self, gate] in
+            do {
+                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            } catch {
+                return
+            }
+            guard let self else {
+                gate.resolve(.dismiss)
+                return
+            }
+            _ = self.finishDialog(gate, decision: .dismiss, resolution: .timedOut)
+        }
+    }
+
+    private func dismissPendingDialogs(
+        for tabID: BrowserTabID,
+        resolution: BrowserDialogResolution
+    ) {
+        let gates = Array(pendingDialogGates[tabID]?.values ?? Dictionary<UUID, BrowserDialogGate>().values)
+        for gate in gates {
+            _ = finishDialog(gate, decision: .dismiss, resolution: resolution)
+        }
+    }
+
+    private func sourceOrigin(for frame: WKFrameInfo, webView: WKWebView) -> BrowserOrigin? {
+        frame.request.url.flatMap(BrowserOrigin.init(url:)) ?? webView.url.flatMap(BrowserOrigin.init(url:))
+    }
+
     private func consumeExplicitNavigationPhase(
         for url: URL,
         in managedTab: ManagedBrowserTab
@@ -690,6 +1003,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
 
     private func recordWebKitFailure(_ error: Error, for webView: WKWebView) {
         guard let tabID = tabID(for: webView) else { return }
+        dismissPendingDialogs(for: tabID, resolution: .engineFailure)
         let nsError = error as NSError
         let reason: BrowserNavigationFailureReason
         if nsError.code == NSURLErrorCancelled {
