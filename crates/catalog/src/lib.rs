@@ -30,6 +30,7 @@ mod hub_validation;
 mod image;
 mod install;
 mod probe;
+mod quant;
 mod recommend;
 mod store;
 mod stream;
@@ -62,6 +63,9 @@ pub use install::{
 };
 pub use probe::{
     evaluate_config, evaluate_gguf, probe, ProbeReport, TypeShare, Verdict, KNOWN_SIDECARS,
+};
+pub use quant::{
+    group_variants, quant_label, QuantLabel, ShardSetIssue, ShardSetStatus, VariantFiles,
 };
 pub use recommend::{
     context_ladder, discover, fit, from_entry, gguf_variants, name_params_hint, probe_entry,
