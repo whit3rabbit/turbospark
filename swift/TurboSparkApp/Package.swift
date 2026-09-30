@@ -88,10 +88,14 @@ let package = Package(
                 "TurboSparkApp",
                 "DOMSnapshotFixtures",
                 .product(name: "TurboSpark", package: "TurboSpark"),
+                .product(name: "SQLCipher", package: "SQLCipher.swift"),
                 .product(name: "Syntext", package: "syntext")
             ],
             exclude: [
                 "Fixtures/DOMSnapshotService"
+            ],
+            cSettings: [
+                .define("SQLITE_HAS_CODEC")
             ],
             linkerSettings: [
                 .unsafeFlags([

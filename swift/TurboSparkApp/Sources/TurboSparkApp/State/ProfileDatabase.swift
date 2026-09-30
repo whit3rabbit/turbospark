@@ -191,12 +191,41 @@ final class ProfileDatabase: @unchecked Sendable {
         let selected = try loadMetadata(key: "selected-chat-id")
         var chats: [AppChat] = []
         let decoder = JSONDecoder()
-        try withStatement("SELECT payload FROM chats ORDER BY updated_at DESC, id ASC") { statement in
+        try withStatement(
+            "SELECT payload, title, title_provenance, title_generation_attempted, recovery_anchor FROM chats ORDER BY updated_at DESC, id ASC"
+        ) { statement in
             while sqlite3_step(statement) == SQLITE_ROW {
                 guard let payload = columnData(statement, index: 0) else { continue }
-                if let chat = try? decoder.decode(AppChat.self, from: payload) {
-                    chats.append(chat)
+                guard var chat = try? decoder.decode(AppChat.self, from: payload) else { continue }
+                let payloadFields = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any]
+
+                if payloadFields?["title"] == nil || payloadFields?["title"] is NSNull,
+                   let projectedTitle = columnText(statement, index: 1)
+                {
+                    chat.title = projectedTitle
                 }
+                if payloadFields?["titleProvenance"] == nil
+                    || payloadFields?["titleProvenance"] is NSNull,
+                   let rawValue = columnText(statement, index: 2),
+                   let provenance = AppChatTitleProvenance(rawValue: rawValue)
+                {
+                    chat.titleProvenance = provenance
+                }
+                if payloadFields?["titleGenerationAttempted"] == nil
+                    || payloadFields?["titleGenerationAttempted"] is NSNull,
+                   sqlite3_column_type(statement, 3) != SQLITE_NULL
+                {
+                    chat.titleGenerationAttempted = sqlite3_column_int64(statement, 3) != 0
+                }
+                if payloadFields?["recoveryAnchor"] == nil
+                    || payloadFields?["recoveryAnchor"] is NSNull,
+                   let projectedData = optionalData(statement, index: 4),
+                   let anchor = try? decoder.decode(RecoveryAnchor.self, from: projectedData),
+                   anchor.isValid(forMessageCount: chat.messages.count)
+                {
+                    chat.recoveryAnchor = anchor
+                }
+                chats.append(chat)
             }
         }
         guard selected != nil || !chats.isEmpty else { return nil }
@@ -581,8 +610,129 @@ final class ProfileDatabase: @unchecked Sendable {
                 created_at REAL NOT NULL
             );
             INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-                VALUES(1, unixepoch());
+            VALUES(1, unixepoch());
             """)
+        try migrateChatProjections()
+    }
+
+    /// Adds chat metadata projections for fast indexing and preserves them
+    /// when older app versions rewrite payloads without knowing these fields.
+    private func migrateChatProjections() throws {
+        try transaction {
+            let requiredColumns: [(String, String)] = [
+                ("title_provenance", "TEXT"),
+                ("title_generation_attempted", "INTEGER"),
+                ("recovery_anchor", "BLOB"),
+            ]
+            let existingColumns = try chatColumnNames()
+            let migrationAlreadyApplied = try hasMigration(version: 2)
+            if migrationAlreadyApplied
+                && requiredColumns.allSatisfy({ existingColumns.contains($0.0) })
+            {
+                return
+            }
+
+            var columns = existingColumns
+            for (name, definition) in requiredColumns where !columns.contains(name) {
+                try execute("ALTER TABLE chats ADD COLUMN \(name) \(definition);")
+                columns.insert(name)
+            }
+
+            let rows = try chatProjectionMigrationRows()
+            let decoder = JSONDecoder()
+            let encoder = JSONEncoder()
+            for row in rows {
+                let decodedChat = try? decoder.decode(AppChat.self, from: row.payload)
+                let payload = (try? JSONSerialization.jsonObject(with: row.payload)) as? [String: Any]
+                let title = payload?["title"] as? String ?? row.title
+                let inferredProvenance = AppChatTitleProvenance.inferred(from: title)
+                let payloadProvenance = (payload?["titleProvenance"] as? String)
+                    .flatMap { AppChatTitleProvenance(rawValue: $0)?.rawValue }
+                let provenance = row.titleProvenance
+                    ?? payloadProvenance
+                    ?? inferredProvenance.rawValue
+                let payloadAttempt = payload?["titleGenerationAttempted"] as? Bool
+                let attempted = row.titleGenerationAttempted
+                    ?? payloadAttempt.map { $0 ? 1 : 0 }
+                    ?? (provenance == AppChatTitleProvenance.unclaimed.rawValue ? 0 : 1)
+                let anchorData = row.recoveryAnchor
+                    ?? decodedChat?.recoveryAnchor.flatMap { try? encoder.encode($0) }
+
+                try withStatement(
+                    """
+                    UPDATE chats SET
+                        title_provenance = COALESCE(title_provenance, ?2),
+                        title_generation_attempted = COALESCE(title_generation_attempted, ?3),
+                        recovery_anchor = COALESCE(recovery_anchor, ?4)
+                    WHERE id = ?1
+                    """) { statement in
+                    try bind(row.id, at: 1, to: statement)
+                    try bind(provenance, at: 2, to: statement)
+                    try bind(attempted, at: 3, to: statement)
+                    try bind(anchorData, at: 4, to: statement)
+                    try stepDone(statement)
+                }
+            }
+            try execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, unixepoch());")
+        }
+    }
+
+    private struct ChatProjectionMigrationRow {
+        var id: String
+        var title: String
+        var payload: Data
+        var titleProvenance: String?
+        var titleGenerationAttempted: Int64?
+        var recoveryAnchor: Data?
+    }
+
+    private func chatColumnNames() throws -> Set<String> {
+        var names = Set<String>()
+        try withStatement("PRAGMA table_info(chats);") { statement in
+            while true {
+                let result = sqlite3_step(statement)
+                if result == SQLITE_DONE { break }
+                guard result == SQLITE_ROW else { throw DatabaseError.step(errorMessage) }
+                if let name = columnText(statement, index: 1) { names.insert(name) }
+            }
+        }
+        return names
+    }
+
+    private func hasMigration(version: Int64) throws -> Bool {
+        try withStatement("SELECT 1 FROM schema_migrations WHERE version = ?1 LIMIT 1") { statement in
+            try bind(version, at: 1, to: statement)
+            let result = sqlite3_step(statement)
+            if result == SQLITE_ROW { return true }
+            if result == SQLITE_DONE { return false }
+            throw DatabaseError.step(errorMessage)
+        }
+    }
+
+    private func chatProjectionMigrationRows() throws -> [ChatProjectionMigrationRow] {
+        var rows: [ChatProjectionMigrationRow] = []
+        try withStatement(
+            "SELECT id, title, payload, title_provenance, title_generation_attempted, recovery_anchor FROM chats"
+        ) { statement in
+            while true {
+                let result = sqlite3_step(statement)
+                if result == SQLITE_DONE { break }
+                guard result == SQLITE_ROW else { throw DatabaseError.step(errorMessage) }
+                guard let id = columnText(statement, index: 0),
+                      let title = columnText(statement, index: 1),
+                      let payload = columnData(statement, index: 2)
+                else { continue }
+                rows.append(ChatProjectionMigrationRow(
+                    id: id,
+                    title: title,
+                    payload: payload,
+                    titleProvenance: columnText(statement, index: 3),
+                    titleGenerationAttempted: optionalInt64(statement, index: 4),
+                    recoveryAnchor: optionalData(statement, index: 5)))
+            }
+        }
+        return rows
     }
 
     private func chatIDs() throws -> Set<String> {
@@ -606,19 +756,28 @@ final class ProfileDatabase: @unchecked Sendable {
     private func upsertChat(_ chat: AppChat, payload: Data) throws {
         try withStatement(
             """
-            INSERT INTO chats(id, project_id, title, updated_at, payload)
-            VALUES(?1, ?2, ?3, ?4, ?5)
+            INSERT INTO chats(
+                id, project_id, title, updated_at, payload,
+                title_provenance, title_generation_attempted, recovery_anchor)
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT(id) DO UPDATE SET
                 project_id=excluded.project_id,
                 title=excluded.title,
                 updated_at=excluded.updated_at,
-                payload=excluded.payload
+                payload=excluded.payload,
+                title_provenance=excluded.title_provenance,
+                title_generation_attempted=excluded.title_generation_attempted,
+                recovery_anchor=excluded.recovery_anchor
             """) { statement in
             try bind(chat.id.uuidString, at: 1, to: statement)
             try bind(chat.projectID?.uuidString, at: 2, to: statement)
             try bind(chat.title, at: 3, to: statement)
             try bind(chat.updatedAt.timeIntervalSince1970, at: 4, to: statement)
             try bind(payload, at: 5, to: statement)
+            try bind(chat.titleProvenance.rawValue, at: 6, to: statement)
+            try bind(chat.titleGenerationAttempted ? Int64(1) : Int64(0), at: 7, to: statement)
+            let anchorData = try chat.recoveryAnchor.map { try JSONEncoder().encode($0) }
+            try bind(anchorData, at: 8, to: statement)
             try stepDone(statement)
         }
     }
@@ -834,6 +993,16 @@ final class ProfileDatabase: @unchecked Sendable {
         guard result == SQLITE_OK else { throw DatabaseError.bind(errorMessage) }
     }
 
+    private func bind(_ value: Data?, at index: Int32, to statement: OpaquePointer) throws {
+        guard let value else {
+            guard sqlite3_bind_null(statement, index) == SQLITE_OK else {
+                throw DatabaseError.bind(errorMessage)
+            }
+            return
+        }
+        try bind(value, at: index, to: statement)
+    }
+
     private func bind(_ value: Double, at index: Int32, to statement: OpaquePointer) throws {
         guard sqlite3_bind_double(statement, index, value) == SQLITE_OK else {
             throw DatabaseError.bind(errorMessage)
@@ -846,6 +1015,16 @@ final class ProfileDatabase: @unchecked Sendable {
         }
     }
 
+    private func bind(_ value: Int64?, at index: Int32, to statement: OpaquePointer) throws {
+        guard let value else {
+            guard sqlite3_bind_null(statement, index) == SQLITE_OK else {
+                throw DatabaseError.bind(errorMessage)
+            }
+            return
+        }
+        try bind(value, at: index, to: statement)
+    }
+
     private func columnText(_ statement: OpaquePointer, index: Int32) -> String? {
         guard let text = sqlite3_column_text(statement, index) else { return nil }
         return String(cString: text)
@@ -855,6 +1034,16 @@ final class ProfileDatabase: @unchecked Sendable {
         let count = Int(sqlite3_column_bytes(statement, index))
         guard count > 0, let bytes = sqlite3_column_blob(statement, index) else { return Data() }
         return Data(bytes: bytes, count: count)
+    }
+
+    private func optionalData(_ statement: OpaquePointer, index: Int32) -> Data? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return columnData(statement, index: index)
+    }
+
+    private func optionalInt64(_ statement: OpaquePointer, index: Int32) -> Int64? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return sqlite3_column_int64(statement, index)
     }
 
     static func applyFilePermissions(at databaseURL: URL) throws {
