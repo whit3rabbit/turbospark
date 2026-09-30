@@ -59,8 +59,9 @@ pub use image::{
     validate_krea2_ram_bits, ImageCatalog, ImageCatalogEntry,
 };
 pub use install::{
-    gate, human_bytes, install, install_with_byte_progress, record, ByteProgressCallback,
-    CancelFlag, InstallPlan, Installed, INSTALL_CANCELLED, VISION_SIDECAR_FILES,
+    gate, human_bytes, install, install_variant, install_with_byte_progress, record,
+    ByteProgressCallback, CancelFlag, InstallPlan, Installed, VariantInstallPlan,
+    INSTALL_CANCELLED, VISION_SIDECAR_FILES,
 };
 pub use probe::{
     evaluate_config, evaluate_gguf, probe, ProbeReport, TypeShare, Verdict, KNOWN_SIDECARS,

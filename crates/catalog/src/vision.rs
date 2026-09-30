@@ -174,6 +174,7 @@ mod tests {
                 status: "runs".to_string(),
                 kind: Some("vision-tower".to_string()),
                 modality: ModelModality::Text,
+                variant: None,
             })
             .expect("recording the row");
         dir
@@ -239,6 +240,7 @@ mod tests {
                 status: "runs".to_string(),
                 kind: None,
                 modality: ModelModality::Text,
+                variant: None,
             })
             .expect("recording the row");
         let err = resolve_vision_sidecar(&store, ModelFamily::QwenGdnDense, 5120).unwrap_err();

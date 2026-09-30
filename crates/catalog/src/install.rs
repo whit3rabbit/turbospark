@@ -28,7 +28,9 @@ use tokenizer::{Message, MfTokenizer, Role};
 
 use crate::entry::{CatalogEntry, EntryKind, SourceKind};
 use crate::hf::{Client, RepoRef};
+use crate::hub::{HubGgufVariant, VariantInstallability};
 use crate::probe::{probe, ProbeReport, Verdict};
+use crate::quant::{group_variants, ShardSetStatus};
 use crate::store::{directory_bytes, InstalledModel, ModelModality, Store};
 
 /// The sidecar files a vision-tower-only install fetches, in the order
@@ -159,6 +161,114 @@ impl InstallPlan {
     }
 }
 
+/// A gated install plan bound to one complete, ready Hub variant.
+///
+/// Its fields stay private so callers cannot replace the selected label,
+/// pinned probe target, or exact file set after validation.
+#[derive(Debug, Clone)]
+pub struct VariantInstallPlan {
+    plan: InstallPlan,
+    canonical_label: String,
+    selected_files: Vec<String>,
+}
+
+struct SelectedVariant<'a> {
+    files: &'a [String],
+    label: &'a str,
+}
+
+impl VariantInstallPlan {
+    /// Binds one ready variant to its explicit runnable GGUF probe.
+    pub fn from_hub_variant(
+        alias: &str,
+        variant: &HubGgufVariant,
+        report: &ProbeReport,
+        sidecars: RepoRef,
+    ) -> Result<Self, String> {
+        if variant.installability != VariantInstallability::Ready {
+            return Err(format!("variant {} is not ready to install", variant.label));
+        }
+        if !is_immutable_revision(&variant.repo.revision) {
+            return Err(format!(
+                "variant install requires an immutable revision, got {}",
+                variant.repo.revision
+            ));
+        }
+        if report.repo != variant.repo {
+            return Err(format!(
+                "probe target {} does not exactly match selected variant {}",
+                report.repo, variant.repo
+            ));
+        }
+        if report.kind != SourceKind::Gguf || report.verdict != Verdict::Runnable {
+            return Err("variant install requires an explicit runnable GGUF probe".to_string());
+        }
+        let probe_file = report
+            .file
+            .as_deref()
+            .ok_or_else(|| "GGUF probe did not name its selected file".to_string())?;
+
+        let groups = group_variants(&variant.files);
+        if groups.len() != 1 {
+            return Err(
+                "selected variant must contain exactly one recognized GGUF file group".into(),
+            );
+        }
+        let group = &groups[0];
+        if group.label != variant.label
+            || !matches!(
+                group.shard_set,
+                ShardSetStatus::SingleFile | ShardSetStatus::Complete { .. }
+            )
+        {
+            return Err("selected variant has a mismatched or incomplete GGUF file group".into());
+        }
+
+        let mut selected_files: Vec<String> =
+            variant.files.iter().map(|file| file.name.clone()).collect();
+        selected_files.sort();
+        selected_files.dedup();
+        let mut grouped_files: Vec<String> =
+            group.files.iter().map(|file| file.name.clone()).collect();
+        grouped_files.sort();
+        if selected_files.len() != variant.files.len() || selected_files != grouped_files {
+            return Err("selected variant files do not form one exact GGUF file group".into());
+        }
+        if !selected_files.iter().any(|file| file == probe_file) {
+            return Err(format!(
+                "probe file {probe_file:?} is outside the selected variant file set"
+            ));
+        }
+        let total_bytes = variant
+            .total_bytes
+            .ok_or_else(|| "selected variant has no authoritative total size".to_string())?;
+        let measured_total = variant
+            .files
+            .iter()
+            .try_fold(0_u64, |total, file| total.checked_add(file.size?));
+        if measured_total != Some(total_bytes) {
+            return Err(
+                "selected variant total does not match its authoritative file sizes".into(),
+            );
+        }
+
+        let mut plan = InstallPlan::from_probe(alias, report, sidecars);
+        plan.weights = variant.repo.clone();
+        plan.file = Some(probe_file.to_string());
+        plan.kind = SourceKind::Gguf;
+        plan.install_bytes = total_bytes;
+        Ok(Self {
+            plan,
+            canonical_label: variant.label.0.clone(),
+            selected_files,
+        })
+    }
+}
+
+fn is_immutable_revision(revision: &str) -> bool {
+    revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 /// What an install produced.
 #[derive(Debug, Clone)]
 pub struct Installed {
@@ -202,9 +312,57 @@ pub fn install_with_byte_progress(
     plan: &InstallPlan,
     dir: &Path,
     client: &Client,
+    progress: impl FnMut(&str),
+    byte_progress: Option<ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+) -> Result<Installed, String> {
+    install_with_selected_files(plan, dir, client, progress, byte_progress, cancel, None)
+}
+
+/// Installs one selected Hub variant through the same probe gate and normal
+/// GGUF repack path as every other install.
+pub fn install_variant(
+    plan: &VariantInstallPlan,
+    dir: &Path,
+    client: &Client,
+    mut progress: impl FnMut(&str),
+) -> Result<Installed, String> {
+    let report = gate(client, &plan.plan, false, &mut progress)?;
+    if report.repo != plan.plan.weights
+        || report.kind != SourceKind::Gguf
+        || report.verdict != Verdict::Runnable
+        || report.file.as_deref() != plan.plan.file.as_deref()
+        || !report
+            .file
+            .as_deref()
+            .is_some_and(|file| plan.selected_files.iter().any(|selected| selected == file))
+    {
+        return Err("the install gate report no longer matches the selected variant".into());
+    }
+
+    let installed = install_with_selected_files(
+        &plan.plan,
+        dir,
+        client,
+        &mut progress,
+        None,
+        None,
+        Some(SelectedVariant {
+            files: &plan.selected_files,
+            label: &plan.canonical_label,
+        }),
+    )?;
+    Ok(installed)
+}
+
+fn install_with_selected_files(
+    plan: &InstallPlan,
+    dir: &Path,
+    client: &Client,
     mut progress: impl FnMut(&str),
     byte_progress: Option<ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
+    selected_variant: Option<SelectedVariant<'_>>,
 ) -> Result<Installed, String> {
     if let Some(flag) = cancel {
         if flag.checkpoint().is_err() {
@@ -252,6 +410,7 @@ pub fn install_with_byte_progress(
             &mut progress,
             byte_progress.as_ref(),
             cancel,
+            selected_variant.as_ref().map(|variant| variant.files),
         )?,
         SourceKind::Mlx => crate::stream::stream_mlx(
             plan,
@@ -284,6 +443,7 @@ pub fn install_with_byte_progress(
         status: plan.status.clone(),
         kind: None,
         modality: ModelModality::Text,
+        variant: selected_variant.map(|variant| variant.label.to_string()),
     };
     Ok(Installed { model, arch })
 }
@@ -344,6 +504,7 @@ fn install_vision_only(
         status: plan.status.clone(),
         kind: Some(EntryKind::VisionTower.as_str().to_string()),
         modality: ModelModality::Text,
+        variant: None,
     };
     Ok(Installed { model, arch })
 }

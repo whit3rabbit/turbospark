@@ -58,6 +58,11 @@ pub struct InstalledModel {
     /// `kind == "image"` by [`Self::effective_modality`].
     #[serde(default)]
     pub modality: ModelModality,
+    /// Canonical GGUF quantization label selected for a variant install.
+    /// Absent for legacy installs and installs that did not select a live
+    /// variant, preserving the earlier serialized shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
 }
 
 /// The user-facing model namespace under the shared TurboSpark store.

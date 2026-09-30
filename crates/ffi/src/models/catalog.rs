@@ -273,6 +273,7 @@ mod tests {
                 status: "runs".to_string(),
                 kind: None,
                 modality: ModelModality::Text,
+                variant: None,
             })
             .unwrap();
     }

@@ -32,6 +32,7 @@ fn row(alias: &str, path: &std::path::Path) -> InstalledModel {
         status: "runs".to_string(),
         kind: None,
         modality: ModelModality::Text,
+        variant: None,
     }
 }
 
@@ -43,6 +44,27 @@ fn an_install_path_is_the_alias_under_models() {
         store.install_path("gemma4"),
         root.join("models").join("text").join("gemma4.gturbo")
     );
+}
+
+#[test]
+fn variant_label_is_optional_and_legacy_records_keep_their_json_shape() {
+    let path = std::path::Path::new("/models/model.gturbo");
+    let legacy_json = serde_json::to_value(row("model", path)).unwrap();
+    let mut legacy_object = legacy_json.as_object().unwrap().clone();
+    legacy_object.remove("variant");
+    let legacy: InstalledModel = serde_json::from_value(legacy_object.into()).unwrap();
+    assert_eq!(legacy.variant, None);
+    assert!(!serde_json::to_value(&legacy)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("variant"));
+
+    let mut variant = row("model-q8", path);
+    variant.variant = Some("Q8_0".to_string());
+    let encoded = serde_json::to_vec(&variant).unwrap();
+    let decoded: InstalledModel = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(decoded.variant.as_deref(), Some("Q8_0"));
 }
 
 #[test]

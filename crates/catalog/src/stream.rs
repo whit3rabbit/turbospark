@@ -71,6 +71,7 @@ pub(crate) fn stream_gguf(
     progress: &mut impl FnMut(&str),
     byte_progress: Option<&ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
+    selected_files: Option<&[String]>,
 ) -> Result<ArchConfig, String> {
     let file = plan
         .file
@@ -82,14 +83,25 @@ pub(crate) fn stream_gguf(
             "persistent range cache disabled; an interrupted download will fetch the source again",
         );
     }
-    let source = crate::gguf_source::load(
-        client,
-        &plan.weights,
-        file,
-        byte_progress,
-        cancel,
-        cache.as_deref(),
-    )?;
+    let source = match selected_files {
+        Some(files) => crate::gguf_source::load_selected(
+            client,
+            &plan.weights,
+            file,
+            files,
+            byte_progress,
+            cancel,
+            cache.as_deref(),
+        )?,
+        None => crate::gguf_source::load(
+            client,
+            &plan.weights,
+            file,
+            byte_progress,
+            cancel,
+            cache.as_deref(),
+        )?,
+    };
     let header = &source.header;
     if header.architecture() == Some("minimax-m2") {
         let size = repack::minimax_gguf_sizing(header).map_err(|e| e.to_string())?;
