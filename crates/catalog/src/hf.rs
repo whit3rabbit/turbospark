@@ -320,6 +320,33 @@ impl Client {
         read_response_bounded_for_hub(response, max_bytes)
     }
 
+    /// Opens one explicit repository file as a stream for the exact-source
+    /// transfer path. The caller consumes bounded chunks and owns cancellation,
+    /// hashing, and staging policy; the response is never buffered here.
+    pub(crate) fn open_stream_for_hub(
+        &self,
+        url: &str,
+    ) -> Result<reqwest::blocking::Response, HubRequestError> {
+        let response = self.send_retrying_response(url).map_err(|error| {
+            if error.is_connect() {
+                HubRequestError::Offline
+            } else {
+                HubRequestError::Transport(format!("GET {url}: {error}"))
+            }
+        })?;
+        if response.status().as_u16() != 200 {
+            return Err(HubRequestError::HttpStatus {
+                status: response.status().as_u16(),
+                retry_after_secs: response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().parse::<u64>().ok()),
+            });
+        }
+        Ok(response)
+    }
+
     fn get_with_limit(&self, url: &str, max_bytes: Option<usize>) -> Result<Vec<u8>, String> {
         let response = self.send_retrying(url)?;
         let status = response.status().as_u16();

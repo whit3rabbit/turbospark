@@ -208,6 +208,52 @@ pub struct PinnedSourceGroup {
     pub files: Vec<PinnedSourceFile>,
 }
 
+/// An explicit all-or-nothing transfer request from a modality-owned catalog.
+/// `owner_id` and each source `role` are opaque values preserved in the receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedArtifactPlan {
+    pub owner_id: String,
+    pub sources: Vec<PinnedSourceGroup>,
+}
+
+/// All verified files from one source group, with the owner's role unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSourceGroup {
+    pub role: String,
+    pub repo: RepoRef,
+    pub files: Vec<VerifiedSourceFile>,
+}
+
+/// A staged file whose byte count and SHA-256 were verified before receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSourceFile {
+    pub path: String,
+    pub staged_path: PathBuf,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// Receipt returned only after every source group has transferred and passed
+/// identity, size, and digest checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadReceipt {
+    pub owner_id: String,
+    pub sources: Vec<VerifiedSourceGroup>,
+    /// The unique child staging directory created and owned by this transfer.
+    pub staging_root: PathBuf,
+}
+
+/// Progress for one explicit pinned-source transfer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HubDownloadProgress {
+    pub owner_id: String,
+    pub completed_files: u32,
+    pub total_files: u32,
+    pub current_path: Option<String>,
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
+}
+
 /// One owner-pinned path and any exact size or SHA-256 expectations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedSourceFile {
@@ -284,6 +330,16 @@ pub struct HubPage {
 pub enum HubError {
     Offline,
     Network(String),
+    /// The caller cancelled an explicit transfer. Its owned staging root is
+    /// removed before this value is returned.
+    Cancelled,
+    /// A staged body failed a source size or digest invariant.
+    TransferIntegrity {
+        entry: String,
+        rule: &'static str,
+    },
+    /// Local staging could not be created, written, synced, or removed.
+    Staging(String),
     RateLimited {
         retry_after_secs: Option<u64>,
     },
@@ -302,6 +358,14 @@ impl std::fmt::Display for HubError {
         match self {
             Self::Offline => write!(f, "hub is offline; check the network and retry"),
             Self::Network(error) => write!(f, "hub request failed: {error}"),
+            Self::Cancelled => write!(f, "hub transfer cancelled by the caller"),
+            Self::TransferIntegrity { entry, rule } => {
+                write!(
+                    f,
+                    "hub transfer entry {entry:?} failed integrity rule {rule}"
+                )
+            }
+            Self::Staging(error) => write!(f, "hub transfer staging failed: {error}"),
             Self::RateLimited { retry_after_secs } => match retry_after_secs {
                 Some(seconds) => write!(f, "hub rate limit reached; retry after {seconds}s"),
                 None => write!(f, "hub rate limit reached"),
@@ -421,10 +485,19 @@ impl<'a> HubClient<'a> {
         &self,
         expected: &PinnedSourceGroup,
     ) -> Result<ResolvedSourceIdentity, HubError> {
+        let endpoint = hf_endpoint();
+        self.resolve_source_identity_at(expected, &endpoint)
+    }
+
+    pub(crate) fn resolve_source_identity_at(
+        &self,
+        expected: &PinnedSourceGroup,
+        endpoint: &str,
+    ) -> Result<ResolvedSourceIdentity, HubError> {
         validate_pinned_source_group(expected)?;
 
         let validator = HubMetadataValidator::default();
-        let metadata_url = expected.repo.api_url_with_sizes();
+        let metadata_url = source_repository_metadata_url(endpoint, &expected.repo)?;
         let body = self
             .client
             .get_bounded_for_hub(&metadata_url, validator.limits().max_response_bytes)
@@ -477,7 +550,7 @@ impl<'a> HubClient<'a> {
             let authoritative_size = match source.size_bytes {
                 Some(size) => Some(size),
                 None => {
-                    let url = source_file_url(&expected.repo, &pinned.path)?;
+                    let url = source_file_url_at(endpoint, &expected.repo, &pinned.path)?;
                     self.client
                         .content_length(&url)
                         .map_err(HubError::Network)?
@@ -527,6 +600,23 @@ impl<'a> HubClient<'a> {
             .map_err(map_validation_error)?;
 
         Ok(resolved)
+    }
+
+    /// Transfers an explicit owner-pinned plan into a unique child directory
+    /// below `staging_parent`. The parent remains caller-owned; only the child
+    /// created by this invocation is eligible for rollback cleanup.
+    pub fn download_pinned_artifacts(
+        &self,
+        plan: &PinnedArtifactPlan,
+        staging_parent: &Path,
+        progress: &mut dyn FnMut(HubDownloadProgress),
+        cancel: &crate::install::CancelFlag,
+    ) -> Result<DownloadReceipt, HubError> {
+        crate::hub_transfer::download_pinned_artifacts(self, plan, staging_parent, progress, cancel)
+    }
+
+    pub(crate) fn client(&self) -> &Client {
+        self.client
     }
 
     fn enrich_repo_variants(
@@ -1028,7 +1118,7 @@ pub fn matches_exact_source(
     Ok(())
 }
 
-fn validate_pinned_source_group(expected: &PinnedSourceGroup) -> Result<(), HubError> {
+pub(crate) fn validate_pinned_source_group(expected: &PinnedSourceGroup) -> Result<(), HubError> {
     let invalid = |field, rule| HubError::InvalidRequest { field, rule };
     if !valid_repo_id(&expected.repo.repo) {
         return Err(invalid("repo", "repository_id_shape"));
@@ -1069,8 +1159,34 @@ fn validate_pinned_source_group(expected: &PinnedSourceGroup) -> Result<(), HubE
     Ok(())
 }
 
-fn source_file_url(repo: &RepoRef, path: &str) -> Result<String, HubError> {
-    let endpoint = hf_endpoint();
+pub(crate) fn source_repository_metadata_url(
+    endpoint: &str,
+    repo: &RepoRef,
+) -> Result<String, HubError> {
+    let mut url = reqwest::Url::parse(&format!("{}/", endpoint.trim_end_matches('/')))
+        .map_err(|error| HubError::Network(format!("invalid HF endpoint {endpoint:?}: {error}")))?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| HubError::InvalidRequest {
+                field: "repo",
+                rule: "repository_id_shape",
+            })?;
+        segments.push("api").push("models");
+        for segment in repo.repo.split('/') {
+            segments.push(segment);
+        }
+        segments.push("revision").push(&repo.revision);
+    }
+    url.query_pairs_mut().append_pair("blobs", "true");
+    Ok(url.into())
+}
+
+pub(crate) fn source_file_url_at(
+    endpoint: &str,
+    repo: &RepoRef,
+    path: &str,
+) -> Result<String, HubError> {
     let mut url = reqwest::Url::parse(&format!("{}/", endpoint.trim_end_matches('/')))
         .map_err(|error| HubError::Network(format!("invalid HF endpoint {endpoint:?}: {error}")))?;
     {
@@ -1091,7 +1207,7 @@ fn source_file_url(repo: &RepoRef, path: &str) -> Result<String, HubError> {
     Ok(url.into())
 }
 
-fn source_mismatch_rule(mismatch: SourceIdentityMismatch) -> &'static str {
+pub(crate) fn source_mismatch_rule(mismatch: SourceIdentityMismatch) -> &'static str {
     match mismatch {
         SourceIdentityMismatch::Repository => "repository_id_matches_owner_source",
         SourceIdentityMismatch::Revision => "immutable_revision_matches_owner_source",
@@ -1330,7 +1446,11 @@ fn size_failure_installability(error: HubValidationError) -> VariantInstallabili
     }
 }
 
-fn map_hub_request_error(error: HubRequestError, url: &str, has_token: bool) -> HubError {
+pub(crate) fn map_hub_request_error(
+    error: HubRequestError,
+    url: &str,
+    has_token: bool,
+) -> HubError {
     match error {
         HubRequestError::Offline => HubError::Offline,
         HubRequestError::Transport(message) => HubError::Network(message),
