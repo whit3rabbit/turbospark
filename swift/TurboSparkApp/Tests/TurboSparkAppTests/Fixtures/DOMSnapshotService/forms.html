@@ -4,16 +4,27 @@
 <body>
   <main>
     <h1>Account form</h1>
-    <form>
+    <form id="account-form">
       <label for="email">Email address</label>
       <input id="email" name="email" type="email" value="private-email@example.invalid">
       <label for="message">Message</label>
       <textarea id="message">private message</textarea>
       <label for="topic">Topic</label>
       <select id="topic"><option selected>Support</option><option>Billing</option></select>
+      <label for="name-precedence">Native label name</label>
+      <span id="name-precedence-source">Referenced accessible name</span>
+      <input id="name-precedence" type="text" aria-label="ARIA label name" aria-labelledby="name-precedence-source">
       <button id="stable" type="button">Continue</button>
       <a href="#details">Read details</a>
+      <button id="repeat-first" type="button" aria-label="Repeated action">First repeated action</button>
+      <button id="repeat-second" type="button" aria-label="Repeated action">Second repeated action</button>
+      <button id="hidden-visible-target" type="button" style="display: none;">Visible target</button>
+      <button id="visible-target" type="button">Visible target</button>
+      <div id="scroll-area" role="region" aria-label="Scrollable region" tabindex="0" style="height: 64px; overflow: auto;">
+        <div style="height: 320px;">Scrollable content</div>
+      </div>
     </form>
+    <input id="standalone" type="text" value="">
   </main>
 </body>
 </html>

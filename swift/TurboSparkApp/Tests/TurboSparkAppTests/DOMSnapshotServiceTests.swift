@@ -91,6 +91,225 @@ final class DOMSnapshotServiceTests: XCTestCase {
         XCTAssertTrue(snapshot.nodes.contains { $0.role == "dialog" && $0.name == "Confirm changes" })
     }
 
+    func testReferenceLocatorClicksAndReturnsResolvedReference() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        let reference = try XCTUnwrap(node(named: "Continue", in: snapshot).reference)
+        try await page.webView.evaluateJavaScript("document.querySelector('#stable').addEventListener('click', () => { document.body.dataset.clicked = 'stable' })")
+
+        let outcome = try await page.service.perform(
+            .click,
+            on: .reference(reference),
+            generation: snapshot.generation
+        )
+
+        XCTAssertEqual(outcome.reference, reference)
+        XCTAssertFalse(outcome.isAmbiguous)
+        XCTAssertFalse(outcome.didSubmit)
+        let clicked = try await page.webView.evaluateJavaScript("document.body.dataset.clicked") as? String
+        XCTAssertEqual(clicked, "stable")
+    }
+
+    func testRoleAndNameLocatorUsesFirstDocumentOrderMatch() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        let reference = try XCTUnwrap(snapshot.nodes.first { $0.name == "Repeated action" }?.reference)
+        try await page.webView.evaluateJavaScript(
+            "document.querySelectorAll('[aria-label=\"Repeated action\"]').forEach(button => button.addEventListener('click', () => { document.body.dataset.clicked = button.id }))"
+        )
+
+        let outcome = try await page.service.perform(
+            .click,
+            on: .role(role: "button", name: "Repeated action"),
+            generation: snapshot.generation
+        )
+
+        XCTAssertEqual(outcome.reference, reference)
+        XCTAssertTrue(outcome.isAmbiguous)
+        let clicked = try await page.webView.evaluateJavaScript("document.body.dataset.clicked") as? String
+        XCTAssertEqual(clicked, "repeat-first")
+    }
+
+    func testRoleNameLocatorUsesAriaLabelledbyBeforeAriaLabelAndNativeLabel() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        try await page.webView.evaluateJavaScript(
+            "document.querySelector('#name-precedence').addEventListener('click', () => { document.body.dataset.clicked = 'name-precedence' })"
+        )
+
+        let outcome: DOMSnapshotActionOutcome
+        do {
+            outcome = try await page.service.perform(
+                .click,
+                on: .role(role: "textbox", name: "Referenced accessible name"),
+                generation: snapshot.generation
+            )
+        } catch {
+            XCTFail("Expected aria-labelledby to resolve the textbox name, got \(error)")
+            return
+        }
+
+        XCTAssertFalse(outcome.reference.isEmpty)
+        let clicked = try await page.webView.evaluateJavaScript("document.body.dataset.clicked") as? String
+        XCTAssertEqual(clicked, "name-precedence")
+    }
+
+    func testVisibleTextLocatorClicksItsVisibleMatch() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        let reference = try XCTUnwrap(node(named: "Visible target", in: snapshot).reference)
+        try await page.webView.evaluateJavaScript("document.querySelector('#visible-target').addEventListener('click', () => { document.body.dataset.clicked = 'visible' })")
+
+        let outcome = try await page.service.perform(
+            .click,
+            on: .visibleText("Visible target"),
+            generation: snapshot.generation
+        )
+
+        XCTAssertEqual(outcome.reference, reference)
+        XCTAssertFalse(outcome.isAmbiguous)
+        let clicked = try await page.webView.evaluateJavaScript("document.body.dataset.clicked") as? String
+        XCTAssertEqual(clicked, "visible")
+    }
+
+    func testCSSLocatorTypesAndSubmitsWithResolvedReference() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        let reference = try XCTUnwrap(snapshot.nodes.first { $0.role == "textbox" }?.reference)
+        try await page.webView.evaluateJavaScript(
+            "document.querySelector('#email').addEventListener('input', event => { document.body.dataset.inputType = event.inputType }); document.querySelector('#account-form').addEventListener('submit', event => { event.preventDefault(); document.body.dataset.submitted = 'yes' })"
+        )
+
+        let outcome = try await page.service.perform(
+            .type(text: "agent@example.invalid", submit: true),
+            on: .cssSelector("#email"),
+            generation: snapshot.generation
+        )
+
+        XCTAssertEqual(outcome.reference, reference)
+        XCTAssertTrue(outcome.didSubmit)
+        let value = try await page.webView.evaluateJavaScript("document.querySelector('#email').value") as? String
+        let inputType = try await page.webView.evaluateJavaScript("document.body.dataset.inputType") as? String
+        let submitted = try await page.webView.evaluateJavaScript("document.body.dataset.submitted") as? String
+        XCTAssertEqual(value, "agent@example.invalid")
+        XCTAssertEqual(inputType, "insertText")
+        XCTAssertEqual(submitted, "yes")
+    }
+
+    func testTypeWithoutSubmitLeavesFormPending() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        let reference = try XCTUnwrap(snapshot.nodes.first { $0.role == "textbox" }?.reference)
+        try await page.webView.evaluateJavaScript(
+            "document.querySelector('#account-form').addEventListener('submit', event => { event.preventDefault(); document.body.dataset.submitted = 'yes' })"
+        )
+
+        let outcome = try await page.service.perform(
+            .type(text: "draft@example.invalid", submit: false),
+            on: .cssSelector("#email"),
+            generation: snapshot.generation
+        )
+
+        XCTAssertEqual(outcome.reference, reference)
+        XCTAssertFalse(outcome.didSubmit)
+        let submitted = try await page.webView.evaluateJavaScript("document.body.dataset.submitted") as? String
+        XCTAssertNil(submitted)
+    }
+
+    func testTypeSubmitWithoutFormDoesNotMutateTarget() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        try await page.webView.evaluateJavaScript(
+            "document.querySelector('#standalone').addEventListener('input', () => { document.body.dataset.standaloneInput = 'fired' })"
+        )
+        do {
+            _ = try await page.service.perform(
+                .type(text: "must-not-be-entered", submit: true),
+                on: .cssSelector("#standalone"),
+                generation: snapshot.generation
+            )
+            XCTFail("Expected submit on an input without a form to be rejected")
+        } catch let error as DOMSnapshotServiceError {
+            XCTAssertEqual(error, .actionRejected)
+        }
+
+        let value = try await page.webView.evaluateJavaScript("document.querySelector('#standalone').value") as? String
+        let inputEvent = try await page.webView.evaluateJavaScript("document.body.dataset.standaloneInput") as? String
+        XCTAssertEqual(value, "")
+        XCTAssertNil(inputEvent)
+    }
+
+    func testKeyPressAndScrollDispatchEventsAtResolvedElements() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        let emailReference = try XCTUnwrap(snapshot.nodes.first { $0.role == "textbox" }?.reference)
+        try await page.webView.evaluateJavaScript(
+            "document.querySelector('#email').addEventListener('keydown', event => { document.body.dataset.lastKey = event.key })"
+        )
+        let key = try await page.service.perform(
+            .pressKey(key: "Enter"),
+            on: .reference(emailReference),
+            generation: snapshot.generation
+        )
+        XCTAssertEqual(key.reference, emailReference)
+        let keyEvent = try await page.webView.evaluateJavaScript("document.body.dataset.lastKey") as? String
+        XCTAssertEqual(keyEvent, "Enter")
+
+        let scrollReference = try XCTUnwrap(node(named: "Scrollable region", in: snapshot).reference)
+        let scroll = try await page.service.perform(
+            .scroll(direction: .down, amount: 48),
+            on: .reference(scrollReference),
+            generation: snapshot.generation
+        )
+        XCTAssertEqual(scroll.reference, scrollReference)
+        let scrollTop = try await page.webView.evaluateJavaScript("document.querySelector('#scroll-area').scrollTop") as? Double
+        XCTAssertGreaterThan(try XCTUnwrap(scrollTop), 0)
+    }
+
+    func testMissingLocatorFailsWithoutActingOnAnotherElement() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        do {
+            _ = try await page.service.resolve(
+                locator: .visibleText("No such visible target"),
+                generation: snapshot.generation
+            )
+            XCTFail("Expected a missing locator to fail")
+        } catch let error as DOMSnapshotServiceError {
+            XCTAssertEqual(error, .targetNotFound)
+        }
+
+        let clicked = try await page.webView.evaluateJavaScript("document.body.dataset.clicked") as? String
+        XCTAssertNil(clicked)
+    }
+
     func testOversizeSnapshotHasAnExplicitTruncationMarker() async throws {
         let fixture = try fixtureURL("forms")
         let page = try await makePage(fixture: fixture, maximumNodes: 3, maximumBytes: 2_000)
