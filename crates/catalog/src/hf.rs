@@ -18,7 +18,9 @@
 //!   sidecars exist rather than guessing a list, which is the failure that
 //!   cost a 20-minute re-stream (AGENTS.md Gotcha 47).
 
-use serde::Deserialize;
+use crate::hub_validation::{HubMetadataValidator, HubValidationError, ValidationReport};
+use serde_json::Value;
+use std::io::Read;
 
 /// An in-process override for [`hf_endpoint`], set by [`set_hf_endpoint_override`].
 ///
@@ -129,20 +131,6 @@ impl std::fmt::Display for RepoRef {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct Sibling {
-    rfilename: String,
-    /// Present only under `?blobs=true`.
-    #[serde(default)]
-    size: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RepoInfo {
-    #[serde(default)]
-    siblings: Vec<Sibling>,
-}
-
 /// One row of the popular-models listing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PopularRepo {
@@ -162,24 +150,6 @@ pub struct PopularRepo {
 pub struct RepoFile {
     pub name: String,
     pub size: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CardData {
-    /// Either a bare string or a list; the API is not consistent about which,
-    /// and a caller that expects one gets `None` for half of Hugging Face.
-    #[serde(default)]
-    base_model: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ListedModel {
-    id: String,
-    #[serde(default)]
-    downloads: Option<u64>,
-    #[serde(default)]
-    #[serde(rename = "cardData")]
-    card_data: Option<CardData>,
 }
 
 /// A blocking HTTP client for the small-file endpoints.
@@ -288,13 +258,27 @@ impl Client {
     /// and 404 (the file is not in this repo at this revision, which is the
     /// sidecar-list trap).
     pub fn get(&self, url: &str) -> Result<Vec<u8>, String> {
+        self.get_with_limit(url, None)
+    }
+
+    /// One small file with a hard response-body ceiling. Metadata callers use
+    /// this before parsing so an oversized Hub response cannot be fully
+    /// buffered before validation rejects it.
+    pub fn get_bounded(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
+        self.get_with_limit(url, Some(max_bytes))
+    }
+
+    fn get_with_limit(&self, url: &str, max_bytes: Option<usize>) -> Result<Vec<u8>, String> {
         let response = self.send_retrying(url)?;
         let status = response.status().as_u16();
         match status {
-            200 => response
-                .bytes()
-                .map(|b| b.to_vec())
-                .map_err(|e| format!("reading {url}: {e}")),
+            200 => match max_bytes {
+                Some(max_bytes) => read_response_bounded(response, url, max_bytes),
+                None => response
+                    .bytes()
+                    .map(|b| b.to_vec())
+                    .map_err(|e| format!("reading {url}: {e}")),
+            },
             401 | 403 if !self.has_token() => Err(format!(
                 "GET {url}: HTTP {status}. This repository is gated and no HF_TOKEN \
                  is set; accept its licence on huggingface.co, then export a token."
@@ -385,12 +369,21 @@ impl Client {
     /// safetensors or GGUF, which `.gguf` files are on offer, and which
     /// tokenizer sidecars actually exist.
     pub fn file_list(&self, repo: &RepoRef) -> Result<Vec<String>, String> {
-        let body = self.get(&repo.api_url())?;
-        let info: RepoInfo = serde_json::from_slice(&body)
-            .map_err(|e| format!("parsing the file list for {repo}: {e}"))?;
-        let mut names: Vec<String> = info.siblings.into_iter().map(|s| s.rfilename).collect();
-        names.sort();
-        Ok(names)
+        self.file_list_report(repo).map(|report| {
+            report_rejections(&report);
+            report.valid
+        })
+    }
+
+    /// Validated file names plus per-file rejections for callers that can
+    /// present metadata diagnostics while retaining unrelated safe siblings.
+    pub fn file_list_report(
+        &self,
+        repo: &RepoRef,
+    ) -> Result<ValidationReport<Vec<String>>, String> {
+        let validator = HubMetadataValidator::default();
+        let body = self.get_bounded(&repo.api_url(), validator.limits().max_response_bytes)?;
+        validate_file_list_payload(&body, &validator, &repo.repo, &repo.revision)
     }
 
     /// Every filename in the repository, with its length.
@@ -402,19 +395,23 @@ impl Client {
     /// should sort to the bottom of a size ranking (the same reasoning the
     /// probe's unsized ggml types get -- `crates/catalog/CLAUDE.md`).
     pub fn file_list_with_sizes(&self, repo: &RepoRef) -> Result<Vec<RepoFile>, String> {
-        let body = self.get(&repo.api_url_with_sizes())?;
-        let info: RepoInfo = serde_json::from_slice(&body)
-            .map_err(|e| format!("parsing the file list for {repo}: {e}"))?;
-        let mut files: Vec<RepoFile> = info
-            .siblings
-            .into_iter()
-            .map(|s| RepoFile {
-                name: s.rfilename,
-                size: s.size,
-            })
-            .collect();
-        files.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(files)
+        self.file_list_with_sizes_report(repo).map(|report| {
+            report_rejections(&report);
+            report.valid
+        })
+    }
+
+    /// Validated file names and sizes plus per-file rejections.
+    pub fn file_list_with_sizes_report(
+        &self,
+        repo: &RepoRef,
+    ) -> Result<ValidationReport<Vec<RepoFile>>, String> {
+        let validator = HubMetadataValidator::default();
+        let body = self.get_bounded(
+            &repo.api_url_with_sizes(),
+            validator.limits().max_response_bytes,
+        )?;
+        validate_file_list_with_sizes_payload(&body, &validator, &repo.repo, &repo.revision)
     }
 
     /// The most-downloaded GGUF text-generation repositories.
@@ -426,22 +423,27 @@ impl Client {
     /// shelling out to `curl`, and that it asks for `cardData` so the
     /// sidecar repository comes back in the same request.
     pub fn popular_gguf_repos(&self, limit: usize) -> Result<Vec<PopularRepo>, String> {
+        self.popular_gguf_repos_report(limit).map(|report| {
+            report_rejections(&report);
+            report.valid
+        })
+    }
+
+    /// Validated popular repository rows plus rejected entries from the Hub
+    /// response. The legacy vector method remains available to callers that
+    /// cannot display row-level diagnostics.
+    pub fn popular_gguf_repos_report(
+        &self,
+        limit: usize,
+    ) -> Result<ValidationReport<Vec<PopularRepo>>, String> {
         let url = format!(
             "{}/api/models?filter=gguf&pipeline_tag=text-generation\
              &sort=downloads&direction=-1&cardData=true&limit={limit}",
             hf_endpoint()
         );
-        let body = self.get(&url)?;
-        let listed: Vec<ListedModel> = serde_json::from_slice(&body)
-            .map_err(|e| format!("parsing the popular-model listing: {e}"))?;
-        Ok(listed
-            .into_iter()
-            .map(|m| PopularRepo {
-                id: m.id,
-                downloads: m.downloads.unwrap_or(0),
-                base_model: m.card_data.and_then(|c| c.base_model).and_then(base_model),
-            })
-            .collect())
+        let validator = HubMetadataValidator::default();
+        let body = self.get_bounded(&url, validator.limits().max_response_bytes)?;
+        validate_popular_list_payload(&body, &validator)
     }
 
     /// The `Content-Length` of a file, without fetching it.
@@ -468,6 +470,167 @@ impl Client {
                 .and_then(|v| v.parse::<u64>().ok())
         };
         Ok(read("x-linked-size").or_else(|| read("content-length")))
+    }
+}
+
+fn read_response_bounded(
+    response: reqwest::blocking::Response,
+    url: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    let max_u64 = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    if response
+        .content_length()
+        .is_some_and(|content_length| content_length > max_u64)
+    {
+        return Err(format!(
+            "GET {url}: response exceeds the {max_bytes}-byte metadata limit"
+        ));
+    }
+    read_bounded_body(response, max_bytes).map_err(|error| format!("GET {url}: {error}"))
+}
+
+fn read_bounded_body<R: Read>(reader: R, max_bytes: usize) -> std::io::Result<Vec<u8>> {
+    let read_limit = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut body = Vec::with_capacity(max_bytes.min(64 * 1024));
+    reader.take(read_limit).read_to_end(&mut body)?;
+    if body.len() > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("response exceeds the {max_bytes}-byte metadata limit"),
+        ));
+    }
+    Ok(body)
+}
+
+fn validate_file_list_payload(
+    bytes: &[u8],
+    validator: &HubMetadataValidator,
+    expected_repo: &str,
+    expected_revision: &str,
+) -> Result<ValidationReport<Vec<String>>, String> {
+    let report =
+        validate_repository_for_request(bytes, validator, expected_repo, expected_revision)?;
+    let mut valid: Vec<String> = report
+        .valid
+        .files
+        .into_iter()
+        .map(|file| file.path)
+        .collect();
+    valid.sort();
+    Ok(ValidationReport {
+        valid,
+        rejected: report.rejected,
+    })
+}
+
+fn validate_file_list_with_sizes_payload(
+    bytes: &[u8],
+    validator: &HubMetadataValidator,
+    expected_repo: &str,
+    expected_revision: &str,
+) -> Result<ValidationReport<Vec<RepoFile>>, String> {
+    let report =
+        validate_repository_for_request(bytes, validator, expected_repo, expected_revision)?;
+    let mut valid: Vec<RepoFile> = report
+        .valid
+        .files
+        .into_iter()
+        .map(|file| RepoFile {
+            name: file.path,
+            size: file.size_bytes,
+        })
+        .collect();
+    valid.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(ValidationReport {
+        valid,
+        rejected: report.rejected,
+    })
+}
+
+fn validate_repository_for_request(
+    bytes: &[u8],
+    validator: &HubMetadataValidator,
+    expected_repo: &str,
+    expected_revision: &str,
+) -> Result<ValidationReport<crate::hub_validation::HubRepoMetadata>, String> {
+    let report = validator
+        .validate_repository_payload(bytes)
+        .map_err(|error| error.to_string())?;
+    if report.valid.repo_id != expected_repo {
+        return Err(HubValidationError::InvalidResponse {
+            entry: report.valid.repo_id,
+            rule: "repository_id_matches_request",
+        }
+        .to_string());
+    }
+    // A floating ref such as `main` resolves to the response SHA. An
+    // immutable caller ref must resolve to that exact commit.
+    if is_commit_sha(expected_revision)
+        && !report
+            .valid
+            .revision
+            .eq_ignore_ascii_case(expected_revision)
+    {
+        return Err(HubValidationError::InvalidResponse {
+            entry: format!("{expected_repo}@{}", report.valid.revision),
+            rule: "revision_matches_request",
+        }
+        .to_string());
+    }
+    Ok(report)
+}
+
+fn is_commit_sha(revision: &str) -> bool {
+    revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn validate_popular_list_payload(
+    bytes: &[u8],
+    validator: &HubMetadataValidator,
+) -> Result<ValidationReport<Vec<PopularRepo>>, String> {
+    let report = validator
+        .validate_search_payload(bytes)
+        .map_err(|error| error.to_string())?;
+    let raw: Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("parsing the popular-model listing: {error}"))?;
+    let rows = raw
+        .as_array()
+        .expect("validated search response is an array");
+    let valid = report
+        .valid
+        .into_iter()
+        .map(|entry| {
+            let raw_entry = rows.iter().find(|row| {
+                row.get("id").and_then(Value::as_str) == Some(entry.repo_id.as_str())
+                    && row
+                        .get("sha")
+                        .and_then(Value::as_str)
+                        .is_some_and(|sha| sha.eq_ignore_ascii_case(&entry.revision))
+            });
+            let base_model = raw_entry
+                .and_then(|row| row.get("cardData"))
+                .and_then(|card_data| card_data.get("base_model"))
+                .cloned()
+                .and_then(base_model);
+            PopularRepo {
+                id: entry.repo_id,
+                downloads: entry.downloads.unwrap_or(0),
+                base_model,
+            }
+        })
+        .collect();
+    Ok(ValidationReport {
+        valid,
+        rejected: report.rejected,
+    })
+}
+
+fn report_rejections<T>(report: &ValidationReport<T>) {
+    for rejected in &report.rejected {
+        eprintln!("{rejected}");
     }
 }
 
@@ -513,7 +676,153 @@ fn base_model(value: serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{base_model, throttle_backoff, throttled_status};
+    use super::{
+        base_model, read_bounded_body, throttle_backoff, throttled_status,
+        validate_file_list_payload, validate_file_list_with_sizes_payload,
+        validate_popular_list_payload, PopularRepo, RepoFile,
+    };
+    use crate::{HubMetadataValidator, HubValidationError, HubValidationLimits};
+    use std::io::Read;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct CountingReader {
+        bytes: Vec<u8>,
+        read_bytes: Arc<AtomicUsize>,
+    }
+
+    impl Read for CountingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let count = buffer.len().min(self.bytes.len());
+            buffer[..count].copy_from_slice(&self.bytes[..count]);
+            self.bytes.drain(..count);
+            self.read_bytes.fetch_add(count, Ordering::SeqCst);
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn bounded_metadata_read_consumes_no_more_than_limit_plus_one() {
+        let read_bytes = Arc::new(AtomicUsize::new(0));
+        let reader = CountingReader {
+            bytes: vec![b'x'; 100],
+            read_bytes: Arc::clone(&read_bytes),
+        };
+
+        let result = read_bounded_body(reader, 8);
+
+        assert!(result.is_err());
+        assert_eq!(read_bytes.load(Ordering::SeqCst), 9);
+    }
+
+    #[test]
+    fn file_list_payload_validation_keeps_safe_rows_and_reports_rejections() {
+        let validator = HubMetadataValidator::default();
+        let body = format!(
+            r#"{{"id":"owner/model","sha":"{}","siblings":[
+                {{"rfilename":"config.json","size":4}},
+                {{"rfilename":"../escape.gguf","size":8}}
+            ]}}"#,
+            "0123456789abcdef0123456789abcdef01234567"
+        );
+
+        let report =
+            validate_file_list_payload(body.as_bytes(), &validator, "owner/model", "main").unwrap();
+
+        assert_eq!(report.valid, vec!["config.json"]);
+        assert_eq!(report.rejected.len(), 1);
+        assert_eq!(report.rejected[0].entry, "../escape.gguf");
+        assert_eq!(report.rejected[0].rule, "safe_relative_path");
+    }
+
+    #[test]
+    fn sized_file_list_payload_preserves_unknown_sizes_without_zeroing_them() {
+        let validator = HubMetadataValidator::default();
+        let body = format!(
+            r#"{{"id":"owner/model","sha":"{}","siblings":[
+                {{"rfilename":"weights.gguf","size":8}},
+                {{"rfilename":"tokenizer.json"}}
+            ]}}"#,
+            "0123456789abcdef0123456789abcdef01234567"
+        );
+
+        let report = validate_file_list_with_sizes_payload(
+            body.as_bytes(),
+            &validator,
+            "owner/model",
+            "main",
+        )
+        .unwrap();
+
+        assert_eq!(
+            report.valid,
+            vec![
+                RepoFile {
+                    name: "tokenizer.json".to_string(),
+                    size: None
+                },
+                RepoFile {
+                    name: "weights.gguf".to_string(),
+                    size: Some(8)
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn popular_list_validation_filters_only_invalid_repositories() {
+        let validator = HubMetadataValidator::default();
+        let body = format!(
+            r#"[
+                {{"id":"owner/good","sha":"{}","downloads":12,"cardData":{{"base_model":"base/source"}}}},
+                {{"id":"owner/../bad","sha":"{}","downloads":8}},
+                {{"id":"owner/also-good","sha":"{}","downloads":null}}
+            ]"#,
+            "0123456789abcdef0123456789abcdef01234567",
+            "0123456789abcdef0123456789abcdef01234567",
+            "abcdef0123456789abcdef0123456789abcdef01"
+        );
+
+        let report = validate_popular_list_payload(body.as_bytes(), &validator).unwrap();
+
+        assert_eq!(report.valid.len(), 2);
+        assert_eq!(
+            report.valid[0],
+            PopularRepo {
+                id: "owner/good".to_string(),
+                downloads: 12,
+                base_model: Some("base/source".to_string())
+            }
+        );
+        assert_eq!(report.valid[1].id, "owner/also-good");
+        assert_eq!(report.valid[1].downloads, 0);
+        assert_eq!(report.rejected.len(), 1);
+        assert_eq!(report.rejected[0].entry, "owner/../bad");
+        assert_eq!(report.rejected[0].rule, "repository_id_shape");
+    }
+
+    #[test]
+    fn oversized_json_is_rejected_at_the_reader_before_full_buffering() {
+        let read_bytes = Arc::new(AtomicUsize::new(0));
+        let reader = CountingReader {
+            bytes: vec![b' '; 100],
+            read_bytes: Arc::clone(&read_bytes),
+        };
+        let validator = HubMetadataValidator::new(HubValidationLimits {
+            max_response_bytes: 8,
+            ..HubValidationLimits::default()
+        });
+        let body = read_bounded_body(reader, validator.limits().max_response_bytes);
+
+        assert!(body.is_err());
+        assert_eq!(read_bytes.load(Ordering::SeqCst), 9);
+        assert!(matches!(
+            validator.validate_search_payload(&[b' '; 9]),
+            Err(HubValidationError::OversizedResponse { .. })
+        ));
+    }
 
     /// 429 and the 5xx pair retry; nothing else does -- the exact set
     /// `repack`'s own `throttled_status` uses, which is what lets this

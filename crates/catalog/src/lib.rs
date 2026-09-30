@@ -25,6 +25,7 @@ mod catalog;
 mod entry;
 mod gguf_source;
 mod hf;
+mod hub_validation;
 mod image;
 mod install;
 mod probe;
@@ -42,6 +43,10 @@ pub use entry::{
     CatalogEntry, EntryKind, Measured, MtpSource, Sidecars, Source, SourceKind, Status,
 };
 pub use hf::{hf_endpoint, set_hf_endpoint_override, Client, PopularRepo, RepoFile, RepoRef};
+pub use hub_validation::{
+    HubFileMetadata, HubMetadataValidator, HubRepoMetadata, HubSearchEntry, HubValidationError,
+    HubValidationLimits, RejectedHubEntry, ValidationReport,
+};
 pub use image::{
     image_family_for_model_id, materialize_image_source, normalize_mflux_source,
     validate_krea2_ram_bits, ImageCatalog, ImageCatalogEntry,
