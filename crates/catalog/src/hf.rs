@@ -22,6 +22,21 @@ use crate::hub_validation::{HubMetadataValidator, HubValidationError, Validation
 use serde_json::Value;
 use std::io::Read;
 
+/// Typed bounded GET failures for the explicit live catalog path.
+///
+/// Other Hugging Face callers retain the legacy string-returning methods.
+#[derive(Debug)]
+pub(crate) enum HubRequestError {
+    Offline,
+    Transport(String),
+    HttpStatus {
+        status: u16,
+        retry_after_secs: Option<u64>,
+    },
+    ResponseTooLarge,
+    BodyRead(String),
+}
+
 /// An in-process override for [`hf_endpoint`], set by [`set_hf_endpoint_override`].
 ///
 /// This exists instead of `std::env::set_var`/`remove_var` because this
@@ -212,15 +227,15 @@ impl Client {
         self.token.is_some()
     }
 
-    fn send(&self, url: &str) -> Result<reqwest::blocking::Response, String> {
+    fn send_response(&self, url: &str) -> Result<reqwest::blocking::Response, reqwest::Error> {
         let mut request = self.inner.get(url);
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }
-        request.send().map_err(|e| format!("GET {url}: {e}"))
+        request.send()
     }
 
-    /// [`Self::send`] under the same retry ladder
+    /// A request under the same retry ladder
     /// `repack::HttpRangeSource::read_chunk_retrying` carries for weight
     /// ranges (`crates/repack/CLAUDE.md` Gotcha 14) -- a SEPARATE
     /// implementation rather than a shared one, because this module's own
@@ -236,9 +251,17 @@ impl Client {
     /// is not throttled (or attempts run out), so `get`/`get_optional`/
     /// `content_length`'s own 401/403/404 interpretation is untouched.
     fn send_retrying(&self, url: &str) -> Result<reqwest::blocking::Response, String> {
+        self.send_retrying_response(url)
+            .map_err(|error| format!("GET {url}: {error}"))
+    }
+
+    fn send_retrying_response(
+        &self,
+        url: &str,
+    ) -> Result<reqwest::blocking::Response, reqwest::Error> {
         const ATTEMPTS: usize = 8;
         for attempt in 0..ATTEMPTS {
-            let response = self.send(url)?;
+            let response = self.send_response(url)?;
             let status = response.status().as_u16();
             if !throttled_status(status) || attempt + 1 == ATTEMPTS {
                 return Ok(response);
@@ -266,6 +289,35 @@ impl Client {
     /// buffered before validation rejects it.
     pub fn get_bounded(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
         self.get_with_limit(url, Some(max_bytes))
+    }
+
+    /// Bounded GET for live catalog search and trending. It keeps connection
+    /// failures, HTTP status, retry metadata, and body-limit failures typed so
+    /// the Hub layer can preserve actionable failure state.
+    pub(crate) fn get_bounded_for_hub(
+        &self,
+        url: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, HubRequestError> {
+        let response = self.send_retrying_response(url).map_err(|error| {
+            if error.is_connect() {
+                HubRequestError::Offline
+            } else {
+                HubRequestError::Transport(format!("GET {url}: {error}"))
+            }
+        })?;
+        let status = response.status().as_u16();
+        if status != 200 {
+            return Err(HubRequestError::HttpStatus {
+                status,
+                retry_after_secs: response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().parse::<u64>().ok()),
+            });
+        }
+        read_response_bounded_for_hub(response, max_bytes)
     }
 
     fn get_with_limit(&self, url: &str, max_bytes: Option<usize>) -> Result<Vec<u8>, String> {
@@ -488,6 +540,31 @@ fn read_response_bounded(
         ));
     }
     read_bounded_body(response, max_bytes).map_err(|error| format!("GET {url}: {error}"))
+}
+
+fn read_response_bounded_for_hub(
+    response: reqwest::blocking::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, HubRequestError> {
+    let max_u64 = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    if response
+        .content_length()
+        .is_some_and(|content_length| content_length > max_u64)
+    {
+        return Err(HubRequestError::ResponseTooLarge);
+    }
+    let read_limit = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut body = Vec::with_capacity(max_bytes.min(64 * 1024));
+    response
+        .take(read_limit)
+        .read_to_end(&mut body)
+        .map_err(|error| HubRequestError::BodyRead(error.to_string()))?;
+    if body.len() > max_bytes {
+        return Err(HubRequestError::ResponseTooLarge);
+    }
+    Ok(body)
 }
 
 fn read_bounded_body<R: Read>(reader: R, max_bytes: usize) -> std::io::Result<Vec<u8>> {

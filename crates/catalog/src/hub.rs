@@ -8,7 +8,7 @@
 
 use crate::catalog::Catalog;
 use crate::entry::CatalogEntry;
-use crate::hf::{hf_endpoint, Client, RepoRef};
+use crate::hf::{hf_endpoint, Client, HubRequestError, RepoRef};
 use crate::hub_validation::{
     HubMetadataValidator, HubSearchEntry, HubValidationError, RejectedHubEntry,
 };
@@ -197,6 +197,7 @@ pub struct HubPage {
 /// A failed live request or an invalid whole response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HubError {
+    Offline,
     Network(String),
     RateLimited {
         retry_after_secs: Option<u64>,
@@ -214,6 +215,7 @@ pub enum HubError {
 impl std::fmt::Display for HubError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Offline => write!(f, "hub is offline; check the network and retry"),
             Self::Network(error) => write!(f, "hub request failed: {error}"),
             Self::RateLimited { retry_after_secs } => match retry_after_secs {
                 Some(seconds) => write!(f, "hub rate limit reached; retry after {seconds}s"),
@@ -321,8 +323,8 @@ impl<'a> HubClient<'a> {
 
         let body = self
             .client
-            .get_bounded(url, validator.limits().max_response_bytes)
-            .map_err(map_transport_error)?;
+            .get_bounded_for_hub(url, validator.limits().max_response_bytes)
+            .map_err(|error| map_hub_request_error(error, url, self.client.has_token()))?;
         let report = validator
             .validate_search_payload(&body)
             .map_err(map_validation_error)?;
@@ -688,18 +690,40 @@ fn unknown_live_fit() -> FitSummary {
     }
 }
 
-fn map_transport_error(error: String) -> HubError {
-    if error.contains("HTTP 429") {
-        HubError::RateLimited {
-            retry_after_secs: None,
+fn map_hub_request_error(error: HubRequestError, url: &str, has_token: bool) -> HubError {
+    match error {
+        HubRequestError::Offline => HubError::Offline,
+        HubRequestError::Transport(message) => HubError::Network(message),
+        HubRequestError::HttpStatus {
+            status: 429,
+            retry_after_secs,
+        } => HubError::RateLimited { retry_after_secs },
+        HubRequestError::HttpStatus {
+            status: status @ (401 | 403),
+            ..
+        } if !has_token => HubError::Network(format!(
+            "GET {url}: HTTP {status}. This repository is gated and no HF_TOKEN \
+             is set; accept its licence on huggingface.co, then export a token."
+        )),
+        HubRequestError::HttpStatus {
+            status: status @ (401 | 403),
+            ..
+        } => HubError::Network(format!(
+            "GET {url}: HTTP {status}. HF_TOKEN is set, so either it lacks access \
+             to this repository or its licence has not been accepted."
+        )),
+        HubRequestError::HttpStatus { status: 404, .. } => HubError::Network(format!(
+            "GET {url}: HTTP 404. That file is not in this repository at this \
+             revision -- file lists differ per repository, not per model family."
+        )),
+        HubRequestError::HttpStatus { status, .. } => {
+            HubError::Network(format!("GET {url}: HTTP {status}"))
         }
-    } else if error.contains("response exceeds the") {
-        HubError::InvalidResponse {
+        HubRequestError::ResponseTooLarge => HubError::InvalidResponse {
             entry: "<response>".to_string(),
             rule: "response_size_within_limit",
-        }
-    } else {
-        HubError::Network(error)
+        },
+        HubRequestError::BodyRead(message) => HubError::Network(format!("GET {url}: {message}")),
     }
 }
 
