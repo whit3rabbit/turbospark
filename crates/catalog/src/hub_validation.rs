@@ -92,6 +92,25 @@ pub struct HubRepoMetadata {
     pub files: Vec<HubFileMetadata>,
 }
 
+/// One validated repository sibling with an optional LFS SHA-256 identity.
+///
+/// This source-resolution view is separate from `HubFileMetadata` so the
+/// existing public repository and GGUF variant contracts stay unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HubSourceFileMetadata {
+    pub path: String,
+    pub size_bytes: Option<u64>,
+    pub sha256: Option<String>,
+}
+
+/// Validated repository identity and source metadata for exact owner matching.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HubSourceRepoMetadata {
+    pub repo_id: String,
+    pub revision: String,
+    pub files: Vec<HubSourceFileMetadata>,
+}
+
 /// A whole-response validation failure. Entry-level failures are returned in
 /// [`ValidationReport::rejected`] so valid neighbors remain usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -308,6 +327,49 @@ impl HubMetadataValidator {
         })
     }
 
+    /// Validates repository metadata and retains SHA-256 identities for LFS
+    /// siblings without changing the legacy public repository metadata shape.
+    pub(crate) fn validate_source_repository_payload(
+        &self,
+        bytes: &[u8],
+    ) -> Result<ValidationReport<HubSourceRepoMetadata>, HubValidationError> {
+        let report = self.validate_repository_payload(bytes)?;
+        let value = self.parse_bounded_json(bytes)?;
+        let Some(siblings) = value.get("siblings").and_then(Value::as_array) else {
+            return Err(invalid("<repository>", "siblings_array_shape"));
+        };
+        let by_path: std::collections::HashMap<&str, &Value> = siblings
+            .iter()
+            .filter_map(|sibling| Some((sibling.get("rfilename")?.as_str()?, sibling)))
+            .collect();
+
+        let mut valid_files = Vec::with_capacity(report.valid.files.len());
+        let mut rejected = report.rejected;
+        for file in report.valid.files {
+            let Some(sibling) = by_path.get(file.path.as_str()).copied() else {
+                rejected.push(rejected_entry(file.path, "file_metadata_shape"));
+                continue;
+            };
+            match sibling_sha256(sibling) {
+                Ok(sha256) => valid_files.push(HubSourceFileMetadata {
+                    path: file.path,
+                    size_bytes: file.size_bytes,
+                    sha256,
+                }),
+                Err(rule) => rejected.push(rejected_entry(file.path, rule)),
+            }
+        }
+
+        Ok(ValidationReport {
+            valid: HubSourceRepoMetadata {
+                repo_id: report.valid.repo_id,
+                revision: report.valid.revision,
+                files: valid_files,
+            },
+            rejected,
+        })
+    }
+
     /// Returns a checked total for a selected file set, or `None` if any size
     /// is unknown. Invalid paths, sizes, zero-byte GGUFs, overflow, and a
     /// configured set-size ceiling produce a named validation error.
@@ -394,7 +456,7 @@ pub(crate) fn valid_revision(revision: &str) -> bool {
     revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn valid_relative_path(path: &str) -> bool {
+pub(crate) fn valid_relative_path(path: &str) -> bool {
     if path.is_empty()
         || path.len() > MAX_HUB_PATH_BYTES
         || path.starts_with('/')
@@ -407,6 +469,45 @@ fn valid_relative_path(path: &str) -> bool {
     }
     path.split('/')
         .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+fn sibling_sha256(sibling: &Value) -> Result<Option<String>, &'static str> {
+    let Some(lfs) = sibling.get("lfs") else {
+        return Ok(None);
+    };
+    if lfs.is_null() {
+        return Ok(None);
+    }
+    let Some(lfs) = lfs.as_object() else {
+        return Err("lfs_metadata_shape");
+    };
+
+    let direct = match lfs.get("sha256") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(value.as_str()),
+        Some(_) => return Err("sha256_digest_shape"),
+    };
+    let oid = match lfs.get("oid") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => {
+            Some(value.strip_prefix("sha256:").ok_or("sha256_digest_shape")?)
+        }
+        Some(_) => return Err("sha256_digest_shape"),
+    };
+
+    let direct = direct.map(normalize_sha256).transpose()?;
+    let oid = oid.map(normalize_sha256).transpose()?;
+    if direct.is_some() && oid.is_some() && direct != oid {
+        return Err("sha256_digest_conflict");
+    }
+    Ok(direct.or(oid))
+}
+
+pub(crate) fn normalize_sha256(value: &str) -> Result<String, &'static str> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("sha256_digest_shape");
+    }
+    Ok(value.to_ascii_lowercase())
 }
 
 fn invalid(entry: impl Into<String>, rule: &'static str) -> HubValidationError {

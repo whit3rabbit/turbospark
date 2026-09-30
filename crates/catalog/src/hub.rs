@@ -10,8 +10,8 @@ use crate::catalog::Catalog;
 use crate::entry::CatalogEntry;
 use crate::hf::{hf_endpoint, Client, HubRequestError, RepoRef};
 use crate::hub_validation::{
-    valid_repo_id, valid_revision, HubFileMetadata, HubMetadataValidator, HubSearchEntry,
-    HubValidationError, RejectedHubEntry,
+    normalize_sha256, valid_relative_path, valid_repo_id, valid_revision, HubFileMetadata,
+    HubMetadataValidator, HubSearchEntry, HubValidationError, RejectedHubEntry,
 };
 use crate::probe::{ProbeReport, Verdict};
 use crate::quant::{group_variants, quant_label, QuantLabel, ShardSetIssue, ShardSetStatus};
@@ -200,6 +200,50 @@ pub struct HubGgufVariant {
     pub installability: VariantInstallability,
 }
 
+/// An owner-supplied source group. `role` is opaque to catalog transport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedSourceGroup {
+    pub role: String,
+    pub repo: RepoRef,
+    pub files: Vec<PinnedSourceFile>,
+}
+
+/// One owner-pinned path and any exact size or SHA-256 expectations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedSourceFile {
+    pub path: String,
+    pub expected_size: Option<u64>,
+    pub expected_sha256: Option<String>,
+}
+
+/// Repository source metadata resolved and checked against an owner source set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedSourceIdentity {
+    pub repo: RepoRef,
+    pub files: Vec<ResolvedSourceFile>,
+}
+
+/// One exact path with authority-backed source metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedSourceFile {
+    pub path: String,
+    pub authoritative_size: Option<u64>,
+    pub source_sha256: Option<String>,
+}
+
+/// Why an owner-pinned source and a resolved live source do not match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceIdentityMismatch {
+    Repository,
+    Revision,
+    FileSet,
+    MissingAuthoritativeSize,
+    Size,
+    MissingPinnedDigest,
+    Digest,
+    DuplicatePath,
+}
+
 /// Why one GGUF file group can or cannot reach the existing install gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VariantInstallability {
@@ -366,6 +410,123 @@ impl<'a> HubClient<'a> {
         probe: &ProbeReport,
     ) -> Result<Vec<HubGgufVariant>, HubError> {
         self.enrich_repo_variants(repo, Some(probe))
+    }
+
+    /// Resolves one owner-pinned source group at its immutable revision.
+    ///
+    /// This is an explicit source-resolution request. It reads the repository
+    /// listing once, resolves missing listed sizes with `HEAD`, and returns
+    /// only after the complete owner-pinned set matches validated metadata.
+    pub fn resolve_source_identity(
+        &self,
+        expected: &PinnedSourceGroup,
+    ) -> Result<ResolvedSourceIdentity, HubError> {
+        validate_pinned_source_group(expected)?;
+
+        let validator = HubMetadataValidator::default();
+        let metadata_url = expected.repo.api_url_with_sizes();
+        let body = self
+            .client
+            .get_bounded_for_hub(&metadata_url, validator.limits().max_response_bytes)
+            .map_err(|error| {
+                map_hub_request_error(error, &metadata_url, self.client.has_token())
+            })?;
+        let report = validator
+            .validate_source_repository_payload(&body)
+            .map_err(map_validation_error)?;
+
+        let repo_id = canonical_repo_id(&expected.repo.repo);
+        if canonical_repo_id(&report.valid.repo_id) != repo_id {
+            return Err(HubError::InvalidResponse {
+                entry: report.valid.repo_id,
+                rule: "repository_id_matches_owner_source",
+            });
+        }
+        let revision = expected.repo.revision.to_ascii_lowercase();
+        if report.valid.revision != revision {
+            return Err(HubError::InvalidResponse {
+                entry: format!("{}@{}", report.valid.repo_id, report.valid.revision),
+                rule: "immutable_revision_matches_owner_source",
+            });
+        }
+
+        let mut files = Vec::with_capacity(expected.files.len());
+        for pinned in &expected.files {
+            if report
+                .rejected
+                .iter()
+                .any(|rejected| rejected.entry == pinned.path)
+            {
+                return Err(HubError::InvalidResponse {
+                    entry: pinned.path.clone(),
+                    rule: "owner_source_file_metadata_valid",
+                });
+            }
+            let Some(source) = report
+                .valid
+                .files
+                .iter()
+                .find(|file| file.path == pinned.path)
+            else {
+                return Err(HubError::InvalidResponse {
+                    entry: pinned.path.clone(),
+                    rule: "owner_source_file_present",
+                });
+            };
+
+            let authoritative_size = match source.size_bytes {
+                Some(size) => Some(size),
+                None => {
+                    let url = source_file_url(&expected.repo, &pinned.path)?;
+                    self.client
+                        .content_length(&url)
+                        .map_err(HubError::Network)?
+                }
+            };
+            let Some(authoritative_size) = authoritative_size else {
+                return Err(HubError::InvalidResponse {
+                    entry: pinned.path.clone(),
+                    rule: "authoritative_source_size_available",
+                });
+            };
+            if authoritative_size > validator.limits().max_file_size_bytes {
+                return Err(HubError::InvalidResponse {
+                    entry: pinned.path.clone(),
+                    rule: "file_size_within_limit",
+                });
+            }
+
+            files.push(ResolvedSourceFile {
+                path: pinned.path.clone(),
+                authoritative_size: Some(authoritative_size),
+                source_sha256: source.sha256.clone(),
+            });
+        }
+
+        let resolved = ResolvedSourceIdentity {
+            repo: RepoRef::new(repo_id, revision),
+            files,
+        };
+        matches_exact_source(expected, &resolved).map_err(|mismatch| {
+            HubError::InvalidResponse {
+                entry: expected.repo.to_string(),
+                rule: source_mismatch_rule(mismatch),
+            }
+        })?;
+
+        let checked_files: Vec<_> = resolved
+            .files
+            .iter()
+            .map(|file| HubFileMetadata {
+                path: file.path.clone(),
+                size_bytes: file.authoritative_size,
+            })
+            .collect();
+        validator
+            .checked_file_total(&checked_files)
+            .map_err(map_validation_error)?;
+
+        Ok(resolved)
     }
 
     fn enrich_repo_variants(
@@ -766,6 +927,180 @@ impl<'a> HubClient<'a> {
             fetched_at: fetched.fetched_at,
             from_cache: fetched.from_cache,
         }
+    }
+}
+
+/// Checks that a fully resolved live source exactly satisfies an owner pin.
+///
+/// Path identity is case-sensitive and set-based. Repository IDs and commit
+/// hashes are canonicalized according to the Hub's case-insensitive IDs and
+/// hexadecimal revision representation.
+pub fn matches_exact_source(
+    expected: &PinnedSourceGroup,
+    candidate: &ResolvedSourceIdentity,
+) -> Result<(), SourceIdentityMismatch> {
+    if !valid_repo_id(&expected.repo.repo) || !valid_repo_id(&candidate.repo.repo) {
+        return Err(SourceIdentityMismatch::Repository);
+    }
+    if canonical_repo_id(&expected.repo.repo) != canonical_repo_id(&candidate.repo.repo) {
+        return Err(SourceIdentityMismatch::Repository);
+    }
+    if !valid_revision(&expected.repo.revision)
+        || !valid_revision(&candidate.repo.revision)
+        || !expected
+            .repo
+            .revision
+            .eq_ignore_ascii_case(&candidate.repo.revision)
+    {
+        return Err(SourceIdentityMismatch::Revision);
+    }
+    if expected.files.is_empty() {
+        return Err(SourceIdentityMismatch::FileSet);
+    }
+
+    let mut expected_by_path = HashMap::with_capacity(expected.files.len());
+    for file in &expected.files {
+        if !valid_relative_path(&file.path) {
+            return Err(SourceIdentityMismatch::FileSet);
+        }
+        if expected_by_path.insert(file.path.as_str(), file).is_some() {
+            return Err(SourceIdentityMismatch::DuplicatePath);
+        }
+    }
+
+    let mut candidate_by_path = HashMap::with_capacity(candidate.files.len());
+    for file in &candidate.files {
+        if !valid_relative_path(&file.path) {
+            return Err(SourceIdentityMismatch::FileSet);
+        }
+        if candidate_by_path.insert(file.path.as_str(), file).is_some() {
+            return Err(SourceIdentityMismatch::DuplicatePath);
+        }
+    }
+    if expected_by_path.len() != candidate_by_path.len()
+        || expected_by_path
+            .keys()
+            .any(|path| !candidate_by_path.contains_key(path))
+    {
+        return Err(SourceIdentityMismatch::FileSet);
+    }
+
+    let validator = HubMetadataValidator::default();
+    let mut checked_files = Vec::with_capacity(candidate.files.len());
+    for file in &candidate.files {
+        let Some(size) = file.authoritative_size else {
+            return Err(SourceIdentityMismatch::MissingAuthoritativeSize);
+        };
+        let source_sha256 = file
+            .source_sha256
+            .as_deref()
+            .map(normalize_sha256)
+            .transpose()
+            .map_err(|_| SourceIdentityMismatch::Digest)?;
+        checked_files.push(HubFileMetadata {
+            path: file.path.clone(),
+            size_bytes: Some(size),
+        });
+
+        let Some(pinned) = expected_by_path.get(file.path.as_str()).copied() else {
+            return Err(SourceIdentityMismatch::FileSet);
+        };
+        if pinned
+            .expected_size
+            .is_some_and(|expected_size| expected_size != size)
+        {
+            return Err(SourceIdentityMismatch::Size);
+        }
+        if let Some(expected_sha256) = pinned.expected_sha256.as_deref() {
+            let expected_sha256 =
+                normalize_sha256(expected_sha256).map_err(|_| SourceIdentityMismatch::Digest)?;
+            let Some(source_sha256) = source_sha256 else {
+                return Err(SourceIdentityMismatch::MissingPinnedDigest);
+            };
+            if expected_sha256 != source_sha256 {
+                return Err(SourceIdentityMismatch::Digest);
+            }
+        }
+    }
+    validator
+        .checked_file_total(&checked_files)
+        .map_err(|_| SourceIdentityMismatch::Size)?;
+    Ok(())
+}
+
+fn validate_pinned_source_group(expected: &PinnedSourceGroup) -> Result<(), HubError> {
+    let invalid = |field, rule| HubError::InvalidRequest { field, rule };
+    if !valid_repo_id(&expected.repo.repo) {
+        return Err(invalid("repo", "repository_id_shape"));
+    }
+    if !valid_revision(&expected.repo.revision) {
+        return Err(invalid("revision", "immutable_commit_revision"));
+    }
+    let validator = HubMetadataValidator::default();
+    if expected.files.is_empty() {
+        return Err(invalid("files", "non_empty_source_set"));
+    }
+    if expected.files.len() > validator.limits().max_repo_files {
+        return Err(invalid("files", "file_count_within_limit"));
+    }
+
+    let mut seen = std::collections::HashSet::with_capacity(expected.files.len());
+    for file in &expected.files {
+        if !valid_relative_path(&file.path) {
+            return Err(invalid("path", "safe_relative_path"));
+        }
+        if !seen.insert(file.path.as_str()) {
+            return Err(invalid("path", "unique_file_path"));
+        }
+        if file
+            .expected_size
+            .is_some_and(|size| size > validator.limits().max_file_size_bytes)
+        {
+            return Err(invalid("expected_size", "file_size_within_limit"));
+        }
+        if file
+            .expected_sha256
+            .as_deref()
+            .is_some_and(|digest| normalize_sha256(digest).is_err())
+        {
+            return Err(invalid("expected_sha256", "sha256_digest_shape"));
+        }
+    }
+    Ok(())
+}
+
+fn source_file_url(repo: &RepoRef, path: &str) -> Result<String, HubError> {
+    let endpoint = hf_endpoint();
+    let mut url = reqwest::Url::parse(&format!("{}/", endpoint.trim_end_matches('/')))
+        .map_err(|error| HubError::Network(format!("invalid HF endpoint {endpoint:?}: {error}")))?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| HubError::InvalidRequest {
+                field: "path",
+                rule: "safe_relative_path",
+            })?;
+        for segment in repo.repo.split('/') {
+            segments.push(segment);
+        }
+        segments.push("resolve").push(&repo.revision);
+        for segment in path.split('/') {
+            segments.push(segment);
+        }
+    }
+    Ok(url.into())
+}
+
+fn source_mismatch_rule(mismatch: SourceIdentityMismatch) -> &'static str {
+    match mismatch {
+        SourceIdentityMismatch::Repository => "repository_id_matches_owner_source",
+        SourceIdentityMismatch::Revision => "immutable_revision_matches_owner_source",
+        SourceIdentityMismatch::FileSet => "complete_file_set_matches_owner_source",
+        SourceIdentityMismatch::MissingAuthoritativeSize => "authoritative_source_size_available",
+        SourceIdentityMismatch::Size => "source_size_matches_owner_pin",
+        SourceIdentityMismatch::MissingPinnedDigest => "pinned_source_digest_available",
+        SourceIdentityMismatch::Digest => "source_digest_matches_owner_pin",
+        SourceIdentityMismatch::DuplicatePath => "unique_file_path",
     }
 }
 
