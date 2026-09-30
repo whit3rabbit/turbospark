@@ -72,12 +72,26 @@ let package = Package(
             dependencies: [.product(name: "QwenImage", package: "qwenimage")],
             path: "Benchmarks/QwenImageMLXBenchmark"
         ),
+        .target(
+            name: "DOMSnapshotFixtures",
+            path: "Tests/TurboSparkAppTests/Fixtures/DOMSnapshotService",
+            resources: [
+                .process("forms.html"),
+                .process("dialogs.html"),
+                .process("dynamic-rerender.html"),
+                .process("credential-fields.html")
+            ]
+        ),
         .testTarget(
             name: "TurboSparkAppTests",
             dependencies: [
                 "TurboSparkApp",
+                "DOMSnapshotFixtures",
                 .product(name: "TurboSpark", package: "TurboSpark"),
                 .product(name: "Syntext", package: "syntext")
+            ],
+            exclude: [
+                "Fixtures/DOMSnapshotService"
             ],
             linkerSettings: [
                 .unsafeFlags([
