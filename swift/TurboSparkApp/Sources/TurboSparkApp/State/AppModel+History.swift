@@ -8,6 +8,14 @@ import TurboSpark
 /// arm -- the default, and the one that grows with every turn and every tool
 /// result until a 4,096-context install stops the run outright between step
 /// 30 and 35 (`docs/SKILL_STATE.md`).
+struct AppChatHistoryProjection {
+    var messages: [ChatMessage]
+    /// Parallel to `messages`; transcript-expanded messages share their source row index.
+    var sourceRowIndexByMessage: [Int?]
+    /// Counts rows visible to this assembly after full compaction, including rows that emit none.
+    var sourceTranscriptRowCount: Int
+}
+
 extension AppModel {
     /// The append-only prompt: the system message, then every turn and every
     /// tool result in order.
@@ -32,22 +40,37 @@ extension AppModel {
     }
 
     func buildAppendOnlyHistory(chatIndex: Int, project: AppProject?) -> [ChatMessage] {
+        buildAppendOnlyHistoryProjection(chatIndex: chatIndex, project: project).messages
+    }
+
+    /// Assembles the same prompt messages while retaining each transcript row's identity.
+    func buildAppendOnlyHistoryProjection(
+        chatIndex: Int, project: AppProject?
+    ) -> AppChatHistoryProjection {
         var history: [ChatMessage] = []
+        var sourceRowIndexByMessage: [Int?] = []
+        func append(_ message: ChatMessage, sourceRowIndex: Int?) {
+            history.append(message)
+            sourceRowIndexByMessage.append(sourceRowIndex)
+        }
+
         let systemContent = buildSystemPrompt(
             for: project,
             userPrompt: resolvedUserSystemPrompt(chatIndex: chatIndex))
         if !systemContent.isEmpty {
-            history.append(ChatMessage(role: .system, content: systemContent))
+            append(ChatMessage(role: .system, content: systemContent), sourceRowIndex: nil)
         }
 
         // Vault-aware: a ghost chat's decrypted transcript is what the model
         // gets, exactly as a normal chat's row is.
         let chatID = chats[chatIndex].id
         let compaction = compactionState(chatID: chatID)
-        for (rowIndex, msg) in turnMessages(for: chatID).enumerated() {
-            // Rows the summary replaces never reach the prompt. They stay in
-            // the transcript and on disk; only this assembly skips them.
-            if rowIndex < compaction.boundary { continue }
+        let transcriptRows = turnMessages(for: chatID)
+        // Rows the summary replaces never reach the prompt. Rebase the
+        // remaining source indexes so keep-recent can count this projection.
+        let sourceStartIndex = min(max(compaction.boundary, 0), transcriptRows.count)
+        let sourceRows = Array(transcriptRows.dropFirst(sourceStartIndex))
+        for (rowIndex, msg) in sourceRows.enumerated() {
             // **AN IMAGE-ONLY TURN HAS NO TEXT AND IS STILL A TURN.** This
             // guard predates images and would drop one entirely, leaving the
             // model to answer a question whose picture was never sent -- the
@@ -74,13 +97,14 @@ extension AppModel {
                 // sentence as though it had meant to stop there.
                 let content = Self.truncationNote(for: msg).map { "\(msg.content)\n\n\($0)" }
                     ?? msg.content
-                history.append(
+                append(
                     ChatMessage(
                         role: msg.role,
                         content: content,
                         images: msg.imagePaths.map {
                             ChatImage.path(AppStorageRoot.resolveStoredPath($0))
-                        }))
+                        }),
+                    sourceRowIndex: rowIndex)
             }
             // **A TOOL RESULT GOES BACK AS `.tool`, NOT AS `.system`**
             // (state#32). `ChatMessage.Role.tool` exists and the FFI maps it.
@@ -94,8 +118,9 @@ extension AppModel {
             // neither cause.
             for res in msg.toolResults {
                 let tag = res.isError ? "tool_error" : "tool_response"
-                history.append(
-                    ChatMessage(role: .tool, content: "<\(tag)>\n\(res.modelOutput)\n</\(tag)>"))
+                append(
+                    ChatMessage(role: .tool, content: "<\(tag)>\n\(res.modelOutput)\n</\(tag)>"),
+                    sourceRowIndex: rowIndex)
             }
         }
         // **SYSTEM REMINDERS ARE ASSEMBLY-TIME, NEVER STORED** (see
@@ -113,7 +138,15 @@ extension AppModel {
                 history[lastUser].content += "\n\n\(reminder)"
             }
         }
-        return insertingSummaryInjection(history, summary: compaction.summary)
+        let historyWithSummary = insertingSummaryInjection(history, summary: compaction.summary)
+        if historyWithSummary.count > history.count {
+            let summaryIndex = history.firstIndex { $0.role != .system } ?? history.count
+            sourceRowIndexByMessage.insert(nil, at: summaryIndex)
+        }
+        return AppChatHistoryProjection(
+            messages: historyWithSummary,
+            sourceRowIndexByMessage: sourceRowIndexByMessage,
+            sourceTranscriptRowCount: sourceRows.count)
     }
 
     /// The note appended to a turn that did not finish, or nil for one that

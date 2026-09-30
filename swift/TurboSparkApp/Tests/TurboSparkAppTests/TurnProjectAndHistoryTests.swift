@@ -183,6 +183,97 @@ final class TurnProjectAndHistoryTests: XCTestCase {
             "No system message may appear after the first position.")
     }
 
+    func testHistoryProjectionKeepsOneSourceRowForEveryToolResultFromThatRow() {
+        let model = AppModel()
+        model.defaultSystemPrompt = ""
+        model.selectedSystemPromptID = nil
+        model.selectedPersonalityID = nil
+        let firstCall = AppToolCall(name: "read_file", arguments: ["path": "a"], category: .fileRead)
+        let secondCall = AppToolCall(name: "read_file", arguments: ["path": "b"], category: .fileRead)
+        var chat = AppChat(title: "multi-result row")
+        chat.messages = [
+            AppChatMessage(role: .user, content: "read both files"),
+            AppChatMessage(
+                role: .assistant,
+                content: "I will read them.",
+                stopReason: "tool_use",
+                toolCalls: [firstCall, secondCall],
+                toolResults: [
+                    AppToolResult(callID: firstCall.id, output: "first contents"),
+                    AppToolResult(callID: secondCall.id, output: "second contents"),
+                ])
+        ]
+        model.chats = [chat]
+
+        let projection = model.buildAppendOnlyHistoryProjection(chatIndex: 0, project: nil)
+
+        XCTAssertEqual(projection.sourceTranscriptRowCount, 2)
+        XCTAssertEqual(projection.messages.map(\.content), [
+            "read both files",
+            "I will read them.",
+            "<tool_response>\nfirst contents\n</tool_response>",
+            "<tool_response>\nsecond contents\n</tool_response>",
+        ])
+        XCTAssertEqual(projection.sourceRowIndexByMessage, [0, 1, 1, 1])
+        let compatibleHistory = model.buildAppendOnlyHistory(chatIndex: 0, project: nil)
+        XCTAssertEqual(compatibleHistory.map(\.content), projection.messages.map(\.content))
+        XCTAssertEqual(compatibleHistory.map(\.role), projection.messages.map(\.role))
+    }
+
+    func testHistoryProjectionCountsAnEmptyTranscriptRowWithoutCompressingIndexes() {
+        let model = AppModel()
+        model.defaultSystemPrompt = ""
+        model.selectedSystemPromptID = nil
+        model.selectedPersonalityID = nil
+        var chat = AppChat(title: "empty source row")
+        chat.messages = [
+            AppChatMessage(role: .user, content: "first"),
+            AppChatMessage(role: .assistant, content: ""),
+            AppChatMessage(role: .user, content: "last"),
+        ]
+        model.chats = [chat]
+
+        let projection = model.buildAppendOnlyHistoryProjection(chatIndex: 0, project: nil)
+
+        XCTAssertEqual(projection.sourceTranscriptRowCount, 3)
+        XCTAssertEqual(projection.messages.map(\.content), ["first", "last"])
+        XCTAssertEqual(projection.sourceRowIndexByMessage, [0, 2])
+    }
+
+    func testHistoryProjectionLeavesSyntheticSystemAndSummaryWithoutTranscriptRows() {
+        let model = AppModel()
+        model.defaultSystemPrompt = "SYSTEM-SENTINEL"
+        model.selectedSystemPromptID = nil
+        model.selectedPersonalityID = nil
+        var chat = AppChat(title: "synthetic rows")
+        chat.messages = [
+            AppChatMessage(role: .user, content: "summarized away"),
+            AppChatMessage(role: .user, content: "retained"),
+        ]
+        chat.contextSummary = "SUMMARY-SENTINEL"
+        chat.compactedMessageCount = 1
+        model.chats = [chat]
+
+        let projection = model.buildAppendOnlyHistoryProjection(chatIndex: 0, project: nil)
+
+        XCTAssertEqual(projection.sourceTranscriptRowCount, 1)
+        let systemIndexes = projection.messages.indices.filter {
+            projection.messages[$0].role == .system
+        }
+        XCTAssertFalse(systemIndexes.isEmpty)
+        XCTAssertTrue(systemIndexes.allSatisfy { projection.sourceRowIndexByMessage[$0] == nil })
+        let summaryIndex = projection.messages.firstIndex { $0.content.contains("SUMMARY-SENTINEL") }
+        XCTAssertNotNil(summaryIndex)
+        if let summaryIndex {
+            XCTAssertNil(projection.sourceRowIndexByMessage[summaryIndex])
+        }
+        let retainedIndex = projection.messages.firstIndex { $0.content == "retained" }
+        XCTAssertNotNil(retainedIndex)
+        if let retainedIndex {
+            XCTAssertEqual(projection.sourceRowIndexByMessage[retainedIndex], 0)
+        }
+    }
+
     // MARK: - state#29: approve and deny both own a turn
 
     /// Approving used to lower `generating` on top of the continuation it had
