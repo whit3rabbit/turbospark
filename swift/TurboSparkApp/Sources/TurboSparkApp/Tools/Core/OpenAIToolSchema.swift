@@ -50,6 +50,9 @@ public struct JSONSchema: Codable, Sendable, Equatable {
     public var enumValues: [String]?
     public var items: JSONSchemaProperty?
     public var additionalProperties: Bool?
+    /// Internal marker used when an advertised schema contains unsupported
+    /// validation keywords. It is not serialized into the model-facing schema.
+    public var validationIssue: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -68,7 +71,8 @@ public struct JSONSchema: Codable, Sendable, Equatable {
         required: [String]? = nil,
         enumValues: [String]? = nil,
         items: JSONSchemaProperty? = nil,
-        additionalProperties: Bool? = nil
+        additionalProperties: Bool? = nil,
+        validationIssue: String? = nil
     ) {
         self.type = type
         self.description = description
@@ -77,18 +81,21 @@ public struct JSONSchema: Codable, Sendable, Equatable {
         self.enumValues = enumValues
         self.items = items
         self.additionalProperties = additionalProperties
+        self.validationIssue = validationIssue
     }
 
     public static func object(
         properties: [String: JSONSchemaProperty],
         required: [String] = [],
-        description: String? = nil
+        description: String? = nil,
+        additionalProperties: Bool? = nil
     ) -> JSONSchema {
         JSONSchema(
             type: "object",
             description: description,
             properties: properties,
-            required: required.isEmpty ? nil : required
+            required: required.isEmpty ? nil : required,
+            additionalProperties: additionalProperties
         )
     }
 
@@ -111,6 +118,10 @@ public struct JSONSchemaProperty: Codable, Sendable, Equatable {
     public var properties: [String: JSONSchemaProperty]?
     public var required: [String]?
     public var defaultVal: String?
+    /// Internal marker used when an advertised property uses unsupported
+    /// validation keywords. It is not serialized into the model-facing schema.
+    public var validationIssue: String? = nil
+    public var additionalProperties: Bool?
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -120,6 +131,7 @@ public struct JSONSchemaProperty: Codable, Sendable, Equatable {
         case properties
         case required
         case defaultVal = "default"
+        case additionalProperties
     }
 
     public init(
@@ -129,7 +141,9 @@ public struct JSONSchemaProperty: Codable, Sendable, Equatable {
         items: JSONSchemaProperty? = nil,
         properties: [String: JSONSchemaProperty]? = nil,
         required: [String]? = nil,
-        defaultVal: String? = nil
+        defaultVal: String? = nil,
+        additionalProperties: Bool? = nil,
+        validationIssue: String? = nil
     ) {
         self.type = type
         self.description = description
@@ -138,6 +152,8 @@ public struct JSONSchemaProperty: Codable, Sendable, Equatable {
         self.properties = properties
         self.required = required
         self.defaultVal = defaultVal
+        self.additionalProperties = additionalProperties
+        self.validationIssue = validationIssue
     }
 
     public static func string(
@@ -200,13 +216,15 @@ public struct JSONSchemaProperty: Codable, Sendable, Equatable {
     public static func object(
         properties: [String: JSONSchemaProperty],
         required: [String] = [],
-        description: String? = nil
+        description: String? = nil,
+        additionalProperties: Bool? = nil
     ) -> JSONSchemaProperty {
         JSONSchemaProperty(
             type: "object",
             description: description,
             properties: properties,
-            required: required.isEmpty ? nil : required
+            required: required.isEmpty ? nil : required,
+            additionalProperties: additionalProperties
         )
     }
 }

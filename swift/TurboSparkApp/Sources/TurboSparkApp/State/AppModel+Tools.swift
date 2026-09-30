@@ -229,7 +229,9 @@ extension AppModel {
     /// breakdown's slices can never describe different text: there is one
     /// builder and the prompt IS the join.
     public func buildSystemPromptSections(
-        for project: AppProject?, userPrompt: String = ""
+        for project: AppProject?,
+        userPrompt: String = "",
+        availableTools: TurnAvailableTools? = nil
     ) -> [(section: SystemPromptSection, content: String)] {
         var sections: [(section: SystemPromptSection, content: String)] = []
 
@@ -314,7 +316,8 @@ extension AppModel {
             project: project,
             contextTokens: contextBudget,
             availableAgents: availableAgents,
-            webToolsEnabled: webSearchEnabled)
+            webToolsEnabled: webSearchEnabled,
+            availableTools: availableTools)
         sections.append((.tools, toolsPrompt))
 
         if !activeMcpServers.isEmpty {
@@ -348,8 +351,12 @@ extension AppModel {
     /// `extractToolCalls` carries its own independent
     /// `interactionMode == .projects, project != nil` gate, so this is the
     /// second of two locks rather than the only one.
-    public func buildSystemPrompt(for project: AppProject?, userPrompt: String = "") -> String {
-        buildSystemPromptSections(for: project, userPrompt: userPrompt)
+    public func buildSystemPrompt(
+        for project: AppProject?, userPrompt: String = "",
+        availableTools: TurnAvailableTools? = nil
+    ) -> String {
+        buildSystemPromptSections(
+            for: project, userPrompt: userPrompt, availableTools: availableTools)
             .map(\.content)
             .joined(separator: "\n\n")
     }

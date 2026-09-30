@@ -39,13 +39,16 @@ extension AppModel {
         return Array(history[..<at]) + [injection] + Array(history[at...])
     }
 
-    func buildAppendOnlyHistory(chatIndex: Int, project: AppProject?) -> [ChatMessage] {
-        buildAppendOnlyHistoryProjection(chatIndex: chatIndex, project: project).messages
+    func buildAppendOnlyHistory(
+        chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil
+    ) -> [ChatMessage] {
+        buildAppendOnlyHistoryProjection(
+            chatIndex: chatIndex, project: project, availableTools: availableTools).messages
     }
 
     /// Assembles the same prompt messages while retaining each transcript row's identity.
     func buildAppendOnlyHistoryProjection(
-        chatIndex: Int, project: AppProject?
+        chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil
     ) -> AppChatHistoryProjection {
         var history: [ChatMessage] = []
         var sourceRowIndexByMessage: [Int?] = []
@@ -56,7 +59,8 @@ extension AppModel {
 
         let systemContent = buildSystemPrompt(
             for: project,
-            userPrompt: resolvedUserSystemPrompt(chatIndex: chatIndex))
+            userPrompt: resolvedUserSystemPrompt(chatIndex: chatIndex),
+            availableTools: availableTools)
         if !systemContent.isEmpty {
             append(ChatMessage(role: .system, content: systemContent), sourceRowIndex: nil)
         }

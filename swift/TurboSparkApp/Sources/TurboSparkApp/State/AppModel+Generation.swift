@@ -73,6 +73,11 @@ extension AppModel {
         // and the permission evaluation of whatever call the turn proposes.
         let turnProject = self.turnProject(chatID: chatID)
         let usesSkillState = turnProject?.skillStateEnabled ?? false
+        let turnAvailableTools = AppToolCatalog.captureTurnAvailableTools(
+            for: turnProject,
+            globalMcpServers: globalMcpServers,
+            contextTokens: maxContextTokens > 0 ? maxContextTokens : nil,
+            webToolsEnabled: webSearchEnabled)
 
         generationEpoch += 1
         let myEpoch = generationEpoch
@@ -103,8 +108,10 @@ extension AppModel {
         }
         let rawHistory: [ChatMessage] =
             usesSkillState
-            ? buildSkillStateHistory(chatIndex: chatIndex, project: turnProject)
-            : buildAppendOnlyHistory(chatIndex: chatIndex, project: turnProject)
+            ? buildSkillStateHistory(
+                chatIndex: chatIndex, project: turnProject, availableTools: turnAvailableTools)
+            : buildAppendOnlyHistory(
+                chatIndex: chatIndex, project: turnProject, availableTools: turnAvailableTools)
 
         // Per-chat sampling: the chat's own override when it carries one,
         // the app-wide settings otherwise. Resolved from `chatID`, never the
@@ -140,7 +147,8 @@ extension AppModel {
                         guard let refreshed = self.chats.firstIndex(where: { $0.id == turnChatID })
                         else { return }
                         turnHistory = self.buildAppendOnlyHistory(
-                            chatIndex: refreshed, project: turnProject)
+                            chatIndex: refreshed, project: turnProject,
+                            availableTools: turnAvailableTools)
                     }
                 }
                 // **THE PROMPT BUDGET IS THE WINDOW MINUS WHAT GENERATION

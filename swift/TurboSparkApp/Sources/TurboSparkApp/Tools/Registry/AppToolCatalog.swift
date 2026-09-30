@@ -174,6 +174,30 @@ public enum AppToolCatalog {
         return OpenAIToolSerializer.encodeJSONString(active)
     }
 
+    /// Captures the tools offered to one generation request after the same
+    /// project, agent, feature, and runtime filters used by prompt assembly.
+    public static func captureTurnAvailableTools(
+        for project: AppProject?,
+        globalMcpServers: [McpServerConfig],
+        contextTokens: Int?,
+        webToolsEnabled: Bool
+    ) -> TurnAvailableTools {
+        guard let project else { return TurnAvailableTools(definitions: []) }
+        let promptDefinitions = tools(
+            for: project.agentType,
+            projectURL: project.rootDirectoryURL,
+            contextTokens: contextTokens,
+            webToolsEnabled: webToolsEnabled)
+        let visibleServers = AppToolCatalogMcp.visibleServers(
+            global: globalMcpServers, project: project)
+        let mcpSnapshot = AppToolCatalogMcp.catalogSnapshot(
+            servers: visibleServers, permissions: project.permissions)
+        return TurnAvailableTools(
+            definitions: promptDefinitions + mcpSnapshot.definitions,
+            promptDefinitions: promptDefinitions,
+            deferredMcpTools: mcpSnapshot.deferredDescriptors)
+    }
+
     /// Generates Markdown / XML system prompt guidance for tool use.
     ///
     /// `projectURL` and `contextTokens` reach the skill tool's listing: the
@@ -193,9 +217,10 @@ public enum AppToolCatalog {
         projectURL: URL? = nil,
         contextTokens: Int? = nil,
         availableAgents: [(name: String, whenToUse: String)] = [],
-        webToolsEnabled: Bool = true
+        webToolsEnabled: Bool = true,
+        availableTools: TurnAvailableTools? = nil
     ) -> String {
-        let active = tools(
+        let active = availableTools?.promptDefinitions ?? tools(
             for: agentType, projectURL: projectURL, contextTokens: contextTokens,
             webToolsEnabled: webToolsEnabled)
         var lines: [String] = []
@@ -284,15 +309,17 @@ public enum AppToolCatalog {
         project: AppProject?,
         contextTokens: Int? = nil,
         availableAgents: [(name: String, whenToUse: String)] = [],
-        webToolsEnabled: Bool = true
+        webToolsEnabled: Bool = true,
+        availableTools: TurnAvailableTools? = nil
     ) -> String {
         let base = systemPromptAddendum(
             for: agentType,
             projectURL: project?.rootDirectoryURL,
             contextTokens: contextTokens,
             availableAgents: availableAgents,
-            webToolsEnabled: webToolsEnabled)
-        let deferred = ToolSearchCatalog.descriptors(
+            webToolsEnabled: webToolsEnabled,
+            availableTools: availableTools)
+        let deferred = availableTools?.deferredMcpTools ?? ToolSearchCatalog.descriptors(
             servers: mcpServers, permissions: project?.permissions)
         guard !deferred.isEmpty else { return base }
         return base + ToolSearchCatalog.promptListing(

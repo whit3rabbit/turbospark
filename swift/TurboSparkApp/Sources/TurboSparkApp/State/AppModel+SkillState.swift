@@ -67,12 +67,15 @@ extension AppModel {
     /// Compare `AppModel+Generation.swift`'s append-only assembly, which walks
     /// every message and every tool result. This one is O(1) in step count,
     /// which is the whole point.
-    func buildSkillStateHistory(chatIndex: Int, project: AppProject?) -> [ChatMessage] {
+    func buildSkillStateHistory(
+        chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil
+    ) -> [ChatMessage] {
         var history: [ChatMessage] = []
 
         var systemContent = buildSystemPrompt(
             for: project,
-            userPrompt: resolvedUserSystemPrompt(chatIndex: chatIndex))
+            userPrompt: resolvedUserSystemPrompt(chatIndex: chatIndex),
+            availableTools: availableTools)
         systemContent = systemContent.isEmpty
             ? skillStateProtocol()
             : "\(systemContent)\n\n\(skillStateProtocol())"
