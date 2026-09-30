@@ -16,13 +16,58 @@ use crate::recommend::{
     recommend_catalog, CountedSource, Evidence, Fit, FitVerdict, GgufVariant, Machine, Origin,
     Recommendation,
 };
+use crate::store::Store;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Maximum list size accepted by the default metadata validator.
 pub const MAX_HUB_PAGE_ENTRIES: u32 = 1_000;
 /// Page size for the on-demand trending feed.
 pub const DEFAULT_TRENDING_LIMIT: u32 = 30;
+const SEARCH_FRESHNESS: Duration = Duration::from_secs(15 * 60);
+const TRENDING_FRESHNESS: Duration = Duration::from_secs(60 * 60);
+const CACHE_RETENTION_MULTIPLIER: u32 = 2;
+const CACHE_ENVELOPE_OVERHEAD_BYTES: usize = 4 * 1024;
+static CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy)]
+enum CacheKind {
+    Search,
+    Trending,
+}
+
+impl CacheKind {
+    fn freshness(self) -> Duration {
+        match self {
+            Self::Search => SEARCH_FRESHNESS,
+            Self::Trending => TRENDING_FRESHNESS,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ValidatedList {
+    entries: Vec<HubSearchEntry>,
+    rejected: Vec<RejectedHubEntry>,
+    fetched_at: SystemTime,
+    from_cache: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CacheEnvelope {
+    /// Seconds since the Unix epoch, kept as an integer for a stable JSON
+    /// envelope and deterministic freshness comparisons.
+    fetched_at: u64,
+    payload: Value,
+}
 
 /// Ordering requested from the Hugging Face model-list endpoint.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -74,9 +119,7 @@ impl HubQuery {
     }
 }
 
-/// Cache policy reserved for the cache implementation in task 1.3.
-///
-/// Until that task lands, both variants deliberately issue a fresh request.
+/// Whether a user action may use a fresh cached response or must fetch again.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Refresh {
     /// Use a fresh cached response when a cache is available.
@@ -147,7 +190,7 @@ pub struct HubPage {
     pub entries: Vec<HubEntry>,
     pub rejected: Vec<RejectedHubEntry>,
     pub fetched_at: SystemTime,
-    /// Always false until the validated-response cache is implemented.
+    /// True when the validated live payload came from the store cache.
     pub from_cache: bool,
 }
 
@@ -206,6 +249,7 @@ pub struct HubClient<'a> {
     machine: Machine,
     context: u32,
     slots: model_io::ExpertCacheSlots,
+    store: Option<Store>,
 }
 
 impl<'a> HubClient<'a> {
@@ -222,11 +266,19 @@ impl<'a> HubClient<'a> {
             machine,
             context,
             slots,
+            store: Store::default_store().ok(),
         }
     }
 
+    /// Uses an explicit model-store root for the validated hub-response cache.
+    /// The default constructor resolves the configured store automatically.
+    pub fn with_store(mut self, store: Store) -> Self {
+        self.store = Some(store);
+        self
+    }
+
     /// Fetches one explicit live search and merges matching bundled rows.
-    pub fn search(&self, query: &HubQuery, _refresh: Refresh) -> Result<HubPage, HubError> {
+    pub fn search(&self, query: &HubQuery, refresh: Refresh) -> Result<HubPage, HubError> {
         if query.text.trim().is_empty() {
             return Err(HubError::InvalidRequest {
                 field: "text",
@@ -241,24 +293,32 @@ impl<'a> HubClient<'a> {
         }
 
         let url = models_url(Some(&query.text), query.sort, query.limit)?;
-        let (live, rejected) = self.fetch_list(&url)?;
+        let fetched = self.fetch_list(&url, CacheKind::Search, refresh)?;
         let local_matches = self.catalog.find(&query.text);
-        Ok(self.compose(live, rejected, local_matches))
+        Ok(self.compose(fetched, local_matches))
     }
 
     /// Fetches the current trending page and appends bundled recommendations.
-    pub fn trending(&self, _refresh: Refresh) -> Result<HubPage, HubError> {
+    pub fn trending(&self, refresh: Refresh) -> Result<HubPage, HubError> {
         let url = models_url(None, HubSort::Trending, DEFAULT_TRENDING_LIMIT)?;
-        let (live, rejected) = self.fetch_list(&url)?;
+        let fetched = self.fetch_list(&url, CacheKind::Trending, refresh)?;
         let local_recommendations = self.catalog.entries().collect();
-        Ok(self.compose(live, rejected, local_recommendations))
+        Ok(self.compose(fetched, local_recommendations))
     }
 
     fn fetch_list(
         &self,
         url: &str,
-    ) -> Result<(Vec<HubSearchEntry>, Vec<RejectedHubEntry>), HubError> {
+        kind: CacheKind,
+        refresh: Refresh,
+    ) -> Result<ValidatedList, HubError> {
         let validator = HubMetadataValidator::default();
+        if refresh == Refresh::AllowCache {
+            if let Some(cached) = self.read_cache(url, kind, &validator) {
+                return Ok(cached);
+            }
+        }
+
         let body = self
             .client
             .get_bounded(url, validator.limits().max_response_bytes)
@@ -266,19 +326,156 @@ impl<'a> HubClient<'a> {
         let report = validator
             .validate_search_payload(&body)
             .map_err(map_validation_error)?;
-        Ok((report.valid, report.rejected))
+        let fetched_at = truncate_to_seconds(SystemTime::now());
+        if report.rejected.is_empty() {
+            self.write_cache(
+                url,
+                &body,
+                fetched_at,
+                validator.limits().max_response_bytes,
+            );
+        }
+        Ok(ValidatedList {
+            entries: report.valid,
+            rejected: report.rejected,
+            fetched_at,
+            from_cache: false,
+        })
     }
 
-    fn compose(
+    fn read_cache(
         &self,
-        live_rows: Vec<HubSearchEntry>,
-        mut rejected: Vec<RejectedHubEntry>,
-        bundled_rows: Vec<&CatalogEntry>,
-    ) -> HubPage {
+        url: &str,
+        kind: CacheKind,
+        validator: &HubMetadataValidator,
+    ) -> Option<ValidatedList> {
+        let path = self.cache_path(url)?;
+        let max_envelope_bytes = validator
+            .limits()
+            .max_response_bytes
+            .checked_add(CACHE_ENVELOPE_OVERHEAD_BYTES)?;
+        let Some(bytes) = read_bounded_cache(&path, max_envelope_bytes) else {
+            let _ = fs::remove_file(&path);
+            return None;
+        };
+        let Ok(envelope) = serde_json::from_slice::<CacheEnvelope>(&bytes) else {
+            let _ = fs::remove_file(&path);
+            return None;
+        };
+        let Some(fetched_at) = unix_seconds_to_system_time(envelope.fetched_at) else {
+            let _ = fs::remove_file(&path);
+            return None;
+        };
+        let now = SystemTime::now();
+        let Ok(age) = now.duration_since(fetched_at) else {
+            let _ = fs::remove_file(&path);
+            return None;
+        };
+        if age > kind.freshness().saturating_mul(CACHE_RETENTION_MULTIPLIER) {
+            let _ = fs::remove_file(&path);
+            return None;
+        }
+
+        let Ok(payload) = serde_json::to_vec(&envelope.payload) else {
+            let _ = fs::remove_file(&path);
+            return None;
+        };
+        let Ok(report) = validator.validate_search_payload(&payload) else {
+            let _ = fs::remove_file(&path);
+            return None;
+        };
+        // A cache file is written only for a fully accepted page. If it was
+        // edited later, discard it rather than turning its bad rows into an
+        // apparently fresh partial result.
+        if !report.rejected.is_empty() {
+            let _ = fs::remove_file(&path);
+            return None;
+        }
+        if age > kind.freshness() {
+            return None;
+        }
+
+        Some(ValidatedList {
+            entries: report.valid,
+            rejected: report.rejected,
+            fetched_at,
+            from_cache: true,
+        })
+    }
+
+    fn write_cache(&self, url: &str, body: &[u8], fetched_at: SystemTime, max_bytes: usize) {
+        let Some(path) = self.cache_path(url) else {
+            return;
+        };
+        let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+            return;
+        };
+        let Some(fetched_at) = system_time_to_unix_seconds(fetched_at) else {
+            return;
+        };
+        let envelope = CacheEnvelope {
+            fetched_at,
+            payload,
+        };
+        let Ok(bytes) = serde_json::to_vec(&envelope) else {
+            return;
+        };
+        let Some(max_envelope_bytes) = max_bytes.checked_add(CACHE_ENVELOPE_OVERHEAD_BYTES) else {
+            return;
+        };
+        if bytes.len() > max_envelope_bytes {
+            return;
+        }
+
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if fs::create_dir_all(parent).is_err() {
+            return;
+        }
+        let sequence = CACHE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("hub-cache");
+        let temporary = parent.join(format!(
+            ".{file_name}.tmp-{}-{sequence}",
+            std::process::id()
+        ));
+        let Ok(mut file) = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        else {
+            return;
+        };
+        if file.write_all(&bytes).is_err() || file.sync_all().is_err() {
+            drop(file);
+            let _ = fs::remove_file(&temporary);
+            return;
+        }
+        drop(file);
+        if fs::rename(&temporary, &path).is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+    }
+
+    fn cache_path(&self, url: &str) -> Option<PathBuf> {
+        let store = self.store.as_ref()?;
+        Some(
+            store
+                .root()
+                .join("hub-cache")
+                .join(format!("{}.json", cache_key(url, self.client.token()))),
+        )
+    }
+
+    fn compose(&self, fetched: ValidatedList, bundled_rows: Vec<&CatalogEntry>) -> HubPage {
         let mut entries = Vec::<HubEntry>::new();
         let mut by_repo = HashMap::<String, usize>::new();
 
-        for live in live_rows {
+        let mut rejected = fetched.rejected;
+        for live in fetched.entries {
             let key = canonical_repo_id(&live.repo_id);
             if let Some(index) = by_repo.get(&key).copied() {
                 let existing = &mut entries[index];
@@ -364,10 +561,61 @@ impl<'a> HubClient<'a> {
         HubPage {
             entries,
             rejected,
-            fetched_at: SystemTime::now(),
-            from_cache: false,
+            fetched_at: fetched.fetched_at,
+            from_cache: fetched.from_cache,
         }
     }
+}
+
+fn cache_key(url: &str, token: Option<&str>) -> String {
+    let token_fingerprint = token.map(|token| {
+        let mut fingerprint = Sha256::new();
+        fingerprint.update(b"turbospark-hub-token-v1\0");
+        fingerprint.update(token.as_bytes());
+        fingerprint.finalize()
+    });
+
+    let mut key = Sha256::new();
+    key.update(b"turbospark-hub-cache-v1\0");
+    key.update(url.as_bytes());
+    key.update([0]);
+    if let Some(fingerprint) = token_fingerprint {
+        key.update(b"authenticated\0");
+        key.update(fingerprint);
+    } else {
+        key.update(b"anonymous\0");
+    }
+    let digest = key.finalize();
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    encoded
+}
+
+fn read_bounded_cache(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    let read_limit = u64::try_from(max_bytes).ok()?.checked_add(1)?;
+    let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+    file.take(read_limit).read_to_end(&mut bytes).ok()?;
+    (bytes.len() <= max_bytes).then_some(bytes)
+}
+
+fn system_time_to_unix_seconds(time: SystemTime) -> Option<u64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+fn unix_seconds_to_system_time(seconds: u64) -> Option<SystemTime> {
+    UNIX_EPOCH.checked_add(Duration::from_secs(seconds))
+}
+
+fn truncate_to_seconds(time: SystemTime) -> SystemTime {
+    system_time_to_unix_seconds(time)
+        .and_then(unix_seconds_to_system_time)
+        .unwrap_or(time)
 }
 
 fn models_url(search: Option<&str>, sort: HubSort, limit: u32) -> Result<String, HubError> {
@@ -509,5 +757,16 @@ mod tests {
             canonical_repo_id("owner/model-name"),
             canonical_repo_id("owner/model_name")
         );
+    }
+
+    #[test]
+    fn cache_identity_separates_anonymous_and_authenticated_partitions() {
+        let url = "https://huggingface.co/api/models?search=owner%2Fmodel";
+        let anonymous = cache_key(url, None);
+        let credential_one = cache_key(url, Some("hf_fixture_one"));
+        let credential_two = cache_key(url, Some("hf_fixture_two"));
+
+        assert_ne!(anonymous, credential_one);
+        assert_ne!(credential_one, credential_two);
     }
 }

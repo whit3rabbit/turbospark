@@ -1,14 +1,35 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use turbospark_catalog::{
     Catalog, Client, EntryKind, Evidence, FitVerdict, HubClient, HubQuery, Machine, Refresh,
-    RepoRef,
+    RepoRef, Store,
 };
 
 static ENDPOINT_LOCK: Mutex<()> = Mutex::new(());
+static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+
+struct TempRoot(PathBuf);
+
+impl TempRoot {
+    fn new() -> Self {
+        let sequence = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
+        Self(std::env::temp_dir().join(format!(
+            "turbospark-hub-composition-{}-{sequence}",
+            std::process::id()
+        )))
+    }
+}
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 struct EndpointReset;
 
@@ -92,6 +113,7 @@ fn search_and_trending_compose_sources_without_implicit_probes() {
     ]);
     turbospark_catalog::set_hf_endpoint_override(Some(endpoint));
     let _reset = EndpointReset;
+    let cache_root = TempRoot::new();
 
     let client = Client::with_timeout(Duration::from_secs(2));
     let hub = HubClient::new(
@@ -104,7 +126,8 @@ fn search_and_trending_compose_sources_without_implicit_probes() {
         },
         4096,
         model_io::ExpertCacheSlots::Auto,
-    );
+    )
+    .with_store(Store::new(&cache_root.0));
 
     let search = hub
         .search(&HubQuery::new("Qwen3.8"), Refresh::AllowCache)

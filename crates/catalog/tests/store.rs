@@ -93,6 +93,10 @@ fn relocating_the_default_store_verifies_and_rewrites_install_paths() {
     std::fs::write(audio_model.join("weights.bin"), [7, 8, 9]).unwrap();
     store.record(&row("text-model", &text_model)).unwrap();
     std::fs::write(source.join("hf_token"), "hf_test").unwrap();
+    let cached_hub_response = b"validated hub cache fixture";
+    let hub_cache_file = source.join("hub-cache").join("query.json");
+    std::fs::create_dir_all(hub_cache_file.parent().unwrap()).unwrap();
+    std::fs::write(&hub_cache_file, cached_hub_response).unwrap();
     let expected_source = source.canonicalize().unwrap();
 
     set_default_root(Some(source.clone())).unwrap();
@@ -109,6 +113,15 @@ fn relocating_the_default_store_verifies_and_rewrites_install_paths() {
     assert!(
         !source.join("models").exists(),
         "the managed model tree should be removed from the source"
+    );
+    assert_eq!(
+        std::fs::read(destination.join("hub-cache/query.json")).unwrap(),
+        cached_hub_response,
+        "validated hub cache entries should move with the store"
+    );
+    assert!(
+        !source.join("hub-cache").exists(),
+        "the managed hub cache should be removed from the source"
     );
     assert_eq!(
         std::fs::read_to_string(source.join("hf_token")).unwrap(),
