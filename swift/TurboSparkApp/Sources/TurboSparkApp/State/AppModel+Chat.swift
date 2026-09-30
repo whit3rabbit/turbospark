@@ -231,13 +231,14 @@ extension AppModel {
         outputPromptText = ""
         persistChats()
         updateTokenEstimate()
-        drainPendingTaskNotificationsIfIdle(chatID: id)
         // Queued prompts drain on selection too. The turn tail covers the
         // chat the user STAYED on; this covers the chat the user LEFT and
         // came back to (and is how a cron prompt parked for a background
         // chat finally fires). The drain re-checks idleness, so a selection
-        // made mid-turn parks cleanly again.
+        // made mid-turn parks cleanly again. Drain user prompts first because
+        // starting one makes the chat busy and gives it priority over notes.
         drainPendingUserMessagesIfIdle(chatID: id)
+        drainPendingTaskNotificationsIfIdle(chatID: id)
     }
 
     public func renameChat(id: UUID, title: String) {

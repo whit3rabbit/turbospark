@@ -1,6 +1,16 @@
 import Foundation
 import TurboSpark
 
+extension MidTurnInputPresentation {
+    func makeUserMessage(_ content: String, imagePaths: [String] = []) -> AppChatMessage {
+        AppChatMessage(
+            role: .user,
+            content: wrap(content),
+            imagePaths: imagePaths,
+            presentationLabel: label)
+    }
+}
+
 /// One prompt parked while its chat is busy.
 ///
 /// Claude Code reference: `src/utils/messageQueueManager.ts` -- input typed
@@ -24,6 +34,15 @@ public struct QueuedUserPrompt: Identifiable, Equatable {
         self.text = text
         self.attachments = attachments
     }
+}
+
+/// One queued prompt as it crosses from the queue into normal submission.
+/// Keeping the presentation beside the captured draft prevents the tail
+/// drain from losing its source while restoring text and attachments.
+struct PendingUserSubmission: Equatable {
+    let text: String
+    let attachments: [AppPromptAttachment]
+    let presentation: MidTurnInputPresentation
 }
 
 extension AppModel {
@@ -102,21 +121,27 @@ extension AppModel {
     /// (before the task-notification drain, so USER intent goes before a
     /// background agent's completion note) and idempotent whenever the
     /// chat is not idle.
-    func drainPendingUserMessagesIfIdle(chatID: UUID) {
-        guard canInjectTaskNotification(into: chatID),
+    @discardableResult
+    func drainPendingUserMessagesIfIdle(chatID: UUID) -> PendingUserSubmission? {
+        guard canInjectChatInput(into: chatID),
             let queued = pendingUserMessages[chatID], !queued.isEmpty
-        else { return }
+        else { return nil }
         let first = queued[0]
+        let submission = PendingUserSubmission(
+            text: first.text,
+            attachments: first.attachments,
+            presentation: .userSteer)
         if queued.count > 1 {
             pendingUserMessages[chatID] = Array(queued.dropFirst())
         } else {
             pendingUserMessages[chatID] = nil
         }
         if let rowIndex = chats.firstIndex(where: { $0.id == chatID }) {
-            chats[rowIndex].draftAttachments = first.attachments
+            chats[rowIndex].draftAttachments = submission.attachments
         }
-        writePromptTextDirectly(first.text)
-        run()
+        writePromptTextDirectly(submission.text)
+        run(presentation: submission.presentation)
+        return submission
     }
 
     /// Delivers parked prompts MID-TURN at an agent-loop step boundary, and
@@ -152,7 +177,9 @@ extension AppModel {
     /// FINAL step have no boundary left to catch and are still the tail
     /// drain's. Boundary first, tail second -- the same priority order the
     /// two modes have in the contract this ports.
-    func deliverSteersAtBoundary(chatID: UUID, project: AppProject?) async -> Bool {
+    func deliverSteersAtBoundary(
+        chatID: UUID, project: AppProject?, visionAvailable: Bool
+    ) async -> Bool {
         // An approval card means the loop is parked between steps: the next
         // boundary is whichever `continueOrStop` the approved (or denied)
         // call lands on, not this one. A pending cancel means the turn is
@@ -192,7 +219,7 @@ extension AppModel {
                     split.1.append(doc)
                 }
             }
-            if !imageDocs.isEmpty && !visionIsActive {
+            if !imageDocs.isEmpty && !visionAvailable {
                 showToast(
                     "Cannot send \(imageDocs.count == 1 ? "this image" : "these images"): "
                         + "\(visionRefusalReason ?? "the loaded model has no active vision tower")",
@@ -240,9 +267,8 @@ extension AppModel {
             if let context = verdict.additionalContext, !context.isEmpty {
                 contentForModel += "\n\n<hook_context>\n\(context)\n</hook_context>"
             }
-            let userMessage = AppChatMessage(
-                role: .user,
-                content: contentForModel,
+            let userMessage = MidTurnInputPresentation.userSteer.makeUserMessage(
+                contentForModel,
                 imagePaths: promptImages.compactMap {
                     if case .path(let p) = $0 { return p } else { return nil }
                 })

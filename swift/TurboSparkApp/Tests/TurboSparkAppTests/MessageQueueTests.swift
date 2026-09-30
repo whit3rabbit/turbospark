@@ -123,6 +123,54 @@ final class MessageQueueTests: XCTestCase {
         XCTAssertEqual(appModel.queuedMessages(for: chatID).first?.text, "second")
     }
 
+    func testTailDrainCarriesUserSteerPresentationAndAttachmentsIntoSubmission() {
+        let chatID = makeChat()
+        let attachment = AppPromptAttachment(
+            fileName: "notes.txt", formatLabel: "TXT",
+            extractedText: "the payload", wasTruncatedDuringExtraction: false)
+        appModel.promptText = "first"
+        appModel.chats[0].draftAttachments = [attachment]
+        appModel.enqueueCurrentDraft(chatID: chatID)
+
+        let submission = appModel.drainPendingUserMessagesIfIdle(chatID: chatID)
+
+        XCTAssertEqual(submission?.text, "first")
+        XCTAssertEqual(submission?.attachments, [attachment])
+        XCTAssertEqual(submission?.presentation, .userSteer)
+        XCTAssertTrue(appModel.queuedMessages(for: chatID).isEmpty)
+        XCTAssertEqual(appModel.promptText, "first")
+        XCTAssertEqual(appModel.chats[0].draftAttachments, [attachment])
+    }
+
+    func testSelectingChatDrainsQueuedUserPromptBeforeTaskNotification() {
+        let currentChat = AppChat(title: "Current")
+        let targetChat = AppChat(title: "Target")
+        appModel.chats = [currentChat, targetChat]
+        appModel.selectedChatID = currentChat.id
+        appModel.pendingUserMessages[targetChat.id] = [QueuedUserPrompt(text: "user first")]
+        let note = "background result"
+        appModel.pendingTaskNotifications[targetChat.id] = [
+            PendingTaskNotification(kind: .taskNotification, note: note)
+        ]
+
+        appModel.selectChat(id: targetChat.id)
+
+        XCTAssertTrue(appModel.queuedMessages(for: targetChat.id).isEmpty)
+        XCTAssertEqual(appModel.promptText, "user first")
+        XCTAssertEqual(appModel.pendingTaskNotifications[targetChat.id]?.count, 1)
+        XCTAssertTrue(appModel.chats[1].messages.isEmpty)
+
+        appModel.promptText = ""
+        appModel.drainPendingTaskNotificationsIfIdle(chatID: targetChat.id)
+
+        XCTAssertNil(appModel.pendingTaskNotifications[targetChat.id])
+        XCTAssertEqual(appModel.chats[1].messages.count, 1)
+        XCTAssertEqual(appModel.chats[1].messages[0].role, .user)
+        XCTAssertEqual(
+            appModel.chats[1].messages[0].content,
+            MidTurnInputPresentation.taskNotification.wrap(note))
+    }
+
     func testDrainOfAnotherChatDoesNothing() {
         let chatID = makeChat()
         appModel.promptText = "mine"
@@ -163,22 +211,37 @@ final class MessageQueueTests: XCTestCase {
         appModel.promptText = "second"
         appModel.enqueueCurrentDraft(chatID: chatID)
 
-        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+        let delivered = await appModel.deliverSteersAtBoundary(
+            chatID: chatID, project: nil, visionAvailable: false)
 
         XCTAssertTrue(delivered)
         XCTAssertTrue(appModel.queuedMessages(for: chatID).isEmpty)
         let messages = appModel.chats[0].messages
         XCTAssertEqual(messages.count, 2)
         XCTAssertEqual(messages[0].role, .user)
-        XCTAssertEqual(messages[0].content, "first")
-        XCTAssertEqual(messages[1].content, "second")
+        XCTAssertEqual(messages[0].content, MidTurnInputPresentation.userSteer.wrap("first"))
+        XCTAssertEqual(messages[0].presentationLabel, MidTurnInputPresentation.userSteer.label)
+        XCTAssertEqual(messages[1].role, .user)
+        XCTAssertEqual(messages[1].content, MidTurnInputPresentation.userSteer.wrap("second"))
+        XCTAssertEqual(messages[1].presentationLabel, MidTurnInputPresentation.userSteer.label)
         XCTAssertEqual(appModel.promptText, "")
+    }
+
+    func testImageOnlySteerKeepsEmptyTextAndCarriesItsPresentationLabel() {
+        let message = MidTurnInputPresentation.userSteer.makeUserMessage(
+            "", imagePaths: ["/tmp/page.png"])
+
+        XCTAssertEqual(message.role, .user)
+        XCTAssertEqual(message.content, MidTurnInputPresentation.userSteer.wrap(""))
+        XCTAssertEqual(message.imagePaths, ["/tmp/page.png"])
+        XCTAssertEqual(message.presentationLabel, MidTurnInputPresentation.userSteer.label)
     }
 
     func testABoundaryDeliveryWithNothingQueuedReturnsFalse() async {
         let chatID = makeChat()
 
-        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+        let delivered = await appModel.deliverSteersAtBoundary(
+            chatID: chatID, project: nil, visionAvailable: false)
 
         XCTAssertFalse(delivered)
         XCTAssertTrue(appModel.chats[0].messages.isEmpty)
@@ -190,12 +253,41 @@ final class MessageQueueTests: XCTestCase {
         appModel.enqueueCurrentDraft(chatID: chatID)
         appModel.pendingToolCall = AppToolCall(name: "run_command")
 
-        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+        let delivered = await appModel.deliverSteersAtBoundary(
+            chatID: chatID, project: nil, visionAvailable: false)
 
         XCTAssertFalse(delivered, "An approval card means the loop is parked, not at a boundary.")
         XCTAssertEqual(appModel.queuedMessages(for: chatID).count, 1,
                        "The entry stays parked for the boundary the approval lands on.")
         XCTAssertTrue(appModel.chats[0].messages.isEmpty)
+    }
+
+    func testABlockedBoundarySteerIsReparkedAheadOfLaterEntries() async {
+        let store = AppHookStore.shared
+        store.refresh(projectDirectory: nil)
+        let hook = AppHookCommand(
+            name: "Block queued boundary steer",
+            event: .userPromptSubmit,
+            type: .command,
+            command: "echo 'boundary steer blocked' >&2; exit 2",
+            sourceType: .custom)
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
+
+        let chatID = makeChat()
+        appModel.promptText = "blocked first"
+        appModel.enqueueCurrentDraft(chatID: chatID)
+        appModel.promptText = "later second"
+        appModel.enqueueCurrentDraft(chatID: chatID)
+
+        let delivered = await appModel.deliverSteersAtBoundary(
+            chatID: chatID, project: nil, visionAvailable: false)
+
+        XCTAssertFalse(delivered)
+        XCTAssertTrue(appModel.chats[0].messages.isEmpty)
+        XCTAssertEqual(
+            appModel.queuedMessages(for: chatID).map(\.text),
+            ["blocked first", "later second"])
     }
 
     func testABoundaryDeliveryDoesNotRunAgainstACancelledTurn() async {
@@ -204,7 +296,8 @@ final class MessageQueueTests: XCTestCase {
         appModel.enqueueCurrentDraft(chatID: chatID)
         appModel.isCancellationPending = true
 
-        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+        let delivered = await appModel.deliverSteersAtBoundary(
+            chatID: chatID, project: nil, visionAvailable: false)
 
         XCTAssertFalse(delivered, "A steer must not outrun the Stop the user just pressed.")
         XCTAssertEqual(appModel.queuedMessages(for: chatID).count, 1)
@@ -220,7 +313,8 @@ final class MessageQueueTests: XCTestCase {
         ]
         appModel.enqueueCurrentDraft(chatID: chatID)
 
-        let delivered = await appModel.deliverSteersAtBoundary(chatID: chatID, project: nil)
+        let delivered = await appModel.deliverSteersAtBoundary(
+            chatID: chatID, project: nil, visionAvailable: false)
 
         XCTAssertTrue(delivered)
         let content = appModel.chats[0].messages[0].content
@@ -230,5 +324,33 @@ final class MessageQueueTests: XCTestCase {
         XCTAssertTrue(content.contains("the payload"))
         // The moved-out attachments are consumed, not left on the row.
         XCTAssertTrue(appModel.chats[0].draftAttachments.isEmpty)
+    }
+
+    func testAnImageOnlyQueuedSteerKeepsItsWrapperAndImagePath() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("queued-image-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let imageURL = directory.appendingPathComponent("page.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: imageURL)
+
+        let chatID = makeChat()
+        appModel.chats[0].draftAttachments = [
+            AppPromptAttachment(
+                fileName: "page.png", formatLabel: "Image",
+                extractedText: "", wasTruncatedDuringExtraction: false,
+                sourcePath: imageURL.path)
+        ]
+        appModel.enqueueCurrentDraft(chatID: chatID)
+
+        let delivered = await appModel.deliverSteersAtBoundary(
+            chatID: chatID, project: nil, visionAvailable: true)
+
+        XCTAssertTrue(delivered)
+        let message = try XCTUnwrap(appModel.chats[0].messages.first)
+        XCTAssertEqual(message.role, .user)
+        XCTAssertEqual(message.content, MidTurnInputPresentation.userSteer.wrap(""))
+        XCTAssertEqual(message.imagePaths, [imageURL.path])
+        XCTAssertEqual(message.presentationLabel, MidTurnInputPresentation.userSteer.label)
     }
 }

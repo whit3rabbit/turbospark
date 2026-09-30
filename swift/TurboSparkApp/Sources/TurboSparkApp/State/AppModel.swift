@@ -425,7 +425,7 @@ public final class AppModel: ObservableObject {
     /// User-role `<task-notification>` turns a background agent finished
     /// while its chat was busy, parked per chat until a turn tail can inject
     /// them (Claude Code's pending-notification queue).
-    var pendingTaskNotifications: [UUID: [String]] = [:]
+    var pendingTaskNotifications: [UUID: [PendingTaskNotification]] = [:]
     /// Prompts submitted while their chat was busy, parked per chat and
     /// sent from a turn tail (Claude Code's message queue). Published for
     /// the composer's queued-count pill; in-memory only, never persisted.

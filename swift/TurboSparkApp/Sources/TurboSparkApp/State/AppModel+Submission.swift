@@ -15,6 +15,10 @@ import TurboSpark
 /// events -- and the file had grown to 684 lines holding both.
 extension AppModel {
     public func run() {
+        run(presentation: nil)
+    }
+
+    func run(presentation: MidTurnInputPresentation?) {
         let userDraft = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if imageModeEnabled {
@@ -262,11 +266,11 @@ extension AppModel {
             // `runAgentTaskDirectly` -- which appends a user turn and starts
             // generating -- with no `UserPromptSubmit` hook ever consulted,
             // so a hook that blocks every prompt did not block these.
-            if self.handleAgentSlashCommand(fullUserContent) {
+            if self.handleAgentSlashCommand(fullUserContent, presentation: presentation) {
                 return
             }
 
-            if self.handleSkillSlashCommand(fullUserContent) {
+            if self.handleSkillSlashCommand(fullUserContent, presentation: presentation) {
                 return
             }
 
@@ -325,7 +329,13 @@ extension AppModel {
             // Append user turn. Ghost chats seal the message into the vault
             // instead of the row; the ordinary path persists inside the
             // helper, exactly once, as before.
-            let userMessage = AppChatMessage(
+            let userMessage = presentation.map {
+                $0.makeUserMessage(
+                    contentForModel,
+                    imagePaths: promptImages.compactMap {
+                        if case .path(let p) = $0 { return p } else { return nil }
+                    })
+            } ?? AppChatMessage(
                 role: .user,
                 content: contentForModel,
                 imagePaths: promptImages.compactMap {

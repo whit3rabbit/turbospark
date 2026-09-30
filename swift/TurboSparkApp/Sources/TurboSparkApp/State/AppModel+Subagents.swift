@@ -1,6 +1,11 @@
 import Foundation
 import TurboSpark
 
+struct PendingTaskNotification: Equatable, Sendable {
+    let kind: MidTurnInputPresentation
+    let note: String
+}
+
 /// Everything needed to launch one background subagent, carried across the
 /// provider boundary from `AppToolRegistry` into `AppModel`.
 ///
@@ -251,10 +256,11 @@ extension AppModel {
         let note = BackgroundAgentNotification.text(
             id: id, status: status, agentName: state.agentName,
             displayName: state.displayName, result: result)
+        let notification = PendingTaskNotification(kind: .taskNotification, note: note)
         if canInjectTaskNotification(into: chatID) {
-            injectTaskNotification(note, chatID: chatID)
+            injectTaskNotification(notification, chatID: chatID)
         } else {
-            pendingTaskNotifications[chatID, default: []].append(note)
+            pendingTaskNotifications[chatID, default: []].append(notification)
         }
     }
 
@@ -281,25 +287,31 @@ extension AppModel {
 
     // MARK: - Notification injection
 
-    /// Whether a notification turn may be injected and answered RIGHT NOW:
-    /// the chat must be idle end to end. A turn in flight parks it for the
-    /// tail; so does an approval card, whose own approve path refuses to run
-    /// while `generating` is true -- injecting under it would eat the card.
-    /// A live session is deliberately NOT required: with the model unloaded
-    /// the notification still belongs in the transcript, and the generation
-    /// it triggers self-guards on `session`.
-    func canInjectTaskNotification(into chatID: UUID) -> Bool {
+    /// Whether an input may be injected into this chat now. A turn in flight
+    /// parks it for the tail; so does an approval card, whose own approve
+    /// path refuses to run while `generating` is true.
+    func canInjectChatInput(into chatID: UUID) -> Bool {
         !generating && !submitting && pendingToolCall == nil && pendingBatchCalls == nil
             && selectedChatID == chatID
             && chats.contains(where: { $0.id == chatID })
     }
 
+    /// Background notifications wait behind queued user prompts and behind a
+    /// prompt the tail drain restored to the composer but could not submit.
+    func canInjectTaskNotification(into chatID: UUID) -> Bool {
+        guard canInjectChatInput(into: chatID),
+            (pendingUserMessages[chatID] ?? []).isEmpty
+        else { return false }
+        return promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && promptAttachments.isEmpty
+    }
+
     /// Appends the notification as a user turn and answers it with a fresh
     /// generation turn (step 0: the notification is not an agent-loop step,
     /// so the turn gets the full `maxAutonomousSteps` budget).
-    func injectTaskNotification(_ note: String, chatID: UUID) {
+    func injectTaskNotification(_ notification: PendingTaskNotification, chatID: UUID) {
         mutateTurnMessages(for: chatID) {
-            $0.append(AppChatMessage(role: .user, content: note))
+            $0.append(notification.kind.makeUserMessage(notification.note))
         }
         executeGenerationTurn(step: 0, chatID: chatID)
     }
@@ -311,9 +323,9 @@ extension AppModel {
         guard canInjectTaskNotification(into: chatID),
             let notes = pendingTaskNotifications[chatID], !notes.isEmpty else { return }
         pendingTaskNotifications[chatID] = nil
-        for note in notes {
+        for notification in notes {
             mutateTurnMessages(for: chatID) {
-                $0.append(AppChatMessage(role: .user, content: note))
+                $0.append(notification.kind.makeUserMessage(notification.note))
             }
         }
         executeGenerationTurn(step: 0, chatID: chatID)

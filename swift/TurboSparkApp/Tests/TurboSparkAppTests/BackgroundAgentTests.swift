@@ -165,7 +165,10 @@ final class BackgroundAgentTests: XCTestCase {
 
     func testANotificationParksWhileTheChatIsBusyAndDrainsWhenIdle() {
         let chatID = makeChat(appModel)
-        appModel.pendingTaskNotifications[chatID] = ["<task-notification>note</task-notification>"]
+        let note = "<task-notification>note</task-notification>"
+        appModel.pendingTaskNotifications[chatID] = [
+            PendingTaskNotification(kind: .taskNotification, note: note)
+        ]
 
         // A chat "busy" for the injection rule: an approval card is up.
         appModel.pendingToolCall = AppToolCall(name: "run_command", arguments: [:], category: .terminal)
@@ -178,8 +181,44 @@ final class BackgroundAgentTests: XCTestCase {
         XCTAssertEqual(appModel.chats[0].messages.count, 1, "Idle: the parked note becomes a user turn.")
         guard let first = appModel.chats[0].messages.first else { return }
         XCTAssertEqual(first.role, .user)
-        XCTAssertTrue(first.content.contains("<task-notification>"))
+        XCTAssertEqual(
+            first.content,
+            MidTurnInputPresentation.taskNotification.wrap(note))
+        XCTAssertEqual(first.presentationLabel, MidTurnInputPresentation.taskNotification.label)
         XCTAssertNil(appModel.pendingTaskNotifications[chatID])
+    }
+
+    func testPendingNotificationsPreserveKindsAndEnqueueOrder() {
+        let chatID = makeChat(appModel)
+        let notifications = [
+            PendingTaskNotification(kind: .taskNotification, note: "first task"),
+            PendingTaskNotification(kind: .peerReply, note: "peer response")
+        ]
+        appModel.pendingTaskNotifications[chatID] = notifications
+
+        appModel.drainPendingTaskNotificationsIfIdle(chatID: chatID)
+
+        let messages = appModel.chats[0].messages
+        XCTAssertEqual(messages.count, notifications.count)
+        XCTAssertEqual(messages.map(\.role), [.user, .user])
+        XCTAssertEqual(
+            messages.map(\.content),
+            notifications.map { $0.kind.wrap($0.note) })
+        XCTAssertEqual(
+            messages.map(\.presentationLabel),
+            notifications.map { $0.kind.label })
+    }
+
+    func testImmediateNotificationUsesItsPresentationKind() {
+        let chatID = makeChat(appModel)
+        let notification = PendingTaskNotification(kind: .coordinatorSteer, note: "review this")
+
+        appModel.injectTaskNotification(notification, chatID: chatID)
+
+        let message = appModel.chats[0].messages[0]
+        XCTAssertEqual(message.role, .user)
+        XCTAssertEqual(message.content, notification.kind.wrap(notification.note))
+        XCTAssertEqual(message.presentationLabel, notification.kind.label)
     }
 
     func testCanInjectRequiresAnExistingChatAndAClearedCard() {
@@ -198,6 +237,28 @@ final class BackgroundAgentTests: XCTestCase {
         XCTAssertFalse(appModel.canInjectTaskNotification(into: chatID),
                        "Injecting under an approval card would eat it: approval refuses while generating.")
         appModel.pendingToolCall = nil
+
+        appModel.pendingUserMessages[chatID] = [QueuedUserPrompt(text: "queued user prompt")]
+        XCTAssertFalse(
+            appModel.canInjectTaskNotification(into: chatID),
+            "Queued user prompts must drain before background notifications.")
+        appModel.pendingUserMessages[chatID] = nil
+
+        appModel.promptText = "restored user prompt"
+        XCTAssertFalse(
+            appModel.canInjectTaskNotification(into: chatID),
+            "A user prompt restored by a declined run still has priority.")
+        appModel.promptText = ""
+        appModel.chats[0].draftAttachments = [
+            AppPromptAttachment(
+                fileName: "page.png", formatLabel: "Image",
+                extractedText: "", wasTruncatedDuringExtraction: false)
+        ]
+        XCTAssertFalse(
+            appModel.canInjectTaskNotification(into: chatID),
+            "An image-only user prompt still has priority.")
+        appModel.chats[0].draftAttachments = []
+        XCTAssertTrue(appModel.canInjectTaskNotification(into: chatID))
 
         XCTAssertFalse(appModel.canInjectTaskNotification(into: UUID()),
                        "A chat that no longer exists receives nothing.")

@@ -89,7 +89,8 @@ extension AppModel {
         // is consulted about a turn the user just added to. Entries that
         // arrive during the FINAL step catch no boundary here and remain
         // the tail drain's.
-        if await deliverSteersAtBoundary(chatID: chatID, project: project) {
+        if await deliverSteersAtBoundary(
+            chatID: chatID, project: project, visionAvailable: visionIsActive) {
             continueAgentLoop(step: 0, chatID: chatID)
             return
         }

@@ -20,10 +20,9 @@ enum MidTurnInputPresentation: CaseIterable, Equatable, Sendable {
     /// Mid-turn inputs use the user role to preserve alternating-role templates.
     var role: ChatMessage.Role { .user }
 
-    /// Frames non-empty content with its source label and applicable refusal guidance.
+    /// Frames content, including image-only turns whose text body is empty,
+    /// with its source label and applicable refusal guidance.
     func wrap(_ body: String) -> String {
-        precondition(!body.isEmpty, "mid-turn input body must not be empty")
-
         let framedBody = "[\(label)]\n\(body)"
         guard let refusalGuidance else { return framedBody }
         return "\(framedBody)\n\n\(refusalGuidance)"

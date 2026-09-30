@@ -173,6 +173,13 @@ extension AppModel {
     /// calls `run()`, both of which resolve the selection themselves, so a
     /// chat-id parameter would be an argument nothing reads.
     public func handleSkillSlashCommand(_ input: String) -> Bool {
+        handleSkillSlashCommand(input, presentation: nil)
+    }
+
+    func handleSkillSlashCommand(
+        _ input: String,
+        presentation: MidTurnInputPresentation?
+    ) -> Bool {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/") else { return false }
 
@@ -242,7 +249,7 @@ extension AppModel {
                 if let requested, agent.name.lowercased() != requested.lowercased() {
                     prompt += "\n\n(Requested agent '\(requested)' was not found; running as '\(agent.name)'.)"
                 }
-                runAgentTaskDirectly(agent: agent, prompt: prompt)
+                runAgentTaskDirectly(agent: agent, prompt: prompt, presentation: presentation)
             }
             return true
         } else {
@@ -255,7 +262,7 @@ extension AppModel {
                 rawArgs.isEmpty
                     ? "Execute the following skill instructions:\n\n\(payload)"
                     : "Execute the following skill instructions with arguments: \(rawArgs)\n\n\(payload)")
-            run()
+            run(presentation: presentation)
             return true
         }
     }

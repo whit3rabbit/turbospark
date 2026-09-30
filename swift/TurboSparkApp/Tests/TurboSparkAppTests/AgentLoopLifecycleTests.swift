@@ -484,7 +484,9 @@ final class AgentLoopLifecycleTests: XCTestCase {
 
         XCTAssertTrue(
             appModel.chats[0].messages.contains {
-                $0.role == .user && $0.content == "use Python instead"
+                $0.role == .user
+                    && $0.content == MidTurnInputPresentation.userSteer.wrap("use Python instead")
+                    && $0.presentationLabel == MidTurnInputPresentation.userSteer.label
             },
             "The queued prompt must be delivered at the boundary, into the running turn.")
         XCTAssertFalse(

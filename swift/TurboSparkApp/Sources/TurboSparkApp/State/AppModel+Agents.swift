@@ -148,6 +148,13 @@ extension AppModel {
     /// Handles REPL slash commands for direct agent invocations (e.g. `/explore <query>`, `/plan <task>`, `/agent <name> <task>`).
     /// Returns true if a command was recognized and handled.
     public func handleAgentSlashCommand(_ input: String) -> Bool {
+        handleAgentSlashCommand(input, presentation: nil)
+    }
+
+    func handleAgentSlashCommand(
+        _ input: String,
+        presentation: MidTurnInputPresentation?
+    ) -> Bool {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/") else { return false }
 
@@ -205,7 +212,7 @@ extension AppModel {
             return true
         }
 
-        runAgentTaskDirectly(agent: agent, prompt: taskPrompt)
+        runAgentTaskDirectly(agent: agent, prompt: taskPrompt, presentation: presentation)
         return true
     }
 
@@ -219,6 +226,14 @@ extension AppModel {
     /// chat was resolved at COMPLETION rather than captured, landing the
     /// result in whatever the user had switched to.
     public func runAgentTaskDirectly(agent: AppAgentDefinition, prompt: String) {
+        runAgentTaskDirectly(agent: agent, prompt: prompt, presentation: nil)
+    }
+
+    func runAgentTaskDirectly(
+        agent: AppAgentDefinition,
+        prompt: String,
+        presentation: MidTurnInputPresentation?
+    ) {
         guard session != nil else {
             showToast("No active model session. Please load a model first.", style: .error)
             return
@@ -255,10 +270,9 @@ extension AppModel {
         chats[chatIndex].updatedAt = Date()
 
         // Append user turn reflecting the agent command
-        let userTurn = AppChatMessage(
-            role: .user,
-            content: "[Agent: \(agent.displayName)] \(prompt)"
-        )
+        let content = "[Agent: \(agent.displayName)] \(prompt)"
+        let userTurn = presentation.map { $0.makeUserMessage(content) }
+            ?? AppChatMessage(role: .user, content: content)
         mutateTurnMessages(for: submissionChatID) { $0.append(userTurn) }
 
         // Captured before the run, like every other turn: a subagent run is
