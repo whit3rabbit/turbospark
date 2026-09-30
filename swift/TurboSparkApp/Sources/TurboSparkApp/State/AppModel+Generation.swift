@@ -78,6 +78,7 @@ extension AppModel {
             globalMcpServers: globalMcpServers,
             contextTokens: maxContextTokens > 0 ? maxContextTokens : nil,
             webToolsEnabled: webSearchEnabled)
+        let turnAllowsToolCalls = interactionMode == .projects && turnProject != nil
 
         generationEpoch += 1
         let myEpoch = generationEpoch
@@ -264,15 +265,33 @@ extension AppModel {
                                 from: generatedContent, chatIndex: idx, project: turnProject)
                         }
                         let generatedReasoning = self.outputReasoningText
-                        let parsedCalls = self.extractToolCalls(
-                            from: generatedContent, project: turnProject)
+                        let streamState: ToolCallStreamState
+                        if case .cancelled = result.stopReason {
+                            streamState = .failed
+                        } else {
+                            streamState = .completed
+                        }
+                        let dispatchGate = ToolCallDispatchGate.evaluate(
+                            content: generatedContent,
+                            streamState: streamState,
+                            availableTools: turnAvailableTools,
+                            forgeGuardrailsEnabled: self.forgeGuardrailsEnabled(for: turnProject),
+                            allowsParsing: turnAllowsToolCalls,
+                            projectURL: turnProject?.rootDirectoryURL)
+                        if !dispatchGate.refusals.isEmpty {
+                            self.showToast(
+                                dispatchGate.refusals
+                                    .map(\.userFacingSummary)
+                                    .joined(separator: " "),
+                                style: .warning)
+                        }
                         // A retried or edited turn that came back as tool
                         // calls cannot carry the parked variants: they
                         // describe a PROSE reply, and seeding one onto a
                         // chain of tool rows would let variant navigation
                         // swap content under live tool cards. Dropped
                         // rather than seeded.
-                        if !parsedCalls.isEmpty {
+                        if !dispatchGate.dispatchableCalls.isEmpty {
                             self.pendingResponseVariants[turnChatID] = nil
                         }
 
@@ -302,47 +321,30 @@ extension AppModel {
                             }
                         }
 
-                        if self.forgeGuardrailsEnabled(for: turnProject) {
-                            let availableSpecs = AppToolCatalog.tools(
-                                for: self.agentType(for: turnProject))
-                            let verdict = ForgeGuardrailsEngine.inspect(
-                                text: generatedContent,
-                                parsedCalls: parsedCalls,
-                                availableTools: availableSpecs,
-                                requiresCall: false
-                            )
-
-                            switch verdict {
-                            case .accept:
-                                await dispatch(parsedCalls, content: generatedContent)
-                            case .rescued(let rescuedCalls, let sanitizedText):
-                                await dispatch(rescuedCalls, content: sanitizedText)
-                            case .retry(let nudge):
-                                let maxSteps = turnProject?.maxAutonomousSteps ?? 5
-                                if step + 1 < maxSteps && !nudge.isEmpty {
-                                    self.mutateTurnMessages(for: turnChatID) { messages in
-                                        messages.append(AppChatMessage(
-                                            role: .assistant,
-                                            content: generatedContent,
-                                            reasoning: generatedReasoning,
-                                            stopReason: "guardrail_retry"
-                                        ))
-                                        messages.append(AppChatMessage(
-                                            role: .user,
-                                            content: nudge
-                                        ))
-                                    }
-                                    self.outputText = ""
-                                    self.outputReasoningText = ""
-                                    self.continueAgentLoop(step: step + 1, chatID: turnChatID)
-                                    return
-                                } else {
-                                    await dispatch(parsedCalls, content: generatedContent)
+                        if let nudge = dispatchGate.retryNudge {
+                            let maxSteps = turnProject?.maxAutonomousSteps ?? 5
+                            if step + 1 < maxSteps && !nudge.isEmpty {
+                                self.mutateTurnMessages(for: turnChatID) { messages in
+                                    messages.append(AppChatMessage(
+                                        role: .assistant,
+                                        content: generatedContent,
+                                        reasoning: generatedReasoning,
+                                        stopReason: "guardrail_retry"
+                                    ))
+                                    messages.append(AppChatMessage(
+                                        role: .user,
+                                        content: nudge
+                                    ))
                                 }
+                                self.outputText = ""
+                                self.outputReasoningText = ""
+                                self.continueAgentLoop(step: step + 1, chatID: turnChatID)
+                                return
                             }
-                        } else {
-                            await dispatch(parsedCalls, content: generatedContent)
                         }
+                        await dispatch(
+                            dispatchGate.dispatchableCalls,
+                            content: dispatchGate.preservedContent)
 
                         // **UNDER THE EPOCH GUARD** (state#98). `dispatch`
                         // above can re-enter `executeGenerationTurn` through

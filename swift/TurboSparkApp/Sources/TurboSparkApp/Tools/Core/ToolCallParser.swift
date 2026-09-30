@@ -18,30 +18,47 @@ import Foundation
 /// one by construction. Each keeps its own guard and neither keeps its own
 /// parser.
 public enum ToolCallParser {
+    /// A complete parser match with its original JSON argument text retained
+    /// until the offered schema has authorized it.
+    struct Candidate: Equatable {
+        let call: AppToolCall?
+        let argumentsJSON: String
+        /// UTF-16 source range, matching `NSRegularExpression` offsets.
+        let sourceRange: NSRange
+        let refusal: ToolCallValidationRefusal?
+    }
+
     /// Every call `text` contains, in the order they appear.
     ///
     /// - Parameter projectURL: the workspace root, so a PROJECT-scoped custom
     ///   tool is classified under the category it declares rather than under
     ///   `category(for:)`'s default arm (state#71).
     public static func parse(from text: String, projectURL: URL? = nil) -> [AppToolCall] {
-        var calls = parseXMLBlocks(in: text, projectURL: projectURL)
+        parseCandidates(from: text, projectURL: projectURL).compactMap(\.call)
+    }
+
+    /// Complete candidates only. A partial wrapper cannot produce a
+    /// candidate. Malformed fenced blocks remain candidates with a typed
+    /// parse refusal rather than disappearing into ordinary prose.
+    static func parseCandidates(from text: String, projectURL: URL? = nil) -> [Candidate] {
+        var candidates = parseXMLBlocks(in: text, projectURL: projectURL)
         // The markdown form is a FALLBACK, not an alternative: a reply
         // carrying both is one that wrapped its XML in a fence, and reading
         // it twice would run the same call twice.
-        if calls.isEmpty {
-            calls = parseMarkdownBlocks(in: text, projectURL: projectURL)
+        if candidates.isEmpty {
+            candidates = parseMarkdownBlocks(in: text, projectURL: projectURL)
         }
-        return calls
+        return candidates
     }
 
     /// `<tool_call><name>x</name><arguments>{...}</arguments></tool_call>`.
-    private static func parseXMLBlocks(in text: String, projectURL: URL?) -> [AppToolCall] {
+    private static func parseXMLBlocks(in text: String, projectURL: URL?) -> [Candidate] {
         guard
             let xmlRegex = try? NSRegularExpression(
                 pattern: "<tool_call>([\\s\\S]*?)</tool_call>", options: [])
         else { return [] }
 
-        var calls: [AppToolCall] = []
+        var candidates: [Candidate] = []
         let nsString = text as NSString
         let matches = xmlRegex.matches(
             in: text, options: [], range: NSRange(location: 0, length: nsString.length))
@@ -49,33 +66,39 @@ public enum ToolCallParser {
             guard match.numberOfRanges > 1 else { continue }
             let inner = nsString.substring(with: match.range(at: 1))
             let raw = nsString.substring(with: match.range(at: 0))
+            let sourceRange = match.range(at: 0)
 
-            let toolName = firstCapture(in: inner, pattern: "<name>([\\s\\S]*?)</name>")?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !toolName.isEmpty else { continue }
-
-            var arguments: [String: String] = [:]
-            if let argsString = firstCapture(
-                in: inner, pattern: "<arguments>([\\s\\S]*?)</arguments>")
-            {
-                arguments = parseJSONArguments(
-                    argsString.trimmingCharacters(in: .whitespacesAndNewlines))
+            guard let toolName = firstCapture(
+                in: inner, pattern: "<name>([\\s\\S]*?)</name>")?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !toolName.isEmpty,
+                let rawArguments = firstCapture(
+                    in: inner, pattern: "<arguments>([\\s\\S]*?)</arguments>")
+            else {
+                candidates.append(malformedCandidate(sourceRange: sourceRange))
+                continue
             }
-            calls.append(
-                makeCall(
-                    name: toolName, arguments: arguments, raw: raw, projectURL: projectURL))
+
+            let argumentsJSON = rawArguments.trimmingCharacters(in: .whitespacesAndNewlines)
+            let arguments = parseJSONArguments(argumentsJSON)
+            candidates.append(Candidate(
+                call: makeCall(
+                    name: toolName, arguments: arguments, raw: raw, projectURL: projectURL),
+                argumentsJSON: argumentsJSON,
+                sourceRange: sourceRange,
+                refusal: nil))
         }
-        return calls
+        return candidates
     }
 
     /// ```` ```tool_call\n{"name": "x", "arguments": {...}}\n``` ````
-    private static func parseMarkdownBlocks(in text: String, projectURL: URL?) -> [AppToolCall] {
+    private static func parseMarkdownBlocks(in text: String, projectURL: URL?) -> [Candidate] {
         guard
             let mdRegex = try? NSRegularExpression(
                 pattern: "```(?:tool_call|json_tool_call)\\s*\\n([\\s\\S]*?)\\n```", options: [])
         else { return [] }
 
-        var calls: [AppToolCall] = []
+        var candidates: [Candidate] = []
         let nsString = text as NSString
         let matches = mdRegex.matches(
             in: text, options: [], range: NSRange(location: 0, length: nsString.length))
@@ -84,23 +107,46 @@ public enum ToolCallParser {
             let inner = nsString.substring(with: match.range(at: 1))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let raw = nsString.substring(with: match.range(at: 0))
+            let sourceRange = match.range(at: 0)
 
             guard let data = inner.data(using: .utf8),
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let toolName = (json["name"] as? String) ?? (json["tool"] as? String)
-            else { continue }
-
-            var arguments: [String: String] = [:]
-            if let rawArgs = json["arguments"] as? [String: Any] {
-                for (key, value) in rawArgs {
-                    arguments[key] = "\(value)"
-                }
+                  let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            else {
+                candidates.append(malformedCandidate(sourceRange: sourceRange))
+                continue
             }
-            calls.append(
-                makeCall(
-                    name: toolName, arguments: arguments, raw: raw, projectURL: projectURL))
+
+            let toolName = ((json["name"] as? String) ?? (json["tool"] as? String))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let toolName, !toolName.isEmpty, let rawArguments = json["arguments"] else {
+                candidates.append(malformedCandidate(sourceRange: sourceRange))
+                continue
+            }
+            guard JSONSerialization.isValidJSONObject(["arguments": rawArguments]),
+                  let argumentsData = try? JSONSerialization.data(
+                    withJSONObject: rawArguments,
+                    options: [.sortedKeys, .fragmentsAllowed]),
+                  let argumentsJSON = String(data: argumentsData, encoding: .utf8) else {
+                candidates.append(malformedCandidate(sourceRange: sourceRange))
+                continue
+            }
+            let arguments = parseJSONArguments(argumentsJSON)
+            candidates.append(Candidate(
+                call: makeCall(
+                    name: toolName, arguments: arguments, raw: raw, projectURL: projectURL),
+                argumentsJSON: argumentsJSON,
+                sourceRange: sourceRange,
+                refusal: nil))
         }
-        return calls
+        return candidates
+    }
+
+    private static func malformedCandidate(sourceRange: NSRange) -> Candidate {
+        Candidate(
+            call: nil,
+            argumentsJSON: "",
+            sourceRange: sourceRange,
+            refusal: .malformedJSON)
     }
 
     /// A parsed call, classified and risk-assessed.
