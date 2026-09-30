@@ -228,6 +228,16 @@ public final class AppModel: ObservableObject {
     @Published public var observationPackEnabled: Bool = true
     @Published public var evidenceReducerEnabled: Bool = true
     @Published public var todoBoundaryCompactionEnabled: Bool = true
+    /// Whether old tool-result bodies may be compacted in request history.
+    @Published public var microcompactEnabled: Bool = true
+    /// Whether output-limit responses may continue automatically.
+    @Published public var autoContinuationEnabled: Bool = true
+    /// Whether pinned standing instructions may be injected into requests.
+    @Published public var instructionPinningEnabled: Bool = true
+    /// Minimum token savings required before microcompact changes a request.
+    @Published public var microcompactMinimumSavingsTokens: Int = 512
+    /// Maximum tokens of pinned instructions injected into a request; zero disables injection.
+    @Published public var instructionPinTokenCeiling: Int = 512
     /// Whether the model sees the auto-memory section and the `memory` tool
     /// (swift/docs/SWIFT_MEMORY.md). The `didSet` mirrors the value into
     /// `MemoryStore.shared`, the static surface `AppToolCatalog` and

@@ -321,6 +321,30 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var todoBoundaryCompaction: Bool
     /// How many trailing message rows stay verbatim after a compaction.
     public var compactionKeepRecentTurns: Int
+    /// Whether old tool-result bodies may be compacted in request history.
+    public var microcompactEnabled: Bool
+    /// Whether output-limit responses may continue automatically.
+    public var autoContinuationEnabled: Bool
+    /// Whether pinned standing instructions may be injected into requests.
+    public var instructionPinningEnabled: Bool
+    /// Minimum token savings required before microcompact changes a request.
+    public var microcompactMinimumSavingsTokens: Int
+    /// Maximum tokens of pinned instructions injected into a request; zero disables injection.
+    public var instructionPinTokenCeiling: Int
+
+    public static let microcompactMinimumSavingsTokenRange = 64...4_096
+    public static let instructionPinTokenCeilingRange = 0...2_048
+
+    static func clampMicrocompactMinimumSavingsTokens(_ value: Int) -> Int {
+        min(max(value, microcompactMinimumSavingsTokenRange.lowerBound),
+            microcompactMinimumSavingsTokenRange.upperBound)
+    }
+
+    static func clampInstructionPinTokenCeiling(_ value: Int) -> Int {
+        min(max(value, instructionPinTokenCeilingRange.lowerBound),
+            instructionPinTokenCeilingRange.upperBound)
+    }
+
     /// Port the in-process server pins to, 0 = first free port. Persisted
     /// because the field had a settings UI that reset every launch; the
     /// server API key deliberately does NOT live here (see
@@ -454,6 +478,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         evidenceReducer: Bool = true,
         todoBoundaryCompaction: Bool = true,
         compactionKeepRecentTurns: Int = 2,
+        microcompactEnabled: Bool = true,
+        autoContinuationEnabled: Bool = true,
+        instructionPinningEnabled: Bool = true,
+        microcompactMinimumSavingsTokens: Int = 512,
+        instructionPinTokenCeiling: Int = 512,
         serverHost: String = "127.0.0.1",
         serverFavorites: [ServerFavorite] = [],
         serverPinnedPort: UInt16 = 0,
@@ -527,6 +556,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.evidenceReducer = evidenceReducer
         self.todoBoundaryCompaction = todoBoundaryCompaction
         self.compactionKeepRecentTurns = compactionKeepRecentTurns
+        self.microcompactEnabled = microcompactEnabled
+        self.autoContinuationEnabled = autoContinuationEnabled
+        self.instructionPinningEnabled = instructionPinningEnabled
+        self.microcompactMinimumSavingsTokens = microcompactMinimumSavingsTokens
+        self.instructionPinTokenCeiling = instructionPinTokenCeiling
         self.serverHost = serverHost
         self.serverFavorites = serverFavorites
         self.serverPinnedPort = serverPinnedPort
@@ -657,6 +691,16 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .todoBoundaryCompaction, fallback: true)
         self.compactionKeepRecentTurns = c.decodeLenient(
             Int.self, forKey: .compactionKeepRecentTurns, fallback: 2)
+        self.microcompactEnabled = c.decodeLenient(
+            Bool.self, forKey: .microcompactEnabled, fallback: true)
+        self.autoContinuationEnabled = c.decodeLenient(
+            Bool.self, forKey: .autoContinuationEnabled, fallback: true)
+        self.instructionPinningEnabled = c.decodeLenient(
+            Bool.self, forKey: .instructionPinningEnabled, fallback: true)
+        self.microcompactMinimumSavingsTokens = c.decodeLenient(
+            Int.self, forKey: .microcompactMinimumSavingsTokens, fallback: 512)
+        self.instructionPinTokenCeiling = c.decodeLenient(
+            Int.self, forKey: .instructionPinTokenCeiling, fallback: 512)
         self.serverHost = c.decodeLenient(String.self, forKey: .serverHost, fallback: "127.0.0.1")
         self.serverFavorites = c.decodeLenient([ServerFavorite].self, forKey: .serverFavorites, fallback: [])
         self.serverPinnedPort = c.decodeLenient(UInt16.self, forKey: .serverPinnedPort, fallback: 0)
@@ -773,6 +817,19 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.browser = c.decodeLenient(
             BrowserSettings.self, forKey: .browser, fallback: BrowserSettings())
     }
+
+    /// Normalizes persisted chat-runtime controls without changing their
+    /// independent toggle semantics. Returns whether a value changed.
+    @discardableResult
+    mutating func normalizeChatRuntimeSettings() -> Bool {
+        let originalMinimumSavings = microcompactMinimumSavingsTokens
+        let originalPinCeiling = instructionPinTokenCeiling
+        microcompactMinimumSavingsTokens = Self.clampMicrocompactMinimumSavingsTokens(
+            originalMinimumSavings)
+        instructionPinTokenCeiling = Self.clampInstructionPinTokenCeiling(originalPinCeiling)
+        return microcompactMinimumSavingsTokens != originalMinimumSavings
+            || instructionPinTokenCeiling != originalPinCeiling
+    }
 }
 
 /// JSON persistence storage provider for `MacAppSettings` under `~/Library/Application Support/TurboSpark/settings.json`.
@@ -793,12 +850,20 @@ public enum MacAppSettingsFileStore {
     /// rather than overwritten, since every preference would otherwise be
     /// silently reset by the next write.
     public static func load() -> MacAppSettings {
-        AppJSONStore.load(MacAppSettings.self, from: settingsFileURL, label: "settings")
-            ?? MacAppSettings()
+        guard var settings = AppJSONStore.load(
+            MacAppSettings.self, from: settingsFileURL, label: "settings") else {
+            return MacAppSettings()
+        }
+        if settings.normalizeChatRuntimeSettings() {
+            save(settings)
+        }
+        return settings
     }
 
     /// Writes application settings to disk atomically as JSON.
     public static func save(_ settings: MacAppSettings) {
-        AppJSONStore.save(settings, to: settingsFileURL, label: "Settings")
+        var normalized = settings
+        normalized.normalizeChatRuntimeSettings()
+        AppJSONStore.save(normalized, to: settingsFileURL, label: "Settings")
     }
 }

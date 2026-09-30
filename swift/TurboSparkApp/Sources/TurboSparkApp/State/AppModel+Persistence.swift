@@ -107,6 +107,11 @@ extension AppModel {
         AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
+        self.microcompactEnabled = settings.microcompactEnabled
+        self.autoContinuationEnabled = settings.autoContinuationEnabled
+        self.instructionPinningEnabled = settings.instructionPinningEnabled
+        self.microcompactMinimumSavingsTokens = settings.microcompactMinimumSavingsTokens
+        self.instructionPinTokenCeiling = settings.instructionPinTokenCeiling
         // The pinned port is a plain preference; the server API key is a
         // credential and comes from the Keychain instead (ServerKeychain).
         self.serverHost = settings.serverHost
@@ -182,6 +187,10 @@ extension AppModel {
     public func persistSettings() {
         settingsPersistDebounceTask?.cancel()
         settingsPersistDebounceTask = nil
+        microcompactMinimumSavingsTokens = MacAppSettings
+            .clampMicrocompactMinimumSavingsTokens(microcompactMinimumSavingsTokens)
+        instructionPinTokenCeiling = MacAppSettings
+            .clampInstructionPinTokenCeiling(instructionPinTokenCeiling)
         let settings = MacAppSettings(
             contextTokens: maxContextTokens,
             expertCacheSlots: runtimeOptions.expertCacheSlots,
@@ -230,6 +239,11 @@ extension AppModel {
             evidenceReducer: evidenceReducerEnabled,
             todoBoundaryCompaction: todoBoundaryCompactionEnabled,
             compactionKeepRecentTurns: compactionKeepRecentTurns,
+            microcompactEnabled: microcompactEnabled,
+            autoContinuationEnabled: autoContinuationEnabled,
+            instructionPinningEnabled: instructionPinningEnabled,
+            microcompactMinimumSavingsTokens: microcompactMinimumSavingsTokens,
+            instructionPinTokenCeiling: instructionPinTokenCeiling,
             serverHost: serverHost,
             serverFavorites: serverFavorites,
             serverPinnedPort: serverPinnedPort,
