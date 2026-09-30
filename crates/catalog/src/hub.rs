@@ -10,11 +10,14 @@ use crate::catalog::Catalog;
 use crate::entry::CatalogEntry;
 use crate::hf::{hf_endpoint, Client, HubRequestError, RepoRef};
 use crate::hub_validation::{
-    HubMetadataValidator, HubSearchEntry, HubValidationError, RejectedHubEntry,
+    valid_repo_id, valid_revision, HubFileMetadata, HubMetadataValidator, HubSearchEntry,
+    HubValidationError, RejectedHubEntry,
 };
+use crate::probe::{ProbeReport, Verdict};
+use crate::quant::{group_variants, quant_label, QuantLabel, ShardSetIssue, ShardSetStatus};
 use crate::recommend::{
-    recommend_catalog, CountedSource, Evidence, Fit, FitVerdict, GgufVariant, Machine, Origin,
-    Recommendation,
+    fit as calculate_fit, recommend_catalog, CountedSource, Evidence, Fit, FitVerdict, Machine,
+    Origin, Recommendation, Shape,
 };
 use crate::store::Store;
 use serde::{Deserialize, Serialize};
@@ -170,7 +173,7 @@ pub struct LiveTarget {
     pub evidence: String,
     pub fit: FitSummary,
     /// Populated by the explicit repository-detail or probe flow.
-    pub variants: Option<Vec<GgufVariant>>,
+    pub variants: Option<Vec<HubGgufVariant>>,
 }
 
 /// Display projection of the existing recommendation fit and evidence source.
@@ -182,6 +185,44 @@ pub struct FitSummary {
     pub counted_source: String,
     pub mapped_bytes: Option<u64>,
     pub notes: Vec<String>,
+}
+
+/// A filename-derived GGUF variant enriched with authoritative file sizes and
+/// the existing recommendation fit calculation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HubGgufVariant {
+    /// Immutable repository revision resolved from the repository response.
+    pub repo: RepoRef,
+    pub label: QuantLabel,
+    pub files: Vec<crate::hf::RepoFile>,
+    pub total_bytes: Option<u64>,
+    pub fit: FitSummary,
+    pub installability: VariantInstallability,
+}
+
+/// Why one GGUF file group can or cannot reach the existing install gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VariantInstallability {
+    Ready,
+    SupportUnverified {
+        files: Vec<String>,
+    },
+    Unsupported {
+        files: Vec<String>,
+        reason: String,
+    },
+    UnknownSize {
+        files: Vec<String>,
+    },
+    IncompleteShardSet {
+        files: Vec<String>,
+        expected_count: usize,
+        present_indices: Vec<usize>,
+    },
+    InconsistentShardSet {
+        files: Vec<String>,
+        issues: Vec<ShardSetIssue>,
+    },
 }
 
 /// One composed page plus entry-level validation diagnostics.
@@ -306,6 +347,165 @@ impl<'a> HubClient<'a> {
         let fetched = self.fetch_list(&url, CacheKind::Trending, refresh)?;
         let local_recommendations = self.catalog.entries().collect();
         Ok(self.compose(fetched, local_recommendations))
+    }
+
+    /// Lists GGUF variants for an explicit repository detail action.
+    ///
+    /// Missing sibling sizes are resolved with authoritative `HEAD` content
+    /// lengths. A fit remains unknown until a matching explicit probe supplies
+    /// checkpoint shape; repository size alone is not a fit estimate.
+    pub fn repo_variants(&self, repo: &RepoRef) -> Result<Vec<HubGgufVariant>, HubError> {
+        self.enrich_repo_variants(repo, None)
+    }
+
+    /// Lists variants and applies one explicit probe report only to the exact
+    /// complete file group it describes.
+    pub fn repo_variants_with_probe(
+        &self,
+        repo: &RepoRef,
+        probe: &ProbeReport,
+    ) -> Result<Vec<HubGgufVariant>, HubError> {
+        self.enrich_repo_variants(repo, Some(probe))
+    }
+
+    fn enrich_repo_variants(
+        &self,
+        repo: &RepoRef,
+        probe: Option<&ProbeReport>,
+    ) -> Result<Vec<HubGgufVariant>, HubError> {
+        if !valid_repo_id(&repo.repo) {
+            return Err(HubError::InvalidRequest {
+                field: "repo",
+                rule: "repository_id_shape",
+            });
+        }
+        let requested_revision_is_commit = valid_revision(&repo.revision);
+        if repo.revision != "main" && !requested_revision_is_commit {
+            return Err(HubError::InvalidRequest {
+                field: "revision",
+                rule: "main_or_immutable_commit",
+            });
+        }
+
+        let validator = HubMetadataValidator::default();
+        let metadata_url = repo.api_url_with_sizes();
+        let body = self
+            .client
+            .get_bounded_for_hub(&metadata_url, validator.limits().max_response_bytes)
+            .map_err(|error| {
+                map_hub_request_error(error, &metadata_url, self.client.has_token())
+            })?;
+        let report = validator
+            .validate_repository_payload(&body)
+            .map_err(map_validation_error)?;
+        if canonical_repo_id(&report.valid.repo_id) != canonical_repo_id(&repo.repo) {
+            return Err(HubError::InvalidResponse {
+                entry: report.valid.repo_id,
+                rule: "repository_id_matches_request",
+            });
+        }
+        if requested_revision_is_commit
+            && !report.valid.revision.eq_ignore_ascii_case(&repo.revision)
+        {
+            return Err(HubError::InvalidResponse {
+                entry: format!("{}@{}", repo.repo, report.valid.revision),
+                rule: "revision_matches_request",
+            });
+        }
+        let resolved_repo = RepoRef::new(&report.valid.repo_id, &report.valid.revision);
+        let repo_files: Vec<_> = report
+            .valid
+            .files
+            .into_iter()
+            .map(|file| crate::hf::RepoFile {
+                name: file.path,
+                size: file.size_bytes,
+            })
+            .collect();
+
+        let mut variants = Vec::new();
+        for group in group_variants(&repo_files) {
+            variants.push(self.enrich_variant(&resolved_repo, group, &validator, probe));
+        }
+        Ok(variants)
+    }
+
+    fn enrich_variant(
+        &self,
+        repo: &RepoRef,
+        group: crate::quant::VariantFiles,
+        validator: &HubMetadataValidator,
+        probe: Option<&ProbeReport>,
+    ) -> HubGgufVariant {
+        let matching_probe =
+            probe.filter(|candidate| probe_matches_variant(repo, &group, candidate));
+        let group_files = file_names(&group.files);
+        let mut files = group.files;
+        for file in &mut files {
+            if file.size.is_none() {
+                file.size = self
+                    .client
+                    .content_length(&repo.file_url(&file.name))
+                    .ok()
+                    .flatten();
+            }
+        }
+
+        let complete = matches!(
+            &group.shard_set,
+            ShardSetStatus::SingleFile | ShardSetStatus::Complete { .. }
+        );
+        let total_result = if complete {
+            checked_variant_total(&files, validator)
+        } else {
+            Ok(None)
+        };
+        let total_bytes = total_result.as_ref().ok().copied().flatten();
+        let fit = matching_probe
+            .zip(total_bytes)
+            .filter(|(candidate, _)| has_sufficient_fit_shape(candidate))
+            .map(|(candidate, bytes)| variant_fit_summary(candidate, bytes, self))
+            .unwrap_or_else(unknown_variant_fit);
+
+        let installability = match group.shard_set {
+            ShardSetStatus::Incomplete {
+                expected_count,
+                present_indices,
+            } => VariantInstallability::IncompleteShardSet {
+                files: group_files,
+                expected_count,
+                present_indices,
+            },
+            ShardSetStatus::Inconsistent { issues } => {
+                VariantInstallability::InconsistentShardSet {
+                    files: group_files,
+                    issues,
+                }
+            }
+            ShardSetStatus::SingleFile | ShardSetStatus::Complete { .. } => match total_result {
+                Ok(None) => VariantInstallability::UnknownSize {
+                    files: missing_file_sizes(&files),
+                },
+                Err(error) => size_failure_installability(error),
+                Ok(Some(_)) => match matching_probe.map(|candidate| &candidate.verdict) {
+                    None => VariantInstallability::SupportUnverified { files: group_files },
+                    Some(Verdict::Runnable) => VariantInstallability::Ready,
+                    Some(Verdict::Refused(reason)) => VariantInstallability::Unsupported {
+                        files: group_files,
+                        reason: reason.clone(),
+                    },
+                },
+            },
+        };
+
+        HubGgufVariant {
+            repo: repo.clone(),
+            label: group.label,
+            files,
+            total_bytes,
+            fit,
+            installability,
+        }
     }
 
     fn fetch_list(
@@ -690,6 +890,111 @@ fn unknown_live_fit() -> FitSummary {
     }
 }
 
+fn unknown_variant_fit() -> FitSummary {
+    FitSummary {
+        verdict: FitVerdict::Unknown.as_str().to_string(),
+        is_estimate: false,
+        counted_bytes: None,
+        counted_source: "unknown".to_string(),
+        mapped_bytes: None,
+        notes: vec![
+            "Variant fit stays unknown until an explicit probe provides checkpoint shape."
+                .to_string(),
+        ],
+    }
+}
+
+fn file_names(files: &[crate::hf::RepoFile]) -> Vec<String> {
+    files.iter().map(|file| file.name.clone()).collect()
+}
+
+fn missing_file_sizes(files: &[crate::hf::RepoFile]) -> Vec<String> {
+    files
+        .iter()
+        .filter(|file| file.size.is_none())
+        .map(|file| file.name.clone())
+        .collect()
+}
+
+fn checked_variant_total(
+    files: &[crate::hf::RepoFile],
+    validator: &HubMetadataValidator,
+) -> Result<Option<u64>, HubValidationError> {
+    let metadata: Vec<_> = files
+        .iter()
+        .map(|file| HubFileMetadata {
+            path: file.name.clone(),
+            size_bytes: file.size,
+        })
+        .collect();
+    validator.checked_file_total(&metadata)
+}
+
+fn probe_matches_variant(
+    repo: &RepoRef,
+    group: &crate::quant::VariantFiles,
+    probe: &ProbeReport,
+) -> bool {
+    if probe.kind != crate::entry::SourceKind::Gguf
+        || canonical_repo_id(&probe.repo.repo) != canonical_repo_id(&repo.repo)
+        || probe.repo.revision != repo.revision
+        || !matches!(
+            group.shard_set,
+            ShardSetStatus::SingleFile | ShardSetStatus::Complete { .. }
+        )
+    {
+        return false;
+    }
+    let Some(probed_file) = probe.file.as_deref() else {
+        return false;
+    };
+    group.files.iter().any(|file| file.name == probed_file)
+        && quant_label(probed_file).as_ref() == Some(&group.label)
+}
+
+fn has_sufficient_fit_shape(probe: &ProbeReport) -> bool {
+    probe
+        .arch
+        .as_ref()
+        .is_some_and(|arch| arch.num_experts <= 0 || probe.expert_stride.is_some())
+}
+
+fn variant_fit_summary(probe: &ProbeReport, total_bytes: u64, hub: &HubClient<'_>) -> FitSummary {
+    let shape = Shape {
+        install_bytes: total_bytes,
+        expert_stride: probe.expert_stride,
+        arch: probe.arch.clone(),
+        measured_counted: None,
+    };
+    let mut fit = calculate_fit(
+        &shape,
+        hub.machine.physical_bytes,
+        hub.context,
+        hub.slots,
+        hub.machine.load_guard,
+    );
+    if matches!(probe.verdict, Verdict::Refused(_)) {
+        fit.verdict = FitVerdict::Refused;
+    }
+    fit_summary(&fit, &probe.warnings)
+}
+
+fn size_failure_installability(error: HubValidationError) -> VariantInstallability {
+    match error {
+        HubValidationError::InvalidResponse { entry, rule } => VariantInstallability::Unsupported {
+            files: vec![entry],
+            reason: format!("file size validation failed: {rule}"),
+        },
+        HubValidationError::OversizedResponse {
+            actual_bytes,
+            max_bytes,
+        } => VariantInstallability::Unsupported {
+            files: Vec::new(),
+            reason: format!("file metadata response size {actual_bytes} exceeds {max_bytes}"),
+        },
+    }
+}
+
 fn map_hub_request_error(error: HubRequestError, url: &str, has_token: bool) -> HubError {
     match error {
         HubRequestError::Offline => HubError::Offline,
@@ -792,5 +1097,40 @@ mod tests {
 
         assert_ne!(anonymous, credential_one);
         assert_ne!(credential_one, credential_two);
+    }
+
+    #[test]
+    fn checked_variant_total_rejects_u64_overflow() {
+        let validator = HubMetadataValidator::new(crate::hub_validation::HubValidationLimits {
+            max_file_size_bytes: u64::MAX,
+            max_file_set_size_bytes: u64::MAX,
+            ..crate::hub_validation::HubValidationLimits::default()
+        });
+        let files = [
+            crate::hf::RepoFile {
+                name: "first-Q4_K_M.gguf".to_string(),
+                size: Some(u64::MAX),
+            },
+            crate::hf::RepoFile {
+                name: "second-Q4_K_M.gguf".to_string(),
+                size: Some(1),
+            },
+        ];
+
+        let error = checked_variant_total(&files, &validator).expect_err("overflow is rejected");
+        assert_eq!(
+            error,
+            HubValidationError::InvalidResponse {
+                entry: "second-Q4_K_M.gguf".to_string(),
+                rule: "checked_size_total",
+            }
+        );
+        assert_eq!(
+            size_failure_installability(error),
+            VariantInstallability::Unsupported {
+                files: vec!["second-Q4_K_M.gguf".to_string()],
+                reason: "file size validation failed: checked_size_total".to_string(),
+            }
+        );
     }
 }

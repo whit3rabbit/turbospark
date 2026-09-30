@@ -46,8 +46,9 @@ pub use entry::{
 };
 pub use hf::{hf_endpoint, set_hf_endpoint_override, Client, PopularRepo, RepoFile, RepoRef};
 pub use hub::{
-    BundledTarget, EntryProvenance, FitSummary, HubClient, HubEntry, HubError, HubPage, HubQuery,
-    HubSort, LiveTarget, Refresh, DEFAULT_TRENDING_LIMIT, MAX_HUB_PAGE_ENTRIES,
+    BundledTarget, EntryProvenance, FitSummary, HubClient, HubEntry, HubError, HubGgufVariant,
+    HubPage, HubQuery, HubSort, LiveTarget, Refresh, VariantInstallability, DEFAULT_TRENDING_LIMIT,
+    MAX_HUB_PAGE_ENTRIES,
 };
 pub use hub_validation::{
     HubFileMetadata, HubMetadataValidator, HubRepoMetadata, HubSearchEntry, HubValidationError,

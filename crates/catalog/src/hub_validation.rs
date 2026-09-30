@@ -367,7 +367,7 @@ fn optional_u64(value: Option<&Value>) -> Result<Option<u64>, &'static str> {
     }
 }
 
-fn valid_repo_id(id: &str) -> bool {
+pub(crate) fn valid_repo_id(id: &str) -> bool {
     let mut parts = id.split('/');
     let Some(owner) = parts.next() else {
         return false;
@@ -390,7 +390,7 @@ fn valid_repo_component(component: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
-fn valid_revision(revision: &str) -> bool {
+pub(crate) fn valid_revision(revision: &str) -> bool {
     revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
