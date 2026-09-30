@@ -7,6 +7,7 @@ public enum AppToolCategory: String, Codable, CaseIterable, Identifiable, Sendab
     case fileWrite
     case terminal
     case web
+    case browser
     case mcp
     case automation
 
@@ -18,6 +19,7 @@ public enum AppToolCategory: String, Codable, CaseIterable, Identifiable, Sendab
         case .fileWrite: return "File Editing & Creation"
         case .terminal: return "Terminal & Shell Execution"
         case .web: return "Web & Network Requests"
+        case .browser: return "Browser Automation"
         case .mcp: return "MCP External Tools"
         case .automation: return "Automation & Cron Tasks"
         }
@@ -29,6 +31,7 @@ public enum AppToolCategory: String, Codable, CaseIterable, Identifiable, Sendab
         case .fileWrite: return "square.and.pencil"
         case .terminal: return "terminal"
         case .web: return "globe"
+        case .browser: return "safari"
         case .mcp: return "server.rack"
         case .automation: return "clock.arrow.2.circlepath"
         }

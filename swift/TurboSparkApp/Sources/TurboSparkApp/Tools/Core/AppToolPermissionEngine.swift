@@ -105,11 +105,23 @@ public enum AppToolPermissionEngine {
         project: AppProject?,
         sessionApproved: Bool = false,
         fallbackMode: AppPermissionMode? = nil,
-        globalServers: [McpServerConfig] = GlobalMcpFileStore.load().servers
+        globalServers: [McpServerConfig] = GlobalMcpFileStore.load().servers,
+        browserContext: BrowserPermissionContext? = nil
     ) -> ToolPermissionDecision {
         // No project selected: fall back to the guarded default or chosen fallback mode.
         let permissions = project?.permissions ?? AppProjectPermissions.preset(for: fallbackMode ?? .auto)
         let category = call.category
+
+        let categoryPermission: AppToolPermission
+        switch category {
+        case .fileRead: categoryPermission = permissions.fileRead
+        case .fileWrite: categoryPermission = permissions.fileWrite
+        case .terminal: categoryPermission = permissions.terminal
+        case .web: categoryPermission = permissions.web
+        case .browser: categoryPermission = permissions.browser
+        case .mcp: categoryPermission = permissions.mcp
+        case .automation: categoryPermission = permissions.automation
+        }
 
         // The server/tool pair this call addresses, in whichever spelling
         // the model used. Shared with the approval card and rule writing so
@@ -121,6 +133,18 @@ public enum AppToolPermissionEngine {
 
         let risk: ToolRiskAssessment = {
             let base = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+            if category == .browser,
+               let origin = browserContext?.origin,
+               AppToolSandbox.isPrivateOrMetadataHost(origin.host),
+               !base.isHighRisk
+            {
+                return ToolRiskAssessment(
+                    level: .high,
+                    category: .browser,
+                    reasons: ["Browser navigation to private or metadata origin '\(origin.canonicalString)' requires confirmation."],
+                    hardGated: true
+                )
+            }
             // Server-declared annotations raise a safe verdict on a
             // destructive-marked tool; they never lower a heuristic one.
             guard category == .mcp, let target = mcpTarget, let tool = target.tool,
@@ -157,6 +181,57 @@ public enum AppToolPermissionEngine {
                     + "yet, so \(defaultReason)")
         }
 
+        // Agent browser automation always needs an exact project origin grant
+        // or typed approval for this destination. Direct user-owned navigation
+        // exits before agent permission and risk gates. For agent calls, this
+        // gate stays ahead of all general mode and session shortcuts.
+        if category == .browser {
+            let browserDecision = BrowserPermissionRuleStore.decision(
+                for: browserContext?.origin,
+                in: permissions,
+                owner: browserContext?.owner ?? .agent,
+                currentActionApproved: browserContext?.currentActionApproved ?? false
+            )
+
+            if case .userOwnedNavigation = browserDecision {
+                return .allow
+            }
+
+            if case .deny = browserDecision {
+                return .deny(reason: "The Browser Automation category is denied by project permissions.")
+            }
+
+            if risk.isHighRisk {
+                let reason = risk.reasons.isEmpty
+                    ? "High-risk browser action requires confirmation."
+                    : risk.reasons.joined(separator: "; ")
+                var assessment = risk
+                if permissions.mode == .agentAuto {
+                    assessment.hardGated = true
+                }
+                return .ask(assessment: assessment, reason: reason)
+            }
+
+            switch browserDecision {
+            case .allow:
+                return .allow
+            case .userOwnedNavigation:
+                // Direct user navigation returned above before risk checks.
+                return .allow
+            case .ask:
+                var assessment = risk
+                if permissions.mode == .agentAuto {
+                    assessment.hardGated = true
+                }
+                return .ask(
+                    assessment: assessment,
+                    reason: "Browser automation requires approval for this exact project origin.")
+            case .deny:
+                // Denial returned above so this keeps the decision exhaustive.
+                return .deny(reason: "The Browser Automation category is denied by project permissions.")
+            }
+        }
+
         // 1. Strict Read-Only Mode. Absolute: session approval never applies here.
         if permissions.mode == .readOnly {
             if category == .fileRead && !risk.isHighRisk {
@@ -172,16 +247,6 @@ public enum AppToolPermissionEngine {
 
         // 2. Granular Category Permission Check (Explicit Deny wins, and a
         // session approval cannot resurrect a category the project denies)
-        let categoryPermission: AppToolPermission
-        switch category {
-        case .fileRead: categoryPermission = permissions.fileRead
-        case .fileWrite: categoryPermission = permissions.fileWrite
-        case .terminal: categoryPermission = permissions.terminal
-        case .web: categoryPermission = permissions.web
-        case .mcp: categoryPermission = permissions.mcp
-        case .automation: categoryPermission = permissions.automation
-        }
-
         if categoryPermission == .deny {
             return .deny(reason: "The \(category.label) category is set to Deny in project settings.")
         }

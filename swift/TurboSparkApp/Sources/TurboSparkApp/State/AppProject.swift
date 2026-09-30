@@ -112,6 +112,14 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
     public var mcp: AppToolPermission
     /// Permission for background workflow and cron automation.
     public var automation: AppToolPermission
+    /// Permission for agent-owned browser control and main-frame navigation.
+    public var browser: AppToolPermission
+    /// Canonical exact origins granted in this project. The rule store validates entries.
+    public var browserOriginAllowlist: [String] {
+        didSet {
+            browserOriginAllowlist = BrowserPermissionRuleStore.normalizedAllowlist(browserOriginAllowlist)
+        }
+    }
     /// Persisted MCP ALLOW rules in `mcp__server` / `mcp__server__tool`
     /// syntax (`swift/docs/SWIFT_TOOLS.md`). A matching call skips the ask prompt
     /// but never the high-risk gate.
@@ -129,6 +137,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         web: AppToolPermission = .allow,
         mcp: AppToolPermission = .ask,
         automation: AppToolPermission = .ask,
+        browser: AppToolPermission = .ask,
+        browserOriginAllowlist: [String] = [],
         mcpAllowRules: [String] = [],
         mcpDenyRules: [String] = []
     ) {
@@ -139,6 +149,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         self.web = web
         self.mcp = mcp
         self.automation = automation
+        self.browser = browser
+        self.browserOriginAllowlist = BrowserPermissionRuleStore.normalizedAllowlist(browserOriginAllowlist)
         self.mcpAllowRules = mcpAllowRules
         self.mcpDenyRules = mcpDenyRules
     }
@@ -152,6 +164,10 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         self.web = try container.decodeIfPresent(AppToolPermission.self, forKey: .web) ?? .allow
         self.mcp = try container.decodeIfPresent(AppToolPermission.self, forKey: .mcp) ?? .ask
         self.automation = try container.decodeIfPresent(AppToolPermission.self, forKey: .automation) ?? .ask
+        self.browser = container.decodeTolerant(AppToolPermission.self, forKey: .browser, fallback: .ask)
+        let decodedBrowserOrigins = (try? container.decodeLossyArray(
+            String.self, forKey: .browserOriginAllowlist)) ?? []
+        self.browserOriginAllowlist = BrowserPermissionRuleStore.normalizedAllowlist(decodedBrowserOrigins)
         self.mcpAllowRules = try container.decodeIfPresent([String].self, forKey: .mcpAllowRules) ?? []
         self.mcpDenyRules = try container.decodeIfPresent([String].self, forKey: .mcpDenyRules) ?? []
     }
@@ -165,7 +181,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             terminal: .allow,
             web: .allow,
             mcp: .allow,
-            automation: .allow
+            automation: .allow,
+            browser: .ask
         )
     }
 
@@ -192,7 +209,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             terminal: .ask,
             web: .allow,
             mcp: .ask,
-            automation: .ask
+            automation: .ask,
+            browser: .ask
         )
     }
 
@@ -208,7 +226,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             terminal: .ask,
             web: .allow,
             mcp: .ask,
-            automation: .ask
+            automation: .ask,
+            browser: .ask
         )
     }
 
@@ -221,7 +240,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             terminal: .allow,
             web: .allow,
             mcp: .allow,
-            automation: .allow
+            automation: .allow,
+            browser: .allow
         )
     }
 
@@ -234,7 +254,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             terminal: .ask,
             web: .ask,
             mcp: .ask,
-            automation: .ask
+            automation: .ask,
+            browser: .ask
         )
     }
 
@@ -247,7 +268,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             terminal: .deny,
             web: .allow,
             mcp: .deny,
-            automation: .deny
+            automation: .deny,
+            browser: .deny
         )
     }
 
@@ -260,7 +282,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             terminal: .allow,
             web: .allow,
             mcp: .allow,
-            automation: .allow
+            automation: .allow,
+            browser: .allow
         )
     }
 
