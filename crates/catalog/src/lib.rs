@@ -25,6 +25,7 @@ mod catalog;
 mod entry;
 mod gguf_source;
 mod hf;
+mod hub;
 mod hub_validation;
 mod image;
 mod install;
@@ -43,6 +44,10 @@ pub use entry::{
     CatalogEntry, EntryKind, Measured, MtpSource, Sidecars, Source, SourceKind, Status,
 };
 pub use hf::{hf_endpoint, set_hf_endpoint_override, Client, PopularRepo, RepoFile, RepoRef};
+pub use hub::{
+    BundledTarget, EntryProvenance, FitSummary, HubClient, HubEntry, HubError, HubPage, HubQuery,
+    HubSort, LiveTarget, Refresh, DEFAULT_TRENDING_LIMIT, MAX_HUB_PAGE_ENTRIES,
+};
 pub use hub_validation::{
     HubFileMetadata, HubMetadataValidator, HubRepoMetadata, HubSearchEntry, HubValidationError,
     HubValidationLimits, RejectedHubEntry, ValidationReport,
