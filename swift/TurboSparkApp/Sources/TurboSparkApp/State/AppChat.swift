@@ -2,6 +2,80 @@ import Foundation
 import TurboSpark
 import UniformTypeIdentifiers
 
+public enum AppChatTitleProvenance: String, Codable, Equatable, Sendable {
+    case unclaimed
+    case generated
+    case user
+
+    static func inferred(from title: String) -> Self {
+        title == "New Chat" ? .unclaimed : .user
+    }
+}
+
+public struct RecoveryAnchor: Codable, Equatable, Sendable {
+    public static let maximumContinuationsPerTurn = 3
+    public static let maximumRetriesPerInterruptedTurn = 3
+
+    public let retainedMessageCount: Int
+    public let interruptedMessageID: UUID
+    public let interruptedContentHash: String
+    public let continuationsUsed: Int
+    public let retriesUsed: Int
+    public let recordedAt: Date
+
+    public init?(
+        retainedMessageCount: Int,
+        interruptedMessageID: UUID,
+        interruptedContentHash: String,
+        continuationsUsed: Int,
+        retriesUsed: Int,
+        recordedAt: Date
+    ) {
+        guard retainedMessageCount >= 0,
+            !interruptedContentHash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            (0...Self.maximumContinuationsPerTurn).contains(continuationsUsed),
+            (0...Self.maximumRetriesPerInterruptedTurn).contains(retriesUsed)
+        else { return nil }
+        self.retainedMessageCount = retainedMessageCount
+        self.interruptedMessageID = interruptedMessageID
+        self.interruptedContentHash = interruptedContentHash
+        self.continuationsUsed = continuationsUsed
+        self.retriesUsed = retriesUsed
+        self.recordedAt = recordedAt
+    }
+
+    public func isValid(forMessageCount messageCount: Int) -> Bool {
+        retainedMessageCount < messageCount
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case retainedMessageCount
+        case interruptedMessageID
+        case interruptedContentHash
+        case continuationsUsed
+        case retriesUsed
+        case recordedAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let values = RecoveryAnchor(
+            retainedMessageCount: try container.decode(Int.self, forKey: .retainedMessageCount),
+            interruptedMessageID: try container.decode(UUID.self, forKey: .interruptedMessageID),
+            interruptedContentHash: try container.decode(String.self, forKey: .interruptedContentHash),
+            continuationsUsed: try container.decode(Int.self, forKey: .continuationsUsed),
+            retriesUsed: try container.decode(Int.self, forKey: .retriesUsed),
+            recordedAt: try container.decode(Date.self, forKey: .recordedAt))
+        guard let values else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .interruptedContentHash,
+                in: container,
+                debugDescription: "Recovery anchor contains invalid counts or an empty content hash.")
+        }
+        self = values
+    }
+}
+
 /// A document attachment associated with a prompt draft.
 public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
     /// How the preview pane should render this attachment.
@@ -182,6 +256,8 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var role: ChatMessage.Role
     /// Text content of the message.
     public var content: String
+    /// Whether this user message is explicitly pinned as a standing instruction.
+    public var isStandingInstruction: Bool
     /// Optional thinking or reasoning output preceding the response.
     public var reasoning: String
     /// Reason why generation stopped for this message turn.
@@ -230,11 +306,13 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         toolResults: [AppToolResult] = [],
         imagePaths: [String] = [],
         alternates: [AppChatMessage] = [],
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        isStandingInstruction: Bool = false
     ) {
         self.id = id
         self.role = role
         self.content = content
+        self.isStandingInstruction = isStandingInstruction
         self.reasoning = reasoning
         self.stopReason = stopReason
         self.toolCalls = toolCalls
@@ -270,6 +348,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         // precise about one.
         role = container.decodeTolerant(ChatMessage.Role.self, forKey: .role, fallback: .assistant)
         content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        isStandingInstruction = (try? container.decode(Bool.self, forKey: .isStandingInstruction)) ?? false
         reasoning = try container.decodeIfPresent(String.self, forKey: .reasoning) ?? ""
         stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)
         // Lossy: one malformed call must not take the whole archive down.
@@ -289,6 +368,12 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     public var projectID: UUID?
     /// Display title of the conversation.
     public var title: String
+    /// Whether the title is available for automatic generation or already claimed.
+    public var titleProvenance: AppChatTitleProvenance
+    /// Whether automatic title generation has already been attempted for this chat.
+    public var titleGenerationAttempted: Bool
+    /// Recovery point for the latest interrupted assistant message, when one exists.
+    public var recoveryAnchor: RecoveryAnchor?
     /// Uncommitted draft prompt text.
     public var draft: String
     /// Uncommitted draft document attachments.
@@ -386,11 +471,20 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         isPinned: Bool = false,
         usage: AppChatUsageLedger? = nil,
         goal: ChatGoalState? = nil,
-        isArchived: Bool = false
+        isArchived: Bool = false,
+        titleProvenance: AppChatTitleProvenance? = nil,
+        titleGenerationAttempted: Bool? = nil,
+        recoveryAnchor: RecoveryAnchor? = nil
     ) {
         self.id = id
         self.projectID = projectID
         self.title = title
+        let resolvedTitleProvenance = titleProvenance ?? AppChatTitleProvenance.inferred(from: title)
+        self.titleProvenance = resolvedTitleProvenance
+        self.titleGenerationAttempted = titleGenerationAttempted ?? (resolvedTitleProvenance != .unclaimed)
+        self.recoveryAnchor = recoveryAnchor.flatMap {
+            $0.isValid(forMessageCount: messages.count) ? $0 : nil
+        }
         self.draft = draft
         self.draftAttachments = draftAttachments
         self.messages = messages
@@ -418,10 +512,19 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         projectID = try container.decodeIfPresent(UUID.self, forKey: .projectID)
         title = try container.decodeIfPresent(String.self, forKey: .title) ?? "New Chat"
+        titleProvenance =
+            (try? container.decode(AppChatTitleProvenance.self, forKey: .titleProvenance))
+            ?? AppChatTitleProvenance.inferred(from: title)
+        titleGenerationAttempted =
+            (try? container.decode(Bool.self, forKey: .titleGenerationAttempted))
+            ?? (titleProvenance != .unclaimed)
         draft = try container.decodeIfPresent(String.self, forKey: .draft) ?? ""
         draftAttachments = try container.decodeIfPresent(
             [AppPromptAttachment].self, forKey: .draftAttachments) ?? []
-        messages = try container.decodeLossyArray(AppChatMessage.self, forKey: .messages)
+        let decodedMessages = try container.decodeLossyArray(AppChatMessage.self, forKey: .messages)
+        messages = decodedMessages
+        recoveryAnchor = (try? container.decode(RecoveryAnchor.self, forKey: .recoveryAnchor))
+            .flatMap { $0.isValid(forMessageCount: decodedMessages.count) ? $0 : nil }
         todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos) ?? []
         artifacts = try container.decodeLossyArray(AppArtifact.self, forKey: .artifacts)
         contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)
