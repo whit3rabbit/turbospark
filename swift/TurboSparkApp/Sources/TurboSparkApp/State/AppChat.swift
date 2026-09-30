@@ -256,6 +256,8 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var role: ChatMessage.Role
     /// Text content of the message.
     public var content: String
+    /// Optional source label for queued mid-turn input, kept outside model content.
+    public var presentationLabel: String?
     /// Whether this user message is explicitly pinned as a standing instruction.
     public var isStandingInstruction: Bool
     /// Optional thinking or reasoning output preceding the response.
@@ -307,11 +309,13 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         imagePaths: [String] = [],
         alternates: [AppChatMessage] = [],
         createdAt: Date = Date(),
-        isStandingInstruction: Bool = false
+        isStandingInstruction: Bool = false,
+        presentationLabel: String? = nil
     ) {
         self.id = id
         self.role = role
         self.content = content
+        self.presentationLabel = presentationLabel
         self.isStandingInstruction = isStandingInstruction
         self.reasoning = reasoning
         self.stopReason = stopReason
@@ -348,6 +352,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         // precise about one.
         role = container.decodeTolerant(ChatMessage.Role.self, forKey: .role, fallback: .assistant)
         content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        presentationLabel = try container.decodeIfPresent(String.self, forKey: .presentationLabel)
         isStandingInstruction = (try? container.decode(Bool.self, forKey: .isStandingInstruction)) ?? false
         reasoning = try container.decodeIfPresent(String.self, forKey: .reasoning) ?? ""
         stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)

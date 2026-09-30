@@ -262,6 +262,10 @@ struct MessageRowView: View {
         model.canBranch(message)
     }
 
+    private var transcriptPresentation: MidTurnTranscriptRowPresentation {
+        MidTurnTranscriptRowPresentation(message: message)
+    }
+
     /// Opens an ```html fence in the sandboxed preview panel. Inline bytes:
     /// the fence is not a file, so nothing joins the artifact archive.
     private var previewHTML: (String) -> Void {
@@ -342,6 +346,17 @@ struct MessageRowView: View {
         HStack(alignment: .top, spacing: 0) {
             Spacer(minLength: 48)
             VStack(alignment: .trailing, spacing: 6) {
+                if transcriptPresentation.role == .user,
+                   let label = transcriptPresentation.label
+                {
+                    Text(LocalizedStringKey(label), bundle: .module)
+                        .themedFont(.small, weight: .semibold)
+                        .foregroundStyle(theme.metadataForeground)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(.appSurface, in: Capsule())
+                }
+
                 CollapsibleMessageContentView(
                     text: message.content,
                     isUser: true
