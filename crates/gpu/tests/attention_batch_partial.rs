@@ -49,6 +49,14 @@ fn read_f32(buffer: &metal::Buffer, count: usize) -> Vec<f32> {
     values.to_vec()
 }
 
+fn read_f16(buffer: &metal::Buffer, count: usize) -> Vec<f32> {
+    let values = unsafe { std::slice::from_raw_parts(buffer.contents() as *const u16, count) };
+    values
+        .iter()
+        .map(|&bits| f16::from_bits(bits).to_f32())
+        .collect()
+}
+
 fn expected_partial(
     q: &[f32],
     k: &[f32],
@@ -253,4 +261,112 @@ fn reuses_kv_across_overlapping_and_disjoint_four_query_tiles() {
     assert!(got_o[inactive_start * head_dim as usize..]
         .iter()
         .all(|&x| x == canary));
+}
+
+#[test]
+fn combines_partial_states_per_live_row_and_head_without_touching_absent_rows() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+
+    let head_dim = 4u32;
+    let num_q_heads = 2u32;
+    let max_chunks = 4u32;
+    let live_rows = 3u32;
+    let capacity = 5usize;
+    let partial_slots = capacity * num_q_heads as usize * max_chunks as usize;
+    let active_chunks = [[2usize, 4], [1, 3], [3, 2]];
+
+    let mut m = vec![f32::NEG_INFINITY; partial_slots];
+    let mut d = vec![0.0f32; partial_slots];
+    let mut o = vec![0.0f32; partial_slots * head_dim as usize];
+    for row in 0..live_rows as usize {
+        for q_head in 0..num_q_heads as usize {
+            for chunk in 0..active_chunks[row][q_head] {
+                let slot = (row * num_q_heads as usize + q_head) * max_chunks as usize + chunk;
+                m[slot] = -0.5 + row as f32 * 0.23 + q_head as f32 * 0.11 + chunk as f32 * 0.17;
+                d[slot] = 0.75 + ((row + q_head + chunk) % 5) as f32 * 0.2;
+                for i in 0..head_dim as usize {
+                    o[slot * head_dim as usize + i] =
+                        -0.4 + (row * 7 + q_head * 3 + chunk + i) as f32 * 0.09;
+                }
+            }
+        }
+    }
+
+    // Inactive input rows are deliberately invalid. A live-row guard must
+    // return before the combine kernel reads any of these partial states.
+    let inactive_start = live_rows as usize * num_q_heads as usize * max_chunks as usize;
+    m[inactive_start..].fill(f32::NAN);
+    d[inactive_start..].fill(f32::NAN);
+    o[inactive_start * head_dim as usize..].fill(f32::NAN);
+
+    let m_buffer = context.new_buffer_with_data(&f32_bytes(&m));
+    let d_buffer = context.new_buffer_with_data(&f32_bytes(&d));
+    let o_buffer = context.new_buffer_with_data(&f32_bytes(&o));
+    let canary = 321.0f32;
+    let output_count = capacity * num_q_heads as usize * head_dim as usize;
+    let output_buffer = context.new_buffer_with_data(&f16_bytes(&vec![canary; output_count]));
+
+    let pipeline = context
+        .pipeline(
+            SOURCE,
+            "attention_decode_batch_combine",
+            &FunctionConstantValues::new(),
+            &[],
+        )
+        .expect("batch combine pipeline");
+
+    let pass = context.begin_pass();
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (&m_buffer, 0, 0),
+            (&d_buffer, 1, 0),
+            (&o_buffer, 2, 0),
+            (&output_buffer, 3, 0),
+        ],
+        &[
+            (&head_dim.to_le_bytes(), 4),
+            (&num_q_heads.to_le_bytes(), 5),
+            (&max_chunks.to_le_bytes(), 6),
+            (&live_rows.to_le_bytes(), 7),
+        ],
+        capacity as u64 * num_q_heads as u64,
+        THREADS_PER_GROUP,
+    );
+    pass.commit_and_wait();
+
+    let got = read_f16(&output_buffer, output_count);
+    for row in 0..live_rows as usize {
+        for q_head in 0..num_q_heads as usize {
+            let count = active_chunks[row][q_head];
+            let first_slot = (row * num_q_heads as usize + q_head) * max_chunks as usize;
+            let max_m = (0..count)
+                .map(|chunk| m[first_slot + chunk])
+                .fold(f32::NEG_INFINITY, f32::max);
+            let denominator: f32 = (0..count)
+                .map(|chunk| d[first_slot + chunk] * (m[first_slot + chunk] - max_m).exp())
+                .sum();
+
+            for i in 0..head_dim as usize {
+                let numerator: f32 = (0..count)
+                    .map(|chunk| {
+                        o[(first_slot + chunk) * head_dim as usize + i]
+                            * (m[first_slot + chunk] - max_m).exp()
+                    })
+                    .sum();
+                let want = numerator / denominator;
+                let index = (row * num_q_heads as usize + q_head) * head_dim as usize + i;
+                assert!(
+                    (got[index] - want).abs() < 1e-3,
+                    "output at {row}/{q_head}/{i}: got {}, want {want}",
+                    got[index]
+                );
+            }
+        }
+    }
+
+    let inactive_output_start = live_rows as usize * num_q_heads as usize * head_dim as usize;
+    assert!(got[inactive_output_start..]
+        .iter()
+        .all(|&value| value == canary));
 }

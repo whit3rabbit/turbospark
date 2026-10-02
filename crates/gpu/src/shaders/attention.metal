@@ -394,6 +394,69 @@ void attention_decode_batch_partial(
     }
 }
 
+// Merge split-KV partials for a row-major batch. The group index covers
+// (row, query head); rows at or beyond live_rows return before reading state.
+// Neutral partials (-inf, 0, 0) are skipped so they contribute exactly zero.
+[[kernel, max_total_threads_per_threadgroup(kAttnThreads)]]
+void attention_decode_batch_combine(
+    device const float* m_in         [[buffer(0)]], // [rows * num_q_heads * max_chunks]
+    device const float* d_in         [[buffer(1)]],
+    device const float* o_in         [[buffer(2)]], // [rows * num_q_heads * max_chunks * head_dim]
+    device       half*  out          [[buffer(3)]], // [rows * num_q_heads * head_dim]
+    constant     uint&  head_dim     [[buffer(4)]],
+    constant     uint&  num_q_heads  [[buffer(5)]],
+    constant     uint&  max_chunks   [[buffer(6)]],
+    constant     uint&  live_rows    [[buffer(7)]],
+    uint tg_id           [[threadgroup_position_in_grid]],
+    uint lid             [[thread_position_in_threadgroup]],
+    uint lsize           [[threads_per_threadgroup]]) {
+    const uint row = tg_id / num_q_heads;
+    const uint q_head = tg_id % num_q_heads;
+    if (row >= live_rows) { return; }
+
+    const uint HD = head_dim;
+    const uint NC = max_chunks;
+    const uint head_index = row * num_q_heads + q_head;
+    const uint state_base = head_index * NC;
+    device const float* m_row = m_in + state_base;
+    device const float* d_row = d_in + state_base;
+    device const float* o_base = o_in + state_base * HD;
+
+    // The chunk count is small. Recompute the same row/head reduction per
+    // thread so the combine needs no shared memory or threadgroup barriers.
+    float m_glob = -INFINITY;
+    bool has_contribution = false;
+    for (uint c = 0; c < NC; ++c) {
+        if (d_row[c] > 0.0f) {
+            m_glob = max(m_glob, m_row[c]);
+            has_contribution = true;
+        }
+    }
+
+    float D = 0.0f;
+    if (has_contribution) {
+        for (uint c = 0; c < NC; ++c) {
+            if (d_row[c] > 0.0f) {
+                D += d_row[c] * attn_softmax_exp(m_row[c] - m_glob);
+            }
+        }
+    }
+    const float inv_d = (D > 0.0f) ? (1.0f / D) : 0.0f;
+
+    device half* out_row = out + head_index * HD;
+    for (uint i = lid; i < HD; i += lsize) {
+        float acc = 0.0f;
+        if (has_contribution) {
+            for (uint c = 0; c < NC; ++c) {
+                if (d_row[c] > 0.0f) {
+                    acc += o_base[c * HD + i] * attn_softmax_exp(m_row[c] - m_glob);
+                }
+            }
+        }
+        out_row[i] = half(acc * inv_d);
+    }
+}
+
 [[kernel, max_total_threads_per_threadgroup(kAttnThreads)]]
 void attention_decode_gqa_swa_partial(
     device const half*  Q             [[buffer(0)]],
