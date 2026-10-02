@@ -1743,3 +1743,63 @@ artifact that they measured sequential prefill.
 nothing and is byte-for-byte the same invocation as `default`, which is why
 that axis is exclusive of every other arm: pairing them varies nothing and
 puts one condition in two rows.
+
+## Dense-Llama batched-attention release artifacts (2026-10-02)
+
+Task 4.2 built the end-to-end benchmark executable from isolated detached
+worktrees and separate Cargo target directories. The baseline is the direct
+parent of the first batched-attention feature commit (`ceae8dd7`), so it
+contains no batched-attention changes. The candidate contains the runtime
+route and compatibility checks through task 3.6. Both builds used
+`cargo build --release -p turbospark-bench --bin turbospark-bench`.
+
+| Role | Source revision | Cargo package version | Binary path | SHA-256 |
+| --- | --- | --- | --- | --- |
+| Baseline | `324b3f03ce94c85a5356c3ce9c6c5658fde81edc` | `0.2.0` | `/tmp/turbospark-batched-prefill-baseline-324b3f03/target/release/turbospark-bench` | `2ad05a09cb41a6d6410f90969047c1fe2f736db868fb4d9bbd26cbcabb2ab34a` |
+| Candidate | `80252a6f951c4f7e13acd3608855b67231cd9f36` | `0.2.0` | `/tmp/turbospark-batched-prefill-build-candidate/release/turbospark-bench` | `f8cf688db2c50fd5407cad7b35d9acefc944ac41d632549c4cfa06c408345f58` |
+
+Both source worktrees were clean, their revisions and package versions were
+recorded, and the binaries are arm64 Mach-O executables in separate release
+target directories. Their SHA-256 values were checked after the builds. The
+candidate worktree was clean, so there is no candidate diff hash. Task 4.3
+passes one pinned install path to both binaries and records that install's
+hash once. No model run or timing measurement is included in this
+artifact-build record.
+
+The `turbospark-bench` CLI does not implement a `--version` option. The
+recorded CLI version is therefore the Cargo package version from the source
+manifest (`0.2.0` for both builds).
+
+The end-to-end matched-run harness is
+`scripts/prefill_benchmark_pairs.py`. It requires both binary paths, their
+source revisions and recorded SHA-256 values, one dense-Llama install, and
+an allowed chunk size. It binds the source revision and binary SHA-256 for
+each arm to the corresponding task 4.2 artifact and rejects mismatches. It
+derives each Cargo package version from that revision's workspace manifest.
+It also checks that both revisions contain the same frozen
+long-synthesis prompt, validates the install manifest is dense Llama, hashes
+the full install, then runs three alternating pairs by default. Each process
+discards its own warmup. The JSON record contains the exact command and
+footer, raw prefill time, prompt-token count, model and binary hashes,
+revision, device, host, and pair order. No end-to-end timing is recorded
+until a pinned install path is available. It clears the phase, router-trace,
+chunk/routed-batch, dispatch-profiling, prompt-ID debug, Metal precise-math,
+and residual-capture environment overrides for all arms and records any values
+it removed.
+
+Example command for the recorded artifacts (replace the install path with
+the pinned dense-Llama `.gturbo` directory):
+
+```sh
+python3 scripts/prefill_benchmark_pairs.py \
+  --baseline-binary /tmp/turbospark-batched-prefill-baseline-324b3f03/target/release/turbospark-bench \
+  --candidate-binary /tmp/turbospark-batched-prefill-build-candidate/release/turbospark-bench \
+  --baseline-revision 324b3f03ce94c85a5356c3ce9c6c5658fde81edc \
+  --candidate-revision 80252a6f951c4f7e13acd3608855b67231cd9f36 \
+  --baseline-binary-sha256 2ad05a09cb41a6d6410f90969047c1fe2f736db868fb4d9bbd26cbcabb2ab34a \
+  --candidate-binary-sha256 f8cf688db2c50fd5407cad7b35d9acefc944ac41d632549c4cfa06c408345f58 \
+  --model-install /path/to/dense-llama.gturbo \
+  --chunk-size 128 \
+  --pairs 3 \
+  --output /tmp/batched-prefill-long-synthesis.json
+```
