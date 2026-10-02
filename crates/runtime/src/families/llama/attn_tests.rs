@@ -165,7 +165,8 @@ fn batch_attention_route_requires_multi_row_dense_full_unquantized_llama() {
 
 #[test]
 fn quantized_multi_row_chunk_keeps_sequential_logits_and_skips_batch_dispatch() {
-    let tokens = [5, 9, 2];
+    const TOKENS: [i32; 11] = [5, 9, 2, 7, 1, 3, 8, 4, 6, 0, 11];
+    const CHUNK_SPANS: [usize; 6] = [1, 2, 3, 4, 7, 11];
     let mut reference = open_runner_with_kv_quant(
         "quantized-reference",
         model_io::KvQuant::TurboQuant {
@@ -173,7 +174,11 @@ fn quantized_multi_row_chunk_keeps_sequential_logits_and_skips_batch_dispatch() 
             v_bits: 4,
         },
     );
-    let expected = sequential_logits(&mut reference, &tokens);
+    let expected = sequential_logits(&mut reference, &TOKENS);
+    let mut expected_decode = vec![f16::from_f32(0.0); VOCAB as usize];
+    reference
+        .produce(13, TOKENS.len(), &mut expected_decode)
+        .unwrap();
 
     let mut candidate = open_runner_with_kv_quant(
         "quantized-candidate",
@@ -182,16 +187,40 @@ fn quantized_multi_row_chunk_keeps_sequential_logits_and_skips_batch_dispatch() 
             v_bits: 4,
         },
     );
-    let mut actual = vec![f16::from_f32(0.0); VOCAB as usize];
-    crate::families::llama::prefill::reset_batch_attention_dispatch_count();
-    candidate.prefill_chunk(&tokens, 0, &mut actual).unwrap();
+    for chunk_span in CHUNK_SPANS {
+        candidate.reset();
+        let mut actual = vec![f16::from_f32(0.0); VOCAB as usize];
+        let mut offset = 0;
+        crate::families::llama::prefill::reset_batch_attention_dispatch_count();
+        while offset < TOKENS.len() {
+            let live_rows = (TOKENS.len() - offset).min(chunk_span);
+            candidate
+                .prefill_chunk(&TOKENS[offset..offset + live_rows], offset, &mut actual)
+                .unwrap();
+            offset += live_rows;
+        }
 
-    assert_eq!(
-        crate::families::llama::prefill::batch_attention_dispatch_count(),
-        0,
-        "KV-quantized multi-row requests must not invoke batch attention"
-    );
-    assert_eq!(half_bits(&actual), expected);
+        assert_eq!(
+            crate::families::llama::prefill::batch_attention_dispatch_count(),
+            0,
+            "KV-quantized chunks with span {chunk_span} must not invoke batch attention"
+        );
+        assert_eq!(
+            half_bits(&actual),
+            expected,
+            "KV-quantized chunk span {chunk_span} must preserve sequential logits"
+        );
+
+        let mut actual_decode = vec![f16::from_f32(0.0); VOCAB as usize];
+        candidate
+            .produce(13, TOKENS.len(), &mut actual_decode)
+            .unwrap();
+        assert_eq!(
+            half_bits(&actual_decode),
+            half_bits(&expected_decode),
+            "ordinary decode after KV-quantized chunk span {chunk_span} must match sequential decode"
+        );
+    }
 }
 
 #[test]
