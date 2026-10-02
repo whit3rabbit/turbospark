@@ -50,8 +50,15 @@ fn batch_outputs_match_serial_gpu_and_cpu_for_supported_batch_sizes_with_gqa() {
     let kv_width = NUM_KV_HEADS * HEAD_DIM;
     let scale = 1.0 / (HEAD_DIM as f32).sqrt();
 
+    // Alternating query directions make a wrong row-to-Q mapping visible
+    // without changing the parity tolerance.
     let q_f32: Vec<f32> = (0..MAX_LIVE_ROWS * head_width)
-        .map(|index| ((index as f32 * 0.071).sin()) * 0.7)
+        .map(|index| {
+            let row = index / head_width;
+            let dim = index % head_width;
+            let direction = if row % 2 == 0 { 1.0 } else { -1.0 };
+            direction * ((dim as f32 * 0.071).sin()) * 7.0
+        })
         .collect();
     let k_f32: Vec<f32> = (0..max_seq_len * kv_width)
         .map(|index| ((index as f32 * 0.113).sin()) * 0.4)

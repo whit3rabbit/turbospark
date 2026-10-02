@@ -531,6 +531,20 @@ was 0 bytes. The selected 256-thread dispatch and total 10,352-byte
 threadgroup allocation fit those limits. This is pipeline resource evidence
 only; it does not establish model parity, performance, or release readiness.
 
+The causal and query-row guards were mutation-checked on 2026-10-01 with
+`attention_batch_isolation` and `attention_batch_parity`. Changing the per-row
+state-update bound from `p < row_end[r]` to `p <= row_end[r]` made the isolation
+test fail because future K/V changed row 0 by 0.9003906, above its 0.02
+tolerance. The first query-row mutation, loading `tile_start`'s Q for every
+row in the tile, survived the original parity fixture. The fixture now gives
+alternating rows opposite, higher-magnitude Q vectors; the same mutation then
+fails at M=2, row 1, with a 0.061523438 batch-versus-serial GPU error, above
+the unchanged 0.02 tolerance. Both shader mutations were restored byte-for-
+byte before the unmutated tests were rerun, and both targeted tests passed.
+These synthetic Metal checks establish that the selected guards are
+observable; they do not establish real-model parity, performance, or release
+readiness.
+
 ## Order of work
 
 0. ~~Measure prefill's own dispatch ranking.~~ **Done, 2026-08-16**; it is
