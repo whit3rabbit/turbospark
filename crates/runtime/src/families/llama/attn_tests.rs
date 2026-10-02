@@ -311,3 +311,88 @@ fn batch_staging_matches_single_row_qkv_for_each_live_position() {
         );
     }
 }
+
+#[test]
+fn dense_batch_rows_keep_sequential_query_and_residual_order_with_tails() {
+    const TOKENS: [i32; 11] = [5, 9, 2, 7, 1, 3, 8, 4, 6, 0, 11];
+    const CHUNK_SPANS: [usize; 6] = [1, 2, 3, 4, 7, 11];
+
+    let mut reference = open_runner("dense-parity-reference");
+    reference.reset();
+    let hidden = reference.arch.hidden_size as usize;
+    let q_dim = reference.arch.num_heads as usize * reference.arch.full_head_dim as usize;
+    let mut expected_queries = Vec::with_capacity(TOKENS.len());
+    let mut expected_residuals = Vec::with_capacity(TOKENS.len());
+    let mut expected_logits = vec![f16::from_f32(0.0); VOCAB as usize];
+
+    for (position, &token) in TOKENS.iter().enumerate() {
+        if position + 1 == TOKENS.len() {
+            reference
+                .produce(token, position, &mut expected_logits)
+                .unwrap();
+        } else {
+            reference
+                .produce_prefill(token, position, &mut expected_logits)
+                .unwrap();
+        }
+        expected_queries.push(half_bits(&gpu::read_buffer_f16(
+            &reference.scratch.q,
+            0,
+            q_dim,
+        )));
+        expected_residuals.push(half_bits(&gpu::read_buffer_f16(
+            &reference.scratch.x,
+            0,
+            hidden,
+        )));
+    }
+
+    let mut candidate = open_runner("dense-parity-candidate");
+    for chunk_span in CHUNK_SPANS {
+        candidate.reset();
+        let mut actual_logits = vec![f16::from_f32(0.0); VOCAB as usize];
+        let mut offset = 0;
+        while offset < TOKENS.len() {
+            let live_rows = (TOKENS.len() - offset).min(chunk_span);
+            candidate
+                .prefill_chunk(
+                    &TOKENS[offset..offset + live_rows],
+                    offset,
+                    &mut actual_logits,
+                )
+                .unwrap();
+
+            for row in 0..live_rows {
+                let absolute_row = offset + row;
+                let query = if live_rows == 1 {
+                    gpu::read_buffer_f16(&candidate.scratch.q, 0, q_dim)
+                } else {
+                    let batch = candidate
+                        .real_llama
+                        .as_ref()
+                        .and_then(|llama| llama.batch_attention_buffers.as_ref())
+                        .expect("multi-row dense Llama owns batch query storage");
+                    gpu::read_buffer_f16(&batch.q, row * q_dim * 2, q_dim)
+                };
+                assert_eq!(
+                    half_bits(&query),
+                    expected_queries[absolute_row],
+                    "query row {row} in chunk at {offset} (span {chunk_span}) must match token position {absolute_row}"
+                );
+
+                let residual = gpu::read_buffer_f16(&candidate.scratch.x, row * hidden * 2, hidden);
+                assert_eq!(
+                    half_bits(&residual),
+                    expected_residuals[absolute_row],
+                    "residual row {row} in chunk at {offset} (span {chunk_span}) must match token position {absolute_row}"
+                );
+            }
+            offset += live_rows;
+        }
+        assert_eq!(
+            half_bits(&actual_logits),
+            half_bits(&expected_logits),
+            "chunk span {chunk_span} must preserve sequential logits byte-for-byte"
+        );
+    }
+}
