@@ -1,7 +1,8 @@
 use super::{
-    build_batch_attention_plan, chunks_for, validate_batch_row_plans, BatchAttentionBufferLengths,
-    BatchAttentionInputContract, BatchAttentionKvFormat, BatchAttentionKvLayout, RowChunkPlan,
-    MAX_CHUNKS, MIN_POSITIONS_PER_CHUNK,
+    attention_constants_key, attention_function_constants, build_batch_attention_plan, chunks_for,
+    validate_batch_row_plans, BatchAttentionBufferLengths, BatchAttentionInputContract,
+    BatchAttentionKvFormat, BatchAttentionKvLayout, RowChunkPlan, MAX_CHUNKS,
+    MIN_POSITIONS_PER_CHUNK, SOURCE, THREADS_PER_GROUP,
 };
 
 /// The parity tests exercise the chunked path but cannot pin this
@@ -31,6 +32,77 @@ fn short_ranges_stay_unsplit_and_long_ones_saturate() {
     assert_eq!(chunks_for(MIN_POSITIONS_PER_CHUNK * 2), 2);
     assert_eq!(chunks_for(MIN_POSITIONS_PER_CHUNK * MAX_CHUNKS), MAX_CHUNKS);
     assert_eq!(chunks_for(u32::MAX), MAX_CHUNKS);
+}
+
+/// Reflect the compiled batch partial pipeline at its maximum four-row tile
+/// and head dimension. The head counts and row plan use a supported GQA
+/// shape; the production pipeline keeps those dimensions as runtime inputs,
+/// while scale and NC are the function constants used by the encoder.
+#[test]
+fn batch_partial_pipeline_fits_supported_device_resources() {
+    let (head_dim, num_q_heads, num_kv_heads, live_rows) = (512u32, 32u32, 8u32, 16u32);
+    let input_contract = BatchAttentionInputContract {
+        kv_layout: BatchAttentionKvLayout::Linear,
+        kv_format: BatchAttentionKvFormat::Fp16,
+        kv_start: 0,
+        ring_capacity: 0,
+        sink_count: 0,
+    };
+    let plan = build_batch_attention_plan(
+        input_contract,
+        live_rows as usize,
+        live_rows as usize,
+        4095,
+        num_q_heads,
+        num_kv_heads,
+        head_dim,
+    )
+    .expect("maximum-tile batch plan");
+    assert_eq!(plan.max_chunks, MAX_CHUNKS);
+
+    let scale = 1.0f32 / (head_dim as f32).sqrt();
+    let constants = attention_function_constants(scale, 0, plan.max_chunks, false);
+    let constants_key = attention_constants_key(scale, 0, plan.max_chunks, false);
+    let mut context = crate::MetalContext::new().expect("Metal device");
+    let pipeline = context
+        .pipeline(
+            SOURCE,
+            "attention_decode_batch_partial",
+            &constants,
+            &constants_key,
+        )
+        .expect("maximum-tile batch partial pipeline");
+
+    let selected_threads = THREADS_PER_GROUP;
+    let compiled_thread_limit = pipeline.max_total_threads_per_threadgroup();
+    let static_threadgroup_bytes = pipeline.static_threadgroup_memory_length();
+    // The batch partial kernel declares all threadgroup arrays statically and
+    // does not request dynamic threadgroup memory from a compute encoder.
+    let dynamic_threadgroup_bytes = 0u64;
+    let device_threadgroup_limit = context.device().max_threadgroup_memory_length() as u64;
+    let device_name = context.device().name();
+
+    println!(
+        "device={device_name:?} head_dim={head_dim} q_heads={num_q_heads} \
+         kv_heads={num_kv_heads} live_rows={live_rows} max_chunks={} \
+         selected_threads={selected_threads} compiled_thread_limit={compiled_thread_limit} \
+         static_threadgroup_bytes={static_threadgroup_bytes} \
+         dynamic_threadgroup_bytes={dynamic_threadgroup_bytes} \
+         device_threadgroup_limit_bytes={device_threadgroup_limit}",
+        plan.max_chunks,
+    );
+
+    assert!(
+        compiled_thread_limit >= selected_threads,
+        "the encoder selects {selected_threads} threads but the compiled pipeline permits only \
+         {compiled_thread_limit}"
+    );
+    assert!(
+        static_threadgroup_bytes + dynamic_threadgroup_bytes <= device_threadgroup_limit,
+        "compiled threadgroup memory is {} bytes but device {device_name:?} supports only \
+         {device_threadgroup_limit} bytes",
+        static_threadgroup_bytes + dynamic_threadgroup_bytes,
+    );
 }
 
 #[test]

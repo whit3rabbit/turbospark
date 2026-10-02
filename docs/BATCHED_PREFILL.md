@@ -519,6 +519,18 @@ So this is one phase followed by an optional one, rather than a fork:
   whose 1,202 lines cover embed/norm/rope/router/MoE as well and are
   descoped for reasons that still hold.
 
+The compiled batch partial resource check passed on an Apple M4 Max on
+2026-10-01. `cargo test -p turbospark-gpu
+batch_partial_pipeline_fits_supported_device_resources -- --nocapture`
+compiled the production-specialized `attention_decode_batch_partial`
+pipeline for `head_dim=512`, 32 query heads, 8 KV heads, 16 live rows, and
+`NC=16`. Metal reported a 256-thread pipeline limit, 10,352 bytes of static
+threadgroup memory, and 32,768 bytes of device threadgroup-memory capacity.
+The shader requests no dynamic threadgroup memory, so measured dynamic use
+was 0 bytes. The selected 256-thread dispatch and total 10,352-byte
+threadgroup allocation fit those limits. This is pipeline resource evidence
+only; it does not establish model parity, performance, or release readiness.
+
 ## Order of work
 
 0. ~~Measure prefill's own dispatch ranking.~~ **Done, 2026-08-16**; it is
