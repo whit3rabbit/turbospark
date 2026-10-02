@@ -6,6 +6,7 @@ use turbospark_repack::build_synthetic_dense_llama_install;
 const VOCAB: i64 = 128;
 const LAYERS: i64 = 4;
 const LIVE_ROWS: usize = 3;
+const FIRST_POSITION: usize = 2;
 
 fn open_runner(tag: &str) -> RealForwardRunner {
     let dir = std::env::temp_dir().join(format!(
@@ -53,7 +54,7 @@ fn batch_staging_matches_single_row_qkv_for_each_live_position() {
     let mut reference_qkv = Vec::with_capacity(LIVE_ROWS);
 
     for row in 0..LIVE_ROWS {
-        let position = row;
+        let position = FIRST_POSITION + row;
         let pass = reference.context.begin_pass_labeled("llama row reference");
         let input_norm = crate::real_forward_utils::norm_view(
             &reference.weights,
@@ -98,10 +99,8 @@ fn batch_staging_matches_single_row_qkv_for_each_live_position() {
     }
 
     let rope_positions = vec![crate::vision::RopePosition::Sequential; LIVE_ROWS];
-    let pass = staged.context.begin_pass_labeled("llama staged rows");
-    let batch = encode_attention_inputs_batch(
+    let batch = crate::families::llama::prefill::stage_attention_inputs_batch(
         &mut staged.context,
-        &pass,
         &staged.weights,
         &staged.index,
         &staged.arch,
@@ -109,23 +108,18 @@ fn batch_staging_matches_single_row_qkv_for_each_live_position() {
         &staged.scratch,
         &staged.kv,
         layer,
-        0,
+        FIRST_POSITION,
         &rope_positions,
     )
     .unwrap();
-    pass.commit_and_wait();
 
-    assert_eq!(batch.first_query_position, 0);
+    assert_eq!(batch.first_query_position, FIRST_POSITION);
     assert_eq!(batch.row_count, LIVE_ROWS);
     for (row, (expected_q, expected_k, expected_v)) in reference_qkv.iter().enumerate() {
         let q_offset = row * q_dim * 2;
-        let (k_buffer, k_offset) = staged.kv.k_slot(layer, row);
-        let (v_buffer, v_offset) = staged.kv.v_slot(layer, row);
-        assert_eq!(
-            half_bits(&gpu::read_buffer_f16(batch.query, q_offset, q_dim)),
-            half_bits(expected_q),
-            "query row {row} differs from the existing one-row path"
-        );
+        let position = FIRST_POSITION + row;
+        let (k_buffer, k_offset) = staged.kv.k_slot(layer, position);
+        let (v_buffer, v_offset) = staged.kv.v_slot(layer, position);
         assert_eq!(
             half_bits(&gpu::read_buffer_f16(k_buffer, k_offset, kv_dim)),
             half_bits(expected_k),
@@ -135,6 +129,11 @@ fn batch_staging_matches_single_row_qkv_for_each_live_position() {
             half_bits(&gpu::read_buffer_f16(v_buffer, v_offset, kv_dim)),
             half_bits(expected_v),
             "value row {row} differs from the existing one-row path"
+        );
+        assert_eq!(
+            half_bits(&gpu::read_buffer_f16(batch.query, q_offset, q_dim)),
+            half_bits(expected_q),
+            "query row {row} differs from the existing one-row path"
         );
     }
 }

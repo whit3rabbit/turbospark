@@ -30,6 +30,44 @@ use crate::real_forward_utils::norm_view;
 use crate::resid_capture::encode_resid_capture;
 use crate::steering::encode_steering;
 
+/// Encodes one live layer's query and K/V rows, then waits until every cache
+/// slot write is visible before returning the batch-attention inputs.
+///
+/// The preparation helper visits rows in cache-position order. Keeping the
+/// pass local here makes that ordering and its completion a prerequisite for
+/// exposing the query buffer to a future batched-attention caller.
+#[allow(dead_code)] // The multi-row route is added in task 3.4.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn stage_attention_inputs_batch<'a>(
+    context: &mut gpu::MetalContext,
+    weights: &gpu::ResidentGpuWeights,
+    index: &model_io::ResidentIndex,
+    arch: &model_io::ArchConfig,
+    llama: &'a super::RealLlamaState,
+    scratch: &crate::real_forward_types::DecodeScratch,
+    kv: &gpu::KvCacheManager,
+    layer: usize,
+    first_query_position: usize,
+    rope_positions: &[crate::vision::RopePosition],
+) -> Result<attn::PreparedAttentionRows<'a>, RealForwardError> {
+    let pass = context.begin_pass_labeled("llama batch attention staging");
+    let prepared = attn::encode_attention_inputs_batch(
+        context,
+        &pass,
+        weights,
+        index,
+        arch,
+        llama,
+        scratch,
+        kv,
+        layer,
+        first_query_position,
+        rope_positions,
+    )?;
+    pass.commit_and_wait();
+    Ok(prepared)
+}
+
 impl RealForwardRunner {
     /// Runs a whole prefill chunk through the dense `llama` flow, writing
     /// the logits for the position after its last token. Call only once
