@@ -231,6 +231,106 @@ void attention_decode_partial(
     }
 }
 
+// Batch-only split-KV partial pass. The grid is [capacity * NQ * NC], with
+// one independent row/head/chunk state per threadgroup. Unlike the one-row
+// entry points above, each row reads its own [key_start, seq_len) and
+// chunk_len/num_chunks from RowChunkPlan at buffer 9.
+[[kernel, max_total_threads_per_threadgroup(kAttnThreads)]]
+void attention_decode_batch_partial(
+    device const half*  Q             [[buffer(0)]],   // [capacity, num_q_heads, head_dim]
+    device const half*  K             [[buffer(1)]],   // [position, num_kv_heads, head_dim]
+    device const half*  V             [[buffer(2)]],
+    device       float* m_out         [[buffer(3)]],   // [capacity, num_q_heads, NC]
+    device       float* d_out         [[buffer(4)]],
+    device       float* o_out         [[buffer(5)]],   // [capacity, num_q_heads, NC, head_dim]
+    constant     uint&  head_dim      [[buffer(6)]],
+    constant     uint&  num_q_heads   [[buffer(7)]],
+    constant     uint&  num_kv_heads  [[buffer(8)]],
+    device const uint4* row_plans     [[buffer(9)]],   // {key_start, seq_len, chunk_len, num_chunks}
+    constant     uint&  live_rows     [[buffer(10)]],
+    constant     float& scale         [[buffer(11)]],
+    uint tg_id           [[threadgroup_position_in_grid]],
+    uint lid             [[thread_position_in_threadgroup]],
+    uint lsize           [[threads_per_threadgroup]],
+    uint simd_lane_id    [[thread_index_in_simdgroup]],
+    uint simd_group_id   [[simdgroup_index_in_threadgroup]],
+    uint simdgroups      [[simdgroups_per_threadgroup]]
+) {
+    threadgroup float q_smem[kAttnMaxHeadDim];
+    threadgroup float reduce_scratch[kAttnMaxSimdGroups];
+    threadgroup float bcast;
+    const uint HD = attn_fc_head_dim(head_dim);
+    const uint NQ = attn_fc_num_q_heads(num_q_heads);
+    const uint NKV = attn_fc_num_kv_heads(num_kv_heads);
+    const uint NC = FC_ATTN_NUM_CHUNKS;
+
+    const uint chunk = tg_id % NC;
+    const uint q_head = (tg_id / NC) % NQ;
+    const uint row = tg_id / (NC * NQ);
+    // Return before reading row plans, Q, K, or V for capacity rows that are
+    // not live. Every thread in this group takes the same branch.
+    if (row >= live_rows) { return; }
+
+    const uint4 plan = row_plans[row];
+    const uint state = (row * NQ + q_head) * NC + chunk;
+    if (chunk >= plan.w) {
+        if (lid == 0) { m_out[state] = -INFINITY; d_out[state] = 0.0f; }
+        device float* o_row = o_out + state * HD;
+        for (uint i = lid; i < HD; i += lsize) { o_row[i] = 0.0f; }
+        return;
+    }
+
+    const uint p_start = plan.x + chunk * plan.z;
+    const uint p_end = min(plan.y, p_start + plan.z);
+    const uint kv_head = q_head / (NQ / NKV);
+
+    device const half* Q_row = Q + (row * NQ + q_head) * HD;
+    for (uint i = lid; i < HD; i += lsize) {
+        q_smem[i] = float(Q_row[i]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    constexpr uint kPerThread = (kAttnMaxHeadDim + kAttnThreads - 1) / kAttnThreads;
+    float o_local[kPerThread];
+    for (uint k = 0; k < kPerThread; ++k) { o_local[k] = 0.0f; }
+
+    float m_run = -INFINITY;
+    float d_run = 0.0f;
+    for (uint p = p_start; p < p_end; ++p) {
+        device const half* K_row = K + (p * NKV + kv_head) * HD;
+        device const half* V_row = V + (p * NKV + kv_head) * HD;
+
+        float partial = 0.0f;
+        for (uint i = lid; i < HD; i += lsize) {
+            partial = fma(q_smem[i], float(K_row[i]), partial);
+        }
+        float score = block_reduce_sum(partial,
+                                       simd_lane_id, simd_group_id, simdgroups,
+                                       reduce_scratch, &bcast);
+        score *= attn_fc_scale(scale);
+
+        const float m_new = max(m_run, score);
+        const float alpha = attn_softmax_exp(m_run - m_new);
+        const float p_exp = attn_softmax_exp(score - m_new);
+        d_run = d_run * alpha + p_exp;
+
+        uint slot = 0;
+        for (uint i = lid; i < HD; i += lsize) {
+            o_local[slot] = o_local[slot] * alpha + p_exp * float(V_row[i]);
+            slot += 1;
+        }
+        m_run = m_new;
+    }
+
+    if (lid == 0) { m_out[state] = m_run; d_out[state] = d_run; }
+    device float* o_row = o_out + state * HD;
+    uint slot = 0;
+    for (uint i = lid; i < HD; i += lsize) {
+        o_row[i] = o_local[slot];
+        slot += 1;
+    }
+}
+
 [[kernel, max_total_threads_per_threadgroup(kAttnThreads)]]
 void attention_decode_gqa_swa_partial(
     device const half*  Q             [[buffer(0)]],
