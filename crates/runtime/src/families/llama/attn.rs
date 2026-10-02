@@ -12,8 +12,144 @@ use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, K
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 
+/// Query rows prepared for the dense-Llama batch attention encoder.
+///
+/// K/V remain in their existing linear cache slots. The caller must commit
+/// and wait for the pass that populated those slots before dispatching
+/// attention.
+#[allow(dead_code)] // The chunked-prefill caller consumes this after its batch dispatch is wired.
+pub(crate) struct PreparedAttentionRows<'a> {
+    pub(crate) query: &'a gpu::MetalBuffer,
+    pub(crate) first_query_position: usize,
+    pub(crate) row_count: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn encode_attention_block(
+#[allow(dead_code)] // Used by the dense chunked-prefill staging path.
+pub(crate) fn encode_attention_inputs_batch<'a>(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    llama: &'a RealLlamaState,
+    scratch: &DecodeScratch,
+    kv: &gpu::KvCacheManager,
+    layer: usize,
+    first_query_position: usize,
+    rope_positions: &[crate::vision::RopePosition],
+) -> Result<PreparedAttentionRows<'a>, RealForwardError> {
+    let row_count = rope_positions.len();
+    if row_count == 0 || row_count > crate::real_forward_types::MAX_PREFILL_BATCH {
+        return Err(RealForwardError::Unsupported(format!(
+            "dense Llama attention staging row count {row_count} is outside 1..={}",
+            crate::real_forward_types::MAX_PREFILL_BATCH
+        )));
+    }
+    let num_layers = usize::try_from(arch.num_layers)
+        .map_err(|_| RealForwardError::Unsupported("invalid Llama layer count".into()))?;
+    if arch.family != model_io::ModelFamily::Llama
+        || arch.num_experts != 0
+        || arch.full_attention_layer_mask.len() != num_layers
+        || arch.full_attention_layer_mask.iter().any(|&mask| mask != 1)
+        || layer >= num_layers
+    {
+        return Err(RealForwardError::Unsupported(
+            "batch attention staging requires dense full-attention Llama".into(),
+        ));
+    }
+    if (0..num_layers).any(|layer| kv.layer_quant(layer).is_some()) {
+        return Err(RealForwardError::Unsupported(
+            "dense Llama attention staging requires unquantized KV".into(),
+        ));
+    }
+    let batch = llama.batch_attention_buffers.as_ref().ok_or_else(|| {
+        RealForwardError::Unsupported(
+            "batch attention buffers are unavailable for this Llama architecture".into(),
+        )
+    })?;
+
+    let hidden = arch.hidden_size as usize;
+    let q_dim = (arch.num_heads as usize)
+        .checked_mul(arch.full_head_dim as usize)
+        .ok_or_else(|| RealForwardError::Unsupported("query row size overflow".into()))?;
+    let q_row_bytes = q_dim
+        .checked_mul(2)
+        .ok_or_else(|| RealForwardError::Unsupported("query row byte size overflow".into()))?;
+    let required_q_bytes = q_row_bytes
+        .checked_mul(row_count)
+        .ok_or_else(|| RealForwardError::Unsupported("query batch size overflow".into()))?;
+    if required_q_bytes > batch.q.length() as usize {
+        return Err(RealForwardError::Unsupported(format!(
+            "query batch needs {required_q_bytes} bytes but its buffer has {}",
+            batch.q.length()
+        )));
+    }
+    let required_input_bytes = hidden
+        .checked_mul(2)
+        .and_then(|bytes| bytes.checked_mul(row_count))
+        .ok_or_else(|| RealForwardError::Unsupported("input batch size overflow".into()))?;
+    if required_input_bytes > scratch.x.length() as usize {
+        return Err(RealForwardError::Unsupported(format!(
+            "input batch needs {required_input_bytes} bytes but its buffer has {}",
+            scratch.x.length()
+        )));
+    }
+    let final_position = first_query_position
+        .checked_add(row_count - 1)
+        .ok_or_else(|| RealForwardError::Unsupported("query position range overflow".into()))?;
+    u32::try_from(final_position).map_err(|_| {
+        RealForwardError::Unsupported(format!(
+            "query position {final_position} exceeds the GPU position range"
+        ))
+    })?;
+
+    let input_norm = crate::real_forward_utils::norm_view(
+        weights,
+        index,
+        &layer_tensor(layer, "input_layernorm.weight"),
+        hidden,
+    )?;
+    for (row, &rope_position) in rope_positions.iter().enumerate() {
+        let position = first_query_position + row;
+        let input_offset = row * hidden * 2;
+        gpu::encode_rms_norm_bf16w(
+            context,
+            pass,
+            (&scratch.x, input_offset as u64),
+            input_norm,
+            (&scratch.normed, 0),
+            hidden as u32,
+            llama.rms_eps,
+        )
+        .map_err(RealForwardError::Gpu)?;
+
+        let query_offset = row * q_row_bytes;
+        encode_attention_input_row(
+            context,
+            pass,
+            weights,
+            index,
+            arch,
+            llama,
+            scratch,
+            kv,
+            layer,
+            position,
+            rope_position,
+            (&batch.q, query_offset as u64),
+        )?;
+    }
+
+    Ok(PreparedAttentionRows {
+        query: &batch.q,
+        first_query_position,
+        row_count,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_attention_input_row(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     weights: &gpu::ResidentGpuWeights,
@@ -25,6 +161,7 @@ pub(crate) fn encode_attention_block(
     layer: usize,
     position: usize,
     rope_position: crate::vision::RopePosition,
+    query: (&gpu::MetalBuffer, u64),
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hidden = arch.hidden_size as usize;
@@ -53,7 +190,7 @@ pub(crate) fn encode_attention_block(
         q_dim,
         hidden,
         (&scratch.normed, 0),
-        (&scratch.q, 0),
+        query,
     )?;
     for (suffix, out) in [
         ("k_proj.weight", (k_buf, k_off)),
@@ -77,7 +214,7 @@ pub(crate) fn encode_attention_block(
     // position, producing finite but incorrect attention logits.
     if llama.qkv_bias {
         for (suffix, elems, out) in [
-            ("q_proj.bias", q_dim, (&scratch.q, 0u64)),
+            ("q_proj.bias", q_dim, query),
             ("k_proj.bias", kv_dim, (k_buf, k_off)),
             ("v_proj.bias", kv_dim, (v_buf, v_off)),
         ] {
@@ -89,7 +226,7 @@ pub(crate) fn encode_attention_block(
     // Normalize before RoPE: learned norm weights make the reverse order
     // a different function, even when its outputs look plausible.
     for (data, heads, suffix) in [
-        ((&scratch.q, 0u64), num_heads, "q_norm.weight"),
+        (query, num_heads, "q_norm.weight"),
         ((k_buf, k_off), num_kv, "k_norm.weight"),
     ] {
         use super::state::QkNorm;
@@ -151,7 +288,7 @@ pub(crate) fn encode_attention_block(
     };
     let section = arch.vision.mrope_section;
     let theta = arch.full_rope_theta as f32;
-    for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
+    for (data, heads) in [(query, num_heads), ((k_buf, k_off), num_kv)] {
         if let Some(positions) = mrope {
             gpu::encode_rope_mrope_interleaved(
                 context,
@@ -192,6 +329,45 @@ pub(crate) fn encode_attention_block(
         }
     }
 
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_attention_block(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    llama: &RealLlamaState,
+    scratch: &DecodeScratch,
+    kv: &gpu::KvCacheManager,
+    layer: usize,
+    position: usize,
+    rope_position: crate::vision::RopePosition,
+) -> Result<(), RealForwardError> {
+    let hidden = arch.hidden_size as usize;
+    let num_heads = arch.num_heads as u32;
+    let num_kv = arch.num_full_kv_heads as u32;
+    let head_dim = arch.full_head_dim as u32;
+    let q_dim = (num_heads * head_dim) as usize;
+    let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
+
+    encode_attention_input_row(
+        context,
+        pass,
+        weights,
+        index,
+        arch,
+        llama,
+        scratch,
+        kv,
+        layer,
+        position,
+        rope_position,
+        (&scratch.q, 0),
+    )?;
+
     // No-op on an FP16 layer; quantizes the (now normed and RoPE'd) staging
     // row into the cache on a TurboQuant-quantized one.
     encode_kv_commit(
@@ -230,6 +406,10 @@ pub(crate) fn encode_attention_block(
         (&scratch.o, 0),
     )
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "attn_tests.rs"]
+mod tests;
 
 impl crate::real_forward::RealForwardRunner {
     /// Encodes the attention and router GEMV pass (`cb1`) for a single token `t`
