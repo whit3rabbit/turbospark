@@ -2,7 +2,70 @@
 //! `PrefillChunkScratchBuffers`'s real Metal buffer allocation.
 #![cfg(target_os = "macos")]
 
-use turbospark_gpu::{MetalContext, PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
+use turbospark_gpu::{
+    BatchAttentionScratchLayout, BatchAttentionScratchLayoutError, MetalContext,
+    PrefillChunkScratchBuffers, PrefillChunkScratchLayout, MAX_BATCH_ROWS,
+};
+
+#[test]
+fn batch_attention_layout_accounts_for_every_capacity_buffer() {
+    const NUM_Q_HEADS: usize = 8;
+    for head_dim in [32, 64, 128, 256, 512] {
+        let layout = BatchAttentionScratchLayout::new(NUM_Q_HEADS, head_dim).unwrap();
+        let capacity = MAX_BATCH_ROWS;
+        let q_elements = capacity * NUM_Q_HEADS * head_dim;
+        let row_plan_bytes = capacity * 4 * std::mem::size_of::<u32>();
+        let partial_bytes =
+            capacity * NUM_Q_HEADS * 16 * (2 + head_dim) * std::mem::size_of::<f32>();
+        let expected_total = capacity * NUM_Q_HEADS * head_dim * 4
+            + capacity * 16
+            + capacity * NUM_Q_HEADS * 16 * (2 + head_dim) * 4;
+
+        assert_eq!(layout.capacity(), capacity);
+        assert_eq!(layout.num_q_heads(), NUM_Q_HEADS);
+        assert_eq!(layout.head_dim(), head_dim);
+        assert_eq!(layout.max_chunks(), 16);
+        assert_eq!(
+            layout.q_buffer_bytes(),
+            q_elements * std::mem::size_of::<u16>()
+        );
+        assert_eq!(
+            layout.output_buffer_bytes(),
+            q_elements * std::mem::size_of::<u16>()
+        );
+        assert_eq!(layout.row_plan_bytes(), row_plan_bytes);
+        assert_eq!(layout.partial_state_bytes(), partial_bytes);
+        assert_eq!(
+            q_elements * 2 * std::mem::size_of::<u16>() + row_plan_bytes + partial_bytes,
+            expected_total
+        );
+        assert_eq!(layout.total_bytes(), expected_total);
+    }
+}
+
+#[test]
+fn batch_attention_layout_rejects_invalid_head_dimensions() {
+    assert_eq!(
+        BatchAttentionScratchLayout::new(0, 32),
+        Err(BatchAttentionScratchLayoutError::ZeroQueryHeads)
+    );
+    assert_eq!(
+        BatchAttentionScratchLayout::new(1, 0),
+        Err(BatchAttentionScratchLayoutError::InvalidHeadDimension)
+    );
+    assert_eq!(
+        BatchAttentionScratchLayout::new(1, 513),
+        Err(BatchAttentionScratchLayoutError::InvalidHeadDimension)
+    );
+}
+
+#[test]
+fn batch_attention_layout_refuses_size_overflow() {
+    assert_eq!(
+        BatchAttentionScratchLayout::new(usize::MAX, 512),
+        Err(BatchAttentionScratchLayoutError::SizeOverflow)
+    );
+}
 
 fn dense_arch() -> model_io::ArchConfig {
     model_io::ArchConfig {

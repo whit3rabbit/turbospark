@@ -12,6 +12,133 @@ use model_io::ArchConfig;
 
 const FP16_SIZE: usize = 2;
 const U32_SIZE: usize = 4;
+const FP32_SIZE: usize = 4;
+const ROW_PLAN_U32_FIELDS: usize = 4;
+
+/// Byte layout for dense-Llama multi-row attention scratch buffers.
+///
+/// The layout reserves the existing prefill row capacity and the maximum
+/// chunk count used by split-KV attention. Callers use these byte lengths
+/// both when allocating the buffers and when accounting for their memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatchAttentionScratchLayout {
+    capacity: usize,
+    num_q_heads: usize,
+    head_dim: usize,
+    q_buffer_bytes: usize,
+    output_buffer_bytes: usize,
+    row_plan_bytes: usize,
+    partial_state_bytes: usize,
+    total_bytes: usize,
+}
+
+/// Failure returned when a batch-attention scratch layout cannot be sized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchAttentionScratchLayoutError {
+    /// Query-head count must be non-zero.
+    ZeroQueryHeads,
+    /// Head dimension must be within the decode-attention shader limit.
+    InvalidHeadDimension,
+    /// A required byte count overflowed `usize`.
+    SizeOverflow,
+}
+
+impl BatchAttentionScratchLayout {
+    /// Computes a capacity-sized layout for the given query heads and head
+    /// dimension. Every byte count uses checked arithmetic.
+    pub fn new(
+        num_q_heads: usize,
+        head_dim: usize,
+    ) -> Result<Self, BatchAttentionScratchLayoutError> {
+        if num_q_heads == 0 {
+            return Err(BatchAttentionScratchLayoutError::ZeroQueryHeads);
+        }
+        if head_dim == 0 || head_dim > crate::MAX_DECODE_ATTENTION_HEAD_DIM as usize {
+            return Err(BatchAttentionScratchLayoutError::InvalidHeadDimension);
+        }
+
+        let capacity = crate::MAX_BATCH_ROWS;
+        let max_chunks = crate::attention_decode::MAX_CHUNKS as usize;
+        let partial_width = head_dim
+            .checked_add(2)
+            .ok_or(BatchAttentionScratchLayoutError::SizeOverflow)?;
+        let q_elements = checked_product(&[capacity, num_q_heads, head_dim])?;
+        let q_buffer_bytes = checked_product(&[q_elements, FP16_SIZE])?;
+        let output_buffer_bytes = checked_product(&[q_elements, FP16_SIZE])?;
+        let row_plan_bytes = checked_product(&[capacity, ROW_PLAN_U32_FIELDS, U32_SIZE])?;
+        let partial_state_bytes =
+            checked_product(&[capacity, num_q_heads, max_chunks, partial_width, FP32_SIZE])?;
+        let total_bytes = q_buffer_bytes
+            .checked_add(output_buffer_bytes)
+            .and_then(|bytes| bytes.checked_add(row_plan_bytes))
+            .and_then(|bytes| bytes.checked_add(partial_state_bytes))
+            .ok_or(BatchAttentionScratchLayoutError::SizeOverflow)?;
+
+        Ok(Self {
+            capacity,
+            num_q_heads,
+            head_dim,
+            q_buffer_bytes,
+            output_buffer_bytes,
+            row_plan_bytes,
+            partial_state_bytes,
+            total_bytes,
+        })
+    }
+
+    /// Maximum row count reserved by the existing prefill path.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Number of query heads used to size the buffers.
+    pub fn num_q_heads(&self) -> usize {
+        self.num_q_heads
+    }
+
+    /// Head dimension used to size the buffers.
+    pub fn head_dim(&self) -> usize {
+        self.head_dim
+    }
+
+    /// Maximum split-KV chunk count reserved by the existing attention path.
+    pub fn max_chunks(&self) -> usize {
+        crate::attention_decode::MAX_CHUNKS as usize
+    }
+
+    /// Byte length of the FP16 query buffer.
+    pub fn q_buffer_bytes(&self) -> usize {
+        self.q_buffer_bytes
+    }
+
+    /// Byte length of the FP16 attention-output buffer.
+    pub fn output_buffer_bytes(&self) -> usize {
+        self.output_buffer_bytes
+    }
+
+    /// Byte length of the capacity-sized `[capacity, 4]` u32 row plans.
+    pub fn row_plan_bytes(&self) -> usize {
+        self.row_plan_bytes
+    }
+
+    /// Byte length of the FP32 partial state across all reserved chunks.
+    pub fn partial_state_bytes(&self) -> usize {
+        self.partial_state_bytes
+    }
+
+    /// Exact total byte length for allocation and memory-oracle accounting.
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes
+    }
+}
+
+fn checked_product(values: &[usize]) -> Result<usize, BatchAttentionScratchLayoutError> {
+    values.iter().try_fold(1usize, |product, value| {
+        product
+            .checked_mul(*value)
+            .ok_or(BatchAttentionScratchLayoutError::SizeOverflow)
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PrefillChunkScratchLayout {

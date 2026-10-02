@@ -314,7 +314,10 @@ pub use power_state::{
     low_power_mode_enabled, memory_pressure_raw, physical_memory, thermal_state_raw,
 };
 #[cfg(target_os = "macos")]
-pub use prefill_scratch::{PrefillChunkScratchBuffers, PrefillChunkScratchLayout};
+pub use prefill_scratch::{
+    BatchAttentionScratchLayout, BatchAttentionScratchLayoutError, PrefillChunkScratchBuffers,
+    PrefillChunkScratchLayout,
+};
 #[cfg(target_os = "macos")]
 pub use qsa_indexer::{
     encode_qsa_advance_blocks, encode_qsa_pool_blocks_mean, encode_qsa_score_blocks,

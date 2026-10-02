@@ -41,7 +41,7 @@ const THREADS_PER_GROUP: u64 = 256; // kAttnThreads.
 /// percent of the best chunk count at every context from 256 to 4096,
 /// while 32 starts regressing (more empty chunks and a wider combine for
 /// no extra parallelism).
-const MAX_CHUNKS: u32 = 16;
+pub(crate) const MAX_CHUNKS: u32 = 16;
 
 /// How many KV positions one threadgroup must own before splitting again.
 /// Chunks shorter than this are not worth their share of the combine
