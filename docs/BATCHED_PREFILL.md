@@ -545,6 +545,21 @@ These synthetic Metal checks establish that the selected guards are
 observable; they do not establish real-model parity, performance, or release
 readiness.
 
+Neutral partial initialization and combine indexing were mutation-checked on
+2026-10-01 with the existing `attention_batch_row_plan` and
+`attention_batch_partial` Metal tests. Replacing the unused-chunk max sentinel
+`-INFINITY` with `0.0f` failed the neutral-slot assertion (`got 0.0`, expected
+`-inf`). Changing the batch output pointer from `head_index * HD` to
+`q_head * HD` failed at output `0/0/0` (`got 0.69970703`, expected
+`-0.40907693`). Changing the row/head/chunk state base from `head_index * NC`
+to `row * NC + q_head` failed at output `0/1/0` (`got -0.234375`, expected
+`0.018550487`). Each mutation was applied once, then restored immediately from
+a saved shader copy; the restored shader SHA-256 matched the original
+`c0c35aece76f8bf3a4f916813af3e7462b58f5d53cdc53de4d5811ac49dfb517`, and each
+targeted test passed again. These synthetic edge checks establish sensitivity
+to neutral-state and combine-indexing errors only; they do not establish
+real-model parity, performance, or release readiness.
+
 ## Order of work
 
 0. ~~Measure prefill's own dispatch ranking.~~ **Done, 2026-08-16**; it is
