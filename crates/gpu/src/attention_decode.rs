@@ -32,6 +32,7 @@ use metal::{FunctionConstantValues, MTLDataType};
 
 use crate::bytes::{f32_bytes, half_slice_to_le_bytes, read_half_buffer, u32_bytes};
 use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext, PassEncoder};
+use crate::prefill_scratch::BatchAttentionScratchLayout;
 
 pub(crate) const SOURCE: &str = include_str!("shaders/attention.metal");
 const THREADS_PER_GROUP: u64 = 256; // kAttnThreads.
@@ -489,6 +490,85 @@ fn invalid_batch_input(detail: impl Into<String>) -> GpuError {
     GpuError::InvalidInput(detail.into())
 }
 
+/// Caller-owned row-plan and FP32 partial buffers for batched attention.
+///
+/// The layout is retained with the buffers so the encoder uses the capacity
+/// that sized the allocation rather than a caller-supplied dispatch value.
+pub struct BatchAttentionScratch {
+    pub row_plan: metal::Buffer,
+    pub m: metal::Buffer,
+    pub d: metal::Buffer,
+    pub o: metal::Buffer,
+    layout: BatchAttentionScratchLayout,
+}
+
+impl BatchAttentionScratch {
+    /// Allocate row-plan and partial buffers from the supplied capacity layout.
+    pub fn new(
+        context: &MetalContext,
+        layout: BatchAttentionScratchLayout,
+    ) -> Result<Self, GpuError> {
+        let capacity = layout.capacity();
+        let num_q_heads = layout.num_q_heads();
+        let head_dim = layout.head_dim();
+        let max_chunks = layout.max_chunks();
+        let slots = checked_batch_product(&[capacity, num_q_heads, max_chunks])?;
+        let scalar_bytes = checked_batch_byte_count(&[slots], size_of::<f32>())?;
+        let output_bytes = checked_batch_byte_count(&[slots, head_dim], size_of::<f32>())?;
+        let partial_bytes = scalar_bytes
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(output_bytes))
+            .ok_or_else(|| invalid_batch_input("batch partial-state allocation overflows"))?;
+        if partial_bytes
+            != u64::try_from(layout.partial_state_bytes()).map_err(|_| {
+                invalid_batch_input("batch partial-state allocation exceeds Metal's range")
+            })?
+        {
+            return Err(invalid_batch_input(
+                "batch scratch layout does not match its partial-state allocation",
+            ));
+        }
+        let row_plan_bytes = u64::try_from(layout.row_plan_bytes())
+            .map_err(|_| invalid_batch_input("row-plan allocation exceeds Metal's range"))?;
+
+        Ok(Self {
+            row_plan: context.new_output_buffer(row_plan_bytes),
+            m: context.new_output_buffer(scalar_bytes),
+            d: context.new_output_buffer(scalar_bytes),
+            o: context.new_output_buffer(output_bytes),
+            layout,
+        })
+    }
+
+    /// Capacity and dimensions used to allocate these buffers.
+    pub fn layout(&self) -> BatchAttentionScratchLayout {
+        self.layout
+    }
+}
+
+fn available_buffer_bytes(buffer: &metal::Buffer, offset: u64) -> Result<u64, GpuError> {
+    buffer
+        .length()
+        .checked_sub(offset)
+        .ok_or_else(|| invalid_batch_input("buffer byte offset is past the end of the buffer"))
+}
+
+fn checked_buffer_sum(values: &[u64]) -> Result<u64, GpuError> {
+    values.iter().try_fold(0u64, |sum, value| {
+        sum.checked_add(*value)
+            .ok_or_else(|| invalid_batch_input("batch buffer length sum overflows"))
+    })
+}
+
+fn require_buffer_length(name: &str, actual: u64, required: u64) -> Result<(), GpuError> {
+    if actual < required {
+        return Err(invalid_batch_input(format!(
+            "{name} buffer has {actual} bytes, requires at least {required}"
+        )));
+    }
+    Ok(())
+}
+
 /// `attention_decode_partial` references function constants
 /// `FC_ATTN_HEAD_DIM`(60)/`FC_ATTN_NUM_Q_HEADS`(61)/`FC_ATTN_NUM_KV_HEADS`(62)/
 /// `FC_ATTN_USE_FC`(63)/`FC_ATTN_SCALE`(64)/`FC_ATTN_NUM_CHUNKS`(65)/
@@ -620,6 +700,168 @@ impl AttentionScratch {
             o: context.new_output_buffer(slots * head_dim as u64 * 4),
         }
     }
+}
+
+/// Encode both batch-only split-KV attention passes for row-major Q/output.
+///
+/// `input_contract` must describe the actual cache/configuration that owns
+/// K/V. The GPU crate builds contiguous row plans from `first_query_position`
+/// and `live_rows`, validates every buffer before compiling or encoding a
+/// pass, and specializes both batch pipelines by scale and maximum row chunk
+/// count. Existing one-row callers continue to use
+/// [`encode_attention_decode`].
+#[allow(clippy::too_many_arguments)]
+pub fn encode_attention_decode_batch(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    scratch: &BatchAttentionScratch,
+    out: (&metal::Buffer, u64),
+    input_contract: BatchAttentionInputContract,
+    first_query_position: u32,
+    live_rows: usize,
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    scale: f32,
+) -> Result<(), GpuError> {
+    let layout = scratch.layout;
+    if layout.num_q_heads() != num_q_heads as usize || layout.head_dim() != head_dim as usize {
+        return Err(invalid_batch_input(
+            "batch scratch layout dimensions do not match attention dimensions",
+        ));
+    }
+
+    let plan = build_batch_attention_plan(
+        input_contract,
+        live_rows,
+        layout.capacity(),
+        first_query_position,
+        num_q_heads,
+        num_kv_heads,
+        head_dim,
+    )?;
+
+    let q_bytes = available_buffer_bytes(q.0, q.1)?;
+    let output_bytes = available_buffer_bytes(out.0, out.1)?;
+    let partial_bytes =
+        checked_buffer_sum(&[scratch.m.length(), scratch.d.length(), scratch.o.length()])?;
+    plan.validate_buffer_lengths(BatchAttentionBufferLengths {
+        q_bytes,
+        k_bytes: k_buffer.length(),
+        v_bytes: v_buffer.length(),
+        output_bytes,
+        row_plan_bytes: scratch.row_plan.length(),
+        partial_bytes,
+    })?;
+
+    // Enforce the full layout allocation, not just the live batch prefix.
+    // The runtime and memory oracle both size these buffers from this layout.
+    require_buffer_length(
+        "Q",
+        q_bytes,
+        u64::try_from(layout.q_buffer_bytes())
+            .map_err(|_| invalid_batch_input("Q buffer requirement exceeds Metal's range"))?,
+    )?;
+    require_buffer_length(
+        "output",
+        output_bytes,
+        u64::try_from(layout.output_buffer_bytes())
+            .map_err(|_| invalid_batch_input("output buffer requirement exceeds Metal's range"))?,
+    )?;
+    require_buffer_length(
+        "row-plan",
+        scratch.row_plan.length(),
+        u64::try_from(layout.row_plan_bytes())
+            .map_err(|_| invalid_batch_input("row-plan requirement exceeds Metal's range"))?,
+    )?;
+    let capacity_slots =
+        checked_batch_product(&[layout.capacity(), layout.num_q_heads(), layout.max_chunks()])?;
+    let scalar_plane_bytes = checked_batch_byte_count(&[capacity_slots], size_of::<f32>())?;
+    let output_plane_bytes =
+        checked_batch_byte_count(&[capacity_slots, layout.head_dim()], size_of::<f32>())?;
+    require_buffer_length("partial max", scratch.m.length(), scalar_plane_bytes)?;
+    require_buffer_length(
+        "partial denominator",
+        scratch.d.length(),
+        scalar_plane_bytes,
+    )?;
+    require_buffer_length("partial output", scratch.o.length(), output_plane_bytes)?;
+    if scratch.row_plan.contents().is_null() {
+        return Err(invalid_batch_input(
+            "row-plan buffer must be CPU-writable shared memory",
+        ));
+    }
+
+    let constants = attention_function_constants(scale, 0, plan.max_chunks, false);
+    let constants_key = attention_constants_key(scale, 0, plan.max_chunks, false);
+    // Compile both functions before the first dispatch so a missing combine
+    // entry point cannot leave a partial-only pass in the caller's encoder.
+    let partial_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_batch_partial",
+        &constants,
+        &constants_key,
+    )?;
+    let combine_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_batch_combine",
+        &constants,
+        &constants_key,
+    )?;
+
+    // RowChunkPlan is repr(C), exactly four u32 fields, and Metal buffers are
+    // shared CPU/GPU storage. The capacity tail is intentionally untouched.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            plan.row_plans.as_ptr(),
+            scratch.row_plan.contents().cast::<RowChunkPlan>(),
+            plan.row_plans.len(),
+        );
+    }
+
+    pass.encode_threadgroups(
+        &partial_pipeline,
+        &[
+            (q.0, 0, q.1),
+            (k_buffer, 1, 0),
+            (v_buffer, 2, 0),
+            (&scratch.m, 3, 0),
+            (&scratch.d, 4, 0),
+            (&scratch.o, 5, 0),
+            (&scratch.row_plan, 9, 0),
+        ],
+        &[
+            (u32_bytes(&head_dim), 6),
+            (u32_bytes(&num_q_heads), 7),
+            (u32_bytes(&num_kv_heads), 8),
+            (u32_bytes(&plan.live_rows), 10),
+            (f32_bytes(&scale), 11),
+        ],
+        plan.partial_threadgroups,
+        THREADS_PER_GROUP,
+    );
+
+    pass.encode_threadgroups(
+        &combine_pipeline,
+        &[
+            (&scratch.m, 0, 0),
+            (&scratch.d, 1, 0),
+            (&scratch.o, 2, 0),
+            (out.0, 3, out.1),
+        ],
+        &[
+            (u32_bytes(&head_dim), 4),
+            (u32_bytes(&num_q_heads), 5),
+            (u32_bytes(&plan.max_chunks), 6),
+            (u32_bytes(&plan.live_rows), 7),
+        ],
+        plan.combine_threadgroups,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
 }
 
 /// Encoder-level variant of [`attention_decode_buffers`]: Q at a
