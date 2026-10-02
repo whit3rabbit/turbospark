@@ -30,13 +30,47 @@ use crate::real_forward_utils::norm_view;
 use crate::resid_capture::encode_resid_capture;
 use crate::steering::encode_steering;
 
+#[cfg(all(test, target_os = "macos"))]
+thread_local! {
+    static BATCH_ATTENTION_DISPATCH_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(all(test, target_os = "macos"))]
+pub(super) fn reset_batch_attention_dispatch_count() {
+    BATCH_ATTENTION_DISPATCH_COUNT.with(|value| value.set(0));
+}
+
+#[cfg(all(test, target_os = "macos"))]
+pub(super) fn batch_attention_dispatch_count() -> usize {
+    BATCH_ATTENTION_DISPATCH_COUNT.with(std::cell::Cell::get)
+}
+
+pub(super) fn batch_attention_route_eligible(
+    arch: &model_io::ArchConfig,
+    kv: &gpu::KvCacheManager,
+    live_rows: usize,
+) -> bool {
+    let Ok(num_layers) = usize::try_from(arch.num_layers) else {
+        return false;
+    };
+    if live_rows <= 1
+        || arch.family != model_io::ModelFamily::Llama
+        || arch.num_experts != 0
+        || num_layers == 0
+        || arch.full_attention_layer_mask.len() != num_layers
+        || arch.full_attention_layer_mask.iter().any(|&mask| mask != 1)
+    {
+        return false;
+    }
+    (0..num_layers).all(|layer| kv.layer_quant(layer).is_none())
+}
+
 /// Encodes one live layer's query and K/V rows, then waits until every cache
 /// slot write is visible before returning the batch-attention inputs.
 ///
 /// The preparation helper visits rows in cache-position order. Keeping the
 /// pass local here makes that ordering and its completion a prerequisite for
-/// exposing the query buffer to a future batched-attention caller.
-#[allow(dead_code)] // The multi-row route is added in task 3.4.
+/// exposing the query buffer to batched attention.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn stage_attention_inputs_batch<'a>(
     context: &mut gpu::MetalContext,
@@ -159,6 +193,7 @@ impl RealForwardRunner {
                 "token id {bad} outside vocab {vocab}"
             )));
         }
+        let use_batch_attention = batch_attention_route_eligible(&arch, &self.kv, m);
 
         let embed_name = "language_model.model.embed_tokens.weight";
 
@@ -197,7 +232,7 @@ impl RealForwardRunner {
                 }
             };
 
-        let pass = self.context.begin_pass_labeled("llama dense chunk cb");
+        let mut pass = Some(self.context.begin_pass_labeled("llama dense chunk cb"));
         // No `sqrt(hidden)` embedding scale, matching the sequential flow:
         // this architecture's manifest declares `embeddingScaledBySqrtHidden`
         // false and `RealLlamaState::build` refuses an install that says
@@ -218,7 +253,7 @@ impl RealForwardRunner {
                 None => {
                     encode_embed_any(
                         &mut self.context,
-                        &pass,
+                        pass.as_ref().expect("chunk pass remains active"),
                         &self.weights,
                         &self.index,
                         embed_name,
@@ -257,25 +292,12 @@ impl RealForwardRunner {
                 hidden,
             )?;
 
-            for (t, rope_position) in rope_positions.iter().enumerate() {
-                let rope_position = *rope_position;
-                let position = start_position + t;
-                let x_off = (t * hidden * 2) as u64;
-
-                gpu::encode_rms_norm_bf16w(
+            if use_batch_attention {
+                pass.take()
+                    .expect("chunk pass remains active before batch staging")
+                    .commit_and_wait();
+                let prepared = stage_attention_inputs_batch(
                     context,
-                    &pass,
-                    (&scratch.x, x_off),
-                    input_norm,
-                    (&scratch.normed, 0),
-                    hidden as u32,
-                    llama.rms_eps,
-                )
-                .map_err(gpu_err)?;
-
-                attn::encode_attention_block(
-                    context,
-                    &pass,
                     weights,
                     index,
                     &arch,
@@ -283,54 +305,199 @@ impl RealForwardRunner {
                     scratch,
                     kv,
                     layer,
-                    position,
-                    rope_position,
+                    start_position,
+                    &rope_positions,
                 )?;
-
-                // RAW residual add at this token's OWN row: this
-                // architecture normalizes neither the attention output nor
-                // the FFN output on the way back into the stream (Gotcha 11
-                // in `crates/runtime/CLAUDE.md`).
-                gpu::encode_residual_add(
+                let batch = llama.batch_attention_buffers.as_ref().ok_or_else(|| {
+                    RealForwardError::Unsupported(
+                        "dense Llama batch attention buffers are unavailable".into(),
+                    )
+                })?;
+                let (k_buffer, _) = kv.k_slot(layer, 0);
+                let (v_buffer, _) = kv.v_slot(layer, 0);
+                let first_query_position =
+                    u32::try_from(prepared.first_query_position).map_err(|_| {
+                        RealForwardError::Unsupported(format!(
+                            "query position {} exceeds the GPU position range",
+                            prepared.first_query_position
+                        ))
+                    })?;
+                let head_dim = arch.full_head_dim as u32;
+                let num_q_heads = arch.num_heads as u32;
+                let num_kv_heads = arch.num_full_kv_heads as u32;
+                let batch_pass = context.begin_pass_labeled("llama dense batch attention cb");
+                #[cfg(all(test, target_os = "macos"))]
+                BATCH_ATTENTION_DISPATCH_COUNT.with(|count| count.set(count.get() + 1));
+                gpu::encode_attention_decode_batch(
                     context,
-                    &pass,
-                    (&scratch.x, x_off),
-                    (&scratch.o, 0),
-                    hidden as u32,
+                    &batch_pass,
+                    (prepared.query, 0),
+                    k_buffer,
+                    v_buffer,
+                    &batch.scratch,
+                    (&batch.output, 0),
+                    gpu::BatchAttentionInputContract {
+                        kv_layout: gpu::BatchAttentionKvLayout::Linear,
+                        kv_format: gpu::BatchAttentionKvFormat::Fp16,
+                        kv_start: 0,
+                        ring_capacity: kv.ring_capacity(layer),
+                        sink_count: 0,
+                    },
+                    first_query_position,
+                    prepared.row_count,
+                    head_dim,
+                    num_q_heads,
+                    num_kv_heads,
+                    arch.attention_scale as f32,
                 )
                 .map_err(gpu_err)?;
 
-                gpu::encode_rms_norm_bf16w(
-                    context,
-                    &pass,
-                    (&scratch.x, x_off),
-                    post_attn_norm,
-                    (&llama.moe_x, 0),
-                    hidden as u32,
-                    llama.rms_eps,
-                )
-                .map_err(gpu_err)?;
+                let q_dim = (num_q_heads * head_dim) as usize;
+                for t in 0..prepared.row_count {
+                    let x_off = (t * hidden * 2) as u64;
+                    let attention_off = (t * q_dim * 2) as u64;
+                    encode_gemv_any(
+                        context,
+                        &batch_pass,
+                        weights,
+                        index,
+                        &layer_tensor(layer, "self_attn.o_proj.weight"),
+                        hidden,
+                        q_dim,
+                        (&batch.output, attention_off),
+                        (&scratch.o, 0),
+                    )?;
 
-                dense::encode_llama_layer_dense(
-                    context,
-                    &pass,
-                    weights,
-                    index,
-                    scratch,
-                    llama,
-                    layer,
-                    hidden,
-                    dense_inter,
-                    use_silu,
-                    x_off,
-                )?;
+                    gpu::encode_residual_add(
+                        context,
+                        &batch_pass,
+                        (&scratch.x, x_off),
+                        (&scratch.o, 0),
+                        hidden as u32,
+                    )
+                    .map_err(gpu_err)?;
+                    gpu::encode_rms_norm_bf16w(
+                        context,
+                        &batch_pass,
+                        (&scratch.x, x_off),
+                        post_attn_norm,
+                        (&llama.moe_x, 0),
+                        hidden as u32,
+                        llama.rms_eps,
+                    )
+                    .map_err(gpu_err)?;
+                    dense::encode_llama_layer_dense(
+                        context,
+                        &batch_pass,
+                        weights,
+                        index,
+                        scratch,
+                        llama,
+                        layer,
+                        hidden,
+                        dense_inter,
+                        use_silu,
+                        x_off,
+                    )?;
 
-                // Steering first, then the capture, matching the sequential
-                // flow's order (both are unobservable in either order on
-                // the normal configuration: a direction is extracted with
-                // steering off).
-                encode_steering(context, &pass, scratch, steering, layer, hidden, 1, x_off)?;
-                encode_resid_capture(context, &pass, scratch, resid_capture, layer, hidden, x_off)?;
+                    // Steering runs before capture, matching the existing row path.
+                    encode_steering(
+                        context,
+                        &batch_pass,
+                        scratch,
+                        steering,
+                        layer,
+                        hidden,
+                        1,
+                        x_off,
+                    )?;
+                    encode_resid_capture(
+                        context,
+                        &batch_pass,
+                        scratch,
+                        resid_capture,
+                        layer,
+                        hidden,
+                        x_off,
+                    )?;
+                }
+                pass = Some(batch_pass);
+            } else {
+                let row_pass = pass.as_ref().expect("chunk pass remains active");
+                for (t, rope_position) in rope_positions.iter().enumerate() {
+                    let rope_position = *rope_position;
+                    let position = start_position + t;
+                    let x_off = (t * hidden * 2) as u64;
+
+                    gpu::encode_rms_norm_bf16w(
+                        context,
+                        row_pass,
+                        (&scratch.x, x_off),
+                        input_norm,
+                        (&scratch.normed, 0),
+                        hidden as u32,
+                        llama.rms_eps,
+                    )
+                    .map_err(gpu_err)?;
+                    attn::encode_attention_block(
+                        context,
+                        row_pass,
+                        weights,
+                        index,
+                        &arch,
+                        llama,
+                        scratch,
+                        kv,
+                        layer,
+                        position,
+                        rope_position,
+                    )?;
+
+                    // The architecture adds attention and FFN outputs raw to this row.
+                    gpu::encode_residual_add(
+                        context,
+                        row_pass,
+                        (&scratch.x, x_off),
+                        (&scratch.o, 0),
+                        hidden as u32,
+                    )
+                    .map_err(gpu_err)?;
+                    gpu::encode_rms_norm_bf16w(
+                        context,
+                        row_pass,
+                        (&scratch.x, x_off),
+                        post_attn_norm,
+                        (&llama.moe_x, 0),
+                        hidden as u32,
+                        llama.rms_eps,
+                    )
+                    .map_err(gpu_err)?;
+                    dense::encode_llama_layer_dense(
+                        context,
+                        row_pass,
+                        weights,
+                        index,
+                        scratch,
+                        llama,
+                        layer,
+                        hidden,
+                        dense_inter,
+                        use_silu,
+                        x_off,
+                    )?;
+                    encode_steering(
+                        context, row_pass, scratch, steering, layer, hidden, 1, x_off,
+                    )?;
+                    encode_resid_capture(
+                        context,
+                        row_pass,
+                        scratch,
+                        resid_capture,
+                        layer,
+                        hidden,
+                        x_off,
+                    )?;
+                }
             }
 
             // DEEPSTACK: merger `layer`'s rows raw-add at this chunk's image
@@ -345,7 +512,7 @@ impl RealForwardRunner {
                     if let Some(row) = row {
                         gpu::encode_residual_add(
                             context,
-                            &pass,
+                            pass.as_ref().expect("chunk pass remains active"),
                             (&scratch.x, (t * hidden * 2) as u64),
                             (&deepstack_buffers[layer], (row * hidden * 2) as u64),
                             hidden as u32,
@@ -356,6 +523,7 @@ impl RealForwardRunner {
             }
         }
 
+        let pass = pass.expect("chunk pass remains active at the final layer");
         if want_head {
             pass.relabel("llama dense final cb (head)");
             let last_off = ((m - 1) * hidden * 2) as u64;
