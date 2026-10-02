@@ -1,5 +1,5 @@
 //! Directly dispatches the batch-only partial attention shader and inspects
-//! row/head/chunk states, including neutral chunks and an inactive row.
+//! row/head/chunk states across four-query tiles and disjoint row plans.
 #![cfg(target_os = "macos")]
 
 use half::f16;
@@ -54,6 +54,7 @@ fn expected_partial(
     k: &[f32],
     v: &[f32],
     head_dim: usize,
+    num_q_heads: usize,
     num_kv_heads: usize,
     q_head: usize,
     seq_len: usize,
@@ -64,7 +65,7 @@ fn expected_partial(
 ) -> (f32, f32, Vec<f32>) {
     let start = key_start + chunk * chunk_len;
     let end = (start + chunk_len).min(seq_len);
-    let kv_head = q_head / 2;
+    let kv_head = q_head / (num_q_heads / num_kv_heads);
     let mut m = f32::NEG_INFINITY;
     let mut d = 0.0f32;
     let mut o = vec![0.0f32; head_dim];
@@ -91,45 +92,46 @@ fn expected_partial(
 }
 
 #[test]
-fn writes_each_live_row_head_chunk_and_preserves_inactive_row() {
+fn reuses_kv_across_overlapping_and_disjoint_four_query_tiles() {
     let mut context = MetalContext::new().expect("Metal device available on this machine");
 
     let head_dim = 4u32;
     let num_q_heads = 2u32;
     let num_kv_heads = 1u32;
-    let capacity = 3usize;
-    let live_rows = 2u32;
+    let capacity = 8usize;
+    let live_rows = 5u32;
     let num_chunks = 3u32;
-    let seq_len = 5usize;
+    let seq_len = 16usize;
     let scale = 0.5f32;
 
-    let q = vec![
-        0.25, -0.5, 0.75, 0.125, -0.25, 0.5, 0.375, -0.625, // row 0
-        0.5, 0.25, -0.375, 0.75, -0.5, -0.125, 0.625, 0.25, // row 1
-        4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, // inactive row canary
-    ];
+    let mut q: Vec<f32> = (0..capacity * num_q_heads as usize * head_dim as usize)
+        .map(|i| -0.5 + (i % 11) as f32 * 0.125)
+        .collect();
+    let inactive_q_start = live_rows as usize * num_q_heads as usize * head_dim as usize;
+    q[inactive_q_start..].fill(4.0);
     let k: Vec<f32> = (0..seq_len * head_dim as usize)
         .map(|i| 0.125 + (i % 7) as f32 * 0.0625)
         .collect();
     let v: Vec<f32> = (0..seq_len * head_dim as usize)
         .map(|i| 0.75 + (i % 5) as f32 * 0.125)
         .collect();
-    // Distinct valid plans: row 0 partitions [0, 4) as 3 + 1, row 1
-    // partitions [0, 5) as 2 + 2 + 1. The final row is outside live_rows.
-    let plans = [
-        0,
-        4,
-        3,
-        2,
-        0,
-        5,
-        2,
-        3,
-        u32::MAX,
-        u32::MAX,
-        u32::MAX,
-        u32::MAX,
+    // The first tile mixes overlapping and disjoint intervals for the same
+    // chunk. Row 4 is the only live query in the tail tile. Rows 5-7 are
+    // inactive and carry invalid-plan canaries.
+    let row_plans = [
+        [1, 6, 2, 3],
+        [2, 8, 2, 3],
+        [9, 12, 2, 2],
+        [14, 16, 1, 2],
+        [5, 9, 3, 2],
     ];
+    let mut plans = Vec::with_capacity(capacity * 4);
+    for plan in row_plans {
+        plans.extend(plan);
+    }
+    for _ in live_rows as usize..capacity {
+        plans.extend([u32::MAX; 4]);
+    }
 
     let q_buffer = context.new_buffer_with_data(&f16_bytes(&q));
     let k_buffer = context.new_buffer_with_data(&f16_bytes(&k));
@@ -171,7 +173,7 @@ fn writes_each_live_row_head_chunk_and_preserves_inactive_row() {
             (&live_rows.to_le_bytes(), 10),
             (&scale.to_le_bytes(), 11),
         ],
-        (capacity as u64) * num_q_heads as u64 * num_chunks as u64,
+        ((live_rows as u64 + 3) / 4) * num_q_heads as u64 * num_chunks as u64,
         THREADS_PER_GROUP,
     );
     pass.commit_and_wait();
@@ -180,11 +182,13 @@ fn writes_each_live_row_head_chunk_and_preserves_inactive_row() {
     let got_d = read_f32(&d_buffer, partial_slots);
     let got_o = read_f32(&o_buffer, partial_slots * head_dim as usize);
     for row in 0..live_rows as usize {
-        let (key_start, row_seq_len, chunk_len, row_chunks) = if row == 0 {
-            (0usize, 4usize, 3usize, 2usize)
-        } else {
-            (0usize, 5usize, 2usize, 3usize)
-        };
+        let [key_start, row_seq_len, chunk_len, row_chunks] = row_plans[row];
+        let (key_start, row_seq_len, chunk_len, row_chunks) = (
+            key_start as usize,
+            row_seq_len as usize,
+            chunk_len as usize,
+            row_chunks as usize,
+        );
         for q_head in 0..num_q_heads as usize {
             for chunk in 0..num_chunks as usize {
                 let slot = (row * num_q_heads as usize + q_head) * num_chunks as usize + chunk;
@@ -209,6 +213,7 @@ fn writes_each_live_row_head_chunk_and_preserves_inactive_row() {
                     &k,
                     &v,
                     head_dim as usize,
+                    num_q_heads as usize,
                     num_kv_heads as usize,
                     q_head,
                     row_seq_len,

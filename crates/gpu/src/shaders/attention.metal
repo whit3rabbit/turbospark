@@ -231,10 +231,10 @@ void attention_decode_partial(
     }
 }
 
-// Batch-only split-KV partial pass. The grid is [capacity * NQ * NC], with
-// one independent row/head/chunk state per threadgroup. Unlike the one-row
-// entry points above, each row reads its own [key_start, seq_len) and
-// chunk_len/num_chunks from RowChunkPlan at buffer 9.
+// Batch-only split-KV partial pass. The grid is [ceil(live_rows / 4) * NQ * NC],
+// with one four-query tile/head/chunk per threadgroup. Each row keeps an
+// independent online-softmax state and reads its own interval from buffer 9;
+// K/V positions in the tile's interval union are staged once and reused.
 [[kernel, max_total_threads_per_threadgroup(kAttnThreads)]]
 void attention_decode_batch_partial(
     device const half*  Q             [[buffer(0)]],   // [capacity, num_q_heads, head_dim]
@@ -256,7 +256,10 @@ void attention_decode_batch_partial(
     uint simd_group_id   [[simdgroup_index_in_threadgroup]],
     uint simdgroups      [[simdgroups_per_threadgroup]]
 ) {
-    threadgroup float q_smem[kAttnMaxHeadDim];
+    threadgroup float q_smem[4][kAttnMaxHeadDim];
+    threadgroup half k_smem[kAttnMaxHeadDim];
+    threadgroup half v_smem[kAttnMaxHeadDim];
+    threadgroup uint4 plans_smem[4];
     threadgroup float reduce_scratch[kAttnMaxSimdGroups];
     threadgroup float bcast;
     const uint HD = attn_fc_head_dim(head_dim);
@@ -266,68 +269,128 @@ void attention_decode_batch_partial(
 
     const uint chunk = tg_id % NC;
     const uint q_head = (tg_id / NC) % NQ;
-    const uint row = tg_id / (NC * NQ);
-    // Return before reading row plans, Q, K, or V for capacity rows that are
-    // not live. Every thread in this group takes the same branch.
-    if (row >= live_rows) { return; }
-
-    const uint4 plan = row_plans[row];
-    const uint state = (row * NQ + q_head) * NC + chunk;
-    if (chunk >= plan.w) {
-        if (lid == 0) { m_out[state] = -INFINITY; d_out[state] = 0.0f; }
-        device float* o_row = o_out + state * HD;
-        for (uint i = lid; i < HD; i += lsize) { o_row[i] = 0.0f; }
-        return;
-    }
-
-    const uint p_start = plan.x + chunk * plan.z;
-    const uint p_end = min(plan.y, p_start + plan.z);
+    const uint tile_start = (tg_id / (NC * NQ)) * 4u;
     const uint kv_head = q_head / (NQ / NKV);
 
-    device const half* Q_row = Q + (row * NQ + q_head) * HD;
-    for (uint i = lid; i < HD; i += lsize) {
-        q_smem[i] = float(Q_row[i]);
+    // Only live rows' plan entries are read. Inactive tile slots receive a
+    // threadgroup-local sentinel so they never participate in the interval
+    // union or access Q, K, V, or output buffers.
+    if (lid < 4u) {
+        const uint row = tile_start + lid;
+        plans_smem[lid] = row < live_rows ? row_plans[row] : uint4(0u);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint row_start[4];
+    uint row_end[4];
+    bool row_has_interval[4];
+    uint union_start = 0xffffffffu;
+    uint union_end = 0u;
+    for (uint r = 0; r < 4u; ++r) {
+        const uint row = tile_start + r;
+        const uint4 plan = plans_smem[r];
+        row_start[r] = 0u;
+        row_end[r] = 0u;
+        row_has_interval[r] = false;
+        if (row < live_rows && chunk < plan.w) {
+            const uint start = plan.x + chunk * plan.z;
+            const uint end = min(plan.y, start + plan.z);
+            if (start < end) {
+                row_start[r] = start;
+                row_end[r] = end;
+                row_has_interval[r] = true;
+                union_start = min(union_start, start);
+                union_end = max(union_end, end);
+            }
+        }
+    }
+
+    // Stage only query rows that own a nonempty interval for this chunk.
+    for (uint r = 0; r < 4u; ++r) {
+        const uint row = tile_start + r;
+        if (row_has_interval[r]) {
+            device const half* Q_row = Q + (row * NQ + q_head) * HD;
+            for (uint i = lid; i < HD; i += lsize) {
+                q_smem[r][i] = float(Q_row[i]);
+            }
+        }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     constexpr uint kPerThread = (kAttnMaxHeadDim + kAttnThreads - 1) / kAttnThreads;
-    float o_local[kPerThread];
-    for (uint k = 0; k < kPerThread; ++k) { o_local[k] = 0.0f; }
-
-    float m_run = -INFINITY;
-    float d_run = 0.0f;
-    for (uint p = p_start; p < p_end; ++p) {
-        device const half* K_row = K + (p * NKV + kv_head) * HD;
-        device const half* V_row = V + (p * NKV + kv_head) * HD;
-
-        float partial = 0.0f;
-        for (uint i = lid; i < HD; i += lsize) {
-            partial = fma(q_smem[i], float(K_row[i]), partial);
-        }
-        float score = block_reduce_sum(partial,
-                                       simd_lane_id, simd_group_id, simdgroups,
-                                       reduce_scratch, &bcast);
-        score *= attn_fc_scale(scale);
-
-        const float m_new = max(m_run, score);
-        const float alpha = attn_softmax_exp(m_run - m_new);
-        const float p_exp = attn_softmax_exp(score - m_new);
-        d_run = d_run * alpha + p_exp;
-
-        uint slot = 0;
-        for (uint i = lid; i < HD; i += lsize) {
-            o_local[slot] = o_local[slot] * alpha + p_exp * float(V_row[i]);
-            slot += 1;
-        }
-        m_run = m_new;
+    float o_local[4][kPerThread];
+    float m_run[4];
+    float d_run[4];
+    for (uint r = 0; r < 4u; ++r) {
+        m_run[r] = -INFINITY;
+        d_run[r] = 0.0f;
+        for (uint k = 0; k < kPerThread; ++k) { o_local[r][k] = 0.0f; }
     }
 
-    if (lid == 0) { m_out[state] = m_run; d_out[state] = d_run; }
-    device float* o_row = o_out + state * HD;
-    uint slot = 0;
-    for (uint i = lid; i < HD; i += lsize) {
-        o_row[i] = o_local[slot];
-        slot += 1;
+    // Walk the union in increasing order. The membership check skips gaps
+    // between disjoint row intervals, so no K/V position outside that union
+    // is loaded. Each in-union position is staged once for all four rows.
+    for (uint p = union_start; p < union_end; ++p) {
+        bool in_union = false;
+        for (uint r = 0; r < 4u; ++r) {
+            in_union = in_union ||
+                (row_has_interval[r] && p >= row_start[r] && p < row_end[r]);
+        }
+        if (!in_union) { continue; }
+
+        device const half* K_row = K + (p * NKV + kv_head) * HD;
+        device const half* V_row = V + (p * NKV + kv_head) * HD;
+        for (uint i = lid; i < HD; i += lsize) {
+            k_smem[i] = K_row[i];
+            v_smem[i] = V_row[i];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint r = 0; r < 4u; ++r) {
+            if (row_has_interval[r] && p >= row_start[r] && p < row_end[r]) {
+                float partial = 0.0f;
+                for (uint i = lid; i < HD; i += lsize) {
+                    partial = fma(q_smem[r][i], float(k_smem[i]), partial);
+                }
+                float score = block_reduce_sum(partial,
+                                               simd_lane_id, simd_group_id, simdgroups,
+                                               reduce_scratch, &bcast);
+                score *= attn_fc_scale(scale);
+
+                const float m_new = max(m_run[r], score);
+                const float alpha = attn_softmax_exp(m_run[r] - m_new);
+                const float p_exp = attn_softmax_exp(score - m_new);
+                d_run[r] = d_run[r] * alpha + p_exp;
+
+                uint slot = 0;
+                for (uint i = lid; i < HD; i += lsize) {
+                    o_local[r][slot] = o_local[r][slot] * alpha + p_exp * float(v_smem[i]);
+                    slot += 1;
+                }
+                m_run[r] = m_new;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // Every live row owns a slot for this chunk, including neutral chunks.
+    // Rows beyond live_rows are never read or written.
+    for (uint r = 0; r < 4u; ++r) {
+        const uint row = tile_start + r;
+        if (row < live_rows) {
+            const uint state = (row * NQ + q_head) * NC + chunk;
+            const bool neutral = !row_has_interval[r];
+            if (lid == 0) {
+                m_out[state] = neutral ? -INFINITY : m_run[r];
+                d_out[state] = neutral ? 0.0f : d_run[r];
+            }
+            device float* o_row = o_out + state * HD;
+            uint slot = 0;
+            for (uint i = lid; i < HD; i += lsize) {
+                o_row[i] = neutral ? 0.0f : o_local[r][slot];
+                slot += 1;
+            }
+        }
     }
 }
 
