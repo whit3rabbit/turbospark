@@ -16,6 +16,8 @@ pub enum GpuError {
     /// An argument buffer was encoded with a different reflected ABI than
     /// the one used to allocate it.
     ArgumentBufferMismatch(String),
+    /// A GPU operation received invalid dimensions, ranges, plans, or buffers.
+    InvalidInput(String),
 }
 
 impl std::fmt::Display for GpuError {
@@ -33,6 +35,7 @@ impl std::fmt::Display for GpuError {
             GpuError::ArgumentBufferMismatch(detail) => {
                 write!(f, "argument buffer layout mismatch: {detail}")
             }
+            GpuError::InvalidInput(detail) => write!(f, "invalid GPU input: {detail}"),
         }
     }
 }

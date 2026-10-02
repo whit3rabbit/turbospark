@@ -144,7 +144,8 @@ mod vision;
 
 #[cfg(target_os = "macos")]
 pub use attention_decode::{
-    attention_decode, encode_attention_decode, AttentionScratch, MAX_DECODE_ATTENTION_HEAD_DIM,
+    attention_decode, encode_attention_decode, AttentionScratch, BatchAttentionInputContract,
+    BatchAttentionKvFormat, BatchAttentionKvLayout, MAX_DECODE_ATTENTION_HEAD_DIM,
 };
 #[cfg(target_os = "macos")]
 pub use attention_indexed::{

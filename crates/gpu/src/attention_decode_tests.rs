@@ -1,4 +1,8 @@
-use super::{chunks_for, MAX_CHUNKS, MIN_POSITIONS_PER_CHUNK};
+use super::{
+    build_batch_attention_plan, chunks_for, validate_batch_row_plans, BatchAttentionBufferLengths,
+    BatchAttentionInputContract, BatchAttentionKvFormat, BatchAttentionKvLayout, RowChunkPlan,
+    MAX_CHUNKS, MIN_POSITIONS_PER_CHUNK,
+};
 
 /// The parity tests exercise the chunked path but cannot pin this
 /// mapping: a `chunks_for` that always returned 1 would still match
@@ -27,4 +31,279 @@ fn short_ranges_stay_unsplit_and_long_ones_saturate() {
     assert_eq!(chunks_for(MIN_POSITIONS_PER_CHUNK * 2), 2);
     assert_eq!(chunks_for(MIN_POSITIONS_PER_CHUNK * MAX_CHUNKS), MAX_CHUNKS);
     assert_eq!(chunks_for(u32::MAX), MAX_CHUNKS);
+}
+
+#[test]
+fn batch_attention_plan_builds_contiguous_causal_rows_and_sizes_buffers() {
+    let plan = build_linear_fp16_batch_attention_plan(3, 4, 31, 8, 2, 64).unwrap();
+
+    assert_eq!(
+        plan.row_plans,
+        vec![
+            RowChunkPlan {
+                key_start: 0,
+                seq_len: 32,
+                chunk_len: 16,
+                num_chunks: 2,
+            },
+            RowChunkPlan {
+                key_start: 0,
+                seq_len: 33,
+                chunk_len: 17,
+                num_chunks: 2,
+            },
+            RowChunkPlan {
+                key_start: 0,
+                seq_len: 34,
+                chunk_len: 17,
+                num_chunks: 2,
+            },
+        ]
+    );
+    assert_eq!(plan.live_rows, 3);
+    assert_eq!(plan.capacity, 4);
+    assert_eq!(plan.num_q_heads, 8);
+    assert_eq!(plan.num_kv_heads, 2);
+    assert_eq!(plan.head_dim, 64);
+    assert_eq!(plan.max_chunks, 2);
+    assert_eq!(plan.partial_threadgroups, 16);
+    assert_eq!(plan.combine_threadgroups, 24);
+    assert_eq!(
+        plan.required_buffers,
+        BatchAttentionBufferLengths {
+            q_bytes: 3 * 8 * 64 * 2,
+            k_bytes: 34 * 2 * 64 * 2,
+            v_bytes: 34 * 2 * 64 * 2,
+            output_bytes: 3 * 8 * 64 * 2,
+            row_plan_bytes: 3 * 16,
+            partial_bytes: 3 * 8 * 2 * (2 + 64) * 4,
+        }
+    );
+}
+
+#[test]
+fn batch_attention_plan_accepts_position_zero_and_the_sixteen_chunk_cap() {
+    let position_zero = build_linear_fp16_batch_attention_plan(1, 1, 0, 1, 1, 1).unwrap();
+    assert_eq!(
+        position_zero.row_plans,
+        vec![RowChunkPlan {
+            key_start: 0,
+            seq_len: 1,
+            chunk_len: 1,
+            num_chunks: 1,
+        }]
+    );
+
+    let max_chunks = build_linear_fp16_batch_attention_plan(1, 1, 255, 1, 1, 1).unwrap();
+    assert_eq!(max_chunks.max_chunks, MAX_CHUNKS);
+    assert_eq!(max_chunks.row_plans[0].chunk_len, 16);
+
+    let max_head_dim = build_linear_fp16_batch_attention_plan(1, 1, 0, 1, 1, 512).unwrap();
+    assert_eq!(max_head_dim.head_dim, 512);
+}
+
+#[test]
+fn batch_attention_plan_rejects_invalid_rows_and_head_shapes() {
+    for args in [
+        (0, 1, 0, 1, 1, 1),
+        (1, 0, 0, 1, 1, 1),
+        (2, 1, 0, 1, 1, 1),
+        (1, 1, 0, 0, 1, 1),
+        (1, 1, 0, 1, 0, 1),
+        (1, 1, 0, 3, 2, 1),
+        (1, 1, 0, 1, 1, 0),
+        (1, 1, 0, 1, 1, 513),
+    ] {
+        assert_invalid_input(build_linear_fp16_batch_attention_plan(
+            args.0, args.1, args.2, args.3, args.4, args.5,
+        ));
+    }
+}
+
+#[test]
+fn batch_attention_plan_rejects_position_and_byte_arithmetic_overflow() {
+    assert_invalid_input(build_linear_fp16_batch_attention_plan(
+        1,
+        1,
+        u32::MAX,
+        1,
+        1,
+        1,
+    ));
+
+    let huge_rows = u32::MAX as usize;
+    assert_invalid_input(build_linear_fp16_batch_attention_plan(
+        huge_rows,
+        huge_rows,
+        0,
+        u32::MAX,
+        1,
+        512,
+    ));
+}
+
+#[test]
+fn batch_attention_plan_rejects_malformed_internal_row_plans() {
+    for malformed in [
+        vec![],
+        vec![RowChunkPlan {
+            key_start: 1,
+            seq_len: 32,
+            chunk_len: 16,
+            num_chunks: 2,
+        }],
+        vec![RowChunkPlan {
+            key_start: 0,
+            seq_len: 0,
+            chunk_len: 1,
+            num_chunks: 1,
+        }],
+        vec![RowChunkPlan {
+            key_start: 0,
+            seq_len: 32,
+            chunk_len: 16,
+            num_chunks: 1,
+        }],
+        vec![RowChunkPlan {
+            key_start: 0,
+            seq_len: 32,
+            chunk_len: 15,
+            num_chunks: 2,
+        }],
+        vec![
+            RowChunkPlan {
+                key_start: 0,
+                seq_len: 32,
+                chunk_len: 16,
+                num_chunks: 2,
+            },
+            RowChunkPlan {
+                key_start: 0,
+                seq_len: 34,
+                chunk_len: 17,
+                num_chunks: 2,
+            },
+        ],
+    ] {
+        assert_invalid_input(validate_batch_row_plans(&malformed));
+    }
+}
+
+#[test]
+fn batch_attention_plan_rejects_each_undersized_buffer() {
+    let plan = build_linear_fp16_batch_attention_plan(2, 4, 15, 4, 2, 32).unwrap();
+    let exact = plan.required_buffers;
+    plan.validate_buffer_lengths(exact).unwrap();
+
+    for undersized in [
+        BatchAttentionBufferLengths {
+            q_bytes: exact.q_bytes - 1,
+            ..exact
+        },
+        BatchAttentionBufferLengths {
+            k_bytes: exact.k_bytes - 1,
+            ..exact
+        },
+        BatchAttentionBufferLengths {
+            v_bytes: exact.v_bytes - 1,
+            ..exact
+        },
+        BatchAttentionBufferLengths {
+            output_bytes: exact.output_bytes - 1,
+            ..exact
+        },
+        BatchAttentionBufferLengths {
+            row_plan_bytes: exact.row_plan_bytes - 1,
+            ..exact
+        },
+        BatchAttentionBufferLengths {
+            partial_bytes: exact.partial_bytes - 1,
+            ..exact
+        },
+    ] {
+        assert_invalid_input(plan.validate_buffer_lengths(undersized));
+    }
+}
+
+fn assert_invalid_input<T>(result: Result<T, crate::GpuError>) {
+    assert!(matches!(result, Err(crate::GpuError::InvalidInput(_))));
+}
+
+fn linear_fp16_contract() -> BatchAttentionInputContract {
+    BatchAttentionInputContract {
+        kv_layout: BatchAttentionKvLayout::Linear,
+        kv_format: BatchAttentionKvFormat::Fp16,
+        kv_start: 0,
+        ring_capacity: 0,
+        sink_count: 0,
+    }
+}
+
+fn build_linear_fp16_batch_attention_plan(
+    live_rows: usize,
+    capacity: usize,
+    first_query_position: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    head_dim: u32,
+) -> Result<super::BatchAttentionPlan, crate::GpuError> {
+    build_batch_attention_plan(
+        linear_fp16_contract(),
+        live_rows,
+        capacity,
+        first_query_position,
+        num_q_heads,
+        num_kv_heads,
+        head_dim,
+    )
+}
+
+#[test]
+fn batch_attention_plan_rejects_non_linear_cache_layout() {
+    let contract = BatchAttentionInputContract {
+        kv_layout: BatchAttentionKvLayout::NonLinear,
+        ..linear_fp16_contract()
+    };
+    assert_invalid_input(build_batch_attention_plan(contract, 1, 1, 0, 1, 1, 1));
+}
+
+#[test]
+fn batch_attention_plan_rejects_ring_cache_capacity() {
+    let ring_backed = BatchAttentionInputContract {
+        ring_capacity: 128,
+        ..linear_fp16_contract()
+    };
+    assert_invalid_input(build_batch_attention_plan(ring_backed, 1, 1, 0, 1, 1, 1));
+}
+
+#[test]
+fn batch_attention_plan_rejects_quantized_and_non_fp16_kv() {
+    for kv_format in [
+        BatchAttentionKvFormat::Quantized,
+        BatchAttentionKvFormat::Other,
+    ] {
+        let contract = BatchAttentionInputContract {
+            kv_format,
+            ..linear_fp16_contract()
+        };
+        assert_invalid_input(build_batch_attention_plan(contract, 1, 1, 0, 1, 1, 1));
+    }
+}
+
+#[test]
+fn batch_attention_plan_rejects_nonzero_kv_start() {
+    let nonzero_start = BatchAttentionInputContract {
+        kv_start: 1,
+        ..linear_fp16_contract()
+    };
+    assert_invalid_input(build_batch_attention_plan(nonzero_start, 1, 1, 0, 1, 1, 1));
+}
+
+#[test]
+fn batch_attention_plan_rejects_attention_sink_count() {
+    let with_sinks = BatchAttentionInputContract {
+        sink_count: 1,
+        ..linear_fp16_contract()
+    };
+    assert_invalid_input(build_batch_attention_plan(with_sinks, 1, 1, 0, 1, 1, 1));
 }

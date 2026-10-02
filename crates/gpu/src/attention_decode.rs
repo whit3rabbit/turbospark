@@ -25,6 +25,8 @@
 //! Swift runner's rule (identity slot mapping below capacity, so the
 //! non-ring pipeline stays byte-identical until the first wrap).
 
+use std::mem::size_of;
+
 use half::f16;
 use metal::{FunctionConstantValues, MTLDataType};
 
@@ -83,6 +85,408 @@ pub const MAX_DECODE_ATTENTION_HEAD_DIM: u32 = 512;
 pub(crate) fn chunks_for(range: u32) -> u32 {
     let chunks = (range / MIN_POSITIONS_PER_CHUNK).clamp(1, MAX_CHUNKS);
     1 << chunks.ilog2()
+}
+
+/// Per-live-row causal bounds and split-KV geometry for batched attention.
+///
+/// The batch API uses the fixed linear FP16 K/V layout. Plans always begin at
+/// position zero; ring addressing, sinks, and quantized K/V are not part of
+/// this contract.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RowChunkPlan {
+    pub(crate) key_start: u32,
+    pub(crate) seq_len: u32,
+    pub(crate) chunk_len: u32,
+    pub(crate) num_chunks: u32,
+}
+const _: [(); 16] = [(); size_of::<RowChunkPlan>()];
+
+/// K/V addressing mode reported by the caller for the buffers being passed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchAttentionKvLayout {
+    /// Contiguous `[position, kv_head, head_dim]` rows starting at position 0.
+    Linear,
+    /// Any other non-linear addressing mode is unsupported.
+    NonLinear,
+}
+
+/// Element format reported by the caller for the K/V buffers being passed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchAttentionKvFormat {
+    /// Native FP16 K/V rows.
+    Fp16,
+    /// Any packed or otherwise quantized K/V representation.
+    Quantized,
+    /// Any non-FP16, non-quantized representation.
+    Other,
+}
+
+/// Actual K/V and attention modes backing a batch-attention request.
+///
+/// Callers must derive this descriptor from the actual cache and model
+/// attention configuration that own the supplied buffers. In particular,
+/// `kv_layout`, `ring_capacity`, and `kv_format` come from the cache, while
+/// `kv_start` and `sink_count` come from the active attention configuration.
+/// Do not set these values from the desired dispatch mode alone. The
+/// validator requires zero-start linear FP16 K/V, with no ring addressing
+/// and no attention sinks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatchAttentionInputContract {
+    /// Cache addressing mode for the supplied K/V buffers.
+    pub kv_layout: BatchAttentionKvLayout,
+    /// Element format for the supplied K/V buffers.
+    pub kv_format: BatchAttentionKvFormat,
+    /// First key position addressable by this request.
+    pub kv_start: u32,
+    /// Physical token capacity when these K/V buffers use ring addressing.
+    /// This must be zero for the supported linear layout.
+    pub ring_capacity: usize,
+    /// Number of attention sink logits supplied by the model configuration.
+    pub sink_count: usize,
+}
+
+impl BatchAttentionInputContract {
+    fn validate(self) -> Result<(), GpuError> {
+        match self.kv_layout {
+            BatchAttentionKvLayout::Linear => {}
+            BatchAttentionKvLayout::NonLinear => {
+                return Err(invalid_batch_input(
+                    "non-linear K/V addressing is unsupported",
+                ))
+            }
+        }
+        match self.kv_format {
+            BatchAttentionKvFormat::Fp16 => {}
+            BatchAttentionKvFormat::Quantized => {
+                return Err(invalid_batch_input("quantized K/V buffers are unsupported"))
+            }
+            BatchAttentionKvFormat::Other => {
+                return Err(invalid_batch_input("batch K/V buffers must use FP16"))
+            }
+        }
+        if self.ring_capacity != 0 {
+            return Err(invalid_batch_input(format!(
+                "ring K/V addressing with capacity {} is unsupported",
+                self.ring_capacity
+            )));
+        }
+        if self.kv_start != 0 {
+            return Err(invalid_batch_input(format!(
+                "batch attention requires kv_start 0, got {}",
+                self.kv_start
+            )));
+        }
+        if self.sink_count != 0 {
+            return Err(invalid_batch_input(
+                "attention sinks are unsupported by batch attention",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Minimum buffer lengths for one validated batched-attention request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BatchAttentionBufferLengths {
+    pub(crate) q_bytes: u64,
+    pub(crate) k_bytes: u64,
+    pub(crate) v_bytes: u64,
+    pub(crate) output_bytes: u64,
+    pub(crate) row_plan_bytes: u64,
+    pub(crate) partial_bytes: u64,
+}
+
+/// GPU-private validation result consumed by the batch encoder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BatchAttentionPlan {
+    pub(crate) live_rows: u32,
+    pub(crate) capacity: usize,
+    pub(crate) num_q_heads: u32,
+    pub(crate) num_kv_heads: u32,
+    pub(crate) head_dim: u32,
+    pub(crate) row_plans: Vec<RowChunkPlan>,
+    pub(crate) max_chunks: u32,
+    pub(crate) partial_threadgroups: u64,
+    pub(crate) combine_threadgroups: u64,
+    pub(crate) required_buffers: BatchAttentionBufferLengths,
+}
+
+/// Construct and validate the complete row plan for a contiguous batch.
+///
+/// Query positions and dimensions use the same `u32` domain as the Metal
+/// argument ABI. `capacity` is the row capacity represented by the caller's
+/// scratch buffers. All planned ranges, byte counts, and dispatch counts are
+/// checked before allocating the row-plan vector.
+pub(crate) fn build_batch_attention_plan(
+    input_contract: BatchAttentionInputContract,
+    live_rows: usize,
+    capacity: usize,
+    first_query_position: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    head_dim: u32,
+) -> Result<BatchAttentionPlan, GpuError> {
+    input_contract.validate()?;
+    if live_rows == 0 || live_rows > capacity {
+        return Err(invalid_batch_input(format!(
+            "live row count {live_rows} must be in 1..={capacity}"
+        )));
+    }
+    if num_q_heads == 0 || num_kv_heads == 0 {
+        return Err(invalid_batch_input(
+            "query and KV head counts must both be positive",
+        ));
+    }
+    if num_q_heads % num_kv_heads != 0 {
+        return Err(invalid_batch_input(format!(
+            "query head count {num_q_heads} must be divisible by KV head count {num_kv_heads}"
+        )));
+    }
+    if head_dim == 0 || head_dim > MAX_DECODE_ATTENTION_HEAD_DIM {
+        return Err(invalid_batch_input(format!(
+            "head dimension {head_dim} must be in 1..={MAX_DECODE_ATTENTION_HEAD_DIM}"
+        )));
+    }
+
+    let last_row = u32::try_from(live_rows - 1)
+        .map_err(|_| invalid_batch_input("live row count exceeds the Metal row-index range"))?;
+    let last_seq_len = first_query_position
+        .checked_add(last_row)
+        .and_then(|position| position.checked_add(1))
+        .ok_or_else(|| invalid_batch_input("query position range overflows u32"))?;
+    let max_chunks = chunks_for(last_seq_len);
+    if !(1..=MAX_CHUNKS).contains(&max_chunks) {
+        return Err(invalid_batch_input(format!(
+            "chunk count {max_chunks} exceeds 1..={MAX_CHUNKS}"
+        )));
+    }
+
+    let live_rows_u32 = u32::try_from(live_rows)
+        .map_err(|_| invalid_batch_input("live row count exceeds the Metal row-index range"))?;
+    let q_heads = usize::try_from(num_q_heads)
+        .map_err(|_| invalid_batch_input("query head count does not fit host indexing"))?;
+    let kv_heads = usize::try_from(num_kv_heads)
+        .map_err(|_| invalid_batch_input("KV head count does not fit host indexing"))?;
+    let dim = usize::try_from(head_dim)
+        .map_err(|_| invalid_batch_input("head dimension does not fit host indexing"))?;
+    let max_chunks_usize = usize::try_from(max_chunks)
+        .map_err(|_| invalid_batch_input("chunk count does not fit host indexing"))?;
+    let max_seq_len = usize::try_from(last_seq_len)
+        .map_err(|_| invalid_batch_input("sequence length does not fit host indexing"))?;
+
+    let q_bytes = checked_batch_byte_count(&[live_rows, q_heads, dim], size_of::<f16>())?;
+    let output_bytes = q_bytes;
+    let k_bytes = checked_batch_byte_count(&[max_seq_len, kv_heads, dim], size_of::<f16>())?;
+    let v_bytes = k_bytes;
+    let row_plan_bytes = checked_batch_byte_count(&[live_rows], size_of::<RowChunkPlan>())?;
+    let partial_width = dim
+        .checked_add(2)
+        .ok_or_else(|| invalid_batch_input("partial-state width overflows host indexing"))?;
+    let partial_bytes = checked_batch_byte_count(
+        &[live_rows, q_heads, max_chunks_usize, partial_width],
+        size_of::<f32>(),
+    )?;
+
+    let row_tiles = checked_ceil_div_usize(live_rows, 4)?;
+    let partial_threadgroups = checked_batch_product(&[row_tiles, q_heads, max_chunks_usize])?;
+    let combine_threadgroups = checked_batch_product(&[live_rows, q_heads])?;
+
+    let mut row_plans = Vec::new();
+    row_plans.try_reserve_exact(live_rows).map_err(|error| {
+        invalid_batch_input(format!("cannot allocate {live_rows} row plans: {error}"))
+    })?;
+    for row in 0..live_rows {
+        let row_offset = u32::try_from(row)
+            .map_err(|_| invalid_batch_input("row index exceeds the Metal row-index range"))?;
+        let seq_len = first_query_position
+            .checked_add(row_offset)
+            .and_then(|position| position.checked_add(1))
+            .ok_or_else(|| invalid_batch_input("query position range overflows u32"))?;
+        let key_start = 0;
+        let range = seq_len
+            .checked_sub(key_start)
+            .ok_or_else(|| invalid_batch_input("row plan has an inverted key range"))?;
+        if range == 0 {
+            return Err(invalid_batch_input(
+                "row plan must include at least one key",
+            ));
+        }
+        let num_chunks = chunks_for(range);
+        if !(1..=MAX_CHUNKS).contains(&num_chunks) {
+            return Err(invalid_batch_input(format!(
+                "row chunk count {num_chunks} exceeds 1..={MAX_CHUNKS}"
+            )));
+        }
+        let chunk_len = checked_ceil_div_u32(range, num_chunks)?;
+        row_plans.push(RowChunkPlan {
+            key_start,
+            seq_len,
+            chunk_len,
+            num_chunks,
+        });
+    }
+    let validated_max_chunks = validate_batch_row_plans(&row_plans)?;
+    if validated_max_chunks != max_chunks {
+        return Err(invalid_batch_input(
+            "batch chunk count does not match the generated row plans",
+        ));
+    }
+
+    Ok(BatchAttentionPlan {
+        live_rows: live_rows_u32,
+        capacity,
+        num_q_heads,
+        num_kv_heads,
+        head_dim,
+        row_plans,
+        max_chunks,
+        partial_threadgroups: u64::try_from(partial_threadgroups).map_err(|_| {
+            invalid_batch_input("partial dispatch count exceeds Metal's index range")
+        })?,
+        combine_threadgroups: u64::try_from(combine_threadgroups).map_err(|_| {
+            invalid_batch_input("combine dispatch count exceeds Metal's index range")
+        })?,
+        required_buffers: BatchAttentionBufferLengths {
+            q_bytes,
+            k_bytes,
+            v_bytes,
+            output_bytes,
+            row_plan_bytes,
+            partial_bytes,
+        },
+    })
+}
+
+/// Validate the private row plans before deriving dispatch bounds from them.
+pub(crate) fn validate_batch_row_plans(plans: &[RowChunkPlan]) -> Result<u32, GpuError> {
+    let first = plans
+        .first()
+        .ok_or_else(|| invalid_batch_input("batch row plan must contain at least one row"))?;
+    let first_position = first
+        .seq_len
+        .checked_sub(1)
+        .ok_or_else(|| invalid_batch_input("row plan sequence length must be positive"))?;
+    let mut max_chunks = 0;
+
+    for (row, plan) in plans.iter().enumerate() {
+        let row_offset = u32::try_from(row)
+            .map_err(|_| invalid_batch_input("row index exceeds the Metal row-index range"))?;
+        let expected_seq_len = first_position
+            .checked_add(row_offset)
+            .and_then(|position| position.checked_add(1))
+            .ok_or_else(|| invalid_batch_input("row plan position range overflows u32"))?;
+        if plan.key_start != 0 || plan.seq_len != expected_seq_len {
+            return Err(invalid_batch_input(format!(
+                "row {row} must have key_start 0 and contiguous seq_len {expected_seq_len}"
+            )));
+        }
+        let range = plan
+            .seq_len
+            .checked_sub(plan.key_start)
+            .ok_or_else(|| invalid_batch_input(format!("row {row} has an inverted key range")))?;
+        if range == 0 {
+            return Err(invalid_batch_input(format!(
+                "row {row} must include at least one key"
+            )));
+        }
+        let expected_chunks = chunks_for(range);
+        if !(1..=MAX_CHUNKS).contains(&plan.num_chunks) || plan.num_chunks != expected_chunks {
+            return Err(invalid_batch_input(format!(
+                "row {row} chunk count {} does not match expected {expected_chunks}",
+                plan.num_chunks
+            )));
+        }
+        let expected_chunk_len = checked_ceil_div_u32(range, plan.num_chunks)?;
+        if plan.chunk_len != expected_chunk_len {
+            return Err(invalid_batch_input(format!(
+                "row {row} chunk length {} does not match expected {expected_chunk_len}",
+                plan.chunk_len
+            )));
+        }
+        max_chunks = max_chunks.max(plan.num_chunks);
+    }
+
+    Ok(max_chunks)
+}
+
+impl BatchAttentionPlan {
+    /// Refuse short Metal buffers before the encoder can create either pass.
+    pub(crate) fn validate_buffer_lengths(
+        &self,
+        actual: BatchAttentionBufferLengths,
+    ) -> Result<(), GpuError> {
+        for (name, actual, required) in [
+            ("Q", actual.q_bytes, self.required_buffers.q_bytes),
+            ("K", actual.k_bytes, self.required_buffers.k_bytes),
+            ("V", actual.v_bytes, self.required_buffers.v_bytes),
+            (
+                "output",
+                actual.output_bytes,
+                self.required_buffers.output_bytes,
+            ),
+            (
+                "row-plan",
+                actual.row_plan_bytes,
+                self.required_buffers.row_plan_bytes,
+            ),
+            (
+                "partial-state",
+                actual.partial_bytes,
+                self.required_buffers.partial_bytes,
+            ),
+        ] {
+            if actual < required {
+                return Err(invalid_batch_input(format!(
+                    "{name} buffer has {actual} bytes, requires at least {required}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn checked_batch_product(values: &[usize]) -> Result<usize, GpuError> {
+    values.iter().try_fold(1usize, |product, value| {
+        product
+            .checked_mul(*value)
+            .ok_or_else(|| invalid_batch_input("batch size or dispatch arithmetic overflows"))
+    })
+}
+
+fn checked_batch_byte_count(values: &[usize], element_size: usize) -> Result<u64, GpuError> {
+    let elements = checked_batch_product(values)?;
+    let bytes = elements
+        .checked_mul(element_size)
+        .ok_or_else(|| invalid_batch_input("batch buffer byte count overflows"))?;
+    u64::try_from(bytes)
+        .map_err(|_| invalid_batch_input("batch buffer byte count exceeds Metal's range"))
+}
+
+fn checked_ceil_div_usize(value: usize, divisor: usize) -> Result<usize, GpuError> {
+    if divisor == 0 {
+        return Err(invalid_batch_input(
+            "batch dispatch tile size must be positive",
+        ));
+    }
+    let quotient = value / divisor;
+    quotient
+        .checked_add(usize::from(value % divisor != 0))
+        .ok_or_else(|| invalid_batch_input("batch dispatch tile count overflows"))
+}
+
+fn checked_ceil_div_u32(value: u32, divisor: u32) -> Result<u32, GpuError> {
+    if divisor == 0 {
+        return Err(invalid_batch_input("row-plan chunk count must be positive"));
+    }
+    let quotient = value / divisor;
+    quotient
+        .checked_add(u32::from(value % divisor != 0))
+        .ok_or_else(|| invalid_batch_input("row-plan chunk length overflows"))
+}
+
+fn invalid_batch_input(detail: impl Into<String>) -> GpuError {
+    GpuError::InvalidInput(detail.into())
 }
 
 /// `attention_decode_partial` references function constants
