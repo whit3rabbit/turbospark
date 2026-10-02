@@ -58,6 +58,11 @@ pub(crate) struct RealLlamaState {
     /// It changes what the FFN half of a layer is and nothing above it:
     /// attention, both norms and the head are the same code either way.
     pub(crate) dense: bool,
+    /// Capacity-sized Q/output and split-KV scratch reserved only for dense,
+    /// full-attention Llama configurations. Other families share this state
+    /// type but keep their existing allocation footprint.
+    #[allow(dead_code)] // The next runtime task adds the row-staging reader.
+    pub(crate) batch_attention_buffers: Option<BatchAttentionBuffers>,
     /// FP32 router logits, one `[num_experts]` row per token of a prefill
     /// micro-batch (`MAX_PREFILL_BATCH` rows, matching `RealGemmaState`'s
     /// field of the same name): the chunked-prefill driver's per-layer
@@ -74,6 +79,103 @@ pub(crate) struct RealLlamaState {
     pub(crate) moe_x: gpu::MetalBuffer,
     /// `[hidden]`: the routed sum, added back to the stream.
     pub(crate) h2: gpu::MetalBuffer,
+}
+
+/// Persistent allocations for the dense-Llama batched-attention path.
+/// Query/output byte lengths and GPU scratch all come from the same layout.
+/// The later memory-oracle gate checks process peak separately.
+pub(crate) struct BatchAttentionBuffers {
+    #[allow(dead_code)] // Read when task 3.2 stages query rows.
+    pub(crate) q: gpu::MetalBuffer,
+    #[allow(dead_code)] // Read after task 3.3 completes batched attention.
+    pub(crate) output: gpu::MetalBuffer,
+    #[allow(dead_code)] // Bound by the batch encoder in task 3.4.
+    pub(crate) scratch: gpu::BatchAttentionScratch,
+}
+
+impl BatchAttentionBuffers {
+    fn allocate(
+        context: &gpu::MetalContext,
+        layout: gpu::BatchAttentionScratchLayout,
+    ) -> Result<Self, RealForwardError> {
+        let q_bytes = metal_buffer_byte_length(layout.q_buffer_bytes())?;
+        let output_bytes = metal_buffer_byte_length(layout.output_buffer_bytes())?;
+        let q = context.new_output_buffer(q_bytes);
+        let output = context.new_output_buffer(output_bytes);
+        let scratch =
+            gpu::BatchAttentionScratch::new(context, layout).map_err(RealForwardError::Gpu)?;
+
+        Ok(Self { q, output, scratch })
+    }
+}
+
+fn metal_buffer_byte_length(bytes: usize) -> Result<u64, RealForwardError> {
+    u64::try_from(bytes).map_err(|_| {
+        RealForwardError::Gpu(gpu::GpuError::InvalidInput(
+            "batch-attention buffer length exceeds Metal's byte range".into(),
+        ))
+    })
+}
+
+fn batch_attention_eligible(
+    family: ModelFamily,
+    num_experts: i64,
+    num_layers: i64,
+    full_attention_layer_mask: &[u8],
+) -> bool {
+    let Ok(num_layers) = usize::try_from(num_layers) else {
+        return false;
+    };
+
+    family == ModelFamily::Llama
+        && num_experts == 0
+        && num_layers > 0
+        && full_attention_layer_mask.len() == num_layers
+        && full_attention_layer_mask.iter().all(|&mask| mask == 1)
+}
+
+fn arch_uses_batch_attention_buffers(arch: &ArchConfig) -> bool {
+    batch_attention_eligible(
+        arch.family,
+        arch.num_experts,
+        arch.num_layers,
+        &arch.full_attention_layer_mask,
+    )
+}
+
+fn batch_attention_layout(
+    arch: &ArchConfig,
+) -> Result<Option<gpu::BatchAttentionScratchLayout>, RealForwardError> {
+    if !arch_uses_batch_attention_buffers(arch) {
+        return Ok(None);
+    }
+
+    let num_q_heads = usize::try_from(arch.num_heads).map_err(|_| {
+        RealForwardError::Unsupported(format!(
+            "dense Llama batch attention requires positive query heads, got {}",
+            arch.num_heads
+        ))
+    })?;
+    let head_dim = usize::try_from(arch.full_head_dim).map_err(|_| {
+        RealForwardError::Unsupported(format!(
+            "dense Llama batch attention requires a positive full head dimension, got {}",
+            arch.full_head_dim
+        ))
+    })?;
+    let layout = gpu::BatchAttentionScratchLayout::new(num_q_heads, head_dim).map_err(|error| {
+        RealForwardError::Unsupported(format!(
+            "dense Llama batch-attention scratch layout is unsupported: {error:?}"
+        ))
+    })?;
+    if layout.capacity() != MAX_PREFILL_BATCH {
+        return Err(RealForwardError::Unsupported(format!(
+            "GPU batch-attention capacity {} does not match runtime prefill capacity {}",
+            layout.capacity(),
+            MAX_PREFILL_BATCH
+        )));
+    }
+
+    Ok(Some(layout))
 }
 
 impl RealLlamaState {
@@ -287,6 +389,10 @@ impl RealLlamaState {
         entry(index, "language_model.model.norm.weight")?;
         let _ = weights;
 
+        let batch_attention_buffers = batch_attention_layout(arch)?
+            .map(|layout| BatchAttentionBuffers::allocate(context, layout))
+            .transpose()?;
+
         let ones: Vec<u8> = (0..hidden).flat_map(|_| BF16_ONE.to_le_bytes()).collect();
         let router_ones = context.new_output_buffer(ones.len() as u64);
         gpu::write_buffer_bytes(&router_ones, 0, &ones);
@@ -300,6 +406,7 @@ impl RealLlamaState {
             router_ones,
             correction_bias,
             dense,
+            batch_attention_buffers,
             per_expert_ones: vec![1.0; num_experts],
             // `new_output_buffer(0)` is not a thing worth finding out about
             // at the first dispatch, and a dense flow never binds either of
@@ -309,5 +416,73 @@ impl RealLlamaState {
             moe_x: halfs(hidden * MAX_PREFILL_BATCH),
             h2: halfs(hidden),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_attention_buffer_gate_requires_dense_full_attention_llama() {
+        assert!(batch_attention_eligible(
+            ModelFamily::Llama,
+            0,
+            3,
+            &[1, 1, 1]
+        ));
+
+        // Mixtral shares the Llama architecture string but has routed experts.
+        assert!(!batch_attention_eligible(
+            ModelFamily::Llama,
+            8,
+            3,
+            &[1, 1, 1]
+        ));
+        // Dense families sharing RealLlamaState keep their existing scratch.
+        for family in [
+            ModelFamily::Qwen3Moe,
+            ModelFamily::Qwen2Dense,
+            ModelFamily::Qwen3Dense,
+            ModelFamily::Qwen3Vl,
+        ] {
+            assert!(!batch_attention_eligible(family, 0, 3, &[1, 1, 1]));
+        }
+        assert!(!batch_attention_eligible(
+            ModelFamily::Llama,
+            0,
+            3,
+            &[1, 0, 1]
+        ));
+        assert!(!batch_attention_eligible(ModelFamily::Llama, 0, 3, &[1, 1]));
+        assert!(!batch_attention_eligible(ModelFamily::Llama, 0, 0, &[]));
+    }
+
+    #[test]
+    fn batch_attention_buffers_match_shared_layout_byte_lengths() {
+        let context = gpu::MetalContext::new().expect("Metal device");
+        let layout = gpu::BatchAttentionScratchLayout::new(32, 128)
+            .expect("supported Llama attention shape");
+        assert_eq!(layout.capacity(), MAX_PREFILL_BATCH);
+
+        let buffers = BatchAttentionBuffers::allocate(&context, layout)
+            .expect("allocate layout-sized batch buffers");
+        assert_eq!(buffers.scratch.layout(), layout);
+        assert_eq!(buffers.q.length(), layout.q_buffer_bytes() as u64);
+        assert_eq!(buffers.output.length(), layout.output_buffer_bytes() as u64);
+        assert_eq!(
+            buffers.scratch.row_plan.length(),
+            layout.row_plan_bytes() as u64
+        );
+        let partial_bytes =
+            buffers.scratch.m.length() + buffers.scratch.d.length() + buffers.scratch.o.length();
+        assert_eq!(partial_bytes, layout.partial_state_bytes() as u64);
+        assert_eq!(
+            buffers.q.length()
+                + buffers.output.length()
+                + buffers.scratch.row_plan.length()
+                + partial_bytes,
+            layout.total_bytes() as u64
+        );
     }
 }
