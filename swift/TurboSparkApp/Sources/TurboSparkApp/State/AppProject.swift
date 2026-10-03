@@ -120,6 +120,9 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             browserOriginAllowlist = BrowserPermissionRuleStore.normalizedAllowlist(browserOriginAllowlist)
         }
     }
+    /// Absolute roots granted to the JavaScript REPL file facade. Empty denies file access.
+    /// The app-side broker reads this value for every operation; workers never receive this list.
+    public var replFileAccessRoots: [String]
     /// Persisted MCP ALLOW rules in `mcp__server` / `mcp__server__tool`
     /// syntax (`swift/docs/SWIFT_TOOLS.md`). A matching call skips the ask prompt
     /// but never the high-risk gate.
@@ -139,6 +142,7 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         automation: AppToolPermission = .ask,
         browser: AppToolPermission = .ask,
         browserOriginAllowlist: [String] = [],
+        replFileAccessRoots: [String] = [],
         mcpAllowRules: [String] = [],
         mcpDenyRules: [String] = []
     ) {
@@ -151,6 +155,7 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         self.automation = automation
         self.browser = browser
         self.browserOriginAllowlist = BrowserPermissionRuleStore.normalizedAllowlist(browserOriginAllowlist)
+        self.replFileAccessRoots = replFileAccessRoots
         self.mcpAllowRules = mcpAllowRules
         self.mcpDenyRules = mcpDenyRules
     }
@@ -168,6 +173,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         let decodedBrowserOrigins = (try? container.decodeLossyArray(
             String.self, forKey: .browserOriginAllowlist)) ?? []
         self.browserOriginAllowlist = BrowserPermissionRuleStore.normalizedAllowlist(decodedBrowserOrigins)
+        self.replFileAccessRoots = try container.decodeIfPresent(
+            [String].self, forKey: .replFileAccessRoots) ?? []
         self.mcpAllowRules = try container.decodeIfPresent([String].self, forKey: .mcpAllowRules) ?? []
         self.mcpDenyRules = try container.decodeIfPresent([String].self, forKey: .mcpDenyRules) ?? []
     }
