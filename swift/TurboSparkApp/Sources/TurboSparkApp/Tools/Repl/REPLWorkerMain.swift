@@ -1,5 +1,4 @@
 import Foundation
-import JavaScriptCore
 
 enum REPLWorkerMain {
     static let workerModeArgument = "--turbospark-js-repl-worker"
@@ -46,17 +45,13 @@ enum REPLWorkerMain {
 
         let result = SmokeResultBox()
         let finished = DispatchSemaphore(value: 0)
-        DispatchQueue(label: "com.turbospark.repl.worker-smoke").async {
+        let worker = REPLWorkerContext()
+        Task.detached {
             defer { finished.signal() }
-            guard let context = JSContext(),
-                  let value = context.evaluateScript("1 + 1"),
-                  context.exception == nil else {
-                result.store(completionText: nil, ranOnMainThread: Thread.isMainThread)
-                return
-            }
+            let evaluation = await worker.evaluateWithThreadStatus(code: "1 + 1")
             result.store(
-                completionText: value.toString(),
-                ranOnMainThread: Thread.isMainThread)
+                completionText: evaluation.result.completionText,
+                ranOnMainThread: evaluation.ranOnMainThread)
         }
 
         finished.wait()
