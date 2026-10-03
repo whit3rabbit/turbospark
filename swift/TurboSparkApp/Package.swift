@@ -47,6 +47,7 @@ let package = Package(
                 .define("SQLITE_HAS_CODEC")
             ],
             linkerSettings: [
+                .linkedFramework("JavaScriptCore"),
                 // EVERY CONSUMER OF TurboSpark HAS TO REPEAT THIS, and that
                 // is a SwiftPM limitation rather than a mistake here: a
                 // library search path in `unsafeFlags` is resolved against

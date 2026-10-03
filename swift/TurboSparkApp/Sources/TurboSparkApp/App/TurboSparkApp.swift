@@ -73,6 +73,13 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
+enum TurboSparkAppMain {
+    static func main() {
+        guard !REPLWorkerMain.runIfRequested() else { return }
+        TurboSparkApp.main()
+    }
+}
+
 struct TurboSparkApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: ForegroundAppDelegate
     @StateObject private var vaultCoordinator = ProfileVaultCoordinator.shared
