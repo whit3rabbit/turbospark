@@ -74,25 +74,20 @@ sparkle_public_ed_key="O+w+eDlUPQQa1Y+quYgz9BiJljUdS01KeafmpSzoZ3g="
 app="$out_dir/TurboSpark.app"
 contents="$app/Contents"
 openkind_revision="${OPENKIND_RELEASE_REVISION:-}"
-openkind_url="${OPENKIND_PACKAGE_URL:-https://github.com/whit3rabbit/opendecision.git}"
+openkind_server_version="${OPENKIND_SERVER_VERSION:-0.1.0}"
 openkind_bin="${OPENKINDD_BINARY:-}"
 openkind_build_dir=""
 
 if [ "$skip_build" -eq 0 ]; then
   [[ "$openkind_revision" =~ ^[0-9a-f]{40}$ ]] || {
-    echo "OPENKIND_RELEASE_REVISION must be an exact published 40-character commit for app bundles" >&2
+    echo "OPENKIND_RELEASE_REVISION must be an exact published 40-character commit for the Swift package" >&2
     exit 1
   }
   openkind_build_dir="$(mktemp -d)"
   trap 'rm -rf "$openkind_build_dir"' EXIT
-  git clone -q --filter=blob:none "$openkind_url" "$openkind_build_dir/openkind"
-  git -C "$openkind_build_dir/openkind" checkout -q "$openkind_revision"
-  [ "$(git -C "$openkind_build_dir/openkind" rev-parse HEAD)" = "$openkind_revision" ] || {
-    echo "OpenKind revision mismatch" >&2; exit 1;
-  }
-  cargo build --release --locked --features mlx -p openkind-server \
-    --manifest-path "$openkind_build_dir/openkind/Cargo.toml"
-  openkind_bin="$openkind_build_dir/openkind/target/release/openkindd"
+  cargo install --locked --version "$openkind_server_version" --target "$target" --features mlx \
+    --root "$openkind_build_dir/install" openkind-server
+  openkind_bin="$openkind_build_dir/install/bin/openkindd"
 fi
 [ -x "$openkind_bin" ] || { echo "openkindd binary missing; set OPENKINDD_BINARY for --skip-build" >&2; exit 1; }
 
@@ -123,6 +118,7 @@ cp "$exe" "$contents/MacOS/TurboSparkApp"
 cp "$openkind_bin" "$contents/MacOS/openkindd"
 if [ "$skip_build" -eq 0 ]; then
   printf '%s\n' "$openkind_revision" > "$contents/Resources/OpenKindRevision.txt"
+  printf '%s\n' "$openkind_server_version" > "$contents/Resources/OpenKindServerVersion.txt"
 fi
 
 # `Bundle.module` resolves against Bundle.main.resourceURL in a real bundle, so

@@ -2,13 +2,13 @@
 import PackageDescription
 import Foundation
 
-// Development uses the sibling checkout. Release packaging sets one exact
-// revision for both this Swift client and its bundled daemon.
+// Development uses the sibling checkout. Release packaging pins this Swift
+// client to the source commit that published its paired daemon crate.
 let openKindRevision = ProcessInfo.processInfo.environment["OPENKIND_RELEASE_REVISION"]
 let openKindURL = ProcessInfo.processInfo.environment["OPENKIND_PACKAGE_URL"]
-    ?? "https://github.com/whit3rabbit/opendecision.git"
+    ?? "https://github.com/whit3rabbit/openkind.git"
 let openKindIdentity = URL(string: openKindURL)?.deletingPathExtension().lastPathComponent.lowercased()
-    ?? "opendecision"
+    ?? "openkind"
 let openKindDependency: Package.Dependency = openKindRevision.map {
     .package(url: openKindURL, revision: $0)
 } ?? .package(path: "../../../openkind")

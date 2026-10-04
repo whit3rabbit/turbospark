@@ -106,11 +106,15 @@ jobs:
 
       - name: Build TurboSpark.app
         env:
-          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION }}
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '325701be0582c8986ce84c54f88caa21630020c0' }}
+          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.1.0' }}
         run: ./scripts/make-app-bundle.sh
 
       # make-dmg.sh mounts what it built and asserts the contents; a green
       # run here means the image is complete and its signature verifies, not
       # merely that hdiutil exited 0.
       - name: Build and verify DMG
+        env:
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '325701be0582c8986ce84c54f88caa21630020c0' }}
+          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.1.0' }}
         run: ./scripts/make-dmg.sh

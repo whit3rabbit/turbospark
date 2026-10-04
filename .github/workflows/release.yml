@@ -106,7 +106,8 @@ jobs:
       - name: Build app bundle (also builds the CLI and the server)
         env:
           VER: ${{ needs.check-version.outputs.version }}
-          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION }}
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '325701be0582c8986ce84c54f88caa21630020c0' }}
+          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.1.0' }}
         run: ./scripts/make-app-bundle.sh --version "${VER}"
 
       - name: Stage CLI zip
@@ -129,6 +130,8 @@ jobs:
       - name: Build DMG
         env:
           VER: ${{ needs.check-version.outputs.version }}
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '325701be0582c8986ce84c54f88caa21630020c0' }}
+          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.1.0' }}
         run: ./scripts/make-dmg.sh --version "${VER}"
 
       # The Sparkle feed that lets installed apps update in place. Signed with
