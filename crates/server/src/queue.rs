@@ -55,14 +55,26 @@ use crate::cancel::Cancel;
 /// One permit's worth of admission. Holds the semaphore permit for as long
 /// as it lives, so dropping it (end of request, abort of the awaiting task)
 /// is what admits the next waiter.
+#[derive(Clone)]
 pub struct GenerationPermit {
-    _permit: OwnedSemaphorePermit,
+    // The async request and detached blocking body can each own a clone. The
+    // semaphore slot returns only after the last owner exits, so cancellation
+    // cannot admit another model run while this body is still using it.
+    _permit: Arc<OwnedSemaphorePermit>,
 }
 
 /// A one-at-a-time FIFO admission gate. See the module docs.
 pub struct GenerationQueue {
     permits: Arc<Semaphore>,
     queued: AtomicUsize,
+}
+
+struct QueuedCountGuard<'a>(&'a AtomicUsize);
+
+impl Drop for QueuedCountGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Release);
+    }
 }
 
 impl GenerationQueue {
@@ -86,16 +98,17 @@ impl GenerationQueue {
     /// the window the check exists for.
     pub async fn acquire(self: &Arc<Self>, cancel: &Cancel) -> Option<GenerationPermit> {
         self.queued.fetch_add(1, Ordering::Release);
+        let queued = QueuedCountGuard(&self.queued);
         let permit = self.permits.clone().acquire_owned().await;
-        self.queued.fetch_sub(1, Ordering::Release);
+        drop(queued);
         match permit {
             // The semaphore is never closed here, so the `Err` arm is
             // unreachable in practice; treating it as "no admission" keeps
             // this total rather than propagating an invariant nothing can
             // trigger.
-            Ok(permit) if !cancel.load(Ordering::Acquire) => {
-                Some(GenerationPermit { _permit: permit })
-            }
+            Ok(permit) if !cancel.load(Ordering::Acquire) => Some(GenerationPermit {
+                _permit: Arc::new(permit),
+            }),
             _ => None,
         }
     }
@@ -137,11 +150,164 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    let _permit = match queue {
+    let permit = match queue {
         // The `?` is the cancelled-while-queued case: fold to the caller's
         // silence rather than starting a generation nobody will read.
         Some(queue) => Some(queue.acquire(cancel).await?),
         None => None,
     };
-    Some(tokio::task::spawn_blocking(body).await)
+    Some(run_blocking(permit, body).await)
+}
+
+/// Runs blocking model work while retaining any permit acquired by an outer
+/// request flow. Cloned permits let a guardrail retry loop keep its FIFO place
+/// while each detached generation body independently protects active work.
+pub(crate) async fn run_blocking<T, F>(
+    permit: Option<GenerationPermit>,
+    body: F,
+) -> std::result::Result<T, tokio::task::JoinError>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    // A dropped JoinHandle does not stop spawn_blocking work that has
+    // already started. Keep queue load and admission blocked until that
+    // work exits, even if the async response waiter is cancelled.
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        body()
+    })
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::{run_blocking, run_gated, GenerationQueue};
+    use crate::cancel::new_cancel;
+
+    #[tokio::test]
+    async fn dropping_a_waiter_decrements_queue_load() {
+        let queue = GenerationQueue::shared();
+        let cancel = new_cancel();
+        let active = queue
+            .acquire(&cancel)
+            .await
+            .expect("queue admits first work");
+
+        let waiting_queue = queue.clone();
+        let waiting_cancel = cancel.clone();
+        let waiter = tokio::spawn(async move { waiting_queue.acquire(&waiting_cancel).await });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while queue.queued() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("second request reaches the queue");
+        assert_eq!(queue.queued(), 1);
+
+        waiter.abort();
+        assert!(matches!(waiter.await, Err(error) if error.is_cancelled()));
+        assert_eq!(queue.queued(), 0, "cancellation releases its queued count");
+        assert_eq!(queue.load(), 1, "the active request still owns the permit");
+
+        drop(active);
+        assert_eq!(queue.load(), 0, "the idle queue has no stale load");
+    }
+
+    #[tokio::test]
+    async fn dropping_run_gated_waiter_keeps_permit_until_blocking_body_exits() {
+        let queue = GenerationQueue::shared();
+        let cancel = new_cancel();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        let waiting_queue = queue.clone();
+        let waiter = tokio::spawn(async move {
+            run_gated(Some(waiting_queue), &cancel, move || {
+                let _ = started_tx.send(());
+                let _ = release_rx.recv_timeout(Duration::from_secs(10));
+                let _ = finished_tx.send(());
+            })
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), started_rx)
+            .await
+            .expect("blocking body starts")
+            .expect("start signal arrives");
+        assert_eq!(queue.load(), 1, "body owns the generation permit");
+
+        waiter.abort();
+        assert!(waiter.await.expect_err("waiter was aborted").is_cancelled());
+        let load_while_body_is_held = queue.load();
+
+        release_tx.send(()).expect("blocking body is still waiting");
+        tokio::time::timeout(Duration::from_secs(5), finished_rx)
+            .await
+            .expect("blocking body exits")
+            .expect("finish signal arrives");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while queue.load() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("permit is released after the body exits");
+
+        assert_eq!(
+            load_while_body_is_held, 1,
+            "dropping the waiter must not release capacity used by a still-running blocking body"
+        );
+        assert_eq!(queue.load(), 0, "body exit releases the permit");
+    }
+
+    #[tokio::test]
+    async fn dropping_direct_waiter_keeps_cloned_permit_until_blocking_body_exits() {
+        let queue = GenerationQueue::shared();
+        let cancel = new_cancel();
+        let permit = queue
+            .acquire(&cancel)
+            .await
+            .expect("queue should admit work");
+        let blocking_permit = permit.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        let waiter = tokio::spawn(async move {
+            run_blocking(Some(blocking_permit), move || {
+                let _ = started_tx.send(());
+                let _ = release_rx.recv_timeout(Duration::from_secs(10));
+                let _ = finished_tx.send(());
+            })
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), started_rx)
+            .await
+            .expect("blocking body starts")
+            .expect("start signal arrives");
+        waiter.abort();
+        assert!(waiter.await.expect_err("waiter was aborted").is_cancelled());
+        drop(permit);
+        assert_eq!(queue.load(), 1, "blocking body still owns the last clone");
+
+        release_tx.send(()).expect("blocking body is still waiting");
+        tokio::time::timeout(Duration::from_secs(5), finished_rx)
+            .await
+            .expect("blocking body exits")
+            .expect("finish signal arrives");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while queue.load() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("permit is released after the body exits");
+    }
 }

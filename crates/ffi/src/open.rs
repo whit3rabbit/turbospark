@@ -165,7 +165,35 @@ fn steering_gate(gate: Option<f64>) -> Result<f32, String> {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum OpenFailure {
+    ContextRefused(runtime::ContextRefused),
+    Failed(String),
+}
+
+impl std::fmt::Display for OpenFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ContextRefused(error) => error.fmt(f),
+            Self::Failed(detail) => f.write_str(detail),
+        }
+    }
+}
+
+impl From<String> for OpenFailure {
+    fn from(detail: String) -> Self {
+        Self::Failed(detail)
+    }
+}
+
 pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String> {
+    open_with_failure(model, options).map_err(|error| error.to_string())
+}
+
+pub(crate) fn open_with_failure(
+    model: &str,
+    options: &OpenOptions,
+) -> Result<Session, OpenFailure> {
     // EVERY OPTION IS MAPPED BEFORE ANYTHING IS READ FROM DISK, and that
     // ordering is worth keeping. A misspelled key is the caller's own
     // mistake and is answerable in microseconds, so answering it first
@@ -182,7 +210,9 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     // already ran. Refused here, before anything is read from disk, for the
     // same reason the slot-count check below is.
     if max_context == Some(0) {
-        return Err("maxContext must be at least 1, or \"auto\"".to_string());
+        return Err(OpenFailure::Failed(
+            "maxContext must be at least 1, or \"auto\"".to_string(),
+        ));
     }
     // **A SLOT COUNT OUTSIDE THE ALLOWED SET IS A PANIC LATER, IN PROCESS.**
     // `sized` only proves a non-negative integer; `ExpertCacheSlots::Fixed`
@@ -239,7 +269,9 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
             || options.steering_target.is_some()
             || options.steering_gate.is_some())
     {
-        return Err("steering options given without a steering vector path".to_string());
+        return Err(OpenFailure::Failed(
+            "steering options given without a steering vector path".to_string(),
+        ));
     }
 
     // `model` takes a path OR a `turbospark-model` alias, and an existing
@@ -249,10 +281,10 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
     let resolved = catalog::resolve_model_arg(model);
     let dir: &Path = resolved.as_path();
     if !dir.is_dir() {
-        return Err(format!(
+        return Err(OpenFailure::Failed(format!(
             "{} is not a directory (and matched no installed alias)",
             dir.display()
-        ));
+        )));
     }
     let arch = repack::peek_manifest_arch(dir)?;
     // Captured before `arch` is moved into the runner. The manifest's own
@@ -305,7 +337,7 @@ pub(crate) fn open(model: &str, options: &OpenOptions) -> Result<Session, String
         &load_policy,
         kv_quant,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(OpenFailure::ContextRefused)?;
 
     // Steering policy is loaded before open, following CLI and server pattern.
     // The FFI wire shape carries ONE vector; the runtime's policy is a list,

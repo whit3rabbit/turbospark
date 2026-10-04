@@ -38,7 +38,7 @@ use tokenizer::{JsonValue, ParsedToolCall, ReasoningEffort};
 
 use crate::cancel::Cancel;
 use crate::handler::{
-    cancelled_before_start, plan, run_full, tool_names, AppState, GenError, Generated,
+    cancelled_before_start, plan, run_full, tool_names, AppState, GenError, Generated, RunControl,
 };
 
 mod extra_formats;
@@ -405,7 +405,7 @@ pub(crate) async fn run_guarded(
     effort: ReasoningEffort,
     cancel: Cancel,
 ) -> Result<Generated, GenError> {
-    let _gate = match model.generation_queue() {
+    let gate = match model.generation_queue() {
         Some(queue) => match queue.acquire(&cancel).await {
             Some(permit) => Some(permit),
             // Cancelled while queued: the client is gone, nothing was
@@ -448,7 +448,10 @@ pub(crate) async fn run_guarded(
             planned.images,
             offered.clone(),
             effort,
-            cancel.clone(),
+            RunControl {
+                cancel: cancel.clone(),
+                permit: gate.clone(),
+            },
         )
         .await?;
 

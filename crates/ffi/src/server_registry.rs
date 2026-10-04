@@ -18,22 +18,81 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use turbospark_server::observe::{ServerEvent, ServerObserver};
-use turbospark_server::registry::{model_row, resolve_among, ModelRegistry, ModelRow, Resolution};
+use turbospark_server::registry::{
+    model_row, resolve_among, resolve_embedding_among, ModelRegistry, ModelRow, RequestUseLease,
+    Resolution, ResolvedModel,
+};
 use turbospark_server::ChatModel;
 
 /// The models attached to one running server.
-#[derive(Default)]
 pub(crate) struct LiveRegistry {
     // A `Vec` rather than a `HashMap` because attachment ORDER is what a
     // host lists them in and what `/v1/models` reports, and the set is a
     // handful of entries at most -- a machine that can hold ten resident
     // models at once does not exist. Uniqueness is enforced on insert.
-    models: Mutex<Vec<Arc<dyn ChatModel>>>,
+    models: Mutex<Vec<Arc<LiveModelEntry>>>,
+    clock: Arc<dyn Fn() -> Instant + Send + Sync>,
+}
+
+struct LiveModelEntry {
+    model: Arc<dyn ChatModel>,
+    generation_queue: Option<Arc<turbospark_server::GenerationQueue>>,
+    use_state: Mutex<ModelUseState>,
+    clock: Arc<dyn Fn() -> Instant + Send + Sync>,
+}
+
+struct ModelUseState {
+    active_requests: usize,
+    last_used: Instant,
+}
+
+impl LiveModelEntry {
+    fn acquire_request(&self) {
+        let mut state = self.use_state.lock().unwrap_or_else(|p| p.into_inner());
+        state.last_used = (self.clock)();
+        state.active_requests += 1;
+    }
+
+    fn release_request(&self) {
+        let mut state = self.use_state.lock().unwrap_or_else(|p| p.into_inner());
+        state.last_used = (self.clock)();
+        debug_assert!(
+            state.active_requests > 0,
+            "request lease count cannot underflow"
+        );
+        state.active_requests = state.active_requests.saturating_sub(1);
+    }
+}
+
+struct LiveRequestLease {
+    entry: Arc<LiveModelEntry>,
+}
+
+impl RequestUseLease for LiveRequestLease {}
+
+impl Drop for LiveRequestLease {
+    fn drop(&mut self) {
+        self.entry.release_request();
+    }
+}
+
+impl Default for LiveRegistry {
+    fn default() -> Self {
+        Self::with_clock(Arc::new(Instant::now))
+    }
 }
 
 impl LiveRegistry {
+    pub(crate) fn with_clock(clock: Arc<dyn Fn() -> Instant + Send + Sync>) -> Self {
+        Self {
+            models: Mutex::new(Vec::new()),
+            clock,
+        }
+    }
+
     /// Adds a model, or refuses if any public identity is already attached.
     ///
     /// **A DUPLICATE ID IS REFUSED BY NAME RATHER THAN SUFFIXED.** The id is
@@ -46,10 +105,13 @@ impl LiveRegistry {
     pub(crate) fn attach(&self, model: Arc<dyn ChatModel>) -> Result<String, String> {
         let row = model_row(&*model);
         let id = row.id.clone();
+        let generation_queue = model.generation_queue();
+        let clock = Arc::clone(&self.clock);
+        let last_used = (clock)();
         let mut models = self.models.lock().unwrap_or_else(|p| p.into_inner());
         let mut identities = HashSet::new();
         for existing in models.iter() {
-            identities.extend(model_row(&**existing).ids().map(str::to_string));
+            identities.extend(model_row(&*existing.model).ids().map(str::to_string));
         }
         for identity in row.ids() {
             if !identities.insert(identity.to_string()) {
@@ -59,16 +121,120 @@ impl LiveRegistry {
                 ));
             }
         }
-        models.push(model);
+        models.push(Arc::new(LiveModelEntry {
+            model,
+            generation_queue,
+            use_state: Mutex::new(ModelUseState {
+                active_requests: 0,
+                last_used,
+            }),
+            clock,
+        }));
         Ok(id)
     }
 
     /// Removes a model by id. Returns whether one was there.
     pub(crate) fn detach(&self, id: &str) -> bool {
         let mut models = self.models.lock().unwrap_or_else(|p| p.into_inner());
-        let before = models.len();
-        models.retain(|m| m.model_id() != id);
-        models.len() != before
+        let Some(index) = models.iter().position(|entry| entry.model.model_id() == id) else {
+            return false;
+        };
+        if models[index]
+            .use_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .active_requests
+            != 0
+        {
+            return false;
+        }
+        // Cancelled response waiters may leave blocking model work alive.
+        // Its permit protects residency until that work actually exits.
+        if models[index]
+            .generation_queue
+            .as_ref()
+            .is_some_and(|queue| queue.load() != 0)
+        {
+            return false;
+        }
+        models.remove(index);
+        true
+    }
+
+    /// Atomically detaches entries whose last request use is older than `ttl`.
+    /// The request lease count and queue load are checked while holding the
+    /// same registry lock that resolution uses to acquire a lease.
+    pub(crate) fn detach_idle_expired(&self, ttl: Duration) -> Vec<String> {
+        let now = (self.clock)();
+        let mut models = self.models.lock().unwrap_or_else(|p| p.into_inner());
+        let mut detached = Vec::new();
+        models.retain(|entry| {
+            let expired_and_unused = {
+                let state = entry.use_state.lock().unwrap_or_else(|p| p.into_inner());
+                state.active_requests == 0 && now.saturating_duration_since(state.last_used) >= ttl
+            };
+            let generation_active = entry
+                .generation_queue
+                .as_ref()
+                .is_some_and(|queue| queue.load() != 0);
+            if expired_and_unused && !generation_active {
+                detached.push(entry.model.model_id().to_string());
+                false
+            } else {
+                true
+            }
+        });
+        detached
+    }
+
+    /// Returns a model only when the requested id or alias is attached.
+    ///
+    /// Unlike ModelRegistry::resolve, this does not apply the single-model
+    /// fallback, which would mistake any request for an exact match.
+    pub(crate) fn exact_model(&self, requested: &str) -> Option<Arc<dyn ChatModel>> {
+        let models = self.models.lock().unwrap_or_else(|p| p.into_inner());
+        models.iter().find_map(|entry| {
+            model_row(&*entry.model)
+                .ids()
+                .any(|id| id == requested)
+                .then(|| Arc::clone(&entry.model))
+        })
+    }
+
+    fn resolve_for_capability(&self, requested: Option<&str>, embedding: bool) -> Resolution {
+        // The POLICY is `turbospark_server`'s, not this crate's: the
+        // single-model fallback that keeps Claude Code working is stated
+        // once, in `registry.rs`, and every registry defers to it. A second
+        // copy here would be a second place for it to drift.
+        let models = self.models.lock().unwrap_or_else(|p| p.into_inner());
+        let model_arcs: Vec<_> = models
+            .iter()
+            .map(|entry| Arc::clone(&entry.model))
+            .collect();
+        let resolution = if embedding {
+            resolve_embedding_among(&model_arcs, requested)
+        } else {
+            resolve_among(&model_arcs, requested)
+        };
+        match resolution {
+            Resolution::Model(resolved) => {
+                // Resolution and lease acquisition happen under the same lock
+                // as detach, so a resolved model cannot become detached
+                // before its request-use guard is visible.
+                let entry = models
+                    .iter()
+                    .find(|entry| Arc::ptr_eq(&entry.model, &resolved.model))
+                    .expect("resolved models originate in this live registry");
+                entry.acquire_request();
+                Resolution::Model(ResolvedModel::with_lease(
+                    resolved.model,
+                    Some(Box::new(LiveRequestLease {
+                        entry: Arc::clone(entry),
+                    })),
+                ))
+            }
+            other => other,
+        }
     }
 
     pub(crate) fn ids(&self) -> Vec<String> {
@@ -76,19 +242,18 @@ impl LiveRegistry {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .iter()
-            .map(|m| m.model_id().to_string())
+            .map(|entry| entry.model.model_id().to_string())
             .collect()
     }
 }
 
 impl ModelRegistry for LiveRegistry {
     fn resolve(&self, requested: Option<&str>) -> Resolution {
-        // The POLICY is `turbospark_server`'s, not this crate's: the
-        // single-model fallback that keeps Claude Code working is stated
-        // once, in `registry.rs`, and every registry defers to it. A second
-        // copy here would be a second place for it to drift.
-        let models = self.models.lock().unwrap_or_else(|p| p.into_inner());
-        resolve_among(&models, requested)
+        self.resolve_for_capability(requested, false)
+    }
+
+    fn resolve_embedding(&self, requested: Option<&str>) -> Resolution {
+        self.resolve_for_capability(requested, true)
     }
 
     fn rows(&self) -> Vec<ModelRow> {
@@ -96,7 +261,7 @@ impl ModelRegistry for LiveRegistry {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .iter()
-            .map(|m| model_row(&**m))
+            .map(|entry| model_row(&*entry.model))
             .collect()
     }
 }
@@ -193,6 +358,44 @@ impl ServerObserver for EventRing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use tokenizer::MfTokenizer;
+    use turbospark_server::registry::{ModelRegistry, Resolution};
+    use turbospark_server::{ChatModel, ScriptedChatModel};
+
+    struct ChatOnlyModel(ScriptedChatModel);
+
+    impl ChatModel for ChatOnlyModel {
+        fn tokenizer(&self) -> &tokenizer::MfTokenizer {
+            self.0.tokenizer()
+        }
+
+        fn vocab_size(&self) -> usize {
+            self.0.vocab_size()
+        }
+
+        fn max_context(&self) -> u32 {
+            self.0.max_context()
+        }
+
+        fn model_id(&self) -> &str {
+            "live-chat"
+        }
+
+        fn supports_embeddings(&self) -> bool {
+            false
+        }
+
+        fn with_producer(
+            &self,
+            f: &mut dyn FnMut(
+                &mut dyn runtime::LogitProducer,
+            )
+                -> Result<runtime::RawDecodeResult, runtime::RuntimeError>,
+        ) -> Result<runtime::RawDecodeResult, runtime::RuntimeError> {
+            self.0.with_producer(f)
+        }
+    }
 
     fn event(id: u64) -> ServerEvent {
         ServerEvent::RequestStarted {
@@ -280,5 +483,92 @@ mod tests {
         let (events, dropped) = ring.drain(usize::MAX);
         assert!(events.is_empty());
         assert_eq!(dropped, 1);
+    }
+
+    #[test]
+    fn an_active_request_lease_prevents_live_model_detach() {
+        let registry = LiveRegistry::default();
+        let tokenizer_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tokenizer/tests/fixtures/ChatMLTokenizer");
+        let tokenizer =
+            MfTokenizer::load_from_dir(&tokenizer_dir).expect("fixture tokenizer should load");
+        let model: Arc<dyn ChatModel> = Arc::new(ChatOnlyModel(ScriptedChatModel::new(
+            tokenizer,
+            4096,
+            Vec::new(),
+        )));
+        let id = registry.attach(model).expect("model should attach");
+
+        let resolved = match registry.resolve(Some(&id)) {
+            Resolution::Model(resolved) => resolved,
+            _ => panic!("the attached model should resolve"),
+        };
+        let request_lease = resolved
+            .request_lease
+            .expect("live resolution should acquire a request-use lease");
+
+        assert!(
+            !registry.detach(&id),
+            "an active request must keep its model attached"
+        );
+
+        drop(request_lease);
+        assert!(
+            registry.detach(&id),
+            "dropping the final request lease should allow detach"
+        );
+    }
+
+    #[test]
+    fn embedding_resolution_refuses_a_chat_only_live_registry() {
+        let registry = LiveRegistry::default();
+        let tokenizer_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tokenizer/tests/fixtures/ChatMLTokenizer");
+        let tokenizer = MfTokenizer::load_from_dir(&tokenizer_dir).unwrap();
+        registry
+            .attach(Arc::new(ChatOnlyModel(ScriptedChatModel::new(
+                tokenizer,
+                4096,
+                Vec::new(),
+            ))))
+            .unwrap();
+
+        assert!(matches!(
+            registry.resolve_embedding(Some("live-chat")),
+            Resolution::Empty
+        ));
+    }
+
+    #[test]
+    fn embedding_resolution_selects_and_leases_the_capable_live_model() {
+        let registry = LiveRegistry::default();
+        let tokenizer_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tokenizer/tests/fixtures/ChatMLTokenizer");
+        let tokenizer = || MfTokenizer::load_from_dir(&tokenizer_dir).unwrap();
+        registry
+            .attach(Arc::new(ChatOnlyModel(ScriptedChatModel::new(
+                tokenizer(),
+                4096,
+                Vec::new(),
+            ))))
+            .unwrap();
+        let embedding_id = registry
+            .attach(Arc::new(ScriptedChatModel::new(
+                tokenizer(),
+                4096,
+                Vec::new(),
+            )))
+            .unwrap();
+
+        let resolved = match registry.resolve_embedding(Some("text-embedding-3-small")) {
+            Resolution::Model(resolved) => resolved,
+            _ => panic!("the only embedding model should resolve by default name"),
+        };
+        assert_eq!(resolved.model.model_id(), embedding_id);
+        assert!(resolved.request_lease.is_some());
+        assert!(!registry.detach(&embedding_id));
+        assert!(registry.detach("live-chat"));
+        drop(resolved);
+        assert!(registry.detach(&embedding_id));
     }
 }

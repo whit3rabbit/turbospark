@@ -49,7 +49,12 @@ use crate::session::{Engine, SessionCore};
 
 pub(crate) struct FfiChatModel {
     core: Arc<SessionCore>,
+    /// The server's blocking generation gate is also the idle sweep's signal
+    /// that detached work still owns this session after its response waiter
+    /// is cancelled.
+    generation_queue: Arc<turbospark_server::GenerationQueue>,
     model_id: String,
+    model_aliases: Vec<String>,
     guardrails: turbospark_server::GuardrailConfig,
     default_system: Option<String>,
     default_reasoning: tokenizer::ReasoningEffort,
@@ -70,9 +75,31 @@ impl FfiChatModel {
         default_reasoning: tokenizer::ReasoningEffort,
         stopping: Arc<AtomicBool>,
     ) -> Self {
-        Self {
+        Self::new_with_aliases(
             core,
             model_id,
+            Vec::new(),
+            guardrails,
+            default_system,
+            default_reasoning,
+            stopping,
+        )
+    }
+
+    pub(crate) fn new_with_aliases(
+        core: Arc<SessionCore>,
+        model_id: String,
+        model_aliases: Vec<String>,
+        guardrails: turbospark_server::GuardrailConfig,
+        default_system: Option<String>,
+        default_reasoning: tokenizer::ReasoningEffort,
+        stopping: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            core,
+            generation_queue: turbospark_server::GenerationQueue::shared(),
+            model_id,
+            model_aliases,
             guardrails,
             default_system,
             default_reasoning,
@@ -266,6 +293,20 @@ impl ChatModel for FfiChatModel {
 
     fn model_id(&self) -> &str {
         &self.model_id
+    }
+
+    fn generation_queue(&self) -> Option<Arc<turbospark_server::GenerationQueue>> {
+        Some(Arc::clone(&self.generation_queue))
+    }
+
+    fn model_aliases(&self) -> Vec<String> {
+        let mut aliases = vec![format!("claude-turbospark-{}", self.model_id)];
+        for alias in &self.model_aliases {
+            if alias != &self.model_id && !aliases.contains(alias) {
+                aliases.push(alias.clone());
+            }
+        }
+        aliases
     }
 
     fn rate_control(&self) -> runtime::RateControl {
@@ -469,6 +510,38 @@ mod tests {
             result.new_tokens <= 1,
             "expected the stop flag to be observed within one token, got {} new tokens",
             result.new_tokens
+        );
+    }
+
+    #[test]
+    fn model_aliases_prefix_the_id_and_drop_id_collisions_and_duplicates() {
+        let tokenizer = fixture();
+        let vocab = tokenizer.vocab_size;
+        let session =
+            crate::testing::session_for_testing(tokenizer, vec![one_hot(vocab, 0); 1], vocab, 4096);
+
+        let model = FfiChatModel::new_with_aliases(
+            session.core(),
+            "qwen-local".to_string(),
+            vec![
+                "qwen-local".to_string(),
+                "alias-a".to_string(),
+                "claude-turbospark-qwen-local".to_string(),
+                "alias-a".to_string(),
+            ],
+            turbospark_server::GuardrailConfig::default(),
+            None,
+            tokenizer::ReasoningEffort::Off,
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(
+            model.model_aliases(),
+            vec![
+                "claude-turbospark-qwen-local".to_string(),
+                "alias-a".to_string(),
+            ],
+            "the claude- prefix comes first, the id itself is dropped, and repeats collapse"
         );
     }
 }

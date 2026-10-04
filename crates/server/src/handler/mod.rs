@@ -14,7 +14,9 @@ mod plan;
 mod tests;
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyllm_translate::openai::ChatCompletionRequest;
@@ -42,6 +44,79 @@ use crate::response::{
     completion_chunk, completion_response, reasoning_delta, role_delta, text_delta, tool_call_delta,
 };
 
+/// Per-request storage that carries a registry lease from resolution to the
+/// outer response-body layer without changing each handler's return type.
+#[derive(Clone, Default)]
+pub(crate) struct RequestLeaseSlot(Arc<Mutex<Option<Box<dyn crate::registry::RequestUseLease>>>>);
+
+impl RequestLeaseSlot {
+    fn store(&self, lease: Box<dyn crate::registry::RequestUseLease>) {
+        let mut slot = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        debug_assert!(
+            slot.is_none(),
+            "one model-use lease is expected per request"
+        );
+        *slot = Some(lease);
+    }
+
+    fn take(&self) -> Option<Box<dyn crate::registry::RequestUseLease>> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).take()
+    }
+}
+
+struct LeasedBodyStream<S> {
+    inner: Pin<Box<S>>,
+    lease: Option<Box<dyn crate::registry::RequestUseLease>>,
+}
+
+impl<S> LeasedBodyStream<S> {
+    fn new(inner: S, lease: Box<dyn crate::registry::RequestUseLease>) -> Self {
+        Self {
+            inner: Box::pin(inner),
+            lease: Some(lease),
+        }
+    }
+}
+
+impl<S: Stream> Stream for LeasedBodyStream<S> {
+    type Item = S::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        match this.inner.as_mut().poll_next(cx) {
+            Poll::Ready(None) => {
+                this.lease.take();
+                Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+}
+
+/// Installs the request lease before dispatch and attaches it to the final
+/// body, so cancellation and body completion both release the model-use guard.
+pub(crate) async fn request_lease_layer(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let slot = RequestLeaseSlot::default();
+    request.extensions_mut().insert(slot.clone());
+    let response = next.run(request).await;
+    with_request_lease(response, slot.take())
+}
+
+fn with_request_lease(
+    response: Response,
+    lease: Option<Box<dyn crate::registry::RequestUseLease>>,
+) -> Response {
+    let Some(lease) = lease else {
+        return response;
+    };
+    let (parts, body) = response.into_parts();
+    let body = axum::body::Body::from_stream(LeasedBodyStream::new(body.into_data_stream(), lease));
+    Response::from_parts(parts, body)
+}
+
 /// Turns the router's [`crate::ServerState`] into the one backend that will
 /// serve this request, and records which one it picked.
 ///
@@ -62,15 +137,22 @@ use crate::response::{
 /// an error type that is large by accident, and this one is the crate's own
 /// return type by design.
 #[allow(clippy::result_large_err)]
-pub(crate) fn resolve_backend(
+pub(crate) async fn resolve_backend(
     state: &crate::ServerState,
+    request_lease_slot: &RequestLeaseSlot,
     tag: Option<crate::observe::RequestTag>,
     requested: Option<&str>,
     stream: bool,
 ) -> Result<AppState, Response> {
     finish_resolution(
         state,
-        state.registry.resolve(requested),
+        request_lease_slot,
+        resolve_off_worker(
+            state,
+            requested,
+            crate::bounded_resolve::ResolutionKind::Chat,
+        )
+        .await?,
         tag,
         requested,
         stream,
@@ -93,24 +175,76 @@ pub(crate) fn resolve_backend(
 /// either (fixed alongside this), so the wrapper would have refused
 /// embeddings outright had it ever been reached.
 #[allow(clippy::result_large_err)]
-pub(crate) fn resolve_embedding_backend(
+pub(crate) async fn resolve_embedding_backend(
     state: &crate::ServerState,
+    request_lease_slot: &RequestLeaseSlot,
     tag: Option<crate::observe::RequestTag>,
     requested: Option<&str>,
 ) -> Result<AppState, Response> {
     finish_resolution(
         state,
-        state.registry.resolve_embedding(requested),
+        request_lease_slot,
+        resolve_off_worker(
+            state,
+            requested,
+            crate::bounded_resolve::ResolutionKind::Embedding,
+        )
+        .await?,
         tag,
         requested,
         false,
     )
 }
 
+/// Runs synchronous registry resolution outside the request worker.
+#[allow(clippy::result_large_err)]
+async fn resolve_off_worker(
+    state: &crate::ServerState,
+    requested: Option<&str>,
+    kind: crate::bounded_resolve::ResolutionKind,
+) -> Result<crate::registry::Resolution, Response> {
+    use crate::bounded_resolve::ResolveError;
+
+    let requested = requested.map(str::to_owned);
+    match state
+        .resolve_executor
+        .resolve(Arc::clone(&state.registry), requested, kind)
+        .await
+    {
+        Ok(resolution) => Ok(resolution),
+        Err(ResolveError::Saturated) => Err((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": {
+                    "message": "Model resolution is at capacity. Retry the request shortly.",
+                    "type": "server_error",
+                    "param": "model",
+                    "code": "model_resolution_busy",
+                    "retryable": true
+                }
+            })),
+        )
+            .into_response()),
+        Err(ResolveError::WorkerFailed) => Err((
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": {
+                    "message": "The model resolution task failed.",
+                    "type": "server_error",
+                    "code": "model_resolution_failed",
+                    "retryable": false
+                }
+            })),
+        )
+            .into_response()),
+    }
+}
+
 /// The observer-wrapping and error-mapping tail both resolvers share.
 #[allow(clippy::result_large_err)]
 fn finish_resolution(
     state: &crate::ServerState,
+    request_lease_slot: &RequestLeaseSlot,
     resolution: crate::registry::Resolution,
     tag: Option<crate::observe::RequestTag>,
     requested: Option<&str>,
@@ -118,7 +252,11 @@ fn finish_resolution(
 ) -> Result<AppState, Response> {
     use crate::registry::Resolution;
     match resolution {
-        Resolution::Model(model) => {
+        Resolution::Model(resolved) => {
+            if let Some(lease) = resolved.request_lease {
+                request_lease_slot.store(lease);
+            }
+            let model = resolved.model;
             // With no observer, or no id to tie events to, the caller gets
             // the bare model back and nothing is wrapped -- which is every
             // pre-observer caller, this crate's whole integration suite
@@ -147,6 +285,7 @@ fn finish_resolution(
         Resolution::Unknown {
             requested,
             available,
+            suggestions,
         } => Err((
             axum::http::StatusCode::NOT_FOUND,
             Json(serde_json::json!({
@@ -159,7 +298,22 @@ fn finish_resolution(
                     ),
                     "type": "invalid_request_error",
                     "param": "model",
-                    "code": "model_not_found"
+                    "code": "model_not_found",
+                    "available": available,
+                    "suggestions": suggestions
+                }
+            })),
+        )
+            .into_response()),
+        Resolution::LoadRefused(refusal) => Err((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": {
+                    "message": "The requested installed model could not be loaded.",
+                    "type": "server_error",
+                    "code": "model_load_refused",
+                    "retryable": true,
+                    "refusal": refusal
                 }
             })),
         )
@@ -329,14 +483,18 @@ pub async fn model_detail(
 pub async fn chat_completions(
     State(state): State<crate::ServerState>,
     tag: Option<axum::Extension<crate::observe::RequestTag>>,
+    lease_slot: axum::Extension<RequestLeaseSlot>,
     Json(request): Json<ChatCompletionRequest>,
 ) -> Response {
     let model = match resolve_backend(
         &state,
+        &lease_slot.0,
         tag.map(|t| t.0),
         Some(request.model.as_str()),
         request.stream.unwrap_or(false),
-    ) {
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };

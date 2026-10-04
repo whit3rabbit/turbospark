@@ -34,7 +34,9 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
 
-use crate::handler::{error_response, plan, run_full, status_for, AppState, GenError, Piece};
+use crate::handler::{
+    error_response, plan, run_full, status_for, AppState, GenError, Piece, RunControl,
+};
 use crate::observe::RequestTag;
 use crate::ServerState;
 
@@ -362,15 +364,19 @@ use crate::handler::Generated;
 pub async fn chat(
     State(state): State<ServerState>,
     tag: Option<axum::Extension<RequestTag>>,
+    lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(request): Json<ChatRequest>,
 ) -> Response {
     let streaming = request.stream.unwrap_or(true);
     let model = match crate::handler::resolve_backend(
         &state,
+        &lease_slot.0,
         tag.map(|t| t.0),
         Some(request.model.as_str()),
         streaming,
-    ) {
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };
@@ -399,15 +405,19 @@ pub async fn chat(
 pub async fn generate(
     State(state): State<ServerState>,
     tag: Option<axum::Extension<RequestTag>>,
+    lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(request): Json<GenerateRequest>,
 ) -> Response {
     let streaming = request.stream.unwrap_or(true);
     let model = match crate::handler::resolve_backend(
         &state,
+        &lease_slot.0,
         tag.map(|t| t.0),
         Some(request.model.as_str()),
         streaming,
-    ) {
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };
@@ -450,7 +460,7 @@ async fn run(
         // (`queue.rs`'s closed set); the streaming arm below acquires
         // through `run_gated`. Acquired per arm rather than once above the
         // fork so the permit is moved into exactly the arm that runs.
-        let _gate = match model.generation_queue() {
+        let gate = match model.generation_queue() {
             Some(queue) => match queue.acquire(&cancel).await {
                 Some(permit) => Some(permit),
                 // Cancelled while queued: the same `done` object a
@@ -482,7 +492,10 @@ async fn run(
             planned.images,
             HashSet::new(),
             effort,
-            cancel,
+            RunControl {
+                cancel,
+                permit: gate.clone(),
+            },
         )
         .await;
         guard.defuse();

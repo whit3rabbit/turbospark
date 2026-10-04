@@ -130,6 +130,7 @@ pub(crate) fn normalize_anthropic_body(body: &mut serde_json::Value, default_max
 pub async fn messages(
     State(state): State<crate::ServerState>,
     tag: Option<axum::Extension<crate::observe::RequestTag>>,
+    lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(mut body): Json<serde_json::Value>,
 ) -> Response {
     let requested = body
@@ -142,10 +143,13 @@ pub async fn messages(
         .unwrap_or(false);
     let model = match crate::handler::resolve_backend(
         &state,
+        &lease_slot.0,
         tag.map(|t| t.0),
         requested.as_deref(),
         stream_requested,
-    ) {
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };
@@ -239,6 +243,7 @@ pub async fn messages(
 pub async fn count_tokens(
     State(state): State<crate::ServerState>,
     tag: Option<axum::Extension<crate::observe::RequestTag>>,
+    lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(mut body): Json<serde_json::Value>,
 ) -> Response {
     // Resolved off the RAW body, before `max_tokens` is injected: this
@@ -251,10 +256,13 @@ pub async fn count_tokens(
         .map(str::to_string);
     let model = match crate::handler::resolve_backend(
         &state,
+        &lease_slot.0,
         tag.map(|t| t.0),
         requested.as_deref(),
         false,
-    ) {
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };

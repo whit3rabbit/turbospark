@@ -1,6 +1,7 @@
 //! Seam tests for prompt planning and structured output decoding.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use anyllm_translate::openai::ChatCompletionRequest;
@@ -9,10 +10,95 @@ use tokenizer::{MfTokenizer, ReasoningEffort};
 use super::*;
 use crate::model::ScriptedChatModel;
 
+struct CountedRequestLease(Arc<AtomicUsize>);
+
+impl crate::registry::RequestUseLease for CountedRequestLease {}
+
+impl Drop for CountedRequestLease {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+struct LeaseTestRegistry {
+    model: AppState,
+    dropped_leases: Arc<AtomicUsize>,
+}
+
+impl crate::registry::ModelRegistry for LeaseTestRegistry {
+    fn resolve(&self, _requested: Option<&str>) -> crate::registry::Resolution {
+        crate::registry::Resolution::Model(crate::registry::ResolvedModel::with_lease(
+            Arc::clone(&self.model),
+            Some(Box::new(CountedRequestLease(Arc::clone(
+                &self.dropped_leases,
+            )))),
+        ))
+    }
+
+    fn rows(&self) -> Vec<crate::registry::ModelRow> {
+        vec![crate::registry::model_row(&*self.model)]
+    }
+}
+
 fn state() -> AppState {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
     let tok = MfTokenizer::load_from_dir(&dir).expect("fixture tokenizer should load");
     Arc::new(ScriptedChatModel::new(tok, 4096, Vec::new()))
+}
+
+#[tokio::test]
+async fn resolving_a_model_does_not_drop_its_request_lease() {
+    let dropped_leases = Arc::new(AtomicUsize::new(0));
+    let registry = Arc::new(LeaseTestRegistry {
+        model: state(),
+        dropped_leases: Arc::clone(&dropped_leases),
+    });
+    let state = crate::ServerState::new(registry);
+
+    let lease_slot = RequestLeaseSlot::default();
+    let model = resolve_backend(&state, &lease_slot, None, Some("scripted"), false)
+        .await
+        .expect("the fake registry should resolve its model");
+
+    assert_eq!(
+        dropped_leases.load(Ordering::SeqCst),
+        0,
+        "resolution must transfer its request lease instead of dropping it"
+    );
+
+    let pending_body = futures::stream::pending::<Result<axum::body::Bytes, axum::Error>>();
+    let response = with_request_lease(
+        Response::new(axum::body::Body::from_stream(pending_body)),
+        lease_slot.take(),
+    );
+    drop(model);
+    assert_eq!(dropped_leases.load(Ordering::SeqCst), 0);
+
+    drop(response);
+    assert_eq!(
+        dropped_leases.load(Ordering::SeqCst),
+        1,
+        "cancelling the response body must release its request-use lease"
+    );
+
+    let lease_slot = RequestLeaseSlot::default();
+    let model = resolve_backend(&state, &lease_slot, None, Some("scripted"), false)
+        .await
+        .expect("the fake registry should resolve its model again");
+    let response = with_request_lease(
+        Response::new(axum::body::Body::from("complete")),
+        lease_slot.take(),
+    );
+    drop(model);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("the response body should complete");
+    assert_eq!(body, "complete");
+    assert_eq!(
+        dropped_leases.load(Ordering::SeqCst),
+        2,
+        "body completion must release its request-use lease"
+    );
 }
 
 /// The request as a client would send it, so the test covers the

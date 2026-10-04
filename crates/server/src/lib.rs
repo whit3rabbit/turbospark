@@ -15,6 +15,77 @@
 //! dialect auto-selection is the tokenizer's job here, not the server's.
 
 mod auth;
+
+// Resolution may open installed models synchronously. Keep that complete path off
+// request workers and cap how many requests can submit it to Tokio's blocking pool.
+mod bounded_resolve {
+    use std::num::NonZeroUsize;
+    use std::sync::Arc;
+
+    use tokio::sync::Semaphore;
+
+    use crate::registry::{ModelRegistry, Resolution};
+
+    const DEFAULT_MAX_CONCURRENT_RESOLUTIONS: usize = 4;
+
+    #[derive(Clone, Copy)]
+    pub(crate) enum ResolutionKind {
+        Chat,
+        Embedding,
+    }
+
+    pub(crate) enum ResolveError {
+        Saturated,
+        WorkerFailed,
+    }
+
+    #[derive(Clone)]
+    pub(crate) struct BoundedResolveExecutor {
+        slots: Arc<Semaphore>,
+    }
+
+    impl Default for BoundedResolveExecutor {
+        fn default() -> Self {
+            Self::new(
+                NonZeroUsize::new(DEFAULT_MAX_CONCURRENT_RESOLUTIONS)
+                    .expect("default resolution limit is nonzero"),
+            )
+        }
+    }
+
+    impl BoundedResolveExecutor {
+        pub(crate) fn new(max_concurrent: NonZeroUsize) -> Self {
+            Self {
+                slots: Arc::new(Semaphore::new(max_concurrent.get())),
+            }
+        }
+
+        pub(crate) async fn resolve(
+            &self,
+            registry: Arc<dyn ModelRegistry>,
+            requested: Option<String>,
+            kind: ResolutionKind,
+        ) -> Result<Resolution, ResolveError> {
+            // Reserve before submitting work. Saturated requests return here,
+            // without adding another closure to Tokio's blocking pool queue.
+            let permit = Arc::clone(&self.slots)
+                .try_acquire_owned()
+                .map_err(|_| ResolveError::Saturated)?;
+
+            tokio::task::spawn_blocking(move || {
+                // Keep the slot until resolution/load ends, even if the HTTP
+                // future is cancelled while the blocking closure is running.
+                let _permit = permit;
+                match kind {
+                    ResolutionKind::Chat => registry.resolve(requested.as_deref()),
+                    ResolutionKind::Embedding => registry.resolve_embedding(requested.as_deref()),
+                }
+            })
+            .await
+            .map_err(|_| ResolveError::WorkerFailed)
+        }
+    }
+}
 mod cancel;
 mod completions;
 mod embeddings;
@@ -82,6 +153,7 @@ pub use anyllm_translate::openai::{
     ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ChatUsage, Choice,
 };
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use axum::routing::{get, post};
@@ -118,6 +190,7 @@ pub struct RouterOptions {
 #[derive(Clone)]
 pub struct ServerState {
     pub(crate) registry: Arc<dyn registry::ModelRegistry>,
+    pub(crate) resolve_executor: bounded_resolve::BoundedResolveExecutor,
     pub(crate) observer: Option<Arc<dyn observe::ServerObserver>>,
     pub(crate) ids: Arc<observe::RequestIds>,
     pub(crate) image_provider: Option<Arc<dyn ImageProvider>>,
@@ -127,6 +200,7 @@ impl ServerState {
     pub fn new(registry: Arc<dyn registry::ModelRegistry>) -> Self {
         Self {
             registry,
+            resolve_executor: bounded_resolve::BoundedResolveExecutor::default(),
             observer: None,
             ids: Arc::new(observe::RequestIds::default()),
             image_provider: None,
@@ -139,6 +213,14 @@ impl ServerState {
     }
 }
 
+impl ServerState {
+    /// Sets the maximum number of blocking model resolutions this server can
+    /// run at once. Additional inference requests receive a retryable 503.
+    pub fn with_max_concurrent_resolutions(mut self, max_concurrent: NonZeroUsize) -> Self {
+        self.resolve_executor = bounded_resolve::BoundedResolveExecutor::new(max_concurrent);
+        self
+    }
+}
 /// So `build_router(model)` keeps compiling for every caller that predates
 /// the registry, this crate's integration tests included.
 impl From<Arc<dyn ChatModel>> for ServerState {
@@ -248,7 +330,9 @@ pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterO
         None => router,
     };
 
-    router.with_state(state)
+    router
+        .layer(axum::middleware::from_fn(handler::request_lease_layer))
+        .with_state(state)
 }
 
 /// Mints a request id, records the HTTP-level facts around a request, and

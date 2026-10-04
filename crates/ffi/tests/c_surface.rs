@@ -1247,8 +1247,8 @@ async fn chat(base: &str, model: &str) -> (u16, serde_json::Value) {
 
 /// **A NULL SESSION IS A RUNNING SERVER WITH NOTHING TO SERVE**, which is
 /// the state a GUI starts one in before its user has chosen a model. The
-/// socket is bound and `/health` answers; generation is 503 rather than a
-/// 404 or a hang.
+/// socket is bound and `/health` answers. A named request goes through the
+/// installed-model loader even when nothing is attached.
 #[tokio::test]
 async fn a_server_started_with_no_session_binds_and_reports_itself_empty() {
     let server = unsafe { start_server(ptr::null(), "{}") };
@@ -1266,8 +1266,14 @@ async fn a_server_started_with_no_session_binds_and_reports_itself_empty() {
         .unwrap();
     assert_eq!(health["state"], "empty");
 
-    let (status, _) = chat(&base, "anything").await;
-    assert_eq!(status, 503, "no model attached is unavailable, not missing");
+    let (status, body) = chat(&base, "turbospark-review-nonexistent-model-78ba2035").await;
+    assert_eq!(
+        status, 404,
+        "an unknown installed identity should be missing"
+    );
+    assert_eq!(body["error"]["code"], "model_not_found");
+    assert_eq!(body["error"]["available"], serde_json::json!([]));
+    assert!(body["error"]["suggestions"].is_array());
 
     unsafe { ts_server_stop(server) };
 }

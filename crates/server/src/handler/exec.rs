@@ -42,6 +42,13 @@ pub(crate) struct Generated {
     pub released_span_text: String,
 }
 
+/// Cancellation and queue ownership that must travel together into detached
+/// blocking generation work.
+pub(crate) struct RunControl {
+    pub cancel: Cancel,
+    pub permit: Option<crate::queue::GenerationPermit>,
+}
+
 /// The zero-token result a request cancelled BEFORE its generation started
 /// reports (the FIFO gate's queued-disconnect case): the same
 /// `StopReason::Cancelled` every cancelled arm already folds into
@@ -69,9 +76,10 @@ pub(crate) async fn run_full(
     images: Option<crate::vision::RequestImages>,
     tools: HashSet<String>,
     effort: ReasoningEffort,
-    cancel: Cancel,
+    control: RunControl,
 ) -> Result<Generated, GenError> {
-    let joined = tokio::task::spawn_blocking(move || {
+    let RunControl { cancel, permit } = control;
+    let joined = crate::queue::run_blocking(permit, move || {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut calls = Vec::new();

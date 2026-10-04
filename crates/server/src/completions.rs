@@ -144,7 +144,7 @@ async fn run_full(
     config: GenerationConfig,
     cancel: crate::cancel::Cancel,
 ) -> Result<(String, RawDecodeResult), crate::handler::GenError> {
-    let _gate = match model.generation_queue() {
+    let permit = match model.generation_queue() {
         Some(queue) => match queue.acquire(&cancel).await {
             Some(permit) => Some(permit),
             None => return Ok((String::new(), crate::handler::cancelled_before_start())),
@@ -152,7 +152,7 @@ async fn run_full(
         None => None,
     };
     let joined =
-        tokio::task::spawn_blocking(move || {
+        crate::queue::run_blocking(permit, move || {
             let mut text = String::new();
             let flag = crate::cancel::as_cancel_flag(&cancel);
             let result = model.run_completion(&prompt_ids, &config, None, &flag, &mut |progress| {
@@ -286,14 +286,18 @@ fn stream_response(
 pub async fn completions(
     State(state): State<crate::ServerState>,
     tag: Option<axum::Extension<crate::observe::RequestTag>>,
+    lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(request): Json<CompletionRequest>,
 ) -> Response {
     let model = match crate::handler::resolve_backend(
         &state,
+        &lease_slot.0,
         tag.map(|t| t.0),
         Some(request.model.as_str()),
         request.stream.unwrap_or(false),
-    ) {
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };

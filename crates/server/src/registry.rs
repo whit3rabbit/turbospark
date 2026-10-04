@@ -56,16 +56,105 @@ pub fn model_row(model: &dyn ChatModel) -> ModelRow {
     }
 }
 
+/// Why an installed model could not be opened through the host's gated loader.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LoadRefusal {
+    DoesNotFit {
+        committed_bytes: u64,
+        ceiling_bytes: u64,
+    },
+    OpenFailed {
+        detail: String,
+    },
+    UnsupportedFamily {
+        family: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuggestionSource {
+    Installed,
+    Catalog,
+}
+
+/// A candidate identity only. A catalog suggestion is not permission to download or load it.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSuggestion {
+    pub id: String,
+    pub label: String,
+    pub sources: Vec<SuggestionSource>,
+}
+
+/// Result of an exact installed-ID lookup through the host-provided loader.
+pub enum LoadOutcome {
+    Loaded(Arc<dyn ChatModel>),
+    Refused(LoadRefusal),
+    Unavailable { candidates: Vec<ModelSuggestion> },
+}
+
+/// A request-lifetime guard supplied by a host registry when it has residency state.
+pub trait RequestUseLease: Send + Sync {}
+
+/// A resolved backend plus an optional lease that must remain alive for the request.
+pub struct ResolvedModel {
+    pub model: Arc<dyn ChatModel>,
+    pub request_lease: Option<Box<dyn RequestUseLease>>,
+}
+
+impl ResolvedModel {
+    pub fn without_lease(model: Arc<dyn ChatModel>) -> Self {
+        Self {
+            model,
+            request_lease: None,
+        }
+    }
+
+    pub fn with_lease(
+        model: Arc<dyn ChatModel>,
+        request_lease: Option<Box<dyn RequestUseLease>>,
+    ) -> Self {
+        Self {
+            model,
+            request_lease,
+        }
+    }
+}
+
+impl std::ops::Deref for ResolvedModel {
+    type Target = dyn ChatModel;
+
+    fn deref(&self) -> &Self::Target {
+        self.model.as_ref()
+    }
+}
+
+/// Host-owned installed lookup and suggestion ranking. Implementations never download models.
+pub trait ModelLoader: Send + Sync {
+    /// Load only the exact installed ID. A refusal is final for this request and must not fall
+    /// through to a different attached model. A successful result must already be attached to
+    /// the wrapped host registry before this method returns.
+    fn load(&self, id: &str) -> LoadOutcome;
+
+    /// Rank local installed and bundled-catalog candidates without network access or downloads.
+    fn candidates(&self, requested: &str) -> Vec<ModelSuggestion>;
+}
+
 /// What [`ModelRegistry::resolve`] decided.
 pub enum Resolution {
     /// Serve this backend.
-    Model(Arc<dyn ChatModel>),
+    Model(ResolvedModel),
+    /// The exact installed model was found but the host refused or failed to open it.
+    LoadRefused(LoadRefusal),
     /// Several models are attached and the request named none of them.
     /// Carries what IS available, because a 404 that does not say what the
     /// caller should have asked for makes them guess.
     Unknown {
         requested: String,
         available: Vec<String>,
+        suggestions: Vec<ModelSuggestion>,
     },
     /// The server is running with nothing attached.
     Empty,
@@ -84,6 +173,113 @@ pub trait ModelRegistry: Send + Sync {
     }
 }
 
+/// Adds installed-model loading and typed local suggestions to an existing registry.
+///
+/// The wrapped registry remains authoritative for exact attached matches and for its
+/// single-capable-model fallback. The loader is consulted only for a named request that does
+/// not already identify an attached model. After a successful load, resolution goes back
+/// through the wrapped registry so host-owned attachment and request-use state are preserved.
+pub struct ModelLoaderRegistry {
+    registry: Arc<dyn ModelRegistry>,
+    loader: Arc<dyn ModelLoader>,
+}
+
+impl ModelLoaderRegistry {
+    pub fn new(registry: Arc<dyn ModelRegistry>, loader: Arc<dyn ModelLoader>) -> Self {
+        Self { registry, loader }
+    }
+}
+
+impl ModelRegistry for ModelLoaderRegistry {
+    fn resolve(&self, requested: Option<&str>) -> Resolution {
+        let Some(requested) = requested else {
+            return self.registry.resolve(None);
+        };
+        if requested.is_empty() {
+            return self.registry.resolve(Some(requested));
+        }
+
+        let already_loaded = self
+            .registry
+            .rows()
+            .iter()
+            .any(|row| row.ids().any(|id| id == requested));
+        if already_loaded {
+            return self.registry.resolve(Some(requested));
+        }
+
+        match self.loader.load(requested) {
+            LoadOutcome::Loaded(model) => {
+                let row = model_row(&*model);
+                if !row.ids().any(|id| id == requested) {
+                    return Resolution::LoadRefused(LoadRefusal::OpenFailed {
+                        detail: format!(
+                            "the loader returned model '{}' for a different requested identity",
+                            row.id
+                        ),
+                    });
+                }
+                match self.registry.resolve(Some(requested)) {
+                    Resolution::Model(resolved)
+                        if model_row(&*resolved.model)
+                            .ids()
+                            .any(|id| id == requested) =>
+                    {
+                        // The host attaches successful opens before returning from `load`.
+                        // Resolve again through that registry so its live-use guard is
+                        // acquired atomically with visibility to request handlers.
+                        Resolution::Model(resolved)
+                    }
+                    _ => Resolution::LoadRefused(LoadRefusal::OpenFailed {
+                        detail: format!(
+                            "the loader reported '{}' as loaded, but the host registry did not attach it",
+                            row.id
+                        ),
+                    }),
+                }
+            }
+            LoadOutcome::Refused(refusal) => Resolution::LoadRefused(refusal),
+            LoadOutcome::Unavailable {
+                candidates: load_candidates,
+            } => {
+                let suggestions = if load_candidates.is_empty() {
+                    self.loader.candidates(requested)
+                } else {
+                    load_candidates
+                };
+                match self.registry.resolve(Some(requested)) {
+                    // The wrapped registry's Model result can only be its unchanged
+                    // single-capable-model fallback because exact matches were checked above.
+                    Resolution::Model(model) => Resolution::Model(model),
+                    Resolution::Unknown {
+                        requested,
+                        available,
+                        ..
+                    } => Resolution::Unknown {
+                        requested,
+                        available,
+                        suggestions,
+                    },
+                    Resolution::Empty => Resolution::Unknown {
+                        requested: requested.to_string(),
+                        available: Vec::new(),
+                        suggestions,
+                    },
+                    Resolution::LoadRefused(refusal) => Resolution::LoadRefused(refusal),
+                }
+            }
+        }
+    }
+
+    fn resolve_embedding(&self, requested: Option<&str>) -> Resolution {
+        self.registry.resolve_embedding(requested)
+    }
+
+    fn rows(&self) -> Vec<ModelRow> {
+        self.registry.rows()
+    }
+}
+
 /// The one-model registry every pre-registry caller gets, including all of
 /// this crate's integration tests: `build_router(model)` builds one of these
 /// through [`crate::ServerState`]'s `From` impl, and its `resolve` returns
@@ -98,11 +294,11 @@ impl SingleModel {
 
 impl ModelRegistry for SingleModel {
     fn resolve(&self, _requested: Option<&str>) -> Resolution {
-        Resolution::Model(Arc::clone(&self.0))
+        Resolution::Model(ResolvedModel::without_lease(Arc::clone(&self.0)))
     }
 
     fn resolve_embedding(&self, _requested: Option<&str>) -> Resolution {
-        Resolution::Model(Arc::clone(&self.0))
+        Resolution::Model(ResolvedModel::without_lease(Arc::clone(&self.0)))
     }
 
     fn rows(&self) -> Vec<ModelRow> {
@@ -263,12 +459,12 @@ impl ModelRegistry for PoolRegistry {
         // something else entirely is all "the pool" -- there is nothing the
         // name could disambiguate.
         let _ = requested;
-        Resolution::Model(self.pick())
+        Resolution::Model(ResolvedModel::without_lease(self.pick()))
     }
 
     fn resolve_embedding(&self, requested: Option<&str>) -> Resolution {
         let _ = requested;
-        Resolution::Model(self.pick())
+        Resolution::Model(ResolvedModel::without_lease(self.pick()))
     }
 
     fn rows(&self) -> Vec<ModelRow> {
@@ -332,7 +528,7 @@ fn resolve_capability(
                 .iter()
                 .find(|m| wants(m) && model_row(&***m).ids().any(|id| id == name))
             {
-                return Resolution::Model(Arc::clone(hit));
+                return Resolution::Model(ResolvedModel::without_lease(Arc::clone(hit)));
             }
         }
     }
@@ -342,7 +538,7 @@ fn resolve_capability(
         // The fallback. One capable model means there is no ambiguity to
         // resolve, so an unrecognized name is the caller's label for the
         // conversation rather than a routing instruction.
-        [only] => Resolution::Model(Arc::clone(only)),
+        [only] => Resolution::Model(ResolvedModel::without_lease(Arc::clone(only))),
         several => Resolution::Unknown {
             requested: requested.unwrap_or("").to_string(),
             available: several
@@ -354,6 +550,7 @@ fn resolve_capability(
                         .collect::<Vec<_>>()
                 })
                 .collect(),
+            suggestions: Vec::new(),
         },
     }
 }
@@ -478,6 +675,7 @@ mod tests {
             Resolution::Unknown {
                 requested,
                 available,
+                ..
             } => {
                 assert_eq!(requested, "nope");
                 assert_eq!(
@@ -492,6 +690,287 @@ mod tests {
             }
             _ => panic!("expected a refusal naming both"),
         }
+    }
+
+    struct TestModelLoader {
+        outcome: std::sync::Mutex<Option<LoadOutcome>>,
+        registry: std::sync::Mutex<Option<Arc<TestMutableRegistry>>>,
+        suggestions: Vec<ModelSuggestion>,
+        load_count: std::sync::atomic::AtomicUsize,
+        candidate_count: std::sync::atomic::AtomicUsize,
+    }
+
+    struct TestMutableRegistry {
+        models: std::sync::Mutex<Vec<Arc<dyn ChatModel>>>,
+    }
+
+    struct TestRequestUseLease;
+
+    impl RequestUseLease for TestRequestUseLease {}
+
+    fn with_test_lease(resolution: Resolution) -> Resolution {
+        match resolution {
+            Resolution::Model(resolved) => Resolution::Model(ResolvedModel::with_lease(
+                resolved.model,
+                Some(Box::new(TestRequestUseLease)),
+            )),
+            other => other,
+        }
+    }
+
+    impl TestMutableRegistry {
+        fn new(models: Vec<Arc<dyn ChatModel>>) -> Self {
+            Self {
+                models: std::sync::Mutex::new(models),
+            }
+        }
+
+        fn attach(&self, model: Arc<dyn ChatModel>) {
+            self.models.lock().expect("test registry lock").push(model);
+        }
+    }
+
+    impl ModelRegistry for TestMutableRegistry {
+        fn resolve(&self, requested: Option<&str>) -> Resolution {
+            with_test_lease(resolve_among(
+                &self.models.lock().expect("test registry lock"),
+                requested,
+            ))
+        }
+
+        fn resolve_embedding(&self, requested: Option<&str>) -> Resolution {
+            with_test_lease(resolve_embedding_among(
+                &self.models.lock().expect("test registry lock"),
+                requested,
+            ))
+        }
+
+        fn rows(&self) -> Vec<ModelRow> {
+            self.models
+                .lock()
+                .expect("test registry lock")
+                .iter()
+                .map(|model| model_row(&**model))
+                .collect()
+        }
+    }
+
+    impl TestModelLoader {
+        fn new(outcome: LoadOutcome, suggestions: Vec<ModelSuggestion>) -> Arc<Self> {
+            Arc::new(Self {
+                outcome: std::sync::Mutex::new(Some(outcome)),
+                registry: std::sync::Mutex::new(None),
+                suggestions,
+                load_count: std::sync::atomic::AtomicUsize::new(0),
+                candidate_count: std::sync::atomic::AtomicUsize::new(0),
+            })
+        }
+    }
+
+    impl ModelLoader for TestModelLoader {
+        fn load(&self, _id: &str) -> LoadOutcome {
+            self.load_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let outcome = self
+                .outcome
+                .lock()
+                .expect("test loader lock")
+                .take()
+                .expect("the resolver should only load once");
+            if let LoadOutcome::Loaded(model) = &outcome {
+                if let Some(registry) = self.registry.lock().expect("test loader lock").as_ref() {
+                    registry.attach(Arc::clone(model));
+                }
+            }
+            outcome
+        }
+
+        fn candidates(&self, _requested: &str) -> Vec<ModelSuggestion> {
+            self.candidate_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.suggestions.clone()
+        }
+    }
+
+    fn loading_registry(
+        models: Vec<Arc<dyn ChatModel>>,
+        loader: Arc<TestModelLoader>,
+    ) -> ModelLoaderRegistry {
+        let registry = Arc::new(TestMutableRegistry::new(models));
+        *loader.registry.lock().expect("test loader lock") = Some(Arc::clone(&registry));
+        ModelLoaderRegistry::new(registry, loader)
+    }
+
+    fn suggestion(id: &str, source: SuggestionSource) -> ModelSuggestion {
+        ModelSuggestion {
+            id: id.to_string(),
+            label: format!("{id} display"),
+            sources: vec![source],
+        }
+    }
+
+    #[test]
+    fn exact_loaded_model_wins_without_consulting_the_loader() {
+        let loader = TestModelLoader::new(LoadOutcome::Loaded(model("other.gturbo")), Vec::new());
+        let registry = loading_registry(vec![model("loaded.gturbo")], Arc::clone(&loader));
+
+        match registry.resolve(Some("loaded.gturbo")) {
+            Resolution::Model(resolved) => assert_eq!(resolved.model.model_id(), "loaded.gturbo"),
+            _ => panic!("expected the exact loaded model"),
+        }
+        assert_eq!(
+            loader.load_count.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+    }
+
+    #[test]
+    fn installed_model_load_precedes_the_single_model_fallback() {
+        let loader =
+            TestModelLoader::new(LoadOutcome::Loaded(model("installed.gturbo")), Vec::new());
+        let registry = loading_registry(vec![model("attached.gturbo")], Arc::clone(&loader));
+
+        match registry.resolve(Some("installed.gturbo")) {
+            Resolution::Model(resolved) => {
+                assert_eq!(resolved.model.model_id(), "installed.gturbo");
+                assert!(resolved.request_lease.is_some());
+            }
+            _ => panic!("an installed request must load before falling back"),
+        }
+        assert_eq!(
+            loader.load_count.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[test]
+    fn a_loaded_model_must_be_attached_before_resolution_returns_it() {
+        let loader =
+            TestModelLoader::new(LoadOutcome::Loaded(model("installed.gturbo")), Vec::new());
+        let registry = ModelLoaderRegistry::new(
+            Arc::new(StaticRegistry::new(vec![model("attached.gturbo")]).unwrap()),
+            loader,
+        );
+
+        assert!(matches!(
+            registry.resolve(Some("installed.gturbo")),
+            Resolution::LoadRefused(LoadRefusal::OpenFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn an_unknown_name_keeps_the_documented_single_model_fallback() {
+        let loader = TestModelLoader::new(
+            LoadOutcome::Unavailable {
+                candidates: Vec::new(),
+            },
+            vec![suggestion("catalog-model", SuggestionSource::Catalog)],
+        );
+        let registry = loading_registry(vec![model("attached.gturbo")], Arc::clone(&loader));
+
+        match registry.resolve(Some("client-default")) {
+            Resolution::Model(resolved) => assert_eq!(resolved.model.model_id(), "attached.gturbo"),
+            _ => panic!("an unknown name must retain the single-model fallback"),
+        }
+        assert_eq!(
+            loader.load_count.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[test]
+    fn unknown_model_suggestions_keep_installed_and_catalog_sources_typed() {
+        let suggestions = vec![
+            suggestion("installed-close-match", SuggestionSource::Installed),
+            suggestion("catalog-close-match", SuggestionSource::Catalog),
+        ];
+        let loader = TestModelLoader::new(
+            LoadOutcome::Unavailable {
+                candidates: Vec::new(),
+            },
+            suggestions.clone(),
+        );
+        let registry = loading_registry(
+            vec![model("attached-a.gturbo"), model("attached-b.gturbo")],
+            Arc::clone(&loader),
+        );
+
+        match registry.resolve(Some("requested-name")) {
+            Resolution::Unknown {
+                requested,
+                available,
+                suggestions: actual_suggestions,
+            } => {
+                assert_eq!(requested, "requested-name");
+                assert_eq!(available.len(), 4);
+                assert_eq!(actual_suggestions, suggestions);
+            }
+            _ => panic!("multiple loaded models and an unknown name must remain unknown"),
+        }
+        assert_eq!(
+            loader
+                .candidate_count
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[test]
+    fn an_empty_server_returns_suggestions_without_starting_a_download() {
+        let suggestions = vec![
+            suggestion("installed-close-match", SuggestionSource::Installed),
+            suggestion("catalog-close-match", SuggestionSource::Catalog),
+        ];
+        let loader = TestModelLoader::new(
+            LoadOutcome::Unavailable {
+                candidates: Vec::new(),
+            },
+            suggestions.clone(),
+        );
+        let registry = loading_registry(Vec::new(), Arc::clone(&loader));
+
+        match registry.resolve(Some("requested-name")) {
+            Resolution::Unknown {
+                requested,
+                available,
+                suggestions: actual_suggestions,
+            } => {
+                assert_eq!(requested, "requested-name");
+                assert!(available.is_empty());
+                assert_eq!(actual_suggestions, suggestions);
+            }
+            _ => panic!("an empty server should return actionable suggestions"),
+        }
+        assert_eq!(
+            loader.load_count.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            loader
+                .candidate_count
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[test]
+    fn a_typed_load_refusal_does_not_fall_back_to_another_model() {
+        let loader = TestModelLoader::new(
+            LoadOutcome::Refused(LoadRefusal::DoesNotFit {
+                committed_bytes: 12,
+                ceiling_bytes: 10,
+            }),
+            Vec::new(),
+        );
+        let registry = loading_registry(vec![model("attached.gturbo")], Arc::clone(&loader));
+
+        assert!(matches!(
+            registry.resolve(Some("installed.gturbo")),
+            Resolution::LoadRefused(LoadRefusal::DoesNotFit {
+                committed_bytes: 12,
+                ceiling_bytes: 10,
+            })
+        ));
     }
 
     #[test]
@@ -574,6 +1053,7 @@ mod tests {
             Resolution::Model(m) => assert_eq!(m.model_id(), "gemma4.gturbo"),
             Resolution::Unknown { .. } => panic!("expected the fallback chat model, not Unknown"),
             Resolution::Empty => panic!("expected the fallback chat model, not Empty"),
+            Resolution::LoadRefused(_) => panic!("a static registry cannot refuse to load"),
         }
     }
 
@@ -591,6 +1071,7 @@ mod tests {
                 panic!("expected the fallback embedding model, not Unknown")
             }
             Resolution::Empty => panic!("expected the fallback embedding model, not Empty"),
+            Resolution::LoadRefused(_) => panic!("a static registry cannot refuse to load"),
         }
     }
 
@@ -644,6 +1125,7 @@ mod tests {
             }
             Resolution::Model(_) => panic!("expected an ambiguous refusal, got Model"),
             Resolution::Empty => panic!("expected an ambiguous refusal, got Empty"),
+            Resolution::LoadRefused(_) => panic!("a static registry cannot refuse to load"),
         }
     }
 
@@ -810,7 +1292,7 @@ mod tests {
                 };
                 let idx = members
                     .iter()
-                    .position(|m| Arc::ptr_eq(m, &served))
+                    .position(|m| Arc::ptr_eq(m, &served.model))
                     .expect("the served backend is one of the members");
                 seen.push(idx);
             }
@@ -838,7 +1320,7 @@ mod tests {
                 panic!("expected a member");
             };
             assert!(
-                Arc::ptr_eq(&served, &idle),
+                Arc::ptr_eq(&served.model, &idle),
                 "an idle runner must win over an active runner with no waiters"
             );
         }

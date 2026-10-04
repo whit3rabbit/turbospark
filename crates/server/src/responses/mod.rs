@@ -65,14 +65,18 @@ const SSE_KEEP_ALIVE: Duration = Duration::from_secs(15);
 pub async fn responses(
     State(state): State<crate::ServerState>,
     tag: Option<axum::Extension<crate::observe::RequestTag>>,
+    lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(request): Json<ResponsesRequest>,
 ) -> Response {
     let model = match crate::handler::resolve_backend(
         &state,
+        &lease_slot.0,
         tag.map(|t| t.0),
         Some(request.model.as_str()),
         request.stream.unwrap_or(false),
-    ) {
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };

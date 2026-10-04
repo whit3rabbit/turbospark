@@ -200,9 +200,17 @@ pub struct EmbeddingResponse {
 pub async fn embeddings(
     State(state): State<ServerState>,
     tag: Option<axum::Extension<RequestTag>>,
+    lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(req): Json<EmbeddingRequest>,
 ) -> Response {
-    let model = match resolve_embedding_backend(&state, tag.map(|t| t.0), req.model.as_deref()) {
+    let model = match resolve_embedding_backend(
+        &state,
+        &lease_slot.0,
+        tag.map(|t| t.0),
+        req.model.as_deref(),
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };
@@ -312,9 +320,17 @@ pub struct OllamaEmbeddingResponse {
 pub async fn ollama_embeddings(
     State(state): State<ServerState>,
     tag: Option<axum::Extension<RequestTag>>,
+    lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(req): Json<OllamaEmbeddingRequest>,
 ) -> Response {
-    let model = match resolve_embedding_backend(&state, tag.map(|t| t.0), req.model.as_deref()) {
+    let model = match resolve_embedding_backend(
+        &state,
+        &lease_slot.0,
+        tag.map(|t| t.0),
+        req.model.as_deref(),
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };
@@ -349,9 +365,17 @@ pub struct OllamaEmbedResponse {
 pub async fn ollama_embed(
     State(state): State<ServerState>,
     tag: Option<axum::Extension<RequestTag>>,
+    lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(req): Json<OllamaEmbedRequest>,
 ) -> Response {
-    let model = match resolve_embedding_backend(&state, tag.map(|t| t.0), req.model.as_deref()) {
+    let model = match resolve_embedding_backend(
+        &state,
+        &lease_slot.0,
+        tag.map(|t| t.0),
+        req.model.as_deref(),
+    )
+    .await
+    {
         Ok(m) => m,
         Err(response) => return response,
     };
