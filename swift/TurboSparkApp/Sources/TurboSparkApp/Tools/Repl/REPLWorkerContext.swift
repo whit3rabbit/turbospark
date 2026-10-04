@@ -35,6 +35,11 @@ final class REPLWorkerContext: @unchecked Sendable {
     private var capturedException: String?
     private var hasCreatedSession = false
     private let outcomeBox = REPLSettlementBox()
+    private let limits: REPLLimits
+
+    init(limits: REPLLimits = REPLLimits()) {
+        self.limits = limits
+    }
 
     /// Deadline the lowered path waits for the wrapper promise to settle.
     /// The per-call timeout owned by the parent supervisor terminates the
@@ -262,11 +267,17 @@ final class REPLWorkerContext: @unchecked Sendable {
         errorText: String?,
         sessionCreated: Bool
     ) -> REPLCallResult {
-        let consoleText = outputEvents
+        // The captured event sequence is the ordering contract (6.1); the
+        // summaries below are derived from the compacted sequence so the
+        // output cap bounds every text channel the result carries (6.3).
+        let compacted = Self.compactOutputEvents(
+            outputEvents,
+            cap: limits.maximumOutputCharacters)
+        let consoleText = compacted.events
             .filter { [.log, .info, .debug].contains($0.level) }
             .map(\.text)
             .joined(separator: "\n")
-        let capturedErrors = outputEvents
+        let capturedErrors = compacted.events
             .filter { [.warn, .error].contains($0.level) }
             .map(\.text)
         let combinedErrorText = (capturedErrors + [errorText].compactMap { $0 })
@@ -274,14 +285,78 @@ final class REPLWorkerContext: @unchecked Sendable {
 
         return REPLCallResult(
             status: status,
-            outputEvents: outputEvents,
+            outputEvents: compacted.events,
             consoleText: consoleText,
             errorText: combinedErrorText.isEmpty ? nil : combinedErrorText,
             completionText: completionText,
             images: [],
-            truncated: false,
+            truncated: compacted.truncated,
             sessionCreated: sessionCreated,
             sessionReset: false)
+    }
+
+    /// Head-and-tail compaction of one call's captured console stream,
+    /// mirroring the shell output policy (ShellOutputFormatting): the head
+    /// keeps two thirds of the cap, the tail one quarter, and a marker event
+    /// names the characters removed from the middle. Events survive whole
+    /// when they fit inside a cut and are sliced when a cut lands inside
+    /// them, so the surviving sequence keeps exact cross-level order and
+    /// every event keeps its level; a sliced warn or error event still feeds
+    /// the error channel. The truncation flag is computed on the Swift side
+    /// after evaluation and is never exposed to scripts, so scripts cannot
+    /// tamper with it.
+    static func compactOutputEvents(
+        _ events: [REPLTextOutputEvent],
+        cap: Int
+    ) -> (events: [REPLTextOutputEvent], truncated: Bool) {
+        guard !events.isEmpty else { return (events, false) }
+        let streamLength = events.reduce(0) { $0 + $1.text.count } + events.count - 1
+        let boundedCap = max(cap, 0)
+        guard streamLength > boundedCap else { return (events, false) }
+
+        let headCut = min(boundedCap * 2 / 3, streamLength)
+        let tailCut = min(boundedCap / 4, streamLength - headCut)
+
+        var kept: [REPLTextOutputEvent] = []
+        var position = 0
+        for event in events {
+            let length = event.text.count
+            if position >= headCut { break }
+            if position + length <= headCut {
+                kept.append(event)
+            } else {
+                kept.append(REPLTextOutputEvent(
+                    level: event.level,
+                    text: String(event.text.prefix(headCut - position))))
+                break
+            }
+            position += length + 1
+        }
+
+        var tail: [REPLTextOutputEvent] = []
+        var endPosition = streamLength
+        let tailStart = streamLength - tailCut
+        for event in events.reversed() {
+            let length = event.text.count
+            let start = endPosition - length
+            if start >= tailStart {
+                tail.append(event)
+            } else if start + length > tailStart {
+                tail.append(REPLTextOutputEvent(
+                    level: event.level,
+                    text: String(event.text.suffix(start + length - tailStart))))
+                break
+            } else {
+                break
+            }
+            endPosition = start - 1
+        }
+
+        kept.append(REPLTextOutputEvent(
+            level: .log,
+            text: "... [\(streamLength - headCut - tailCut) chars truncated] ..."))
+        kept.append(contentsOf: tail.reversed())
+        return (kept, true)
     }
 
     /// Installs the completion renderer and exposes it to the lowered

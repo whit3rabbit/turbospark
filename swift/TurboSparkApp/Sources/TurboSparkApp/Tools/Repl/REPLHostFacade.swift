@@ -3,7 +3,10 @@ import JavaScriptCore
 typealias REPLConsoleSink = @Sendable (REPLTextOutputEvent) -> Void
 
 /// Installs the worker's host-visible console methods onto a fresh context.
-/// The app never receives JavaScriptCore values or objects through this seam.
+/// Every member is defined non-writable and non-configurable, and both the
+/// console object and its method functions are frozen, so tampering during
+/// one call cannot weaken the surface for later calls. The app never
+/// receives JavaScriptCore values or objects through this seam.
 final class REPLHostFacade: @unchecked Sendable {
     private let output: REPLConsoleSink
 
@@ -48,8 +51,10 @@ final class REPLHostFacade: @unchecked Sendable {
       };
       const console = {};
       for (const level of ["log", "info", "debug", "warn", "error"]) {
+        const method = (...values) => sink(level, format(values));
+        Object.freeze(method);
         Object.defineProperty(console, level, {
-          value: (...values) => sink(level, format(values)),
+          value: method,
           enumerable: true,
           writable: false,
           configurable: false
