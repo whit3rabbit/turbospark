@@ -62,6 +62,9 @@ impl RealForwardRunner {
         let embed_name = "language_model.model.embed_tokens.weight";
         let base = self.index.header.index_size;
 
+        // Retain submitted shared passes through the final wait, including
+        // early errors, without adding a host wait before routed submission.
+        let mut shared_submissions = Vec::new();
         let mut pass = self.context.begin_pass_labeled("cb1 (attn+router)");
         // THE IMAGE INJECTION (ROADMAP M-V5). At an image-pad position the
         // vision tower's row IS this token's embedding, so the table lookup is
@@ -401,7 +404,7 @@ impl RealForwardRunner {
             phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
 
             pass = context.begin_pass_labeled("routed cb");
-            moe::encode_qwen_layer_moe(
+            if let Some(shared) = moe::encode_qwen_layer_moe(
                 context,
                 &pass,
                 weights,
@@ -423,7 +426,9 @@ impl RealForwardRunner {
                 num_experts,
                 top_k,
                 use_silu,
-            )?;
+            )? {
+                shared_submissions.push(shared);
+            }
             // The MoE half's post-FFN residual add happens INSIDE
             // `encode_qwen_layer_moe`, so this layer's output exists only
             // once that call returns -- the same boundary the dense branch

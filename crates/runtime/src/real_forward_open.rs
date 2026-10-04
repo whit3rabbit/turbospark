@@ -24,6 +24,9 @@ impl RealForwardRunner {
         kv_quant: KvQuant,
         residency: model_io::ExpertResidency,
     ) -> Result<Self, RealForwardError> {
+        let open_started = std::time::Instant::now();
+        let phase_started = open_started;
+        let mut startup_stats = crate::startup::StartupStats::default();
         // A vision sidecar directory (vision memory sidecar, Part A2) is not
         // a model install -- it declares `numLayers: 0` and has no trunk
         // tensors at all, so letting it fall through to the checks below
@@ -149,6 +152,8 @@ impl RealForwardRunner {
             )));
         }
 
+        startup_stats.manifest_index_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+        let phase_started = std::time::Instant::now();
         let buffer = ResidentBuffer::map(
             &dir.join("model_weights.bin"),
             index.header.index_size,
@@ -158,6 +163,8 @@ impl RealForwardRunner {
         let mut context = gpu::MetalContext::new().map_err(RealForwardError::Gpu)?;
         let weights = gpu::ResidentGpuWeights::wrap(context.device(), buffer)
             .map_err(RealForwardError::Gpu)?;
+        startup_stats.resident_mapping_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+        let phase_started = std::time::Instant::now();
 
         let kv = gpu::KvCacheManager::new_with_kv_quant(
             context.device(),
@@ -171,6 +178,8 @@ impl RealForwardRunner {
         )
         .map_err(RealForwardError::Gpu)?;
         let scratch = DecodeScratch::new(&context, &expecting, kv_quant);
+        startup_stats.kv_scratch_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+        let phase_started = std::time::Instant::now();
 
         let (streamers, slot_buffers, experts_layout, resolved_slots, resolved_residency, mapped) =
             crate::real_forward_init::open_expert_streamers(
@@ -218,6 +227,8 @@ impl RealForwardRunner {
             None => (Vec::new(), Vec::new(), None, Vec::new()),
         };
         drop(experts_layout);
+        startup_stats.expert_setup_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+        let phase_started = std::time::Instant::now();
 
         let router_hist = crate::router_hist::RouterHistogram::from_env(
             expecting.num_layers as usize,
@@ -237,6 +248,7 @@ impl RealForwardRunner {
             session_pool: crate::session_pool::SessionPool::empty(),
             session_slot_evicted: false,
             context,
+            startup_stats,
             weights,
             index,
             arch: expecting,
@@ -497,6 +509,8 @@ impl RealForwardRunner {
                 )?);
             }
         }
+        runner.startup_stats.family_state_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+        let phase_started = std::time::Instant::now();
         // Pre-allocated once, here rather than lazily on first use: a slot
         // that failed to allocate mid-conversation would be a Metal
         // allocation error with nothing pointing back at `--session-slots`,
@@ -597,6 +611,12 @@ impl RealForwardRunner {
         // ACCEPTANCE alone, which is exactly the shape that reads as a verdict
         // about the drafter rather than as a consequence of the edit. It is
         // measured in `docs/OBLITERATION.md` rather than left to be guessed.
+        runner.startup_stats.session_state_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
+        if std::env::var("TURBOSPARK_METAL_KERNEL_WARMUP").as_deref() == Ok("1") {
+            runner.startup_stats.kernel_warmup =
+                runner.prepare_kernel_warmup(max_context as u32)?;
+        }
+        runner.startup_stats.total_open_ms = open_started.elapsed().as_secs_f64() * 1000.0;
         Ok(runner)
     }
 }

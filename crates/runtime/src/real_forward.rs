@@ -103,6 +103,7 @@ pub struct RealForwardRunner {
     /// and reported on `RawDecodeResult`.
     pub(crate) session_slot_evicted: bool,
     pub(crate) context: gpu::MetalContext,
+    pub(crate) startup_stats: crate::startup::StartupStats,
     /// The whole resident region as one zero-copy `MTLBuffer` over the
     /// mmap (see `gpu::ResidentGpuWeights`); every GPU projection binds
     /// weights/scales/biases as offsets into it, Swift-style. No weight

@@ -37,6 +37,10 @@ pub(crate) struct RealQwenState {
     /// embedding, both norms, both attention blocks, the raw residual and the
     /// head are the same code either way.
     pub(crate) dense: bool,
+    /// Experimental scheduling is captured once per open, keeping env
+    /// lookups out of the per-layer hot path and the shipping path unchanged.
+    pub(crate) shared_read_overlap: bool,
+    pub(crate) mapped_demand_preparation: Option<streaming::MappedPagePreparationMode>,
     /// BF16 `[hidden]` of ones. The INT8 router kernel multiplies `x[n]`
     /// by an effective scale per element; Qwen has no `router.scale` and
     /// `router_scaled` is false, so the scale is identically 1.
@@ -109,6 +113,19 @@ impl RealQwenState {
             ));
         }
         let dense = arch.num_experts == 0;
+        let shared_read_overlap =
+            !dense && std::env::var("TURBOSPARK_QWEN_SHARED_READ_OVERLAP").as_deref() == Ok("1");
+        let mapped_demand_preparation =
+            match std::env::var("TURBOSPARK_MAPPED_DEMAND_PREP").as_deref() {
+                Err(_) | Ok("off") => None,
+                Ok("advice") => Some(streaming::MappedPagePreparationMode::Advice),
+                Ok("touch") => Some(streaming::MappedPagePreparationMode::Touch),
+                Ok(value) => {
+                    return unsupported(format!(
+                "invalid TURBOSPARK_MAPPED_DEMAND_PREP {value:?}; expected off, advice, or touch"
+            ))
+                }
+            };
         if dense != (arch.top_k_experts == 0) {
             return unsupported(format!(
                 "num_experts {} and top_k_experts {} disagree about whether this install is \
@@ -300,6 +317,8 @@ impl RealQwenState {
             shape,
             rotary_dim: rotary_dim as u32,
             dense,
+            shared_read_overlap,
+            mapped_demand_preparation,
             router_ones,
             per_expert_ones: vec![1.0; num_experts],
             // `new_output_buffer(0)` is not a thing worth finding out about at

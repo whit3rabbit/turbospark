@@ -25,7 +25,9 @@ pub use expert_cache::{
     ExpertIoAdviceResult,
 };
 pub use linux_uring::{dio_aligned, dio_round_up, Mode as LinuxIoMode, DIO_ALIGNMENT};
-pub use mapped_experts::MappedExpertLayer;
+pub use mapped_experts::{
+    MappedExpertLayer, MappedPagePreparationMode, MappedPagePreparationStats,
+};
 pub use pread_streamer::PreadExpertStreamer;
 pub use rdadvice::{call as rdadvice_call, clipped_byte_count, RdAdviceCallResult};
 pub use stream_layout::StreamLayout;

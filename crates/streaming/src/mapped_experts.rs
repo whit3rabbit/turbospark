@@ -48,6 +48,64 @@ use model_io::ResidentBuffer;
 use crate::error::StreamerError;
 use crate::stream_layout::StreamLayout;
 
+/// Preparation changes page access only, never expert weights or slot order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MappedPagePreparationMode {
+    /// Ask the OS to fetch selected ranges; failure is advisory only.
+    Advice,
+    /// Read one byte per selected VM page before the GPU consumes it.
+    Touch,
+}
+
+/// Work performed by one demand-selected preparation call.
+///
+/// Byte counts describe mapped spans, not physical disk I/O or guaranteed
+/// residency. `selected_bytes` sums logical bytes of unique expert IDs;
+/// `bytes_prepared` counts the union of their admitted page spans, clipped at
+/// the mapping end. Advisory errors do not change inference behavior.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MappedPagePreparationStats {
+    pub requested_experts: usize,
+    pub unique_experts: usize,
+    pub duplicate_experts: usize,
+    pub prepared_experts: usize,
+    pub skipped_budget_experts: usize,
+    pub selected_bytes: u64,
+    pub bytes_prepared: u64,
+    pub pages_prepared: u64,
+    pub page_touches: u64,
+    /// Number of merged ranges passed to madvise, including failed calls.
+    pub advisory_ranges: u64,
+    pub advisory_errors: u64,
+    pub page_size: u64,
+    pub elapsed_ms: f64,
+}
+
+// A routed batch is small. Bound stack work and refuse larger selections
+// rather than allocating on every layer's inference path.
+const MAX_PREPARATION_EXPERTS: usize = 64;
+
+#[derive(Clone, Copy, Default)]
+struct PageSpan {
+    start: u64,
+    end: u64,
+}
+
+fn merge_page_spans(spans: &mut [PageSpan]) -> usize {
+    spans.sort_unstable_by_key(|span| span.start);
+    let mut merged = 0;
+    for index in 0..spans.len() {
+        let span = spans[index];
+        if merged > 0 && span.start <= spans[merged - 1].end {
+            spans[merged - 1].end = spans[merged - 1].end.max(span.end);
+        } else {
+            spans[merged] = span;
+            merged += 1;
+        }
+    }
+    merged
+}
+
 /// One layer's expert file, mapped and addressable by expert index.
 pub struct MappedExpertLayer {
     layout: StreamLayout,
@@ -154,5 +212,191 @@ impl MappedExpertLayer {
         let start = self.expert_offset(expert).ok()? as usize;
         let end = start.checked_add(self.expert_stride() as usize)?;
         self.mapping.mapped_bytes().get(start..end)
+    }
+
+    /// Touches each VM page in one expert's range without changing its bytes.
+    /// Returns page-touch count, not disk bytes or a page-residency guarantee.
+    pub fn prefetch_expert(&self, expert: usize) -> Result<u64, StreamerError> {
+        if self
+            .layout
+            .expert_offsets
+            .as_ref()
+            .is_some_and(|offsets| expert >= offsets.len())
+        {
+            return Err(StreamerError::OffsetOutOfRange {
+                offset: expert as u64,
+            });
+        }
+        let start = self.expert_offset(expert)? as usize;
+        let count =
+            usize::try_from(self.expert_stride()).map_err(|_| StreamerError::OffsetOutOfRange {
+                offset: start as u64,
+            })?;
+        if count == 0 {
+            return Ok(0);
+        }
+        // SAFETY: sysconf reads a process constant and borrows no memory.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let page_size = if page_size > 0 {
+            page_size as usize
+        } else {
+            4096
+        };
+        let bytes = self.mapping.mapped_bytes();
+        let end = start + count; // expert_offset checked this whole range.
+        std::hint::black_box(bytes[start]);
+        let mut touches = 1;
+        let mut next = start.saturating_add(page_size - start % page_size);
+        while next < end {
+            std::hint::black_box(bytes[next]);
+            touches += 1;
+            next = next.saturating_add(page_size);
+        }
+        Ok(touches)
+    }
+
+    /// Prepares only the experts already selected for this layer.
+    ///
+    /// All IDs and byte ranges are validated before any read or advice.
+    /// Duplicate IDs and overlapping pages are prepared once. Whole experts
+    /// are admitted in caller order while the union of page spans fits
+    /// `max_bytes`; a skipped expert does not prevent later smaller spans
+    /// from fitting. A zero budget still validates all selections. This
+    /// method does not change routing, bind order, or expert contents.
+    pub fn prepare_selected_experts(
+        &self,
+        experts: &[usize],
+        mode: MappedPagePreparationMode,
+        max_bytes: u64,
+    ) -> Result<MappedPagePreparationStats, StreamerError> {
+        let started = std::time::Instant::now();
+        if experts.len() > MAX_PREPARATION_EXPERTS {
+            return Err(StreamerError::OpenFailed {
+                path: self.layout.path.clone(),
+                detail: format!(
+                    "mapped preparation supports at most {MAX_PREPARATION_EXPERTS} selected experts"
+                ),
+            });
+        }
+        let bytes = self.mapping.mapped_bytes();
+        let mut unique_ids = [0usize; MAX_PREPARATION_EXPERTS];
+        let mut selected = [PageSpan::default(); MAX_PREPARATION_EXPERTS];
+        let mut stats = MappedPagePreparationStats {
+            requested_experts: experts.len(),
+            ..Default::default()
+        };
+        for &expert in experts {
+            // Explicit offset tables are authoritative, including missing
+            // entries. Checked arithmetic also covers uniform layouts.
+            if expert >= self.layout.experts_per_layer {
+                return Err(StreamerError::OffsetOutOfRange {
+                    offset: expert as u64,
+                });
+            }
+            let offset = if let Some(offsets) = &self.layout.expert_offsets {
+                *offsets.get(expert).ok_or(StreamerError::OffsetOutOfRange {
+                    offset: expert as u64,
+                })?
+            } else {
+                (expert as u64)
+                    .checked_mul(self.layout.expert_stride)
+                    .ok_or(StreamerError::OffsetOutOfRange {
+                        offset: expert as u64,
+                    })?
+            };
+            let start = self
+                .shift
+                .checked_add(offset)
+                .ok_or(StreamerError::OffsetOutOfRange { offset })?;
+            let end = start
+                .checked_add(self.layout.expert_stride)
+                .filter(|&end| end <= bytes.len() as u64)
+                .ok_or(StreamerError::OffsetOutOfRange { offset: start })?;
+            if unique_ids[..stats.unique_experts].contains(&expert) {
+                stats.duplicate_experts += 1;
+                continue;
+            }
+            stats.selected_bytes = stats
+                .selected_bytes
+                .checked_add(self.layout.expert_stride)
+                .ok_or(StreamerError::OffsetOutOfRange { offset: start })?;
+            unique_ids[stats.unique_experts] = expert;
+            selected[stats.unique_experts] = PageSpan { start, end };
+            stats.unique_experts += 1;
+        }
+        // SAFETY: sysconf reads a process constant and borrows no memory.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if page_size <= 0 {
+            return Err(StreamerError::OpenFailed {
+                path: self.layout.path.clone(),
+                detail: "cannot determine VM page size for mapped preparation".to_string(),
+            });
+        }
+        stats.page_size = page_size as u64;
+        let mut admitted = [PageSpan::default(); MAX_PREPARATION_EXPERTS];
+        let mut admitted_count = 0;
+        for &span in &selected[..stats.unique_experts] {
+            if span.start == span.end {
+                continue;
+            }
+            if max_bytes == 0 {
+                stats.skipped_budget_experts += 1;
+                continue;
+            }
+            let start = span.start / stats.page_size * stats.page_size;
+            let tail = (stats.page_size - span.end % stats.page_size) % stats.page_size;
+            let end = span.end.saturating_add(tail).min(bytes.len() as u64);
+            let mut candidate = admitted;
+            candidate[admitted_count] = PageSpan { start, end };
+            let count = merge_page_spans(&mut candidate[..admitted_count + 1]);
+            let candidate_bytes: u64 = candidate[..count]
+                .iter()
+                .map(|span| span.end - span.start)
+                .sum();
+            if candidate_bytes > max_bytes {
+                stats.skipped_budget_experts += 1;
+                continue;
+            }
+            admitted = candidate;
+            admitted_count = count;
+            stats.bytes_prepared = candidate_bytes;
+            stats.prepared_experts += 1;
+        }
+        for span in &admitted[..admitted_count] {
+            stats.pages_prepared += (span.end - span.start).div_ceil(stats.page_size);
+            match mode {
+                MappedPagePreparationMode::Advice => {
+                    stats.advisory_ranges += 1;
+                    // SAFETY: mmap's base and span.start are page-aligned;
+                    // validation and clipping keep this nonempty range
+                    // inside the immutable mapping for this whole call.
+                    let result = unsafe {
+                        libc::madvise(
+                            bytes.as_ptr().add(span.start as usize).cast_mut().cast(),
+                            (span.end - span.start) as usize,
+                            libc::MADV_WILLNEED,
+                        )
+                    };
+                    if result != 0 {
+                        stats.advisory_errors += 1;
+                    }
+                }
+                MappedPagePreparationMode::Touch => {
+                    let mut page = span.start;
+                    while page < span.end {
+                        // SAFETY: each page address is inside the validated
+                        // read-only mapping. A volatile read forces the CPU
+                        // access even though the weight value is not used.
+                        std::hint::black_box(unsafe {
+                            bytes.as_ptr().add(page as usize).read_volatile()
+                        });
+                        stats.page_touches += 1;
+                        page = page.saturating_add(stats.page_size);
+                    }
+                }
+            }
+        }
+        stats.elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        Ok(stats)
     }
 }

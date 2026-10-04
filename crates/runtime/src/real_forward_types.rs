@@ -109,6 +109,15 @@ pub struct PhaseCounters {
     pub expert_io_bytes_requested: u64,
     pub expert_io_bytes_physical: u64,
     pub expert_io_samples: u64,
+    /// Experimental scheduling counters prove the measured arm executed.
+    /// Mapped preparation bytes are logical page spans, not physical I/O.
+    pub qwen_shared_submissions: u64,
+    pub mapped_prepare_calls: u64,
+    pub mapped_prepared_bytes: u64,
+    pub mapped_page_touches: u64,
+    pub mapped_advice_calls: u64,
+    pub mapped_advice_failures: u64,
+    pub mapped_prepare_nanos: u64,
 }
 
 /// How many prompt tokens a chunked prefill may carry through one layer

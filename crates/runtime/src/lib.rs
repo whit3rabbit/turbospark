@@ -14,6 +14,8 @@ mod families;
 #[cfg(target_os = "macos")]
 mod ffn_hist;
 #[cfg(target_os = "macos")]
+mod kernel_warmup;
+#[cfg(target_os = "macos")]
 mod kv_prefix;
 #[cfg(target_os = "macos")]
 mod kv_write;
@@ -58,6 +60,8 @@ mod session_pool;
 mod speculation_policy;
 mod speculative;
 #[cfg(target_os = "macos")]
+mod startup;
+#[cfg(target_os = "macos")]
 mod steering;
 mod token_sink;
 mod turn_stream;
@@ -99,6 +103,8 @@ pub use families::qwen::{
     DFLASH_BLOCK, DFLASH_SERVING_BLOCK, MOE_SPECULATION_BLOCKER_MARKER,
     VISION_SPECULATION_BLOCKER_MARKER,
 };
+#[cfg(target_os = "macos")]
+pub use gpu::MetalCompilationStats;
 pub use power::{
     low_power_mode_enabled, memory_cap, memory_pressure, physical_memory, rate_control_for,
     recommended_max_working_set, resolve_profile, stepped_cap, thermal_cap, thermal_level,
@@ -119,6 +125,8 @@ pub use real_forward::{
 };
 #[cfg(target_os = "macos")]
 pub use real_forward_init::{resolve_expert_residency, resolve_expert_residency_for_install};
+#[cfg(target_os = "macos")]
+pub use startup::{ExpertPrefetchStats, StartupStats};
 // The drafter/speculation policy, shared by `turbospark-check` and
 // `turbospark-server`. It lived in the CLI until the server needed the same
 // three decisions in the same order; see `speculation_policy`'s own header

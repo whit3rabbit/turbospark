@@ -37,7 +37,7 @@ pub(crate) fn encode_qwen_layer_moe(
     num_experts: usize,
     top_k: usize,
     use_silu: bool,
-) -> Result<(), RealForwardError> {
+) -> Result<Option<gpu::CommittedPass>, RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let t_router = Instant::now();
     let router_logits = gpu::read_f32_buffer(&qwen.router_logits_f32, num_experts);
@@ -53,10 +53,51 @@ pub(crate) fn encode_qwen_layer_moe(
     // rate stays comparable across residency modes rather than reading
     // undefined for a run with zero requests.
     let mapped_active = mapped.buffers.get(layer).is_some_and(Option::is_some);
+    let routing_nanos = t_router.elapsed().as_nanos() as u64;
+    // Submit independent shared work before blocking reads. The same queue
+    // orders it before the routed reduction, and the caller retains the
+    // draining handle so errors cannot release no-copy backing in flight.
+    let shared_submission = if qwen.shared_read_overlap && !mapped_active {
+        let shared_pass = context.begin_pass_labeled("qwen shared expert (read overlap)");
+        encode_shared_expert(
+            context,
+            &shared_pass,
+            weights,
+            index,
+            scratch,
+            qwen,
+            layer,
+            hidden,
+            inter,
+            use_silu,
+        )?;
+        phases.qwen_shared_submissions += 1;
+        Some(shared_pass.commit().waiting_on_drop())
+    } else {
+        None
+    };
+    if mapped_active {
+        if let Some(mode) = qwen.mapped_demand_preparation {
+            let mapping = mapped.layers[layer]
+                .as_ref()
+                .expect("mapped residency checked above");
+            let stats = mapping
+                .prepare_selected_experts(&selected, mode, 16 * 1024 * 1024)
+                .map_err(|e| {
+                    RealForwardError::Unsupported(format!("mapped demand preparation: {e}"))
+                })?;
+            phases.mapped_prepare_calls += 1;
+            phases.mapped_prepared_bytes += stats.bytes_prepared;
+            phases.mapped_page_touches += stats.page_touches;
+            phases.mapped_advice_calls += stats.advisory_ranges;
+            phases.mapped_advice_failures += stats.advisory_errors;
+            phases.mapped_prepare_nanos += (stats.elapsed_ms * 1e6) as u64;
+        }
+    }
     let slots: Vec<usize> = if mapped_active {
         phases.expert_requests += selected.len() as u64;
         phases.expert_hits += selected.len() as u64;
-        phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+        phases.router_nanos += routing_nanos;
         selected.clone()
     } else {
         let streamer = streamers[layer].as_mut().ok_or_else(|| {
@@ -64,11 +105,12 @@ pub(crate) fn encode_qwen_layer_moe(
                 "real Qwen 3.6 layer {layer} has no packed-expert streamer"
             ))
         })?;
+        let t_plan = Instant::now();
         let plan = streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
         let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
         phases.expert_requests += requests;
         phases.expert_hits += hits;
-        phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+        phases.router_nanos += routing_nanos + t_plan.elapsed().as_nanos() as u64;
 
         let streamer = streamers[layer]
             .as_mut()
@@ -138,6 +180,63 @@ pub(crate) fn encode_qwen_layer_moe(
         pass.use_read_buffer(buffer);
     }
 
+    if shared_submission.is_none() {
+        encode_shared_expert(
+            context, pass, weights, index, scratch, qwen, layer, hidden, inter, use_silu,
+        )?;
+    }
+
+    encode_moe_phase1_any(
+        routed_layouts[layer].phase1,
+        context,
+        pass,
+        routed,
+        offsets,
+        (&qwen.moe_x, 0),
+        (&scratch.moe_acts, 0),
+        hidden as u32,
+        moe_inter,
+        selected.len() as u32,
+        use_silu,
+    )
+    .map_err(gpu_err)?;
+    encode_moe_phase2_any(
+        routed_layouts[layer].phase2,
+        context,
+        pass,
+        routed,
+        offsets,
+        (&scratch.moe_acts, 0),
+        (&scratch.routing_w, 0),
+        (&qwen.h1, 0),
+        (&qwen.h2, 0),
+        hidden as u32,
+        moe_inter,
+        top_k as u32,
+        use_silu,
+    )
+    .map_err(gpu_err)?;
+    gpu::encode_residual_add(context, pass, (&scratch.x, 0), (&qwen.h2, 0), hidden as u32)
+        .map_err(gpu_err)?;
+
+    Ok(shared_submission)
+}
+
+/// Keep identical shared arithmetic in the inline and overlapping arms.
+#[allow(clippy::too_many_arguments)]
+fn encode_shared_expert(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    scratch: &DecodeScratch,
+    qwen: &RealQwenState,
+    layer: usize,
+    hidden: usize,
+    inter: usize,
+    use_silu: bool,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
     encode_gemv_any(
         context,
         pass,
@@ -204,39 +303,6 @@ pub(crate) fn encode_qwen_layer_moe(
         hidden as u32,
     )
     .map_err(gpu_err)?;
-
-    encode_moe_phase1_any(
-        routed_layouts[layer].phase1,
-        context,
-        pass,
-        routed,
-        offsets,
-        (&qwen.moe_x, 0),
-        (&scratch.moe_acts, 0),
-        hidden as u32,
-        moe_inter,
-        selected.len() as u32,
-        use_silu,
-    )
-    .map_err(gpu_err)?;
-    encode_moe_phase2_any(
-        routed_layouts[layer].phase2,
-        context,
-        pass,
-        routed,
-        offsets,
-        (&scratch.moe_acts, 0),
-        (&scratch.routing_w, 0),
-        (&qwen.h1, 0),
-        (&qwen.h2, 0),
-        hidden as u32,
-        moe_inter,
-        top_k as u32,
-        use_silu,
-    )
-    .map_err(gpu_err)?;
-    gpu::encode_residual_add(context, pass, (&scratch.x, 0), (&qwen.h2, 0), hidden as u32)
-        .map_err(gpu_err)?;
 
     Ok(())
 }

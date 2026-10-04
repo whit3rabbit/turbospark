@@ -118,6 +118,58 @@ impl PreadExpertStreamer {
         &self.layout
     }
 
+    /// Reads one expert through bounded caller-owned scratch to warm file pages.
+    /// Does not populate or evict expert slots. Refuses cache-bypassing reads
+    /// because they cannot establish the warm-cache condition being measured.
+    pub fn prefetch_expert(&self, expert: usize, scratch: &mut [u8]) -> Result<u64, StreamerError> {
+        if self.nocache {
+            return Err(StreamerError::PreadFailed {
+                detail: "expert prefetch conflicts with F_NOCACHE".to_string(),
+            });
+        }
+        if scratch.is_empty() {
+            return Err(StreamerError::PreadFailed {
+                detail: "expert prefetch scratch must not be empty".to_string(),
+            });
+        }
+        if expert >= self.layout.experts_per_layer {
+            return Err(StreamerError::OffsetOutOfRange {
+                offset: expert as u64,
+            });
+        }
+        let invalid = || StreamerError::OffsetOutOfRange {
+            offset: expert as u64,
+        };
+        let offset = match &self.layout.expert_offsets {
+            Some(offsets) => *offsets.get(expert).ok_or_else(invalid)?,
+            None => (expert as u64)
+                .checked_mul(self.layout.expert_stride)
+                .ok_or_else(invalid)?,
+        };
+        let end = offset
+            .checked_add(self.layout.expert_stride)
+            .ok_or_else(invalid)?;
+        if end > self.layout.stream_size {
+            return Err(invalid());
+        }
+        let start = self
+            .layout
+            .stream_offset
+            .checked_add(offset)
+            .ok_or_else(invalid)?;
+        self.layout
+            .stream_offset
+            .checked_add(end)
+            .ok_or_else(invalid)?;
+        let mut prepared = 0u64;
+        while prepared < self.layout.expert_stride {
+            let count = (self.layout.expert_stride - prepared).min(scratch.len() as u64) as usize;
+            read_full(&self.file, &mut scratch[..count], start + prepared)?;
+            prepared += count as u64;
+        }
+        Ok(prepared)
+    }
+
     /// Returns reference to slot bytes slice for a given slot index.
     pub fn slot_data(&self, slot: usize) -> &[u8] {
         &self.slots[slot].as_slice()[..self.layout.expert_stride as usize]
@@ -434,4 +486,38 @@ pub(crate) fn read_full(
         filled += got;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod prefetch_tests {
+    use super::*;
+
+    #[test]
+    fn prefetch_refuses_cache_bypass_without_reading_or_changing_slots() {
+        let path = std::env::temp_dir().join(format!(
+            "turbospark-prefetch-nocache-{}",
+            std::process::id()
+        ));
+        std::fs::write(&path, [7u8; 128]).unwrap();
+        let layout = StreamLayout {
+            path: path.display().to_string(),
+            stream_offset: 0,
+            stream_size: 128,
+            experts_per_layer: 2,
+            expert_stride: 64,
+            expert_offsets: None,
+        };
+        let mut streamer = PreadExpertStreamer::open(layout, 2, ExpertCachePolicy::Lfu).unwrap();
+        streamer.nocache = true;
+        let mut scratch = [0xeeu8; 64];
+        let error = streamer.prefetch_expert(0, &mut scratch).unwrap_err();
+        assert!(error.to_string().contains("F_NOCACHE"));
+        assert_eq!(scratch, [0xee; 64]);
+        assert!(streamer
+            .resident_experts_snapshot()
+            .iter()
+            .all(Option::is_none));
+        drop(streamer);
+        std::fs::remove_file(path).unwrap();
+    }
 }
