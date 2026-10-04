@@ -16,6 +16,10 @@ a small library shared by the binary and oracle, and `tests/memory_oracle.rs`.
 The Swift MLX image benchmark is a separate executable target in
 `swift/TurboSparkApp`.
 
+For loading and first-request costs without discarded warmup, use
+[`MOE_STARTUP.md`](MOE_STARTUP.md). It covers the startup probe, opt-in Metal
+library and pipeline caches, and bounded expert-prefetch experiments.
+
 ## The three modes
 
 | Mode | Command | What it measures |

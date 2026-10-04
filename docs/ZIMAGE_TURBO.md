@@ -304,6 +304,12 @@ benchmark path. The Swift app uses its install catalog and `.image.gturbo`
 source retention, but dispatches generation through the separate MLX
 pipeline. This keeps diffusion state out of the autoregressive text runner.
 
+The [compile-only JIT warmup result](MOE_STARTUP.md#compile-only-warmup-results-2026-10-03)
+covers MLX-derived Qwen MoE text weights in the Rust/Metal runner. It found
+no repeatable startup gain, so `TURBOSPARK_METAL_KERNEL_WARMUP=1` remains
+opt-in. The switch does not configure Swift MLX image generation; image
+warmup requires separate total-startup, quality, and memory measurements.
+
 Memory work starts with ownership, not a disk-size headline: keep only one
 heavyweight stage resident, map packed payloads without expanding every matrix,
 dequantize INT4 linear weights at use, and release stage state before loading

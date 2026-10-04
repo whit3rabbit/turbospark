@@ -162,6 +162,13 @@ schedule and are not quality-equivalent to the 40-step native setting.
   this family runs through the vendored MLX package, like the app's MLX
   Z-Image route.
 
+The [Qwen MoE text JIT warmup experiment](MOE_STARTUP.md#compile-only-warmup-results-2026-10-03)
+remains opt-in after finding no repeatable startup gain.
+`TURBOSPARK_METAL_KERNEL_WARMUP=1` applies to the Rust/Metal text runner,
+including MLX-derived text weights, not this Swift MLX image pipeline.
+An image warmup default needs its own paired total-startup, image-quality,
+and memory gates.
+
 ## License note
 
 The upstream weights carry the `qwen-research` license (non-commercial

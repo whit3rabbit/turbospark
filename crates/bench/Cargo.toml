@@ -12,6 +12,10 @@ description = "Throughput benchmark harness: three fixed prompts, fixed seeds, a
 name = "turbospark-bench"
 path = "src/main.rs"
 
+[[bin]]
+name = "turbospark-startup-probe"
+path = "src/startup_probe_main.rs"
+
 [dependencies]
 foundation = { package = "turbospark-core", path = "../core", version = "0.2.0" }
 runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.2.0" }
@@ -26,6 +30,7 @@ repack = { package = "turbospark-repack", path = "../repack", version = "0.2.0" 
 # dev-dependency until the resolver needed it in `src/`; a regular
 # dependency is visible to the tests too, so nothing moved out of reach.
 model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.2.0" }
+serde_json = "1"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # phys_footprint sampling for tests/memory_oracle.rs (proc_pid_rusage).

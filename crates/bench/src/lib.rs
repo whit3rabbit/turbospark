@@ -18,3 +18,7 @@ pub mod real_model_open;
 /// Real model protocol parameters.
 #[cfg(target_os = "macos")]
 pub mod real_model_params;
+
+/// Unwarmed startup and first-request measurements, separate from the frozen protocol.
+#[cfg(target_os = "macos")]
+pub mod startup_probe;

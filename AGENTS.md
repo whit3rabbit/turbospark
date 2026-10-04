@@ -78,6 +78,12 @@ The root references are:
   real Metal, quality, or memory claim.
 - Do not widen quality or resource tolerances without new evidence. Preserve
   negative findings and refusal paths in the canonical docs.
+- Keep Metal JIT warmup opt-in (`TURBOSPARK_METAL_KERNEL_WARMUP=1`);
+  the Qwen MoE experiment found no repeatable startup gain. Read
+  [MoE startup](docs/MOE_STARTUP.md) before changing the default.
+- Read [MLX kernel experiments](docs/MLX_KERNELS.md) before reusing oMLX
+  kernels. Steel has synthetic prefill evidence; runtime defaults still
+  require real-model quality, memory, and paired performance gates.
 
 ## Minimal verification
 

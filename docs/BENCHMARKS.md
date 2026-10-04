@@ -525,8 +525,7 @@ add, and the order of work is unchanged -- the width is unreachable at
 `MAX_BATCH_ROWS = 16` and would buy nothing on a kernel whose own `c` is flat
 across 2..16.
 
-**THE 1.50x KERNEL TERM SURVIVED THE ONE ATTEMPT ON IT, so this decomposition
-is unchanged and the width is the only term still open.** PF-02 Step 7 built
+**THE 1.50x KERNEL TERM SURVIVED THE PF-02 ATTEMPT.** PF-02 Step 7 built
 `dequant_int4_gemm_mma`'s four-SIMD-group re-tile on 2026-09-05 -- the shape
 difference against `qmm_t_impl` that this section's own 1.50x is measured
 against -- and it reads WORSE than the narrow matrix tile at every width up to
@@ -534,6 +533,12 @@ against -- and it reads WORSE than the narrow matrix tile at every width up to
 dequant deleted on both tiles the floors are identical, so the threadgroup
 width was not what separated the two engines. `ROADMAP.md` Do Not Revisit 16
 carries the table.
+
+The separate [full Steel prototype](MLX_KERNELS.md#isolated-steel-probe-2026-10-03)
+uses upstream `qmm_t_impl` and `BlockMMA` with our BF16 companion planes and
+FP16 activations. Its synthetic large-projection results support further
+prefill qualification. It is not wired into the runtime, so these frozen
+engine rows remain unchanged.
 
 **oMLX's CUSTOM KERNELS ARE NOT A THIRD DATA POINT.**
 `jundot/omlx`'s `omlx/custom_kernels/qwen35_prefill` is the build behind the

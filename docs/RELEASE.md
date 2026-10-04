@@ -138,14 +138,16 @@ close that gap, and CI calls exactly these, so a local `make dmg` and a
 release build the same thing:
 
 ```sh
-OPENKIND_RELEASE_REVISION=<published-40-character-commit> make app-bundle
-OPENKIND_RELEASE_REVISION=<same-commit> make dmg
+OPENKIND_RELEASE_REVISION=325701be0582c8986ce84c54f88caa21630020c0 OPENKIND_SERVER_VERSION=0.1.0 make app-bundle
+OPENKIND_RELEASE_REVISION=325701be0582c8986ce84c54f88caa21630020c0 OPENKIND_SERVER_VERSION=0.1.0 make dmg
 ```
 
-`OPENKIND_RELEASE_REVISION` pins the Swift package and the bundled `openkindd`
-to the same published commit. The script refuses an unpinned release bundle.
-Set the same commit as the `OPENKIND_RELEASE_REVISION` GitHub Actions variable
-for CI and the release workflow.
+`OPENKIND_RELEASE_REVISION` pins the OpenKind Swift package. The bundled
+`openkindd` is installed from the `openkind-server` crates.io package at the
+exact `OPENKIND_SERVER_VERSION`; version `0.1.0` was published from the commit
+shown above. The app bundle records both pins, and the DMG check compares them
+to the build environment. Set both GitHub Actions variables together when
+upgrading OpenKind.
 Development builds use the sibling `../openkind` Swift package and can set
 `OPENKINDD_BINARY` to a locally built daemon for the TypeSafe pane.
 
@@ -166,7 +168,8 @@ TurboSpark.app/Contents/
 |   \-- openkindd              # TypeSafe loopback daemon
 \-- Resources/
     +-- TurboSparkApp_TurboSparkApp.bundle   # Bundle.module's resources
-    \-- OpenKindRevision.txt   # exact package and daemon commit
+    +-- OpenKindRevision.txt   # exact Swift package commit
+    \-- OpenKindServerVersion.txt # crates.io daemon version
 ```
 
 Three facts about that layout that are decisions rather than defaults:

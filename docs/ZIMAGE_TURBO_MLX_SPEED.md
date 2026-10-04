@@ -29,6 +29,13 @@ The maintained benchmark command is in [BENCHMARKING.md](BENCHMARKING.md#image-g
 Add `--steps 8` or `--steps 4` to reproduce those schedule variants. The
 cache run needs the removed experimental patch.
 
+The [compile-only JIT warmup experiment](MOE_STARTUP.md#compile-only-warmup-results-2026-10-03)
+found no repeatable total-startup benefit and remains opt-in.
+`TURBOSPARK_METAL_KERNEL_WARMUP=1` prepares the Rust/Metal Qwen MoE text
+runner using MLX-derived weights; it does not configure this Swift MLX image
+pipeline. Image warmup needs separate startup, output-quality, and memory
+measurements, with preparation included in the total elapsed time.
+
 ## End-to-end screening runs
 
 | Run | Full transformer forwards | Elapsed | Denoise | Text encode | VAE decode | Peak phys | Output versus nine-forward image |
