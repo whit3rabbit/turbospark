@@ -9,6 +9,9 @@ public struct SubagentRunResult: Sendable, Equatable {
     public var totalTurns: Int
     public var totalToolCalls: Int
     public var durationSeconds: Double
+    /// The resulting actor turns for an explicit continuation call, excluding
+    /// the generated system prompt. Ordinary calls leave this nil.
+    public var transcript: [ChatMessage]?
     /// Identifier emitted with the `SubagentStart` / `SubagentStop` hooks
     /// and reported to the parent in the result trailer, so a caller can
     /// refer back to a specific run.
@@ -21,7 +24,8 @@ public struct SubagentRunResult: Sendable, Equatable {
         totalTurns: Int,
         totalToolCalls: Int,
         durationSeconds: Double,
-        runID: String = ""
+        runID: String = "",
+        transcript: [ChatMessage]? = nil
     ) {
         self.agentName = agentName
         self.status = status
@@ -30,10 +34,65 @@ public struct SubagentRunResult: Sendable, Equatable {
         self.totalToolCalls = totalToolCalls
         self.durationSeconds = durationSeconds
         self.runID = runID
+        self.transcript = transcript
     }
 }
 
-/// Executes subagent tasks in a clean, isolated context without parent conversation history.
+struct SubagentPromptFit: Sendable {
+    let retained: [ChatMessage]
+    let measuredTokens: Int
+    let removedTurnCount: Int
+    let hasRoomForGeneration: Bool
+}
+
+/// The model operations used by the production subagent loop. Keeping this
+/// seam at the session boundary lets tests exercise the real dispatch loop.
+protocol SubagentGenerationPort: Sendable {
+    var maxContext: UInt32 { get }
+
+    func fitWindow(
+        _ messages: [ChatMessage],
+        maxTokens: UInt32,
+        reasoning: GenerateOptions.Reasoning
+    ) async throws -> SubagentPromptFit
+
+    func generate(
+        _ messages: [ChatMessage], options: GenerateOptions
+    ) async -> AsyncThrowingStream<GenerationEvent, Error>
+}
+
+enum SubagentGenerationPortContext {
+    @TaskLocal static var current: (any SubagentGenerationPort)? = nil
+}
+
+private struct TurboSparkSubagentGenerationPort: SubagentGenerationPort {
+    let session: TurboSparkSession
+
+    var maxContext: UInt32 { session.info.maxContext }
+
+    func fitWindow(
+        _ messages: [ChatMessage],
+        maxTokens: UInt32,
+        reasoning: GenerateOptions.Reasoning
+    ) async throws -> SubagentPromptFit {
+        let result = try await session.fitWindow(
+            messages, maxTokens: maxTokens, reasoning: reasoning)
+        return SubagentPromptFit(
+            retained: result.retained,
+            measuredTokens: result.measuredTokens,
+            removedTurnCount: result.removedTurnCount,
+            hasRoomForGeneration: result.hasRoomForGeneration)
+    }
+
+    func generate(
+        _ messages: [ChatMessage], options: GenerateOptions
+    ) async -> AsyncThrowingStream<GenerationEvent, Error> {
+        session.generate(messages, options: options)
+    }
+}
+
+/// Executes subagent tasks in a clean, isolated context by default. Workflow
+/// actors may opt in to their own prior turns without importing parent history.
 public enum SubagentRunner {
     /// How many subagents may nest. Two, so an agent may delegate once and
     /// what it delegates to may not (state#47).
@@ -53,7 +112,8 @@ public enum SubagentRunner {
     public static func buildSystemPrompt(
         for agent: AppAgentDefinition,
         project: AppProject?,
-        userPrompt: String = ""
+        userPrompt: String = "",
+        availableTools: TurnAvailableTools? = nil
     ) -> String {
         var sections: [String] = []
 
@@ -115,10 +175,8 @@ public enum SubagentRunner {
         // one at a time, and the run burned its turn budget on calls that
         // were never available. `tools(for:)` is the same slice the main
         // loop advertises.
-        let allTools = AppToolCatalog.tools(
-            for: project?.agentType ?? .coder,
-            projectURL: project?.rootDirectoryURL)
-        let allowed = allTools.filter { agent.isToolAllowed($0.function.name) }
+        let offeredTools = availableTools ?? captureAvailableTools(for: agent, project: project)
+        let allowed = offeredTools.promptDefinitions
 
         if !allowed.isEmpty {
             var lines: [String] = []
@@ -140,18 +198,48 @@ public enum SubagentRunner {
         // full schemas stay deferred, matching the main prompt. The
         // available-tool list below still retains the direct definitions for
         // guardrail validation and exact-name compatibility.
-        if let project {
-            let servers = AppToolCatalogMcp.visibleServers(
-                global: GlobalMcpFileStore.load().servers, project: project)
-            let deferred = ToolSearchCatalog.descriptors(
-                servers: servers, permissions: project.permissions)
-                .filter { agent.isToolAllowed($0.name) }
-            if !deferred.isEmpty {
-                sections.append(ToolSearchCatalog.promptListing(descriptors: deferred))
-            }
+        if !offeredTools.deferredMcpTools.isEmpty {
+            sections.append(ToolSearchCatalog.promptListing(
+                descriptors: offeredTools.deferredMcpTools))
         }
 
         return sections.joined(separator: "\n\n")
+    }
+
+    /// Captures exactly one agent-filtered tool catalog for a subagent run.
+    /// Prompt assembly, validation, and turn-exhaustion checks all reuse it.
+    public static func captureAvailableTools(
+        for agent: AppAgentDefinition,
+        project: AppProject?,
+        browserAvailability: BrowserToolAvailability = .disabled
+    ) -> TurnAvailableTools {
+        let baseTools = AppToolCatalog.tools(
+            for: project?.agentType ?? .coder,
+            projectURL: project?.rootDirectoryURL,
+            browserAvailability: browserAvailability)
+            .filter { agent.isToolAllowed($0.function.name) }
+        let servers = project.map {
+            AppToolCatalogMcp.visibleServers(
+                global: GlobalMcpFileStore.load().servers, project: $0)
+        } ?? []
+        let mcpSnapshot = AppToolCatalogMcp.catalogSnapshot(
+            servers: servers, permissions: project?.permissions)
+        let mcpDefinitions = mcpSnapshot.definitions
+            .filter { agent.isToolAllowed($0.function.name) }
+        let deferredDescriptors = mcpSnapshot.deferredDescriptors
+            .filter { agent.isToolAllowed($0.name) }
+        return TurnAvailableTools(
+            definitions: baseTools + mcpDefinitions,
+            promptDefinitions: baseTools,
+            deferredMcpTools: deferredDescriptors)
+    }
+
+    static func toolCallStreamState(
+        for finishedStopReason: GenerationResult.StopReason?
+    ) -> ToolCallStreamState {
+        guard let finishedStopReason else { return .failed }
+        if case .cancelled = finishedStopReason { return .failed }
+        return .completed
     }
 
     /// Executes an isolated subagent run to completion, wrapped in the
@@ -179,6 +267,8 @@ public enum SubagentRunner {
     /// - Parameter taskDescription: the caller's short summary of the task,
     ///   reported in the `started` progress event. Prose for a card header,
     ///   never part of the prompt.
+    /// - Parameter priorHistory: optional run-owned actor turns for workflow
+    ///   continuation. When omitted, the run starts fresh and returns no transcript.
     public static func run(
         agent: AppAgentDefinition,
         taskPrompt: String,
@@ -190,7 +280,8 @@ public enum SubagentRunner {
         userSystemPrompt: String = "",
         samplingOptions: GenerateOptions = GenerateOptions(),
         progress: (@Sendable (SubagentProgressEvent) async -> Void)? = nil,
-        taskDescription: String = ""
+        taskDescription: String = "",
+        priorHistory: [ChatMessage]? = nil
     ) async -> SubagentRunResult {
         let sessionID = chatID?.uuidString ?? "subagent"
         let runID = UUID().uuidString
@@ -212,7 +303,8 @@ public enum SubagentRunner {
             agent: agent, taskPrompt: taskPrompt, session: session, project: project,
             chatID: chatID, depth: depth, maxTurnsOverride: maxTurnsOverride,
             userSystemPrompt: userSystemPrompt, samplingOptions: samplingOptions,
-            progress: progress, runID: runID)
+            progress: progress, priorHistory: priorHistory,
+            generationPort: SubagentGenerationPortContext.current, runID: runID)
         var result = bodyResult
         result.runID = runID
 
@@ -268,6 +360,8 @@ public enum SubagentRunner {
         userSystemPrompt: String = "",
         samplingOptions: GenerateOptions = GenerateOptions(),
         progress: (@Sendable (SubagentProgressEvent) async -> Void)? = nil,
+        priorHistory: [ChatMessage]? = nil,
+        generationPort: (any SubagentGenerationPort)? = nil,
         runID: String
     ) async -> SubagentRunResult {
         let startTime = Date()
@@ -285,8 +379,10 @@ public enum SubagentRunner {
             )
         }
 
-        // Verify session availability
-        guard let session else {
+        // Verify the production session or a model port used by the real loop.
+        guard let generation = generationPort
+            ?? session.map({ TurboSparkSubagentGenerationPort(session: $0) })
+        else {
             let duration = Date().timeIntervalSince(startTime)
             return SubagentRunResult(
                 agentName: agent.name,
@@ -298,16 +394,26 @@ public enum SubagentRunner {
             )
         }
 
-        // Fresh, isolated history: zero parent message context
-        var history: [ChatMessage] = []
+        let browserAvailability = await MainActor.run {
+            AppToolRegistry.browserToolAvailabilityProvider?() ?? .disabled
+        }
+        let turnAvailableTools = captureAvailableTools(
+            for: agent,
+            project: project,
+            browserAvailability: browserAvailability
+        )
         let sysPrompt = buildSystemPrompt(
-            for: agent, project: project, userPrompt: userSystemPrompt)
-        history.append(ChatMessage(role: .system, content: sysPrompt))
-        history.append(ChatMessage(role: .user, content: taskPrompt))
+            for: agent, project: project, userPrompt: userSystemPrompt,
+            availableTools: turnAvailableTools)
+        var history = initialHistory(
+            systemPrompt: sysPrompt,
+            priorHistory: priorHistory,
+            taskPrompt: taskPrompt)
 
         var totalToolCalls = 0
         var currentTurn = 0
         var finalContent = ""
+        var lastTurnHasUnfinishedWork = false
         /// How many turns `fitWindow` dropped across the whole run (state#75).
         var droppedTurns = 0
 
@@ -323,7 +429,8 @@ public enum SubagentRunner {
                         ? "Subagent run was cancelled." : finalContent,
                     totalTurns: currentTurn,
                     totalToolCalls: totalToolCalls,
-                    durationSeconds: Date().timeIntervalSince(startTime)
+                    durationSeconds: Date().timeIntervalSince(startTime),
+                    transcript: transcriptForResult(history, priorHistory: priorHistory)
                 )
             }
             currentTurn += 1
@@ -340,6 +447,7 @@ public enum SubagentRunner {
             options.maxNewTokens = 2048
 
             var generatedText = ""
+            var finishedStopReason: GenerationResult.StopReason?
 
             do {
                 // **THE PROMPT BUDGET IS THE WINDOW MINUS WHAT GENERATION
@@ -352,10 +460,10 @@ public enum SubagentRunner {
                 // one token or throws a context overflow naming neither
                 // cause. A subagent's history grows by a whole tool result
                 // per turn, so it reaches the bound faster than a chat does.
-                let promptBudget = session.info.maxContext > options.maxNewTokens
-                    ? session.info.maxContext - options.maxNewTokens
-                    : session.info.maxContext
-                let fitted = try await session.fitWindow(
+                let promptBudget = generation.maxContext > options.maxNewTokens
+                    ? generation.maxContext - options.maxNewTokens
+                    : generation.maxContext
+                let fitted = try await generation.fitWindow(
                     history, maxTokens: promptBudget, reasoning: .off)
                 guard fitted.hasRoomForGeneration else {
                     return SubagentRunResult(
@@ -364,16 +472,18 @@ public enum SubagentRunner {
                         finalResponse:
                             "Subagent stopped: its context no longer fits. "
                             + "\(fitted.measuredTokens) prompt tokens against a "
-                            + "\(session.info.maxContext)-token window with "
+                            + "\(generation.maxContext)-token window with "
                             + "\(options.maxNewTokens) reserved for the reply. The text below is "
                             + "its last turn and is not a finished answer.\n\n\(finalContent)",
                         totalTurns: currentTurn,
                         totalToolCalls: totalToolCalls,
-                        durationSeconds: Date().timeIntervalSince(startTime)
+                        durationSeconds: Date().timeIntervalSince(startTime),
+                        transcript: transcriptForResult(history, priorHistory: priorHistory)
                     )
                 }
                 droppedTurns += fitted.removedTurnCount
-                for try await event in session.generate(fitted.retained, options: options) {
+                let events = await generation.generate(fitted.retained, options: options)
+                for try await event in events {
                     try Task.checkCancellation()
                     switch event {
                     case .content(let chunk):
@@ -381,6 +491,8 @@ public enum SubagentRunner {
                         await progress?(.content(chunk))
                     case .reasoning(let chunk):
                         await progress?(.content(chunk))
+                    case .finished(let result):
+                        finishedStopReason = result.stopReason
                     default:
                         break
                     }
@@ -394,7 +506,8 @@ public enum SubagentRunner {
                         ? "Subagent run was cancelled." : finalContent,
                     totalTurns: currentTurn,
                     totalToolCalls: totalToolCalls,
-                    durationSeconds: duration
+                    durationSeconds: duration,
+                    transcript: transcriptForResult(history, priorHistory: priorHistory)
                 )
             } catch {
                 let duration = Date().timeIntervalSince(startTime)
@@ -406,7 +519,8 @@ public enum SubagentRunner {
                             ? "Subagent run was cancelled." : finalContent,
                         totalTurns: currentTurn,
                         totalToolCalls: totalToolCalls,
-                        durationSeconds: duration
+                        durationSeconds: duration,
+                        transcript: transcriptForResult(history, priorHistory: priorHistory)
                     )
                 }
                 // **AN ERROR KEEPS THE PROGRESS IT HAD** (Claude Code's
@@ -425,34 +539,67 @@ public enum SubagentRunner {
                         + partialNote,
                     totalTurns: currentTurn,
                     totalToolCalls: totalToolCalls,
-                    durationSeconds: duration
+                    durationSeconds: duration,
+                    transcript: transcriptForResult(history, priorHistory: priorHistory)
                 )
             }
 
-            finalContent = generatedText
-            var parsedCalls = extractToolCalls(
-                from: generatedText, projectURL: project?.rootDirectoryURL)
-
-            let availableSpecs = availableTools(for: agent, project: project)
-            let verdict = ForgeGuardrailsEngine.inspect(
-                text: generatedText,
-                parsedCalls: parsedCalls,
-                availableTools: availableSpecs,
-                requiresCall: false
-            )
-
-            switch verdict {
-            case .accept:
-                break
-            case .rescued(let rescuedCalls, _):
-                parsedCalls = rescuedCalls
-            case .retry(let nudge):
-                if currentTurn < maxTurns && !nudge.isEmpty {
-                    history.append(ChatMessage(role: .assistant, content: generatedText))
-                    history.append(ChatMessage(role: .user, content: nudge))
-                    continue
-                }
+            // A clean stream end alone is not a completed model turn. Keep
+            // cancelled or incomplete output out of successful actor history.
+            guard let finishedStopReason else {
+                return SubagentRunResult(
+                    agentName: agent.name,
+                    status: "error",
+                    finalResponse: "Subagent generation ended without a result.\n\n\(generatedText)",
+                    totalTurns: currentTurn,
+                    totalToolCalls: totalToolCalls,
+                    durationSeconds: Date().timeIntervalSince(startTime),
+                    transcript: transcriptForResult(history, priorHistory: priorHistory))
             }
+            if case .cancelled = finishedStopReason {
+                return SubagentRunResult(
+                    agentName: agent.name,
+                    status: "cancelled",
+                    finalResponse: generatedText.isEmpty ? "Subagent run was cancelled." : generatedText,
+                    totalTurns: currentTurn,
+                    totalToolCalls: totalToolCalls,
+                    durationSeconds: Date().timeIntervalSince(startTime),
+                    transcript: transcriptForResult(history, priorHistory: priorHistory))
+            }
+
+            let dispatchGate = ToolCallDispatchGate.evaluate(
+                content: generatedText,
+                streamState: toolCallStreamState(for: finishedStopReason),
+                availableTools: turnAvailableTools,
+                // Subagents historically ran Forge Guardrails inspection on
+                // every turn. The shared gate's snapshot validation remains
+                // unconditional even if a caller disables content inspection.
+                forgeGuardrailsEnabled: true,
+                projectURL: project?.rootDirectoryURL)
+            let resolution = ToolCallDispatchResolution.resolve(
+                gateResult: dispatchGate,
+                originalContent: generatedText,
+                completedAttempts: currentTurn,
+                maximumAttempts: maxTurns)
+            lastTurnHasUnfinishedWork =
+                !dispatchGate.dispatchableCalls.isEmpty || dispatchGate.retryNudge != nil
+            var parsedCalls: [AppToolCall] = []
+            let handlingResult = await ToolCallDispatchResolution.handle(
+                resolution,
+                retry: { nudge, assistantContent in
+                    finalContent = assistantContent
+                    history.append(ChatMessage(role: .assistant, content: assistantContent))
+                    history.append(ChatMessage(role: .user, content: nudge))
+                },
+                finishProse: { content in
+                    finalContent = content
+                    history.append(ChatMessage(role: .assistant, content: content))
+                },
+                dispatch: { calls, content in
+                    parsedCalls = calls
+                    finalContent = content
+                })
+            if handlingResult == .retried { continue }
 
             if parsedCalls.isEmpty {
                 // Completed prose answer with no more tool calls
@@ -484,7 +631,8 @@ public enum SubagentRunner {
                         ? "Subagent run was cancelled." : finalContent,
                     totalTurns: currentTurn,
                     totalToolCalls: totalToolCalls,
-                    durationSeconds: Date().timeIntervalSince(startTime)
+                    durationSeconds: Date().timeIntervalSince(startTime),
+                    transcript: transcriptForResult(history, priorHistory: priorHistory)
                 )
             }
         }
@@ -498,17 +646,14 @@ public enum SubagentRunner {
                     ? "Subagent run was cancelled." : finalContent,
                 totalTurns: currentTurn,
                 totalToolCalls: totalToolCalls,
-                durationSeconds: totalDuration
+                durationSeconds: totalDuration,
+                transcript: transcriptForResult(history, priorHistory: priorHistory)
             )
         }
-        // **A RUN THAT RAN OUT OF TURNS DID NOT COMPLETE.** `finalContent` here
-        // is the last turn's raw text, which on this exit is a tool call the
-        // loop never got to execute -- reported as `completed` it reaches the
-        // parent as an answer, with unexecuted XML as its content.
-        let availableNames = Set(availableTools(for: agent, project: project).map { $0.function.name })
-        let lastHasCalls = !extractToolCalls(from: finalContent, projectURL: project?.rootDirectoryURL).isEmpty
-            || !ForgeGuardrailsEngine.rescueToolCalls(from: finalContent, availableToolNames: availableNames).isEmpty
-        let exhausted = currentTurn >= maxTurns && lastHasCalls
+        // **A RUN THAT RAN OUT OF TURNS DID NOT COMPLETE.** The last turn
+        // either requested a guardrail retry or proposed work, leaving no
+        // turn to produce a final answer.
+        let exhausted = currentTurn >= maxTurns && lastTurnHasUnfinishedWork
         // A run whose own history was truncated says so (state#75). Dropping
         // turns is a legitimate outcome and a silent one is indistinguishable
         // from a subagent that simply forgot what it had already done.
@@ -528,21 +673,45 @@ public enum SubagentRunner {
                     : finalContent),
             totalTurns: currentTurn,
             totalToolCalls: totalToolCalls,
-            durationSeconds: totalDuration
+            durationSeconds: totalDuration,
+            transcript: transcriptForResult(history, priorHistory: priorHistory)
         )
     }
 
+    /// Starts a subagent turn with only its run-owned history. The current
+    /// system prompt is always first, and prior turns are present only when a
+    /// caller explicitly opts into continuation.
+    static func initialHistory(
+        systemPrompt: String,
+        priorHistory: [ChatMessage]?,
+        taskPrompt: String
+    ) -> [ChatMessage] {
+        var history = [ChatMessage(role: .system, content: systemPrompt)]
+        history.append(contentsOf: priorHistory ?? [])
+        history.append(ChatMessage(role: .user, content: taskPrompt))
+        return history
+    }
+
+    /// Returns only run-owned turns to the workflow journal. The first entry
+    /// is always the freshly generated system prompt and is not transcript data.
+    static func transcriptForResult(
+        _ history: [ChatMessage], priorHistory: [ChatMessage]?
+    ) -> [ChatMessage]? {
+        guard priorHistory != nil else { return nil }
+        return Array(history.dropFirst())
+    }
+
     /// The tools available to this agent under the turn's project and MCP environment.
-    public static func availableTools(for agent: AppAgentDefinition, project: AppProject?) -> [OpenAITool] {
-        let baseTools = AppToolCatalog.tools(for: project?.agentType ?? .coder, projectURL: project?.rootDirectoryURL)
-            .filter { agent.isToolAllowed($0.function.name) }
-        guard let project else { return baseTools }
-        let servers = AppToolCatalogMcp.visibleServers(
-            global: GlobalMcpFileStore.load().servers, project: project)
-        let mcpDefinitions = AppToolCatalogMcp.toolDefinitions(
-            servers: servers, permissions: project.permissions)
-            .filter { agent.isToolAllowed($0.function.name) }
-        return baseTools + mcpDefinitions
+    public static func availableTools(
+        for agent: AppAgentDefinition,
+        project: AppProject?,
+        browserAvailability: BrowserToolAvailability = .disabled
+    ) -> [OpenAITool] {
+        captureAvailableTools(
+            for: agent,
+            project: project,
+            browserAvailability: browserAvailability
+        ).definitions
     }
 
     /// **THE PARSER IS `ToolCallParser`'S NOW.** This file used to carry a

@@ -89,6 +89,15 @@ extension SubagentRunner {
         if let updated = hookDecision.updatedInput {
             for (key, value) in updated { call.arguments[key] = value }
         }
+        // Hooks may rewrite the deferred target; authorize the name that
+        // actually reaches the registry against this agent's profile.
+        if call.name.lowercased() == "tool_call",
+            let deferredName = call.arguments["name"],
+            !agent.isToolAllowed(deferredName)
+        {
+            return errorObservation(
+                "Tool '\(deferredName)' is disallowed for agent profile '\(agent.name)'.")
+        }
         if hookDecision.behavior == .deny {
             let reason = hookDecision.reason ?? "Blocked by PreToolUse hook"
             return errorObservation("Tool execution blocked by hook: \(reason)")
@@ -142,8 +151,21 @@ extension SubagentRunner {
             output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
         }
 
+        let media = AppToolMediaHistoryAdapter.project(
+            toolResult.mediaReferences,
+            capability: AppToolMediaCapability(
+                supportsImageBearingToolResults: session?.info.vision.active ?? false,
+                maximumPixelCount: session?.info.vision.maxPixels),
+            materialize: { try ManagedAssetStore.shared.materializedURL(for: $0) })
+        if media.omittedReferenceCount > 0 {
+            output += "\n[The image result is unavailable to this model.]"
+        }
+
         let tag = toolResult.isError ? "tool_error" : "tool_response"
-        return ChatMessage(role: .tool, content: "<\(tag)>\n\(output)\n</\(tag)>")
+        return ChatMessage(
+            role: .tool,
+            content: "<\(tag)>\n\(output)\n</\(tag)>",
+            images: media.images)
     }
 
     /// A refusal fed back to the subagent.

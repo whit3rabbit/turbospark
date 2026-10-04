@@ -17,6 +17,7 @@ final class AppChatMicrocompactTests: XCTestCase {
         AppChatHistoryProjection(
             messages: messages,
             sourceRowIndexByMessage: sourceRows,
+            instructionPinBlockIndex: nil,
             sourceTranscriptRowCount: rowCount)
     }
 

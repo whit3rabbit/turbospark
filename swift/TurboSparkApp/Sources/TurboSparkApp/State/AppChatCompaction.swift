@@ -25,6 +25,12 @@ import TurboSpark
 /// structured summary prompt, and re-injection ahead of the retained turns
 /// -- at the scale this app actually runs at.
 enum AppChatCompaction {
+    static func pinningReasoning(
+        requestSnapshot: GenerateOptions.Reasoning?, currentReasoning: GenerateOptions.Reasoning
+    ) -> GenerateOptions.Reasoning {
+        requestSnapshot ?? currentReasoning
+    }
+
     /// Auto-compaction fires when the measured prompt reaches four fifths of
     /// the usable window (`measured * 5 >= usable * 4`). Claude Code's
     /// threshold is a flat 13k buffer on a ~200k context; proportionally
@@ -347,6 +353,17 @@ extension AppModel {
         }
     }
 
+    /// Manual and automatic requests share this successful compaction commit.
+    /// Refresh pin selection only after the new summary boundary is persisted.
+    func commitCompactionBoundary(
+        chatIndex: Int, summary: String, boundary: Int,
+        refreshPins: () async -> Void
+    ) async {
+        setStoredCompaction(chatIndex: chatIndex, summary: summary, boundary: boundary)
+        await refreshPins()
+        updateTokenEstimate()
+    }
+
     /// Summarizes everything between the current boundary and the recent
     /// tail, advances the boundary, and rewrites the summary.
     ///
@@ -355,9 +372,19 @@ extension AppModel {
     /// that (inside the turn's own task, before `generate`; and from the
     /// `/compact` command, which refuses while `generating`).
     func performCompaction(
-        chatID: UUID, project: AppProject?, focus: String?, trigger: String, keepRecent: Int
+        chatID: UUID, project: AppProject?, focus: String?, trigger: String, keepRecent: Int,
+        requestReasoning: GenerateOptions.Reasoning? = nil
     ) async -> CompactionOutcome {
-        guard let session else { return .failed("no model is loaded") }
+        await interruptTitleGenerationForForeground()
+        guard !Task.isCancelled else { return .cancelled }
+        let session = self.session
+        let summaryOverride = compactionSummaryOverride
+        let tokenCountOverride = compactionTokenCountOverride
+        let pinningReasoning = AppChatCompaction.pinningReasoning(
+            requestSnapshot: requestReasoning, currentReasoning: reasoning)
+        guard session != nil || (summaryOverride != nil && tokenCountOverride != nil) else {
+            return .failed("no model is loaded")
+        }
         guard let chatIndex = chats.firstIndex(where: { $0.id == chatID }) else {
             return .failed("the conversation no longer exists")
         }
@@ -394,18 +421,23 @@ extension AppModel {
         defer { isCompacting = false }
         var summaryText = ""
         do {
-            for try await event in session.generate(messages, options: options) {
-                try Task.checkCancellation()
-                switch event {
-                case .content(let chunk):
-                    summaryText += chunk
-                case .prefill(let done, let total):
-                    phase = .prefill
-                    livePrefillDone = done
-                    livePrefillTotal = total
-                case .reasoning, .toolCall, .stopped, .finished:
-                    break
+            if let session {
+                for try await event in session.generate(messages, options: options) {
+                    try Task.checkCancellation()
+                    switch event {
+                    case .content(let chunk):
+                        summaryText += chunk
+                    case .prefill(let done, let total):
+                        phase = .prefill
+                        livePrefillDone = done
+                        livePrefillTotal = total
+                    case .reasoning, .toolCall, .stopped, .finished:
+                        break
+                    }
                 }
+            } else if let summaryOverride {
+                summaryText = await summaryOverride(messages, options) ?? ""
+                try Task.checkCancellation()
             }
         } catch is CancellationError {
             return .cancelled
@@ -418,8 +450,26 @@ extension AppModel {
             return .failed("the model returned an empty summary")
         }
 
-        setStoredCompaction(chatIndex: chatIndex, summary: summary, boundary: newBoundary)
-        updateTokenEstimate()
+        await commitCompactionBoundary(
+            chatIndex: chatIndex, summary: summary, boundary: newBoundary
+        ) {
+            if let session {
+                await self.refreshInstructionPinningCache(
+                    chatID: chatID, boundary: newBoundary, messages: allMessages,
+                    session: session, reasoning: pinningReasoning)
+            } else if let tokenCountOverride {
+                await self.rebuildInstructionPinningCache(
+                    chatID: chatID,
+                    boundary: newBoundary,
+                    messages: allMessages,
+                    sessionIdentity: nil,
+                    reasoning: pinningReasoning,
+                    countTokens: { content in
+                        await tokenCountOverride(
+                            [ChatMessage(role: .user, content: content)], pinningReasoning)
+                    })
+            }
+        }
         showToast(
             "Compacted \(rows.count) earlier message\(rows.count == 1 ? "" : "s") into a summary.",
             style: .success)
@@ -438,15 +488,22 @@ extension AppModel {
         chatID: UUID, project: AppProject?, rawHistory: [ChatMessage],
         maxContext: UInt32, reservedForNew: UInt32, reasoning: GenerateOptions.Reasoning
     ) async -> Bool {
-        guard autoCompactEnabled, let session else { return false }
-        guard let measured = try? await session.countTokens(rawHistory, reasoning: reasoning)
-        else { return false }
+        guard autoCompactEnabled else { return false }
+        let measured: Int?
+        if let session {
+            measured = try? await session.countTokens(rawHistory, reasoning: reasoning)
+        } else if let compactionTokenCountOverride {
+            measured = await compactionTokenCountOverride(rawHistory, reasoning)
+        } else {
+            return false
+        }
+        guard let measured else { return false }
         guard AppChatCompaction.shouldAutoCompact(
             measuredTokens: measured, maxContext: maxContext, reservedForNew: reservedForNew)
         else { return false }
         switch await performCompaction(
             chatID: chatID, project: project, focus: nil, trigger: "auto",
-            keepRecent: compactionKeepRecentTurns)
+            keepRecent: compactionKeepRecentTurns, requestReasoning: reasoning)
         {
         case .compacted:
             return true
@@ -464,12 +521,15 @@ extension AppModel {
     func handleCompactCommand(_ text: String) {
         let focus = text.dropFirst("/compact".count)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard session != nil else {
+        guard session != nil
+            || (compactionSummaryOverride != nil && compactionTokenCountOverride != nil)
+        else {
             error = "Load a model before compacting."
             return
         }
         guard !generating, !submitting, pendingToolCall == nil else { return }
         let chatID = selectedChatID
+        let requestReasoning = reasoning
         promptText = ""
         submitting = true
         // Held on `submissionTask`, the same slot Stop reaches (state#33), so
@@ -483,7 +543,8 @@ extension AppModel {
             switch await self.performCompaction(
                 chatID: chatID, project: self.turnProject(chatID: chatID),
                 focus: focus.isEmpty ? nil : focus, trigger: "manual",
-                keepRecent: self.compactionKeepRecentTurns)
+                keepRecent: self.compactionKeepRecentTurns,
+                requestReasoning: requestReasoning)
             {
             case .compacted, .cancelled:
                 break

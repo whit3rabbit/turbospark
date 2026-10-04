@@ -18,6 +18,8 @@ struct ProjectSettingsSheet: View {
     @State private var webPermission: AppToolPermission = .allow
     @State private var mcpPermission: AppToolPermission = .ask
     @State private var automationPermission: AppToolPermission = .ask
+    @State private var browserPermission: AppToolPermission = .ask
+    @State private var browserOriginAllowlist: [String] = []
     @State private var maxAutonomousSteps: Double = 5
     @State private var skillStateEnabled: Bool = false
     @State private var rulePreference: AppRulePreference = .agentsFirst
@@ -51,6 +53,8 @@ struct ProjectSettingsSheet: View {
                                 webPermission: $webPermission,
                                 mcpPermission: $mcpPermission,
                                 automationPermission: $automationPermission,
+                                browserPermission: $browserPermission,
+                                browserOriginAllowlist: $browserOriginAllowlist,
                                 guardrailsOption: $guardrailsOption
                             )
                             mcpSection
@@ -395,6 +399,8 @@ struct ProjectSettingsSheet: View {
             webPermission = editing.permissions.web
             mcpPermission = editing.permissions.mcp
             automationPermission = editing.permissions.automation
+            browserPermission = editing.permissions.browser
+            browserOriginAllowlist = editing.permissions.browserOriginAllowlist
             maxAutonomousSteps = Double(editing.maxAutonomousSteps)
             skillStateEnabled = editing.skillStateEnabled
             guardrailsOption = AppProjectGuardrailsOption.from(optionalBool: editing.forgeGuardrailsEnabled)
@@ -421,6 +427,8 @@ struct ProjectSettingsSheet: View {
             webPermission = defaultPerms.web
             mcpPermission = defaultPerms.mcp
             automationPermission = defaultPerms.automation
+            browserPermission = defaultPerms.browser
+            browserOriginAllowlist = defaultPerms.browserOriginAllowlist
             syntextIndexEnabled = false
         }
     }
@@ -528,7 +536,9 @@ struct ProjectSettingsSheet: View {
             terminal: terminalPermission,
             web: webPermission,
             mcp: mcpPermission,
-            automation: automationPermission
+            automation: automationPermission,
+            browser: browserPermission,
+            browserOriginAllowlist: browserOriginAllowlist
         )
 
         let trimmedPath = rootDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)

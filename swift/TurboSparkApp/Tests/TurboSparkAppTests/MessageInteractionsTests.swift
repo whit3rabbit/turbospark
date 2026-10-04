@@ -62,6 +62,28 @@ final class MessageInteractionsTests: XCTestCase {
         XCTAssertEqual(MessageTimestampFormatter.relativeString(for: threeHoursAgo, relativeTo: now), "3 hours ago")
     }
 
+    func testRelativeStringStaysRelativeAcrossLocalMidnight() {
+        // A message sent at 22:00 yesterday, viewed at 01:00 today, is three
+        // hours old: the elapsed-time branch must win over the calendar day,
+        // which the previous `isDateInToday` check would have lost.
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone.current
+        var oneOClockToday = calendar.dateComponents([.year, .month, .day], from: Date())
+        oneOClockToday.hour = 1
+        oneOClockToday.minute = 0
+        oneOClockToday.second = 0
+        guard let now = calendar.date(from: oneOClockToday) else {
+            return XCTFail("could not construct 01:00 today in the local calendar")
+        }
+        let beforeMidnight = now.addingTimeInterval(-3 * 3600)
+        XCTAssertFalse(
+            calendar.isDate(beforeMidnight, inSameDayAs: now),
+            "fixture premise: 01:00 minus three hours is a different local day")
+        XCTAssertEqual(
+            MessageTimestampFormatter.relativeString(for: beforeMidnight, relativeTo: now),
+            "3 hours ago")
+    }
+
     func testMessageTimestampFormatterExactString() {
         let fixedDate = Date(timeIntervalSince1970: 1700000000)
         let exact = MessageTimestampFormatter.exactString(for: fixedDate)

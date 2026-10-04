@@ -41,6 +41,33 @@ final class SwiftToolCallDispatchGateTests: XCTestCase {
         }
     }
 
+    func testPriorLocalizationIncompleteLabelsRemainInertAfterLanguageSwitch() throws {
+        let defaults = UserDefaults.standard
+        let previousLanguage = defaults.object(forKey: AppLanguage.storageKey)
+        defer {
+            if let previousLanguage { defaults.set(previousLanguage, forKey: AppLanguage.storageKey) }
+            else { defaults.removeObject(forKey: AppLanguage.storageKey) }
+        }
+        defaults.set(AppLanguage.english.rawValue, forKey: AppLanguage.storageKey)
+        let path = try XCTUnwrap(Bundle.module.path(forResource: "es", ofType: "lproj"))
+        let spanish = try XCTUnwrap(Bundle(path: path))
+        let label = spanish.localizedString(forKey: "Incomplete tool call, not executed", value: nil, table: nil)
+        XCTAssertNotEqual(label, "Incomplete tool call, not executed")
+
+        for fragment in [
+            "<tool_call><name>read_file</name><arguments>{\"path\":\"a.txt\"}</arguments></tool_call>",
+            "```tool_call\n{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.txt\"}}\n```",
+            "call:read_file{path:<quote>a.txt<quote>}",
+        ] {
+            let content = "[\(label)]\n\(fragment)"
+            for result in evaluateBothInspectionModes(content) {
+                XCTAssertTrue(result.dispatchableCalls.isEmpty, content)
+                XCTAssertTrue(result.refusals.isEmpty, content)
+                XCTAssertEqual(result.preservedContent, content)
+            }
+        }
+    }
+
     func testMalformedArgumentsAreRefusedAndSurroundingProseIsPreserved() {
         let content = "Keep this.\n<tool_call><name>read_file</name><arguments>{</arguments></tool_call>\nKeep this too."
 
@@ -134,6 +161,117 @@ final class SwiftToolCallDispatchGateTests: XCTestCase {
             XCTAssertEqual(result.refusals, [.unavailableTool(name: "delete_everything")])
             XCTAssertFalse(result.preservedContent.contains("<tool_call>"))
         }
+    }
+
+    func testToolAvailableInCatalogButAbsentFromCapturedSnapshotIsRefused() {
+        let content = #"<tool_call><name>run_command</name><arguments>{"command":"pwd"}</arguments></tool_call>"#
+
+        let result = ToolCallDispatchGate.evaluate(
+            content: content,
+            streamState: .completed,
+            availableTools: availableTools(),
+            forgeGuardrailsEnabled: false)
+
+        XCTAssertTrue(result.dispatchableCalls.isEmpty)
+        XCTAssertEqual(result.refusals, [.unavailableTool(name: "run_command")])
+        XCTAssertFalse(result.preservedContent.contains("<tool_call>"))
+    }
+
+    func testRescuedCallIsRevalidatedAgainstTheCapturedSnapshotSchema() {
+        let integerTool = OpenAITool.function(
+            name: "read_count",
+            description: "Read a count",
+            parameters: .object(
+                properties: ["count": .integer()],
+                required: ["count"],
+                additionalProperties: false))
+        let captured = TurnAvailableTools(definitions: [integerTool])
+        let content = #"<function=read_count>{"count":3}</function>"#
+
+        let result = ToolCallDispatchGate.evaluate(
+            content: content,
+            streamState: .completed,
+            availableTools: captured,
+            forgeGuardrailsEnabled: true)
+
+        XCTAssertTrue(result.dispatchableCalls.isEmpty)
+        XCTAssertEqual(result.refusals, [.invalidArguments(path: "$.count", reason: "type")])
+    }
+
+    func testTerminalRetryDropsValidatedCallsAndPreservesAssistantTextAsProse() {
+        let assistantText = #"I could not repair this call: <tool_call><name>read_file</name><arguments>{"path":"a.txt"}</arguments></tool_call>"#
+        let validatedCall = AppToolCall(name: "read_file", arguments: ["path": "a.txt"])
+        let gateResult = ToolCallDispatchGateResult(
+            dispatchableCalls: [validatedCall],
+            refusals: [],
+            preservedContent: "I could not repair this call: ",
+            retryNudge: "Try a corrected call.")
+
+        let resolution = ToolCallDispatchResolution.resolve(
+            gateResult: gateResult,
+            originalContent: assistantText,
+            completedAttempts: 3,
+            maximumAttempts: 3)
+
+        XCTAssertEqual(resolution, .finishProse(content: assistantText))
+    }
+
+    func testMainChatTerminalRetryDoesNotInvokeExecutorHandoff() async {
+        await assertTerminalRetryDoesNotInvokeExecutorHandoff()
+    }
+
+    func testSubagentTerminalRetryDoesNotInvokeExecutorHandoff() async {
+        await assertTerminalRetryDoesNotInvokeExecutorHandoff()
+    }
+
+    private func assertTerminalRetryDoesNotInvokeExecutorHandoff() async {
+        let gateResult = ToolCallDispatchGateResult(
+            dispatchableCalls: [AppToolCall(name: "read_file", arguments: ["path": "a.txt"])],
+            refusals: [],
+            preservedContent: "partially repaired prose",
+            retryNudge: "Try a corrected call.")
+        let resolution = ToolCallDispatchResolution.resolve(
+            gateResult: gateResult,
+            originalContent: "assistant text with a valid call",
+            completedAttempts: 3,
+            maximumAttempts: 3)
+        var retryCallbackCount = 0
+        var proseCallbackCount = 0
+        var executorHandoffCount = 0
+
+        let result = await ToolCallDispatchResolution.handle(
+            resolution,
+            retry: { _, _ in retryCallbackCount += 1 },
+            finishProse: { _ in proseCallbackCount += 1 },
+            dispatch: { _, _ in executorHandoffCount += 1 })
+
+        XCTAssertEqual(result, .finishedProse)
+        XCTAssertEqual(retryCallbackCount, 0)
+        XCTAssertEqual(proseCallbackCount, 1)
+        XCTAssertEqual(executorHandoffCount, 0)
+    }
+
+    func testRetryRequiresBothNonemptyNudgeAndRemainingAttempt() {
+        let gateResult = ToolCallDispatchGateResult(
+            dispatchableCalls: [], refusals: [], preservedContent: "prose", retryNudge: "repair")
+        XCTAssertEqual(
+            ToolCallDispatchResolution.resolve(
+                gateResult: gateResult,
+                originalContent: "original prose",
+                completedAttempts: 1,
+                maximumAttempts: 2),
+            .retry(nudge: "repair", assistantContent: "original prose"))
+
+        let emptyNudge = ToolCallDispatchGateResult(
+            dispatchableCalls: [AppToolCall(name: "read_file", arguments: ["path": "a.txt"])],
+            refusals: [], preservedContent: "prose", retryNudge: "")
+        XCTAssertEqual(
+            ToolCallDispatchResolution.resolve(
+                gateResult: emptyNudge,
+                originalContent: "original prose",
+                completedAttempts: 1,
+                maximumAttempts: 2),
+            .finishProse(content: "original prose"))
     }
 
     func testNestedJSONTypesAreValidatedBeforeExecutorProjection() {

@@ -32,7 +32,41 @@ struct ProjectPermissionsSectionView: View {
     @Binding var webPermission: AppToolPermission
     @Binding var mcpPermission: AppToolPermission
     @Binding var automationPermission: AppToolPermission
+    @Binding var browserPermission: AppToolPermission
+    @Binding var browserOriginAllowlist: [String]
     @Binding var guardrailsOption: AppProjectGuardrailsOption
+    @StateObject private var browserPermissionModel: BrowserProjectPermissionsSettingsViewModel
+
+    init(
+        permissionMode: Binding<AppPermissionMode>,
+        fileReadPermission: Binding<AppToolPermission>,
+        fileWritePermission: Binding<AppToolPermission>,
+        terminalPermission: Binding<AppToolPermission>,
+        webPermission: Binding<AppToolPermission>,
+        mcpPermission: Binding<AppToolPermission>,
+        automationPermission: Binding<AppToolPermission>,
+        browserPermission: Binding<AppToolPermission>,
+        browserOriginAllowlist: Binding<[String]>,
+        guardrailsOption: Binding<AppProjectGuardrailsOption>
+    ) {
+        _permissionMode = permissionMode
+        _fileReadPermission = fileReadPermission
+        _fileWritePermission = fileWritePermission
+        _terminalPermission = terminalPermission
+        _webPermission = webPermission
+        _mcpPermission = mcpPermission
+        _automationPermission = automationPermission
+        _browserPermission = browserPermission
+        _browserOriginAllowlist = browserOriginAllowlist
+        _guardrailsOption = guardrailsOption
+        _browserPermissionModel = StateObject(wrappedValue: BrowserProjectPermissionsSettingsViewModel(
+            permission: browserPermission.wrappedValue,
+            originAllowlist: browserOriginAllowlist.wrappedValue
+        ) { updatedPermission, updatedOrigins in
+            browserPermission.wrappedValue = updatedPermission
+            browserOriginAllowlist.wrappedValue = updatedOrigins
+        })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -94,6 +128,8 @@ struct ProjectPermissionsSectionView: View {
             .padding(12)
             .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
 
+            browserPermissionsSection
+
             // Forge Guardrails project option
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -116,6 +152,71 @@ struct ProjectPermissionsSectionView: View {
             .padding(12)
             .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
         }
+    }
+
+    private var browserPermissionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Browser access", bundle: .module)
+                .themedFont(.base, weight: .medium)
+
+            Picker(
+                "Browser access",
+                selection: Binding(
+                    get: { browserPermissionModel.permission },
+                    set: { browserPermissionModel.setPermission($0) }
+                )
+            ) {
+                ForEach(AppToolPermission.allCases) { permission in
+                    Text(permission.label).tag(permission)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityLabel(Text("Browser access", bundle: .module))
+
+            Text("Site grants match exact HTTP(S) origins and are limited to 256 per project. Actions ask by default.", bundle: .module)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
+
+            Text("Allowed site origins", bundle: .module)
+                .themedFont(.small, weight: .semibold)
+
+            if !browserPermissionModel.originAllowlist.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(browserPermissionModel.originAllowlist, id: \.self) { origin in
+                        HStack(spacing: 8) {
+                            Text(origin)
+                                .themedFont(.tiny, systemDesign: .monospaced)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 4)
+                            Button("Remove", role: .destructive) {
+                                browserPermissionModel.revokeOrigin(origin)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                TextField("https://example.com", text: $browserPermissionModel.originDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(Text("Exact HTTP(S) origin", bundle: .module))
+                Button("Add") {
+                    browserPermissionModel.addOrigin()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if let feedback = browserPermissionModel.feedback {
+                Text(LocalizedStringKey(feedback.localizationKey), bundle: .module)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.red)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+        }
+        .padding(12)
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func permissionRow(title: String, desc: String, selection: Binding<AppToolPermission>) -> some View {

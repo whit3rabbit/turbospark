@@ -72,6 +72,12 @@ public enum AppToolRegistry {
         // custom names are resolved beside it.
         let resolvedRoot = project?.rootDirectoryURL
         let lowerName = call.name.lowercased()
+        var browserCardMetadata: AppToolBrowserCardMetadata?
+        if lowerName == "browser_navigate",
+           let rawURL = call.arguments["url"], let url = URL(string: rawURL)
+        {
+            browserCardMetadata = AppToolBrowserCardMetadata(origin: BrowserOrigin(url: url))
+        }
         let needsWorkspaceRoot =
             workspaceRootedToolNames.contains(lowerName)
             || lowerName.hasPrefix("mcp__")
@@ -95,6 +101,9 @@ public enum AppToolRegistry {
         do {
             var output: String = ""
             var archivalOutput: String?
+            var mediaReferences: [AppToolMediaReference]?
+            var mediaDisposition: AppToolMediaDisposition?
+            var mediaWasRefused = false
             // Populated by the producing cases below (write_file, edit_file,
             // apply_patch, notebook_edit, send_user_file) and reported once,
             // after the switch succeeds -- `ArtifactRegistrar.report`'s own
@@ -424,6 +433,69 @@ public enum AppToolRegistry {
                     format: format,
                     timeout: timeout
                 )
+
+            case "browser_navigate", "browser_click", "browser_type", "browser_press_key",
+                "browser_scroll", "browser_screenshot", "browser_snapshot", "browser_wait":
+                guard let runtime = await browserToolRuntimeProvider?(call, project) else {
+                    throw NSError(domain: "TurboSparkTool", code: 42, userInfo: [
+                        NSLocalizedDescriptionKey: "Browser automation is disabled or unavailable.",
+                    ])
+                }
+                let requestedOrigin = call.arguments["url"].flatMap { rawURL in
+                    URL(string: rawURL).flatMap { BrowserOrigin(url: $0) }
+                }
+                let actionOrigin = requestedOrigin ?? runtime.permissionContext?.origin
+                browserCardMetadata = AppToolBrowserCardMetadata(origin: actionOrigin)
+                let actionApproved: Bool
+                if let actionOrigin {
+                    actionApproved = await browserActionApprovalProvider?(call, project, actionOrigin) ?? false
+                } else {
+                    actionApproved = false
+                }
+                switch await BrowserToolExecutor.execute(
+                    call: call,
+                    in: project,
+                    runtime: runtime,
+                    currentActionApproved: actionApproved
+                ) {
+                case .cancelled:
+                    throw CancellationError()
+                case .completed(let result):
+                    output = BrowserToolExecutor.modelOutput(for: result)
+                    browserCardMetadata = BrowserToolCardMetadataBuilder.make(
+                        value: result.value,
+                        fallbackOrigin: actionOrigin)
+                    if case .screenshot = result.value {
+                        let assetStore = await browserScreenshotAssetStoreProvider?() ?? .shared
+                        let media = AppToolMediaPolicy.storeScreenshot(
+                            pngData: result.screenshotPNGData,
+                            capability: runtime.availability.mediaCapability,
+                            assetStore: assetStore)
+                        mediaDisposition = media.disposition
+                        if let reference = media.reference {
+                            mediaReferences = [reference]
+                        } else {
+                            mediaWasRefused = true
+                            output += "\nThe screenshot image was not attached, so visual page details are unavailable."
+                        }
+                    }
+                case .pendingApproval(_, let reason):
+                    throw NSError(domain: "TurboSparkTool", code: 43, userInfo: [
+                        NSLocalizedDescriptionKey: "Browser action is pending approval: \(reason)",
+                    ])
+                case .denied(let reason):
+                    throw NSError(domain: "TurboSparkTool", code: 44, userInfo: [
+                        NSLocalizedDescriptionKey: "Browser action was denied: \(reason)",
+                    ])
+                case .unsupported(let command):
+                    throw NSError(domain: "TurboSparkTool", code: 45, userInfo: [
+                        NSLocalizedDescriptionKey: "Browser command '\(command.rawValue)' is unsupported by the active backend.",
+                    ])
+                case .invalidInput(let reason), .unavailable(let reason), .failed(let reason):
+                    throw NSError(domain: "TurboSparkTool", code: 46, userInfo: [
+                        NSLocalizedDescriptionKey: reason,
+                    ])
+                }
 
             case "codesearch", "code_search":
                 output = try await CodeSearchExecutor.execute(arguments: call.arguments)
@@ -768,7 +840,10 @@ public enum AppToolRegistry {
             ArtifactRegistrar.report(chatID: chatID, produced: producedFiles)
             let elapsed = Date().timeIntervalSince(startTime)
             return AppToolResult(
-                callID: call.id, output: output, isError: false, durationSeconds: elapsed,
+                callID: call.id, output: output, isError: mediaWasRefused, durationSeconds: elapsed,
+                mediaReferences: mediaReferences,
+                mediaDisposition: mediaDisposition,
+                browserCardMetadata: browserCardMetadata,
                 archivalOutput: archivalOutput)
         } catch let stop as DeferredMcpContinuationStop {
             let elapsed = Date().timeIntervalSince(startTime)
@@ -777,6 +852,7 @@ public enum AppToolRegistry {
                 output: stop.output,
                 isError: stop.isError,
                 durationSeconds: elapsed,
+                browserCardMetadata: browserCardMetadata,
                 continuationStopReason: stop.reason)
         } catch is CancellationError {
             // **A STOP IS NOT A TOOL FAILURE** (state#64). `CancellationError`
@@ -789,12 +865,18 @@ public enum AppToolRegistry {
             return AppToolResult(
                 callID: call.id,
                 output: "Stopped by the user before it finished. Do not retry; wait for "
-                    + "further instructions.",
+                + "further instructions.",
                 isError: true,
-                durationSeconds: elapsed)
+                durationSeconds: elapsed,
+                browserCardMetadata: browserCardMetadata)
         } catch {
             let elapsed = Date().timeIntervalSince(startTime)
-            return AppToolResult(callID: call.id, output: "Error: \(error.localizedDescription)", isError: true, durationSeconds: elapsed)
+            return AppToolResult(
+                callID: call.id,
+                output: "Error: \(error.localizedDescription)",
+                isError: true,
+                durationSeconds: elapsed,
+                browserCardMetadata: browserCardMetadata)
         }
     }
 

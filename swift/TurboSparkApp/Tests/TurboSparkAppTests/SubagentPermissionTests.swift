@@ -1,4 +1,5 @@
 import XCTest
+import TurboSpark
 
 @testable import TurboSparkApp
 
@@ -167,6 +168,86 @@ final class SubagentPermissionTests: XCTestCase {
             "A permitted call must still execute. Got: \(allowed.content)")
     }
 
+    func testSubagentPromptAndDispatchUseTheSameCapturedToolSnapshot() throws {
+        let readFile = OpenAITool.function(
+            name: "read_file",
+            description: "Read a file",
+            parameters: .object(
+                properties: ["path": .string()],
+                required: ["path"],
+                additionalProperties: false))
+        let capturedTools = TurnAvailableTools(definitions: [readFile])
+        let agent = try XCTUnwrap(AgentManager.shared.builtInAgents.first)
+
+        let prompt = SubagentRunner.buildSystemPrompt(
+            for: agent,
+            project: project(terminal: .allow),
+            availableTools: capturedTools)
+        XCTAssertTrue(prompt.contains("- `read_file`: Read a file"))
+        XCTAssertFalse(prompt.contains("- `run_command`:"))
+
+        let generatedCall = #"<tool_call><name>run_command</name><arguments>{"command":"pwd"}</arguments></tool_call>"#
+        let dispatch = ToolCallDispatchGate.evaluate(
+            content: generatedCall,
+            streamState: .completed,
+            availableTools: capturedTools,
+            forgeGuardrailsEnabled: false,
+            projectURL: URL(fileURLWithPath: "/tmp"))
+        XCTAssertTrue(dispatch.dispatchableCalls.isEmpty)
+        XCTAssertEqual(dispatch.refusals, [.unavailableTool(name: "run_command")])
+    }
+
+    func testCancelledSubagentStreamDoesNotHandACompleteCallToExecution() async {
+        await assertUnfinishedSubagentStreamDoesNotDispatch(stopReason: .cancelled)
+    }
+
+    func testSubagentStreamWithoutFinishedEventFailsClosed() async {
+        await assertUnfinishedSubagentStreamDoesNotDispatch(stopReason: nil)
+    }
+
+    private func assertUnfinishedSubagentStreamDoesNotDispatch(
+        stopReason: GenerationResult.StopReason?
+    ) async {
+        let readFile = OpenAITool.function(
+            name: "read_file",
+            description: "Read a file",
+            parameters: .object(
+                properties: ["path": .string()],
+                required: ["path"],
+                additionalProperties: false))
+        let capturedTools = TurnAvailableTools(definitions: [readFile])
+        let completeCall = #"<tool_call><name>read_file</name><arguments>{"path":"a.txt"}</arguments></tool_call>"#
+        let completedGateResult = ToolCallDispatchGate.evaluate(
+            content: completeCall,
+            streamState: .completed,
+            availableTools: capturedTools,
+            forgeGuardrailsEnabled: false,
+            projectURL: URL(fileURLWithPath: "/tmp"))
+        let gateResult = ToolCallDispatchGate.evaluate(
+            content: completeCall,
+            streamState: SubagentRunner.toolCallStreamState(for: stopReason),
+            availableTools: capturedTools,
+            forgeGuardrailsEnabled: false,
+            projectURL: URL(fileURLWithPath: "/tmp"))
+        let resolution = ToolCallDispatchResolution.resolve(
+            gateResult: gateResult,
+            originalContent: completeCall,
+            completedAttempts: 1,
+            maximumAttempts: 2)
+        var executorHandoffCount = 0
+
+        let result = await ToolCallDispatchResolution.handle(
+            resolution,
+            retry: { _, _ in XCTFail("A cancelled stream cannot request a retry.") },
+            finishProse: { _ in },
+            dispatch: { _, _ in executorHandoffCount += 1 })
+
+        XCTAssertEqual(completedGateResult.dispatchableCalls.map(\.name), ["read_file"])
+        XCTAssertTrue(gateResult.dispatchableCalls.isEmpty)
+        XCTAssertEqual(result, .finishedProse)
+        XCTAssertEqual(executorHandoffCount, 0)
+    }
+
     // MARK: - A12: exhausting the turn budget is not success
 
     func testTheMaxTurnsExitIsNotReportedAsCompleted() async {
@@ -191,5 +272,40 @@ final class SubagentPermissionTests: XCTestCase {
             XCTAssertTrue(refused.content.hasPrefix("<tool_error>"), "Should have prefix <tool_error> for \(name)")
             XCTAssertTrue(refused.content.contains("Refused: subagents may nest at most"), "Should mention nesting limit for \(name). Got: \(refused.content)")
         }
+    }
+
+    // MARK: - tool-result media on the subagent gate path
+
+    func testASubagentBrowserScreenshotIsRefusedEvenWithAnOriginGrant() async throws {
+        // The subagent gate consults `AppToolPermissionEngine.evaluate`
+        // WITHOUT a browser context, so the engine's origin-allowlist branch
+        // never applies on this path: every browser call resolves `.ask`,
+        // agentAuto hard-gates that ask to the manual card, and a subagent
+        // cannot show one (state#18). This pins the fail-closed behavior --
+        // and documents that the gate's media projection is not reachable
+        // through browser tools until the gate passes the browser context
+        // (or a typed approval) into the engine.
+        let origin = try XCTUnwrap(BrowserOrigin(origin: "https://example.com"))
+        let project = AppProject(
+            name: "p",
+            permissions: AppProjectPermissions(
+                mode: .agentAuto,
+                browser: .allow,
+                browserOriginAllowlist: [origin.canonicalString]))
+        let agent = try XCTUnwrap(AgentManager.shared.findAgent(name: "general-purpose"))
+
+        let call = AppToolCall(name: "browser_screenshot", category: .browser)
+        let observation = await SubagentRunner.observation(
+            for: call, agent: agent, project: project, session: nil)
+
+        XCTAssertTrue(
+            observation.content.contains("<tool_error>"),
+            "a subagent cannot approve browser automation, so the gate must refuse")
+        XCTAssertTrue(
+            observation.content.contains("needs interactive approval"),
+            "the refusal must say why: \(observation.content)")
+        XCTAssertTrue(
+            observation.images.isEmpty,
+            "a refused call attaches no media")
     }
 }

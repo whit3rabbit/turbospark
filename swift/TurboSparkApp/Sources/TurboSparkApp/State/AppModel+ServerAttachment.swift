@@ -19,6 +19,27 @@ import TurboSpark
 extension AppModel {
     // MARK: - Attaching and detaching
 
+    nonisolated static func detachedServerModelID(from event: ServerEvent) -> String? {
+        guard case let .modelDetached(_, model) = event else { return nil }
+        return model
+    }
+
+    nonisolated static func removeServerAttachment<T>(
+        id: String,
+        from attachments: inout [String: T]
+    ) {
+        attachments.removeValue(forKey: id)
+    }
+
+    /// Drops the app-owned session reference after the server reports a
+    /// detach, then refreshes every surface derived from server state.
+    func releaseServerAttachment(id: String, refresh: Bool = true) {
+        Self.removeServerAttachment(id: id, from: &serverAttachedSessions)
+        if refresh {
+            refreshServerInfo()
+        }
+    }
+
     /// Opens `model` in its own session and attaches it to the running
     /// server, without disturbing the Chat pane's session.
     ///
@@ -136,8 +157,7 @@ extension AppModel {
         // committed. Dropping it here is the recoverable direction: the
         // engine's own half either succeeded or is reported below.
         defer {
-            serverAttachedSessions.removeValue(forKey: id)
-            refreshServerInfo()
+            releaseServerAttachment(id: id)
         }
         do {
             try server.detach(modelId: id)
@@ -175,7 +195,7 @@ extension AppModel {
                 // reported nowhere.
                 failures.append("\(id): \(error.localizedDescription)")
             }
-            serverAttachedSessions[id] = nil
+            releaseServerAttachment(id: id, refresh: false)
         }
         if !failures.isEmpty {
             let msg =

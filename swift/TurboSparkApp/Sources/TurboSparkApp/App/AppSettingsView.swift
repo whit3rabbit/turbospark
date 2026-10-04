@@ -43,7 +43,7 @@ public struct AppSettingsView: View {
             VStack(spacing: 0) {
                 // Top header for right pane
                 HStack {
-                    Text(selectedTab.title)
+                    Text(LocalizedStringKey(selectedTab.title), bundle: .module)
                         .font(theme.ui(.title3, weight: .semibold))
                     Spacer()
                 }
@@ -172,7 +172,7 @@ public struct AppSettingsView: View {
                                 .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                                 .accessibilityHidden(true)
 
-                            Text(tab.title)
+                            Text(LocalizedStringKey(tab.title), bundle: .module)
                                 .font(theme.ui(.base))
                                 .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
 
@@ -261,6 +261,8 @@ public struct AppSettingsView: View {
             CronJobsSettingsPaneView(model: model)
         case .hooks:
             HooksSettingsPaneView(model: model)
+        case .browser:
+            BrowserSettingsPaneView(model: model)
         }
     }
 }

@@ -149,7 +149,9 @@ struct RootView: View {
             // silently toggles a pane the user cannot see. All three
             // preview claimants close; the inspector is only reached when
             // none of them does.
-            if rightColumnClaimant.isPreviewPane {
+            if rightColumnClaimant.isBrowserPane {
+                model.setBrowserPaneOpen(false)
+            } else if rightColumnClaimant.isPreviewPane {
                 model.dismissArtifact()
                 model.dismissHTMLPreview()
                 model.dismissPreview()
@@ -186,6 +188,12 @@ struct RootView: View {
                 isInspectorVisible = true
             }
         }
+        .onChange(of: model.browserSettings.enabled) { _, enabled in
+            if !enabled { model.setBrowserPaneOpen(false) }
+        }
+        .onChange(of: model.activeSection) { _, section in
+            if section == .images { model.setBrowserPaneOpen(false) }
+        }
         // Theme the complete scene once. Applying this to an overlay also
         // paints its empty space, hiding every pane underneath it.
         .appThemed()
@@ -193,6 +201,11 @@ struct RootView: View {
 
     private func toggleModelSettings() {
         guard model.activeSection != .images else { return }
+        if rightColumnClaimant.isBrowserPane {
+            model.setBrowserPaneOpen(false)
+            isInspectorVisible = true
+            return
+        }
         // Preview panes have priority, so dismiss them before opening settings.
         if !isInspectorVisible || rightColumnClaimant.isPreviewPane {
             model.dismissArtifact()
@@ -238,7 +251,8 @@ struct RootView: View {
             htmlPreviewID: model.htmlPreviewID,
             previewAttachmentID: model.previewAttachmentID,
             isInspectorVisible: isInspectorVisible,
-            showProjectSummary: hasProjectSummary && canPinSummary && isSummaryVisible)
+            showProjectSummary: hasProjectSummary && canPinSummary && isSummaryVisible,
+            showBrowserPane: model.browserSettings.enabled && model.browserPaneIsOpen)
     }
 
     @ViewBuilder
@@ -275,6 +289,11 @@ struct RootView: View {
                 } else if isInspectorVisible {
                     verticalHairline
                     inspectorColumn
+                }
+            case .browser:
+                verticalHairline
+                rightPane(width: AppChromeLayout.browserPanelWidth) {
+                    BrowserPaneView(engine: model.browserAutomationCoordinator.engine, appModel: model)
                 }
             case .inspector:
                 verticalHairline

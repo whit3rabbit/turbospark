@@ -22,6 +22,9 @@ public struct RecoveryAnchor: Codable, Equatable, Sendable {
     public let continuationsUsed: Int
     public let retriesUsed: Int
     public let recordedAt: Date
+    /// The exact interrupted row while an anchored retry is in flight and
+    /// the row has been moved out of the active transcript.
+    public let interruptedMessage: AppChatMessage?
 
     public init?(
         retainedMessageCount: Int,
@@ -29,7 +32,8 @@ public struct RecoveryAnchor: Codable, Equatable, Sendable {
         interruptedContentHash: String,
         continuationsUsed: Int,
         retriesUsed: Int,
-        recordedAt: Date
+        recordedAt: Date,
+        interruptedMessage: AppChatMessage? = nil
     ) {
         guard retainedMessageCount >= 0,
             !interruptedContentHash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -42,10 +46,37 @@ public struct RecoveryAnchor: Codable, Equatable, Sendable {
         self.continuationsUsed = continuationsUsed
         self.retriesUsed = retriesUsed
         self.recordedAt = recordedAt
+        self.interruptedMessage = interruptedMessage
     }
 
     public func isValid(forMessageCount messageCount: Int) -> Bool {
         retainedMessageCount < messageCount
+            || (retainedMessageCount == messageCount && interruptedMessage != nil)
+    }
+
+    func matchesInterruptedMessage(_ message: AppChatMessage) -> Bool {
+        message.role == .assistant
+            && message.id == interruptedMessageID
+            && AppStreamRecovery.contentHash(forPersistedRowContent: message.content)
+                == interruptedContentHash
+    }
+
+    func recordingRetryAttempt(
+        _ attempt: Int,
+        interruptedMessage: AppChatMessage
+    ) -> RecoveryAnchor? {
+        guard attempt == retriesUsed + 1,
+            (1...Self.maximumRetriesPerInterruptedTurn).contains(attempt),
+            matchesInterruptedMessage(interruptedMessage)
+        else { return nil }
+        return RecoveryAnchor(
+            retainedMessageCount: retainedMessageCount,
+            interruptedMessageID: interruptedMessageID,
+            interruptedContentHash: interruptedContentHash,
+            continuationsUsed: continuationsUsed,
+            retriesUsed: attempt,
+            recordedAt: recordedAt,
+            interruptedMessage: interruptedMessage)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -55,6 +86,7 @@ public struct RecoveryAnchor: Codable, Equatable, Sendable {
         case continuationsUsed
         case retriesUsed
         case recordedAt
+        case interruptedMessage
     }
 
     public init(from decoder: any Decoder) throws {
@@ -65,7 +97,9 @@ public struct RecoveryAnchor: Codable, Equatable, Sendable {
             interruptedContentHash: try container.decode(String.self, forKey: .interruptedContentHash),
             continuationsUsed: try container.decode(Int.self, forKey: .continuationsUsed),
             retriesUsed: try container.decode(Int.self, forKey: .retriesUsed),
-            recordedAt: try container.decode(Date.self, forKey: .recordedAt))
+            recordedAt: try container.decode(Date.self, forKey: .recordedAt),
+            interruptedMessage: try container.decodeIfPresent(
+                AppChatMessage.self, forKey: .interruptedMessage))
         guard let values else {
             throw DecodingError.dataCorruptedError(
                 forKey: .interruptedContentHash,
@@ -487,12 +521,21 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         let resolvedTitleProvenance = titleProvenance ?? AppChatTitleProvenance.inferred(from: title)
         self.titleProvenance = resolvedTitleProvenance
         self.titleGenerationAttempted = titleGenerationAttempted ?? (resolvedTitleProvenance != .unclaimed)
+        var restoredMessages = messages
+        if let recoveryAnchor,
+            recoveryAnchor.retainedMessageCount == restoredMessages.count,
+            let interrupted = recoveryAnchor.interruptedMessage,
+            recoveryAnchor.matchesInterruptedMessage(interrupted),
+            !restoredMessages.contains(where: { $0.id == interrupted.id })
+        {
+            restoredMessages.append(interrupted)
+        }
         self.recoveryAnchor = recoveryAnchor.flatMap {
-            $0.isValid(forMessageCount: messages.count) ? $0 : nil
+            $0.isValid(forMessageCount: restoredMessages.count) ? $0 : nil
         }
         self.draft = draft
         self.draftAttachments = draftAttachments
-        self.messages = messages
+        self.messages = restoredMessages
         self.todos = todos
         self.artifacts = artifacts
         self.contextSummary = contextSummary
@@ -526,10 +569,20 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         draft = try container.decodeIfPresent(String.self, forKey: .draft) ?? ""
         draftAttachments = try container.decodeIfPresent(
             [AppPromptAttachment].self, forKey: .draftAttachments) ?? []
-        let decodedMessages = try container.decodeLossyArray(AppChatMessage.self, forKey: .messages)
+        var decodedMessages = try container.decodeLossyArray(AppChatMessage.self, forKey: .messages)
+        let decodedAnchor = try? container.decode(RecoveryAnchor.self, forKey: .recoveryAnchor)
+        if let decodedAnchor,
+            decodedAnchor.retainedMessageCount == decodedMessages.count,
+            let interrupted = decodedAnchor.interruptedMessage,
+            decodedAnchor.matchesInterruptedMessage(interrupted),
+            !decodedMessages.contains(where: { $0.id == interrupted.id })
+        {
+            decodedMessages.append(interrupted)
+        }
         messages = decodedMessages
-        recoveryAnchor = (try? container.decode(RecoveryAnchor.self, forKey: .recoveryAnchor))
-            .flatMap { $0.isValid(forMessageCount: decodedMessages.count) ? $0 : nil }
+        recoveryAnchor = decodedAnchor.flatMap {
+            $0.isValid(forMessageCount: decodedMessages.count) ? $0 : nil
+        }
         todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos) ?? []
         artifacts = try container.decodeLossyArray(AppArtifact.self, forKey: .artifacts)
         contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)

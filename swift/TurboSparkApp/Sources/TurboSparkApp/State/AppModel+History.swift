@@ -12,6 +12,8 @@ struct AppChatHistoryProjection {
     var messages: [ChatMessage]
     /// Parallel to `messages`; transcript-expanded messages share their source row index.
     var sourceRowIndexByMessage: [Int?]
+    /// Index of the synthetic preserved-instructions message, when injected.
+    var instructionPinBlockIndex: Int?
     /// Counts rows visible to this assembly after full compaction, including rows that emit none.
     var sourceTranscriptRowCount: Int
 }
@@ -40,15 +42,19 @@ extension AppModel {
     }
 
     func buildAppendOnlyHistory(
-        chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil
+        chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil,
+        mediaCapability: AppToolMediaCapability = .textOnly
     ) -> [ChatMessage] {
         buildAppendOnlyHistoryProjection(
-            chatIndex: chatIndex, project: project, availableTools: availableTools).messages
+            chatIndex: chatIndex, project: project, availableTools: availableTools,
+            mediaCapability: mediaCapability).messages
     }
 
     /// Assembles the same prompt messages while retaining each transcript row's identity.
     func buildAppendOnlyHistoryProjection(
-        chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil
+        chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil,
+        reasoning: GenerateOptions.Reasoning? = nil,
+        mediaCapability: AppToolMediaCapability = .textOnly
     ) -> AppChatHistoryProjection {
         var history: [ChatMessage] = []
         var sourceRowIndexByMessage: [Int?] = []
@@ -122,8 +128,19 @@ extension AppModel {
             // neither cause.
             for res in msg.toolResults {
                 let tag = res.isError ? "tool_error" : "tool_response"
+                let media = AppToolMediaHistoryAdapter.project(
+                    res.mediaReferences,
+                    capability: mediaCapability,
+                    materialize: { try ManagedAssetStore.shared.materializedURL(for: $0) })
+                var resultText = res.modelOutput
+                if media.omittedReferenceCount > 0 {
+                    resultText += "\n[The image result is unavailable to this model.]"
+                }
                 append(
-                    ChatMessage(role: .tool, content: "<\(tag)>\n\(res.modelOutput)\n</\(tag)>"),
+                    ChatMessage(
+                        role: .tool,
+                        content: "<\(tag)>\n\(resultText)\n</\(tag)>",
+                        images: media.images),
                     sourceRowIndex: rowIndex)
             }
         }
@@ -142,14 +159,28 @@ extension AppModel {
                 history[lastUser].content += "\n\n\(reminder)"
             }
         }
-        let historyWithSummary = insertingSummaryInjection(history, summary: compaction.summary)
-        if historyWithSummary.count > history.count {
+        var rebuiltHistory = insertingSummaryInjection(history, summary: compaction.summary)
+        var rebuiltSourceRows = sourceRowIndexByMessage
+        if rebuiltHistory.count > history.count {
             let summaryIndex = history.firstIndex { $0.role != .system } ?? history.count
-            sourceRowIndexByMessage.insert(nil, at: summaryIndex)
+            rebuiltSourceRows.insert(nil, at: summaryIndex)
+        }
+        var instructionPinBlockIndex: Int?
+        if let outcome = cachedInstructionPinningOutcome(
+            chatID: chatID, boundary: compaction.boundary, messages: transcriptRows,
+            reasoning: reasoning),
+            !outcome.pinnedGroups.isEmpty
+        {
+            let pinIndex = rebuiltHistory.firstIndex { $0.role != .system } ?? rebuiltHistory.count
+            rebuiltHistory.insert(
+                AppChatInstructionPin.injectionBlock(outcome.pinnedGroups), at: pinIndex)
+            rebuiltSourceRows.insert(nil, at: pinIndex)
+            instructionPinBlockIndex = pinIndex
         }
         return AppChatHistoryProjection(
-            messages: historyWithSummary,
-            sourceRowIndexByMessage: sourceRowIndexByMessage,
+            messages: rebuiltHistory,
+            sourceRowIndexByMessage: rebuiltSourceRows,
+            instructionPinBlockIndex: instructionPinBlockIndex,
             sourceTranscriptRowCount: sourceRows.count)
     }
 
@@ -240,6 +271,10 @@ extension AppModel {
         // engine's splice. The paths ride along anyway so the estimate
         // tracks the conversation that is actually sent.
         let compaction = compactionState(chatID: selectedChatID)
+        let contextMediaCapability: AppToolMediaCapability = {
+            guard let vision = session?.info.vision, vision.active else { return .textOnly }
+            return .imageBearingToolResults(maximumPixelCount: vision.maxPixels)
+        }()
         var conversationParts: [String] = []
         for (rowIndex, msg) in selectedTurnMessages.enumerated() {
             if rowIndex < compaction.boundary { continue }
@@ -261,8 +296,16 @@ extension AppModel {
             }
             for result in msg.toolResults {
                 let tag = result.isError ? "tool_error" : "tool_response"
-                let content = "<\(tag)>\n\(result.modelOutput)\n</\(tag)>"
-                history.append(ChatMessage(role: .tool, content: content))
+                let media = AppToolMediaHistoryAdapter.project(
+                    result.mediaReferences,
+                    capability: contextMediaCapability,
+                    materialize: { try ManagedAssetStore.shared.materializedURL(for: $0) })
+                var resultText = result.modelOutput
+                if media.omittedReferenceCount > 0 {
+                    resultText += "\n[The image result is unavailable to this model.]"
+                }
+                let content = "<\(tag)>\n\(resultText)\n</\(tag)>"
+                history.append(ChatMessage(role: .tool, content: content, images: media.images))
                 conversationParts.append(content)
             }
         }
@@ -272,6 +315,17 @@ extension AppModel {
                 ContextUsagePiece(kind: .conversation, label: "Conversation", content: conversationPiece))
         }
         history = insertingSummaryInjection(history, summary: compaction.summary)
+        if let outcome = cachedInstructionPinningOutcome(
+            chatID: selectedChatID, boundary: compaction.boundary, messages: selectedTurnMessages),
+            !outcome.pinnedGroups.isEmpty
+        {
+            let injection = AppChatInstructionPin.injectionBlock(outcome.pinnedGroups)
+            let pinIndex = history.firstIndex { $0.role != .system } ?? history.count
+            history.insert(injection, at: pinIndex)
+            pieces.append(
+                ContextUsagePiece(
+                    kind: .conversation, label: "Pinned instructions", content: injection.content))
+        }
         if let summary = compaction.summary, !summary.isEmpty {
             pieces.append(
                 ContextUsagePiece(kind: .summary, label: "Compaction summary", content: summary))

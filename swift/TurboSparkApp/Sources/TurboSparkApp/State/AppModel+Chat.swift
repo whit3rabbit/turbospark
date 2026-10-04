@@ -242,10 +242,15 @@ extension AppModel {
     }
 
     public func renameChat(id: UUID, title: String) {
-        guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = chats.firstIndex(where: { $0.id == id }), !chats[index].isGhost else {
+            return
+        }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        invalidatePendingTitleGeneration(for: id)
         chats[index].title = String(trimmed.prefix(80))
+        chats[index].titleProvenance = .user
+        chats[index].titleGenerationAttempted = true
         chats[index].updatedAt = Date()
         persistChats()
     }
@@ -305,6 +310,7 @@ extension AppModel {
         } else {
             ToolObservationStore.shared.delete(chatID: id)
         }
+        invalidatePendingTitleGeneration(for: id)
         // A deleted chat's queued drafts are discarded WITH it: the user's
         // deletion is the older intent, and a prompt parked for a chat with
         // no row would sit in `pendingUserMessages` forever (nothing else

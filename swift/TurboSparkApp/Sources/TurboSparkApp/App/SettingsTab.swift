@@ -18,6 +18,7 @@ extension AppSettingsView {
         case plugins = "Plugins"
         case automation = "Scheduled Tasks"
         case hooks = "Hooks & Lifecycle"
+        case browser = "Browser"
 
         public var id: String { rawValue }
 
@@ -41,6 +42,7 @@ extension AppSettingsView {
             case .plugins: return "puzzlepiece.extension"
             case .automation: return "clock.badge.checkmark"
             case .hooks: return "link.badge.plus"
+            case .browser: return "globe"
             }
         }
 
@@ -49,7 +51,7 @@ extension AppSettingsView {
             case .general, .profiles, .appearance, .shortcuts, .permissions:
                 return "Personal"
             case .models, .engine, .safety, .mcp, .skills, .memory, .soul, .agents, .plugins,
-                .automation, .hooks:
+                .automation, .hooks, .browser:
                 return "Engine & Coding"
             }
         }
@@ -88,6 +90,8 @@ extension AppSettingsView {
                 return ["cron", "scheduled", "tasks", "schedule", "timer", "recurring", "automation"]
             case .hooks:
                 return ["hooks", "lifecycle", "events", "scripts"]
+            case .browser:
+                return ["browser", "web", "automation", "origins", "viewport", "dialogs"]
             }
         }
     }

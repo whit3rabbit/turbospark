@@ -120,11 +120,7 @@ extension AppModel {
     /// quick-saves are `.user` rows too, and neither is a prompt a response
     /// can be regenerated against.
     static func lastPromptAnchorIndex(in messages: [AppChatMessage]) -> Int? {
-        messages.lastIndex {
-            $0.role == .user
-                && $0.toolResults.isEmpty
-                && UserMemoryInputMessage.parse($0.content) == nil
-        }
+        AppStreamRecovery.lastPromptAnchorIndex(in: messages)
     }
 
     /// Whether the response chain after a prompt is one plain prose reply --
@@ -132,8 +128,7 @@ extension AppModel {
     /// stays out: restoring it as a single alternate would have to carry
     /// every row, and re-rolling an agent's work is a different feature.
     static func isSingleProseResponse(_ chain: [AppChatMessage]) -> Bool {
-        chain.count == 1 && chain[0].role == .assistant
-            && chain[0].toolCalls.isEmpty && chain[0].toolResults.isEmpty
+        AppStreamRecovery.isSingleProseResponse(chain)
     }
 
     // MARK: - Retry
@@ -150,21 +145,16 @@ extension AppModel {
             && Self.isSingleProseResponse(Array(messages[(anchorIndex + 1)...]))
     }
 
-    /// Pure: what Retry does to a transcript. Returns the transcript
-    /// truncated back to the prompt and the replaced response as the variant
-    /// to seed onto the regenerated one, or nil when there is nothing to
-    /// retry.
+    /// Pure ordinary retry transform retained for transcript-operation tests.
+    /// Interrupted rows are rejected here unless the caller uses the anchored
+    /// recovery route in `prepareResponseRetry`.
     static func retryApplied(to messages: [AppChatMessage]) -> (
         messages: [AppChatMessage], variants: [AppChatMessage]
     )? {
-        guard let anchorIndex = lastPromptAnchorIndex(in: messages),
-            anchorIndex + 1 < messages.count,
-            isSingleProseResponse(Array(messages[(anchorIndex + 1)...]))
+        guard case .retry(let plan) = AppStreamRecovery.prepareResponseRetry(
+            recoveryAnchor: nil, messages: messages)
         else { return nil }
-        var oldResponse = messages[anchorIndex + 1]
-        oldResponse.alternates = []
-        let truncated = Array(messages[...anchorIndex])
-        return (truncated, [oldResponse])
+        return (plan.transcript, plan.alternates)
     }
 
     /// Regenerates the selected chat's last response in place. The replaced
@@ -173,12 +163,33 @@ extension AppModel {
     public func regenerateResponse(chatID: UUID? = nil) -> Bool {
         let targetID = chatID ?? selectedChatID
         guard editingAllowed(chatID: targetID) else { return false }
-        guard let applied = Self.retryApplied(to: turnMessages(for: targetID)) else {
+
+        let messages = turnMessages(for: targetID)
+        switch AppStreamRecovery.prepareResponseRetry(
+            recoveryAnchor: recoveryAnchor(for: targetID),
+            messages: messages)
+        {
+        case .retry(let plan):
+            if plan.recoveryAttempt != nil && plan.stagedRecoveryAnchor == nil {
+                streamRecoveryEvents[targetID, default: []].append(.retryConflict)
+                return false
+            }
+            pendingResponseVariants[targetID] = plan.alternates
+            pendingRecoveryRetryCounts[targetID] = plan.recoveryAttempt
+            mutateRecoveryState(for: targetID) { messages, anchor in
+                messages = plan.transcript
+                anchor = plan.stagedRecoveryAnchor
+            }
+            clampStoredCompaction(chatID: targetID, toRow: plan.transcript.count - 1)
+        case .conflict:
+            streamRecoveryEvents[targetID, default: []].append(.retryConflict)
+            return false
+        case .exhausted:
+            streamRecoveryEvents[targetID, default: []].append(.retryExhausted)
+            return false
+        case .unavailable:
             return false
         }
-        pendingResponseVariants[targetID] = applied.variants
-        mutateTurnMessages(for: targetID) { $0 = applied.messages }
-        clampStoredCompaction(chatID: targetID, toRow: applied.messages.count - 1)
         updateTokenEstimate()
         executeGenerationTurn(step: 0, chatID: targetID)
         return true
@@ -259,7 +270,10 @@ extension AppModel {
         let applied = Self.editApplied(
             to: messages, anchorIndex: anchorIndex, newText: trimmed, now: Date())
         pendingResponseVariants[targetID] = applied.responseVariants
-        mutateTurnMessages(for: targetID) { $0 = applied.messages }
+        mutateRecoveryState(for: targetID) { messages, anchor in
+            messages = applied.messages
+            anchor = nil
+        }
         clampStoredCompaction(chatID: targetID, toRow: anchorIndex)
         editingMessageID = nil
         updateTokenEstimate()

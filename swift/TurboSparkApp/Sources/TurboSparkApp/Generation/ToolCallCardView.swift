@@ -21,7 +21,19 @@ struct ToolCallCardView: View {
 
     @State private var isExpanded: Bool = false
 
+    private var browserCardPresentation: BrowserToolCardPresentation? {
+        guard BrowserToolCardPresentation.isBrowserTool(call.name) else { return nil }
+        return BrowserToolCardPresentation(
+            call: call,
+            result: result,
+            pendingOrigin: model.browserPermissionApprovalRequest(for: call)?.origin
+        )
+    }
+
     private var summary: ToolCallSummaryInfo {
+        if let browserCardPresentation {
+            return browserCardPresentation.summary
+        }
         let presentation = ToolPresentation.resolve(call.name)
         if let url = ToolPresentation.webURL(for: call) {
             return ToolCallSummaryInfo(action: presentation.localizedLabel, target: url.absoluteString)
@@ -79,6 +91,10 @@ struct ToolCallCardView: View {
 
     private var isQuestionCall: Bool {
         call.name.lowercased().contains("question")
+    }
+
+    private var isBrowserCall: Bool {
+        browserCardPresentation != nil
     }
 
     private var parsedQuestions: [UserQuestionItem]? {
@@ -142,7 +158,9 @@ struct ToolCallCardView: View {
 
             if isExpanded || isPendingApproval || isActiveQuestionSet {
                 VStack(alignment: .leading, spacing: 8) {
-                    if let submittedPlan {
+                    if isBrowserCall {
+                        EmptyView()
+                    } else if let submittedPlan {
                         CollapsibleMessageContentView(text: submittedPlan, maxHeight: 260)
                             .padding(6)
                     } else if isTodoCall, let todos = parsedTodos, !todos.isEmpty {
@@ -190,7 +208,7 @@ struct ToolCallCardView: View {
                         argumentsPreview
                     }
 
-                    if let risk = call.riskAssessment, !risk.reasons.isEmpty, isPendingApproval {
+                    if !isBrowserCall, let risk = call.riskAssessment, !risk.reasons.isEmpty, isPendingApproval {
                         riskWarningBox(risk)
                     }
 
@@ -198,7 +216,7 @@ struct ToolCallCardView: View {
                         approvalPrompt
                     }
 
-                    if let result, submittedPlan == nil || result.isError {
+                    if !isBrowserCall, let result, submittedPlan == nil || result.isError {
                         if let outcome = result.efficiency, outcome.hasAnyOutcome {
                             efficiencyOutcome(outcome)
                         }
@@ -237,7 +255,9 @@ struct ToolCallCardView: View {
         } label: {
             HStack(spacing: 7) {
                 Group {
-                    if let url = ToolPresentation.webURL(for: call) {
+                    if isBrowserCall {
+                        BundledToolIcon(name: ToolPresentation.resolve(call.name).icon)
+                    } else if let url = ToolPresentation.webURL(for: call) {
                         OfflineSiteIcon(url: url)
                     } else {
                         BundledToolIcon(name: ToolPresentation.resolve(call.name).icon)
@@ -245,6 +265,9 @@ struct ToolCallCardView: View {
                 }
                 .frame(width: ConversationLayout.activityIconWidth)
                 headerLabelView
+                if let browserCardPresentation {
+                    BrowserToolCardView(presentation: browserCardPresentation)
+                }
 
                 if let additions = summary.additions {
                     Text(verbatim: "+\(additions)")
@@ -342,7 +365,21 @@ struct ToolCallCardView: View {
     @ViewBuilder
     private var headerLabelView: some View {
         let isCancelled = call.status == .denied
-        if submittedPlan != nil {
+        if let browserCardPresentation {
+            HStack(spacing: 5) {
+                Text(browserCardPresentation.action)
+                    .themedFont(.small, weight: .medium)
+                    .foregroundStyle(isCancelled ? theme.secondaryText : theme.foreground)
+
+                if let target = browserCardPresentation.target {
+                    Text(verbatim: target)
+                        .font(theme.code(.base, weight: .semibold))
+                        .foregroundStyle(isCancelled ? theme.secondaryText : theme.foreground)
+                }
+            }
+            .strikethrough(isCancelled, color: .secondary)
+            .lineLimit(1)
+        } else if submittedPlan != nil {
             Text("Plan", bundle: .module)
                 .themedFont(.small, weight: .medium)
                 .foregroundStyle(.appText)
@@ -1016,74 +1053,101 @@ struct ToolCallCardView: View {
                     in: RoundedRectangle(cornerRadius: 6))
             }
 
-            Text("This action requires your confirmation to execute.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-
-            HStack(spacing: 8) {
-                Button {
-                    model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
-                } label: {
-                    Label { Text("Approve Once", bundle: .module) } icon: { Image(systemName: "checkmark") }
+            if isPendingApproval, let request = model.browserPermissionApprovalRequest(for: call) {
+                BrowserPermissionApprovalView(
+                    request: request,
+                    onAllowOnce: {
+                        model.approvePendingBrowserToolCall(id: call.id, alwaysAllowOrigin: false)
+                    },
+                    onAlwaysAllow: {
+                        model.approvePendingBrowserToolCall(id: call.id, alwaysAllowOrigin: true)
+                    },
+                    onDeny: {
+                        model.denyPendingBrowserToolCall(id: call.id)
+                    }
+                )
+            } else if call.category == .browser {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Browser origin unavailable. This action cannot be approved safely.", bundle: .module)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                    Button(role: .cancel) {
+                        model.denyPendingBrowserToolCall(id: call.id)
+                    } label: {
+                        Text("Deny", bundle: .module)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(isHighRisk ? Color.orange : TurboSparkTheme.accentColor)
-                .help("Approve this tool call once")
-                .accessibilityLabel("Approve once \(call.name)")
+            } else {
+                Text("This action requires your confirmation to execute.", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
 
-                if model.pendingToolCallClassifierNotice != nil, isPendingApproval {
+                HStack(spacing: 8) {
                     Button {
-                        model.suspendAgentModeForSession()
                         model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
                     } label: {
-                        Label { Text("Suspend Agent Mode", bundle: .module) } icon: { Image(systemName: "pause.circle") }
+                        Label { Text("Approve Once", bundle: .module) } icon: { Image(systemName: "checkmark") }
                     }
-                    .buttonStyle(.bordered)
-                    .help("Approve once and stop using the classifier for the rest of this session")
-                    .accessibilityLabel("Suspend Agent mode for this session and approve once")
-                }
+                    .buttonStyle(.borderedProminent)
+                    .tint(isHighRisk ? Color.orange : TurboSparkTheme.accentColor)
+                    .help("Approve this tool call once")
+                    .accessibilityLabel("Approve once \(call.name)")
 
-                if call.category == .mcp,
-                   let target = McpPermissionRule.targetOfCall(name: call.name, arguments: call.arguments) {
-                    // MCP calls can persist the grant on the PROJECT, not
-                    // just this session: the rule the engine matches is
-                    // written with the same parse that reads the call, so
-                    // "this tool" and "this server" mean exactly what the
-                    // evaluation will compare.
-                    Menu {
+                    if model.pendingToolCallClassifierNotice != nil, isPendingApproval {
                         Button {
-                            model.addMcpPermissionRule(serverName: target.server, toolName: target.tool, allow: true)
+                            model.suspendAgentModeForSession()
                             model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
-                        } label: { Text("Always Allow This Tool", bundle: .module) }
-                        Button {
-                            model.addMcpPermissionRule(serverName: target.server, toolName: nil, allow: true)
-                            model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
-                        } label: { Text("Always Allow This Server", bundle: .module) }
-                    } label: {
-                        Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.seal") }
+                        } label: {
+                            Label { Text("Suspend Agent Mode", bundle: .module) } icon: { Image(systemName: "pause.circle") }
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Approve once and stop using the classifier for the rest of this session")
+                        .accessibilityLabel("Suspend Agent mode for this session and approve once")
                     }
-                    .buttonStyle(.bordered)
-                    .help("Persist an allow rule for this MCP tool or server in project settings")
-                    .accessibilityLabel("Always allow \(call.name) in project settings")
-                } else {
-                    Button {
-                        model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
-                    } label: {
-                        Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
-                    }
-                    .buttonStyle(.bordered)
-                    .help("Always allow this tool and command in this session")
-                    .accessibilityLabel("Always allow \(call.name) in this session")
-                }
 
-                Button(role: .cancel) {
-                    model.denyPendingToolCall(id: call.id)
-                } label: { Text("Deny", bundle: .module) }
-                .buttonStyle(.bordered)
-                .help("Deny this tool call execution")
-                .accessibilityLabel("Deny \(call.name)")
+                    if call.category == .mcp,
+                       let target = McpPermissionRule.targetOfCall(name: call.name, arguments: call.arguments) {
+                        // MCP calls can persist the grant on the PROJECT, not
+                        // just this session: the rule the engine matches is
+                        // written with the same parse that reads the call, so
+                        // "this tool" and "this server" mean exactly what the
+                        // evaluation will compare.
+                        Menu {
+                            Button {
+                                model.addMcpPermissionRule(serverName: target.server, toolName: target.tool, allow: true)
+                                model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                            } label: { Text("Always Allow This Tool", bundle: .module) }
+                            Button {
+                                model.addMcpPermissionRule(serverName: target.server, toolName: nil, allow: true)
+                                model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                            } label: { Text("Always Allow This Server", bundle: .module) }
+                        } label: {
+                            Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.seal") }
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Persist an allow rule for this MCP tool or server in project settings")
+                        .accessibilityLabel("Always allow \(call.name) in project settings")
+                    } else {
+                        Button {
+                            model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
+                        } label: {
+                            Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Always allow this tool and command in this session")
+                        .accessibilityLabel("Always allow \(call.name) in this session")
+                    }
+
+                    Button(role: .cancel) {
+                        model.denyPendingToolCall(id: call.id)
+                    } label: { Text("Deny", bundle: .module) }
+                    .buttonStyle(.bordered)
+                    .help("Deny this tool call execution")
+                    .accessibilityLabel("Deny \(call.name)")
+                }
+                .controlSize(.small)
             }
-            .controlSize(.small)
         }
         .padding(.top, 4)
     }

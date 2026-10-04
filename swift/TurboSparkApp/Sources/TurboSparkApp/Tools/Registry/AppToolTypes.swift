@@ -152,6 +152,85 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// A managed, non-inline image attached to a tool result.
+///
+/// The reference points into the encrypted profile asset store. Image bytes
+/// never enter the chat archive or the provider request as base64.
+public struct AppToolMediaReference: Codable, Equatable, Sendable {
+    public var assetReference: String
+    public var mimeType: String
+    public var byteCount: Int64
+    public var pixelWidth: Int
+    public var pixelHeight: Int
+
+    public init(
+        assetReference: String,
+        mimeType: String,
+        byteCount: Int64,
+        pixelWidth: Int,
+        pixelHeight: Int
+    ) {
+        self.assetReference = assetReference
+        self.mimeType = mimeType
+        self.byteCount = byteCount
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+    }
+}
+
+/// How a tool image was handled before it entered the managed asset store.
+public enum AppToolMediaDisposition: String, Codable, Equatable, Sendable {
+    case kept
+    case downscaled
+    case refused
+}
+
+/// Only the identifiers a browser action card may reveal. Page URLs are
+/// reduced to a canonical origin and element references must match the
+/// browser bridge's opaque 128-bit hex form.
+public struct AppToolBrowserCardMetadata: Codable, Equatable, Sendable {
+    public let canonicalOrigin: String?
+    public let elementReference: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case canonicalOrigin, elementReference
+    }
+
+    public init(origin: BrowserOrigin?, elementReference: String? = nil) {
+        self.canonicalOrigin = origin?.canonicalString
+        self.elementReference = Self.isOpaqueReference(elementReference) ? elementReference : nil
+    }
+
+    public var displayTarget: String? {
+        elementReference ?? canonicalOrigin
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawOrigin = try? container.decode(String.self, forKey: .canonicalOrigin)
+        let rawReference = try? container.decode(String.self, forKey: .elementReference)
+        if let rawOrigin,
+           let origin = BrowserOrigin(origin: rawOrigin), origin.canonicalString == rawOrigin
+        {
+            canonicalOrigin = rawOrigin
+        } else {
+            canonicalOrigin = nil
+        }
+        elementReference = Self.isOpaqueReference(rawReference) ? rawReference : nil
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(canonicalOrigin, forKey: .canonicalOrigin)
+        try container.encodeIfPresent(elementReference, forKey: .elementReference)
+    }
+
+    private static func isOpaqueReference(_ value: String?) -> Bool {
+        guard let value, value.utf8.count == 32 else { return false }
+        return value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+}
+
 /// The result returned from executing a tool call.
 public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
     public var id = UUID()
@@ -166,6 +245,12 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
     public var observation: ToolObservationRef?
     /// Small, user-visible outcomes from native efficiency features.
     public var efficiency: ToolEfficiencyOutcome?
+    /// Managed images available to providers that accept image-bearing tool results.
+    public var mediaReferences: [AppToolMediaReference]?
+    /// Persisted image handling outcome; absent in archives written before tool media.
+    public var mediaDisposition: AppToolMediaDisposition?
+    /// Allowlisted browser target metadata for the visible tool card.
+    public var browserCardMetadata: AppToolBrowserCardMetadata?
     /// Number of actual prompt sends that included the complete observation.
     public var fullPromptSendCount: Int
     /// Full source available only while this result is in memory. It is never
@@ -185,6 +270,9 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         promptProjection: String? = nil,
         observation: ToolObservationRef? = nil,
         efficiency: ToolEfficiencyOutcome? = nil,
+        mediaReferences: [AppToolMediaReference]? = nil,
+        mediaDisposition: AppToolMediaDisposition? = nil,
+        browserCardMetadata: AppToolBrowserCardMetadata? = nil,
         fullPromptSendCount: Int = 0,
         archivalOutput: String? = nil,
         continuationStopReason: String? = nil
@@ -197,6 +285,9 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         self.promptProjection = promptProjection
         self.observation = observation
         self.efficiency = efficiency
+        self.mediaReferences = mediaReferences
+        self.mediaDisposition = mediaDisposition
+        self.browserCardMetadata = browserCardMetadata
         self.fullPromptSendCount = fullPromptSendCount
         self.archivalOutput = archivalOutput
         self.continuationStopReason = continuationStopReason
@@ -208,7 +299,8 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
     /// to the property names or every archive written before this change
     /// decodes its fields as absent.
     enum CodingKeys: String, CodingKey {
-        case id, callID, output, isError, durationSeconds, promptProjection, observation, efficiency, fullPromptSendCount
+        case id, callID, output, isError, durationSeconds, promptProjection, observation, efficiency
+        case mediaReferences, mediaDisposition, browserCardMetadata, fullPromptSendCount
     }
 
     /// Largest tool output written to the chat archive.
@@ -235,6 +327,9 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         }
         try container.encodeIfPresent(observation, forKey: .observation)
         try container.encodeIfPresent(efficiency, forKey: .efficiency)
+        try container.encodeIfPresent(mediaReferences, forKey: .mediaReferences)
+        try container.encodeIfPresent(mediaDisposition, forKey: .mediaDisposition)
+        try container.encodeIfPresent(browserCardMetadata, forKey: .browserCardMetadata)
         try container.encode(fullPromptSendCount, forKey: .fullPromptSendCount)
 
         if output.utf8.count > Self.maximumPersistedOutputBytes {
@@ -275,6 +370,9 @@ public struct AppToolResult: Identifiable, Codable, Equatable, Sendable {
         promptProjection = try container.decodeIfPresent(String.self, forKey: .promptProjection)
         observation = try container.decodeIfPresent(ToolObservationRef.self, forKey: .observation)
         efficiency = try container.decodeIfPresent(ToolEfficiencyOutcome.self, forKey: .efficiency)
+        mediaReferences = try container.decodeIfPresent([AppToolMediaReference].self, forKey: .mediaReferences)
+        mediaDisposition = try container.decodeIfPresent(AppToolMediaDisposition.self, forKey: .mediaDisposition)
+        browserCardMetadata = try container.decodeIfPresent(AppToolBrowserCardMetadata.self, forKey: .browserCardMetadata)
         fullPromptSendCount = try container.decodeIfPresent(Int.self, forKey: .fullPromptSendCount) ?? 0
         archivalOutput = nil
         continuationStopReason = nil

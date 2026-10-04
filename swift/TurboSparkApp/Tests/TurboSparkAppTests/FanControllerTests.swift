@@ -57,7 +57,7 @@ final class FanControllerTests: XCTestCase {
     /// daemon that is down. `max` flips the status fixture to a pinned
     /// (manual, at-target) reading; `auto` flips it back and drops
     /// `restored` as a marker the sync quit path can be asserted on.
-    private func makeFixtureScript(failsMax: Bool = false) throws -> URL {
+    private func makeFixtureScript(failsMax: Bool = false, silentStatus: Bool = false) throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FanControllerTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -66,6 +66,7 @@ final class FanControllerTests: XCTestCase {
         #!/bin/sh
         case "$1" in
           status)
+        \(silentStatus ? "    sleep 4\n    : > \"\(dir.path)/status-completed\"" : "")
             if [ -f "\(dir.path)/pinned" ]; then
               echo '{"fans":[{"actual_rpm":5774,"index":0,"max_rpm":5777,"min_rpm":1350,"mode":"manual","target_rpm":5777}]}'
             else
@@ -311,6 +312,22 @@ final class FanControllerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
         await controller.refreshStatus()
         XCTAssertEqual(controller.status?.fans.first?.mode, "auto")
+    }
+
+    func test_quitStatusProbeTimesOutWithoutWaitingForSilentChildOutput() throws {
+        let script = try makeFixtureScript(silentStatus: true)
+        let dir = script.deletingLastPathComponent()
+        defer { cleanup(script) }
+        let controller = FanController(executablePath: script.path, pollInterval: nil)
+        let started = Date()
+
+        controller.restoreOnQuitIfNeeded()
+
+        XCTAssertLessThan(Date().timeIntervalSince(started), 4)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: dir.appendingPathComponent("status-completed").path),
+            "The two-second quit deadline must stop the silent child before its fixture completes.")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("restored").path))
     }
 
     // MARK: - Fixture helpers

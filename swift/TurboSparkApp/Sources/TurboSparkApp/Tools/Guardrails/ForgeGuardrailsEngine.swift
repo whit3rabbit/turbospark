@@ -93,6 +93,7 @@ public enum ForgeGuardrailsEngine {
                 let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
                 for match in matches {
                     guard match.numberOfRanges >= 3 else { continue }
+                    guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
                     let name = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
                     let body = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
                     let raw = nsString.substring(with: match.range(at: 0))
@@ -136,6 +137,7 @@ public enum ForgeGuardrailsEngine {
             let nsString = text as NSString
             for match in callRegex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length)) {
                 guard match.numberOfRanges >= 3 else { continue }
+                guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
                 let name = nsString.substring(with: match.range(at: 1))
                 guard isToolNameAllowed(name, in: availableToolNames) else { continue }
                 let pairsText = nsString.substring(with: match.range(at: 2))
@@ -174,6 +176,7 @@ public enum ForgeGuardrailsEngine {
             let nsString = text as NSString
             for match in kimiRegex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length)) {
                 guard match.numberOfRanges >= 3 else { continue }
+                guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
                 let id = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
                 let name = id.hasPrefix("functions.")
                     ? String(id.dropFirst("functions.".count).split(separator: ":").first ?? "")
@@ -204,6 +207,7 @@ public enum ForgeGuardrailsEngine {
             let nsString = text as NSString
             for match in gemmaRegex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length)) {
                 guard match.numberOfRanges >= 3 else { continue }
+                guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
                 let name = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard isToolNameAllowed(name, in: availableToolNames) else { continue }
                 let body = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -224,11 +228,16 @@ public enum ForgeGuardrailsEngine {
         if !results.isEmpty { return results }
         if text.contains("[TOOL_CALLS]") {
             let mistralPattern = "\\[TOOL_CALLS\\]\\s*(\\[[\\s\\S]*?\\]|\\{[\\s\\S]*?\\})"
-            if let regex = try? NSRegularExpression(pattern: mistralPattern, options: []),
-               let match = regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length)) {
-                let rawBlock = (text as NSString).substring(with: match.range(at: 1))
-                if let parsed = parseJsonCalls(rawBlock, availableToolNames: availableToolNames) {
-                    return parsed
+            if let regex = try? NSRegularExpression(pattern: mistralPattern, options: []) {
+                let nsString = text as NSString
+                let matches = regex.matches(
+                    in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+                for match in matches {
+                    guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
+                    let rawBlock = nsString.substring(with: match.range(at: 1))
+                    if let parsed = parseJsonCalls(rawBlock, availableToolNames: availableToolNames) {
+                        return parsed
+                    }
                 }
             }
         }
@@ -240,6 +249,7 @@ public enum ForgeGuardrailsEngine {
             let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
             for match in matches {
                 guard match.numberOfRanges > 1 else { continue }
+                guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
                 let inner = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
                 if let parsed = parseJsonCalls(inner, availableToolNames: availableToolNames) {
                     results.append(contentsOf: parsed)
@@ -256,21 +266,26 @@ public enum ForgeGuardrailsEngine {
         // JSON, so here the wrapper has to be stripped before that same
         // parse can see the object.
         let longcatPattern = "<longcat_tool_call>\\s*([\\s\\S]*?)\\s*</longcat_tool_call>"
-        if let longcatRegex = try? NSRegularExpression(pattern: longcatPattern, options: []),
-           let match = longcatRegex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length)) {
-            let inner = (text as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-            if let parsed = parseJsonCalls(inner, availableToolNames: availableToolNames) {
-                // The raw invocation is the whole tagged block, so
-                // `sanitizeProse` removes the wrapper along with the call.
-                return parsed.map { call in
-                    AppToolCall(
-                        name: call.name,
-                        arguments: call.arguments,
-                        rawInvocation: (text as NSString).substring(with: match.range(at: 0)),
-                        status: call.status,
-                        category: call.category,
-                        riskAssessment: call.riskAssessment
-                    )
+        if let longcatRegex = try? NSRegularExpression(pattern: longcatPattern, options: []) {
+            let nsString = text as NSString
+            let matches = longcatRegex.matches(
+                in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+            for match in matches {
+                guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
+                let inner = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let parsed = parseJsonCalls(inner, availableToolNames: availableToolNames) {
+                    // The raw invocation is the whole tagged block, so
+                    // `sanitizeProse` removes the wrapper along with the call.
+                    return parsed.map { call in
+                        AppToolCall(
+                            name: call.name,
+                            arguments: call.arguments,
+                            rawInvocation: nsString.substring(with: match.range(at: 0)),
+                            status: call.status,
+                            category: call.category,
+                            riskAssessment: call.riskAssessment
+                        )
+                    }
                 }
             }
         }

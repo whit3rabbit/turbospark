@@ -19,11 +19,27 @@ public struct AppDiagnostics: Sendable, Equatable {
     public let stopReason: GenerationResult.StopReason
     /// Detailed phase profiling counters if enabled.
     public let phases: PhaseReport?
+    /// Request-only context shortened before window fitting, when this run used microcompact.
+    let compactionBoundaryEvent: CompactionBoundaryEvent?
 
     public init(
         result: GenerationResult,
         peakMemory: UInt64? = nil,
         phases: PhaseReport? = nil
+    ) {
+        self.init(
+            result: result,
+            peakMemory: peakMemory,
+            phases: phases,
+            compactionBoundaryEvent: nil
+        )
+    }
+
+    init(
+        result: GenerationResult,
+        peakMemory: UInt64? = nil,
+        phases: PhaseReport? = nil,
+        compactionBoundaryEvent: CompactionBoundaryEvent?
     ) {
         self.promptTokens = result.promptTokens
         self.generatedTokens = result.newTokens
@@ -33,5 +49,6 @@ public struct AppDiagnostics: Sendable, Equatable {
         self.peakMemoryBytes = peakMemory
         self.stopReason = result.stopReason
         self.phases = phases
+        self.compactionBoundaryEvent = compactionBoundaryEvent
     }
 }

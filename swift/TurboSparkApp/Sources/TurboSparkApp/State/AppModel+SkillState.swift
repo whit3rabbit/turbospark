@@ -1,6 +1,11 @@
 import Foundation
 import TurboSpark
 
+private struct SkillStateLatestObservation {
+    let text: String
+    let images: [ChatImage]
+}
+
 /// The SKILL.state arm of the agent loop: a bounded prompt carrying the current
 /// execution state instead of the whole transcript. Opt-in per project, default
 /// off, so the append-only path stays byte-identical when it is not used.
@@ -68,7 +73,8 @@ extension AppModel {
     /// every message and every tool result. This one is O(1) in step count,
     /// which is the whole point.
     func buildSkillStateHistory(
-        chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil
+        chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil,
+        mediaCapability: AppToolMediaCapability = .textOnly
     ) -> [ChatMessage] {
         var history: [ChatMessage] = []
 
@@ -103,12 +109,13 @@ extension AppModel {
         let state = storedSkillState(chatIndex: chatIndex) ?? AppSkillState()
         var latest = "CURRENT STATE:\n\(state.rendered)"
 
-        if let observation = latestObservation(chatIndex: chatIndex) {
-            latest += "\n\nLATEST RESULT:\n\(observation)"
+        let observation = latestObservation(chatIndex: chatIndex, mediaCapability: mediaCapability)
+        if let observation {
+            latest += "\n\nLATEST RESULT:\n\(observation.text)"
         }
         latest += "\n\nContinue. Emit a state patch for anything you learned, "
             + "then either call one tool or give your final answer."
-        history.append(ChatMessage(role: .user, content: latest))
+        history.append(ChatMessage(role: .user, content: latest, images: observation?.images ?? []))
 
         return history
     }
@@ -116,7 +123,10 @@ extension AppModel {
     /// The single most recent tool result, or the last guardrail nudge. This is
     /// O_t: only the newest observation reaches the model, because everything
     /// worth keeping from older ones is supposed to be in the state by now.
-    private func latestObservation(chatIndex: Int) -> String? {
+    private func latestObservation(
+        chatIndex: Int,
+        mediaCapability: AppToolMediaCapability
+    ) -> SkillStateLatestObservation? {
         // Hoisted out of the loop (state#111). `taskMessage` scans from the
         // FRONT and this walks from the BACK, so the pair was quadratic in
         // the message count -- on the one prompt shape whose entire purpose
@@ -126,7 +136,16 @@ extension AppModel {
             if let result = message.toolResults.last {
                 let tag = result.isError ? "tool_error" : "tool_response"
                 let call = message.toolCalls.last.map { "\($0.name)\n" } ?? ""
-                return "<\(tag)>\n\(call)\(result.output)\n</\(tag)>"
+                let media = AppToolMediaHistoryAdapter.project(
+                    result.mediaReferences,
+                    capability: mediaCapability,
+                    materialize: { try ManagedAssetStore.shared.materializedURL(for: $0) })
+                let unavailableNote = media.omittedReferenceCount > 0
+                    ? "\n[The image result is unavailable to this model.]"
+                    : ""
+                return SkillStateLatestObservation(
+                    text: "<\(tag)>\n\(call)\(result.output)\(unavailableNote)\n</\(tag)>",
+                    images: media.images)
             }
             // A nudge is a user turn that is not the original task -- and
             // "the task" means the same thing here as it does above
@@ -137,7 +156,7 @@ extension AppModel {
             // different messages, so the real task was fed back as the
             // latest observation on every step.
             if message.role == .user, message.id != taskID {
-                return message.content
+                return SkillStateLatestObservation(text: message.content, images: [])
             }
         }
         return nil

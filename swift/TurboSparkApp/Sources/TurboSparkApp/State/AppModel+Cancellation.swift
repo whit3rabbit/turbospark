@@ -23,35 +23,99 @@ extension AppModel {
     /// could not tell a user pressing Stop from the engine failing mid-turn --
     /// and the `error` banner beside it is transient while the stop reason is
     /// persisted.
-    func finishCancelled(chatID: UUID? = nil, reason: String = "cancelled") {
+    func finishCancelled(
+        chatID: UUID? = nil,
+        reason: String = "cancelled",
+        continuationsUsed: Int = 0
+    ) {
         let targetID = chatID ?? selectedChatID
         let targetProject = turnProject(chatID: targetID)
-        if !outputText.isEmpty || !outputReasoningText.isEmpty {
+        let recoveryRetryAttempt = pendingRecoveryRetryCounts.removeValue(forKey: targetID)
+        let hasFreshReplacement = recoveryRetryAttempt == nil
+            && !(pendingResponseVariants[targetID] ?? []).isEmpty
+        if !outputText.isEmpty || !outputReasoningText.isEmpty || hasFreshReplacement {
             // A Retry/Edit turn stopped mid-flight still owes its variants
             // an answer: the partial reply becomes the active version (its
             // stop reason marks it as unfinished) and the replaced one is
-            // kept beside it. Consumed here for the same once-only reason
+            // kept beside it. An empty failed replacement keeps an empty
+            // interrupted row, so an edited prompt is never paired with its
+            // previous answer as though generation succeeded. Consumed here
+            // for the same once-only reason
             // `finishProseTurn` consumes it.
             let parkedVariants =
                 self.pendingResponseVariants.removeValue(forKey: targetID) ?? []
-            mutateTurnMessages(for: targetID) {
-                var message = AppChatMessage(
-                    role: .assistant,
-                    content: self.outputText,
-                    reasoning: self.outputReasoningText,
-                    stopReason: reason
-                )
-                if !parkedVariants.isEmpty {
-                    message.alternates = parkedVariants.map { variant in
-                        var flat = variant
-                        flat.alternates = []
-                        return flat
+            let selectedLanguage = AppLanguage.resolve(
+                UserDefaults.standard.string(forKey: AppLanguage.storageKey)
+                    ?? AppLanguage.system.rawValue)
+            let toolCallLabel = String(
+                localized: "Incomplete tool call, not executed",
+                bundle: .module,
+                locale: selectedLanguage.locale)
+            let previousRetries = recoveryRetryAttempt ?? 0
+
+            var preservation: InterruptedStreamPreservation?
+            if let index = chats.firstIndex(where: { $0.id == targetID }), chats[index].isGhost {
+                mutateGhostPayload(for: targetID) { payload in
+                    preservation = AppStreamRecovery.preserveInterruptedOutput(
+                        into: &payload.messages,
+                        content: self.outputText,
+                        reasoning: self.outputReasoningText,
+                        stopReason: reason,
+                        continuationsUsed: continuationsUsed,
+                        retriesUsed: previousRetries,
+                        alternates: parkedVariants,
+                        toolCallLabel: toolCallLabel)
+                    if let preservation {
+                        payload.recoveryAnchor = preservation.anchor
                     }
                 }
-                $0.append(message)
+            } else if let index = chats.firstIndex(where: { $0.id == targetID }) {
+                var messages = chats[index].messages
+                preservation = AppStreamRecovery.preserveInterruptedOutput(
+                    into: &messages,
+                    content: outputText,
+                    reasoning: outputReasoningText,
+                    stopReason: reason,
+                    continuationsUsed: continuationsUsed,
+                    retriesUsed: previousRetries,
+                    alternates: parkedVariants,
+                    toolCallLabel: toolCallLabel)
+                if let preservation {
+                    chats[index].messages = messages
+                    chats[index].recoveryAnchor = preservation.anchor
+                    chats[index].updatedAt = Date()
+                    persistChats()
+                }
+            }
+            if let preservation {
+                self.streamRecoveryEvents[targetID, default: []].append(contentsOf: preservation.events)
             }
             outputText = ""
             outputReasoningText = ""
+        } else if recoveryRetryAttempt != nil {
+            // A retry can fail before yielding any text. Restore its parked
+            // interrupted row and advance the anchor so empty failures still
+            // consume one of the bounded recovery attempts.
+            let parkedVariants = pendingResponseVariants.removeValue(forKey: targetID) ?? []
+            if let interrupted = parkedVariants.first {
+                var updatedAnchor: RecoveryAnchor?
+                mutateRecoveryState(for: targetID) { messages, anchor in
+                    let retainedMessageCount = messages.count
+                    if !messages.contains(where: { $0.id == interrupted.id }) {
+                        messages.append(interrupted)
+                    }
+                    updatedAnchor = AppStreamRecovery.anchor(
+                        retainedMessageCount: retainedMessageCount,
+                        messageID: interrupted.id,
+                        persistedRowContent: interrupted.content,
+                        continuationsUsed: anchor?.continuationsUsed ?? 0,
+                        retriesUsed: recoveryRetryAttempt ?? 0)
+                    anchor = updatedAnchor
+                }
+                if let updatedAnchor {
+                    streamRecoveryEvents[targetID, default: []].append(.anchorRecorded(updatedAnchor))
+                }
+            }
         }
         // `Stop` fires for observability even on a cancelled or errored
         // turn, but its block-and-continue capability does not apply here

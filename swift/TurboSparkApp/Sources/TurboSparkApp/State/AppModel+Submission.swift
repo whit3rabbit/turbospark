@@ -155,6 +155,7 @@ extension AppModel {
             // Retry/Edit park response variants immediately before their own
             // turn; an ordinary submission must never inherit a stale one.
             self.pendingResponseVariants[submissionChatID] = nil
+            self.pendingRecoveryRetryCounts[submissionChatID] = nil
 
             // **`@path` MENTIONS RESOLVE FIRST**, before the attachments are
             // read and before the hook: each resolvable token becomes an
@@ -316,16 +317,6 @@ extension AppModel {
                 contentForModel += "\n\n<hook_context>\n\(context)\n</hook_context>"
             }
 
-            // Auto-title from the draft -- REAL chats only. A ghost chat
-            // keeps its fixed title: the title is derived from the prompt,
-            // and the row's title field is as in-memory as everything else,
-            // but a stable "Temporary Chat" is what the sidebar promises.
-            if !self.chats[chatIndex].isGhost,
-                (self.chats[chatIndex].title == "New Chat" || self.chats[chatIndex].title.isEmpty),
-                !userDraft.isEmpty {
-                self.chats[chatIndex].title = String(userDraft.prefix(40)).replacingOccurrences(of: "\n", with: " ")
-            }
-
             // Append user turn. Ghost chats seal the message into the vault
             // instead of the row; the ordinary path persists inside the
             // helper, exactly once, as before.
@@ -341,7 +332,12 @@ extension AppModel {
                 imagePaths: promptImages.compactMap {
                     if case .path(let p) = $0 { return p } else { return nil }
                 })
-            self.mutateTurnMessages(for: submissionChatID) { $0.append(userMessage) }
+            self.recordTitleGenerationAttempt(
+                chatID: submissionChatID, firstUserMessage: userMessage.content)
+            self.mutateRecoveryState(for: submissionChatID) { messages, anchor in
+                messages.append(userMessage)
+                anchor = nil
+            }
 
             self.executeGenerationTurn(step: 0, chatID: submissionChatID)
         }

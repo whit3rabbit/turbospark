@@ -82,6 +82,27 @@ extension AppToolRegistry {
     /// from prompt construction so stale or forged calls cannot bypass it.
     public static var webToolsEnabledProvider: (@Sendable @MainActor () -> Bool)?
 
+    /// Current browser automation runtime. The provider resolves the active
+    /// tab, backend manifest, and call-scoped permission context on MainActor.
+    public static var browserToolRuntimeProvider: (
+        @Sendable @MainActor (AppToolCall, AppProject?) -> BrowserToolRuntime?
+    )?
+
+    /// The current feature, WebKit manifest, and model media contract for catalog construction.
+    public static var browserToolAvailabilityProvider: (
+        @Sendable @MainActor () -> BrowserToolAvailability
+    )?
+
+    /// Checks a user approval scoped to one browser call, project, and origin.
+    public static var browserActionApprovalProvider: (
+        @Sendable @MainActor (AppToolCall, AppProject?, BrowserOrigin) -> Bool
+    )?
+
+    /// Isolated managed storage for browser media-path integration tests. Nil uses the active profile store.
+    static var browserScreenshotAssetStoreProvider: (
+        @Sendable @MainActor () -> ManagedAssetStore?
+    )?
+
     /// Progress sink for subagent runs, keyed by a host-chosen run key (a
     /// tool-call UUID for a foreground run, a `bga_N` id for a background
     /// one). The app installs one at startup, which routes the events into
@@ -161,6 +182,8 @@ extension AppToolRegistry {
         "exitworktree", "exit_worktree",
         "memory", "remember",
         "tool_search", "tool_describe", "tool_call",
+        "browser_navigate", "browser_click", "browser_type", "browser_press_key",
+        "browser_scroll", "browser_screenshot", "browser_snapshot", "browser_wait",
         "call_mcp_tool", "callmcptool", "mcp_tool",
         "listmcpresources", "list_mcp_resources", "list_resources",
         "readmcpresource", "read_mcp_resource", "read_resource"

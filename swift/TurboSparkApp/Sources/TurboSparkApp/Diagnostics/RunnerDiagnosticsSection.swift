@@ -3,6 +3,7 @@ import SwiftUI
 /// Diagnostics inspector section presenting prefill/decode timing, token counts, tok/s speed, and GPU phase breakdown.
 struct RunnerDiagnosticsSection: View {
     let diagnostics: AppDiagnostics?
+    var recoveryEvents: [StreamRecoveryEvent] = []
 
     var body: some View {
         Section(header: Text("Last run", bundle: .module)) {
@@ -11,6 +12,11 @@ struct RunnerDiagnosticsSection: View {
                 DiagnosticRow("Prompt tokens", "\(diagnostics.promptTokens)")
                 DiagnosticRow("Output tokens", "\(diagnostics.generatedTokens)")
                 DiagnosticRow("Stop reason", diagnostics.stopReason.rawValue)
+                if let event = diagnostics.compactionBoundaryEvent {
+                    ForEach(Self.compactionBoundaryRows(for: event), id: \.label) { row in
+                        DiagnosticRow(row.label, row.value)
+                    }
+                }
 
                 groupLabel("Performance")
                 DiagnosticRow("Prefill time", MetricFormat.seconds(diagnostics.prefillSeconds))
@@ -32,11 +38,17 @@ struct RunnerDiagnosticsSection: View {
                         DiagnosticRow("Expert cache hit", String(format: "%.1f%%", hitRate * 100))
                     }
                 }
-
             } else {
                 Text("No runs yet", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.tertiary)
+            }
+
+            if !recoveryEvents.isEmpty {
+                localizedGroupLabel("Recovery events")
+                ForEach(Array(recoveryEvents.enumerated()), id: \.offset) { entry in
+                    StreamRecoveryEventNoticeView(event: entry.element, occurrence: entry.offset)
+                }
             }
         }
     }
@@ -48,6 +60,30 @@ struct RunnerDiagnosticsSection: View {
             .foregroundStyle(.tertiary)
             .accessibilityHeading(.h3)
     }
+
+    private func localizedGroupLabel(_ title: LocalizedStringKey) -> some View {
+        Text(title, bundle: .module)
+            .themedFont(.small)
+            .textCase(.uppercase)
+            .foregroundStyle(.tertiary)
+            .accessibilityHeading(.h3)
+    }
+
+    static func compactionBoundaryRows(for event: CompactionBoundaryEvent) -> [RunnerDiagnosticValue] {
+        [
+            RunnerDiagnosticValue(
+                label: String(localized: "Rows shortened", bundle: .module),
+                value: "\(event.rowsCleared)"),
+            RunnerDiagnosticValue(
+                label: String(localized: "Estimated tokens saved", bundle: .module),
+                value: "\(event.estimatedTokensSaved)"),
+        ]
+    }
+}
+
+struct RunnerDiagnosticValue: Equatable {
+    let label: String
+    let value: String
 }
 
 private struct DiagnosticRow: View {

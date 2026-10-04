@@ -24,7 +24,9 @@ struct InspectorView: View {
                 // which an extension property on InspectorView cannot hold.
                 GenerationSamplingSection(model: model)
                 telemetrySection
-                RunnerDiagnosticsSection(diagnostics: model.diagnostics)
+                RunnerDiagnosticsSection(
+                    diagnostics: model.diagnostics,
+                    recoveryEvents: model.streamRecoveryEvents[model.selectedChatID] ?? [])
                 usageDashboardSection
             }
             .formStyle(.grouped)

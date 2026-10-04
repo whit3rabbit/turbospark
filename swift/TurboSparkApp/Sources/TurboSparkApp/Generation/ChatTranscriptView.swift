@@ -17,6 +17,10 @@ struct ChatTranscriptView: View {
         Dictionary(uniqueKeysWithValues: model.selectedTurnMessages.map { ($0.id, $0) })
     }
 
+    private var selectedRecoveryEvents: [StreamRecoveryEvent] {
+        model.streamRecoveryEvents[model.selectedChatID] ?? []
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -34,6 +38,16 @@ struct ChatTranscriptView: View {
                     ForEach(turns, id: \.offset) { index, turn in
                         if index > 0 { ConversationDivider().padding(.vertical, 8) }
                         turnRows(turn, byID: byID)
+                    }
+
+                    if let event = model.selectedCompactionBoundaryEvent {
+                        CompactionBoundaryNoticeView(event: event)
+                            .id(event.id)
+                    }
+
+                    ForEach(Array(selectedRecoveryEvents.enumerated()), id: \.offset) { entry in
+                        StreamRecoveryEventNoticeView(event: entry.element, occurrence: entry.offset)
+                            .id("recovery-\(model.selectedChatID.uuidString)-\(entry.offset)")
                     }
 
                     NewChatSuggestionBanner(model: model)
@@ -86,6 +100,17 @@ struct ChatTranscriptView: View {
             }
             .onChange(of: model.outputReasoningText) {
                 if model.isRunning {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+            .onChange(of: model.selectedCompactionBoundaryEvent) { _, event in
+                if event != nil {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+            .onChange(of: selectedRecoveryEvents) { _, events in
+                guard !events.isEmpty else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -155,6 +180,24 @@ struct ChatTranscriptView: View {
             }
         }
         .padding(.bottom, 8)
+    }
+}
+
+private struct CompactionBoundaryNoticeView: View {
+    let event: CompactionBoundaryEvent
+
+    var body: some View {
+        Label {
+            Text("Some older tool output was shortened for this request.", bundle: .module)
+        } icon: {
+            Image(systemName: "info.circle")
+        }
+        .foregroundStyle(.secondary)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("microcompact-boundary-notice-\(event.id.uuidString)")
     }
 }
 

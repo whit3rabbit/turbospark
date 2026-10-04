@@ -281,7 +281,8 @@ extension AppModel {
         let baseDecision = AppToolPermissionEngine.evaluate(
             call: call, project: decisionProject, sessionApproved: sessionApproved,
             fallbackMode: self.activePermissionMode,
-            globalServers: self.globalMcpServers)
+            globalServers: self.globalMcpServers,
+            browserContext: browserPermissionContext(for: call, project: decisionProject))
         let decision: ToolPermissionDecision
         if case .deny = baseDecision {
             // A mutation policy refusal remains absolute. Validation cannot
@@ -655,7 +656,8 @@ extension AppModel {
                 command: updated.shellCommand)
             let decision = AppToolPermissionEngine.evaluate(
                 call: updated, project: project, sessionApproved: sessionApproved,
-                fallbackMode: activePermissionMode, globalServers: globalMcpServers)
+                fallbackMode: activePermissionMode, globalServers: globalMcpServers,
+                browserContext: browserPermissionContext(for: updated, project: project))
             switch decision {
             case .deny(let reason):
                 denied.append((updated, reason, true))

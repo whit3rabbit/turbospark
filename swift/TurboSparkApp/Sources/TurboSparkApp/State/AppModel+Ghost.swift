@@ -53,6 +53,16 @@ extension AppModel {
         return chats[index].messages
     }
 
+    /// Reads the recovery anchor from the persisted chat row or sealed ghost
+    /// payload.
+    func recoveryAnchor(for chatID: UUID) -> RecoveryAnchor? {
+        guard let index = chats.firstIndex(where: { $0.id == chatID }) else { return nil }
+        if chats[index].isGhost {
+            return ghostVault.payload(for: chatID).recoveryAnchor
+        }
+        return chats[index].recoveryAnchor
+    }
+
     /// Messages of the selected chat, vault-aware. What transcript views read.
     public var selectedTurnMessages: [AppChatMessage] {
         turnMessages(for: selectedChatID)
@@ -121,6 +131,32 @@ extension AppModel {
             mutateGhostPayload(for: chatID) { change(&$0.messages) }
         } else {
             change(&chats[index].messages)
+            chats[index].updatedAt = Date()
+            persistChats()
+        }
+    }
+
+    /// Updates transcript rows and their recovery anchor as one persistence
+    /// operation, including the encrypted payload path for ghost chats.
+    func mutateRecoveryState(
+        for chatID: UUID,
+        _ change: (inout [AppChatMessage], inout RecoveryAnchor?) -> Void
+    ) {
+        guard let index = chats.firstIndex(where: { $0.id == chatID }) else { return }
+        if chats[index].isGhost {
+            mutateGhostPayload(for: chatID) { payload in
+                var messages = payload.messages
+                var anchor = payload.recoveryAnchor
+                change(&messages, &anchor)
+                payload.messages = messages
+                payload.recoveryAnchor = anchor
+            }
+        } else {
+            var messages = chats[index].messages
+            var anchor = chats[index].recoveryAnchor
+            change(&messages, &anchor)
+            chats[index].messages = messages
+            chats[index].recoveryAnchor = anchor
             chats[index].updatedAt = Date()
             persistChats()
         }

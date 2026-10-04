@@ -90,6 +90,9 @@ struct TopBarView: View {
                     }
                 }
                 unloadButton
+                if model.browserSettings.enabled && model.activeSection != .images {
+                    browserToggle
+                }
                 if model.activeSection != .images {
                     inspectorToggle
                 }
@@ -159,6 +162,27 @@ struct TopBarView: View {
         .accessibilityLabel(presentation.title)
         .accessibilityHint(presentation.help)
         .accessibilityValue(presentation.accessibilityValue)
+    }
+
+    private var browserToggle: some View {
+        Button {
+            model.setBrowserPaneOpen(!model.browserPaneIsOpen)
+        } label: {
+            Image(systemName: "globe")
+                .font(theme.ui(.callout, weight: .medium))
+                .frame(width: buttonSize, height: buttonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(TSPressScaleStyle(scale: 0.9))
+        .foregroundStyle(model.browserPaneIsOpen ? theme.accent : Color.secondary)
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(model.browserPaneIsOpen ? theme.accent.opacity(0.14) : .clear)
+        }
+        .animation(TSMotion.hover, value: model.browserPaneIsOpen)
+        .help(Text("Browser", bundle: .module))
+        .accessibilityLabel(Text("Browser", bundle: .module))
+        .accessibilityAddTraits(model.browserPaneIsOpen ? .isSelected : [])
     }
 
     private func gitPill(worktree: WorktreeModel) -> some View {

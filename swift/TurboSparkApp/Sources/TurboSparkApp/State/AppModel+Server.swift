@@ -409,6 +409,15 @@ extension AppModel {
 
     private func ingestServerEvents(_ batch: ServerEventBatch) {
         guard !batch.events.isEmpty || batch.dropped > 0 else { return }
+        var detachedModel = false
+        for event in batch.events {
+            guard let id = Self.detachedServerModelID(from: event) else { continue }
+            releaseServerAttachment(id: id, refresh: false)
+            detachedModel = true
+        }
+        if detachedModel {
+            refreshServerInfo()
+        }
         serverMetrics.ingest(batch)
         serverEventLog.append(contentsOf: batch.events)
         // The console's own window. Bounded for the reason the metrics store

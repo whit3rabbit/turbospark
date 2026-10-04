@@ -262,6 +262,16 @@ struct MessageRowView: View {
         model.canBranch(message)
     }
 
+    private var standingInstructionAction: (() -> Void)? {
+        guard AppChatInstructionPin.canPin(message) else { return nil }
+        return {
+            model.setMessageStandingInstruction(
+                id: message.id,
+                pinned: !message.isStandingInstruction,
+                chatID: model.selectedChatID)
+        }
+    }
+
     private var transcriptPresentation: MidTurnTranscriptRowPresentation {
         MidTurnTranscriptRowPresentation(message: message)
     }
@@ -386,6 +396,8 @@ struct MessageRowView: View {
                         branchAction: canBranchThis
                             ? { branchTarget = AppModel.BranchTarget(id: message.id, originalText: message.content) }
                             : nil,
+                        standingInstructionAction: standingInstructionAction,
+                        isStandingInstruction: message.isStandingInstruction,
                         actionsDisabled: model.isRunning
                     )
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -448,6 +460,8 @@ struct MessageRowView: View {
                         text: message.content,
                         messageID: message.id,
                         date: message.createdAt,
+                        standingInstructionAction: standingInstructionAction,
+                        isStandingInstruction: message.isStandingInstruction,
                         actionsDisabled: model.isRunning
                     )
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))

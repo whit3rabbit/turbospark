@@ -35,7 +35,8 @@ public enum MessageTimestampFormatter {
         }
 
         let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
+        // Keep short elapsed times relative even when they cross local midnight.
+        if interval < 24 * 60 * 60 {
             let minutes = max(1, Int(round(interval / 60.0)))
             if minutes < 60 {
                 return minutes == 1 ? "1 minute ago" : "\(minutes) minutes ago"
@@ -83,4 +84,3 @@ public enum MessageTimestampFormatter {
         return "\(days)d"
     }
 }
-

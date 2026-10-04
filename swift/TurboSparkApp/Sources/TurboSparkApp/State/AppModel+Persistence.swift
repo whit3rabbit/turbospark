@@ -95,6 +95,7 @@ extension AppModel {
         self.guardrailsMode = AppGuardrailsMode(rawValue: settings.guardrailsMode) ?? .select
         self.modelReasoningDefaults = settings.modelReasoningDefaults
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
+        self.browserSettings = settings.browser
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
         self.autoCompactEnabled = settings.autoCompact
         self.actionFusionEnabled = settings.actionFusion
@@ -267,7 +268,8 @@ extension AppModel {
             memoryEnabled: memoryEnabled,
             memoryEmbeddingModel: memoryEmbeddingModel,
             agentModeHints: agentModeHints,
-            syntextIndexingEnabled: syntextIndexingEnabled
+            syntextIndexingEnabled: syntextIndexingEnabled,
+            browser: browserSettings
         )
         // The API key follows its own storage: Keychain, written only when
         // the field changed, so a persist of unrelated settings does not

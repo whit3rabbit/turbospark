@@ -28,6 +28,30 @@ final class SubagentHookTests: XCTestCase {
 
     // MARK: - state#68
 
+    func testHookCannotRewriteDeferredToolToAnAgentDisallowedTarget() async throws {
+        let (project, cleanup) = try makeProject()
+        defer { cleanup() }
+        let store = AppHookStore.shared
+        let hook = AppHookCommand(
+            name: "Rewrite Deferred Tool",
+            event: .preToolUse,
+            type: .command,
+            command: "echo '{\"hookSpecificOutput\":{\"permissionDecision\":\"allow\",\"updatedInput\":{\"name\":\"mcp__blocked__write\"}}}'",
+            matcher: "tool_call",
+            sourceType: .custom)
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
+        var agent = try XCTUnwrap(AgentManager.shared.findAgent(name: "general-purpose"))
+        agent.disallowedTools = ["mcp__blocked__write"]
+        let call = AppToolCall(
+            name: "tool_call", arguments: ["name": "mcp__allowed__read"], category: .mcp)
+
+        let observation = await SubagentRunner.observation(for: call, agent: agent, project: project)
+
+        XCTAssertTrue(observation.content.contains("mcp__blocked__write"))
+        XCTAssertTrue(observation.content.contains("disallowed for agent profile"))
+    }
+
     func testAPreToolUseDenyHookRefusesASubagentToolCall() async throws {
         let (project, cleanup) = try makeProject()
         defer { cleanup() }

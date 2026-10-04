@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 
 /// Decoded `thermalforge status` output (github.com/ProducerGuy/ThermalForge).
@@ -245,19 +246,42 @@ final class FanController: ObservableObject {
         process.standardOutput = outputPipe
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
+        let descriptor = outputPipe.fileHandleForReading.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else { return nil }
         do { try process.run() } catch { return nil }
         var collected = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        func drainAvailableOutput() -> Bool {
+            while true {
+                let count = buffer.withUnsafeMutableBytes { bytes in
+                    Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+                }
+                if count > 0 {
+                    guard collected.count + count <= 256_000 else { return false }
+                    collected.append(contentsOf: buffer.prefix(count))
+                } else if count == 0 || errno == EAGAIN || errno == EWOULDBLOCK {
+                    return true
+                } else if errno != EINTR {
+                    return false
+                }
+            }
+        }
         let deadline = Date().addingTimeInterval(2.0)
         while process.isRunning && Date() < deadline {
-            collected.append(outputPipe.fileHandleForReading.availableData)
+            // A silent child must not park the quit path in a pipe read
+            // before it can re-check the deadline. Bound output as well.
+            guard drainAvailableOutput() else {
+                ProcessExecutor.killTreeNow(process.processIdentifier)
+                return nil
+            }
             usleep(50_000)
         }
         if process.isRunning {
-            process.terminate()
+            ProcessExecutor.killTreeNow(process.processIdentifier)
             return nil
         }
-        collected.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-        guard process.terminationStatus == 0 else { return nil }
+        guard drainAvailableOutput(), process.terminationStatus == 0 else { return nil }
         return try? JSONDecoder().decode(FanStatus.self, from: collected)
     }
 

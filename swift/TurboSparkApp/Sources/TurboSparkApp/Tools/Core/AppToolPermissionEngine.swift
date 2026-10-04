@@ -201,7 +201,7 @@ public enum AppToolPermissionEngine {
                 return .deny(reason: "The Browser Automation category is denied by project permissions.")
             }
 
-            if risk.isHighRisk {
+            if risk.isHighRisk, !(browserContext?.currentActionApproved ?? false) {
                 let reason = risk.reasons.isEmpty
                     ? "High-risk browser action requires confirmation."
                     : risk.reasons.joined(separator: "; ")

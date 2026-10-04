@@ -16,6 +16,62 @@ struct ToolCallDispatchGateResult: Equatable {
     let retryNudge: String?
 }
 
+/// The only outcomes a generation loop may act on after authorization. A
+/// terminal retry is prose, so its parsed calls cannot reach an executor.
+enum ToolCallDispatchResolution: Equatable {
+    case retry(nudge: String, assistantContent: String)
+    case finishProse(content: String)
+    case dispatch(calls: [AppToolCall], content: String)
+
+    enum HandlingResult: Equatable {
+        case retried
+        case finishedProse
+        case dispatched
+    }
+
+    static func resolve(
+        gateResult: ToolCallDispatchGateResult,
+        originalContent: String,
+        completedAttempts: Int,
+        maximumAttempts: Int
+    ) -> ToolCallDispatchResolution {
+        if let nudge = gateResult.retryNudge {
+            guard !nudge.isEmpty, completedAttempts < maximumAttempts else {
+                return .finishProse(content: originalContent)
+            }
+            return .retry(nudge: nudge, assistantContent: originalContent)
+        }
+
+        guard !gateResult.dispatchableCalls.isEmpty else {
+            return .finishProse(content: gateResult.preservedContent)
+        }
+        return .dispatch(
+            calls: gateResult.dispatchableCalls,
+            content: gateResult.preservedContent)
+    }
+
+    /// Routes exactly one authorized outcome to its matching loop callback.
+    /// In particular, prose completion has no path to the executor callback.
+    static func handle(
+        _ resolution: ToolCallDispatchResolution,
+        retry: (String, String) async -> Void,
+        finishProse: (String) async -> Void,
+        dispatch: ([AppToolCall], String) async -> Void
+    ) async -> HandlingResult {
+        switch resolution {
+        case .retry(let nudge, let assistantContent):
+            await retry(nudge, assistantContent)
+            return .retried
+        case .finishProse(let content):
+            await finishProse(content)
+            return .finishedProse
+        case .dispatch(let calls, let content):
+            await dispatch(calls, content)
+            return .dispatched
+        }
+    }
+}
+
 enum ToolCallDispatchGate {
     static func evaluate(
         content: String,

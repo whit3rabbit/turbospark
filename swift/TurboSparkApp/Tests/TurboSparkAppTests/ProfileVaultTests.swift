@@ -313,6 +313,62 @@ final class ProfileVaultTests: XCTestCase {
             Set(["manifest.json", "checksums.sha256"]))
     }
 
+    func testToolMediaAssetRoundTripsWithChatAndReconcilesReferences() throws {
+        let store = makeStore(id: "tool-media")
+        let session = try XCTUnwrap(try store.prepareForLaunch())
+        let assets = ManagedAssetStore(vault: store)
+        let bytes = try AppToolMediaPNGFixture.make(width: 160, height: 90, noisy: false)
+        let outcome = AppToolMediaPolicy.storeScreenshot(
+            pngData: bytes,
+            capability: .imageBearingToolResults(),
+            assetStore: assets)
+        XCTAssertEqual(outcome.disposition, .kept)
+        let reference = try XCTUnwrap(outcome.reference)
+        let descriptor = try XCTUnwrap(assets.descriptor(for: reference.assetReference))
+        let duplicate = try assets.store(
+            data: bytes,
+            fileName: "browser-screenshot.png",
+            mimeType: "image/png")
+        XCTAssertEqual(duplicate.id, descriptor.id)
+        let result = AppToolResult(
+            callID: UUID(),
+            output: "Captured browser screenshot \(reference.pixelWidth)x\(reference.pixelHeight).",
+            mediaReferences: [reference],
+            mediaDisposition: .kept)
+        let chat = AppChat(
+            title: "Media result",
+            messages: [AppChatMessage(role: .assistant, content: "", toolResults: [result])])
+        let repository = ProfileRepository(store: store)
+        try repository.saveChatArchive(AppChatArchive(selectedChatID: chat.id, chats: [chat]))
+
+        let loaded = try XCTUnwrap(repository.loadChatArchive())
+        let loadedResult = try XCTUnwrap(loaded.chats[0].messages[0].toolResults.first)
+        XCTAssertEqual(loadedResult.mediaReferences, [reference])
+        XCTAssertEqual(loadedResult.mediaDisposition, .kept)
+        XCTAssertEqual(
+            try assets.descriptor(for: reference.assetReference)?.byteCount,
+            Int64(bytes.count))
+        let metadata = try XCTUnwrap(
+            session.database.allAssetMetadata().first(where: { $0.id == descriptor.id }))
+        XCTAssertEqual(metadata.referenceCount, 1)
+    }
+
+    func testRefusedScreenshotCreatesNoManagedAssetOrReference() throws {
+        let store = makeStore(id: "refused-tool-media")
+        let session = try XCTUnwrap(try store.prepareForLaunch())
+        let assets = ManagedAssetStore(vault: store)
+        let before = try session.database.allAssetMetadata()
+
+        let outcome = AppToolMediaPolicy.storeScreenshot(
+            pngData: Data("invalid image".utf8),
+            capability: .imageBearingToolResults(),
+            assetStore: assets)
+
+        XCTAssertNil(outcome.reference)
+        XCTAssertEqual(outcome.disposition, .refused)
+        XCTAssertEqual(try session.database.allAssetMetadata(), before)
+    }
+
     private func makeStore(id: String) -> ProfileVaultStore {
         let vault = root.appendingPathComponent(id, isDirectory: true)
         return ProfileVaultStore(

@@ -22,6 +22,9 @@ struct MessageActionBarView: View {
     var branchAction: (() -> Void)? = nil
     /// Regenerates this response (the last prose reply).
     var retryAction: (() -> Void)? = nil
+    /// Pins an eligible user message as a standing instruction.
+    var standingInstructionAction: (() -> Void)? = nil
+    var isStandingInstruction: Bool = false
     /// Greyed while a turn runs; the model-side guards refuse anyway, this
     /// is the affordance half.
     var actionsDisabled: Bool = false
@@ -31,6 +34,38 @@ struct MessageActionBarView: View {
             if variantCount > 1, let variantStep {
                 MessageVariantSwitcherView(
                     position: variantPosition, count: variantCount, step: variantStep)
+            }
+
+            if let standingInstructionAction {
+                Button(action: standingInstructionAction) {
+                    HStack(spacing: 4) {
+                        Image(systemName: isStandingInstruction ? "pin.fill" : "pin")
+                            .themedFont(.tiny, weight: .medium)
+                            .accessibilityHidden(true)
+                        Text(
+                            isStandingInstruction ? "Unpin instruction" : "Pin instruction",
+                            bundle: .module)
+                            .themedFont(.tiny, weight: .medium)
+                    }
+                    .foregroundStyle(
+                        isStandingInstruction ? TurboSparkTheme.accentColor : Color.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(
+                        Color.primary.opacity(0.04),
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(actionsDisabled)
+                .opacity(actionsDisabled ? 0.4 : 1)
+                .help(Text(
+                    isStandingInstruction ? "Unpin instruction" : "Pin instruction",
+                    bundle: .module))
+                .accessibilityLabel(Text(
+                    isStandingInstruction ? "Unpin instruction" : "Pin instruction",
+                    bundle: .module))
+                .accessibilityIdentifier("message-standing-instruction-toggle")
             }
 
             MessageCopyButton(text: text)

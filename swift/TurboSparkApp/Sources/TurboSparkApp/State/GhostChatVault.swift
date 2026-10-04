@@ -9,6 +9,8 @@ import Foundation
 public struct GhostChatPayload: Codable, Equatable {
     /// Committed conversation message history.
     public var messages: [AppChatMessage]
+    /// Recovery point for the latest interrupted assistant message.
+    public var recoveryAnchor: RecoveryAnchor?
     /// Active task checklist for the session.
     public var todos: [TodoItem]
     /// Optional context summary or metadata.
@@ -29,6 +31,7 @@ public struct GhostChatPayload: Codable, Equatable {
 
     public init(
         messages: [AppChatMessage] = [],
+        recoveryAnchor: RecoveryAnchor? = nil,
         todos: [TodoItem] = [],
         contextSummary: String? = nil,
         compactedMessageCount: Int = 0,
@@ -38,6 +41,7 @@ public struct GhostChatPayload: Codable, Equatable {
         toolObservations: [UUID: GhostToolObservation] = [:]
     ) {
         self.messages = messages
+        self.recoveryAnchor = recoveryAnchor
         self.todos = todos
         self.contextSummary = contextSummary
         self.compactedMessageCount = compactedMessageCount

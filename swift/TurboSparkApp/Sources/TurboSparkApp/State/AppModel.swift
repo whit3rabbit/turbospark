@@ -217,6 +217,16 @@ public final class AppModel: ObservableObject {
 
     /// Current UI interaction mode (Chat vs Projects / Coding).
     @Published public var interactionMode: AppInteractionMode = .chat
+    /// Profile-scoped browser automation preferences.
+    @Published public var browserSettings = BrowserSettings()
+    /// Whether the browser side pane currently owns the shared right column.
+    @Published public var browserPaneIsOpen = false
+    public lazy var browserAutomationCoordinator = AppBrowserAutomationCoordinator(
+        authorizeNavigation: { [weak self] request in
+            guard let self else { return .deny }
+            return await self.authorizeBrowserNavigation(request)
+        }
+    )
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     @Published public var alwaysStartInGhostMode: Bool = false
     /// Whether older turns are summarized automatically as the prompt
@@ -238,6 +248,13 @@ public final class AppModel: ObservableObject {
     @Published public var microcompactMinimumSavingsTokens: Int = 512
     /// Maximum tokens of pinned instructions injected into a request; zero disables injection.
     @Published public var instructionPinTokenCeiling: Int = 512
+    /// Token-counted instructions for the current compacted prefix, keyed by chat.
+    /// Rebuilt with the active session tokenizer and never persisted as transcript state.
+    var instructionPinningCache: [UUID: AppChatInstructionPin.CacheEntry] = [:]
+    /// Test seams for exercising compaction triggers without a real model session.
+    var compactionSummaryOverride: (@MainActor ([ChatMessage], GenerateOptions) async -> String?)?
+    var compactionTokenCountOverride:
+        (@MainActor ([ChatMessage], GenerateOptions.Reasoning) async -> Int?)?
     /// Whether the model sees the auto-memory section and the `memory` tool
     /// (swift/docs/SWIFT_MEMORY.md). The `didSet` mirrors the value into
     /// `MemoryStore.shared`, the static surface `AppToolCatalog` and
@@ -306,6 +323,7 @@ public final class AppModel: ObservableObject {
 
     /// Currently pending tool call requiring user approval.
     @Published public var pendingToolCall: AppToolCall? = nil
+    let browserPermissionApprovalCoordinator = BrowserPermissionApprovalCoordinator()
     /// The chat the pending tool call was proposed in, captured at proposal
     /// time. Approving/denying appends to THIS chat, never to whatever
     /// `selectedChatID` happens to be when the user responds -- `generating`
@@ -476,14 +494,26 @@ public final class AppModel: ObservableObject {
     /// (`finishCancelled`). Both consumers REMOVE their entry; a turn that
     /// came back as tool calls drops it (variants describe a prose reply,
     /// and seeding one onto a chain of tool rows would swap content under
-    /// live tool cards); an ordinary submission clears it up front. Without
-    /// those three exits a stale entry would graft old text onto a turn it
-    /// was never written for.
+    /// live tool cards), except an anchored recovery retry carries its
+    /// partial response through the tool cycle to the next prose reply. An
+    /// ordinary submission clears it up front. Without those exits a stale
+    /// entry would graft old text onto a turn it was never written for.
     var pendingResponseVariants: [UUID: [AppChatMessage]] = [:]
+    /// Retry count for an anchored recovery attempt while it is in flight.
+    /// A later interrupted row persists this count in its recovery anchor.
+    var pendingRecoveryRetryCounts: [UUID: Int] = [:]
 
     // Multi-chat State
     /// All user chat conversations.
     @Published public var chats: [AppChat] = []
+    /// First-message title attempts waiting for the foreground session to idle.
+    var pendingTitleGenerations: [PendingAppTitleGeneration] = []
+    /// In-memory attempt tokens prevent an old sidecar result from claiming a renamed chat.
+    var pendingTitleGenerationTokens: [UUID: UUID] = [:]
+    /// The one auxiliary title call currently using the local session queue.
+    var titleGenerationTask: Task<Void, Never>?
+    /// Test seam for lifecycle behavior without opening a local model.
+    var titleGenerationEnqueueOverride: (@MainActor (String) async -> String?)?
     /// Unique identifier of the currently active chat conversation.
     ///
     /// `didSet` keeps `activeDraftChat`'s identity in step with every
@@ -566,6 +596,10 @@ public final class AppModel: ObservableObject {
     // Status & Diagnostics
     /// Diagnostics summary from the last generation run.
     @Published public var diagnostics: AppDiagnostics?
+    /// Request-only microcompact notices, kept out of transcript persistence.
+    @Published var compactionBoundaryEvents: [UUID: CompactionBoundaryEvent] = [:]
+    /// Typed stream-recovery events awaiting transcript and diagnostics presentation.
+    @Published var streamRecoveryEvents: [UUID: [StreamRecoveryEvent]] = [:]
     /// Estimated token count of the current prompt draft.
     @Published public var estimatedPromptTokens: Int = 0
     /// Per-component breakdown of what the context window holds. Nil until
@@ -846,6 +880,26 @@ public final class AppModel: ObservableObject {
         }
         AppToolRegistry.webToolsEnabledProvider = { [weak self] in
             self?.webSearchEnabled ?? true
+        }
+        AppToolRegistry.browserActionApprovalProvider = { [weak self] call, project, origin in
+            guard let self, let project else { return false }
+            return self.browserPermissionApprovalCoordinator.allowsOnce(
+                callID: call.id,
+                projectID: project.id,
+                origin: origin
+            )
+        }
+        AppToolRegistry.browserToolAvailabilityProvider = { [weak self] in
+            self?.browserToolAvailability() ?? .disabled
+        }
+        AppToolRegistry.browserToolRuntimeProvider = { [weak self] call, project in
+            guard let self, self.browserSettings.enabled else { return nil }
+            self.setBrowserPaneOpen(true)
+            return self.browserAutomationCoordinator.runtime(
+                for: call,
+                project: project,
+                availability: self.browserToolAvailability()
+            )
         }
         AppToolRegistry.subagentProgressSink = { [weak self] key, event in
             await self?.applySubagentEvent(key, event)

@@ -15,6 +15,7 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
     /// memory, opened by an explicit click on a "Preview" button.
     case htmlPreview(UUID)
     case filePreview(UUID)
+    case browser
     case inspector
     case projectSummary
 
@@ -40,11 +41,13 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
         htmlPreviewID: UUID? = nil,
         previewAttachmentID: UUID?,
         isInspectorVisible: Bool,
-        showProjectSummary: Bool = false
+        showProjectSummary: Bool = false,
+        showBrowserPane: Bool = false
     ) -> AppRightColumnClaimant {
         if let openArtifactID { return .artifact(openArtifactID) }
         if let htmlPreviewID { return .htmlPreview(htmlPreviewID) }
         if let previewAttachmentID { return .filePreview(previewAttachmentID) }
+        if showBrowserPane { return .browser }
         if isInspectorVisible { return .inspector }
         return showProjectSummary ? .projectSummary : .none
     }
@@ -60,18 +63,22 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
         return false
     }
 
+    public var isBrowserPane: Bool { self == .browser }
+
     /// Whether ANY web/file preview the inspector shortcut must close before
     /// toggling. Both previews are explicit clicks; the shortcut closes what
     /// the user can see, whichever kind it is.
     public var isPreviewPane: Bool {
         switch self {
         case .artifact, .htmlPreview, .filePreview: return true
-        case .none, .inspector, .projectSummary: return false
+        case .none, .browser, .inspector, .projectSummary: return false
         }
     }
 }
 
 extension AppChromeLayout {
+    public static let browserPanelWidth: CGFloat = 460
+
     /// Wider than the inspector's 320 because this panel renders PROSE.
     ///
     /// A fenced code block wraps at 320 minus padding, which is the one thing
@@ -90,6 +97,7 @@ extension AppChromeLayout {
         switch claimant {
         case .none: return 0
         case .projectSummary: return ProjectChatSummary.width
+        case .browser: return browserPanelWidth
         case .artifact, .htmlPreview: return artifactPanelWidth
         case .filePreview: return inspectorWidth
         case .inspector: return inspectorWidth(isExpanded: isExpandedWorktree)

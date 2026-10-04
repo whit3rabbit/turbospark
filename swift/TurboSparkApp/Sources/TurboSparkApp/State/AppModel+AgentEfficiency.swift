@@ -10,6 +10,11 @@ extension AppModel {
         preMutationFingerprints: [ToolActionFusion.Fingerprint] = [],
         webToolsEnabled: Bool = true
     ) async -> (call: AppToolCall, result: AppToolResult, stopReason: String?) {
+        defer {
+            if call.category == .browser {
+                browserPermissionApprovalCoordinator.cancel(callID: call.id)
+            }
+        }
         var mutation = call
         var result = await AppToolRegistry.execute(
             call: mutation, in: project, chatID: chatID,

@@ -19,6 +19,10 @@ public enum AppToolCatalog {
     /// Web search and web fetching tools.
     public static let webTools: [OpenAITool] = WebToolDefinitions.all + CodeSearchToolDefinitions.all
 
+    /// Browser tools are present only when the active feature, backend
+    /// manifest, and provider media contract support each command.
+    public static var browserTools: [OpenAITool] { BrowserToolDefinitions.all }
+
     /// Project documentation, artifacts, and worktree tools.
     public static let projectArtifactTools: [OpenAITool] = ProjectDocDefinitions.all + ArtifactWorktreeDefinitions.all
 
@@ -54,6 +58,13 @@ public enum AppToolCatalog {
     /// `execute`) before removing it from this filter.
     /// Full suite of all supported OpenAI tool definitions.
     public static var allTools: [OpenAITool] {
+        allTools(browserAvailability: .disabled)
+    }
+
+    /// Full catalog for a specific browser backend snapshot.
+    public static func allTools(
+        browserAvailability: BrowserToolAvailability
+    ) -> [OpenAITool] {
         var tools: [OpenAITool] = []
         tools.append(contentsOf: fileTools)
         tools.append(contentsOf: terminalTools)
@@ -65,6 +76,7 @@ public enum AppToolCatalog {
         tools.append(contentsOf: memoryTools)
         tools.append(contentsOf: automationTools)
         tools.append(contentsOf: toolSearchTools)
+        tools.append(contentsOf: BrowserToolDefinitions.tools(availableFor: browserAvailability))
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: nil).map { $0.openAITool }
         tools.append(contentsOf: custom)
         return tools.filter { AppToolRegistry.isImplemented($0.function.name) }
@@ -76,7 +88,8 @@ public enum AppToolCatalog {
     /// nil keeps the 8,000-character default.
     public static func tools(
         for agentType: AppAgentType, projectURL: URL? = nil, contextTokens: Int? = nil,
-        webToolsEnabled: Bool = true
+        webToolsEnabled: Bool = true,
+        browserAvailability: BrowserToolAvailability = .disabled
     ) -> [OpenAITool] {
         var list: [OpenAITool]
         switch agentType {
@@ -103,7 +116,7 @@ public enum AppToolCatalog {
             list = l
 
         case .autonomous:
-            list = allTools
+            list = allTools(browserAvailability: browserAvailability)
 
         case .general, .custom:
             var l: [OpenAITool] = []
@@ -114,6 +127,10 @@ public enum AppToolCatalog {
             l.append(contentsOf: mcpTools)
             l.append(contentsOf: memoryTools)
             list = l
+        }
+
+        if agentType != .autonomous {
+            list.append(contentsOf: BrowserToolDefinitions.tools(availableFor: browserAvailability))
         }
 
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL).map { $0.openAITool }
@@ -155,6 +172,9 @@ public enum AppToolCatalog {
             return .terminal
         case "websearch", "web_search", "webfetch", "web_fetch", "fetch_url", "search_web", "read_url_content", "codesearch", "code_search", "http_request", "httprequest":
             return .web
+        case "browser_navigate", "browser_click", "browser_type", "browser_press_key",
+            "browser_scroll", "browser_screenshot", "browser_snapshot", "browser_wait":
+            return .browser
         case "batch", "schedule", "cron", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
             return .automation
         case "tool_call", "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource":
@@ -169,8 +189,11 @@ public enum AppToolCatalog {
     }
 
     /// Generates OpenAI-compatible tools JSON array payload.
-    public static func openAIFormattedToolsJSON(for agentType: AppAgentType = .coder) -> String {
-        let active = tools(for: agentType)
+    public static func openAIFormattedToolsJSON(
+        for agentType: AppAgentType = .coder,
+        browserAvailability: BrowserToolAvailability = .disabled
+    ) -> String {
+        let active = tools(for: agentType, browserAvailability: browserAvailability)
         return OpenAIToolSerializer.encodeJSONString(active)
     }
 
@@ -180,14 +203,16 @@ public enum AppToolCatalog {
         for project: AppProject?,
         globalMcpServers: [McpServerConfig],
         contextTokens: Int?,
-        webToolsEnabled: Bool
+        webToolsEnabled: Bool,
+        browserAvailability: BrowserToolAvailability = .disabled
     ) -> TurnAvailableTools {
         guard let project else { return TurnAvailableTools(definitions: []) }
         let promptDefinitions = tools(
             for: project.agentType,
             projectURL: project.rootDirectoryURL,
             contextTokens: contextTokens,
-            webToolsEnabled: webToolsEnabled)
+            webToolsEnabled: webToolsEnabled,
+            browserAvailability: browserAvailability)
         let visibleServers = AppToolCatalogMcp.visibleServers(
             global: globalMcpServers, project: project)
         let mcpSnapshot = AppToolCatalogMcp.catalogSnapshot(
@@ -218,11 +243,13 @@ public enum AppToolCatalog {
         contextTokens: Int? = nil,
         availableAgents: [(name: String, whenToUse: String)] = [],
         webToolsEnabled: Bool = true,
-        availableTools: TurnAvailableTools? = nil
+        availableTools: TurnAvailableTools? = nil,
+        browserAvailability: BrowserToolAvailability = .disabled
     ) -> String {
         let active = availableTools?.promptDefinitions ?? tools(
             for: agentType, projectURL: projectURL, contextTokens: contextTokens,
-            webToolsEnabled: webToolsEnabled)
+            webToolsEnabled: webToolsEnabled,
+            browserAvailability: browserAvailability)
         var lines: [String] = []
         lines.append("## Available Tools")
         lines.append("You have access to the following developer tools formatted in OpenAI function calling style:")
@@ -310,7 +337,8 @@ public enum AppToolCatalog {
         contextTokens: Int? = nil,
         availableAgents: [(name: String, whenToUse: String)] = [],
         webToolsEnabled: Bool = true,
-        availableTools: TurnAvailableTools? = nil
+        availableTools: TurnAvailableTools? = nil,
+        browserAvailability: BrowserToolAvailability = .disabled
     ) -> String {
         let base = systemPromptAddendum(
             for: agentType,
@@ -318,7 +346,8 @@ public enum AppToolCatalog {
             contextTokens: contextTokens,
             availableAgents: availableAgents,
             webToolsEnabled: webToolsEnabled,
-            availableTools: availableTools)
+            availableTools: availableTools,
+            browserAvailability: browserAvailability)
         let deferred = availableTools?.deferredMcpTools ?? ToolSearchCatalog.descriptors(
             servers: mcpServers, permissions: project?.permissions)
         guard !deferred.isEmpty else { return base }
