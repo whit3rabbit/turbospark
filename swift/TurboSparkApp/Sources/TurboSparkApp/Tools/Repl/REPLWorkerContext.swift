@@ -36,9 +36,18 @@ final class REPLWorkerContext: @unchecked Sendable {
     private var hasCreatedSession = false
     private let outcomeBox = REPLSettlementBox()
     private let limits: REPLLimits
+    private let fileChannel: any REPLFileRequestChannel
 
-    init(limits: REPLLimits = REPLLimits()) {
+    /// `fileChannel` is the bounded request channel for `repl.fs`. Omitting
+    /// it binds the fail-closed channel, so a worker created without an
+    /// app-side broker denies every file operation instead of reaching the
+    /// filesystem (5.5). The channel never carries a grant list.
+    init(
+        limits: REPLLimits = REPLLimits(),
+        fileChannel: (any REPLFileRequestChannel)? = nil
+    ) {
         self.limits = limits
+        self.fileChannel = fileChannel ?? REPLNoAccessFileChannel()
     }
 
     /// Deadline the lowered path waits for the wrapper promise to settle.
@@ -248,10 +257,11 @@ final class REPLWorkerContext: @unchecked Sendable {
         context.setObject(settled, forKeyedSubscript: "__turbosparkReplSettledBridge" as NSString)
         context.evaluateScript(Self.settleInstallationScript)
 
-        REPLHostFacade { [weak self] event in
+        let facade = REPLHostFacade { [weak self] event in
             self?.outputEvents.append(event)
         }
-        .installConsole(into: context)
+        facade.installConsole(into: context)
+        facade.installFileSystem(into: context, channel: fileChannel)
         context.exception = nil
         return context
     }
