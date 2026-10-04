@@ -154,53 +154,34 @@ public final class TurboSparkSession: @unchecked Sendable {
         _ messages: [ChatMessage],
         options: GenerateOptions = GenerateOptions()
     ) -> AsyncThrowingStream<GenerationEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let messagesJSON: String
-            let optionsJSON: String
-            do {
-                messagesJSON = try Self.encode(messages)
-                optionsJSON = try Self.encode(options)
-            } catch {
-                continuation.finish(throwing: error)
-                return
-            }
+        let messagesJSON: String
+        let optionsJSON: String
+        do {
+            messagesJSON = try Self.encode(messages)
+            optionsJSON = try Self.encode(options)
+        } catch {
+            return AsyncThrowingStream { $0.finish(throwing: error) }
+        }
 
-            // A dropped consumer must stop the model rather than leave it
-            // decoding into a stream nobody reads. `weak` deliberately: this
-            // handler must ASK the session to stop, never extend its life
-            // past the consumer that owns it.
-            continuation.onTermination = { [weak self] reason in
-                if case .cancelled = reason { self?.cancel() }
-            }
+        // The queued worker retains self until the C call returns. The
+        // request guard skips work cancelled before it starts and keeps
+        // active cancellation from spilling into another queued turn.
+        return QueuedGenerationStream.make(
+            queue: queue, cancelActive: { [weak self] in self?.cancel() }
+        ) { [self] continuation, didReceiveEvent in
+            let box = Box(continuation, didReceiveEvent: didReceiveEvent)
+            let userdata = Unmanaged.passRetained(box).toOpaque()
+            // Balanced on every path out, including the throwing one.
+            defer { Unmanaged<Box>.fromOpaque(userdata).release() }
 
-            // `self` is captured STRONGLY here and that is the whole reason
-            // `deinit` is safe. The C header forbids `ts_session_close` while
-            // `ts_generate` is in flight, so the session has to outlive the
-            // turn; nothing else in this function does that, since
-            // `onTermination` above is weak and the returned stream holds no
-            // reference back. Dropping `self` from this list compiles, passes
-            // every test, and reintroduces a use-after-free reachable by any
-            // caller that lets its session go while a turn is running.
-            queue.async { [self] in
-                let box = Box(continuation)
-                let userdata = Unmanaged.passRetained(box).toOpaque()
-                // Balanced on every path out, including the throwing one.
-                defer { Unmanaged<Box>.fromOpaque(userdata).release() }
-
-                do {
-                    let json = try takeString { out in
-                        messagesJSON.withCString { m in
-                            optionsJSON.withCString { o in
-                                ts_generate(self.handle.raw, m, o, streamCallback, userdata, out)
-                            }
-                        }
+            let json = try takeString { out in
+                messagesJSON.withCString { m in
+                    optionsJSON.withCString { o in
+                        ts_generate(self.handle.raw, m, o, streamCallback, userdata, out)
                     }
-                    continuation.yield(.finished(try decode(GenerationResult.self, from: json)))
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
                 }
             }
+            continuation.yield(.finished(try decode(GenerationResult.self, from: json)))
         }
     }
 
@@ -442,8 +423,13 @@ public final class TurboSparkSession: @unchecked Sendable {
 /// Carries the continuation across the C boundary as a `void *`.
 private final class Box {
     let continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation
-    init(_ continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) {
+    let didReceiveEvent: @Sendable () -> Void
+    init(
+        _ continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation,
+        didReceiveEvent: @escaping @Sendable () -> Void
+    ) {
         self.continuation = continuation
+        self.didReceiveEvent = didReceiveEvent
     }
 }
 
@@ -457,6 +443,7 @@ private let streamCallback: TsEventCallback = {
     // `takeUnretainedValue`: the retain is balanced by `generate`'s `defer`,
     // not per call.
     let box = Unmanaged<Box>.fromOpaque(userdata).takeUnretainedValue()
+    box.didReceiveEvent()
 
     switch kind {
     case TS_EVENT_PREFILL:
