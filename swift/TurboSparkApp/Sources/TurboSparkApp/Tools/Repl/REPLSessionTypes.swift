@@ -1,10 +1,11 @@
 import Foundation
 
-struct REPLLimits: Sendable, Equatable {
+struct REPLLimits: Sendable, Equatable, Codable {
     var defaultTimeout: TimeInterval
     var maximumTimeout: TimeInterval
     var maximumOutputCharacters: Int
     var maximumImageBytes: Int
+    var maximumRequestBytes: Int
     var footprintGrowthBudgetBytes: Int
 
     init(
@@ -12,27 +13,29 @@ struct REPLLimits: Sendable, Equatable {
         maximumTimeout: TimeInterval = 600,
         maximumOutputCharacters: Int = 30_000,
         maximumImageBytes: Int = 20 * 1_024 * 1_024,
+        maximumRequestBytes: Int = 1_024 * 1_024,
         footprintGrowthBudgetBytes: Int = 512 * 1_024 * 1_024
     ) {
         self.defaultTimeout = defaultTimeout
         self.maximumTimeout = maximumTimeout
         self.maximumOutputCharacters = maximumOutputCharacters
         self.maximumImageBytes = maximumImageBytes
+        self.maximumRequestBytes = maximumRequestBytes
         self.footprintGrowthBudgetBytes = footprintGrowthBudgetBytes
     }
 }
 
-struct REPLSessionConfiguration: Sendable, Equatable {
+struct REPLSessionConfiguration: Sendable, Equatable, Codable {
     var artifactDirectory: URL
 }
 
-struct REPLEmittedImage: Sendable, Equatable {
+struct REPLEmittedImage: Sendable, Equatable, Codable {
     var fileURL: URL
     var label: String?
 }
 
-struct REPLTextOutputEvent: Sendable, Equatable {
-    enum Level: String, Sendable {
+struct REPLTextOutputEvent: Sendable, Equatable, Codable {
+    enum Level: String, Sendable, Codable {
         case log
         case info
         case debug
@@ -44,8 +47,8 @@ struct REPLTextOutputEvent: Sendable, Equatable {
     var text: String
 }
 
-struct REPLCallResult: Sendable {
-    enum Status: String, Sendable {
+struct REPLCallResult: Sendable, Codable {
+    enum Status: String, Sendable, Codable {
         case completed
         case failed
         case parseError
