@@ -52,6 +52,15 @@ pub enum ModelError {
     TrustedReceiptInvalid {
         detail: String,
     },
+    /// A config document parsed but carries a field this loader cannot act
+    /// on -- an unsupported activation, a mel width the kernels lack, a
+    /// shape that does not divide. `field` names the config key and `why`
+    /// states the requirement, so the open path can refuse with an
+    /// actionable message instead of running a wrong forward.
+    BadConfig {
+        field: String,
+        why: String,
+    },
 }
 
 impl fmt::Display for ModelError {
@@ -110,6 +119,9 @@ impl fmt::Display for ModelError {
             ModelError::IoFailed { call, detail } => write!(f, "{call} failed: {detail}"),
             ModelError::TrustedReceiptInvalid { detail } => {
                 write!(f, "trusted install receipt invalid: {detail}")
+            }
+            ModelError::BadConfig { field, why } => {
+                write!(f, "config field `{field}` is unusable: {why}")
             }
         }
     }
