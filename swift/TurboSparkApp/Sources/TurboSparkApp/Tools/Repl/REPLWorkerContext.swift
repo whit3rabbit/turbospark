@@ -32,21 +32,34 @@ final class REPLWorkerContext: @unchecked Sendable {
     private var context: JSContext?
     private var completionRenderer: JSValue?
     private var outputEvents: [REPLTextOutputEvent] = []
+    private var emittedImages: [REPLEmittedImage] = []
     private var capturedException: String?
     private var hasCreatedSession = false
     private let outcomeBox = REPLSettlementBox()
     private let limits: REPLLimits
+    private let configuration: REPLSessionConfiguration
     private let fileChannel: any REPLFileRequestChannel
 
     /// `fileChannel` is the bounded request channel for `repl.fs`. Omitting
     /// it binds the fail-closed channel, so a worker created without an
     /// app-side broker denies every file operation instead of reaching the
     /// filesystem (5.5). The channel never carries a grant list.
+    ///
+    /// `configuration.artifactDirectory` receives the images scripts emit
+    /// through `repl.emitImage`. The default parks emissions under the
+    /// store root's "repl-artifacts" directory (redirected automatically
+    /// for test hosts by AppStorageRoot) until the tool wiring (task 5.x)
+    /// supplies the per-chat directory. Nothing constructs a REPL session
+    /// from the tool path before that wiring exists, so the subsystem is
+    /// inert without a feature flag.
     init(
         limits: REPLLimits = REPLLimits(),
+        configuration: REPLSessionConfiguration = REPLSessionConfiguration(
+            artifactDirectory: AppStorageRoot.subdirectory("repl-artifacts")),
         fileChannel: (any REPLFileRequestChannel)? = nil
     ) {
         self.limits = limits
+        self.configuration = configuration
         self.fileChannel = fileChannel ?? REPLNoAccessFileChannel()
     }
 
@@ -84,6 +97,7 @@ final class REPLWorkerContext: @unchecked Sendable {
     ) -> REPLCallResult {
         let sessionCreated = !hasCreatedSession
         outputEvents = []
+        emittedImages = []
         capturedException = nil
 
         guard let context = context ?? makeContext() else {
@@ -261,7 +275,18 @@ final class REPLWorkerContext: @unchecked Sendable {
             self?.outputEvents.append(event)
         }
         facade.installConsole(into: context)
-        facade.installFileSystem(into: context, channel: fileChannel)
+        // The capability bridges install first and the surface seals once,
+        // after every piece is present, because a sealed `repl` object can
+        // never be extended.
+        facade.installFileRequestBridge(into: context, channel: fileChannel)
+        facade.installImageEmitterBridge(
+            into: context,
+            config: configuration,
+            limits: limits
+        ) { [weak self] image in
+            self?.emittedImages.append(image)
+        }
+        facade.sealReplSurface(into: context)
         context.exception = nil
         return context
     }
@@ -299,7 +324,7 @@ final class REPLWorkerContext: @unchecked Sendable {
             consoleText: consoleText,
             errorText: combinedErrorText.isEmpty ? nil : combinedErrorText,
             completionText: completionText,
-            images: [],
+            images: emittedImages,
             truncated: compacted.truncated,
             sessionCreated: sessionCreated,
             sessionReset: false)
