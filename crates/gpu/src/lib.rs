@@ -124,6 +124,8 @@ mod ple;
 #[cfg(target_os = "macos")]
 mod power_state;
 #[cfg(target_os = "macos")]
+mod precompiled;
+#[cfg(target_os = "macos")]
 mod prefill_scratch;
 #[cfg(target_os = "macos")]
 mod qsa_indexer;
@@ -141,6 +143,10 @@ mod rope;
 mod utility;
 #[cfg(target_os = "macos")]
 mod vision;
+#[cfg(target_os = "macos")]
+mod warmup;
+#[cfg(target_os = "macos")]
+pub use warmup::{KernelWarmup, KernelWarmupPlan, KernelWarmupStats};
 
 #[cfg(target_os = "macos")]
 pub use attention_decode::{
@@ -164,7 +170,7 @@ pub use bytes::{read_f32_buffer, read_f32_buffer_at};
 pub use context::{
     autorelease_pool, dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,
     dispatch_threads_3d, read_buffer_bytes, read_buffer_f16, read_buffer_f16_into,
-    write_buffer_bytes, CommittedPass, GpuError, MetalContext, PassEncoder,
+    write_buffer_bytes, CommittedPass, GpuError, MetalCompilationStats, MetalContext, PassEncoder,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_1bit_gemm_batch::{dequant_int1_gemm_resident, encode_dequant_int1_gemm_resident};

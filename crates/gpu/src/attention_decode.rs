@@ -34,7 +34,7 @@ use crate::bytes::{f32_bytes, half_slice_to_le_bytes, read_half_buffer, u32_byte
 use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext, PassEncoder};
 use crate::prefill_scratch::BatchAttentionScratchLayout;
 
-pub(crate) const SOURCE: &str = include_str!("shaders/attention.metal");
+pub(crate) static SOURCE: &str = include_str!("shaders/attention.metal");
 const THREADS_PER_GROUP: u64 = 256; // kAttnThreads.
 
 /// Upper bound on the split-KV chunk count, and therefore on how many

@@ -17,13 +17,13 @@ use metal::{FunctionConstantValues, MTLDataType};
 use crate::bytes::{f32_bytes, half_slice_to_le_bytes, read_half_buffer, u32_bytes};
 use crate::context::{dispatch_threads_3d, GpuError, MetalContext, PassEncoder};
 
-const SOURCE: &str = include_str!("shaders/rope.metal");
+pub(crate) static SOURCE: &str = include_str!("shaders/rope.metal");
 
 /// `rope.metal`'s kernels declare function constants `FC_ROPE_HEAD_DIM`
 /// (50, uint), `FC_ROPE_NUM_HEADS` (51, uint), `FC_ROPE_ROTATED_PAIRS` (52,
 /// uint), and `FC_ROPE_USE_FC` (53, bool). Setting `FC_ROPE_USE_FC = false`
 /// keeps every kernel on its normal runtime-argument path.
-fn unused_function_constants() -> FunctionConstantValues {
+pub(crate) fn unused_function_constants() -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero: u32 = 0;
     let use_fc = false;

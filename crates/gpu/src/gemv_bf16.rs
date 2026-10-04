@@ -14,7 +14,7 @@ use metal::FunctionConstantValues;
 use crate::bytes::u32_bytes;
 use crate::context::{GpuError, MetalContext, PassEncoder};
 
-pub const SOURCE: &str = include_str!("shaders/gemv_bf16.metal");
+pub static SOURCE: &str = include_str!("shaders/gemv_bf16.metal");
 
 /// Threads per threadgroup, matched to the shader's `kBf16GemmThreads` and
 /// its `partial[]` sizing; widening one without the other overruns.

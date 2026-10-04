@@ -16,7 +16,7 @@ use crate::context::{
     MetalContext,
 };
 
-const SOURCE: &str = include_str!("shaders/dequant_int4.metal");
+pub(crate) static SOURCE: &str = include_str!("shaders/dequant_int4.metal");
 const THREADS_PER_GROUP: u64 = 256; // 8 rows/threadgroup * 32 lanes/SIMD group.
 const ROWS_PER_THREADGROUP: u64 = 8;
 
@@ -41,7 +41,7 @@ const ROWS_PER_THREADGROUP: u64 = 8;
 /// The unspecialized set, kept for `embed_lookup_int4`, which reads none
 /// of the GEMV's constants (a lookup has no M/N trip count to bake) but
 /// must still set every constant the source file declares.
-fn unused_function_constants() -> FunctionConstantValues {
+pub(crate) fn unused_function_constants() -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero: u32 = 0;
     let use_fc = false;
@@ -51,7 +51,7 @@ fn unused_function_constants() -> FunctionConstantValues {
     values
 }
 
-fn specialized_constants(m: u32, n: u32) -> (FunctionConstantValues, [u8; 8]) {
+pub(crate) fn specialized_constants(m: u32, n: u32) -> (FunctionConstantValues, [u8; 8]) {
     let values = FunctionConstantValues::new();
     let use_fc = true;
     values.set_constant_value_at_index((&m as *const u32).cast(), MTLDataType::UInt, 20);

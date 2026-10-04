@@ -18,7 +18,7 @@ use metal::{FunctionConstantValues, MTLDataType};
 use crate::bytes::{f32_bytes, half_slice_to_le_bytes, read_half_buffer, u32_bytes};
 use crate::context::{dispatch_one_threadgroup_per_row, GpuError, MetalContext, PassEncoder};
 
-const SOURCE: &str = include_str!("shaders/rmsnorm.metal");
+pub(crate) static SOURCE: &str = include_str!("shaders/rmsnorm.metal");
 const THREADS_PER_GROUP: u64 = 256;
 
 /// `rmsnorm.metal`'s kernels declare (but conditionally read) function
@@ -26,7 +26,7 @@ const THREADS_PER_GROUP: u64 = 256;
 /// bool). Setting `FC_RMS_USE_FC = false` keeps every kernel on its normal
 /// runtime-`D` path (see `MetalContext::pipeline`'s docs for why both must
 /// be specialized regardless).
-fn unused_function_constants() -> FunctionConstantValues {
+pub(crate) fn unused_function_constants() -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let d: u32 = 0;
     let use_fc = false;

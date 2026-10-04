@@ -35,7 +35,7 @@ use crate::dequant_int4_gemv::Int4ResidentMatrix;
 
 /// See the module doc: `dequant_int4.metal` FIRST, because `gdn.metal`
 /// calls into it.
-const SOURCE: &str = concat!(
+static SOURCE: &str = concat!(
     include_str!("shaders/dequant_int4.metal"),
     "\n",
     include_str!("shaders/gdn.metal")
@@ -84,7 +84,7 @@ fn gdn_function_constants() -> FunctionConstantValues {
     values
 }
 
-fn pipeline(
+pub(crate) fn pipeline(
     context: &mut MetalContext,
     name: &'static str,
 ) -> Result<metal::ComputePipelineState, GpuError> {
@@ -98,7 +98,7 @@ fn pipeline(
 /// this kernel reads its own 90-93 through `gdn_in_*`, not `int4_fc_*`.
 /// The KEY carries all four baked values, for the reason documented there:
 /// a shared key silently reuses the first-compiled shape's pipeline.
-fn in_proj_pipeline(
+pub(crate) fn in_proj_pipeline(
     context: &mut MetalContext,
     qkv_rows: u32,
     z_rows: u32,

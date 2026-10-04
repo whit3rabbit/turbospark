@@ -14,7 +14,7 @@ use metal::FunctionConstantValues;
 use crate::bytes::u32_bytes;
 use crate::context::{GpuError, MetalContext, PassEncoder};
 
-const SOURCE: &str = include_str!("shaders/utility.metal");
+pub(crate) static SOURCE: &str = include_str!("shaders/utility.metal");
 const THREADS_PER_GROUP: u64 = 256;
 
 fn grid_for(count: u32) -> u64 {

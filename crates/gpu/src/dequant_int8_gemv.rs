@@ -18,7 +18,7 @@ use crate::context::{
     MetalContext, PassEncoder,
 };
 
-const SOURCE: &str = include_str!("shaders/dequant_int8.metal");
+pub(crate) static SOURCE: &str = include_str!("shaders/dequant_int8.metal");
 const THREADS_PER_GROUP: u64 = 256; // 8 rows/threadgroup * 32 lanes/SIMD group.
 const ROWS_PER_THREADGROUP: u64 = 8;
 
@@ -27,7 +27,7 @@ const ROWS_PER_THREADGROUP: u64 = 8;
 /// `FC_INT8_USE_FC = false` keeps the kernel on its runtime M/N arguments.
 /// The sibling `shared_int8_gate_up_act_simd` kernel's own constants
 /// (73, 74) are not referenced by this one and need no specialization here.
-fn unused_function_constants() -> FunctionConstantValues {
+pub(crate) fn unused_function_constants() -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero: u32 = 0;
     let use_fc = false;

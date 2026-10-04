@@ -21,7 +21,7 @@ use metal::{FunctionConstantValues, MTLDataType, MTLResourceOptions};
 use crate::bytes::u32_bytes;
 use crate::context::{GpuError, MetalContext, PassEncoder};
 
-const SOURCE: &str = include_str!("shaders/moe.metal");
+static SOURCE: &str = include_str!("shaders/moe.metal");
 const ROWS_PER_THREADGROUP: u64 = 8;
 const THREADS_PER_GROUP: u64 = 256;
 

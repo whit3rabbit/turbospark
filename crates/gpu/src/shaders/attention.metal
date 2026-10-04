@@ -415,7 +415,7 @@ void attention_decode_batch_combine(
     if (row >= live_rows) { return; }
 
     const uint HD = head_dim;
-    const uint NC = max_chunks;
+    const uint NC = attn_fc_num_chunks(max_chunks);
     const uint head_index = row * num_q_heads + q_head;
     const uint state_base = head_index * NC;
     device const float* m_row = m_in + state_base;
