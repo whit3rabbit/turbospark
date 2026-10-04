@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreGraphics
 import Foundation
 import WebKit
 
@@ -153,7 +154,10 @@ public struct BrowserEngineTabState: Equatable, Sendable {
 public enum WebKitBrowserEngineError: Error, Equatable {
     case noRecoverableAddress
     case unavailableWebView
+    case screenshotUnavailable
 }
+
+typealias BrowserWebViewSnapshotter = @MainActor (WKWebView) async throws -> NSImage?
 
 public typealias BrowserNavigationAuthorizer = @MainActor (
     BrowserNavigationAuthorizationRequest
@@ -233,6 +237,7 @@ private final class ManagedBrowserTab {
     var observations: [NSKeyValueObservation] = []
     var snapshotService: DOMSnapshotService?
     var snapshotGeneration: UUID?
+    var screenshotRevision: UInt64 = 0
     var pendingResponseOrigins = Set<String>()
     var explicitNavigationURLs: [String: Int] = [:]
     var activeNavigationURL: String?
@@ -255,6 +260,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
     private let onUserTakeover: BrowserUserTakeoverHandler
     private let dialogPolicyProvider: BrowserDialogPolicyProvider
     private let dialogDecisionTimeout: TimeInterval
+    var screenshotSnapshotter: BrowserWebViewSnapshotter
     private var managedTabs: [BrowserTabID: ManagedBrowserTab] = [:]
     private var tabIDsByWebView: [ObjectIdentifier: BrowserTabID] = [:]
     private var pendingPolicyGates: [BrowserTabID: [UUID: BrowserNavigationPolicyGate]] = [:]
@@ -277,6 +283,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
             max(0, dialogDecisionTimeout.isFinite ? dialogDecisionTimeout : 60),
             60
         )
+        self.screenshotSnapshotter = Self.captureWebViewSnapshot
         super.init()
 
         for tab in tabStore.tabs {
@@ -301,6 +308,56 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         managedTabs[tabID]?.webView
     }
 
+    func snapshotService(for tabID: BrowserTabID) -> DOMSnapshotService? {
+        managedTabs[tabID]?.snapshotService
+    }
+
+    /// Captures the requested tab's current WebView viewport, including when another tab is
+    /// selected. Offscreen WebView hosting is checked on supported macOS hosts, not guaranteed
+    /// by WebKit's API contract.
+    public func captureScreenshot(for tabID: BrowserTabID) async throws -> NSImage {
+        guard let managedTab = managedTabs[tabID] else {
+            throw BrowserTabStoreError.tabNotFound(tabID)
+        }
+
+        let webView = managedTab.webView
+        for attempt in 0..<Self.maximumScreenshotCaptureAttempts {
+            try Task.checkCancellation()
+            guard managedTabs[tabID] === managedTab,
+                  managedTab.webView === webView else {
+                throw WebKitBrowserEngineError.screenshotUnavailable
+            }
+
+            let startingRevision = managedTab.screenshotRevision
+            let startingURL = webView.url
+            let image: NSImage?
+            do {
+                image = try await screenshotSnapshotter(webView)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                image = nil
+            }
+
+            guard managedTabs[tabID] === managedTab,
+                  managedTab.webView === webView else {
+                throw WebKitBrowserEngineError.screenshotUnavailable
+            }
+            if managedTab.screenshotRevision == startingRevision,
+               webView.url == startingURL,
+               let image,
+               !autoreleasepool(invoking: { Self.isVisuallyBlank(image) }) {
+                return image
+            }
+
+            if attempt + 1 < Self.maximumScreenshotCaptureAttempts {
+                try await Task.sleep(nanoseconds: 25_000_000)
+            }
+        }
+
+        throw WebKitBrowserEngineError.screenshotUnavailable
+    }
+
     /// Starts a validated HTTP(S) navigation. Agent destinations are authorized by the
     /// navigation delegate before the main-frame request is allowed to proceed.
     public func navigate(to url: URL, in tabID: BrowserTabID) throws {
@@ -313,6 +370,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         }
 
         try tabStore.startNavigation(in: tabID, to: destination.url.absoluteString)
+        managedTab.screenshotRevision &+= 1
         managedTab.pendingResponseOrigins.removeAll()
         managedTab.explicitNavigationURLs[destination.url.absoluteString, default: 0] += 1
         managedTab.activeNavigationURL = destination.url.absoluteString
@@ -349,6 +407,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
 
     public func stopLoading(in tabID: BrowserTabID) {
         guard let managedTab = managedTabs[tabID] else { return }
+        managedTab.screenshotRevision &+= 1
         dismissPendingDialogs(for: tabID, resolution: .cancelled)
         managedTab.webView.stopLoading()
         let message = "Navigation was stopped."
@@ -535,6 +594,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         didStartProvisionalNavigation navigation: WKNavigation!
     ) {
         guard let tabID = tabID(for: webView) else { return }
+        managedTabs[tabID]?.screenshotRevision &+= 1
         updateState(for: tabID) { state in
             state.progress = min(max(webView.estimatedProgress, 0), 1)
             state.loadError = nil
@@ -661,6 +721,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard let tabID = tabID(for: webView), let managedTab = managedTabs[tabID] else { return }
+        managedTab.screenshotRevision &+= 1
         dismissPendingDialogs(for: tabID, resolution: .engineFailure)
         cancelPendingPolicyGates(for: tabID)
         managedTab.pendingResponseOrigins.removeAll()
@@ -820,6 +881,64 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
                 }
             }
         ]
+    }
+
+    private static let maximumScreenshotCaptureAttempts = 3
+
+    private static func captureWebViewSnapshot(of webView: WKWebView) async throws -> NSImage? {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<NSImage?, Error>) in
+            autoreleasepool {
+                webView.takeSnapshot(with: nil) { image, error in
+                    autoreleasepool {
+                        if let error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: image)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static func isVisuallyBlank(_ image: NSImage) -> Bool {
+        var proposedRect = CGRect(origin: .zero, size: image.size)
+        guard let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil),
+              cgImage.width > 0,
+              cgImage.height > 0 else {
+            return true
+        }
+
+        let width = min(32, cgImage.width)
+        let height = min(32, cgImage.height)
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | CGBitmapInfo.byteOrder32Big.rawValue
+            ) else {
+                return false
+            }
+            context.interpolationQuality = .low
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return true }
+
+        let firstPixel = Array(pixels.prefix(4))
+        for offset in stride(from: 4, to: pixels.count, by: 4) {
+            if (0..<4).contains(where: { abs(Int(pixels[offset + $0]) - Int(firstPixel[$0])) > 8 }) {
+                return false
+            }
+        }
+        return true
     }
 
     private func tabID(for webView: WKWebView) -> BrowserTabID? {

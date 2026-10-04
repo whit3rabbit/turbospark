@@ -157,11 +157,18 @@ public struct BrowserControlResult: Codable, Equatable, Sendable {
     public let commandKind: BrowserControlCommandKind
     public let value: BrowserControlValue
     public let durationMilliseconds: Int
+    /// Transient PNG bytes for a screenshot command. Deliberately excluded from Codable output.
+    public let screenshotPNGData: Data?
+
+    private enum CodingKeys: String, CodingKey {
+        case requestID, commandKind, value, durationMilliseconds
+    }
 
     public init(
         request: BrowserControlRequest,
         value: BrowserControlValue,
-        durationMilliseconds: Int
+        durationMilliseconds: Int,
+        screenshotPNGData: Data? = nil
     ) {
         precondition(
             request.command.kind == value.commandKind,
@@ -171,6 +178,24 @@ public struct BrowserControlResult: Codable, Equatable, Sendable {
         self.commandKind = request.command.kind
         self.value = value
         self.durationMilliseconds = durationMilliseconds
+        self.screenshotPNGData = screenshotPNGData
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requestID = try container.decode(UUID.self, forKey: .requestID)
+        commandKind = try container.decode(BrowserControlCommandKind.self, forKey: .commandKind)
+        value = try container.decode(BrowserControlValue.self, forKey: .value)
+        durationMilliseconds = try container.decode(Int.self, forKey: .durationMilliseconds)
+        screenshotPNGData = nil
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(requestID, forKey: .requestID)
+        try container.encode(commandKind, forKey: .commandKind)
+        try container.encode(value, forKey: .value)
+        try container.encode(durationMilliseconds, forKey: .durationMilliseconds)
     }
 }
 
@@ -230,6 +255,9 @@ public protocol BrowserControlPort: AnyObject, Sendable {
 
     func perform(_ request: BrowserControlRequest) async throws -> BrowserControlResult
 
-    /// Cancellation is idempotent. Repeating a command ID must preserve its cancelled state.
+    /// Samples the requested load state or element condition without waiting.
+    func isWaitConditionSatisfied(_ target: BrowserWaitTarget, commandID: UUID) async throws -> Bool
+
+    /// Cancellation is idempotent. Repeating a command ID preserves its cancelled state.
     func cancel(commandID: UUID) async
 }

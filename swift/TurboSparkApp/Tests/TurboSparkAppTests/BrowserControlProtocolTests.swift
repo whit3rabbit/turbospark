@@ -126,6 +126,311 @@ final class BrowserControlProtocolTests: XCTestCase {
     }
 }
 
+final class BrowserAutomationSessionTests: XCTestCase {
+    func testWaitPollsUntilConditionIsSatisfiedForTheAttachedTab() async throws {
+        let store = BrowserTabStore()
+        let visibleTab = store.createTab(owner: .user)
+        let controlledTab = store.createTab(owner: .agent, select: false)
+        let port = SessionTestBrowserControlPort()
+        let session = BrowserAutomationSession(
+            tabStore: store,
+            portFactory: { _ in port },
+            clock: SystemBrowserAutomationClock(),
+            waitPollIntervalSeconds: 0.001
+        )
+        let token = try await session.attach(to: controlledTab)
+        let target = BrowserWaitTarget.element(reference: "button-1", condition: .enabled)
+
+        let result = try await session.perform(.waitFor(target: target, timeoutSeconds: 2), using: token)
+
+        XCTAssertEqual(result.value, .waitCompleted(BrowserWaitResult(target: target)))
+        let probeCount = await port.waitProbeCount()
+        XCTAssertEqual(probeCount, 3)
+        XCTAssertEqual(store.activeTabID, visibleTab)
+        XCTAssertEqual(store.tab(id: visibleTab)?.owner, .user)
+    }
+
+    func testWaitPollsForLoadState() async throws {
+        let store = BrowserTabStore()
+        let controlledTab = store.createTab(owner: .agent)
+        let port = SessionTestBrowserControlPort()
+        await port.setWaitSatisfiedAfter(1)
+        let session = BrowserAutomationSession(tabStore: store, portFactory: { _ in port })
+        let token = try await session.attach(to: controlledTab)
+        let target = BrowserWaitTarget.loadState(.finished)
+
+        let result = try await session.perform(.waitFor(target: target, timeoutSeconds: 1), using: token)
+
+        XCTAssertEqual(result.value, .waitCompleted(BrowserWaitResult(target: target)))
+        let lastTarget = await port.lastWaitTarget()
+        XCTAssertEqual(lastTarget, target)
+    }
+
+    func testTimeoutCancelsCommandAndIgnoresLateReply() async throws {
+        let store = BrowserTabStore()
+        let controlledTab = store.createTab(owner: .agent)
+        let port = SessionTestBrowserControlPort()
+        await port.setSuspendsReplies(true)
+        let session = BrowserAutomationSession(tabStore: store, portFactory: { _ in port })
+        let token = try await session.attach(to: controlledTab)
+        let command = Task {
+            try await session.perform(.readState(scope: .pageStructure), using: token, timeoutSeconds: 0.05)
+        }
+        while await port.requestCount() == 0 {
+            await Task.yield()
+        }
+
+        do {
+            _ = try await command.value
+            XCTFail("The command should time out.")
+        } catch let error as BrowserControlError {
+            XCTAssertEqual(error, .timeout)
+        }
+
+        let requestIDs = await port.requestIDs()
+        let requestID = try XCTUnwrap(requestIDs.first)
+        let cancelled = await port.cancelledCommandIDs()
+        XCTAssertTrue(cancelled.contains(requestID))
+
+        await port.replyLate(to: requestID)
+        await port.setSuspendsReplies(false)
+        let nextResult = try await session.perform(
+            .readState(scope: .pageStructure),
+            using: token,
+            timeoutSeconds: 1
+        )
+        XCTAssertEqual(nextResult.commandKind, .readState)
+    }
+
+    func testUserTakeoverCancelsInFlightCommandAndDropsSessionOwnership() async throws {
+        let store = BrowserTabStore()
+        let controlledTab = store.createTab(owner: .agent)
+        let port = SessionTestBrowserControlPort()
+        await port.setSuspendsReplies(true)
+        let session = BrowserAutomationSession(tabStore: store, portFactory: { _ in port })
+        let token = try await session.attach(to: controlledTab)
+        let command = Task {
+            try await session.perform(.readState(scope: .pageStructure), using: token)
+        }
+        while await port.requestCount() == 0 {
+            await Task.yield()
+        }
+
+        try store.transferOwnershipToUser(of: controlledTab)
+        await session.userTookOver(tabID: controlledTab)
+
+        do {
+            _ = try await command.value
+            XCTFail("User takeover should cancel the command.")
+        } catch let error as BrowserAutomationSessionError {
+            XCTAssertEqual(error, .userTookOver)
+        }
+
+        let cancelled = await port.cancelledCommandIDs()
+        XCTAssertEqual(cancelled.count, 1)
+        let attachedTab = await session.attachedTabID()
+        XCTAssertNil(attachedTab)
+        XCTAssertEqual(store.tab(id: controlledTab)?.owner, .user)
+        XCTAssertThrowsError(try store.agentControlledTab(for: token))
+
+        let requestIDs = await port.requestIDs()
+        if let requestID = requestIDs.first {
+            await port.replyLate(to: requestID)
+        }
+    }
+
+    func testOnlyOneCommandRunsAndDetachCancelsAndReleasesControl() async throws {
+        let store = BrowserTabStore()
+        let controlledTab = store.createTab(owner: .agent)
+        let otherAgentTab = store.createTab(owner: .agent, select: false)
+        let port = SessionTestBrowserControlPort()
+        await port.setSuspendsReplies(true)
+        let session = BrowserAutomationSession(tabStore: store, portFactory: { _ in port })
+        let token = try await session.attach(to: controlledTab)
+        do {
+            _ = try await session.attach(to: otherAgentTab)
+            XCTFail("A session must not attach to a second tab.")
+        } catch let error as BrowserAutomationSessionError {
+            XCTAssertEqual(error, .alreadyAttached(controlledTab))
+        }
+        let command = Task {
+            try await session.perform(.readState(scope: .pageStructure), using: token)
+        }
+        while await port.requestCount() == 0 {
+            await Task.yield()
+        }
+
+        do {
+            _ = try await session.perform(.readState(scope: .pageStructure), using: token)
+            XCTFail("A second command must not overlap the first.")
+        } catch let error as BrowserAutomationSessionError {
+            XCTAssertEqual(error, .commandInFlight)
+        }
+
+        await session.detach()
+        do {
+            _ = try await command.value
+            XCTFail("Detaching should cancel the active command.")
+        } catch let error as BrowserAutomationSessionError {
+            XCTAssertEqual(error, .detached)
+        }
+
+        let cancelled = await port.cancelledCommandIDs()
+        XCTAssertEqual(cancelled.count, 1)
+        XCTAssertEqual(store.tab(id: controlledTab)?.owner, .user)
+        XCTAssertThrowsError(try store.agentControlledTab(for: token))
+        let requestIDs = await port.requestIDs()
+        if let requestID = requestIDs.first {
+            await port.replyLate(to: requestID)
+        }
+    }
+
+    func testTabCloseCancelsActiveCommand() async throws {
+        let store = BrowserTabStore()
+        let controlledTab = store.createTab(owner: .agent)
+        let port = SessionTestBrowserControlPort()
+        await port.setSuspendsReplies(true)
+        let session = BrowserAutomationSession(tabStore: store, portFactory: { _ in port })
+        let token = try await session.attach(to: controlledTab)
+        let command = Task {
+            try await session.perform(.readState(scope: .pageStructure), using: token)
+        }
+        while await port.requestCount() == 0 {
+            await Task.yield()
+        }
+
+        try store.closeTab(controlledTab)
+        await session.tabClosed(tabID: controlledTab)
+
+        do {
+            _ = try await command.value
+            XCTFail("Closing the controlled tab should cancel its command.")
+        } catch let error as BrowserAutomationSessionError {
+            XCTAssertEqual(error, .tabClosed(controlledTab))
+        }
+
+        let cancelled = await port.cancelledCommandIDs()
+        XCTAssertEqual(cancelled.count, 1)
+        let attachedTab = await session.attachedTabID()
+        XCTAssertNil(attachedTab)
+        let requestIDs = await port.requestIDs()
+        if let requestID = requestIDs.first {
+            await port.replyLate(to: requestID)
+        }
+    }
+
+    func testWaitTimeoutReportsTheUnmetCondition() async throws {
+        let store = BrowserTabStore()
+        let controlledTab = store.createTab(owner: .agent)
+        let port = SessionTestBrowserControlPort()
+        await port.setWaitSatisfiedAfter(Int.max)
+        let session = BrowserAutomationSession(
+            tabStore: store,
+            portFactory: { _ in port },
+            waitPollIntervalSeconds: 0.001
+        )
+        let token = try await session.attach(to: controlledTab)
+        let target = BrowserWaitTarget.element(reference: "submit-button", condition: .visible)
+
+        do {
+            _ = try await session.perform(
+                .waitFor(target: target, timeoutSeconds: 0.05),
+                using: token
+            )
+            XCTFail("The wait should stop at its deadline.")
+        } catch let error as BrowserAutomationSessionError {
+            XCTAssertEqual(error, .waitConditionNotMet(target))
+            XCTAssertTrue(error.localizedDescription.contains("submit-button"))
+        }
+
+        let probeCount = await port.waitProbeCount()
+        XCTAssertGreaterThan(probeCount, 0)
+        let cancelled = await port.cancelledCommandIDs()
+        XCTAssertEqual(cancelled.count, 1)
+    }
+
+    func testTimeoutPolicyUsesTenSecondDefaultAndSixtySecondCap() throws {
+        let command = BrowserControlCommand.readState(scope: .pageStructure)
+
+        XCTAssertEqual(
+            try BrowserAutomationSession.effectiveTimeoutSeconds(for: command, overrideSeconds: nil),
+            10
+        )
+        XCTAssertEqual(
+            try BrowserAutomationSession.effectiveTimeoutSeconds(for: command, overrideSeconds: 3),
+            3
+        )
+        XCTAssertEqual(
+            try BrowserAutomationSession.effectiveTimeoutSeconds(for: command, overrideSeconds: 120),
+            60
+        )
+        XCTAssertThrowsError(
+            try BrowserAutomationSession.effectiveTimeoutSeconds(for: command, overrideSeconds: 0)
+        ) { error in
+            XCTAssertEqual(error as? BrowserControlError, .invalidInput(reason: .invalidTimeout))
+        }
+    }
+}
+
+private actor SessionTestBrowserControlPort: BrowserControlPort {
+    private struct PendingReply {
+        let request: BrowserControlRequest
+        let continuation: CheckedContinuation<BrowserControlResult, Error>
+    }
+
+    static let backendIdentifier = "session-test-backend"
+    static let supportedCommands = Set(BrowserControlCommandKind.allCases)
+
+    private var suspendsReplies = false
+    private var pendingReplies: [UUID: PendingReply] = [:]
+    private var requests: [BrowserControlRequest] = []
+    private var cancelledIDs: Set<UUID> = []
+    private var waitProbes = 0
+    private var lastProbedTarget: BrowserWaitTarget?
+
+    private var waitSatisfiedAfter = 3
+
+    func setSuspendsReplies(_ value: Bool) { suspendsReplies = value }
+    func requestCount() -> Int { requests.count }
+    func requestIDs() -> [UUID] { requests.map(\.id) }
+    func cancelledCommandIDs() -> Set<UUID> { cancelledIDs }
+    func setWaitSatisfiedAfter(_ count: Int) { waitSatisfiedAfter = count }
+    func waitProbeCount() -> Int { waitProbes }
+    func lastWaitTarget() -> BrowserWaitTarget? { lastProbedTarget }
+
+    func perform(_ request: BrowserControlRequest) async throws -> BrowserControlResult {
+        requests.append(request)
+        if suspendsReplies {
+            return try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<BrowserControlResult, Error>) in
+                pendingReplies[request.id] = PendingReply(request: request, continuation: continuation)
+            }
+        }
+        return try await StubBrowserControlPort().perform(request)
+    }
+
+    func cancel(commandID: UUID) async { cancelledIDs.insert(commandID) }
+
+    func isWaitConditionSatisfied(
+        _ target: BrowserWaitTarget,
+        commandID: UUID
+    ) async throws -> Bool {
+        waitProbes += 1
+        lastProbedTarget = target
+        return waitProbes >= waitSatisfiedAfter
+    }
+
+    func replyLate(to requestID: UUID) {
+        guard let pending = pendingReplies.removeValue(forKey: requestID) else { return }
+        let value = BrowserSnapshotResult(
+            scope: .pageStructure, url: nil, title: nil, snapshot: "late", truncated: false
+        )
+        pending.continuation.resume(returning: BrowserControlResult(
+            request: pending.request, value: .state(value), durationMilliseconds: 1
+        ))
+    }
+}
+
 private actor StubBrowserControlPort: BrowserControlPort {
     static let backendIdentifier = "test-backend"
     static let supportedCommands: Set<BrowserControlCommandKind> = [
@@ -177,6 +482,13 @@ private actor StubBrowserControlPort: BrowserControlPort {
 
     func cancel(commandID: UUID) async {
         cancelledCommandIDs.insert(commandID)
+    }
+
+    func isWaitConditionSatisfied(
+        _ target: BrowserWaitTarget,
+        commandID: UUID
+    ) async throws -> Bool {
+        true
     }
 
     func isCancelled(commandID: UUID) -> Bool {

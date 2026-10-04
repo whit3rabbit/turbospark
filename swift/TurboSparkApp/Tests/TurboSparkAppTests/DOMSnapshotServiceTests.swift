@@ -78,6 +78,44 @@ final class DOMSnapshotServiceTests: XCTestCase {
         XCTAssertTrue(snapshot.nodes.contains { $0.role == "textbox" && $0.reference != nil })
     }
 
+    func testPickCandidateUsesMaskedDescriptionAndLeavesThePageUnchanged() async throws {
+        let fixture = try fixtureURL("credential-fields")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let htmlBeforeValue = try await page.webView.evaluateJavaScript("document.documentElement.outerHTML")
+        let htmlBefore = try XCTUnwrap(htmlBeforeValue as? String)
+        _ = try await page.webView.evaluateJavaScript(
+            "window.pickerClickCount = 0; document.querySelector('input[type=password]').addEventListener('click', () => { window.pickerClickCount += 1 })"
+        )
+        let pointValue = try await page.webView.evaluateJavaScript("""
+            (() => {
+              const rect = document.querySelector('input[type=password]').getBoundingClientRect();
+              return [rect.x + rect.width / 2, rect.y + rect.height / 2];
+            })()
+            """)
+        let point = try XCTUnwrap(pointValue as? [NSNumber])
+        XCTAssertEqual(point.count, 2)
+
+        let candidateValue = try await page.service.pickCandidate(
+            at: CGPoint(x: point[0].doubleValue, y: point[1].doubleValue)
+        )
+        let candidate = try XCTUnwrap(candidateValue)
+        XCTAssertEqual(candidate.role, "textbox")
+        XCTAssertEqual(candidate.name, "Password field")
+        XCTAssertEqual(candidate.reference.utf8.count, 32)
+        try await page.service.resolve(reference: candidate.reference, generation: candidate.generation)
+
+        let serializedCandidate = String(decoding: try JSONEncoder().encode(candidate), as: UTF8.self)
+        for secret in ["alice-private", "super-secret-password", "secret-recovery-code"] {
+            XCTAssertFalse(serializedCandidate.contains(secret), "Picker description leaked a credential value")
+        }
+        let clickCount = try await page.webView.evaluateJavaScript("window.pickerClickCount") as? Int
+        XCTAssertEqual(clickCount, 0, "Finding a candidate must not activate the page element")
+        let htmlAfterValue = try await page.webView.evaluateJavaScript("document.documentElement.outerHTML")
+        XCTAssertEqual(try XCTUnwrap(htmlAfterValue as? String), htmlBefore)
+    }
+
     func testSnapshotWrapsRolesNamesBoundsAndActionableReferences() async throws {
         let fixture = try fixtureURL("dialogs")
         let page = try await makePage(fixture: fixture)

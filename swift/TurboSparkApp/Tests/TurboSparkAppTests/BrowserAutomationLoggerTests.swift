@@ -119,7 +119,8 @@ final class BrowserAutomationLoggerTests: XCTestCase {
         let serialized = try XCTUnwrap(String(data: encoded, encoding: .utf8))
         for forbiddenValue in [
             "/private/page", "token", "query-secret", "fragment-secret",
-            "typed-value", "dialog-text", "page-content", "secret-material"
+            "typed-value", "dialog-text", "page-content", "secret-material",
+            "screenshot-bytes", "raw-snapshot", "picked-element-content", "picked-role"
         ] {
             XCTAssertFalse(serialized.contains(forbiddenValue))
         }

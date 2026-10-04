@@ -6,6 +6,112 @@ import WebKit
 
 @MainActor
 final class WebKitBrowserEngineTests: XCTestCase {
+    func testScreenshotUsesRequestedBackgroundTabsWebView() async throws {
+        let store = BrowserTabStore()
+        let engine = WebKitBrowserEngine(
+            tabStore: store,
+            authorizeNavigation: { _ in .allow }
+        )
+        let visibleTabID = engine.createTab(owner: .user)
+        let backgroundTabID = engine.createTab(owner: .agent, select: false)
+        let visibleWebView = try XCTUnwrap(engine.webView(for: visibleTabID))
+        let backgroundWebView = try XCTUnwrap(engine.webView(for: backgroundTabID))
+        let expectedImage = makeScreenshotImage(hasContent: true)
+        var capturedWebView: WKWebView?
+
+        engine.screenshotSnapshotter = { webView in
+            capturedWebView = webView
+            return expectedImage
+        }
+
+        let image = try await engine.captureScreenshot(for: backgroundTabID)
+
+        XCTAssertTrue(capturedWebView === backgroundWebView)
+        XCTAssertFalse(capturedWebView === visibleWebView)
+        XCTAssertEqual(store.activeTabID, visibleTabID)
+        XCTAssertTrue(image === expectedImage)
+    }
+
+    func testScreenshotRetriesBlankCaptureBeforeReturningCurrentImage() async throws {
+        let engine = makeScreenshotEngine()
+        let blankImage = makeScreenshotImage(hasContent: false)
+        let currentImage = makeScreenshotImage(hasContent: true)
+        var captureCount = 0
+        engine.screenshotSnapshotter = { _ in
+            captureCount += 1
+            return captureCount == 1 ? blankImage : currentImage
+        }
+
+        let image = try await engine.captureScreenshot(for: engine.tabStore.tabs[0].id)
+
+        XCTAssertEqual(captureCount, 2)
+        XCTAssertTrue(image === currentImage)
+    }
+
+    func testScreenshotReturnsTypedErrorAfterBoundedBlankRetries() async throws {
+        let engine = makeScreenshotEngine()
+        let blankImage = makeScreenshotImage(hasContent: false)
+        var captureCount = 0
+        engine.screenshotSnapshotter = { _ in
+            captureCount += 1
+            return blankImage
+        }
+
+        do {
+            _ = try await engine.captureScreenshot(for: engine.tabStore.tabs[0].id)
+            XCTFail("A blank screenshot must not be returned as a successful capture.")
+        } catch let error as WebKitBrowserEngineError {
+            XCTAssertEqual(error, .screenshotUnavailable)
+        }
+
+        XCTAssertEqual(captureCount, 3)
+    }
+
+    func testScreenshotRetriesWhenTheTabNavigatesDuringCapture() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        let engine = makeScreenshotEngine()
+        let tabID = try XCTUnwrap(engine.tabStore.tabs.first?.id)
+        try engine.navigate(to: server.url("/ok"), in: tabID)
+        let staleImage = makeScreenshotImage(hasContent: true)
+        let currentImage = makeScreenshotImage(hasContent: true, marker: .systemBlue)
+        var captureCount = 0
+        engine.screenshotSnapshotter = { webView in
+            captureCount += 1
+            if captureCount == 1 {
+                try engine.navigate(to: server.url("/landing"), in: tabID)
+                return staleImage
+            }
+            XCTAssertTrue(webView === engine.webView(for: tabID))
+            return currentImage
+        }
+
+        let image = try await engine.captureScreenshot(for: tabID)
+
+        XCTAssertEqual(captureCount, 2)
+        XCTAssertTrue(image === currentImage)
+    }
+
+    func testScreenshotReturnsTypedErrorAfterThreeStaleCaptures() async throws {
+        let engine = makeScreenshotEngine()
+        let tabID = try XCTUnwrap(engine.tabStore.tabs.first?.id)
+        let image = makeScreenshotImage(hasContent: true)
+        var captureCount = 0
+        engine.screenshotSnapshotter = { _ in
+            captureCount += 1
+            engine.stopLoading(in: tabID)
+            return image
+        }
+
+        do {
+            _ = try await engine.captureScreenshot(for: tabID)
+            XCTFail("A screenshot captured across three tab revisions must fail.")
+        } catch let error as WebKitBrowserEngineError {
+            XCTAssertEqual(error, .screenshotUnavailable)
+        }
+
+        XCTAssertEqual(captureCount, 3)
+    }
+
     func testCrossOriginRedirectIsReauthorizedBeforeItCanCommit() async throws {
         let server = try BrowserAutomationHTTPFixtureServer()
         let store = BrowserTabStore()
@@ -485,6 +591,49 @@ final class WebKitBrowserEngineTests: XCTestCase {
         )
         let tabID = engine.createTab(owner: .agent)
         return (engine, tabID)
+    }
+
+    private func makeScreenshotEngine() -> WebKitBrowserEngine {
+        let store = BrowserTabStore()
+        let engine = WebKitBrowserEngine(
+            tabStore: store,
+            authorizeNavigation: { _ in .allow }
+        )
+        _ = engine.createTab(owner: .agent)
+        return engine
+    }
+
+    private func makeScreenshotImage(
+        hasContent: Bool,
+        marker: NSColor = .black
+    ) -> NSImage {
+        let width = 32
+        let height = 32
+        let representation = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width,
+            pixelsHigh: height,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: representation)
+        NSColor.white.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: width, height: height)).fill()
+        if hasContent {
+            marker.setFill()
+            NSBezierPath(rect: NSRect(x: 8, y: 8, width: 8, height: 8)).fill()
+        }
+        NSGraphicsContext.restoreGraphicsState()
+
+        let image = NSImage(size: NSSize(width: width, height: height))
+        image.addRepresentation(representation)
+        return image
     }
 
     private func waitUntil(

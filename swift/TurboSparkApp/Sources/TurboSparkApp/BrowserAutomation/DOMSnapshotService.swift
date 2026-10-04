@@ -107,6 +107,31 @@ public struct DOMSnapshotActionOutcome: Sendable, Equatable {
     }
 }
 
+public struct DOMSnapshotPickCandidate: Codable, Equatable, Sendable {
+    public let version: String
+    public let generation: UUID
+    public let reference: String
+    public let role: String
+    public let name: String
+    public let bounds: DOMSnapshotBounds
+
+    public init(
+        version: String = "ts_element_pick_v1",
+        generation: UUID,
+        reference: String,
+        role: String,
+        name: String,
+        bounds: DOMSnapshotBounds
+    ) {
+        self.version = version
+        self.generation = generation
+        self.reference = reference
+        self.role = role
+        self.name = name
+        self.bounds = bounds
+    }
+}
+
 /// The isolated page bridge that creates bounded snapshots and keeps refs tied to live nodes.
 @MainActor
 public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply {
@@ -438,6 +463,23 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
           return Boolean(node && record.generation === request.generation && node.isConnected
             && referencesByNode.get(node) === request.reference);
         },
+        waitCondition(request) {
+          if (!request || !validReference(request.reference)
+              || !["exists", "visible", "hidden", "enabled"].includes(request.condition)) {
+            return false;
+          }
+          const record = nodesByReference.get(request.reference);
+          const node = record && record.node.deref();
+          if (!node || record.generation !== request.generation || !node.isConnected
+              || referencesByNode.get(node) !== request.reference) {
+            return request.condition === "hidden";
+          }
+          if (request.condition === "exists") return true;
+          if (request.condition === "visible") return visible(node);
+          if (request.condition === "hidden") return !visible(node);
+          return !("disabled" in node && node.disabled)
+            && node.getAttribute("aria-disabled") !== "true";
+        },
         async resolveLocator(request) {
           const acknowledgement = await webkit.messageHandlers.turboSparkDOMSnapshot.postMessage({
             type: "resolve",
@@ -467,6 +509,27 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
             ambiguous: target.ambiguous === true,
             didSubmit: actionResult.didSubmit === true
           };
+        },
+        async pickAt(request) {
+          if (!Number.isFinite(request.x) || !Number.isFinite(request.y)
+              || request.x < 0 || request.y < 0) return { error: "invalid" };
+          const element = document.elementFromPoint(request.x, request.y);
+          if (!element || excludedTags.has(element.tagName) || !visible(element)) return null;
+          const candidate = {
+            version: "ts_element_pick_v1",
+            generation: request.generation,
+            reference: referenceFor(element, request.generation),
+            role: roleFor(element),
+            name: accessibleName(element),
+            bounds: boundsFor(element)
+          };
+          const acknowledgement = await webkit.messageHandlers.turboSparkDOMSnapshot.postMessage({
+            type: "pick",
+            generation: request.generation,
+            candidate
+          });
+          if (!acknowledgement || acknowledgement.accepted !== true) return { error: "rejected" };
+          return candidate;
         }
       };
     })();
@@ -524,6 +587,10 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
         isInstalled && hasCommittedDocument && generation == currentGeneration
     }
 
+    var canPickElement: Bool {
+        isInstalled && hasCommittedDocument && expectedOrigin != nil && webView != nil
+    }
+
     /// Releases the registered script handler when its tab is closed or the bridge is replaced.
     public func invalidate() {
         guard isInstalled else { return }
@@ -576,6 +643,65 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
             throw DOMSnapshotServiceError.invalidSnapshot
         }
         return envelope
+    }
+
+    public func pickCandidate(at point: CGPoint) async throws -> DOMSnapshotPickCandidate? {
+        guard point.x.isFinite, point.y.isFinite, point.x >= 0, point.y >= 0,
+              point.x <= 32_768, point.y <= 32_768 else {
+            throw DOMSnapshotServiceError.invalidLocator
+        }
+        guard isInstalled else { throw DOMSnapshotServiceError.unavailable }
+        guard canPickElement, let webView else { throw DOMSnapshotServiceError.inactiveDocument }
+
+        let generation = currentGeneration
+        let result: Any?
+        do {
+            result = try await webView.callAsyncJavaScript(
+                "return await globalThis.__tsSnapshotV1.pickAt(request)",
+                arguments: ["request": [
+                    "generation": generation.uuidString,
+                    "x": point.x,
+                    "y": point.y
+                ]],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        } catch {
+            guard isActive(generation: generation) else {
+                throw DOMSnapshotServiceError.inactiveDocument
+            }
+            throw DOMSnapshotServiceError.rejectedMessage
+        }
+
+        guard isActive(generation: generation) else {
+            throw DOMSnapshotServiceError.inactiveDocument
+        }
+        guard let object = result as? [String: Any] else {
+            if result == nil || result is NSNull { return nil }
+            throw DOMSnapshotServiceError.invalidSnapshot
+        }
+        if object["error"] as? String == "rejected" {
+            throw DOMSnapshotServiceError.rejectedMessage
+        }
+        guard Self.hasExactKeys(object, ["version", "generation", "reference", "role", "name", "bounds"]),
+              JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              data.count <= 4_096,
+              let candidate = try? JSONDecoder().decode(DOMSnapshotPickCandidate.self, from: data),
+              candidate.version == "ts_element_pick_v1",
+              candidate.generation == generation,
+              Self.isValidReference(candidate.reference),
+              Self.isValidRole(candidate.role),
+              candidate.name.utf8.count <= 2_048,
+              candidate.bounds.x.isFinite,
+              candidate.bounds.y.isFinite,
+              candidate.bounds.width.isFinite,
+              candidate.bounds.height.isFinite,
+              candidate.bounds.width > 0,
+              candidate.bounds.height > 0 else {
+            throw DOMSnapshotServiceError.invalidSnapshot
+        }
+        return candidate
     }
 
     public func resolve(
@@ -694,6 +820,50 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
         }
     }
 
+    /// Samples an element condition through the isolated bridge. A detached or replaced reference
+    /// satisfies `hidden`, but remains stale for the other conditions.
+    public func isWaitConditionSatisfied(
+        reference: String,
+        condition: BrowserElementWaitCondition
+    ) async throws -> Bool {
+        guard Self.isValidReference(reference) else {
+            throw BrowserControlError.staleReference(reference: reference)
+        }
+        guard isInstalled else { throw DOMSnapshotServiceError.unavailable }
+        guard hasCommittedDocument, expectedOrigin != nil, let webView else {
+            return condition == .hidden
+        }
+
+        let generation = currentGeneration
+        let result: Any?
+        do {
+            result = try await webView.callAsyncJavaScript(
+                "return globalThis.__tsSnapshotV1.waitCondition(request)",
+                arguments: ["request": [
+                    "generation": generation.uuidString,
+                    "reference": reference,
+                    "condition": condition.rawValue
+                ]],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        } catch {
+            guard isActive(generation: generation) else {
+                return condition == .hidden
+            }
+            throw DOMSnapshotServiceError.rejectedMessage
+        }
+
+        guard isInstalled else { throw DOMSnapshotServiceError.unavailable }
+        guard isActive(generation: generation) else {
+            return condition == .hidden
+        }
+        guard let satisfied = result as? Bool else {
+            throw DOMSnapshotServiceError.invalidSnapshot
+        }
+        return satisfied
+    }
+
     public func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage,
@@ -740,6 +910,12 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
                   Self.isValidBridgeLocator(body["locator"]),
                   Self.isValidBridgeAction(body["action"]) else {
                 replyHandler(nil, "Action message rejected")
+                return
+            }
+        case "pick":
+            guard Self.hasExactKeys(body, ["type", "generation", "candidate"]),
+                  Self.isValidBridgePickCandidate(body["candidate"], generation: currentGeneration.uuidString) else {
+                replyHandler(nil, "Pick message rejected")
                 return
             }
         default:
@@ -888,6 +1064,33 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
               number.doubleValue >= Double(Int.min),
               number.doubleValue <= Double(Int.max) else { return nil }
         return number.intValue
+    }
+
+    private static func strictFiniteNumber(_ value: Any?) -> Double? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite else { return nil }
+        return number.doubleValue
+    }
+
+    private static func isValidBridgePickCandidate(_ value: Any?, generation: String) -> Bool {
+        guard let candidate = value as? [String: Any],
+              hasExactKeys(candidate, ["version", "generation", "reference", "role", "name", "bounds"]),
+              candidate["version"] as? String == "ts_element_pick_v1",
+              candidate["generation"] as? String == generation,
+              let reference = candidate["reference"] as? String,
+              isValidReference(reference),
+              let role = candidate["role"] as? String,
+              isValidRole(role),
+              let name = candidate["name"] as? String,
+              name.utf8.count <= 2_048,
+              let bounds = candidate["bounds"] as? [String: Any],
+              hasExactKeys(bounds, ["x", "y", "width", "height"]),
+              let x = strictFiniteNumber(bounds["x"]),
+              let y = strictFiniteNumber(bounds["y"]),
+              let width = strictFiniteNumber(bounds["width"]),
+              let height = strictFiniteNumber(bounds["height"]) else { return false }
+        return abs(x) <= 1_000_000 && abs(y) <= 1_000_000 && width > 0 && height > 0
     }
 
     private static func isValidBridgeLocator(_ value: Any?) -> Bool {
