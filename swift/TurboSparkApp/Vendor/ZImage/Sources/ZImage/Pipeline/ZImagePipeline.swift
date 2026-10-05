@@ -281,8 +281,11 @@ public final class ZImagePipeline: @unchecked Sendable {
 
     let weightsMapper = ZImageWeightsMapper(snapshot: snapshot, weightsVariant: loadedWeightsVariant, logger: logger)
     let baseTransformerWeights = try weightsMapper.loadTransformer()
-    ZImageWeightsMapping.applyTransformer(
+    if let error = ZImageWeightsMapping.applyTransformer(
       weights: baseTransformerWeights, to: transformer, manifest: nil, logger: logger)
+    {
+      throw error
+    }
 
     activeTransformerOverrideURL = nil
 
@@ -299,7 +302,11 @@ public final class ZImagePipeline: @unchecked Sendable {
 
       overrideWeights = ZImageTransformerOverride.canonicalize(
         overrideWeights, dim: configs.transformer.dim, logger: logger)
-      ZImageWeightsMapping.applyTransformer(weights: overrideWeights, to: transformer, manifest: nil, logger: logger)
+      if let error = ZImageWeightsMapping.applyTransformer(
+        weights: overrideWeights, to: transformer, manifest: nil, logger: logger)
+      {
+        throw error
+      }
       activeTransformerOverrideURL = overrideURL
     }
   }
@@ -310,7 +317,10 @@ public final class ZImagePipeline: @unchecked Sendable {
     public let totalSteps: Int
 
     public enum Stage: String, Sendable {
+      case downloadingModel = "Downloading model files"
       case loadingModel = "Loading model"
+      case loadingTokenizer = "Loading tokenizer"
+      case loadingTextEncoder = "Loading text encoder"
       case encodingText = "Encoding text"
       case loadingTransformer = "Loading transformer"
       case loadingLoRA = "Loading LoRA"
@@ -330,7 +340,7 @@ public final class ZImagePipeline: @unchecked Sendable {
     }
   }
 
-  public typealias ProgressHandler = (GenerationProgress) -> Void
+  public typealias ProgressHandler = @Sendable (GenerationProgress) -> Void
   public func loadModel(
     modelSpec: String? = nil,
     weightsVariant: String? = nil,
@@ -381,7 +391,7 @@ public final class ZImagePipeline: @unchecked Sendable {
     }
 
     logger.info("Loading model: \(modelId)")
-    progressHandler?(GenerationProgress(stage: .loadingModel, stepIndex: 0, totalSteps: 1))
+    progressHandler?(GenerationProgress(stage: .loadingModel, stepIndex: 0, totalSteps: 0))
 
     let standardSnapshotContext: PipelineUtilities.StandardSnapshotContext?
     let snapshot: URL
@@ -390,7 +400,11 @@ public final class ZImagePipeline: @unchecked Sendable {
       let snapshotContext = try await PipelineUtilities.prepareStandardSnapshot(
         model: modelSpec,
         weightsVariant: normalizedWeightsVariant,
-        logger: logger
+        logger: logger,
+        progressHandler: { completed, total in
+          progressHandler?(GenerationProgress(
+            stage: .downloadingModel, stepIndex: completed, totalSteps: total))
+        }
       )
       standardSnapshotContext = snapshotContext
       snapshot = snapshotContext.snapshot
@@ -401,12 +415,16 @@ public final class ZImagePipeline: @unchecked Sendable {
         model: modelSpec,
         weightsVariant: normalizedWeightsVariant,
         filePatterns: PipelineSnapshot.configAndTokenizerFilePatterns,
-        logger: logger
+        logger: logger,
+        progressHandler: { completed, total in
+          progressHandler?(GenerationProgress(
+            stage: .downloadingModel, stepIndex: completed, totalSteps: total))
+        }
       )
       configs = try ZImageModelConfigs.load(from: snapshot)
     }
     if tokenizer == nil {
-      progressHandler?(GenerationProgress(stage: .encodingText, stepIndex: 0, totalSteps: 1))
+      progressHandler?(GenerationProgress(stage: .loadingTokenizer, stepIndex: 0, totalSteps: 0))
       logger.info("Loading tokenizer...")
       tokenizer = try PipelineUtilities.makeTokenizer(from: snapshot)
     } else {
@@ -431,12 +449,17 @@ public final class ZImagePipeline: @unchecked Sendable {
       let aio = try ZImageAIOCheckpoint.loadComponents(
         from: aioCheckpointURL, textEncoderPrefix: textEncoderPrefix, dtype: .bfloat16, logger: logger)
 
+      progressHandler?(GenerationProgress(stage: .loadingTextEncoder, stepIndex: 0, totalSteps: 0))
       logger.info("Loading text encoder...")
       let te = PipelineUtilities.makeTextEncoder(config: configs.textEncoder)
-      ZImageWeightsMapping.applyTextEncoder(weights: aio.textEncoder, to: te, manifest: nil, logger: logger)
+      if let error = ZImageWeightsMapping.applyTextEncoder(
+        weights: aio.textEncoder, to: te, manifest: nil, logger: logger)
+      {
+        throw error
+      }
       textEncoder = te
 
-      progressHandler?(GenerationProgress(stage: .loadingTransformer, stepIndex: 0, totalSteps: 1))
+      progressHandler?(GenerationProgress(stage: .loadingTransformer, stepIndex: 0, totalSteps: 0))
       logger.info("Loading transformer...")
       let trans = PipelineUtilities.makeTransformer(config: configs.transformer)
       let transformerWeights = ZImageTransformerOverride.canonicalize(
@@ -480,14 +503,18 @@ public final class ZImagePipeline: @unchecked Sendable {
            Use --force-transformer-override-only to treat it as transformer-only.
           """)
       }
-      ZImageWeightsMapping.applyTransformer(weights: transformerWeights, to: trans, manifest: nil, logger: logger)
+      if let error = ZImageWeightsMapping.applyTransformer(
+        weights: transformerWeights, to: trans, manifest: nil, logger: logger)
+      {
+        throw error
+      }
       transformer = trans
 
       activeTransformerOverrideURL = nil
       activeAIOCheckpointURL = aioCheckpointURL
 
       if vae == nil {
-        progressHandler?(GenerationProgress(stage: .loadingVAE, stepIndex: 0, totalSteps: 1))
+        progressHandler?(GenerationProgress(stage: .loadingVAE, stepIndex: 0, totalSteps: 0))
         logger.info("Loading VAE...")
         let v = PipelineUtilities.makeVAEDecoder(config: configs.vae)
         let rawDecoderWeights = aio.vae.filter { $0.key.hasPrefix("decoder.") }
@@ -510,7 +537,11 @@ public final class ZImagePipeline: @unchecked Sendable {
         )
 
         if coverage >= minimumCoverage, mismatches.isEmpty {
-          ZImageWeightsMapping.applyVAE(weights: decoderWeights, to: v, manifest: nil, logger: logger)
+          if let error = ZImageWeightsMapping.applyVAE(
+            weights: decoderWeights, to: v, manifest: nil, logger: logger)
+          {
+            throw error
+          }
         } else {
           let percent = Int((coverage * 100.0).rounded())
           if mismatches.isEmpty {
@@ -537,7 +568,11 @@ public final class ZImagePipeline: @unchecked Sendable {
             weightsVariant: normalizedWeightsVariant,
             filePatterns: PipelineSnapshot.vaeOnlyFilePatterns(weightsVariant: normalizedWeightsVariant),
             snapshotValidator: vaeSnapshotValidator,
-            logger: logger
+            logger: logger,
+            progressHandler: { completed, total in
+              progressHandler?(GenerationProgress(
+                stage: .downloadingModel, stepIndex: completed, totalSteps: total))
+            }
           )
           if let normalizedWeightsVariant,
             ZImageFiles.resolveVAEWeights(at: baseVAESnapshot, weightsVariant: normalizedWeightsVariant, logger: logger)
@@ -553,7 +588,11 @@ public final class ZImagePipeline: @unchecked Sendable {
             snapshot: baseVAESnapshot, weightsVariant: normalizedWeightsVariant, logger: logger)
           let baseVAEWeights = try weightsMapper.loadVAE()
           let baseDecoderWeights = baseVAEWeights.filter { $0.key.hasPrefix("decoder.") }
-          ZImageWeightsMapping.applyVAE(weights: baseDecoderWeights, to: v, manifest: nil, logger: logger)
+          if let error = ZImageWeightsMapping.applyVAE(
+            weights: baseDecoderWeights, to: v, manifest: nil, logger: logger)
+          {
+            throw error
+          }
         }
         vae = v
       } else {
@@ -566,26 +605,39 @@ public final class ZImagePipeline: @unchecked Sendable {
       if let m = manifest {
         logger.info("Loading quantized model (bits=\(m.bits), group_size=\(m.groupSize))")
       }
+      progressHandler?(GenerationProgress(stage: .loadingTextEncoder, stepIndex: 0, totalSteps: 0))
       logger.info("Loading text encoder...")
       let te = PipelineUtilities.makeTextEncoder(config: configs.textEncoder)
       let textEncoderWeights = try weightsMapper.loadTextEncoder()
-      ZImageWeightsMapping.applyTextEncoder(weights: textEncoderWeights, to: te, manifest: manifest, logger: logger)
+      if let error = ZImageWeightsMapping.applyTextEncoder(
+        weights: textEncoderWeights, to: te, manifest: manifest, logger: logger)
+      {
+        throw error
+      }
       textEncoder = te
-      progressHandler?(GenerationProgress(stage: .loadingTransformer, stepIndex: 0, totalSteps: 1))
+      progressHandler?(GenerationProgress(stage: .loadingTransformer, stepIndex: 0, totalSteps: 0))
       logger.info("Loading transformer...")
       let trans = PipelineUtilities.makeTransformer(config: configs.transformer)
       let transformerWeights = try weightsMapper.loadTransformer()
-      ZImageWeightsMapping.applyTransformer(weights: transformerWeights, to: trans, manifest: manifest, logger: logger)
+      if let error = ZImageWeightsMapping.applyTransformer(
+        weights: transformerWeights, to: trans, manifest: manifest, logger: logger)
+      {
+        throw error
+      }
       transformer = trans
       activeTransformerOverrideURL = nil
       activeAIOCheckpointURL = nil
       if vae == nil {
-        progressHandler?(GenerationProgress(stage: .loadingVAE, stepIndex: 0, totalSteps: 1))
+        progressHandler?(GenerationProgress(stage: .loadingVAE, stepIndex: 0, totalSteps: 0))
         logger.info("Loading VAE...")
         let v = PipelineUtilities.makeVAEDecoder(config: configs.vae)
         let vaeWeights = try weightsMapper.loadVAE()
         let decoderWeights = vaeWeights.filter { $0.key.hasPrefix("decoder.") }
-        ZImageWeightsMapping.applyVAE(weights: decoderWeights, to: v, manifest: manifest, logger: logger)
+        if let error = ZImageWeightsMapping.applyVAE(
+          weights: decoderWeights, to: v, manifest: manifest, logger: logger)
+        {
+          throw error
+        }
         vae = v
       } else {
         logger.info("Reusing cached VAE")

@@ -2,6 +2,8 @@ import Foundation
 import Logging
 
 enum PipelineSnapshot {
+  typealias DownloadProgressHandler = @Sendable (Int, Int) -> Void
+
   static let configAndTokenizerFilePatterns: [String] = [
     ZImageFiles.modelIndex,
     ZImageFiles.schedulerConfig,
@@ -54,7 +56,8 @@ enum PipelineSnapshot {
     weightsVariant: String? = nil,
     filePatterns: [String]? = nil,
     snapshotValidator: (@Sendable (URL) -> Bool)? = nil,
-    logger: Logger
+    logger: Logger,
+    progressHandler: DownloadProgressHandler? = nil
   ) async throws -> URL {
     let patterns = filePatterns ?? modelFilePatterns(weightsVariant: weightsVariant)
     let requireWeights = patterns.contains(where: { $0.localizedCaseInsensitiveContains("safetensors") })
@@ -70,6 +73,7 @@ enum PipelineSnapshot {
         let total = progress.totalUnitCount
         let percent = Int(progress.fractionCompleted * 100)
         logger.info("Downloading: \(completed)/\(total) files (\(percent)%)")
+        progressHandler?(Int(completed), Int(total))
       }
     )
 

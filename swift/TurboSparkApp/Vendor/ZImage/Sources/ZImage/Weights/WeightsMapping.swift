@@ -175,15 +175,16 @@ public enum ZImageWeightsMapping {
     return mapped
   }
 
+  @discardableResult
   public static func applyTransformer(
     weights: [String: MLXArray],
     to model: ZImageTransformer2DModel,
     manifest: ZImageQuantizationManifest? = nil,
     logger: Logger
-  ) {
+  ) -> Error? {
     if weights.isEmpty {
       logger.warning("Transformer weights empty; nothing to apply.")
-      return
+      return ZImageModuleWeightsApplyError.noMatchingWeights("transformer")
     }
 
     let canonical = canonicalizeTransformerKeys(weights)
@@ -200,7 +201,8 @@ public enum ZImageWeightsMapping {
 
     let runtimeWeights = castFloat16ToBFloat16(canonical)
     let mapped = transformerMapping(runtimeWeights)
-    ZImageModuleWeightsApplier.applyToModule(model, weights: mapped, prefix: "transformer", logger: logger)
+    let applyError = ZImageModuleWeightsApplier.applyToModule(
+      model, weights: mapped, prefix: "transformer", logger: logger)
 
     let auxiliaryWeights = denseAuxiliaryWeights(weights: runtimeWeights, manifest: manifest)
     let groupSize = manifest?.groupSize ?? 32
@@ -213,6 +215,7 @@ public enum ZImageWeightsMapping {
       xPad: auxiliaryWeights["x_pad_token"],
       capPad: auxiliaryWeights["cap_pad_token"]
     )
+    return applyError
   }
 
   private static func denseAuxiliaryWeights(
@@ -251,15 +254,16 @@ public enum ZImageWeightsMapping {
     }
   }
 
+  @discardableResult
   public static func applyTextEncoder(
     weights: [String: MLXArray],
     to model: QwenTextEncoder,
     manifest: ZImageQuantizationManifest? = nil,
     logger: Logger
-  ) {
+  ) -> Error? {
     if weights.isEmpty {
       logger.warning("Text encoder weights empty; nothing to apply.")
-      return
+      return ZImageModuleWeightsApplyError.noMatchingWeights("text encoder")
     }
 
     let canonical = canonicalizeTextEncoderKeys(weights)
@@ -275,18 +279,20 @@ public enum ZImageWeightsMapping {
     }
 
     let mapped = textEncoderMapping(castFloat16ToBFloat16(canonical))
-    ZImageModuleWeightsApplier.applyToModule(model, weights: mapped, prefix: "text_encoder", logger: logger)
+    return ZImageModuleWeightsApplier.applyToModule(
+      model, weights: mapped, prefix: "text_encoder", logger: logger)
   }
 
+  @discardableResult
   public static func applyVAE(
     weights: [String: MLXArray],
     to model: Module,
     manifest: ZImageQuantizationManifest? = nil,
     logger: Logger
-  ) {
+  ) -> Error? {
     if weights.isEmpty {
       logger.warning("VAE weights empty; nothing to apply.")
-      return
+      return ZImageModuleWeightsApplyError.noMatchingWeights("VAE")
     }
 
     // VAE modules stay dense, but mflux conversions quantize the mid-block
@@ -304,6 +310,7 @@ public enum ZImageWeightsMapping {
         uniqueKeysWithValues: model.parameters().flattened().lazy.map { ($0.0, $0.1.shape) }
       ) as [String: [Int]]
     let mapped = vaeMapping(runtimeWeights, targetShapes: targetShapes)
-    ZImageModuleWeightsApplier.applyToModule(model, weights: mapped, prefix: "vae", logger: logger)
+    return ZImageModuleWeightsApplier.applyToModule(
+      model, weights: mapped, prefix: "vae", logger: logger)
   }
 }

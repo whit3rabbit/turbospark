@@ -7,9 +7,7 @@ extension AppModel {
     func sharedImageSession(for model: ImageInstalledModel) throws -> any ImageGenerationSession {
         if imageSessionPath != model.path || imageSession == nil {
             imageSession?.cancel()
-            imageSession = Self.isQwenImageModel(model.modelID)
-                ? try QwenImageGenerationSession(model: model)
-                : MLXImageGenerationSession(model: model)
+            imageSession = MLXImageGenerationSession(model: model)
             imageSessionPath = model.path
         }
         guard let imageSession else {

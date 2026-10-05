@@ -22,7 +22,6 @@ struct ImageComposerView: View {
                 && !model.savedImageArtifacts.isEmpty && !expanded {
                 ImageModelDownloadOffer(model: model, importing: $importing)
             }
-            if active { progress.padding(.bottom, 12) }
             VStack(spacing: 12) {
                 TextField(text: $model.promptText, axis: .vertical) {
                     Text("Describe the image you want to create.", bundle: .module)
@@ -136,38 +135,4 @@ struct ImageComposerView: View {
         ImageGenerationSettings(model: model, importing: $importing)
     }
 
-    private var progress: some View {
-        HStack(spacing: 12) {
-            ProgressView(value: model.imageProgressFraction).frame(width: 100)
-            Text("Image \(model.imageBatchIndex) of \(model.imageBatchCount)", bundle: .module)
-            Text(stageDescription)
-                .foregroundStyle(.appSecondary).lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .themedFont(.small)
-        .accessibilityElement(children: .combine)
-    }
-
-    private var stageDescription: String {
-        guard let job = model.imageJob, let stage = job.stage else {
-            return String(localized: "Waiting", bundle: .module)
-        }
-        switch stage {
-        case "loading_model":
-            return String(localized: "Loading model", bundle: .module)
-        case "text_encoder":
-            return "Encoding prompt"
-        case "transformer":
-            if job.total > 0 {
-                return "Denoising step \(job.completed)/\(job.total)"
-            }
-            return "Denoising"
-        case "vae_decoder":
-            return "Decoding image"
-        case "png_encode":
-            return "Saving image"
-        default:
-            return stage.capitalized
-        }
-    }
 }

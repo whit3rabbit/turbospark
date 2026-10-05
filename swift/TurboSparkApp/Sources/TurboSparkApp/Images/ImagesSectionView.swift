@@ -30,7 +30,13 @@ struct ImagesSectionView: View {
             header
             Divider()
             if organizing { organizationToolbar }
-            gallery.frame(maxWidth: .infinity, maxHeight: .infinity)
+            gallery
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay {
+                    if model.imageGenerationTask != nil {
+                        generationProgress
+                    }
+                }
             if !organizing {
                 ImageComposerView(model: model, importing: $importing)
             }
@@ -119,7 +125,8 @@ struct ImagesSectionView: View {
 
     @ViewBuilder
     private var gallery: some View {
-        if artifacts.isEmpty && (organizing || model.imageJob?.result == nil || model.imageJob?.savedPath != nil) {
+        if artifacts.isEmpty && model.imageGenerationTask == nil
+            && (organizing || model.imageJob?.result == nil || model.imageJob?.savedPath != nil) {
             VStack(spacing: 14) {
                 Image(systemName: organizing ? "square.grid.2x2" : "photo.badge.plus")
                     .themedFont(.hero).foregroundStyle(.appAccent)
@@ -185,6 +192,52 @@ struct ImagesSectionView: View {
         Dictionary(grouping: artifacts) { Calendar.current.startOfDay(for: $0.createdAt) }
             .map { (day: $0.key, images: $0.value) }
             .sorted { $0.day > $1.day }
+    }
+
+    private var generationProgress: some View {
+        VStack(spacing: 10) {
+            Text("Image \(model.imageBatchIndex) of \(model.imageBatchCount)", bundle: .module)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
+            progressStageLabel
+                .themedFont(.small, weight: .medium)
+                .lineLimit(1)
+            HStack(spacing: 10) {
+                ProgressView(value: model.imageProgressFraction)
+                    .progressViewStyle(.linear)
+                    .frame(width: 280)
+                if let job = model.imageJob, job.total > 0 {
+                    Text(verbatim: "\(job.completed)/\(job.total)")
+                        .themedFont(.tiny)
+                        .monospacedDigit()
+                        .foregroundStyle(.appSecondary)
+                }
+            }
+        }
+        .padding(18)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 0.75)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var progressStageLabel: some View {
+        switch model.imageJob?.stage {
+        case "downloading_model": Text("Downloading model files", bundle: .module)
+        case "loading_model": Text("Loading model", bundle: .module)
+        case "loading_tokenizer": Text("Loading tokenizer", bundle: .module)
+        case "loading_text_encoder": Text("Loading text encoder", bundle: .module)
+        case "loading_transformer": Text("Loading transformer", bundle: .module)
+        case "loading_vae": Text("Loading VAE", bundle: .module)
+        case "text_encoder": Text("Encoding prompt", bundle: .module)
+        case "transformer": Text("Denoising", bundle: .module)
+        case "vae_decoder": Text("Decoding image", bundle: .module)
+        case "png_encode": Text("Saving image", bundle: .module)
+        default: Text("Loading model", bundle: .module)
+        }
     }
 
     @ViewBuilder

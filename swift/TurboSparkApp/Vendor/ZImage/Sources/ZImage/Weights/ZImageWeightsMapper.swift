@@ -18,8 +18,11 @@ public struct ZImageWeightsMapper {
   }
 
   public func loadQuantizationManifest() -> ZImageQuantizationManifest? {
-    let manifestURL = snapshot.appendingPathComponent("quantization.json")
-    return try? ZImageQuantizationManifest.load(from: manifestURL)
+    try? loadValidatedQuantizationManifest()
+  }
+
+  public func loadValidatedQuantizationManifest() throws -> ZImageQuantizationManifest? {
+    try ZImageQuantizer.loadManifest(at: snapshot)
   }
 
   public func loadAll(dtype: DType? = .bfloat16) throws -> [String: MLXArray] {

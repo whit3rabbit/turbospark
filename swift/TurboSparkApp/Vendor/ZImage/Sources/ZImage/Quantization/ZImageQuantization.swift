@@ -400,9 +400,60 @@ public struct ZImageQuantizer {
     }
   }
 
-  public static func hasQuantization(at directory: URL) -> Bool {
+  public static func loadManifest(at directory: URL) throws -> ZImageQuantizationManifest? {
     let manifestURL = directory.appendingPathComponent("quantization.json")
-    return FileManager.default.fileExists(atPath: manifestURL.path)
+    if FileManager.default.fileExists(atPath: manifestURL.path) {
+      return try ZImageQuantizationManifest.load(from: manifestURL)
+    }
+
+    // Hugging Face MLX exports keep their affine settings in quantize_config.json
+    // or the component config files instead of TurboSpark's root manifest.
+    let configURLs = [
+      directory.appendingPathComponent("quantize_config.json"),
+      directory.appendingPathComponent("transformer/config.json"),
+      directory.appendingPathComponent("text_encoder/config.json"),
+    ]
+    var resolved: (bits: Int, groupSize: Int, mode: String)?
+    for url in configURLs where FileManager.default.fileExists(atPath: url.path) {
+      let data = try Data(contentsOf: url)
+      guard let document = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw ZImageQuantizationError.quantizationFailed("Invalid quantization config: \(url.path)")
+      }
+      guard let raw = document["quantization"] else { continue }
+      guard let settings = raw as? [String: Any],
+        let bits = settings["bits"] as? Int,
+        let groupSize = settings["group_size"] as? Int
+      else {
+        throw ZImageQuantizationError.quantizationFailed("Invalid quantization settings in \(url.path)")
+      }
+      let mode = settings["mode"] as? String ?? "affine"
+      guard (2...8).contains(bits), groupSize > 0,
+        mode == "affine" || mode == "mxfp4"
+      else {
+        throw ZImageQuantizationError.quantizationFailed("Unsupported quantization settings in \(url.path)")
+      }
+      if let resolved,
+        resolved.bits != bits || resolved.groupSize != groupSize || resolved.mode != mode
+      {
+        throw ZImageQuantizationError.quantizationFailed(
+          "Conflicting quantization settings in \(url.path)")
+      }
+      resolved = (bits, groupSize, mode)
+    }
+
+    guard let resolved else { return nil }
+    return ZImageQuantizationManifest(
+      modelId: nil,
+      revision: nil,
+      groupSize: resolved.groupSize,
+      bits: resolved.bits,
+      mode: resolved.mode,
+      layers: []
+    )
+  }
+
+  public static func hasQuantization(at directory: URL) -> Bool {
+    (try? loadManifest(at: directory)) != nil
   }
 
   public static func applyQuantization(

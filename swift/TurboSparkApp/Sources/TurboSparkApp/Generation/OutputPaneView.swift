@@ -10,21 +10,14 @@ struct OutputPaneView: View {
     @State private var showingMemoryCapture = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let job = model.imageJob, job.chatID == model.selectedChatID, job.result != nil {
-                ImageGenerationPreviewView(model: model, job: job)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
+        Group {
+            if model.hasOutputTranscript {
+                transcript
+            } else {
+                placeholder
             }
-            Group {
-                if model.hasOutputTranscript {
-                    transcript
-                } else {
-                    placeholder
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: responseCopyFeedbackID) {
             guard responseCopyFeedbackID != nil else { return }
             try? await Task.sleep(for: .seconds(1.2))
@@ -188,48 +181,6 @@ struct OutputPaneView: View {
         withAnimation(.easeIn(duration: 0.15)) {
             responseCopyFeedbackID = UUID()
         }
-    }
-}
-
-private struct ImageGenerationPreviewView: View {
-    @ObservedObject var model: AppModel
-    let job: AppImageJob
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("Generated image", systemImage: "photo")
-                    .themedFont(.base, weight: .semibold)
-                Spacer()
-                if let stage = job.stage {
-                    Text(stage.replacingOccurrences(of: "_", with: " "))
-                        .foregroundStyle(.secondary)
-                        .themedFont(.small)
-                }
-            }
-            if let data = job.result?.png, let image = NSImage(data: data) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxHeight: 420)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.black.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-            }
-            HStack {
-                Button("Save") { model.saveImage() }
-                    .disabled(job.savedPath != nil)
-                Button("Regenerate") { model.regenerateImage() }
-                    .disabled(model.isRunning)
-                if let path = job.savedPath {
-                    Text((path as NSString).lastPathComponent)
-                        .foregroundStyle(.secondary)
-                        .themedFont(.small)
-                        .lineLimit(1)
-                }
-            }
-        }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 /// View displaying a committed conversation message turn with Claude-style layout and hover actions.

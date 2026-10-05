@@ -6,9 +6,6 @@ import TurboSpark
 enum ImageModelPresentation {
     static func family(_ modelID: String) -> String {
         let lowered = modelID.lowercased()
-        if lowered.contains("qwen-image") {
-            return "Qwen-Image 2.1"
-        }
         if lowered.contains("z-image-turbo") || lowered.contains("z-image") {
             return "Z-Image Turbo"
         }
@@ -31,8 +28,11 @@ struct ImageModelControls: View {
     @State private var browsingFamily: String?
 
     private var families: [String] {
-        let set = Set(model.imageModels.map { ImageModelPresentation.family($0.modelID) }
-            + model.imageCatalog.map { ImageModelPresentation.family($0.modelID) })
+        let set = Set(
+            model.imageModels
+                .filter { AppModel.supportsMLXImageModel(modelID: $0.modelID) }
+                .map { ImageModelPresentation.family($0.modelID) }
+                + model.imageDownloadChoices.map { ImageModelPresentation.family($0.modelID) })
         if set.isEmpty {
             return ["Z-Image Turbo"]
         }

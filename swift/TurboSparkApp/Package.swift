@@ -34,7 +34,6 @@ let package = Package(
                 .product(name: "TurboSpark", package: "TurboSpark"),
                 .product(name: "OpenKind", package: openKindRevision == nil ? "openkind" : openKindIdentity),
                 .product(name: "ZImage", package: "zimage"),
-                .product(name: "QwenImage", package: "qwenimage"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 .product(name: "Syntext", package: "syntext"),

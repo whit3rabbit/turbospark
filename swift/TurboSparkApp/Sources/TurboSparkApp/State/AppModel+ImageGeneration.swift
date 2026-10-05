@@ -1,13 +1,7 @@
 import Foundation
-import QwenImage
 import TurboSpark
 
 extension AppModel {
-    /// The Qwen-Image-2.1 family runs on its own vendored pipeline.
-    static func isQwenImageModel(_ modelID: String) -> Bool {
-        modelID.hasPrefix("mlx-community/Qwen-Image-2.1")
-    }
-
     func imageGenerateOptions(prompt: String, seed: UInt64) -> ImageGenerateOptions {
         ImageGenerateOptions(
             prompt: prompt,
@@ -38,36 +32,20 @@ extension AppModel {
             singleProgress = 1.0
         } else if let stage = job.stage {
             switch stage {
-            case "text_encoder":
-                let frac = job.total > 0 ? Double(job.completed) / Double(job.total) : 0.0
-                singleProgress = 0.05 * min(1.0, max(0.0, frac))
-            case "transformer":
-                let frac = job.total > 0 ? Double(job.completed) / Double(job.total) : 0.0
-                singleProgress = 0.05 + 0.90 * min(1.0, max(0.0, frac))
-            case "loading_model":
-                singleProgress = 0.0
-            case "vae_decoder":
-                let frac = job.total > 0 ? Double(job.completed) / Double(job.total) : 0.0
-                singleProgress = 0.95 + 0.04 * min(1.0, max(0.0, frac))
-            case "png_encode":
-                singleProgress = 0.99
+            case "downloading_model", "transformer":
+                guard job.total > 0 else { return nil }
+                singleProgress = min(1.0, max(0.0, Double(job.completed) / Double(job.total)))
+            case "loading_model", "loading_tokenizer", "loading_text_encoder",
+                 "loading_transformer", "loading_vae", "text_encoder", "vae_decoder", "png_encode":
+                return nil
             default:
-                if job.total > 0 {
-                    singleProgress = min(1.0, Double(job.completed) / Double(job.total))
-                } else {
-                    singleProgress = 0.0
-                }
+                return nil
             }
-        } else if job.total > 0 {
-            singleProgress = min(1.0, Double(job.completed) / Double(job.total))
         } else {
-            singleProgress = 0.0
+            return nil
         }
 
-        let count = max(1, imageBatchCount)
-        let currentIndex = max(0, min(imageBatchIndex - 1, count - 1))
-        let overall = (Double(currentIndex) + singleProgress) / Double(count)
-        return min(1.0, max(0.0, overall))
+        return min(1.0, max(0.0, singleProgress))
     }
 
     /// Starts a direct-prompt image turn through the supported MLX pipeline.

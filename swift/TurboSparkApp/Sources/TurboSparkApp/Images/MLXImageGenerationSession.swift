@@ -73,12 +73,17 @@ final class MLXImageGenerationSession: ImageGenerationSession, @unchecked Sendab
                     )
                     let png = try await pipeline.generateToMemory(request) { progress in
                         let stage: String
-                        switch progress.stage.rawValue {
-                        case "Encoding text": stage = "text_encoder"
-                        case "Denoising": stage = "transformer"
-                        case "Decoding": stage = "vae_decoder"
-                        case "Saving": stage = "png_encode"
-                        default: stage = "loading_model"
+                        switch progress.stage {
+                        case .downloadingModel: stage = "downloading_model"
+                        case .loadingModel: stage = "loading_model"
+                        case .loadingTokenizer: stage = "loading_tokenizer"
+                        case .loadingTextEncoder: stage = "loading_text_encoder"
+                        case .loadingTransformer: stage = "loading_transformer"
+                        case .loadingVAE: stage = "loading_vae"
+                        case .encodingText, .loadingLoRA: stage = "text_encoder"
+                        case .denoising: stage = "transformer"
+                        case .decoding: stage = "vae_decoder"
+                        case .saving: stage = "png_encode"
                         }
                         continuation.yield(.stage(
                             name: stage,

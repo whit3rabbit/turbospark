@@ -110,8 +110,8 @@ final class ImageGenerationTests: XCTestCase {
         let fifthStep = try XCTUnwrap(model.imageProgressFraction)
 
         XCTAssertGreaterThan(fifthStep, firstStep)
-        XCTAssertEqual(firstStep, 0.15, accuracy: 0.0001)
-        XCTAssertEqual(fifthStep, 0.55, accuracy: 0.0001)
+        XCTAssertEqual(firstStep, 1.0 / 9.0, accuracy: 0.0001)
+        XCTAssertEqual(fifthStep, 5.0 / 9.0, accuracy: 0.0001)
     }
 
     func testSavedImageCompletesTheVisibleProgressBar() throws {
@@ -177,8 +177,6 @@ final class ImageGenerationTests: XCTestCase {
             thirtyTwoGB,
             [
                 "z-image-turbo-mlx-8bit",
-                "z-image-mlx-q8",
-                "qwen-image-2.1-mlx-4bit",
                 "z-image-turbo-mlx-4bit",
                 "z-image-turbo-mlx-q4",
                 "z-image-turbo-mlx-2bit",
@@ -203,15 +201,14 @@ final class ImageGenerationTests: XCTestCase {
         XCTAssertTrue(model.hasInstalledMLXImageModel)
     }
 
-    func testQwenImageInstallIsSupportedAndRoutedToItsOwnFamily() {
+    func testSwiftImageSupportIsLimitedToZImageTurbo() {
         XCTAssertTrue(
+            AppModel.supportsMLXImageModel(modelID: "andrevp/Z-Image-Turbo-MLX-8bit"))
+        XCTAssertFalse(
+            AppModel.supportsMLXImageModel(modelID: "deepsweet/Z-Image-6B-MLX-Q8"))
+        XCTAssertFalse(
             AppModel.supportsMLXImageModel(modelID: "mlx-community/Qwen-Image-2.1-MLX-4bit"))
-        XCTAssertTrue(AppModel.testedImageModelAliases.contains("qwen-image-2.1-mlx-4bit"))
-        XCTAssertTrue(AppModel.isQwenImageModel("mlx-community/Qwen-Image-2.1-MLX-4bit"))
-        XCTAssertFalse(AppModel.isQwenImageModel("andrevp/Z-Image-Turbo-MLX-4bit"))
-        XCTAssertEqual(
-            ImageModelPresentation.family("mlx-community/Qwen-Image-2.1-MLX-4bit"),
-            "Qwen-Image 2.1")
+        XCTAssertFalse(AppModel.testedImageModelAliases.contains("qwen-image-2.1-mlx-4bit"))
     }
 
     func testImageJobStartsWaitingAndCarriesTheRequest() {

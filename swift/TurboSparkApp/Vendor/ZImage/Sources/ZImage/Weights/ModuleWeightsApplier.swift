@@ -1,8 +1,24 @@
+import Foundation
 import Logging
 import MLX
 import MLXNN
 
+enum ZImageModuleWeightsApplyError: LocalizedError {
+  case noMatchingWeights(String)
+  case updateFailed(String, String)
+
+  var errorDescription: String? {
+    switch self {
+    case .noMatchingWeights(let prefix):
+      return "No matching checkpoint weights were found for \(prefix)."
+    case .updateFailed(let prefix, let reason):
+      return "Failed to apply checkpoint weights to \(prefix): \(reason)"
+    }
+  }
+}
+
 enum ZImageModuleWeightsApplier {
+  @discardableResult
   static func applyToModule(
     _ module: Module,
     weights: [String: MLXArray],
@@ -10,7 +26,7 @@ enum ZImageModuleWeightsApplier {
     logger: Logger,
     tensorNameTransform: ((String) -> String)? = nil,
     parameterKeyTransform: ((String) -> String)? = nil
-  ) {
+  ) -> Error? {
     let params = module.parameters().flattened()
     var updates: [(String, MLXArray)] = []
     updates.reserveCapacity(params.count)
@@ -42,14 +58,16 @@ enum ZImageModuleWeightsApplier {
 
     if updates.isEmpty {
       logger.warning("\(prefix) received no matching weights; skipping apply.")
-      return
+      return ZImageModuleWeightsApplyError.noMatchingWeights(prefix)
     }
 
     do {
       let nd = ModuleParameters.unflattened(updates)
       try module.update(parameters: nd, verify: [.shapeMismatch])
+      return nil
     } catch {
       logger.error("Failed to apply weights to \(prefix): \(error)")
+      return ZImageModuleWeightsApplyError.updateFailed(prefix, String(describing: error))
     }
   }
 }

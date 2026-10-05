@@ -102,14 +102,16 @@ public enum PipelineUtilities {
   static func prepareStandardSnapshot(
     model: String?,
     weightsVariant: String?,
-    logger: Logger
+    logger: Logger,
+    progressHandler: PipelineSnapshot.DownloadProgressHandler? = nil
   ) async throws -> StandardSnapshotContext {
     let normalizedWeightsVariant = ZImageFiles.normalizedWeightsVariant(weightsVariant)
     let snapshot = try await PipelineSnapshot.prepare(
       model: model,
       weightsVariant: normalizedWeightsVariant,
       snapshotValidator: standardSnapshotValidator(weightsVariant: normalizedWeightsVariant),
-      logger: logger
+      logger: logger,
+      progressHandler: progressHandler
     )
     let configs = try ZImageModelConfigs.load(from: snapshot)
     let weightsMapper = ZImageWeightsMapper(
@@ -117,7 +119,7 @@ public enum PipelineUtilities {
       weightsVariant: normalizedWeightsVariant,
       logger: logger
     )
-    let quantizationManifest = weightsMapper.loadQuantizationManifest()
+    let quantizationManifest = try weightsMapper.loadValidatedQuantizationManifest()
     if quantizationManifest == nil {
       try ZImageFiles.validateRequiredComponentWeights(
         at: snapshot,
