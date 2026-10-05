@@ -61,6 +61,31 @@ enum AttachmentImporter {
                         return (url, .failure(error))
                     }
                 }
+                // **AUDIO IS CARRIED BY PATH TOO, AND TRANSCRIBED AFTER.**
+                // The engine decodes it (`AudioFileClass` reads the Rust
+                // decoder list); the transcript arrives in the background
+                // and lands in `extractedText`, which the send path already
+                // inlines. A format the engine refuses gets the engine's
+                // "convert it" sentence instead of an extraction failure.
+                switch AudioFileClass.classify(extension: url.pathExtension) {
+                case .supported:
+                    do {
+                        let document = ExtractedPromptDocument(
+                            fileName: url.lastPathComponent,
+                            formatLabel: "Audio",
+                            text: "",
+                            wasTruncated: false)
+                        let asset = try ManagedAssetStore.shared.store(
+                            fileURL: url, fileName: document.fileName)
+                        return (url, .success((document, asset)))
+                    } catch {
+                        return (url, .failure(error))
+                    }
+                case .refused:
+                    return (url, .failure(AudioImportError.unsupported(url.pathExtension)))
+                case .notAudio:
+                    break
+                }
                 do {
                     let document = try DocumentTextExtractor.extract(from: url)
                     let asset = try ManagedAssetStore.shared.store(
@@ -105,6 +130,10 @@ enum AttachmentImporter {
                 }
                 importedIDs.append(attachment.id)
                 imported += 1
+                if attachment.isAudio && AudioPreferences.autoTranscribeAttachments {
+                    AudioAttachmentTranscriber.shared.transcribe(
+                        attachment, chatID: chatID ?? model.selectedChatID, model: model)
+                }
             case .failure(let error):
                 failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
@@ -280,5 +309,19 @@ enum AttachmentImporter {
             }
         }
         return results
+    }
+}
+
+/// Why an audio file was not attached.
+enum AudioImportError: LocalizedError {
+    case unsupported(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupported(let ext):
+            return String(
+                localized: "Unsupported audio format (.\(ext)). Convert to M4A or WAV and try again.",
+                bundle: .module)
+        }
     }
 }

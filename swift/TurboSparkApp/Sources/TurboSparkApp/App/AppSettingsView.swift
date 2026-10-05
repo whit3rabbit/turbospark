@@ -239,6 +239,8 @@ public struct AppSettingsView: View {
             KeyboardShortcutsSettingsPaneView()
         case .permissions:
             PermissionsSettingsPaneView(model: model)
+        case .audio:
+            AudioSettingsPaneView(model: model)
         case .models:
             ModelsSettingsPaneView(model: model)
         case .engine:

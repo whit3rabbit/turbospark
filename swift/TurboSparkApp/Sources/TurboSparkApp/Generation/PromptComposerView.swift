@@ -14,6 +14,9 @@ struct PromptComposerView: View {
     @State private var showingProjectSettingsSheet = false
     @State private var showingAddMcpSheet = false
     @State private var isCreatingSkill = false
+    @State private var showingAppAudioCapture = false
+    @State private var isDropTargeted = false
+    @ObservedObject private var recorder = ComposerAudioRecorder.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -37,8 +40,12 @@ struct PromptComposerView: View {
                 }
             }
             QueuedPromptsSection(model: model)
-            PromptComposerEditor(
-                model: model, promptFocused: $promptFocused, autocomplete: autocomplete)
+            if recorder.isActive {
+                ComposerRecordingStrip(model: model, recorder: recorder)
+            } else {
+                PromptComposerEditor(
+                    model: model, promptFocused: $promptFocused, autocomplete: autocomplete)
+            }
             if model.isInGhostChat {
                 // Under the text box, before sending: the one place the user
                 // is certain to look as they compose. Persistent rather than
@@ -76,6 +83,9 @@ struct PromptComposerView: View {
                 onInsertPromptText: { text in
                     insertPromptText(text)
                 },
+                onCaptureAppAudio: {
+                    showingAppAudioCapture = true
+                },
                 promptFocused: $promptFocused
             )
         }
@@ -88,7 +98,7 @@ struct PromptComposerView: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .stroke(
-                            promptFocused
+                            promptFocused || isDropTargeted
                                 ? theme.accent.opacity(0.55)
                                 : Color.primary.opacity(theme.isDark ? 0.18 : 0.14),
                             lineWidth: promptFocused ? 1.5 : 1.0
@@ -135,6 +145,22 @@ struct PromptComposerView: View {
                 onDismiss: { showingAddMcpSheet = false }
             )
         }
+        .sheet(isPresented: $showingAppAudioCapture) {
+            SystemAudioCaptureSheet(model: model)
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            // Drop intake routes through the SAME importer and the SAME type
+            // gate as the picker, so a drop can never attach what the picker
+            // would have refused (`swift/CLAUDE.md` Gotcha 23).
+            let accepted = urls.filter { url in
+                guard url.isFileURL else { return false }
+                guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+                return model.attachmentContentTypes.contains { type.conforms(to: $0) }
+            }
+            guard !accepted.isEmpty, !model.isRunning else { return false }
+            importDocuments(accepted)
+            return true
+        } isTargeted: { isDropTargeted = $0 }
         .sheet(isPresented: $isCreatingSkill) {
             SkillEditorSheet(
                 model: model,

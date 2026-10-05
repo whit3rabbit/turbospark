@@ -59,6 +59,10 @@ axum = { version = "0.7", features = ["json"] }
 # build can reach), so it goes here beside `catalog` and `model_io` rather
 # than in the macOS block, and the crate that consumes it is gated instead.
 turbospark-vision-io = { path = "../vision-io", version = "0.2.0" }
+# Audio decode, resample, peaks, WAV output and the speech session contract
+# behind `ts_audio_*`. Portable for the same reason vision-io is: the DSP half
+# of the audio ABI has to answer on any target.
+turbospark-audio = { path = "../audio", version = "0.2.0" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
 
 # The session only exists where the engine does. Everything else in this

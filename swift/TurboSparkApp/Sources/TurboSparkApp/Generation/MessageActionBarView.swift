@@ -123,11 +123,25 @@ struct MessageShareButton: View {
     }
 }
 
-/// Speech synthesis button triggering Apple's native AVSpeechSynthesizer.
+/// Read aloud for one message: the engine's voice model when it has one,
+/// Apple's on-device synthesizer otherwise. The context menu saves the
+/// reading as an audio file through the export sheet.
 struct MessageSpeechButton: View {
     let text: String
     let messageID: UUID
     @ObservedObject private var speechManager = AppSpeechSynthesizer.shared
+    @ObservedObject private var capabilities = AudioCapabilities.shared
+    @State private var renderedClip: RenderedClip?
+    @State private var isRendering = false
+    /// Held apart from `renderedClip`: `.sheet(item:)` nils the item
+    /// BEFORE `onDismiss` runs, so the file to delete must live elsewhere.
+    @State private var cleanupURL: URL?
+
+    /// A rendered reading awaiting export; its file is deleted on dismiss.
+    private struct RenderedClip: Identifiable {
+        let url: URL
+        var id: URL { url }
+    }
 
     private var isSpeakingThis: Bool {
         speechManager.isSpeaking && speechManager.speakingMessageID == messageID
@@ -141,8 +155,14 @@ struct MessageSpeechButton: View {
                 Image(systemName: isSpeakingThis ? "stop.fill" : "speaker.wave.2")
                     .themedFont(.tiny, weight: .medium)
                     .accessibilityHidden(true)
-                Text(isSpeakingThis ? "Stop" : "Read")
-                    .themedFont(.tiny, weight: .medium)
+                Group {
+                    if isSpeakingThis {
+                        Text("Stop", bundle: .module)
+                    } else {
+                        Text("Read", bundle: .module)
+                    }
+                }
+                .themedFont(.tiny, weight: .medium)
             }
             .foregroundStyle(isSpeakingThis ? TurboSparkTheme.accentColor : Color.secondary)
             .padding(.horizontal, 7)
@@ -154,8 +174,49 @@ struct MessageSpeechButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(isSpeakingThis ? "Stop reading out loud" : "Read message out loud")
-        .accessibilityLabel(isSpeakingThis ? "Stop reading message out loud" : "Read message out loud")
+        .disabled(!capabilities.snapshot.readAloud.isUsable)
+        .help(helpText)
+        .accessibilityLabel(isSpeakingThis
+            ? Text("Stop reading message out loud", bundle: .module)
+            : Text("Read message out loud", bundle: .module))
+        .contextMenu {
+            Button {
+                saveAsAudio()
+            } label: {
+                Text("Save as Audio...", bundle: .module)
+            }
+            .disabled(isRendering || !capabilities.snapshot.readAloud.isUsable)
+        }
+        .sheet(item: $renderedClip, onDismiss: {
+            if let url = cleanupURL { try? FileManager.default.removeItem(at: url) }
+            cleanupURL = nil
+        }) { clip in
+            AudioExportSheet(source: clip.url, suggestedName: "Reply.wav", range: nil)
+        }
+    }
+
+    private var helpText: Text {
+        if let reason = capabilities.snapshot.readAloud.reason {
+            return Text(verbatim: reason)
+        }
+        let provider = capabilities.snapshot.readAloud.provider?.label ?? ""
+        return isSpeakingThis
+            ? Text("Stop reading out loud", bundle: .module)
+            : Text("Read message out loud with \(provider)", bundle: .module)
+    }
+
+    private func saveAsAudio() {
+        isRendering = true
+        Task {
+            do {
+                let url = try await speechManager.renderToFile(text: text)
+                cleanupURL = url
+                renderedClip = RenderedClip(url: url)
+            } catch {
+                NSSound.beep()
+            }
+            isRendering = false
+        }
     }
 }
 

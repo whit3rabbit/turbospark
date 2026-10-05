@@ -7,6 +7,7 @@ extension AppSettingsView {
         case appearance = "Appearance"
         case shortcuts = "Keyboard shortcuts"
         case permissions = "Files & Permissions"
+        case audio = "Audio & Voice"
         case models = "Models & Storage"
         case engine = "Engine"
         case safety = "Safety & Steering"
@@ -30,6 +31,7 @@ extension AppSettingsView {
             case .appearance: return "sun.max"
             case .shortcuts: return "keyboard"
             case .permissions: return "folder.badge.gearshape"
+            case .audio: return "waveform"
             case .models: return "cylinder.split.1x2"
             case .engine: return "cpu"
             case .safety: return "dial.medium"
@@ -46,7 +48,7 @@ extension AppSettingsView {
 
         public var category: String {
             switch self {
-            case .general, .profiles, .appearance, .shortcuts, .permissions:
+            case .general, .profiles, .appearance, .shortcuts, .permissions, .audio:
                 return "Personal"
             case .models, .engine, .safety, .mcp, .skills, .memory, .soul, .agents, .plugins,
                 .automation, .hooks:
@@ -66,6 +68,8 @@ extension AppSettingsView {
                 return ["keyboard", "keys", "shortcuts", "hotkeys", "commands"]
             case .permissions:
                 return ["files", "privacy", "access", "filesystem", "security", "tcc", "sandbox", "accessibility", "advisory veto", "full disk access"]
+            case .audio:
+                return ["audio", "voice", "microphone", "mic", "dictation", "speech", "transcribe", "transcription", "record", "read aloud", "tts", "stt", "system audio"]
             case .models:
                 return ["storage", "lm studio", "downloads", "folders", "cache", "context", "hugging face", "hf", "token", "auth", "zero-copy", "rescan"]
             case .engine:

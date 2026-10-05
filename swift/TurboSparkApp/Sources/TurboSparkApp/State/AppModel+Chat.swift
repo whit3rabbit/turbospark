@@ -442,6 +442,32 @@ extension AppModel {
         updateTokenEstimate()
     }
 
+    /// Edits one draft attachment in place: the background transcript of an
+    /// audio clip, or its replacement by a trimmed copy.
+    ///
+    /// Looked up by ID in `chatID` first and then across every chat, because
+    /// a transcription started in one chat can finish after the user has
+    /// switched to another; it must still land on the attachment it belongs
+    /// to and on no other. Returns false when the attachment is gone (the
+    /// user removed it mid-transcription), which is not an error.
+    @discardableResult
+    func updatePromptAttachment(
+        id: UUID, inChatID chatID: UUID?, _ mutate: (inout AppPromptAttachment) -> Void
+    ) -> Bool {
+        let preferred = chatID.flatMap { target in chats.firstIndex { $0.id == target } }
+        let chatIndex = preferred.flatMap { index in
+            chats[index].draftAttachments.contains { $0.id == id } ? index : nil
+        } ?? chats.firstIndex { $0.draftAttachments.contains { $0.id == id } }
+        guard let chatIndex,
+            let attachmentIndex = chats[chatIndex].draftAttachments.firstIndex(where: { $0.id == id })
+        else { return false }
+        mutate(&chats[chatIndex].draftAttachments[attachmentIndex])
+        chats[chatIndex].updatedAt = Date()
+        persistChats()
+        updateTokenEstimate()
+        return true
+    }
+
     public func removePromptAttachment(id: UUID) {
         guard !generating, let index = selectedChatIndex else { return }
         chats[index].draftAttachments.removeAll { $0.id == id }

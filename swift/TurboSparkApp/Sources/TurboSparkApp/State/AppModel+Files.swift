@@ -50,12 +50,17 @@ extension AppModel {
 
     /// The types both attachment pickers accept.
     ///
+    /// Audio is offered only with in-app audio on: without it nothing would
+    /// transcribe the clip, and an attachment the send path then refuses is
+    /// a promise the picker should not make (`swift/CLAUDE.md` Gotcha 23).
+    ///
     /// ONE accessor for the same reason `activeLoadGuard` is one: two views
     /// assembling their own list would drift, and the one that drifted would
     /// accept a file the turn then refuses.
     public var attachmentContentTypes: [UTType] {
         DocumentTextExtractor.supportedContentTypes
             + (visionIsActive ? AppPromptAttachment.imageContentTypes : [])
+            + (AudioPreferences.experimentalEnabled ? AudioFileClass.supportedContentTypes : [])
     }
 
     /// Every attachment across every stored chat, newest chat first.

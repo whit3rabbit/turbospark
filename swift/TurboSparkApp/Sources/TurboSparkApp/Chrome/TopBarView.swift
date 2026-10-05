@@ -59,6 +59,9 @@ struct TopBarView: View {
             }
 
             HStack(spacing: 8) {
+                // Every section, not only Chat: the recording keeps running
+                // when the user navigates, and so must its indicator.
+                RecordingIndicatorPill(model: model)
                 if model.activeSection == .chat {
                     ChatShareButton(model: model)
                     if ProjectChatSummary.isAvailable(

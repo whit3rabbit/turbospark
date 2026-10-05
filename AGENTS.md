@@ -141,6 +141,8 @@ from compilation or a CPU-only result.
 - `crates/compute`, `crates/core`, `crates/selection`,
   `crates/tokenizer`, `crates/streaming`, `crates/invocation`: portable
   primitives and protocol boundaries.
+- `crates/audio`: portable audio decode, resampling, analysis, WAV output,
+  and the speech model contract. Swift owns capture and playback.
 - `crates/ffi`: the C ABI consumed by Swift.
 - `crates/cli`, `crates/catalog`, `crates/server`: user-facing install,
   command, and service surfaces.

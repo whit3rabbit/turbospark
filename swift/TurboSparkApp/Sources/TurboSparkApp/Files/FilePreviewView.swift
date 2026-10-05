@@ -121,6 +121,8 @@ struct FilePreviewView: View {
                 }
             case .image:
                 imageView
+            case .audio:
+                AudioPreviewView(model: model, attachment: attachment)
             case .text:
                 textOrQuickLookView
             }
@@ -204,7 +206,7 @@ struct FilePreviewView: View {
     /// its only route back to what the model actually receives.
     private var hasRenderedAlternative: Bool {
         switch attachment.previewKind {
-        case .pdf, .image: return true
+        case .pdf, .image, .audio: return true
         case .text: return quickLookURL != nil
         }
     }

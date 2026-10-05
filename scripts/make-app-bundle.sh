@@ -190,10 +190,16 @@ cat > "$contents/Info.plist" <<PLIST
     <string>public.app-category.developer-tools</string>
     <key>LSMinimumSystemVersion</key>
     <string>${min_macos}</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>TurboSpark records the audio of an app you choose so it can be attached to a prompt and transcribed on this Mac.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>TurboSpark records your voice for dictation and voice notes. Audio stays on this Mac.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>TurboSpark transcribes your recordings with on-device speech recognition when its own engine has no speech model.</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>SUFeedURL</key>

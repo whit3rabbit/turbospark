@@ -18,8 +18,10 @@ struct PromptComposerPlusMenu: View {
     let onAddMcpServer: () -> Void
     let onCreateSkill: () -> Void
     let onInsertPromptText: (String) -> Void
+    var onCaptureAppAudio: () -> Void = {}
 
     @State private var isHovered: Bool = false
+    @AppStorage(AudioPreferences.experimentalEnabledKey) private var audioEnabled = false
 
     var body: some View {
         if isExtracting {
@@ -87,6 +89,19 @@ struct PromptComposerPlusMenu: View {
                 importGitOrUrlContext()
             } label: {
                 Label { Text("Import GitHub Issue or URL", bundle: .module) } icon: { Image(systemName: "link.badge.plus") }
+            }
+
+            // App-audio capture lives here and in the mic's context menu,
+            // never on the footer: rare, and the most sensitive audio
+            // action, so it is one deliberate step away.
+            if audioEnabled {
+                Button {
+                    onCaptureAppAudio()
+                } label: {
+                    Label { Text("Capture App Audio...", bundle: .module) } icon: { Image(systemName: "macwindow.badge.plus") }
+                }
+                .disabled(!AudioCapabilities.shared.snapshot.systemCapture.isUsable)
+                .help(Text(verbatim: AudioCapabilities.shared.snapshot.systemCapture.reason ?? ""))
             }
         }
     }

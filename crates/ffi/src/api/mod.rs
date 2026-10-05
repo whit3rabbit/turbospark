@@ -1,5 +1,6 @@
 //! C ABI entry points organized by domain.
 
+mod audio;
 mod core;
 mod daemon;
 mod embedding;
@@ -9,6 +10,7 @@ mod models;
 mod server;
 mod session;
 
+pub use audio::*;
 pub use core::*;
 pub use daemon::*;
 pub use embedding::*;

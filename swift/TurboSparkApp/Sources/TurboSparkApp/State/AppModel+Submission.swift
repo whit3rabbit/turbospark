@@ -205,12 +205,16 @@ extension AppModel {
                     style: .warning)
                 return
             }
+            if let refusal = AppPromptAttachment.untranscribedAudioRefusal(in: textDocs) {
+                showToast(refusal, style: .warning)
+                return
+            }
             let promptImages: [ChatImage] = imageDocs.compactMap { $0.sourcePath.map(ChatImage.path) }
 
             var fullUserContent = userDraft
             if !textDocs.isEmpty {
                 let docsText = textDocs.map { doc in
-                    "--- Attachment: \(doc.fileName) (\(doc.formatLabel)) ---\n\(doc.extractedText)\n--- End of \(doc.fileName) ---"
+                    "--- Attachment: \(doc.fileName) (\(doc.promptBlockLabel)) ---\n\(doc.extractedText)\n--- End of \(doc.fileName) ---"
                 }.joined(separator: "\n\n")
                 if fullUserContent.isEmpty {
                     fullUserContent = docsText
@@ -330,7 +334,8 @@ extension AppModel {
                 content: contentForModel,
                 imagePaths: promptImages.compactMap {
                     if case .path(let p) = $0 { return p } else { return nil }
-                })
+                },
+                audioPaths: textDocs.filter(\.isAudio).compactMap(\.sourcePath))
             self.mutateTurnMessages(for: submissionChatID) { $0.append(userMessage) }
 
             self.executeGenerationTurn(step: 0, chatID: submissionChatID)

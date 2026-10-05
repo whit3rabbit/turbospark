@@ -105,6 +105,7 @@ extern "C" {
 typedef struct TsSession TsSession;
 typedef struct TsServer TsServer;
 typedef struct TsImageSession TsImageSession;
+typedef struct TsAudioSession TsAudioSession;
 
 /*
  * One streamed generation event.
@@ -292,6 +293,73 @@ int32_t ts_image_generate(const TsImageSession *s, const char *options_json,
 
 /* Frees the byte buffer returned by ts_image_generate. */
 void ts_image_buffer_free(uint8_t *bytes, size_t len);
+
+/* ---- audio ----
+ *
+ * The portable audio engine (crates/audio). Rust owns decode, resampling,
+ * analysis, WAV output and speech models; the host owns capture, playback,
+ * permissions and AAC encoding. Every call below except the session ones
+ * works on any platform.
+ *
+ * Decoders: WAV, AIFF, CAF, FLAC, MP3, AAC/ALAC in MP4/M4A, Ogg Vorbis.
+ * Opus, WebM and WMA are refused with TS_ERR_UNSUPPORTED and a sentence
+ * that says to convert. A missing or undecodable file is TS_ERR_OPEN; a bad
+ * option or an empty trim range is TS_ERR_INVALID_ARGUMENT. */
+
+/* The capability table:
+ * { "decodeExtensions": [...], "refusedExtensions": [...],
+ *   "speechToText": { "active", "reason" }, "textToSpeech": {...},
+ *   "music": {...} }
+ * No audio model family exists yet, so every task is active:false with the
+ * engine's reason. A host shows that reason on a disabled control rather
+ * than calling ts_audio_session_open to find out. */
+int32_t ts_audio_capabilities_json(char **out);
+
+/* { "sampleRate", "channels", "frames", "durationSeconds", "codec" }.
+ * Decodes the whole file only when the container declares no length. */
+int32_t ts_audio_probe_json(const char *path, char **out);
+
+/* Waveform peaks: { "peaks": [buckets values in 0..1, loudest = 1],
+ * "durationSeconds", "sampleRate", "channels" }. buckets is 1..=8192.
+ * Streams the file once; call from a background thread. */
+int32_t ts_audio_peaks_json(const char *path, size_t buckets, char **out);
+
+/* Converts any decodable file to WAV at destination (overwritten).
+ * options_json may be NULL; every key is optional:
+ * { "sampleRate": 8000..192000, "channels": 1 or the source count,
+ *   "sampleFormat": "int16" | "float32", "startSeconds", "endSeconds" }.
+ * Speech-model input is {"sampleRate":16000,"channels":1,"sampleFormat":"int16"}.
+ * Trim is applied in source frames before resampling. Writes
+ * { "sampleRate", "channels", "frames", "durationSeconds" } to out. */
+int32_t ts_audio_convert_json(const char *source, const char *destination,
+                              const char *options_json, char **out);
+
+/* Meter level in 0..1 for len float samples: RMS mapped over -50..0 dBFS.
+ * Real-time safe (no allocation, lock or I/O), so a capture tap may call it
+ * per buffer. Returns 0 for NULL, len 0, or a caught panic. */
+float ts_audio_display_level(const float *samples, size_t len);
+
+/* Opens an audio model install (models/audio/<alias>.gturbo, reserved).
+ * REFUSED TODAY for every path with TS_ERR_UNSUPPORTED and the same reason
+ * ts_audio_capabilities_json reports; *out is set to NULL. */
+int32_t ts_audio_session_open(const char *model_dir, TsAudioSession **out);
+
+/* Closes an audio session. NULL is a no-op. Not while a call is running. */
+void ts_audio_session_close(TsAudioSession *s);
+
+/* Transcribes any decodable file (resampled to 16 kHz mono internally).
+ * options_json may be NULL: { "language", "timestamps" }. Writes
+ * { "text", "language", "segments": [{ "startSeconds", "endSeconds",
+ * "text" }] }. Blocks for the whole transcription. */
+int32_t ts_audio_transcribe_json(const TsAudioSession *s, const char *audio_path,
+                                 const char *options_json, char **out);
+
+/* Synthesizes text to a float32 mono WAV at destination. options_json may
+ * be NULL: { "voice", "rate" }. Writes { "sampleRate", "frames",
+ * "durationSeconds" }. Blocks for the whole synthesis. */
+int32_t ts_audio_synthesize_json(const TsAudioSession *s, const char *text,
+                                 const char *options_json, const char *destination,
+                                 char **out);
 
 /* ---- introspection ---- */
 

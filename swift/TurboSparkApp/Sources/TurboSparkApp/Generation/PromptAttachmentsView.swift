@@ -30,20 +30,27 @@ struct PromptAttachmentChipView: View {
     let isRunning: Bool
     let onPreview: () -> Void
     let onRemove: () -> Void
+    @ObservedObject private var transcriber = AudioAttachmentTranscriber.shared
 
     var body: some View {
         HStack(spacing: 6) {
             Button(action: onPreview) {
                 HStack(spacing: 6) {
-                    AttachmentThumbnailView(
-                        url: attachment.thumbnailSourceURL,
-                        pixelSize: 16,
-                        fallbackSymbol: attachment.symbolName,
-                        symbolStep: .tiny,
-                        symbolTint: isPreviewing
-                            ? TurboSparkTheme.accentColor : Color.secondary
-                    )
-                    .accessibilityHidden(true)
+                    if attachment.isAudio, let url = attachment.sourceURL {
+                        AudioFileWaveformView(url: url, buckets: 20)
+                            .frame(width: 40, height: 16)
+                            .accessibilityHidden(true)
+                    } else {
+                        AttachmentThumbnailView(
+                            url: attachment.thumbnailSourceURL,
+                            pixelSize: 16,
+                            fallbackSymbol: attachment.symbolName,
+                            symbolStep: .tiny,
+                            symbolTint: isPreviewing
+                                ? TurboSparkTheme.accentColor : Color.secondary
+                        )
+                        .accessibilityHidden(true)
+                    }
                     VStack(alignment: .leading, spacing: 0) {
                         Text(attachment.fileName)
                             .themedFont(.tiny, weight: .medium)
@@ -91,6 +98,18 @@ struct PromptAttachmentChipView: View {
     }
 
     // The subtitle is a VALUE on the attachment, not assembled here, so it
-    // can be tested without a view (`swift/CLAUDE.md` Gotcha 26).
-    private var detailText: String { attachment.detailText }
+    // can be tested without a view (`swift/CLAUDE.md` Gotcha 26). Audio
+    // overlays live transcription status, which is session state rather
+    // than a property of the archived attachment.
+    private var detailText: String {
+        if attachment.isAudio {
+            if transcriber.isTranscribing(attachment.id) {
+                return String(localized: "Transcribing...", bundle: .module)
+            }
+            if attachment.extractedText.isEmpty, transcriber.failures[attachment.id] != nil {
+                return String(localized: "No transcript: open to retry", bundle: .module)
+            }
+        }
+        return attachment.detailText
+    }
 }

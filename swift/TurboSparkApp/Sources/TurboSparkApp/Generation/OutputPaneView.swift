@@ -335,6 +335,15 @@ struct MessageRowView: View {
         }
     }
 
+    /// Sent voice notes and audio files, one player row each. Paths, like
+    /// `imagePaths`, so the row reads the same managed asset the send did.
+    @ViewBuilder
+    private var audioAttachments: some View {
+        ForEach(message.audioPaths, id: \.self) { path in
+            AudioAttachmentRow(storedPath: path)
+        }
+    }
+
     /// The ordinary user bubble. Split out of `body` when `#` quick-saves
     /// arrived: a transcript row holding a `<user-memory-input>` wrap is a
     /// user message too, and rendering it as a bubble showed raw tags.
@@ -358,6 +367,8 @@ struct MessageRowView: View {
                 .shadow(color: Color.black.opacity(0.03), radius: 3, x: 0, y: 1)
 
                 imageAttachments
+
+                audioAttachments
 
                 if isHovered || isCurrentlySpeakingThis {
                     MessageActionBarView(

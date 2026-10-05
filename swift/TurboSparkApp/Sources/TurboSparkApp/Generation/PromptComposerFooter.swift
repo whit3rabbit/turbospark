@@ -22,6 +22,7 @@ struct PromptComposerFooter: View {
     let onAddMcpServer: () -> Void
     let onCreateSkill: () -> Void
     let onInsertPromptText: (String) -> Void
+    var onCaptureAppAudio: () -> Void = {}
     var promptFocused: FocusState<Bool>.Binding
 
     @ScaledMetric private var iconButtonSize: CGFloat = 28
@@ -47,7 +48,8 @@ struct PromptComposerFooter: View {
                 onNewProject: onNewProject,
                 onAddMcpServer: onAddMcpServer,
                 onCreateSkill: onCreateSkill,
-                onInsertPromptText: onInsertPromptText
+                onInsertPromptText: onInsertPromptText,
+                onCaptureAppAudio: onCaptureAppAudio
             )
 
             ToolApprovalDropdown(model: model)
@@ -70,7 +72,9 @@ struct PromptComposerFooter: View {
 
             clearAction
 
-            PromptAudioInputButton(promptFocused: promptFocused)
+            PromptAudioInputButton(
+                model: model, promptFocused: promptFocused,
+                onCaptureAppAudio: onCaptureAppAudio)
 
             GenerateControl(model: model)
         }

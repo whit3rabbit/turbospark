@@ -10,6 +10,8 @@ public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
         case pdf
         /// A raster image rendered at its natural aspect ratio.
         case image
+        /// Audio rendered as a waveform with a transport and the transcript.
+        case audio
         /// Anything else, rendered as the extracted text.
         case text
     }
@@ -96,10 +98,51 @@ public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
     /// it.
     public var isSendableImage: Bool { isImage && sourceExists }
 
+    /// Audio formats the ENGINE decodes (`ts_audio_capabilities_json`).
+    ///
+    /// Read from the Rust side rather than restated here, so a codec added
+    /// to `crates/audio` reaches the picker, the importer and this property
+    /// without a Swift edit that could drift (`swift/CLAUDE.md` Gotcha 22).
+    public static var audioFileExtensions: Set<String> {
+        AudioFileClass.supportedExtensions
+    }
+
+    /// Whether this attachment is a recording or audio file.
+    ///
+    /// Derived from the file name for the same Gotcha 13 reason as
+    /// `isImage`: a stored flag would be a new key on an archived `Codable`.
+    /// The transcript, when there is one, lives in `extractedText`, which is
+    /// what the existing document path already inlines into the prompt.
+    public var isAudio: Bool {
+        Self.audioFileExtensions.contains(fileExtension)
+    }
+
+    /// The label in this attachment's `--- Attachment: name (label) ---`
+    /// prompt block. Audio says what the model is actually reading.
+    public var promptBlockLabel: String {
+        isAudio ? "audio transcript" : formatLabel
+    }
+
+    /// The refusal for a send carrying audio that has no transcript yet, or
+    /// nil when every clip has one.
+    ///
+    /// **AN UNTRANSCRIBED CLIP IS REFUSED, NOT SENT EMPTY**, for the reason
+    /// an image without a tower is: an empty attachment block sends the model
+    /// nothing while the user believes it heard the recording. Shared by the
+    /// send path and the queue drain so the two cannot disagree.
+    public static func untranscribedAudioRefusal(in attachments: [AppPromptAttachment]) -> String? {
+        let pending = attachments.filter { $0.isAudio && $0.extractedText.isEmpty }
+        guard let first = pending.first else { return nil }
+        return pending.count == 1
+            ? "Cannot send \(first.fileName): it has no transcript yet. Wait for transcription or remove it."
+            : "Cannot send \(pending.count) audio attachments: they have no transcript yet."
+    }
+
     /// How the preview pane should render this attachment.
     public var previewKind: PreviewKind {
         if fileExtension == "pdf" { return sourceExists ? .pdf : .text }
         if isImage { return sourceExists ? .image : .text }
+        if isAudio { return sourceExists ? .audio : .text }
         return .text
     }
 
@@ -113,7 +156,7 @@ public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
     public var thumbnailSourceURL: URL? {
         switch previewKind {
         case .image, .pdf: return sourceURL
-        case .text: return nil
+        case .text, .audio: return nil
         }
     }
 
@@ -133,6 +176,16 @@ public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
             let missing = sourceExists ? "" : " • file missing"
             return "\(formatLabel)\(size)\(missing)"
         }
+        // Audio: the transcript is what the model receives, so its presence
+        // is the fact worth showing. The chip overlays live status
+        // ("Transcribing...") from `AudioAttachmentTranscriber`.
+        if isAudio {
+            let size = MetricFormat.fileSize(sourceByteSize).map { " \u{2022} \($0)" } ?? ""
+            let transcript = extractedText.isEmpty
+                ? " \u{2022} no transcript"
+                : " \u{2022} transcript \(characterCount.formatted(.number.notation(.compactName))) chars"
+            return "\(formatLabel)\(size)\(transcript)"
+        }
         let count = characterCount.formatted(.number.notation(.compactName))
         let suffix = wasTruncatedDuringExtraction ? " • truncated" : ""
         return "\(formatLabel) • \(count) chars\(suffix)"
@@ -141,6 +194,7 @@ public struct AppPromptAttachment: Identifiable, Codable, Equatable, Sendable {
     /// SF Symbol representing the document type in lists and chips.
     public var symbolName: String {
         if isImage { return "photo" }
+        if isAudio { return "waveform" }
         switch fileExtension {
         case "pdf": return "doc.richtext"
         case "docx", "doc": return "doc.text"
@@ -203,6 +257,12 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
     /// Paths rather than bytes: the engine reads the file itself, and the
     /// archive is rewritten whole on every keystroke of the draft.
     public var imagePaths: [String]
+    /// Paths of audio attachments sent with this turn, in order.
+    ///
+    /// For REPLAY only: the model received each clip's transcript inline in
+    /// `content`, the same way a document's text is inlined, so prompt
+    /// assembly never reads this. Stored so the bubble can show a player.
+    public var audioPaths: [String]
     /// Inactive earlier versions of this message, oldest first.
     ///
     /// The struct's own fields ARE the active version, so every existing
@@ -229,6 +289,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         toolCalls: [AppToolCall] = [],
         toolResults: [AppToolResult] = [],
         imagePaths: [String] = [],
+        audioPaths: [String] = [],
         alternates: [AppChatMessage] = [],
         createdAt: Date = Date()
     ) {
@@ -240,6 +301,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         self.toolCalls = toolCalls
         self.toolResults = toolResults
         self.imagePaths = imagePaths
+        self.audioPaths = audioPaths
         self.alternates = alternates
         self.createdAt = createdAt
     }
@@ -276,6 +338,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         toolCalls = try container.decodeLossyArray(AppToolCall.self, forKey: .toolCalls)
         toolResults = try container.decodeLossyArray(AppToolResult.self, forKey: .toolResults)
         imagePaths = try container.decodeIfPresent([String].self, forKey: .imagePaths) ?? []
+        audioPaths = try container.decodeIfPresent([String].self, forKey: .audioPaths) ?? []
         alternates = try container.decodeLossyArray(AppChatMessage.self, forKey: .alternates)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }

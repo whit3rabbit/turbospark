@@ -31,6 +31,7 @@ use std::os::raw::{c_char, c_int, c_void};
 pub mod abi;
 /// C ABI entry points organized by domain.
 pub mod api;
+mod audio_session;
 mod generate;
 mod heavy;
 mod image_session;
@@ -53,6 +54,7 @@ mod vision;
 pub mod wire;
 
 pub use api::*;
+pub use audio_session::AudioSession;
 pub use generate::{
     TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING, TS_EVENT_TOOL,
 };
@@ -68,6 +70,9 @@ pub type TsSession = Session;
 
 /// The opaque native image-generation handle. `TsImageSession *` in C.
 pub type TsImageSession = ImageSession;
+
+/// The opaque audio model handle. `TsAudioSession *` in C.
+pub type TsAudioSession = AudioSession;
 
 /// The opaque in-process-server handle a caller holds. `TsServer *` in C.
 pub type TsServer = Server;

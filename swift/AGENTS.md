@@ -15,6 +15,7 @@ Short seams. Verify each one before release.
 - [Swift skills](docs/SWIFT_SKILLS.md)
 - [Swift storage](docs/storage.md)
 - [Swift localization](docs/SWIFT_LOCALIZATION.md)
+- [Audio interface](../docs/AUDIO_UI.md)
 - [Swift keyboard and accessibility](docs/KEYBOARD_SHORTCUTS.md)
 - [Automatic app updates](docs/AUTO_UPDATE.md)
 - [Download manager](docs/DOWNLOAD_MANAGER.md)

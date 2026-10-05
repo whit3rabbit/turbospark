@@ -200,11 +200,16 @@ extension AppModel {
                 reparkSteer(entry, chatID: chatID)
                 break
             }
+            if let refusal = AppPromptAttachment.untranscribedAudioRefusal(in: textDocs) {
+                showToast(refusal, style: .warning)
+                reparkSteer(entry, chatID: chatID)
+                break
+            }
             let promptImages: [ChatImage] = imageDocs.compactMap { $0.sourcePath.map(ChatImage.path) }
             var fullUserContent = entry.text
             if !textDocs.isEmpty {
                 let docsText = textDocs.map { doc in
-                    "--- Attachment: \(doc.fileName) (\(doc.formatLabel)) ---\n\(doc.extractedText)\n--- End of \(doc.fileName) ---"
+                    "--- Attachment: \(doc.fileName) (\(doc.promptBlockLabel)) ---\n\(doc.extractedText)\n--- End of \(doc.fileName) ---"
                 }.joined(separator: "\n\n")
                 fullUserContent = fullUserContent.isEmpty
                     ? docsText
@@ -245,7 +250,8 @@ extension AppModel {
                 content: contentForModel,
                 imagePaths: promptImages.compactMap {
                     if case .path(let p) = $0 { return p } else { return nil }
-                })
+                },
+                audioPaths: textDocs.filter(\.isAudio).compactMap(\.sourcePath))
             mutateTurnMessages(for: chatID) { $0.append(userMessage) }
             delivered = true
         }
