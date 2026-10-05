@@ -31,7 +31,9 @@ measure, so a convenient approximation is still a broken row.
 ```sh
 cargo test -p turbospark-catalog
 cargo test -p turbospark-catalog --test catalog_network --release -- --ignored --nocapture
+cargo test -p turbospark-catalog --test audio_catalog_network --release -- --ignored --nocapture
+cargo test -p turbospark-catalog --test music_catalog_network --release -- --ignored --nocapture
 ```
 
 Run the network target after changing a catalog row. Record durable facts in
-`docs/MODELS.md), not in this file.
+`docs/MODELS.md`, not in this file.

@@ -446,13 +446,13 @@ fn source_resolution_rejects_missing_pinned_digest_and_wrong_live_identity() {
     let requested = source_group(
         "owner/model",
         REVISION,
-        vec![source_file(path, Some(8), Some(SHA_ONE))],
+        vec![source_file(path, None, Some(SHA_ONE))],
     );
     let (endpoint, server) = fixture_server(vec![
         FixtureResponse::Json(metadata(
             "owner/model",
             REVISION,
-            vec![listed_file(path, Some(8), None)],
+            vec![listed_file(path, Some(16 * 1024 * 1024 + 1), None)],
         )),
         FixtureResponse::Json(metadata(
             "owner/other",

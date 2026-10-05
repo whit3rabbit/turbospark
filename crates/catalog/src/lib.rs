@@ -20,6 +20,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audio_catalog;
 mod auth;
 mod catalog;
 mod entry;
@@ -30,6 +31,7 @@ mod hub_transfer;
 mod hub_validation;
 mod image;
 mod install;
+pub mod music;
 mod probe;
 mod quant;
 mod recommend;
@@ -38,6 +40,11 @@ mod store;
 mod stream;
 mod vision;
 
+pub use audio_catalog::{
+    AudioAsset, AudioCapabilities, AudioCatalog, AudioFrontendProvenance, AudioFrontendResource,
+    AudioInstalledRecordError, AudioInstalledReport, AudioLegacyInstall, AudioPcmFormat,
+    AudioProfile, AudioProfileIdentity, AudioReadiness, AudioTask,
+};
 pub use auth::{
     resolve_hf_token, resolve_hf_token_with_source, validate_hf_token, HfTokenSource,
     HfTokenValidationStatus,
@@ -66,6 +73,10 @@ pub use install::{
     gate, human_bytes, install, install_variant, install_with_byte_progress, record,
     ByteProgressCallback, CancelFlag, InstallPlan, Installed, VariantInstallPlan,
     INSTALL_CANCELLED, VISION_SIDECAR_FILES,
+};
+pub use music::{
+    embedded_music_entries, embedded_music_entry, install_music, MusicCatalogEntry,
+    MusicQuantization,
 };
 pub use probe::{
     evaluate_config, evaluate_gguf, probe, ProbeReport, TypeShare, Verdict, KNOWN_SIDECARS,

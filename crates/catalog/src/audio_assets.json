@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    {
+      "alias": "whisper-base",
+      "assets": [
+        {
+          "path": "config.json",
+          "size": 1983,
+          "sha256": "a153c53883a6799b6f056b4a8d1a515c9926d03994682ba88a7616618d7da0c1"
+        },
+        {
+          "path": "model.safetensors",
+          "size": 290403936,
+          "sha256": "07cadb9f25677c8d50df603e66a98fbd842cce45047139baeb16e6219a1e807b"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 2480466,
+          "sha256": "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566"
+        }
+      ]
+    },
+    {
+      "alias": "kokoro-82m-bf16",
+      "assets": [
+        {
+          "path": "README.md",
+          "size": 536,
+          "sha256": "31766be53abd2b182fea067461e935eb6399dbe0e1ce8d165afb1f1c64895b30"
+        },
+        {
+          "path": "config.json",
+          "size": 2351,
+          "sha256": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f"
+        },
+        {
+          "path": "kokoro-v1_0.safetensors",
+          "size": 327115152,
+          "sha256": "4e9ecdf03b8b6cf906070390237feda473dc13327cb8d56a43deaa374c02acd8"
+        },
+        {
+          "path": "voices/af_heart.safetensors",
+          "size": 522320,
+          "sha256": "2c1c733b0e6576c810e268d3e440c21dea4e0f0131a3ba4cfc98d7fe6136d094"
+        }
+      ],
+      "source": {
+        "repository": "mlx-community/Kokoro-82M-bf16",
+        "revision": "a71e4d38b236d968966a2002c4c895dbd12b1c3c"
+      },
+      "frontend": {
+        "repository": "MicheleYin/misaki-rs",
+        "revision": "38bf1a534cce5f6864fb2df595447ca6f6891e74",
+        "license": "MIT",
+        "license_path": "LICENSE",
+        "license_size": 1068,
+        "license_sha256": "1bea4b79e660b7477ea5919bed5944d970c86531b508bd1d538309c0d12e8858",
+        "resources": [
+          {
+            "repository": "hexgrad/misaki",
+            "revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+            "path": "misaki/data/us_gold.json",
+            "size": 3000469,
+            "sha256": "dc414872a49a28ae6c141463d502fd945f3b2fde040484fdc47d00cc4612686f",
+            "license": "Apache-2.0",
+            "bundled_path": "resources/us_gold.json",
+            "bundled_size": 4363593,
+            "bundled_sha256": "0e0aa786515802f93540f2a7d9e14def62fbab026452f891076cd2e3a7ba0cff"
+          },
+          {
+            "repository": "hexgrad/misaki",
+            "revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+            "path": "misaki/data/us_silver.json",
+            "size": 3099517,
+            "sha256": "de8f67be911bb6c659187b4a65fd966b6a30e56350e0f790d763210b053ac475",
+            "license": "Apache-2.0",
+            "bundled_path": "resources/us_silver.json",
+            "bundled_size": 4495420,
+            "bundled_sha256": "8e9ae66877394e21ce8b29f37700ce97e723b163befd1ec7042d1c7dd2fcef73"
+          },
+          {
+            "repository": "hexgrad/misaki",
+            "revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+            "path": "LICENSE",
+            "size": 11357,
+            "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+            "license": "Apache-2.0",
+            "bundled_path": "licenses/MISAKI-APACHE-2.0.txt",
+            "bundled_size": 11357,
+            "bundled_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+          },
+          {
+            "repository": "MicheleYin/misaki-rs",
+            "revision": "38bf1a534cce5f6864fb2df595447ca6f6891e74",
+            "path": "src/resources/tagger/weights.json",
+            "size": 5677744,
+            "sha256": "789e8e35f6fac656d9b7eccea29ba4e8a137cbb5b525dd31f39e4291a9e80832",
+            "license": "MIT",
+            "bundled_path": "resources/pos_weights.json",
+            "bundled_size": 5059876,
+            "bundled_sha256": "4fcbc6a570addaaa94275f0b320b34cea77f913c01e6487e9b3fce45b0a72f43"
+          },
+          {
+            "repository": "MicheleYin/misaki-rs",
+            "revision": "38bf1a534cce5f6864fb2df595447ca6f6891e74",
+            "path": "src/resources/tagger/tags.json",
+            "size": 25788,
+            "sha256": "4c713731cb06727736962bc8cd94ad919217a040e76691059af99bc0c2c9c246",
+            "license": "MIT",
+            "bundled_path": "resources/pos_tags.json",
+            "bundled_size": 22692,
+            "bundled_sha256": "1b934bf0b5523fa4ca1a1282c83990433d2c0e08d897dc4cdea4934bc3b76f5e"
+          },
+          {
+            "repository": "MicheleYin/misaki-rs",
+            "revision": "38bf1a534cce5f6864fb2df595447ca6f6891e74",
+            "path": "src/resources/tagger/classes.txt",
+            "size": 149,
+            "sha256": "7812cb7945022cb348bc6670b3eb7c76cdd50920715e86681337adfbf9c85253",
+            "license": "MIT",
+            "bundled_path": "resources/pos_classes.txt",
+            "bundled_size": 149,
+            "bundled_sha256": "7812cb7945022cb348bc6670b3eb7c76cdd50920715e86681337adfbf9c85253"
+          }
+        ],
+        "bundled_license_path": "licenses/MISAKI-RS-MIT.txt",
+        "bundled_license_size": 1068,
+        "bundled_license_sha256": "1bea4b79e660b7477ea5919bed5944d970c86531b508bd1d538309c0d12e8858"
+      }
+    },
+    {
+      "alias": "minimax-music3-4bit",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "size": 7373,
+          "sha256": "b21d12df2adae59dad3fcf80c1d81492654c662342f497d9a9770198c9317e58"
+        },
+        {
+          "path": "README.md",
+          "size": 3553,
+          "sha256": "146262e009100461f9f3b4eb57531861cd2f3b7ead4fb32a1bc82cb39f881c13"
+        },
+        {
+          "path": "config.json",
+          "size": 1609,
+          "sha256": "727639e9099a5b9699b213bd2efa7058526089c6b0d924fa1117cf3f56bf98ce"
+        },
+        {
+          "path": "model-00001-of-00002.safetensors",
+          "size": 5352618277,
+          "sha256": "d660e5da8b62092edf101cb661ba66cbb1efefad71ac3496a96f8eff8e94225b"
+        },
+        {
+          "path": "model-00002-of-00002.safetensors",
+          "size": 3846523021,
+          "sha256": "156e2ef0cc941103da98537c90d1695f1b77330c72f806649fa0ecf1cdc2d048"
+        },
+        {
+          "path": "model.safetensors.index.json",
+          "size": 192315,
+          "sha256": "2a2ad235763ad26a9c8446ccdb68a84e4de91e698f2a8896b318a690de0ae68b"
+        },
+        {
+          "path": "scheduler/scheduler_config.json",
+          "size": 483,
+          "sha256": "b544466124aab333da4874417da0168610067e9c9ff95fcb63d749e4bf891d99"
+        },
+        {
+          "path": "tokenizer/chat_template.jinja",
+          "size": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "tokenizer/tokenizer.json",
+          "size": 11423801,
+          "sha256": "b1537fa9e59a537276ecbc2e12d0438edff635a1f4a4948e679774b5feb3e610"
+        },
+        {
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 377,
+          "sha256": "1689852cc9c45010de040c8302a8acdc0d2c4c6c740dd7e9dd0a8c704e16eada"
+        }
+      ]
+    }
+  ]
+}

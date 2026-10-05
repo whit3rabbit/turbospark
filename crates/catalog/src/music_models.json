@@ -1,0 +1,105 @@
+[
+  {
+    "alias": "minimax-music3-bf16",
+    "model_id": "mlx-community/MiniMax-Music3-bf16",
+    "revision": "83a5f2d365673689df5c8f36e21e108751fd92ea",
+    "quantization": "bf16",
+    "recommended": false,
+    "experimental": false,
+    "required_files": [
+      "LICENSE", "README.md", "config.json", "model.safetensors.index.json",
+      "model-00001-of-00006.safetensors", "model-00002-of-00006.safetensors",
+      "model-00003-of-00006.safetensors", "model-00004-of-00006.safetensors",
+      "model-00005-of-00006.safetensors", "model-00006-of-00006.safetensors",
+      "scheduler/scheduler_config.json", "tokenizer/chat_template.jinja",
+      "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"
+    ]
+  },
+  {
+    "alias": "minimax-music3-8bit",
+    "model_id": "mlx-community/MiniMax-Music3-8bit",
+    "revision": "10aa4ca578d04c6f5256c1bc22fc8405a09602b5",
+    "quantization": "affine-8bit",
+    "recommended": false,
+    "experimental": false,
+    "required_files": [
+      "LICENSE", "README.md", "config.json", "model.safetensors.index.json",
+      "model-00001-of-00003.safetensors", "model-00002-of-00003.safetensors",
+      "model-00003-of-00003.safetensors", "scheduler/scheduler_config.json",
+      "tokenizer/chat_template.jinja", "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json"
+    ]
+  },
+  {
+    "alias": "minimax-music3-6bit",
+    "model_id": "mlx-community/MiniMax-Music3-6bit",
+    "revision": "7bb5a97930aceea3023fe5f9c25c305ad3ccfaa8",
+    "quantization": "affine-6bit",
+    "recommended": false,
+    "experimental": false,
+    "required_files": [
+      "LICENSE", "README.md", "config.json", "model.safetensors.index.json",
+      "model-00001-of-00003.safetensors", "model-00002-of-00003.safetensors",
+      "model-00003-of-00003.safetensors", "scheduler/scheduler_config.json",
+      "tokenizer/chat_template.jinja", "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json"
+    ]
+  },
+  {
+    "alias": "minimax-music3-4bit",
+    "model_id": "mlx-community/MiniMax-Music3-4bit",
+    "revision": "c7ea32923b245fe5afc22d740a1936ad2ac590f3",
+    "quantization": "affine-4bit",
+    "recommended": false,
+    "experimental": false,
+    "required_files": [
+      "LICENSE", "README.md", "config.json", "model.safetensors.index.json",
+      "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors",
+      "scheduler/scheduler_config.json", "tokenizer/chat_template.jinja",
+      "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"
+    ]
+  },
+  {
+    "alias": "minimax-music3-mxfp8",
+    "model_id": "mlx-community/MiniMax-Music3-mxfp8",
+    "revision": "d00a12c3c7f80eb66379dd02dd0f30ed0ce2d96e",
+    "quantization": "mxfp8",
+    "recommended": true,
+    "experimental": false,
+    "required_files": [
+      "LICENSE", "README.md", "config.json", "model.safetensors.index.json",
+      "model-00001-of-00003.safetensors", "model-00002-of-00003.safetensors",
+      "model-00003-of-00003.safetensors", "scheduler/scheduler_config.json",
+      "tokenizer/chat_template.jinja", "tokenizer/tokenizer.json",
+      "tokenizer/tokenizer_config.json"
+    ]
+  },
+  {
+    "alias": "minimax-music3-mxfp4",
+    "model_id": "mlx-community/MiniMax-Music3-mxfp4",
+    "revision": "c84ceb4fea21d8b3b1455df6f33d5352f3a0df7a",
+    "quantization": "mxfp4",
+    "recommended": false,
+    "experimental": true,
+    "required_files": [
+      "LICENSE", "README.md", "config.json", "model.safetensors.index.json",
+      "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors",
+      "scheduler/scheduler_config.json", "tokenizer/chat_template.jinja",
+      "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"
+    ]
+  },
+  {
+    "alias": "minimax-music3-nvfp4",
+    "model_id": "mlx-community/MiniMax-Music3-nvfp4",
+    "revision": "e40093d6fd9ce29aa56f12b5ae2420d0d8f16457",
+    "quantization": "nvfp4",
+    "recommended": false,
+    "experimental": true,
+    "required_files": [
+      "LICENSE", "README.md", "config.json", "model.safetensors.index.json",
+      "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors",
+      "scheduler/scheduler_config.json", "tokenizer/chat_template.jinja",
+      "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"
+    ]
+  }
+]

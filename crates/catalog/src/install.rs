@@ -726,7 +726,7 @@ pub fn record(store: &Store, installed: &Installed) -> Result<(), String> {
 /// one date, formatted one way, and it is a record field rather than an input
 /// to anything. The civil-from-days conversion is Howard Hinnant's, which is
 /// exact for every day in the proleptic Gregorian calendar.
-fn today() -> String {
+pub(crate) fn today() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

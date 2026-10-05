@@ -74,7 +74,7 @@ pub enum ModelModality {
     Text,
     /// Diffusion and other image-generation artifacts.
     Image,
-    /// Audio models, reserved for the transcription runtime.
+    /// Audio models, including speech recognition and music generation.
     Audio,
 }
 
@@ -422,10 +422,14 @@ impl Store {
             .join(format!("{alias}.gturbo"))
     }
 
-    /// Where a future audio install lands by default.
-    pub fn audio_install_path(&self, alias: &str) -> PathBuf {
+    /// The managed namespace for task-aware audio profiles.
+    pub fn audio_models_dir(&self) -> PathBuf {
         self.modality_root(ModelModality::Audio)
-            .join(format!("{alias}.gturbo"))
+    }
+
+    /// Where an audio model install lands by default.
+    pub fn audio_install_path(&self, alias: &str) -> PathBuf {
+        self.audio_models_dir().join(format!("{alias}.gturbo"))
     }
 
     /// Where a vision-tower sidecar pull of `alias` lands by default. Towers
@@ -546,6 +550,36 @@ impl Store {
             .collect()
     }
 
+    /// Raw Audio records preserve their original paths for explicit ownership validation.
+    pub fn audio_records(&self) -> Vec<InstalledModel> {
+        self.read_rows()
+            .into_iter()
+            .filter(|row| row.effective_modality() == ModelModality::Audio)
+            .collect()
+    }
+
+    /// Recorded audio installs under this root, including after relocation.
+    pub fn installed_audio(&self) -> BTreeMap<String, InstalledModel> {
+        self.read_rows()
+            .into_iter()
+            .filter(|row| row.effective_modality() == ModelModality::Audio)
+            .filter_map(|mut row| {
+                row.path = self.audio_install_path(&row.alias);
+                row.path.is_dir().then_some((row.alias.clone(), row))
+            })
+            .collect()
+    }
+
+    /// Forget one audio row without touching text or image aliases.
+    pub fn forget_audio(&self, alias: &str) -> Result<(), String> {
+        let rows: Vec<_> = self
+            .read_rows()
+            .into_iter()
+            .filter(|row| !(row.alias == alias && row.effective_modality() == ModelModality::Audio))
+            .collect();
+        self.write_rows(&rows)
+    }
+
     /// Add or replace a row, then rewrite the record.
     pub fn record(&self, model: &InstalledModel) -> Result<(), String> {
         let modality = model.effective_modality();
@@ -631,8 +665,7 @@ impl Store {
         legacy.is_dir().then_some(legacy)
     }
 
-    /// Resolve an audio alias or explicit path. Audio loading is reserved for
-    /// the transcription runtime, but its namespace is defined now.
+    /// Resolve an audio alias or explicit path.
     pub fn resolve_audio(&self, name: &str) -> Option<PathBuf> {
         let as_path = PathBuf::from(name);
         if as_path.is_dir() {

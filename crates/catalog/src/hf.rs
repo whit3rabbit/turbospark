@@ -28,6 +28,8 @@ use std::io::Read;
 #[derive(Debug)]
 pub(crate) enum HubRequestError {
     Offline,
+    Cancelled,
+    SourceMetadata(&'static str),
     Transport(String),
     HttpStatus {
         status: u16,
@@ -174,6 +176,8 @@ pub struct RepoFile {
 /// like a missing credential, so [`Client::get`] says so by name.
 pub struct Client {
     inner: reqwest::blocking::Client,
+    exact_source_head: std::sync::OnceLock<reqwest::blocking::Client>,
+    request_timeout: std::time::Duration,
     token: Option<String>,
 }
 
@@ -213,7 +217,12 @@ impl Client {
             .build()
             .expect("blocking HTTP client");
         let token = crate::auth::resolve_hf_token(explicit_token.as_deref());
-        Self { inner, token }
+        Self {
+            inner,
+            exact_source_head: std::sync::OnceLock::new(),
+            request_timeout: timeout,
+            token,
+        }
     }
 
     /// The resolved authentication token, if any.
@@ -259,19 +268,39 @@ impl Client {
         &self,
         url: &str,
     ) -> Result<reqwest::blocking::Response, reqwest::Error> {
+        self.send_retrying_response_controlled(url, None)
+            .map(|response| response.expect("uncontrolled requests are never cancelled"))
+    }
+
+    fn send_retrying_response_controlled(
+        &self,
+        url: &str,
+        cancel: Option<&repack::CancelFlag>,
+    ) -> Result<Option<reqwest::blocking::Response>, reqwest::Error> {
         const ATTEMPTS: usize = 8;
         for attempt in 0..ATTEMPTS {
+            if cancel.is_some_and(|cancel| cancel.checkpoint().is_err()) {
+                return Ok(None);
+            }
             let response = self.send_response(url)?;
             let status = response.status().as_u16();
             if !throttled_status(status) || attempt + 1 == ATTEMPTS {
-                return Ok(response);
+                return Ok(Some(response));
             }
             let retry_after = response
                 .headers()
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.trim().parse::<u64>().ok());
-            std::thread::sleep(throttle_backoff(attempt, retry_after));
+            // A retry has no verified body to retain. Drop it before pausing
+            // so its HTTP timeout cannot expire during the user's pause.
+            drop(response);
+            let delay = throttle_backoff(attempt, retry_after);
+            match cancel {
+                Some(cancel) if cancel.wait_for_retry(delay).is_err() => return Ok(None),
+                Some(_) => {}
+                None => std::thread::sleep(delay),
+            }
         }
         unreachable!("ATTEMPTS is nonzero, so the loop always returns by its last iteration")
     }
@@ -299,44 +328,51 @@ impl Client {
         url: &str,
         max_bytes: usize,
     ) -> Result<Vec<u8>, HubRequestError> {
-        let response = self.send_retrying_response(url).map_err(|error| {
-            if error.is_connect() {
-                HubRequestError::Offline
-            } else {
-                HubRequestError::Transport(format!("GET {url}: {error}"))
-            }
-        })?;
-        let status = response.status().as_u16();
-        if status != 200 {
-            return Err(HubRequestError::HttpStatus {
-                status,
-                retry_after_secs: response
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.trim().parse::<u64>().ok()),
-            });
-        }
-        read_response_bounded_for_hub(response, max_bytes)
+        self.get_bounded_for_hub_with_control(url, max_bytes, None)
     }
 
-    /// Opens one explicit repository file as a stream for the exact-source
-    /// transfer path. The caller consumes bounded chunks and owns cancellation,
-    /// hashing, and staging policy; the response is never buffered here.
-    pub(crate) fn open_stream_for_hub(
+    /// LFS SHA-256 identifies the file bytes, while Xet ETags identify a
+    /// different object. Read the resolve response before its redirect to bind
+    /// both authorities without downloading the weight payload.
+    pub(crate) fn pinned_lfs_validator(
         &self,
         url: &str,
-    ) -> Result<reqwest::blocking::Response, HubRequestError> {
-        let response = self.send_retrying_response(url).map_err(|error| {
+        expected_size: u64,
+        expected_sha256: &str,
+        cancel: Option<&repack::CancelFlag>,
+    ) -> Result<String, HubRequestError> {
+        if let Some(cancel) = cancel {
+            cancel
+                .checkpoint()
+                .map_err(|_| HubRequestError::Cancelled)?;
+        }
+        let head_client = self.exact_source_head.get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .timeout(self.request_timeout)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("blocking HTTP source metadata client")
+        });
+        let mut request = head_client.head(url);
+        if let Some(token) = &self.token {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().map_err(|error| {
             if error.is_connect() {
                 HubRequestError::Offline
             } else {
-                HubRequestError::Transport(format!("GET {url}: {error}"))
+                HubRequestError::Transport(format!("HEAD {url}: {error}"))
             }
         })?;
-        if response.status().as_u16() != 200 {
+        if let Some(cancel) = cancel {
+            cancel
+                .checkpoint()
+                .map_err(|_| HubRequestError::Cancelled)?;
+        }
+        let status = response.status();
+        if status.as_u16() != 200 && !status.is_redirection() {
             return Err(HubRequestError::HttpStatus {
-                status: response.status().as_u16(),
+                status: status.as_u16(),
                 retry_after_secs: response
                     .headers()
                     .get(reqwest::header::RETRY_AFTER)
@@ -344,7 +380,83 @@ impl Client {
                     .and_then(|value| value.trim().parse::<u64>().ok()),
             });
         }
-        Ok(response)
+        let headers = response.headers();
+        let size = headers
+            .get("x-linked-size")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .or_else(|| {
+                if status.as_u16() == 200 {
+                    response.content_length()
+                } else {
+                    None
+                }
+            });
+        if size != Some(expected_size) {
+            return Err(HubRequestError::SourceMetadata(
+                "remote_source_size_matches_pin",
+            ));
+        }
+        let linked = headers
+            .get("x-linked-etag")
+            .or_else(|| headers.get(reqwest::header::ETAG))
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.trim_matches('"'))
+            .and_then(|value| crate::hub_validation::normalize_sha256(value).ok());
+        if linked.as_deref() != Some(expected_sha256) {
+            return Err(HubRequestError::SourceMetadata(
+                "remote_source_digest_matches_pin",
+            ));
+        }
+        let validator = match headers.get("x-xet-hash") {
+            Some(value) => value
+                .to_str()
+                .ok()
+                .and_then(|value| crate::hub_validation::normalize_sha256(value).ok())
+                .ok_or(HubRequestError::SourceMetadata("remote_validator_shape"))?,
+            None => linked.expect("linked digest matched the pin"),
+        };
+        Ok(validator)
+    }
+
+    pub(crate) fn get_bounded_for_hub_with_control(
+        &self,
+        url: &str,
+        max_bytes: usize,
+        cancel: Option<&repack::CancelFlag>,
+    ) -> Result<Vec<u8>, HubRequestError> {
+        loop {
+            if let Some(cancel) = cancel {
+                cancel
+                    .checkpoint()
+                    .map_err(|_| HubRequestError::Cancelled)?;
+            }
+            let response = self
+                .send_retrying_response_controlled(url, cancel)
+                .map_err(|error| {
+                    if error.is_connect() {
+                        HubRequestError::Offline
+                    } else {
+                        HubRequestError::Transport(format!("GET {url}: {error}"))
+                    }
+                })?
+                .ok_or(HubRequestError::Cancelled)?;
+            let status = response.status().as_u16();
+            if status != 200 {
+                return Err(HubRequestError::HttpStatus {
+                    status,
+                    retry_after_secs: response
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.trim().parse::<u64>().ok()),
+                });
+            }
+            match read_response_bounded_for_hub(response, max_bytes, cancel)? {
+                Some(bytes) => return Ok(bytes),
+                None => continue,
+            }
+        }
     }
 
     fn get_with_limit(&self, url: &str, max_bytes: Option<usize>) -> Result<Vec<u8>, String> {
@@ -550,6 +662,27 @@ impl Client {
         };
         Ok(read("x-linked-size").or_else(|| read("content-length")))
     }
+
+    /// Size fallback keeps the legacy HEAD contract, while controlled source
+    /// walks stop before the request and before advancing to the next file.
+    pub(crate) fn content_length_for_hub_with_control(
+        &self,
+        url: &str,
+        cancel: Option<&repack::CancelFlag>,
+    ) -> Result<Option<u64>, HubRequestError> {
+        if let Some(cancel) = cancel {
+            cancel
+                .checkpoint()
+                .map_err(|_| HubRequestError::Cancelled)?;
+        }
+        let result = self.content_length(url);
+        if let Some(cancel) = cancel {
+            cancel
+                .checkpoint()
+                .map_err(|_| HubRequestError::Cancelled)?;
+        }
+        result.map_err(HubRequestError::Transport)
+    }
 }
 
 fn read_response_bounded(
@@ -570,9 +703,10 @@ fn read_response_bounded(
 }
 
 fn read_response_bounded_for_hub(
-    response: reqwest::blocking::Response,
+    mut response: reqwest::blocking::Response,
     max_bytes: usize,
-) -> Result<Vec<u8>, HubRequestError> {
+    cancel: Option<&repack::CancelFlag>,
+) -> Result<Option<Vec<u8>>, HubRequestError> {
     let max_u64 = u64::try_from(max_bytes).unwrap_or(u64::MAX);
     if response
         .content_length()
@@ -580,18 +714,35 @@ fn read_response_bounded_for_hub(
     {
         return Err(HubRequestError::ResponseTooLarge);
     }
-    let read_limit = u64::try_from(max_bytes)
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
     let mut body = Vec::with_capacity(max_bytes.min(64 * 1024));
-    response
-        .take(read_limit)
-        .read_to_end(&mut body)
-        .map_err(|error| HubRequestError::BodyRead(error.to_string()))?;
-    if body.len() > max_bytes {
-        return Err(HubRequestError::ResponseTooLarge);
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        if let Some(cancel) = cancel {
+            if cancel.is_cancelled() {
+                return Err(HubRequestError::Cancelled);
+            }
+            // Drop an unverified response before waiting. A long pause cannot
+            // consume its request timeout; resume restarts the bounded fetch.
+            if cancel.is_paused() {
+                return Ok(None);
+            }
+        }
+        let available = (max_bytes.saturating_sub(body.len()).saturating_add(1)).min(chunk.len());
+        let read = response
+            .read(&mut chunk[..available])
+            .map_err(|error| HubRequestError::BodyRead(error.to_string()))?;
+        if read == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..read]);
+        if body.len() > max_bytes {
+            return Err(HubRequestError::ResponseTooLarge);
+        }
     }
-    Ok(body)
+    if cancel.is_some_and(repack::CancelFlag::is_cancelled) {
+        return Err(HubRequestError::Cancelled);
+    }
+    Ok(Some(body))
 }
 
 fn read_bounded_body<R: Read>(reader: R, max_bytes: usize) -> std::io::Result<Vec<u8>> {

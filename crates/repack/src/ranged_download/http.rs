@@ -56,6 +56,12 @@ impl CancelFlag {
         self.0.cancelled.load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// Bounded preflight readers drop their response before waiting so a
+    /// paused request does not expire while the user decides when to resume.
+    pub fn is_paused(&self) -> bool {
+        *self.0.paused.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// In-flight requests finish; subsequent requests wait without losing work.
     pub fn pause(&self) -> bool {
         let mut paused = self.0.paused.lock().unwrap_or_else(|p| p.into_inner());
@@ -87,6 +93,32 @@ impl CancelFlag {
             Err(DownloadError::Cancelled)
         } else {
             Ok(())
+        }
+    }
+
+    /// Retry delays share the pause/cancel condition variable so cancellation
+    /// wakes the wait immediately and a paused walk cannot issue its next GET.
+    pub fn wait_for_retry(&self, duration: std::time::Duration) -> Result<(), DownloadError> {
+        let started = std::time::Instant::now();
+        let mut paused = self.0.paused.lock().unwrap_or_else(|p| p.into_inner());
+        loop {
+            if self.is_cancelled() {
+                return Err(DownloadError::Cancelled);
+            }
+            if *paused {
+                paused = self.0.wake.wait(paused).unwrap_or_else(|p| p.into_inner());
+                continue;
+            }
+            let remaining = duration.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Ok(());
+            }
+            paused = self
+                .0
+                .wake
+                .wait_timeout(paused, remaining)
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
         }
     }
 
@@ -134,6 +166,7 @@ pub struct HttpRangeSource {
     /// only for immutable repository revisions, so a URL identifies stable
     /// bytes across retries and app launches.
     cache_dir: Option<PathBuf>,
+    pinned_identity: Option<(String, u64, Option<String>)>,
 }
 
 /// `connect_timeout` bounds the TCP/TLS handshake; `timeout` bounds the
@@ -176,6 +209,7 @@ impl HttpRangeSource {
             token: None,
             cancel: None,
             cache_dir: None,
+            pinned_identity: None,
         }
     }
 
@@ -187,6 +221,7 @@ impl HttpRangeSource {
             token: None,
             cancel: None,
             cache_dir: None,
+            pinned_identity: None,
         }
     }
 
@@ -219,9 +254,39 @@ impl HttpRangeSource {
         self
     }
 
+    /// Bind cached ranges and responses to the caller's validated immutable
+    /// source, size, and optional strong ETag. Legacy ranged reads retain
+    /// their URL cache identity and response contract.
+    pub fn with_pinned_identity(
+        mut self,
+        identity: impl Into<String>,
+        total_bytes: u64,
+        validator: Option<String>,
+    ) -> Self {
+        self.pinned_identity = Some((identity.into(), total_bytes, validator));
+        self
+    }
+
+    /// A whole-file digest failure poisons otherwise internally valid chunks.
+    /// Remove only this source's cache so retry can fetch fresh bytes.
+    pub fn invalidate_cache(&self) -> Result<(), std::io::Error> {
+        let Some(path) = self.cache_path(0, 0) else {
+            return Ok(());
+        };
+        let parent = path.parent().expect("cache path has a source parent");
+        match fs::remove_dir_all(parent) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
+    }
+
     fn cache_path(&self, start: u64, end_exclusive: u64) -> Option<PathBuf> {
         let root = self.cache_dir.as_ref()?;
-        let source = model_io::hash_data(self.url.as_bytes());
+        let identity = self
+            .pinned_identity
+            .as_ref()
+            .map_or(self.url.as_str(), |(identity, _, _)| identity.as_str());
+        let source = model_io::hash_data(identity.as_bytes());
         Some(
             root.join(source)
                 .join(format!("{start}-{end_exclusive}.range")),
@@ -286,6 +351,7 @@ impl HttpRangeSource {
                 .open(&temp)?;
             file.write_all(model_io::hash_data(bytes).as_bytes())?;
             file.write_all(bytes)?;
+            file.sync_all()?;
             match fs::rename(&temp, &path) {
                 Ok(()) => Ok(()),
                 Err(_) if path.is_file() => {
@@ -323,6 +389,9 @@ impl HttpRangeSource {
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }
+        if let Some((_, _, Some(validator))) = &self.pinned_identity {
+            request = request.header(reqwest::header::IF_MATCH, format!("\"{validator}\""));
+        }
         let mut response = request
             .send()
             .map_err(|e| DownloadError::Request(e.to_string()))?;
@@ -343,6 +412,37 @@ impl HttpRangeSource {
                 retry_after,
             });
         }
+        if let Some((_, total_bytes, validator)) = &self.pinned_identity {
+            if response
+                .content_length()
+                .is_some_and(|size| size != end_exclusive - start)
+            {
+                return Err(DownloadError::SourceIdentity(
+                    "downloaded_size_matches_authoritative_source",
+                ));
+            }
+            let expected = format!("bytes {start}-{end_inclusive}/{total_bytes}");
+            if response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok())
+                != Some(expected.as_str())
+            {
+                return Err(DownloadError::SourceIdentity(
+                    "downloaded_range_matches_pinned_source",
+                ));
+            }
+            if let (Some(validator), Some(actual)) =
+                (validator, response.headers().get(reqwest::header::ETAG))
+            {
+                let expected = format!("\"{validator}\"");
+                if actual.to_str().ok() != Some(expected.as_str()) {
+                    return Err(DownloadError::SourceIdentity(
+                        "downloaded_validator_matches_pinned_source",
+                    ));
+                }
+            }
+        }
         // Read straight into `dst` rather than buffering the whole body via
         // `response.bytes()` and then copying: with `RANGE_CONCURRENCY`
         // chunks in flight, that doubled peak memory above the caller's own
@@ -354,6 +454,9 @@ impl HttpRangeSource {
         let expected = end_exclusive - start;
         let mut read = 0usize;
         while read < dst.len() {
+            if self.cancel.as_ref().is_some_and(CancelFlag::is_cancelled) {
+                return Err(DownloadError::Cancelled);
+            }
             match response.read(&mut dst[read..]) {
                 Ok(0) => break,
                 Ok(n) => read += n,
@@ -365,6 +468,18 @@ impl HttpRangeSource {
                 expected,
                 actual: read as u64,
             });
+        }
+        if self.pinned_identity.is_some() {
+            let mut extra = [0u8; 1];
+            if response
+                .read(&mut extra)
+                .map_err(|error| DownloadError::Request(error.to_string()))?
+                != 0
+            {
+                return Err(DownloadError::SourceIdentity(
+                    "downloaded_size_matches_authoritative_source",
+                ));
+            }
         }
         self.persist_cached_chunk(start, end_exclusive, dst);
         if let Some(on_bytes) = &self.on_bytes {
@@ -408,6 +523,7 @@ impl HttpRangeSource {
                 // spend the ladder's backoffs pretending the caller did not
                 // just ask the walk to stop.
                 Err(e @ DownloadError::Cancelled) => return Err(e),
+                Err(e @ DownloadError::SourceIdentity(_)) => return Err(e),
                 Err(DownloadError::UnexpectedStatus {
                     status,
                     retry_after,
@@ -417,19 +533,31 @@ impl HttpRangeSource {
                         retry_after,
                     });
                     if attempt + 1 < RANGE_ATTEMPTS {
-                        std::thread::sleep(throttle_backoff(attempt, retry_after));
+                        self.wait_retry_delay(throttle_backoff(attempt, retry_after))?;
                     }
                 }
                 Err(e @ DownloadError::UnexpectedStatus { .. }) => return Err(e),
                 Err(e) => {
                     last = Some(e);
                     if attempt + 1 < RANGE_ATTEMPTS {
-                        std::thread::sleep(std::time::Duration::from_millis(250 << attempt.min(4)));
+                        self.wait_retry_delay(std::time::Duration::from_millis(
+                            250 << attempt.min(4),
+                        ))?;
                     }
                 }
             }
         }
         Err(last.expect("RANGE_ATTEMPTS is nonzero, so a failed loop recorded an error"))
+    }
+
+    fn wait_retry_delay(&self, duration: std::time::Duration) -> Result<(), DownloadError> {
+        match &self.cancel {
+            Some(cancel) => cancel.wait_for_retry(duration),
+            None => {
+                std::thread::sleep(duration);
+                Ok(())
+            }
+        }
     }
 
     /// Download a complete remote file into a sibling `.partial` file using
@@ -494,6 +622,9 @@ impl HttpRangeSource {
         failures.sort_by_key(|(index, _)| *index);
         if let Some((_, error)) = failures.into_iter().next() {
             return Err(error);
+        }
+        if let Some(cancel) = &self.cancel {
+            cancel.checkpoint()?;
         }
         output
             .into_inner()

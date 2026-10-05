@@ -10,8 +10,8 @@ use crate::hub::{
 use crate::hub_validation::{normalize_sha256, HubMetadataValidator};
 use crate::install::CancelFlag;
 use sha2::{Digest, Sha256};
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
+use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -21,6 +21,7 @@ const TRANSFER_BUFFER_BYTES: usize = 64 * 1024;
 struct PreparedSource<'a> {
     expected: &'a crate::hub::PinnedSourceGroup,
     resolved: ResolvedSourceIdentity,
+    remote_validators: std::collections::HashMap<String, String>,
 }
 
 struct OwnedStagingRoot {
@@ -149,7 +150,12 @@ pub(super) fn download_pinned_artifacts(
     let mut total_bytes = 0u64;
     for expected in &plan.sources {
         cancel.checkpoint().map_err(|_| HubError::Cancelled)?;
-        let resolved = hub.resolve_source_identity_at(expected, &endpoint)?;
+        let (resolved, remote_validators) = hub.resolve_source_identity_with_validators_at(
+            expected,
+            &endpoint,
+            Some(cancel),
+            true,
+        )?;
         matches_exact_source(expected, &resolved).map_err(|mismatch| {
             HubError::InvalidResponse {
                 entry: expected.repo.to_string(),
@@ -176,7 +182,11 @@ pub(super) fn download_pinned_artifacts(
                 });
             }
         }
-        prepared.push(PreparedSource { expected, resolved });
+        prepared.push(PreparedSource {
+            expected,
+            resolved,
+            remote_validators,
+        });
     }
 
     cancel.checkpoint().map_err(|_| HubError::Cancelled)?;
@@ -187,6 +197,7 @@ pub(super) fn download_pinned_artifacts(
         &prepared,
         &endpoint,
         &staging.path,
+        &staging_parent.join(".download-cache").join("pinned"),
         total_files,
         total_bytes,
         progress,
@@ -221,6 +232,7 @@ fn transfer_prepared_sources(
     prepared: &[PreparedSource<'_>],
     endpoint: &str,
     staging_root: &Path,
+    cache_root: &Path,
     total_files: u32,
     total_bytes: u64,
     progress: &mut dyn FnMut(HubDownloadProgress),
@@ -271,72 +283,107 @@ fn transfer_prepared_sources(
             fs::create_dir_all(parent).map_err(|error| staging_io_error(parent, error))?;
 
             let url = source_file_url_at(endpoint, &source.resolved.repo, &pinned.path)?;
-            let mut response = client
-                .open_stream_for_hub(&url)
-                .map_err(|error| map_hub_request_error(error, &url, client.has_token()))?;
+            let remote_validator = source.remote_validators.get(&pinned.path).cloned();
+            let identity = serde_json::json!({
+                "owner": plan.owner_id,
+                "role": source.expected.role,
+                "url": url,
+                "repo": source.resolved.repo.repo,
+                "revision": source.resolved.repo.revision,
+                "path": pinned.path,
+                "size": expected_size,
+                "expected_sha256": pinned.expected_sha256,
+                "source_sha256": resolved.source_sha256,
+                "remote_validator": remote_validator,
+                "credential": client.token().map(|token| model_io::hash_data(token.as_bytes())),
+            })
+            .to_string();
+            enum Event {
+                Bytes(u64),
+                Finished(Result<u64, repack::DownloadError>),
+            }
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let byte_sender = sender.clone();
+            let mut range = repack::HttpRangeSource::with_progress(
+                url.clone(),
+                std::sync::Arc::new(move |bytes| {
+                    let _ = byte_sender.send(Event::Bytes(bytes));
+                }),
+            )
+            .with_optional_token(client.token())
+            .with_cancel(cancel.clone())
+            .with_pinned_identity(identity, expected_size, remote_validator.clone());
+            // Reuse requires a verified digest or a live remote validator.
+            // Immutable URLs alone do not establish the current source bytes.
+            if resolved.source_sha256.is_some() || remote_validator.is_some() {
+                range = range.with_cache_dir(cache_root);
+            }
+            let transfer = std::thread::scope(|scope| {
+                let range = &range;
+                let destination = &destination;
+                scope.spawn(move || {
+                    let _ = sender.send(Event::Finished(
+                        range.download_to(destination, expected_size),
+                    ));
+                });
+                loop {
+                    match receiver.recv() {
+                        Ok(Event::Bytes(bytes)) => {
+                            complete_bytes = complete_bytes.saturating_add(bytes).min(total_bytes);
+                            progress(HubDownloadProgress {
+                                owner_id: plan.owner_id.clone(),
+                                completed_files: complete_files,
+                                total_files,
+                                current_path: Some(pinned.path.clone()),
+                                completed_bytes: complete_bytes,
+                                total_bytes,
+                            });
+                        }
+                        Ok(Event::Finished(result)) => break result,
+                        Err(_) => {
+                            break Err(repack::DownloadError::Request(
+                                "range worker stopped without a result".into(),
+                            ))
+                        }
+                    }
+                }
+            });
+            transfer.map_err(|error| match error {
+                repack::DownloadError::Cancelled => HubError::Cancelled,
+                repack::DownloadError::SourceIdentity(rule) => HubError::TransferIntegrity {
+                    entry: pinned.path.clone(),
+                    rule,
+                },
+                repack::DownloadError::UnexpectedStatus {
+                    status,
+                    retry_after,
+                } => map_hub_request_error(
+                    HubRequestError::HttpStatus {
+                        status,
+                        retry_after_secs: retry_after,
+                    },
+                    &url,
+                    client.has_token(),
+                ),
+                error => HubError::Network(format!("GET {url}: {error}")),
+            })?;
             cancel.checkpoint().map_err(|_| HubError::Cancelled)?;
-
-            let mut staged = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&destination)
+            let mut staged = std::fs::File::open(&destination)
                 .map_err(|error| staging_io_error(&destination, error))?;
             let mut hasher = Sha256::new();
             let mut file_bytes = 0u64;
             let mut buffer = vec![0u8; TRANSFER_BUFFER_BYTES];
             loop {
                 cancel.checkpoint().map_err(|_| HubError::Cancelled)?;
-                let read = response.read(&mut buffer).map_err(|error| {
-                    map_hub_request_error(
-                        HubRequestError::BodyRead(error.to_string()),
-                        &url,
-                        client.has_token(),
-                    )
-                })?;
+                let read = staged
+                    .read(&mut buffer)
+                    .map_err(|error| staging_io_error(&destination, error))?;
                 if read == 0 {
                     break;
                 }
-                let chunk = &buffer[..read];
-                file_bytes =
-                    file_bytes
-                        .checked_add(read as u64)
-                        .ok_or(HubError::TransferIntegrity {
-                            entry: pinned.path.clone(),
-                            rule: "downloaded_size_matches_authoritative_source",
-                        })?;
-                if file_bytes > expected_size {
-                    return Err(HubError::TransferIntegrity {
-                        entry: pinned.path.clone(),
-                        rule: "downloaded_size_matches_authoritative_source",
-                    });
-                }
-                staged
-                    .write_all(chunk)
-                    .map_err(|error| staging_io_error(&destination, error))?;
-                hasher.update(chunk);
-                complete_bytes =
-                    complete_bytes
-                        .checked_add(read as u64)
-                        .ok_or(HubError::TransferIntegrity {
-                            entry: pinned.path.clone(),
-                            rule: "download_progress_within_u64",
-                        })?;
-                progress(HubDownloadProgress {
-                    owner_id: plan.owner_id.clone(),
-                    completed_files: complete_files,
-                    total_files,
-                    current_path: Some(pinned.path.clone()),
-                    completed_bytes: complete_bytes,
-                    total_bytes,
-                });
-                cancel.checkpoint().map_err(|_| HubError::Cancelled)?;
+                file_bytes += read as u64;
+                hasher.update(&buffer[..read]);
             }
-            staged
-                .flush()
-                .map_err(|error| staging_io_error(&destination, error))?;
-            staged
-                .sync_all()
-                .map_err(|error| staging_io_error(&destination, error))?;
             if file_bytes != expected_size
                 || pinned
                     .expected_size
@@ -356,6 +403,9 @@ fn transfer_prepared_sources(
                         rule: "sha256_digest_shape",
                     })?;
                 if sha256 != expected_digest {
+                    range
+                        .invalidate_cache()
+                        .map_err(|error| staging_io_error(cache_root, error))?;
                     return Err(HubError::TransferIntegrity {
                         entry: pinned.path.clone(),
                         rule: "downloaded_sha256_matches_pinned_source",
@@ -367,6 +417,9 @@ fn transfer_prepared_sources(
                 .as_deref()
                 .is_some_and(|source| source != sha256)
             {
+                range
+                    .invalidate_cache()
+                    .map_err(|error| staging_io_error(cache_root, error))?;
                 return Err(HubError::TransferIntegrity {
                     entry: pinned.path.clone(),
                     rule: "downloaded_sha256_matches_source_metadata",

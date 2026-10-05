@@ -101,6 +101,7 @@ pub(crate) struct HubSourceFileMetadata {
     pub path: String,
     pub size_bytes: Option<u64>,
     pub sha256: Option<String>,
+    pub remote_validator: Option<String>,
 }
 
 /// Validated repository identity and source metadata for exact owner matching.
@@ -350,11 +351,23 @@ impl HubMetadataValidator {
                 rejected.push(rejected_entry(file.path, "file_metadata_shape"));
                 continue;
             };
-            match sibling_sha256(sibling) {
-                Ok(sha256) => valid_files.push(HubSourceFileMetadata {
+            let validated = sibling_sha256(sibling).and_then(|sha256| {
+                let blob = match sibling.get("blobId") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(blob)) if valid_revision(blob) => {
+                        Some(blob.to_ascii_lowercase())
+                    }
+                    Some(_) => return Err("remote_validator_shape"),
+                };
+                let remote_validator = sha256.clone().or(blob);
+                Ok((sha256, remote_validator))
+            });
+            match validated {
+                Ok((sha256, remote_validator)) => valid_files.push(HubSourceFileMetadata {
                     path: file.path,
                     size_bytes: file.size_bytes,
                     sha256,
+                    remote_validator,
                 }),
                 Err(rule) => rejected.push(rejected_entry(file.path, rule)),
             }

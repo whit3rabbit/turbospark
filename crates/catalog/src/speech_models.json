@@ -112,5 +112,18 @@
       "repo": "openai/whisper-base.en",
       "file": "tokenizer.json"
     }
+  },
+  {
+    "alias": "qwen3-asr-06b-8bit",
+    "model_id": "mlx-community/Qwen3-ASR-0.6B-8bit",
+    "revision": "89e96d92ba34aca20b3e29fb10cc284097d1219f",
+    "required_files": [
+      "config.json",
+      "model.safetensors",
+      "vocab.json",
+      "merges.txt",
+      "tokenizer_config.json"
+    ],
+    "format": "mlx-8bit-bf16"
   }
 ]

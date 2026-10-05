@@ -16,6 +16,8 @@ use crate::safetensors_header::{parse_header, SafetensorsHeader, SafetensorsHead
 #[derive(Debug, Clone, PartialEq)]
 pub enum DownloadError {
     Request(String),
+    /// A pinned request received bytes from a different range or source.
+    SourceIdentity(&'static str),
     /// The walk's own caller asked it to stop (`CancelFlag::cancel`). Not a
     /// network condition, so the retry ladder must never see it.
     Cancelled,
@@ -47,6 +49,9 @@ impl std::fmt::Display for DownloadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DownloadError::Request(detail) => write!(f, "request failed: {detail}"),
+            DownloadError::SourceIdentity(rule) => {
+                write!(f, "source failed validation rule {rule}")
+            }
             DownloadError::Cancelled => write!(f, "cancelled by the caller"),
             DownloadError::UnexpectedStatus {
                 status,

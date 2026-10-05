@@ -494,13 +494,34 @@ impl<'a> HubClient<'a> {
         expected: &PinnedSourceGroup,
         endpoint: &str,
     ) -> Result<ResolvedSourceIdentity, HubError> {
+        self.resolve_source_identity_with_validators_at(expected, endpoint, None, false)
+            .map(|(resolved, _)| resolved)
+    }
+
+    pub(crate) fn resolve_source_identity_with_validators_at(
+        &self,
+        expected: &PinnedSourceGroup,
+        endpoint: &str,
+        cancel: Option<&crate::install::CancelFlag>,
+        fetch_remote_validators: bool,
+    ) -> Result<
+        (
+            ResolvedSourceIdentity,
+            std::collections::HashMap<String, String>,
+        ),
+        HubError,
+    > {
         validate_pinned_source_group(expected)?;
 
         let validator = HubMetadataValidator::default();
         let metadata_url = source_repository_metadata_url(endpoint, &expected.repo)?;
         let body = self
             .client
-            .get_bounded_for_hub(&metadata_url, validator.limits().max_response_bytes)
+            .get_bounded_for_hub_with_control(
+                &metadata_url,
+                validator.limits().max_response_bytes,
+                cancel,
+            )
             .map_err(|error| {
                 map_hub_request_error(error, &metadata_url, self.client.has_token())
             })?;
@@ -524,7 +545,11 @@ impl<'a> HubClient<'a> {
         }
 
         let mut files = Vec::with_capacity(expected.files.len());
+        let mut remote_validators = std::collections::HashMap::new();
         for pinned in &expected.files {
+            if let Some(cancel) = cancel {
+                cancel.checkpoint().map_err(|_| HubError::Cancelled)?;
+            }
             if report
                 .rejected
                 .iter()
@@ -552,8 +577,10 @@ impl<'a> HubClient<'a> {
                 None => {
                     let url = source_file_url_at(endpoint, &expected.repo, &pinned.path)?;
                     self.client
-                        .content_length(&url)
-                        .map_err(HubError::Network)?
+                        .content_length_for_hub_with_control(&url, cancel)
+                        .map_err(|error| {
+                            map_hub_request_error(error, &url, self.client.has_token())
+                        })?
                 }
             };
             let Some(authoritative_size) = authoritative_size else {
@@ -569,10 +596,74 @@ impl<'a> HubClient<'a> {
                 });
             }
 
+            if pinned
+                .expected_size
+                .is_some_and(|size| size != authoritative_size)
+            {
+                return Err(HubError::InvalidResponse {
+                    entry: pinned.path.clone(),
+                    rule: source_mismatch_rule(SourceIdentityMismatch::Size),
+                });
+            }
+            let mut source_sha256 = source.sha256.clone();
+            if source_sha256.is_none() && pinned.expected_sha256.is_some() {
+                // Git blobs expose SHA-1, not SHA-256. Verify bounded immutable
+                // bytes before treating the manifest digest as resolved authority.
+                const MAX_PINNED_SMALL_FILE_BYTES: usize = 16 * 1024 * 1024;
+                if authoritative_size <= MAX_PINNED_SMALL_FILE_BYTES as u64 {
+                    let url = source_file_url_at(endpoint, &expected.repo, &pinned.path)?;
+                    let bytes = self
+                        .client
+                        .get_bounded_for_hub_with_control(&url, MAX_PINNED_SMALL_FILE_BYTES, cancel)
+                        .map_err(|error| {
+                            map_hub_request_error(error, &url, self.client.has_token())
+                        })?;
+                    if bytes.len() as u64 != authoritative_size {
+                        return Err(HubError::InvalidResponse {
+                            entry: pinned.path.clone(),
+                            rule: source_mismatch_rule(SourceIdentityMismatch::Size),
+                        });
+                    }
+                    let digest = model_io::hash_data(&bytes);
+                    let expected_digest = normalize_sha256(
+                        pinned
+                            .expected_sha256
+                            .as_deref()
+                            .expect("checked digest presence"),
+                    )
+                    .map_err(|_| HubError::InvalidRequest {
+                        field: "expected_sha256",
+                        rule: "sha256_digest_shape",
+                    })?;
+                    if digest != expected_digest {
+                        return Err(HubError::InvalidResponse {
+                            entry: pinned.path.clone(),
+                            rule: source_mismatch_rule(SourceIdentityMismatch::Digest),
+                        });
+                    }
+                    source_sha256 = Some(digest);
+                }
+            }
+            let remote_validator = match source.sha256.as_deref() {
+                Some(sha256) if fetch_remote_validators => {
+                    let url = source_file_url_at(endpoint, &expected.repo, &pinned.path)?;
+                    Some(
+                        self.client
+                            .pinned_lfs_validator(&url, authoritative_size, sha256, cancel)
+                            .map_err(|error| {
+                                map_hub_request_error(error, &url, self.client.has_token())
+                            })?,
+                    )
+                }
+                _ => source.remote_validator.clone(),
+            };
+            if let Some(remote_validator) = remote_validator {
+                remote_validators.insert(pinned.path.clone(), remote_validator);
+            }
             files.push(ResolvedSourceFile {
                 path: pinned.path.clone(),
                 authoritative_size: Some(authoritative_size),
-                source_sha256: source.sha256.clone(),
+                source_sha256,
             });
         }
 
@@ -599,7 +690,7 @@ impl<'a> HubClient<'a> {
             .checked_file_total(&checked_files)
             .map_err(map_validation_error)?;
 
-        Ok(resolved)
+        Ok((resolved, remote_validators))
     }
 
     /// Transfers an explicit owner-pinned plan into a unique child directory
@@ -1453,6 +1544,11 @@ pub(crate) fn map_hub_request_error(
 ) -> HubError {
     match error {
         HubRequestError::Offline => HubError::Offline,
+        HubRequestError::Cancelled => HubError::Cancelled,
+        HubRequestError::SourceMetadata(rule) => HubError::InvalidResponse {
+            entry: url.to_string(),
+            rule,
+        },
         HubRequestError::Transport(message) => HubError::Network(message),
         HubRequestError::HttpStatus {
             status: 429,
