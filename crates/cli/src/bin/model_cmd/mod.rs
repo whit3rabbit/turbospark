@@ -20,6 +20,18 @@ pub use auth::auth;
 pub use render::human_bytes;
 
 /// Curated rows, marking which are installed.
+/// The bundled speech table. Speech entries ride their own embedded table
+/// (`speech_models.json`), pinned like the decoder rows.
+pub fn list_speech(store: &Store) {
+    let entries = catalog::embedded_speech_entries().expect("embedded speech catalog");
+    render::speech_list_header(entries.len());
+    println!();
+    for entry in &entries {
+        render::speech_entry(entry, store);
+        println!();
+    }
+}
+
 pub fn list(catalog: &Catalog, store: &Store, filter: Option<&str>) {
     let installed = store.installed();
     let rows: Vec<_> = match filter {

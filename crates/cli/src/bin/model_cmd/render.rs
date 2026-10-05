@@ -9,7 +9,7 @@
 //! cache, and the whole point of printing it is that nobody discovers that
 //! after a 26 GB download twice.
 
-use catalog::{CatalogEntry, ProbeReport, Store, Verdict};
+use catalog::{CatalogEntry, ProbeReport, SpeechCatalogEntry, Store, Verdict};
 
 pub use catalog::human_bytes;
 
@@ -80,6 +80,28 @@ pub fn entry(entry: &CatalogEntry, is_user_row: bool, store: &Store) {
     if let Some(notes) = &entry.notes {
         println!("\n{notes}");
     }
+}
+
+/// One bundled speech entry, with its installed state when present.
+pub fn speech_entry(entry: &SpeechCatalogEntry, store: &Store) {
+    println!("{}  ({})", entry.alias, entry.model_id);
+    println!("  kind        speech (whisper)");
+    println!("  revision    {}", entry.revision);
+    println!("  files       {}", entry.required_files.join(", "));
+    match store.installed().get(&entry.alias) {
+        Some(row) => println!(
+            "  installed   {} on {}",
+            row.path.display(),
+            row.installed_on
+        ),
+        None => println!("  installed   no"),
+    }
+}
+
+/// The speech family table header block.
+pub fn speech_list_header(count: usize) {
+    println!("{count} speech model(s); speech installs are safetensors whisper");
+    println!("distributions consumed through the STT FFI surface, not --model.");
 }
 
 /// A probe report.

@@ -87,6 +87,9 @@ These variables configure runtime diagnostics, kernel execution seams, and profi
 | `TURBOSPARK_FFN_HIST` | Dense FFN (`runtime`) | File path to dump dense FFN neuron activation frequency histogram (JSON) at exit (museGlimmer). | unset |
 | `TURBOSPARK_VISION_OVERFLOW` | Vision tower (`runtime`) | File path to dump vision attention overflow and peak activation tensors. | unset |
 | `TURBOSPARK_RESID_CAPTURE` | Forward pass (`runtime`) | File path to dump residual stream activations (JSON) at prefill-to-decode transition. | unset |
+| `TURBOSPARK_WHISPER_DEVICE` | Whisper speech path (`runtime`) | Set to `cpu` to force the CPU reference execution path. On any other value (or unset) the runner builds the Metal engine when a device initializes and falls back to CPU on any engine error. See [WHISPER](WHISPER.md). | unset (Metal when available) |
+| `TURBOSPARK_WHISPER_PROFILE` | Whisper speech path (`runtime`) | Set to `1` to print per-window phase timings (mel, encode, cross caches, decode) and per-step pass wall/GPU-busy lines to stderr. With `TURBOSPARK_DISPATCH_PROFILE=1` also prints the per-kernel ranking at the end of the run. Attribution only, never a benchmark row. | unset |
+| `TS_STT_TEST_MODEL` | Whisper tests (`runtime`, `ffi`) | Names an installed speech model directory for the real-model, cross-device, and FFI surface tests. Unset skips those tests. | unset |
 
 ---
 

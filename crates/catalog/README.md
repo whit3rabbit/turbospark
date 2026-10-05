@@ -35,6 +35,7 @@ catalog = { package = "turbospark-catalog", path = "../catalog" }
   - `rank.rs`: Candidate tiering and ordering based on system memory and hardware configuration.
   - `discover.rs`: Surveys trending Hugging Face repositories through `probe/`.
 - `vision.rs`: Matches and resolves vision tower sidecars for multimodal models.
+- `speech.rs`: Bundled speech model catalog (`speech_models.json`), `SpeechCatalogEntry`, speech directory probing (`SpeechProbeReport`), and install verification.
 - `gguf_source.rs`: Handles split multi-file GGUF shard discovery and URL construction.
 - `install.rs`: Walk driver orchestrating probe validation, tokenizer sidecar downloads, weight streaming, install receipt creation, and stale sidecar pruning.
 - `stream.rs`: GGUF and MLX streaming and shard-writing helpers driven by `install.rs`.
@@ -64,6 +65,9 @@ Driven from the `turbospark-model` CLI binary:
 ```sh
 # List the curated catalog
 cargo run -p turbospark-cli --bin turbospark-model -- list
+
+# List bundled speech models (STT installs)
+cargo run -p turbospark-cli --bin turbospark-model -- list-speech
 
 # Header-only probe of a remote Hugging Face repository (reads KB, never downloads weights)
 cargo run -p turbospark-cli --bin turbospark-model -- probe Qwen/Qwen3-30B-A3B-GGUF

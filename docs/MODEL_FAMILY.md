@@ -443,3 +443,12 @@ bring-up wrote. Both numbers come off the GGUF header before any download
 - Architecture Bring-up Guide: [`NEW_MODEL.md`](NEW_MODEL.md)
 - `.gturbo` Format Specification: [`GTURBO.md`](GTURBO.md)
 - Benchmark Parity & Measurements: [`BENCHMARKS.md`](BENCHMARKS.md)
+
+## Speech families
+
+Speech models carry their own identity, separate from the decoder table
+above: `SpeechFamily::Whisper` (wire string `whisper`), the whisper
+encoder-decoder transcription class. Speech installs are safetensors
+directories with a typed speech receipt, listed by
+`turbospark-model list-speech`, consumed through the STT FFI surface --
+never through the decoder `--model` path. See `docs/SPEECH_TO_TEXT.md`.

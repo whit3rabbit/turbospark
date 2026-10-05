@@ -33,6 +33,7 @@ mod install;
 mod probe;
 mod quant;
 mod recommend;
+pub mod speech;
 mod store;
 mod stream;
 mod vision;
@@ -79,6 +80,14 @@ pub use recommend::{
     FitVerdict, GgufVariant, GgufVariants, LadderRung, Machine, Origin, Recommendation, Shape,
     ThroughputBand,
 };
+pub use speech::{
+    embedded_entries as embedded_speech_entries, embedded_entry as embedded_speech_entry,
+    install_speech_receipt, probe_speech_dir, verify_speech_install, SpeechCatalogEntry,
+    SpeechProbeReport,
+};
+// The typed speech receipt rides the catalog boundary so server and CLI
+// classify speech installs without each depending on model-io directly.
+pub use model_io::speech_receipt;
 pub use store::{
     default_root, directory_bytes, relocate_default_store, resolve_image_arg, resolve_model_arg,
     set_default_root, InstalledModel, ModelModality, Store, StoreRelocation,

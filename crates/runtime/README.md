@@ -42,6 +42,8 @@ runtime = { package = "turbospark-runtime", path = "../runtime" }
   - `synthetic/`: Synthetic fallback flow for headless unit tests.
 - `steering.rs`: Multi-vector composed directional steering applied directly to residual streams during forward passes.
 - `speculative.rs` & `speculation_policy.rs`: Speculative decoding drivers supporting DFlash block drafting and MTP multi-token prediction heads.
+- `whisper/`: Whisper speech-to-text runner (`WhisperRunner`), audio mel frontend windowing, encoder dispatches, cross-attention cache, and greedy decode.
+- `moonshine.rs`: Moonshine speech encoder and frontend runner.
 - `session_pool.rs`: Thread-safe session pooling for concurrent or reused model runners.
 - `turn_stream.rs`: Push-callback stream adapter bridging generation loops with async channels and FFI callbacks.
 - `resid_capture.rs`, `router_hist.rs`, `ffn_hist.rs`: Diagnostic inspection capturing internal activations, routing weights, and neuron firing histograms.

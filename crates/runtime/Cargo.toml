@@ -21,6 +21,10 @@ tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version =
 gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.2.0" }
 model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.2.0" }
 compute = { package = "turbospark-compute", path = "../compute", version = "0.2.0" }
+# Whisper's mel frontend and log-mel windowing. Portable, but consumed
+# only from the macOS-gated `src/whisper/` runner.
+audio = { package = "turbospark-audio", path = "../audio", version = "0.2.0" }
+serde_json = "1"
 streaming = { package = "turbospark-streaming", path = "../streaming", version = "0.2.0" }
 # The vision tower's preprocessing and position tables (ROADMAP M-V4).
 # PORTABLE, and still declared here rather than as an unconditional

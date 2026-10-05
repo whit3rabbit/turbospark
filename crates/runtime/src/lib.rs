@@ -67,10 +67,16 @@ mod token_sink;
 mod turn_stream;
 #[cfg(target_os = "macos")]
 pub mod vision;
+#[cfg(target_os = "macos")]
+pub mod whisper;
 
 pub use config::GenerationConfig;
 #[cfg(target_os = "macos")]
 pub use encoder::{cosine_similarity, EncoderRunner};
+#[cfg(target_os = "macos")]
+pub use whisper::{WhisperRunner, WhisperSegment, WhisperTranscription};
+#[cfg(target_os = "macos")]
+pub mod moonshine;
 // The two sizing policies LIVE IN `model_io` and are re-exported here.
 //
 // They moved there when `crates/catalog` needed the same arithmetic to answer

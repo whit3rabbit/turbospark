@@ -43,6 +43,7 @@ Catalog discovery, remote Hugging Face inspection, and streaming install:
 
 ```sh
 turbospark-model list                         # Browse curated catalog
+turbospark-model list-speech                  # Browse bundled speech models (STT installs)
 turbospark-model info gemma4                  # Inspect catalog entry details
 turbospark-model probe Qwen/Qwen3-30B-A3B-GGUF # Probe remote HF repo (reads KB, no download)
 turbospark-model pull gemma4                  # Stream and repack directly into ~/.turbospark/models

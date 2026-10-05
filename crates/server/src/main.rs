@@ -261,6 +261,15 @@ fn open_models_registry(
             }
             let model_arg = &parsed.models[0];
             let dir = catalog::resolve_model_arg(model_arg);
+            // A typed speech receipt marks a whisper install: never a
+            // decoder --model, whatever its directory shape.
+            if catalog::speech_receipt::SpeechInstallReceipt::read_from_dir(&dir).is_ok() {
+                return Err(format!(
+                    "--model {model_arg} is a speech (whisper) install; the decoder --model path
+                     serves .gturbo generation models only. Speech installs are consumed through
+                     the STT FFI surface (ts_stt_open)."
+                ));
+            }
             if !dir.join("manifest.json").exists() && dir.join("config.json").exists() {
                 if parsed.pool_size > 1 {
                     return Err(

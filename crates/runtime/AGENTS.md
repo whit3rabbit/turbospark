@@ -8,6 +8,8 @@ policy.
 - [Detailed module guide](../../.claude/docs/modules/runtime.md)
 - [Load guard](../../docs/LOAD_GUARD.md)
 - [Family checklist](../../docs/NEW_MODEL.md)
+- [Speech to text](../../docs/SPEECH_TO_TEXT.md)
+- [Whisper runner](../../docs/WHISPER.md)
 - [Model gates](../../.claude/docs/model-gates.md)
 
 ## Rules

@@ -1,0 +1,116 @@
+[
+  {
+    "alias": "whisper-tiny-en",
+    "model_id": "openai/whisper-tiny.en",
+    "revision": "87c7102498dcde7456f24cfd30239ca606ed9063",
+    "required_files": [
+      "config.json",
+      "model.safetensors",
+      "tokenizer.json"
+    ],
+    "format": "hf-safetensors"
+  },
+  {
+    "alias": "whisper-base-en",
+    "model_id": "openai/whisper-base.en",
+    "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+    "required_files": [
+      "config.json",
+      "model.safetensors",
+      "tokenizer.json"
+    ],
+    "format": "hf-safetensors"
+  },
+  {
+    "alias": "whisper-small-en",
+    "model_id": "openai/whisper-small.en",
+    "revision": "e8727524f962ee844a7319d92be39ac1bd25655a",
+    "required_files": [
+      "config.json",
+      "model.safetensors",
+      "tokenizer.json"
+    ],
+    "format": "hf-safetensors"
+  },
+  {
+    "alias": "whisper-base",
+    "model_id": "openai/whisper-base",
+    "revision": "e37978b90ca9030d5170a5c07aadb050351a65bb",
+    "required_files": [
+      "config.json",
+      "model.safetensors",
+      "tokenizer.json"
+    ],
+    "format": "hf-safetensors"
+  },
+  {
+    "alias": "whisper-tiny-en-mlx-8bit",
+    "model_id": "mlx-community/whisper-tiny.en-8bit",
+    "revision": "77f66077d4c6c8f17e9a4bba98563ff4dcb42e0f",
+    "required_files": [
+      "config.json",
+      "model.safetensors"
+    ],
+    "format": "mlx-8bit",
+    "tokenizer_source": {
+      "repo": "openai/whisper-tiny.en",
+      "file": "tokenizer.json"
+    }
+  },
+  {
+    "alias": "whisper-base-en-mlx-8bit",
+    "model_id": "mlx-community/whisper-base.en-8bit",
+    "revision": "558efa6ba963124db9c56f93cdd4e994259264a3",
+    "required_files": [
+      "config.json",
+      "model.safetensors"
+    ],
+    "format": "mlx-8bit",
+    "tokenizer_source": {
+      "repo": "openai/whisper-base.en",
+      "file": "tokenizer.json"
+    }
+  },
+  {
+    "alias": "whisper-tiny-mlx-8bit",
+    "model_id": "mlx-community/whisper-tiny-8bit",
+    "revision": "76e06d3401d6652722b71dcb155691d8015ce61c",
+    "required_files": [
+      "config.json",
+      "model.safetensors"
+    ],
+    "format": "mlx-8bit",
+    "tokenizer_source": {
+      "repo": "openai/whisper-tiny",
+      "file": "tokenizer.json"
+    }
+  },
+  {
+    "alias": "whisper-tiny-en-mlx-4bit",
+    "model_id": "mlx-community/whisper-tiny.en-4bit",
+    "revision": "beed452b81d37155b5380c562d1b2b9f4a71f807",
+    "required_files": [
+      "config.json",
+      "model.safetensors"
+    ],
+    "format": "mlx-4bit",
+    "tokenizer_source": {
+      "repo": "openai/whisper-tiny.en",
+      "file": "tokenizer.json"
+    }
+  },
+  {
+    "alias": "whisper-base-en-mlx-4bit",
+    "model_id": "mlx-community/whisper-base.en-4bit",
+    "revision": "96011ffcee62e9982879291d183181ec127f18df",
+    "required_files": [
+      "config.json",
+      "model.safetensors"
+    ],
+    "format": "mlx-4bit",
+    "tokenizer_source": {
+      "repo": "openai/whisper-base.en",
+      "file": "tokenizer.json"
+    }
+  }
+]

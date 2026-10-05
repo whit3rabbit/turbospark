@@ -26,6 +26,7 @@ USAGE:
 
 COMMANDS:
     list [--filter TEXT]        curated models, marking the ones installed
+    list-speech                 bundled whisper entries (STT installs)
     info <ALIAS>                one model in full, with its gate targets
     probe <REPO>[@REV]          what this engine makes of a Hugging Face repo,
                                 reading headers only: no download
@@ -194,6 +195,11 @@ fn run(args: &[String]) -> Result<(), Error> {
         "list" => {
             options.reject_unused(&["filter"])?;
             model_cmd::list(&catalog, &store, options.filter.as_deref());
+            Ok(())
+        }
+        "list-speech" => {
+            options.reject_unused(&[])?;
+            model_cmd::list_speech(&store);
             Ok(())
         }
         "info" => {
