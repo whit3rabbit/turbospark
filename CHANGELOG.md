@@ -14,6 +14,37 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `crates/audio`: new unified portable audio crate (`turbospark-audio`)
+  implementing DSP primitives (waveform buffers, RIFF WAV I/O, linear and
+  sinc-Hann resampling, real FFT/STFT/iSTFT, mel filterbanks, OpenAI Whisper
+  and NeMo log-mel frontends), neural tensor ops, MLX groupwise affine
+  dequantization, and model families organized by role (`music/`, `stt/`,
+  `tts/`, `vad/`, `sts/`, `codec/`, `lid/`).
+- `crates/compute`: added `whisper.rs` containing FP32 CPU reference kernels
+  for Whisper 1D convolution, Pre-LN encoder blocks, and incremental decoder
+  with KV cache.
+- `crates/gpu`: added Metal compute kernels and dispatches for Whisper 1D
+  convolution (`whisper_conv.metal`, `whisper_conv.rs`), Pre-LN transformer
+  encoder blocks (`whisper_encoder.metal`, `whisper_encoder.rs`), and Moonshine
+  frontend (`moonshine_frontend.metal`, `moonshine_frontend.rs`), validated
+  by parity test suites.
+- `crates/model-io`: added `SpeechFamily::Whisper`, `WhisperConfig` parsing
+  and validation, and typed `SpeechInstallReceipt` schema for speech model
+  directories.
+- `crates/runtime`: added `WhisperRunner` and Moonshine execution paths
+  supporting audio preprocessing, 30-second windowing, cross-attention caching,
+  language identification, and timestamped segment emission.
+- `crates/catalog`: added speech model catalog (`speech_models.json`),
+  `SpeechCatalogEntry`, and speech install verification.
+- `crates/cli`: added `turbospark-model list-speech` subcommand to display
+  bundled speech models and local installation status.
+- `crates/ffi`: added C ABI speech-to-text surface (`ts_stt_open`,
+  `ts_stt_close`, `ts_stt_stream_open`, `ts_stt_stream_append`,
+  `ts_stt_stream_finish`, `ts_stt_stream_cancel`, `ts_stt_stream_close`)
+  and `TsSttModel`/`TsSttStream` handles in `include/turbospark.h`.
+- `docs/AUDIO.md`, `docs/SPEECH_TO_TEXT.md`, `docs/WHISPER.md`: comprehensive
+  architecture guides, model catalog, and verification protocols for audio and
+  speech-to-text inference.
 - `swift/TurboSparkApp/Vendor/QwenImage`: original Swift + MLX port of the
   Qwen-Image-2.1 text-to-image pipeline (Qwen3-VL text encoder, single-stream
   block-causal DiT with prefix KV cache, RMS-norm VAE decoder, flow-match
@@ -59,6 +90,20 @@ when this file gets updated relative to the version bump and the tag.
   status, safety requirements, and remaining pipeline integration tasks.
 
 ### Changed
+- `swift/TurboSparkApp`: streamlined `ImagesSectionView` with centered progress
+  overlay tracking granular generation stages (`downloading_model`,
+  `loading_tokenizer`, `loading_text_encoder`, `loading_transformer`,
+  `loading_vae`, `text_encoder`, `transformer`, `vae_decoder`, `png_encode`)
+  with localized labels in `Localizable.xcstrings`.
+- `swift/TurboSparkApp`: focused desktop image generation on tested Z-Image
+  Turbo MLX models and removed unused QwenImage package dependencies and
+  session wrappers.
+- `swift/TurboSparkApp/Vendor/ZImage`: added validation in `ZImageQuantizer` to
+  enforce supported quantization modes (`affine`, `mxfp4`), bit widths (2-8),
+  and valid group sizes while rejecting conflicting settings across shards;
+  improved error reporting in `ModuleWeightsApplier` and weights mapping.
+- `crates/server`: added validation guard ensuring `turbospark-server --model`
+  refuses speech model directories, directing users to the STT C ABI.
 - `swift/TurboSparkApp/Vendor/ZImage`: updated `ZImagePipeline` denoising loop
   to fire progress notifications upon step completion.
 - `docs/CLI.md`, `docs/IMAGE_GENERATION.md`, `docs/ZIMAGE_TURBO.md`: documented

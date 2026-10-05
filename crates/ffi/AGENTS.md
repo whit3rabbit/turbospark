@@ -6,6 +6,7 @@ The C ABI used by the Swift package and macOS app.
 
 - [Detailed module guide](../../.claude/docs/modules/ffi.md)
 - [Swift binding contract](../../docs/SWIFT_BINDINGS.md)
+- [Audio binding plan](../../docs/SWIFT_BINDINGS.md#audio-binding-plan)
 
 ## Rules
 

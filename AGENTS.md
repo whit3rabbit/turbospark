@@ -150,6 +150,9 @@ from compilation or a CPU-only result.
 - `crates/compute`, `crates/core`, `crates/selection`,
   `crates/tokenizer`, `crates/streaming`, `crates/invocation`: portable
   primitives and protocol boundaries.
+- `crates/audio`: unified portable audio crate: DSP primitives (waveform,
+  WAV, resampling, FFT, STFT, mel), neural tensor ops, and models organized
+  by role (music, STT, TTS, VAD, STS, codec, LID); see `docs/AUDIO.md`.
 - `crates/ffi`: the C ABI consumed by Swift.
 - `crates/cli`, `crates/catalog`, `crates/server`: user-facing install,
   command, and service surfaces.

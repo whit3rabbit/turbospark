@@ -45,6 +45,8 @@ mod server_registry;
 mod server_transport;
 mod session;
 mod strings;
+#[cfg(target_os = "macos")]
+mod stt_session;
 mod telemetry;
 mod testing;
 /// macOS only, for the reason `open` is: everything here ends at a
@@ -73,6 +75,18 @@ pub type TsImageSession = ImageSession;
 
 /// The opaque in-process-server handle a caller holds. `TsServer *` in C.
 pub type TsServer = Server;
+
+/// The opaque resident speech-to-text model handle. `TsSttModel *` in C.
+/// Off macOS the STT entry points are refused by name; the aliases exist
+/// so a caller's declarations still compile there.
+#[cfg(target_os = "macos")]
+pub type TsSttModel = stt_session::SttModel;
+#[cfg(target_os = "macos")]
+pub type TsSttStream = stt_session::SttStream;
+#[cfg(not(target_os = "macos"))]
+pub type TsSttModel = std::ffi::c_void;
+#[cfg(not(target_os = "macos"))]
+pub type TsSttStream = std::ffi::c_void;
 
 /// One streamed event. `kind` is one of the `TS_EVENT_*` constants; `text`
 /// is UTF-8 of length `len` and is NOT NUL-terminated and NOT owned by the

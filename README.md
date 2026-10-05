@@ -207,6 +207,7 @@ The low-memory result is primarily an MoE result. Dense models run, but they do 
 | Local API | OpenAI-compatible and Anthropic-compatible endpoints from `turbospark-server` or the app |
 | Model intake | Catalog installs, Hugging Face header probes, GGUF intake, MLX quantized checkpoints, and `.gturbo` packing |
 | Vision and images | Supported vision checkpoints plus validated Z-Image-Turbo generation in the CLI and app |
+| Audio and STT | Unified portable audio crate (DSP, mel, WAV, FFT, neural ops), Whisper STT runner, Metal kernels, and STT FFI surface |
 | Performance controls | Context and load guards, expert-cache sizing, chunked prefill, KV-cache quantization, and eligible speculative decoding |
 | Steering | Directional residual steering for supported model flows, without modifying model weights |
 
@@ -214,6 +215,7 @@ The low-memory result is primarily an MoE result. Dense models run, but they do 
 
 - [Model catalog and installation](docs/MODELS.md)
 - [CLI and server reference](docs/CLI.md)
+- [Audio and speech processing](docs/AUDIO.md) and [Speech to text](docs/SPEECH_TO_TEXT.md)
 - [Benchmark rows and quality evidence](docs/BENCHMARKS.md)
 - [Release assets, Homebrew casks, and packaging](docs/RELEASE.md)
 - [Swift bindings and app development](docs/SWIFT_BINDINGS.md)

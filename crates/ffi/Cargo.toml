@@ -73,6 +73,9 @@ repack = { package = "turbospark-repack", path = "../repack", version = "0.2.0" 
 bench = { package = "turbospark-bench", path = "../bench", version = "0.2.0" }
 
 [dev-dependencies]
+# The STT end-to-end test decodes its WAV fixture through the shared
+# reader; macOS-gated in code like the STT surface itself.
+audio = { package = "turbospark-audio", path = "../audio", version = "0.2.0" }
 serde_json = "1"
 # For `tests/c_surface.rs`'s in-process server tests: a real HTTP client is
 # the only way to prove `ts_server_start` actually served a request, rather

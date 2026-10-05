@@ -46,6 +46,69 @@
 extern "C" {
 #endif
 
+/* ------------------------------------------------------------------ */
+/* Speech-to-text (whisper).                                           */
+/*                                                                     */
+/* A resident STT model is opened from a speech install directory      */
+/* (config.json, model.safetensors, tokenizer.json). Streams accept    */
+/* bounded PCM chunks: at most two seconds of base64 f32               */
+/* little-endian 16 kHz mono per append. The stream buffers prior      */
+/* audio internally; callers never resend. On the CPU reference path   */
+/* the decode runs at finish, returning the full deterministic         */
+/* segment list: {"segments":[{"index":0,"startSeconds":0.0,           */
+/* "endSeconds":29.0,"text":"..."}],"languageDetected":"en"}.          */
+/* Serialize calls on each handle. A handle may move between threads   */
+/* between calls. Off macOS, these calls return TS_ERR_UNSUPPORTED.    */
+/* ------------------------------------------------------------------ */
+
+typedef struct TsSttModel TsSttModel;
+typedef struct TsSttStream TsSttStream;
+
+/*
+ * Opens a speech install directory as a resident STT model.
+ * Writes the handle to *out. Free with ts_stt_close after every stream
+ * opened against it is closed.
+ */
+int32_t ts_stt_open(const char *model_dir, TsSttModel **out);
+
+/*
+ * Closes a resident STT model. Returns TS_ERR_INVALID_ARGUMENT (without
+ * dropping) if any stream is still open against it.
+ */
+int32_t ts_stt_close(TsSttModel *model);
+
+/*
+ * Opens a PCM stream against a resident model. options_json may be NULL
+ * or {} for auto-detected language, or carry {"language":"en"} to pin one.
+ */
+int32_t ts_stt_stream_open(TsSttModel *model, const char *options_json,
+                           TsSttStream **out);
+
+/*
+ * Appends one bounded PCM chunk: at most two seconds of base64 f32
+ * little-endian 16 kHz mono. Writes a status JSON ({"bufferedSamples":
+ * N,"bufferedSeconds":S}, free with ts_string_free). Oversize or
+ * non-finite chunks are refused before any decode work.
+ */
+int32_t ts_stt_stream_append(TsSttStream *stream, const char *pcm_base64,
+                             char **out_json);
+
+/*
+ * Finishes the stream: transcribes everything buffered and writes the
+ * segment JSON above (free with ts_string_free).
+ */
+int32_t ts_stt_stream_finish(TsSttStream *stream, char **out_json);
+
+/*
+ * Cancels the stream: the buffered audio is discarded. Idempotent.
+ */
+int32_t ts_stt_stream_cancel(TsSttStream *stream);
+
+/*
+ * Closes a stream. Null is a no-op.
+ */
+int32_t ts_stt_stream_close(TsSttStream *stream);
+
 /* ---- status codes ---- */
 
 #define TS_OK 0

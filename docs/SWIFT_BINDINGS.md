@@ -1222,6 +1222,71 @@ rate that was never measured. `stopReason` is one of `endOfTurn`,
 
 ---
 
+## Audio binding plan
+
+Audio family and checkpoint status lives in
+[`crates/audio/MODELS.md`](../crates/audio/MODELS.md). Rust model support,
+runtime integration, C ABI support, and Swift support are separate gates.
+The portable speech models do not yet imply a usable Swift audio API.
+
+### Current Whisper C ABI
+
+The current working tree contains an in-progress Whisper STT surface in the
+[canonical header](../crates/ffi/include/turbospark.h), backed by
+[`crates/runtime`](../crates/runtime/AGENTS.md). There is no Swift speech
+wrapper or TTS C ABI yet.
+
+`ts_stt_open` opens a resident model. Each stream accepts at most two seconds
+of base64 f32 little-endian, 16 kHz mono PCM per append. Append reports the
+buffered sample count and duration. `ts_stt_stream_finish` synchronously
+decodes the accumulated audio and returns segments with timestamps and
+`languageDetected`. This is buffered transcription; append does not return
+partial transcripts. Off macOS, these symbols return `TS_ERR_UNSUPPORTED`.
+
+Serialize calls on each handle. Streams retain the model's runner, and model
+close refuses while any of its streams remain open. Close every stream before
+closing its model. Cancel discards buffered PCM and finishes the stream. It
+cannot interrupt an active finish call or run concurrently with it.
+
+### Planned Swift surface
+
+Keep future wrappers in the existing TurboSpark package. The planned layout is
+`swift/TurboSpark/Sources/TurboSpark/Speech/`, with matching tests under
+`swift/TurboSpark/Tests/TurboSparkTests/Speech/`. These paths describe future
+implementation; this plan adds no wrapper, public type, or ABI.
+
+- Provide typed PCM metadata, task options, and results. Read family
+  capabilities and checkpoint identity from shared Rust/catalog metadata so
+  Swift does not maintain a second model registry.
+- Run blocking model open and inference off the main thread. Serialize native
+  handle access and retain the model for each stream's lifetime. Close handles
+  only after queued work completes.
+- Reuse the status and JSON helpers above. Read `ts_last_error` immediately on
+  the thread that received a failure. Copy Rust-owned results before freeing
+  them, and release every result allocation even when decoding fails.
+- Give cancellation the semantics the native operation supports. Concurrent
+  interruption requires its own native contract and tests before Swift exposes
+  it. The current STT cancel operation only clears buffered audio.
+- Keep microphone capture, playback, AVFoundation conversion, permissions,
+  and SwiftUI state in the Swift host. The binding accepts or returns PCM with
+  explicit sample rate and channel metadata; each task declares its required
+  format.
+
+### Binding qualification
+
+Reuse `make swift-lib` to stage the static library and canonical header, then
+run `make swift-test`. Future wrappers need tests for error propagation,
+result ownership, stream/model lifetimes, serialized access, and their actual
+cancellation behavior. Keep checkpoint-dependent tests opt-in and identify
+the pinned model they exercise.
+
+The current Rust STT integration test uses `TS_STT_TEST_MODEL` and optional
+`TS_STT_TEST_WAV`. It checks the ABI path and deterministic results. Swift
+binding validation, transcript quality, accelerated execution, and app
+packaging each require separate evidence.
+
+---
+
 ## Building and shipping
 
 ```bash

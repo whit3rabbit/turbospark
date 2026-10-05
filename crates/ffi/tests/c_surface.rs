@@ -34,9 +34,11 @@ use turbospark_ffi::{
     ts_server_info_json, ts_server_poll_events_json, ts_server_start, ts_server_stop,
     ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
     ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
-    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_system_info_json,
-    Server, Session, TsImageSession, TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL,
-    TS_EVENT_REASONING, TS_EVENT_TOOL,
+    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_stt_close, ts_stt_open,
+    ts_stt_stream_append, ts_stt_stream_cancel, ts_stt_stream_close, ts_stt_stream_finish,
+    ts_stt_stream_open, ts_system_info_json, Server, Session, TsImageSession, TsSttModel,
+    TsSttStream, TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING,
+    TS_EVENT_TOOL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -1883,4 +1885,188 @@ fn embedding_encode_null_and_invalid_checks() {
     assert_eq!(code, abi::TS_ERR_JSON);
     #[cfg(not(target_os = "macos"))]
     assert_eq!(code, abi::TS_ERR_UNSUPPORTED);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn stt_handles_reject_null_and_unknown_inputs() {
+    let mut model: *mut TsSttModel = ptr::null_mut();
+    let code = unsafe { ts_stt_open(ptr::null(), &mut model) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(model.is_null());
+    assert!(last_error().contains("modelDir"));
+
+    let missing = c("/definitely/not/a/turbospark-speech-install");
+    let code = unsafe { ts_stt_open(missing.as_ptr(), &mut model) };
+    assert_eq!(code, abi::TS_ERR_OPEN);
+    assert!(model.is_null());
+    assert!(!last_error().is_empty());
+
+    // A null handle is a no-op success.
+    let code = unsafe { ts_stt_close(ptr::null_mut()) };
+    assert_eq!(code, abi::TS_OK);
+
+    // Stream calls refuse null handles with the invalid-argument code.
+    let mut stream: *mut TsSttStream = ptr::null_mut();
+    let code = unsafe { ts_stt_stream_open(ptr::null_mut(), ptr::null(), &mut stream) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(stream.is_null());
+
+    let mut output = ptr::null_mut();
+    let code = unsafe { ts_stt_stream_append(ptr::null_mut(), c("{}").as_ptr(), &mut output) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(output.is_null());
+    let code = unsafe { ts_stt_stream_finish(ptr::null_mut(), &mut output) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(output.is_null());
+    let code = unsafe { ts_stt_stream_cancel(ptr::null_mut()) };
+    assert_eq!(code, abi::TS_OK);
+    let code = unsafe { ts_stt_stream_close(ptr::null_mut()) };
+    assert_eq!(code, abi::TS_OK);
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn stt_symbols_return_platform_refusals_off_macos() {
+    let mut model = ptr::null_mut();
+    let mut stream = ptr::null_mut();
+    let mut output = ptr::null_mut();
+    unsafe {
+        let codes = [
+            ts_stt_open(ptr::null(), &mut model),
+            ts_stt_close(ptr::null_mut()),
+            ts_stt_stream_open(ptr::null_mut(), ptr::null(), &mut stream),
+            ts_stt_stream_append(ptr::null_mut(), ptr::null(), &mut output),
+            ts_stt_stream_finish(ptr::null_mut(), &mut output),
+            ts_stt_stream_cancel(ptr::null_mut()),
+            ts_stt_stream_close(ptr::null_mut()),
+        ];
+        assert_eq!(codes, [abi::TS_ERR_UNSUPPORTED; 7]);
+    }
+    assert!(model.is_null() && stream.is_null() && output.is_null());
+    assert!(last_error().contains("macOS"));
+}
+
+/// The full STT ABI path against a real install. Skipped unless
+/// TS_STT_TEST_MODEL names a speech directory, so the default suite never
+/// downloads or requires a checkpoint.
+#[test]
+#[cfg(target_os = "macos")]
+fn stt_full_path_transcribes_deterministically() {
+    let Some(model_dir) = std::env::var_os("TS_STT_TEST_MODEL") else {
+        return; // no model staged; the contract tests above cover the ABI
+    };
+    let wav = std::env::var_os("TS_STT_TEST_WAV");
+    let dir = std::path::PathBuf::from(model_dir);
+    assert!(
+        dir.is_dir(),
+        "TS_STT_TEST_MODEL must name an existing install"
+    );
+
+    // Build PCM from the WAV under test (16 kHz mono), or silence.
+    let pcm: Vec<f32> = match wav {
+        Some(w) => {
+            let bytes = std::fs::read(w).expect("read wav");
+            let wave = audio::read_wav_f32_bytes(&bytes).expect("decode wav");
+            assert_eq!(
+                wave.sample_rate, 16_000,
+                "TS_STT_TEST_WAV must be 16 kHz PCM"
+            );
+            assert_eq!(wave.channels, 1, "TS_STT_TEST_WAV must be mono PCM");
+            wave.samples
+        }
+        None => vec![0.0; 16_000],
+    };
+
+    let mut model: *mut TsSttModel = ptr::null_mut();
+    let dir_c = c(dir.to_str().unwrap());
+    let code = unsafe { ts_stt_open(dir_c.as_ptr(), &mut model) };
+    assert_eq!(code, abi::TS_OK, "open: {}", last_error());
+
+    let mut stream: *mut TsSttStream = ptr::null_mut();
+    let code = unsafe { ts_stt_stream_open(model, ptr::null(), &mut stream) };
+    assert_eq!(code, abi::TS_OK, "stream open: {}", last_error());
+
+    // Append in 1-second chunks, each well under the two-second cap.
+    let chunk = 16_000usize;
+    for window in pcm.chunks(chunk) {
+        let mut bytes = Vec::with_capacity(window.len() * 4);
+        for s in window {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        let encoded = base64_encode_for_test(&bytes);
+        let encoded_c = c(&encoded);
+        let out = Box::into_raw(Box::new(std::ptr::null_mut::<std::os::raw::c_char>()));
+        let code = unsafe { ts_stt_stream_append(stream, encoded_c.as_ptr(), out) };
+        assert_eq!(code, abi::TS_OK, "append: {}", last_error());
+        unsafe { ts_string_free(*out) };
+        unsafe { drop(Box::from_raw(out)) };
+    }
+
+    let out = Box::into_raw(Box::new(std::ptr::null_mut::<std::os::raw::c_char>()));
+    let code = unsafe { ts_stt_stream_finish(stream, out) };
+    assert_eq!(code, abi::TS_OK, "finish: {}", last_error());
+    let json = unsafe { std::ffi::CStr::from_ptr(*out).to_str().unwrap().to_string() };
+    unsafe { ts_string_free(*out) };
+    unsafe { drop(Box::from_raw(out)) };
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("segment json");
+    assert!(parsed["segments"].is_array());
+    assert!(parsed["languageDetected"].is_string());
+
+    // Determinism: a second stream over the same audio finishes to the
+    // same segments.
+    let mut stream2: *mut TsSttStream = ptr::null_mut();
+    let code = unsafe { ts_stt_stream_open(model, ptr::null(), &mut stream2) };
+    assert_eq!(code, abi::TS_OK);
+    for window in pcm.chunks(chunk) {
+        let mut bytes = Vec::with_capacity(window.len() * 4);
+        for s in window {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        let encoded = base64_encode_for_test(&bytes);
+        let encoded_c = c(&encoded);
+        let out = Box::into_raw(Box::new(std::ptr::null_mut::<std::os::raw::c_char>()));
+        let code = unsafe { ts_stt_stream_append(stream2, encoded_c.as_ptr(), out) };
+        assert_eq!(code, abi::TS_OK);
+        unsafe { ts_string_free(*out) };
+        unsafe { drop(Box::from_raw(out)) };
+    }
+    let out = Box::into_raw(Box::new(std::ptr::null_mut::<std::os::raw::c_char>()));
+    let code = unsafe { ts_stt_stream_finish(stream2, out) };
+    assert_eq!(code, abi::TS_OK);
+    let json2 = unsafe { std::ffi::CStr::from_ptr(*out).to_str().unwrap().to_string() };
+    unsafe { ts_string_free(*out) };
+    unsafe { drop(Box::from_raw(out)) };
+    assert_eq!(json, json2, "same pcm must produce the same segments");
+
+    unsafe { ts_stt_stream_close(stream) };
+    unsafe { ts_stt_stream_close(stream2) };
+    let code = unsafe { ts_stt_close(model) };
+    assert_eq!(code, abi::TS_OK);
+}
+
+/// Minimal standard base64 encoder for test payloads.
+#[cfg(target_os = "macos")]
+fn base64_encode_for_test(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
 }

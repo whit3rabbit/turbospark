@@ -24,6 +24,7 @@ Downstream Swift code links this crate's `staticlib` directly; nothing in this w
 - `models/`: Portable catalog browsing, model recommendation, and stream-install surface.
 - `server.rs`, `server_model.rs`, `server_registry.rs`, `server_transport.rs`: In-process HTTP server engine sharing the open `SessionCore` without loading a second model instance.
 - `image_session.rs`: Verified `.image.gturbo` session, serialized native generation, cancellation, and PNG/metadata ownership for Swift hosts.
+- `stt_session.rs`: Opaque speech-to-text session handle (`TsSttModel`, `TsSttStream`) wrapping Whisper runtime, buffering PCM audio, and emitting timestamped transcription segments.
 - `telemetry.rs`: Hardware performance counters, phase durations, and peak physical footprint telemetry.
 - `vision.rs`: Multimodal image data URL parsing and patch token preparation.
 - `testing.rs`: Scripted mock engine harness for deterministic FFI testing.
@@ -36,6 +37,7 @@ Downstream Swift code links this crate's `staticlib` directly; nothing in this w
   - `daemon.rs`: External daemon process lifecycle controls.
   - `embedding.rs`: Text embedding generation via Post-LN encoder models.
   - `image.rs`: Image session open, generation progress, cancellation, and owned PNG buffers.
+  - `stt.rs`: Speech-to-text model opening, PCM append streaming, synchronous finish transcription, and cancellation (`ts_stt_*`).
 
 ## Development & Test Commands
 
