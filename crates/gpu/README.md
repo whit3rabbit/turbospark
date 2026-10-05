@@ -40,8 +40,10 @@ gpu = { package = "turbospark-gpu", path = "../gpu" }
 - `ple.rs`: Per-layer n-gram embedding table dispatches.
 - `minimax_router.rs`: MiniMax FP32 sigmoid router dispatches.
 - `hyper_connection.rs`: Multi-stream residual connection dispatches.
+- `whisper_conv.rs` & `whisper_encoder.rs`: Metal compute dispatches for Whisper speech-to-text 1D convolution and transformer encoder blocks.
+- `moonshine_frontend.rs`: Moonshine speech encoder preprocessing and linear attention Metal dispatches.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` creation over memory-mapped weight slices (`newBufferWithBytesNoCopy`).
-- `shaders/`: Metal Shading Language source files containing compute kernels across 34 `.metal` files.
+- `shaders/`: Metal Shading Language source files containing compute kernels across 39 `.metal` files.
 
 ## Development & Test Commands
 
@@ -55,12 +57,13 @@ cargo test -p turbospark-gpu --test rms_norm_parity -- --nocapture
 
 ## Tests
 
-This crate contains 58 integration test suites in `tests/` comparing GPU kernel outputs against CPU reference calculations in `crates/compute`:
+This crate contains 61 integration test suites in `tests/` comparing GPU kernel outputs against CPU reference calculations in `crates/compute`:
 - Quantization parity: `dequant_1bit_gemv_parity.rs`, `dequant_1bit_gemm_parity.rs`, `dequant_2bit_gemv_parity.rs`, `dequant_2bit_gemm_parity.rs`, `dequant_int4_gemv_parity.rs`, `dequant_int4_gemm_parity.rs`, `dequant_int8_gemv_parity.rs`, `dequant_iq_gemv_parity.rs`, `dequant_q4_k_gemv_parity.rs`, `dequant_q5_k_gemv_parity.rs`, `dequant_q6_k_gemv_parity.rs`, `dequant_q8_0_gemv_parity.rs`.
 - Attention and KV cache: `attention_decode_parity.rs`, `attention_indexed_parity.rs`, `attention_tq_parity.rs`, `attention_sinks.rs`, `attention_swa.rs`, `kv_cache.rs`, `kv_cache_quant.rs`, `kv_quantize_parity.rs`.
 - Normalization and activations: `rms_norm_parity.rs`, `rms_norm_grouped_parity.rs`, `scaled_norm_and_embed.rs`, `unary_activation_parity.rs`, `logit_softmax_parity.rs`.
 - Linear attention and MoE: `gdn_parity.rs`, `gdn_conv_dilated_parity.rs`, `gdn_gated_norm_sigmoid_parity.rs`, `moe_decode.rs`, `moe_gguf_parity.rs`, `moe_prefill_batch_parity.rs`, `moe_prefill_batch_gguf_parity.rs`.
 - Vision and architecture components: `vision_parity.rs`, `vision_block_parity.rs`, `rope_parity.rs`, `rope_mrope_parity.rs`, `rope_yarn_parity.rs`, `hyper_connection_parity.rs`, `qsa_indexer_parity.rs`, `ple_gate_parity.rs`, `minimax_router.rs`.
+- Speech kernels: `whisper_conv_parity.rs`, `whisper_encoder_parity.rs`, `moonshine_frontend_parity.rs`.
 
 ## Crate Gotchas
 

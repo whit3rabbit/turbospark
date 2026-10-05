@@ -42,6 +42,7 @@ compute = { package = "turbospark-compute", path = "../compute" }
 - `steering.rs`: Directional steering operations on residual streams (`Ablate`, `Add`, `Clamp`, `Renorm`).
 - `tolerance.rs`: NaN-sticky relative error metrics (`RelError`, `bounded_rel_error`, `worst()`) and tolerance comparisons.
 - `vision.rs`: Vision tower reference kernels (LayerNorm, QuickGELU, NewGELU, 2D RoPE, bidirectional attention).
+- `whisper.rs`: FP32 reference kernels for the whisper speech family: conv front end, Pre-LN encoder blocks, and incremental decoder with KV cache.
 - `wht.rs`: Fast Walsh-Hadamard Transform reference.
 
 ## Development & Test Commands

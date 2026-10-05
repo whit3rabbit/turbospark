@@ -10,6 +10,7 @@ threadgroup shape, or normalization convention on the device.
 
 - [Detailed module guide](../../.claude/docs/modules/gpu.md)
 - [Vision pipeline](../../docs/VISION.md)
+- [Speech to text](../../docs/SPEECH_TO_TEXT.md)
 - [Decode and memory guardrails](../../.claude/docs/engineering-gotchas.md)
 
 ## Rules

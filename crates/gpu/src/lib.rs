@@ -120,6 +120,8 @@ mod moe_prefill_batch;
 #[cfg(target_os = "macos")]
 mod moe_prefill_batch_gguf;
 #[cfg(target_os = "macos")]
+mod moonshine_frontend;
+#[cfg(target_os = "macos")]
 mod ple;
 #[cfg(target_os = "macos")]
 mod power_state;
@@ -145,6 +147,10 @@ mod utility;
 mod vision;
 #[cfg(target_os = "macos")]
 mod warmup;
+#[cfg(target_os = "macos")]
+mod whisper_conv;
+#[cfg(target_os = "macos")]
+mod whisper_encoder;
 #[cfg(target_os = "macos")]
 pub use warmup::{KernelWarmup, KernelWarmupPlan, KernelWarmupStats};
 
@@ -316,6 +322,11 @@ pub use moe_prefill_batch_gguf::{
     encode_moe_prefill_phase2_fused_mxfp4, new_routed_blobs_wide as new_routed_blobs_wide_mxfp4,
 };
 #[cfg(target_os = "macos")]
+pub use moonshine_frontend::{
+    encode_moonshine_conv1d, encode_moonshine_embed, encode_moonshine_groupnorm,
+    encode_moonshine_rope, encode_moonshine_swiglu, encode_moonshine_tanh,
+};
+#[cfg(target_os = "macos")]
 pub use ple::encode_ple_gate;
 #[cfg(target_os = "macos")]
 pub use power_state::{
@@ -361,6 +372,18 @@ pub use utility::{
 pub use vision::{
     encode_vision_attention, encode_vision_gelu, encode_vision_layer_norm, encode_vision_matmul,
     encode_vision_residual_add, encode_vision_rope_2d, GeluKind, MAX_ATTENTION_HEAD_DIM,
+};
+#[cfg(target_os = "macos")]
+pub use whisper_conv::{encode_whisper_conv1d3_gelu, whisper_conv1d3_gelu};
+#[cfg(target_os = "macos")]
+pub use whisper_encoder::{
+    encode_add as encode_whisper_add, encode_attn_step as encode_whisper_attn_step,
+    encode_gelu_erf as encode_whisper_gelu_erf, encode_gemv as encode_whisper_gemv,
+    encode_layer_norm as encode_whisper_layer_norm,
+    encode_matmul_bias as encode_whisper_matmul_bias,
+    encode_softmax_rows as encode_whisper_softmax_rows,
+    encode_transpose as encode_whisper_transpose,
+    encode_transpose_pos as encode_whisper_transpose_pos, F32View, MAX_ATTN_STEP, ROW_THREADS,
 };
 
 /// The Metal buffer handle, re-exported so downstream crates (e.g.

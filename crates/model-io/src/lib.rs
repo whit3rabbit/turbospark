@@ -27,8 +27,11 @@ mod resident_buffer;
 mod resident_index;
 pub mod safetensors;
 mod sha256;
+pub mod speech_family;
+pub mod speech_receipt;
 mod steering_set;
 mod vision_sidecar;
+pub mod whisper_config;
 
 pub use arch_baselines::{
     all_known_architectures, deepseek_v2_lite_16b, deepseek_v4_flash_284b_a13b, gemma4_26b_a4b,
@@ -93,11 +96,17 @@ pub use resident_index::{
 };
 pub use safetensors::SafetensorsFile;
 pub use sha256::{hash_data, hash_file, verify_file};
+pub use speech_family::SpeechFamily;
+pub use speech_receipt::{
+    SpeechInstallReceipt, AUDIO_MODALITY, SPEECH_INSTALL_KIND, SPEECH_RECEIPT_FILENAME,
+    SPEECH_RECEIPT_SCHEMA_VERSION,
+};
 pub use steering_set::{LayerDirection, SteeringSet};
 pub use vision_sidecar::{
     is_sidecar_dir, load as load_vision_sidecar, sidecar_arch, PairsWith, SidecarRecord,
     SidecarSource, SIDECAR_KIND, SIDECAR_RECORD_FILE,
 };
+pub use whisper_config::{WhisperConfig, WhisperSpecialTokens};
 
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.

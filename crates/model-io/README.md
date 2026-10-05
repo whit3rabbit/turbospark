@@ -43,6 +43,9 @@ model_io = { package = "turbospark-model-io", path = "../model-io" }
 - `resident_buffer.rs`: Zero-copy `mmap` wrapper (`ResidentBuffer`) for memory-mapped model weights.
 - `safetensors.rs`: Memory-mapped reader (`SafetensorsFile`) for direct inspection of `.safetensors` headers and slices.
 - `steering_set.rs`: Portable per-layer steering vector serialization and loading (`SteeringSet`, `LayerDirection`).
+- `speech_family.rs`: `SpeechFamily` enumeration for audio transcription architectures (`whisper`).
+- `speech_receipt.rs`: `SpeechInstallReceipt` and schema validation for speech model installs (`turbospark-speech-install.json`).
+- `whisper_config.rs`: OpenAI Whisper configuration parser (`WhisperConfig`) and special token resolver (`WhisperSpecialTokens`).
 - `vision_sidecar.rs`: Vision tower sidecar installation format and verification (`SidecarRecord`).
 - `sha256.rs`: Streaming cryptographic SHA-256 verification of installed files.
 - `install_receipt.rs`: Parses and validates `.gturbo` install receipts.

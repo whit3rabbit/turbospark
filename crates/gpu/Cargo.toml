@@ -40,3 +40,4 @@ half = "2"
 # FunctionConstantValues (the split-KV chunk bench) can name the types.
 metal = "0.33"
 turbospark-repack = { path = "../repack", version = "0.2.0" }
+turbospark-audio = { path = "../audio", version = "0.2.0" }
