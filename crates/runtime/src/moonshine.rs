@@ -1008,8 +1008,8 @@ impl MoonshineMetalEngine {
     }
 }
 
-/// Device choice is made at open. An unsupported GPU profile uses the
-/// portable CPU reference without keeping duplicate weights resident.
+/// Device choice is made at open. The CPU reference is the default, and an
+/// unsupported Metal profile fails without retaining a second weight copy.
 pub enum MoonshineBackend {
     Cpu(Moonshine),
     Metal(Mutex<MoonshineMetalEngine>),

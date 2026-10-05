@@ -1,5 +1,6 @@
-//! STT (speech-to-text) sessions: a resident whisper model plus streaming
-//! PCM streams, owned as raw handles the app opens and closes explicitly.
+//! STT (speech-to-text) sessions: a resident speech model of whichever
+//! family its install declares, plus streaming PCM streams, owned as raw
+//! handles the app opens and closes explicitly.
 //!
 //! Transport contract (mirrors the speech-to-text design): audio crosses
 //! the ABI only as bounded chunks. Each append carries at most two seconds
@@ -10,20 +11,62 @@
 //! progress, and the stable-prefix/tail-revision machinery is where the
 //! Metal encoder path plugs in. Cancel discards the buffer.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use runtime::{WhisperRunner, WhisperTranscription};
+use runtime::{Qwen3AsrRunner, WhisperRunner, WhisperTranscription};
 
-/// Resident whisper model.
+/// The resident speech runner, dispatched on the installed speech family.
+#[derive(Clone)]
+pub(crate) enum SttRunner {
+    Whisper(Arc<WhisperRunner>),
+    Qwen3Asr(Arc<Qwen3AsrRunner>),
+}
+
+impl SttRunner {
+    /// Opens one speech install directory, dispatching on the family the
+    /// directory declares in `config.json` -- the same sniff the catalog
+    /// probe makes before writing a receipt. The runners re-validate the
+    /// config, tokenizer, and tensor shapes at open, so a mislabeled or
+    /// foreign directory fails here rather than mid-transcription.
+    fn open(model_dir: &Path) -> Result<Self, String> {
+        let config = std::fs::read_to_string(model_dir.join("config.json"))
+            .map_err(|e| format!("read config.json: {e}"))?;
+        let model_type = serde_json::from_str::<serde_json::Value>(&config)
+            .ok()
+            .and_then(|parsed| {
+                parsed
+                    .get("model_type")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            });
+        match model_type.as_deref() {
+            Some("qwen3_asr") => Ok(Self::Qwen3Asr(Arc::new(Qwen3AsrRunner::open(model_dir)?))),
+            _ => Ok(Self::Whisper(Arc::new(WhisperRunner::open(model_dir)?))),
+        }
+    }
+
+    fn transcribe(
+        &self,
+        samples: &[f32],
+        language: Option<&str>,
+    ) -> Result<WhisperTranscription, String> {
+        match self {
+            Self::Whisper(runner) => runner.transcribe(samples, language),
+            Self::Qwen3Asr(runner) => runner.transcribe(samples, language),
+        }
+    }
+}
+
+/// Resident speech model of whichever family its install declares.
 pub struct SttModel {
-    pub(crate) runner: Arc<WhisperRunner>,
+    pub(crate) runner: SttRunner,
 }
 
 /// One streaming transcription session over a resident model.
 pub struct SttStream {
     /// Each stream owns the runner independently of the FFI model handle.
-    model: Arc<WhisperRunner>,
+    model: SttRunner,
     /// Explicit language code, or None for auto-detection.
     pub language: Option<String>,
     pub pcm: Vec<f32>,
@@ -45,21 +88,22 @@ pub const MAX_APPEND_BYTES: usize = 2 * 16_000 * 4;
 impl SttModel {
     /// Opens a speech install directory.
     pub fn open(model_dir: &str) -> Result<Self, String> {
-        let runner = WhisperRunner::open(PathBuf::from(model_dir).as_path())?;
-        Ok(Self {
-            runner: Arc::new(runner),
-        })
+        let runner = SttRunner::open(PathBuf::from(model_dir).as_path())?;
+        Ok(Self { runner })
     }
 
     pub(crate) fn has_streams(&self) -> bool {
-        Arc::strong_count(&self.runner) > 1
+        match &self.runner {
+            SttRunner::Whisper(arc) => Arc::strong_count(arc) > 1,
+            SttRunner::Qwen3Asr(arc) => Arc::strong_count(arc) > 1,
+        }
     }
 }
 
 impl SttStream {
     pub fn open(model: &SttModel, options: &SttStreamOptions) -> Self {
         Self {
-            model: Arc::clone(&model.runner),
+            model: model.runner.clone(),
             language: options
                 .language
                 .as_deref()
@@ -186,11 +230,11 @@ pub(crate) fn model_for_testing() -> SttModel {
         dec_ln_bias: Vec::new(),
     };
     SttModel {
-        runner: Arc::new(WhisperRunner::from_parts(
+        runner: SttRunner::Whisper(Arc::new(WhisperRunner::from_parts(
             config,
             WhisperSpecialTokens::MULTILINGUAL,
             weights,
-        )),
+        ))),
     }
 }
 

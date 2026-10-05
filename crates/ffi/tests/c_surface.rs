@@ -1889,6 +1889,46 @@ fn embedding_encode_null_and_invalid_checks() {
 
 #[test]
 #[cfg(target_os = "macos")]
+fn embedding_encoder_cache_real_model_measurement() {
+    let Ok(model_path) = std::env::var("TURBOSPARK_ENCODER_TEST_MODEL") else {
+        return;
+    };
+    let path = c(&model_path);
+    let texts = c(r#"["A short memory about local models"]"#);
+    let rss_kib = || {
+        std::process::Command::new("/bin/ps")
+            .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+            .output()
+            .ok()
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .and_then(|text| text.trim().parse::<u64>().ok())
+    };
+    let encode = || {
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe { ts_embedding_encode_json(path.as_ptr(), texts.as_ptr(), &mut out) };
+        assert_eq!(code, abi::TS_OK, "{}", last_error());
+        let json = unsafe { take(out) };
+        serde_json::from_str::<Vec<Vec<f32>>>(&json).unwrap()
+    };
+    let rss_before = rss_kib();
+    let cold_start = std::time::Instant::now();
+    let first = encode();
+    let cold = cold_start.elapsed();
+    let rss_after_cold = rss_kib();
+    let warm_start = std::time::Instant::now();
+    let second = encode();
+    let warm = warm_start.elapsed();
+    let rss_after_warm = rss_kib();
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].len(), 384);
+    eprintln!(
+        "encoder cache: cold={cold:?}, repeated={warm:?}, rss_kib={rss_before:?}/{rss_after_cold:?}/{rss_after_warm:?}"
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
 fn stt_handles_reject_null_and_unknown_inputs() {
     let mut model: *mut TsSttModel = ptr::null_mut();
     let code = unsafe { ts_stt_open(ptr::null(), &mut model) };

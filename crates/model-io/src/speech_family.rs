@@ -20,11 +20,17 @@ pub enum SpeechFamily {
     /// grammar. Per-model shape comes from the whisper `config.json`, not
     /// from this arm.
     Whisper,
+    /// Qwen3-ASR audio-conditioned language models (mlx-community
+    /// conversions): 128-band Whisper frontend, chunked audio transformer
+    /// tower, and a quantized Qwen3 text decoder prompted with audio
+    /// placeholder embeddings. The audio tower stays on the portable CPU
+    /// path; the packed 8-bit decoder has an opt-in Metal engine.
+    Qwen3Asr,
 }
 
 impl SpeechFamily {
     /// Exhaustive list of all speech families.
-    pub const ALL: [SpeechFamily; 1] = [SpeechFamily::Whisper];
+    pub const ALL: [SpeechFamily; 2] = [SpeechFamily::Whisper, SpeechFamily::Qwen3Asr];
 
     /// Returns the static wire string for the speech family.
     ///
@@ -35,6 +41,7 @@ impl SpeechFamily {
     pub fn as_str(&self) -> &'static str {
         match self {
             SpeechFamily::Whisper => "whisper",
+            SpeechFamily::Qwen3Asr => "qwen3_asr",
         }
     }
 
@@ -42,6 +49,7 @@ impl SpeechFamily {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "whisper" => Some(SpeechFamily::Whisper),
+            "qwen3_asr" => Some(SpeechFamily::Qwen3Asr),
             _ => None,
         }
     }
@@ -77,10 +85,10 @@ mod tests {
         let mut seen = 0;
         for family in SpeechFamily::ALL {
             match family {
-                SpeechFamily::Whisper => seen += 1,
+                SpeechFamily::Whisper | SpeechFamily::Qwen3Asr => seen += 1,
             }
         }
         assert_eq!(seen, SpeechFamily::ALL.len());
-        assert_eq!(SpeechFamily::ALL.len(), 1);
+        assert_eq!(SpeechFamily::ALL.len(), 2);
     }
 }

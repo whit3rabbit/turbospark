@@ -74,9 +74,15 @@ pub use config::GenerationConfig;
 #[cfg(target_os = "macos")]
 pub use encoder::{cosine_similarity, EncoderRunner};
 #[cfg(target_os = "macos")]
+pub use qwen3_asr::Qwen3AsrRunner;
+#[cfg(target_os = "macos")]
 pub use whisper::{WhisperRunner, WhisperSegment, WhisperTranscription};
 #[cfg(target_os = "macos")]
 pub mod moonshine;
+#[cfg(target_os = "macos")]
+pub mod qwen3_asr;
+#[cfg(target_os = "macos")]
+pub mod qwen3_asr_metal;
 // The two sizing policies LIVE IN `model_io` and are re-exported here.
 //
 // They moved there when `crates/catalog` needed the same arithmetic to answer

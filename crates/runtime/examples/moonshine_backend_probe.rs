@@ -7,11 +7,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let model_dir = std::path::PathBuf::from(args.next().expect("model dir"));
     let wav = args.next().expect("wav path");
-    let open_only = args.next().as_deref() == Some("--open-only");
+    let mode = args.next();
+    if !matches!(
+        mode.as_deref(),
+        None | Some("--open-only") | Some("--warmup")
+    ) || args.next().is_some()
+    {
+        return Err("expected <model-dir> <wav> [--open-only|--warmup]".into());
+    }
     let opened = Instant::now();
     let model = turbospark_runtime::moonshine::MoonshineRunner::open(&model_dir)?;
     let open_ms = opened.elapsed().as_secs_f64() * 1_000.0;
-    if open_only {
+    if mode.as_deref() == Some("--open-only") {
         eprintln!(
             "moonshine_{} open_ms={open_ms:.2}",
             if model.using_metal() { "metal" } else { "cpu" }
@@ -24,13 +31,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         16_000,
         &audio::MonoResampleStrategy::SincHann(Default::default()),
     )?;
+    let warmup = if mode.as_deref() == Some("--warmup") {
+        let started = Instant::now();
+        let text = model.transcribe(&samples)?;
+        Some((text, started.elapsed().as_secs_f64() * 1_000.0))
+    } else {
+        None
+    };
     let started = Instant::now();
     let text = model.transcribe(&samples)?;
+    let transcribe_ms = started.elapsed().as_secs_f64() * 1_000.0;
+    if let Some((warmup_text, _)) = &warmup {
+        if warmup_text != &text {
+            return Err("Moonshine warmup and measured transcripts differ".into());
+        }
+    }
     println!("TEXT: {text}");
     eprintln!(
-        "moonshine_{} open_ms={open_ms:.2} transcribe_ms={:.2} samples={}",
+        "moonshine_{} open_ms={open_ms:.2} warmup_ms={:.2} transcribe_ms={:.2} samples={}",
         if model.using_metal() { "metal" } else { "cpu" },
-        started.elapsed().as_secs_f64() * 1_000.0,
+        warmup.as_ref().map_or(0.0, |(_, elapsed)| *elapsed),
+        transcribe_ms,
         samples.len()
     );
     Ok(())

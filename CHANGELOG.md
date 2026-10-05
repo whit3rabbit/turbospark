@@ -14,12 +14,42 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `swift/TurboSparkApp`: encrypted profile memory system featuring
+  `ProfileDatabase`, `ProfileMemoryStore`, and Keychain-backed `ProfileVault`.
+- `swift/TurboSparkApp`: added `MemoryLedger` for append-only audit tracking
+  of memory operations and `MemorySettingsPaneView` for user control and search.
+- `swift/TurboSparkApp`: integrated `MemoryTool` with chat generation loop and
+  scheduler (`AppModel+MemoryScheduler.swift`).
+- `crates/audio`: added MiniMax Music 0.3 flow matching DiT, transformer depth
+  decoder, and vocoder supporting MXFP4, MXFP8, and NVFP4 formats.
+- `crates/gpu`: added Metal compute kernels and dispatches for MiniMax Music 0.3
+  (`music3.metal`, `music3_attention_fallback.metal`).
+- `crates/runtime`: added `Music3Runner` with Metal acceleration, multi-chunk
+  flow matching, and stereo waveform generation.
+- `crates/cli`: added `turbospark-music` CLI binary for native music generation
+  and `turbospark-model list-music` catalog command.
+- `crates/catalog`, `crates/repack`: added resumable and cancellable HTTP
+  downloads with retry backoff and progress tracking.
+- `crates/catalog`: added audio and music catalogs (`audio_catalog.rs`, `music.rs`,
+  `audio_assets.json`, `music_models.json`).
+- `crates/audio`: added neural audio codecs: SNAC, EnCodec, Descript Audio
+  Codec (DAC), ECAPA-TDNN, BigVGAN, and Vocos.
+- `crates/audio`: added speech-to-text model families: Canary, Qwen3-ASR with Metal
+  acceleration, SenseVoice, FireRedASR-2, FunASR Nano, GLM-ASR, and Mega-ASR,
+  as well as Sortformer VAD.
+- `crates/model-io`: added `SpeechFamily::Qwen3Asr`.
+- `crates/ffi`: added in-memory cached embedding encoder (`api/embedding.rs`) and
+  multi-family STT runner dispatch supporting Qwen3-ASR alongside Whisper.
 - `crates/audio`: new unified portable audio crate (`turbospark-audio`)
   implementing DSP primitives (waveform buffers, RIFF WAV I/O, linear and
   sinc-Hann resampling, real FFT/STFT/iSTFT, mel filterbanks, OpenAI Whisper
   and NeMo log-mel frontends), neural tensor ops, MLX groupwise affine
   dequantization, and model families organized by role (`music/`, `stt/`,
   `tts/`, `vad/`, `sts/`, `codec/`, `lid/`).
+- `crates/audio`: Qwen3-ASR descriptor-only checkpoint validation
+  (`stt::qwen3_asr::checkpoint::validate_checkpoint`) and a config-derived
+  CPU resident estimate (`Qwen3Config::estimated_resident_bytes`) backing
+  the qwen3_asr install probe and receipt.
 - `crates/compute`: added `whisper.rs` containing FP32 CPU reference kernels
   for Whisper 1D convolution, Pre-LN encoder blocks, and incremental decoder
   with KV cache.
@@ -31,11 +61,22 @@ when this file gets updated relative to the version bump and the tag.
 - `crates/model-io`: added `SpeechFamily::Whisper`, `WhisperConfig` parsing
   and validation, and typed `SpeechInstallReceipt` schema for speech model
   directories.
+- `crates/model-io`: added `SpeechFamily::Qwen3Asr` (wire string
+  `qwen3_asr`) as the second speech family.
 - `crates/runtime`: added `WhisperRunner` and Moonshine execution paths
   supporting audio preprocessing, 30-second windowing, cross-attention caching,
   language identification, and timestamped segment emission.
+- `crates/runtime`: added `Qwen3AsrRunner`, the portable CPU execution path
+  for the qwen3_asr speech family, emitting one clip-level segment.
 - `crates/catalog`: added speech model catalog (`speech_models.json`),
   `SpeechCatalogEntry`, and speech install verification.
+- `crates/catalog`: the speech probe now dispatches on the staged
+  `config.json` model type, validates qwen3_asr installs (tokenizer assets,
+  descriptor-only checkpoint shapes, family runtime file set), and the
+  bundled table gains the pinned `qwen3-asr-06b-8bit` row plus the
+  `mlx-8bit-bf16` format.
+- `crates/ffi`: `ts_stt_open` now dispatches on the installed speech
+  family, opening Qwen3-ASR installs through the same streaming surface.
 - `crates/cli`: added `turbospark-model list-speech` subcommand to display
   bundled speech models and local installation status.
 - `crates/ffi`: added C ABI speech-to-text surface (`ts_stt_open`,

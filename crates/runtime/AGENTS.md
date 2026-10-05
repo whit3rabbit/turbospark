@@ -10,6 +10,8 @@ policy.
 - [Family checklist](../../docs/NEW_MODEL.md)
 - [Speech to text](../../docs/SPEECH_TO_TEXT.md)
 - [Whisper runner](../../docs/WHISPER.md)
+- [Audio models](../audio/MODELS.md)
+- [Audio music generation](../../docs/audio/music.md)
 - [Model gates](../../.claude/docs/model-gates.md)
 
 ## Rules
