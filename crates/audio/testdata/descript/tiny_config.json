@@ -1,0 +1,17 @@
+{
+  "encoder_dim": 8,
+  "encoder_rates": [
+    2,
+    4
+  ],
+  "latent_dim": null,
+  "decoder_dim": 16,
+  "decoder_rates": [
+    4,
+    2
+  ],
+  "n_codebooks": 3,
+  "codebook_size": 64,
+  "codebook_dim": 4,
+  "sample_rate": 44100
+}

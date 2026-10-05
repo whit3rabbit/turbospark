@@ -1,0 +1,17 @@
+{
+  "generator": "tools/gen_encodec_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "87081691a9118cb53205e7b80256e52a2e8104d5d854500af949629fc93f6c8c",
+    "tiny_weights.safetensors": "b91362ca5e276492cdd48fe1b0bf47a60d4ebd3560deed46050693eb641af6b2",
+    "traces.json": "5e34de1e4ac9425273009dd580af5bc152d169790fcff4f090becb8e8ade8030",
+    "weights_manifest.json": "a86cb4664bd99ed894d5b407f02d81d2c2b96002b5d3932e5c9e536fd825e0b5",
+    "a_zq.npy": "269ff661d5a2f8f7a7ab4a93fc695fee1b27a0287b1c25d19106c3c7d42b990a",
+    "a_audio.npy": "1c66cc6a8a0caa5ac0be577558e3f94b42c30e6e6810ef8cfb6cf212d092e4fe",
+    "b_zq.npy": "eb6f273ecf83bf719a036032eda18fa332d3c0d77766a9195165395707060684",
+    "b_audio.npy": "e62789ca93b08f41da2fbf4331af7ddd89e2ec6857fc2327c028d2db6dd1886f",
+    "lstm_in.npy": "cceb595cc4dc87b755898def046ebb2df0a42cd0ad0739f54e3e3a591e71e685",
+    "lstm_out.npy": "c9e7a87228939bfd55e2fdc7dc6884ba6dd125aa6776680b302d955dda2885d8"
+  }
+}

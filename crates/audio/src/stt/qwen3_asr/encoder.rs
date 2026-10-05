@@ -306,7 +306,7 @@ impl AudioLayer {
     }
 }
 
-pub(crate) struct AudioEncoder {
+pub struct AudioEncoder {
     convs: [Conv2d; 3],
     conv_out: Linear,
     layers: Vec<AudioLayer>,
@@ -317,7 +317,7 @@ pub(crate) struct AudioEncoder {
 }
 
 impl AudioEncoder {
-    pub(crate) fn load(file: &SafetensorsFile, config: &AudioEncoderConfig) -> Result<Self> {
+    pub fn load(file: &SafetensorsFile, config: &AudioEncoderConfig) -> Result<Self> {
         let width = config.downsample_hidden_size;
         let convs = [
             Conv2d::load(file, "audio_tower.conv2d1", 1, width)?,
@@ -358,7 +358,7 @@ impl AudioEncoder {
         })
     }
 
-    pub(crate) fn forward(&self, features: &AudioFeatures) -> Result<Vec<f32>> {
+    pub fn forward(&self, features: &AudioFeatures) -> Result<Vec<f32>> {
         if features.frames == 0 || features.values.len() != MEL_BINS * features.frames {
             return Err(SpeechError::Input {
                 why: "Qwen3 audio features must have shape [128, frames]".into(),

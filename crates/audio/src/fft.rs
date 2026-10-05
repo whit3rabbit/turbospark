@@ -30,7 +30,7 @@ impl ComplexF32 {
         Self { re, im }
     }
 
-    fn conj(self) -> Self {
+    pub fn conj(self) -> Self {
         Self::new(self.re, -self.im)
     }
 
@@ -433,6 +433,45 @@ pub fn real_fft_forward(input: &[f32]) -> Result<Vec<ComplexF32>, AudioError> {
     RealFftPlan::new(input.len())?.forward(input)
 }
 
+/// Public complex FFT plan with the numpy conventions: unscaled
+/// forward, inverse scaled by 1/n. Unlike [`RealFftPlan::inverse`],
+/// which is only defined for conjugate-symmetric spectra, this runs a
+/// true complex transform, so it is the right tool when a model emits
+/// arbitrary complex spectra that must be inverted real (vocoders).
+pub struct ComplexFftPlan {
+    plan: ComplexFft,
+    n: usize,
+}
+
+impl ComplexFftPlan {
+    /// Builds a plan for `n` points (any positive size; non powers of
+    /// two take the Bluestein path).
+    pub fn new(n: usize) -> Result<Self, AudioError> {
+        Ok(ComplexFftPlan {
+            plan: ComplexFft::new(n)?,
+            n,
+        })
+    }
+
+    /// Unscaled forward transform.
+    pub fn forward(&self, input: &[ComplexF32]) -> Result<Vec<ComplexF32>, AudioError> {
+        let mut buf = input.to_vec();
+        self.plan.run(&mut buf, false);
+        Ok(buf)
+    }
+
+    /// Inverse transform with the numpy `ifft` 1/n scaling.
+    pub fn inverse(&self, input: &[ComplexF32]) -> Result<Vec<ComplexF32>, AudioError> {
+        let mut buf = input.to_vec();
+        self.plan.run(&mut buf, true);
+        let scale = 1.0 / self.n as f32;
+        for v in &mut buf {
+            *v = v.scale(scale);
+        }
+        Ok(buf)
+    }
+}
+
 /// Plan-less inverse real FFT for a power-of-two output size.
 pub fn real_fft_inverse(spectrum: &[ComplexF32]) -> Result<Vec<f32>, AudioError> {
     let size = (spectrum.len() - 1) * 2;
@@ -469,7 +508,7 @@ mod tests {
 
     #[test]
     fn forward_matches_direct_dft() {
-        for size in [2usize, 8, 64] {
+        for size in [2usize, 8, 64, 512] {
             let input: Vec<f32> = (0..size)
                 .map(|i| ((i as f32) * 0.7).sin() + 0.3 * ((i as f32) * 2.1).cos())
                 .collect();
@@ -617,6 +656,94 @@ mod allocation_regression {
                 RealFftPlan::new(size),
                 Err(AudioError::BufferTooLarge { .. })
             ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod complex_plan_tests {
+    use super::*;
+
+    #[test]
+    fn complex_plan_forward_matches_dft_256() {
+        let n = 256;
+        let plan = ComplexFftPlan::new(n).unwrap();
+        let input: Vec<ComplexF32> = (0..n)
+            .map(|i| ComplexF32::new((i as f32 * 0.37).sin(), (i as f32 * 0.11).cos()))
+            .collect();
+        let fwd = plan.forward(&input).unwrap();
+        let mut worst = 0.0f64;
+        for k in 0..n {
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (j, x) in input.iter().enumerate() {
+                let angle = -2.0 * std::f64::consts::PI * k as f64 * j as f64 / n as f64;
+                re += f64::from(x.re) * angle.cos() - f64::from(x.im) * angle.sin();
+                im += f64::from(x.re) * angle.sin() + f64::from(x.im) * angle.cos();
+            }
+            worst = worst.max(
+                ((fwd[k].re - re as f32).abs() as f64).max(((fwd[k].im - im as f32).abs()) as f64),
+            );
+        }
+        assert!(worst < 1e-3, "n=256 forward vs DFT worst {worst}");
+    }
+
+    #[test]
+    fn complex_plan_inverse_matches_idft_256() {
+        let n = 256;
+        let plan = ComplexFftPlan::new(n).unwrap();
+        // Arbitrary (non-Hermitian) complex spectrum.
+        let input: Vec<ComplexF32> = (0..n)
+            .map(|i| ComplexF32::new((i as f32 * 0.37).sin() * 0.8, (i as f32 * 0.23).cos() * 0.6))
+            .collect();
+        let out = plan.inverse(&input).unwrap();
+        let mut worst = 0.0f64;
+        for t in 0..n {
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (k, x) in input.iter().enumerate() {
+                let angle = 2.0 * std::f64::consts::PI * k as f64 * t as f64 / n as f64;
+                re += f64::from(x.re) * angle.cos() - f64::from(x.im) * angle.sin();
+                im += f64::from(x.re) * angle.sin() + f64::from(x.im) * angle.cos();
+            }
+            let scale = 1.0 / n as f64;
+            worst = worst
+                .max((out[t].re - (re * scale) as f32).abs() as f64)
+                .max((out[t].im - (im * scale) as f32).abs() as f64);
+        }
+        assert!(worst < 1e-4, "n=256 inverse vs IDFT worst {worst}");
+    }
+
+    #[test]
+    fn complex_plan_roundtrip_and_inverse_match_dft() {
+        let n = 16;
+        let plan = ComplexFftPlan::new(n).unwrap();
+        let input: Vec<ComplexF32> = (0..n)
+            .map(|i| ComplexF32::new((i as f32 * 0.7).sin(), (i as f32 * 1.3).cos()))
+            .collect();
+        // Forward must match a direct DFT.
+        let fwd = plan.forward(&input).unwrap();
+        for k in 0..n {
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (j, x) in input.iter().enumerate() {
+                let angle = -2.0 * std::f64::consts::PI * k as f64 * j as f64 / n as f64;
+                re += f64::from(x.re) * angle.cos() - f64::from(x.im) * angle.sin();
+                im += f64::from(x.re) * angle.sin() + f64::from(x.im) * angle.cos();
+            }
+            assert!(
+                (fwd[k].re - re as f32).abs() < 1e-4,
+                "fwd[{k}] re {} vs {re}",
+                fwd[k].re
+            );
+            assert!(
+                (fwd[k].im - im as f32).abs() < 1e-4,
+                "fwd[{k}] im {} vs {im}",
+                fwd[k].im
+            );
+        }
+        // Roundtrip must be the identity.
+        let back = plan.inverse(&fwd).unwrap();
+        for i in 0..n {
+            assert!((back[i].re - input[i].re).abs() < 1e-4, "roundtrip re[{i}]");
+            assert!((back[i].im - input[i].im).abs() < 1e-4, "roundtrip im[{i}]");
         }
     }
 }

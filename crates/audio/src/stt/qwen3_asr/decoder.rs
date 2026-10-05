@@ -15,6 +15,8 @@ fn weight_base(file: &SafetensorsFile, base: &str) -> String {
         base.to_owned()
     } else if file.contains_tensor(&format!("thinker.{base}.weight")) {
         format!("thinker.{base}")
+    } else if file.contains_tensor(&format!("llm.{base}.weight")) {
+        format!("llm.{base}")
     } else {
         base.to_owned()
     }
@@ -101,11 +103,12 @@ struct TextAttention {
     k_proj: Linear,
     v_proj: Linear,
     o_proj: Linear,
-    q_norm: RmsNorm,
-    k_norm: RmsNorm,
+    q_norm: Option<RmsNorm>,
+    k_norm: Option<RmsNorm>,
     query_heads: usize,
     key_value_heads: usize,
     head_dim: usize,
+    rotary_dim: usize,
     theta: f32,
 }
 
@@ -167,21 +170,32 @@ impl TextAttention {
                 config.hidden_size,
                 scheme,
             )?,
-            q_norm: RmsNorm::load(
-                file,
-                &format!("{prefix}.q_norm"),
-                config.head_dim,
-                config.rms_norm_eps,
-            )?,
-            k_norm: RmsNorm::load(
-                file,
-                &format!("{prefix}.k_norm"),
-                config.head_dim,
-                config.rms_norm_eps,
-            )?,
+            q_norm: config
+                .qk_norm
+                .then(|| {
+                    RmsNorm::load(
+                        file,
+                        &format!("{prefix}.q_norm"),
+                        config.head_dim,
+                        config.rms_norm_eps,
+                    )
+                })
+                .transpose()?,
+            k_norm: config
+                .qk_norm
+                .then(|| {
+                    RmsNorm::load(
+                        file,
+                        &format!("{prefix}.k_norm"),
+                        config.head_dim,
+                        config.rms_norm_eps,
+                    )
+                })
+                .transpose()?,
             query_heads: config.num_attention_heads,
             key_value_heads: config.num_key_value_heads,
             head_dim: config.head_dim,
+            rotary_dim: config.rotary_dim,
             theta: config.rope_theta,
         })
     }
@@ -197,18 +211,23 @@ impl TextAttention {
         let mut query = self.q_proj.forward(x, rows);
         let mut key = self.k_proj.forward(x, rows);
         let value = self.v_proj.forward(x, rows);
-        self.q_norm.apply(&mut query, rows * self.query_heads);
-        self.k_norm.apply(&mut key, rows * self.key_value_heads);
+        if let Some(norm) = &self.q_norm {
+            norm.apply(&mut query, rows * self.query_heads);
+        }
+        if let Some(norm) = &self.k_norm {
+            norm.apply(&mut key, rows * self.key_value_heads);
+        }
 
         let mut query_heads = transpose_heads(&query, rows, self.query_heads, self.head_dim);
         let mut key_heads = transpose_heads(&key, rows, self.key_value_heads, self.head_dim);
         let value_heads = transpose_heads(&value, rows, self.key_value_heads, self.head_dim);
-        let (cos, sin) = ops::rope_tables(rows, self.head_dim, self.theta);
+        let (cos, sin) = ops::rope_tables(rows, self.rotary_dim, self.theta);
         apply_rope_neox(
             &mut query_heads,
             self.query_heads,
             rows,
             self.head_dim,
+            self.rotary_dim,
             &cos,
             &sin,
         );
@@ -217,6 +236,7 @@ impl TextAttention {
             self.key_value_heads,
             rows,
             self.head_dim,
+            self.rotary_dim,
             &cos,
             &sin,
         );
@@ -281,15 +301,20 @@ impl TextAttention {
         let mut query = self.q_proj.forward(x, 1);
         let mut key = self.k_proj.forward(x, 1);
         let value = self.v_proj.forward(x, 1);
-        self.q_norm.apply(&mut query, self.query_heads);
-        self.k_norm.apply(&mut key, self.key_value_heads);
+        if let Some(norm) = &self.q_norm {
+            norm.apply(&mut query, self.query_heads);
+        }
+        if let Some(norm) = &self.k_norm {
+            norm.apply(&mut key, self.key_value_heads);
+        }
         let position = cache.len;
-        let (cos, sin) = ops::rope_tables_range(position, 1, self.head_dim, self.theta);
+        let (cos, sin) = ops::rope_tables_range(position, 1, self.rotary_dim, self.theta);
         for head in 0..self.query_heads {
             let start = head * self.head_dim;
             apply_rope_neox_position(
                 &mut query[start..start + self.head_dim],
                 self.head_dim,
+                self.rotary_dim,
                 &cos,
                 &sin,
             );
@@ -299,6 +324,7 @@ impl TextAttention {
             apply_rope_neox_position(
                 &mut key[start..start + self.head_dim],
                 self.head_dim,
+                self.rotary_dim,
                 &cos,
                 &sin,
             );
@@ -463,6 +489,7 @@ impl DecoderLayer {
 
 pub(crate) struct Decoder {
     pub(crate) embeddings: Vec<f32>,
+    lm_head: Option<Linear>,
     layers: Vec<DecoderLayer>,
     final_norm: RmsNorm,
     pub(crate) vocab_size: usize,
@@ -490,8 +517,20 @@ impl Decoder {
         let layers = (0..config.num_hidden_layers)
             .map(|index| DecoderLayer::load(file, index, config, scheme))
             .collect::<Result<Vec<_>>>()?;
+        let lm_head = if config.tie_word_embeddings {
+            None
+        } else {
+            Some(Linear::load(
+                file,
+                "lm_head",
+                config.hidden_size,
+                config.vocab_size,
+                scheme,
+            )?)
+        };
         Ok(Self {
             embeddings,
+            lm_head,
             layers,
             final_norm: RmsNorm::load(file, "model.norm", config.hidden_size, config.rms_norm_eps)?,
             vocab_size: config.vocab_size,
@@ -505,7 +544,7 @@ impl Decoder {
             .any(|&id| id < 0 || id as usize >= self.vocab_size)
         {
             return Err(SpeechError::Input {
-                why: "Qwen3 prompt contains a token outside the checkpoint vocabulary".into(),
+                why: "text prompt contains a token outside the checkpoint vocabulary".into(),
             });
         }
         Ok(ops::embedding(
@@ -552,14 +591,18 @@ impl Decoder {
     }
 
     pub(crate) fn logits(&self, hidden: &[f32]) -> Vec<f32> {
-        ops::linear(
-            hidden,
-            &self.embeddings,
-            None,
-            1,
-            self.hidden_size,
-            self.vocab_size,
-        )
+        if let Some(lm_head) = &self.lm_head {
+            lm_head.forward(hidden, 1)
+        } else {
+            ops::linear(
+                hidden,
+                &self.embeddings,
+                None,
+                1,
+                self.hidden_size,
+                self.vocab_size,
+            )
+        }
     }
 }
 
@@ -580,10 +623,12 @@ fn apply_rope_neox(
     heads: usize,
     rows: usize,
     dim: usize,
+    rotary_dim: usize,
     cos: &[f32],
     sin: &[f32],
 ) {
-    let half = dim / 2;
+    debug_assert!(rotary_dim <= dim && rotary_dim % 2 == 0);
+    let half = rotary_dim / 2;
     for head in 0..heads {
         for row in 0..rows {
             let base = (head * rows + row) * dim;
@@ -598,8 +643,15 @@ fn apply_rope_neox(
     }
 }
 
-fn apply_rope_neox_position(values: &mut [f32], dim: usize, cos: &[f32], sin: &[f32]) {
-    let half = dim / 2;
+fn apply_rope_neox_position(
+    values: &mut [f32],
+    dim: usize,
+    rotary_dim: usize,
+    cos: &[f32],
+    sin: &[f32],
+) {
+    debug_assert!(rotary_dim <= dim && rotary_dim % 2 == 0);
+    let half = rotary_dim / 2;
     for feature in 0..half {
         let a = values[feature];
         let b = values[half + feature];
@@ -611,8 +663,8 @@ fn apply_rope_neox_position(values: &mut [f32], dim: usize, cos: &[f32], sin: &[
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_rope_neox, transpose_heads, Decoder, DecoderLayer, Linear, Mlp, RmsNorm,
-        TextAttention,
+        apply_rope_neox, apply_rope_neox_position, transpose_heads, Decoder, DecoderLayer, Linear,
+        Mlp, RmsNorm, TextAttention,
     };
     use crate::ops;
 
@@ -626,11 +678,20 @@ mod tests {
 
         let mut q = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
         let (cos, sin) = ops::rope_tables(2, 4, 1.0);
-        apply_rope_neox(&mut q, 1, 2, 4, &cos, &sin);
+        apply_rope_neox(&mut q, 1, 2, 4, 4, &cos, &sin);
         assert_eq!(q[0], 1.0);
         assert_eq!(q[1], 0.0);
         assert!((q[4] - 0.5403023).abs() < 1e-6);
         assert!((q[6] - 0.84147096).abs() < 1e-6);
+    }
+
+    #[test]
+    fn partial_rope_leaves_the_head_suffix_untouched() {
+        let (cos, sin) = ops::rope_tables_range(1, 1, 4, 10_000.0);
+        let mut values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let suffix = values[4..].to_vec();
+        apply_rope_neox_position(&mut values, 8, 4, &cos, &sin);
+        assert_eq!(&values[4..], suffix);
     }
 
     #[test]
@@ -658,11 +719,12 @@ mod tests {
             k_proj: linear(hidden, 4, 2),
             v_proj: linear(hidden, 4, 3),
             o_proj: linear(hidden, hidden, 4),
-            q_norm: norm(2),
-            k_norm: norm(2),
+            q_norm: Some(norm(2)),
+            k_norm: Some(norm(2)),
             query_heads: 4,
             key_value_heads: 2,
             head_dim: 2,
+            rotary_dim: 2,
             theta: 10_000.0,
         };
         let layer = DecoderLayer {
@@ -679,6 +741,7 @@ mod tests {
         };
         let decoder = Decoder {
             embeddings: Vec::new(),
+            lm_head: None,
             layers: vec![layer],
             final_norm: norm(hidden),
             vocab_size: 0,

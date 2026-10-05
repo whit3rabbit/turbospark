@@ -502,6 +502,39 @@ impl Subsampling {
             stride: cfg.subsampling_conv_stride,
         })
     }
+
+    /// Canary variant of `load_parakeet`: identical tensor names, but the
+    /// output projection is a groupwise-affine quantized linear whose bias
+    /// may or may not exist.
+    fn load_canary(
+        file: &SafetensorsFile,
+        cfg: &FcEncoderConfig,
+        scheme: crate::quant::QuantScheme,
+    ) -> Result<Self> {
+        let ch = cfg.subsampling_conv_channels;
+        let ks = cfg.subsampling_conv_kernel_size;
+        let base = "encoder.pre_encode.conv";
+        let conv = |idx: usize, out: usize, inp: usize| {
+            load_conv2d_pair(file, &format!("{base}.{idx}"), out, inp, ks, ks)
+        };
+        let (linear_w, linear_b) =
+            crate::quant::load_quantized(file, "encoder.pre_encode.out", scheme)?;
+        Ok(Subsampling {
+            conv0: conv(0, ch, 1)?,
+            dw2: conv(2, ch, 1)?,
+            pw3: load_conv2d_pair(file, &format!("{base}.3"), ch, ch, 1, 1)?,
+            dw5: conv(5, ch, 1)?,
+            pw6: load_conv2d_pair(file, &format!("{base}.6"), ch, ch, 1, 1)?,
+            linear_w,
+            linear_b: linear_b.ok_or_else(|| SpeechError::Tensor {
+                name: "encoder.pre_encode.out.bias".into(),
+                why: "missing from the Canary checkpoint".into(),
+            })?,
+            conv_channels: ch,
+            kernel_size: ks,
+            stride: cfg.subsampling_conv_stride,
+        })
+    }
 }
 
 impl RelPosAttention {
@@ -690,6 +723,103 @@ impl ConformerLayer {
                 o_w: projection("out")?,
                 o_b: None,
                 rel_k_w: load_vec(file, &format!("{attn_prefix}.linear_pos.weight"))?,
+                bias_u: load_vec(file, &format!("{attn_prefix}.pos_bias_u"))?,
+                bias_v: load_vec(file, &format!("{attn_prefix}.pos_bias_v"))?,
+            },
+            norm_conv_w,
+            norm_conv_b,
+            conv: ConformerConvolution::load_parakeet(
+                file,
+                &format!("{prefix}.conv"),
+                cfg.hidden_size,
+                cfg.conv_kernel_size,
+            )?,
+            norm_ff2_w,
+            norm_ff2_b,
+            ff2: ff("feed_forward2")?,
+            norm_out_w,
+            norm_out_b,
+        })
+    }
+
+    /// Canary variant of `load_parakeet`: identical tensor names, but every
+    /// linear is a groupwise-affine quantized tensor and the attention and
+    /// feed-forward projections carry biases (the reference constructs the
+    /// Parakeet Conformer with `use_bias: true`; `linear_pos` stays
+    /// bias-free).
+    fn load_canary(
+        file: &SafetensorsFile,
+        prefix: &str,
+        cfg: &FcEncoderConfig,
+        scheme: crate::quant::QuantScheme,
+    ) -> Result<Self> {
+        let linear =
+            |name: &str| crate::quant::load_quantized(file, &format!("{prefix}.{name}"), scheme);
+        let ff = |name: &str| -> Result<ConformerFeedForward> {
+            let (l1_w, l1_b) = linear(&format!("{name}.linear1"))?;
+            let (l2_w, l2_b) = linear(&format!("{name}.linear2"))?;
+            Ok(ConformerFeedForward {
+                l1_w,
+                l1_b: Some(l1_b.ok_or_else(|| SpeechError::Tensor {
+                    name: format!("{prefix}.{name}.linear1.bias"),
+                    why: "missing from the Canary checkpoint".into(),
+                })?),
+                l2_w,
+                l2_b: Some(l2_b.ok_or_else(|| SpeechError::Tensor {
+                    name: format!("{prefix}.{name}.linear2.bias"),
+                    why: "missing from the Canary checkpoint".into(),
+                })?),
+            })
+        };
+        let norm = |name: &str| -> Result<(Vec<f32>, Vec<f32>)> {
+            Ok((
+                load_vec(file, &format!("{prefix}.{name}.weight"))?,
+                load_vec(file, &format!("{prefix}.{name}.bias"))?,
+            ))
+        };
+        let (norm_ff1_w, norm_ff1_b) = norm("norm_feed_forward1")?;
+        let (norm_att_w, norm_att_b) = norm("norm_self_att")?;
+        let (norm_conv_w, norm_conv_b) = norm("norm_conv")?;
+        let (norm_ff2_w, norm_ff2_b) = norm("norm_feed_forward2")?;
+        let (norm_out_w, norm_out_b) = norm("norm_out")?;
+        let attn_prefix = format!("{prefix}.self_attn");
+        let attention = |name: &str| -> Result<(Vec<f32>, Vec<f32>)> {
+            let (w, b) = linear(&format!("self_attn.linear_{name}"))?;
+            Ok((
+                w,
+                b.ok_or_else(|| SpeechError::Tensor {
+                    name: format!("{attn_prefix}.linear_{name}.bias"),
+                    why: "missing from the Canary checkpoint".into(),
+                })?,
+            ))
+        };
+        let (q_w, q_b) = attention("q")?;
+        let (k_w, k_b) = attention("k")?;
+        let (v_w, v_b) = attention("v")?;
+        let (o_w, o_b) = attention("out")?;
+        let (rel_k_w, rel_k_b) = linear("self_attn.linear_pos")?;
+        if rel_k_b.is_some() {
+            return Err(SpeechError::Tensor {
+                name: format!("{attn_prefix}.linear_pos.bias"),
+                why: "the reference constructs linear_pos without a bias".into(),
+            });
+        }
+        Ok(ConformerLayer {
+            norm_ff1_w,
+            norm_ff1_b,
+            ff1: ff("feed_forward1")?,
+            norm_att_w,
+            norm_att_b,
+            attn: RelPosAttention {
+                q_w,
+                q_b: Some(q_b),
+                k_w,
+                k_b: Some(k_b),
+                v_w,
+                v_b: Some(v_b),
+                o_w,
+                o_b: Some(o_b),
+                rel_k_w,
                 bias_u: load_vec(file, &format!("{attn_prefix}.pos_bias_u"))?,
                 bias_v: load_vec(file, &format!("{attn_prefix}.pos_bias_v"))?,
             },
@@ -1330,6 +1460,31 @@ impl FastConformer {
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             subsampling: Subsampling::load_parakeet(file, cfg)?,
+            layers,
+        })
+    }
+
+    /// Loads the FastConformer encoder from the Canary MLX conversion. The
+    /// tensor names match the Parakeet layout, but the conversion quantizes
+    /// every linear layer to the groupwise affine `scheme` (the reference is
+    /// `mlx_audio/stt/models/canary/canary.py`, which reuses the Parakeet
+    /// `Conformer` with `use_bias: true`). The convolution and batch norm
+    /// tensors stay unquantized and load through the Parakeet path.
+    pub(crate) fn load_canary(
+        file: &SafetensorsFile,
+        cfg: &FcEncoderConfig,
+        scheme: crate::quant::QuantScheme,
+    ) -> Result<Self> {
+        if cfg.subsampling_conv_kernel_size != 3 || cfg.subsampling_conv_stride != 2 {
+            return Err(SpeechError::Unsupported {
+                why: "Canary encoder requires 3x3 stride-2 subsampling convolutions".into(),
+            });
+        }
+        let layers = (0..cfg.num_hidden_layers)
+            .map(|i| ConformerLayer::load_canary(file, &format!("encoder.layers.{i}"), cfg, scheme))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            subsampling: Subsampling::load_canary(file, cfg, scheme)?,
             layers,
         })
     }

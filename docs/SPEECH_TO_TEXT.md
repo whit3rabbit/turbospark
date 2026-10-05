@@ -29,8 +29,29 @@ downloads.
   the CPU path. See the [Moonshine profile](../crates/audio/src/stt/moonshine/README.md).
 - Qwen3-ASR now prefills its CPU decoder once and appends per-layer K/V for
   each generated token. A grouped-query synthetic test compares it with the
-  full-prefix reference. Packed 8-bit Metal weights and real-checkpoint gates
-  remain open.
+  full-prefix reference. At the pinned revision the cached path reproduces
+  the pinned MLX transcript exactly; a release CPU profile transcribed a
+  2.9-second 16 kHz clip in about 11.7 s end to end at a 3.0 GiB peak
+  `phys_footprint`, with the audio encoder the dominant phase. An opt-in
+  resident packed 8-bit Metal decoder in `crates/runtime`
+  (`qwen3_asr_metal`) reproduces the same transcript, prefills 46 prompt
+  rows and decodes 13 tokens in about 0.28 s combined, and peaks near
+  1.97 GiB; the CPU audio tower is the remaining end-to-end bottleneck, and
+  nothing dispatches to Metal by default. Two gates close the bring-up
+  checklist: a synthetic full-layer test generates a complete miniature
+  checkpoint in-test and requires identical CPU and Metal transcripts, and
+  the warm interleaved fresh-process protocol recorded, on one clip with
+  identical transcript hashes across all six runs, CPU median 10159.63 ms
+  at a 3080.4 MiB median peak against Metal median 5411.69 ms at 2073.9 MiB
+  (the Metal end to end still runs the shared CPU audio tower). These are
+  exploratory single-clip readings, not a serving gate; broader quality
+  checks and the default-on decision remain open. The family is wired end
+  to end: `SpeechFamily::Qwen3Asr` (wire string `qwen3_asr`), the pinned
+  `qwen3-asr-06b-8bit` catalog row, the install probe and receipt, the
+  runtime `Qwen3AsrRunner` emitting one clip-level segment, and the
+  `ts_stt_*` dispatch; Swift selection waits on the app's speech
+  subsystem. See the
+  [Qwen3-ASR profile](../crates/audio/src/stt/qwen3_asr/README.md).
 - The shared FastConformer attention used by Parakeet and Sortformer now
   computes one score row at a time instead of retaining quadratic attention
   matrices. Nemotron's limited-context attention computes only its allowed
@@ -41,12 +62,23 @@ downloads.
   the same full-vocabulary softmax and projection for each row. The GPU
   encoder and real-checkpoint gates remain open.
 
-These families are not connected to `ts_stt_*`, install receipts, the speech
+Qwen3-ASR is connected end to end; Moonshine and the other portable
+families are not connected to `ts_stt_*`, install receipts, the speech
 catalog, or Swift selection yet. Moonshine Metal remains opt-in because its
 observed peak footprint is above the CPU reference on the available clip;
 the broader quality and paired performance gates are also open. A model
 without alignment must emit one clip-level segment when it reaches the
-session API, with no word-level timing claim.
+session API, with no word-level timing claim; Qwen3-ASR ships exactly that
+way.
+
+Moonshine diagnostic on an Apple M4 Max: the pinned Tiny checkpoint and a
+52,000-sample spoken clip were run with the warm, interleaved release protocol
+in [Benchmarking](BENCHMARKING.md#moonshine-stt-backend-probe), three runs per
+backend. CPU measured 175.99 ms median transcription and 119.7 MiB median
+peak `phys_footprint`; Metal measured 17.91 ms and 315.9 MiB. Both returned
+the same transcript in all six runs. Peaks include open and warmup. This is
+one clip on a device without a controlled quiet-host gate, not a frozen speed
+or recognition-quality claim. The much higher Metal peak blocks default-on.
 
 ## Evidence recorded from real runs
 
@@ -76,8 +108,11 @@ These numbers come from real runs on this checkout, not projections:
 ## Usage
 
 - CLI inspection: `turbospark-model list-speech` shows the bundled pinned
-  entries (tiny.en, base.en, small.en, multilingual base).
-- FFI: `ts_stt_open` opens a speech install directory;
+  entries: four whisper `hf-safetensors` rows (tiny.en, base.en, small.en,
+  multilingual base), five whisper MLX conversions, and the
+  `qwen3-asr-06b-8bit` row.
+- FFI: `ts_stt_open` opens a speech install directory, dispatching on the
+  family the install declares;
   `ts_stt_stream_open` / `ts_stt_stream_append` / `ts_stt_stream_finish`
   carry bounded PCM chunks (at most two seconds of base64 f32 LE 16 kHz
   mono per append; the stream buffers prior audio, callers never resend);
@@ -85,7 +120,9 @@ These numbers come from real runs on this checkout, not projections:
   model.
 - Runtime API: `turbospark_runtime::WhisperRunner::open(dir)` then
   `transcribe(&pcm, language)`, where `language` is `None`/`"auto"` or a
-  code such as `"en"`.
+  code such as `"en"`. Qwen3-ASR installs open through
+  `turbospark_runtime::Qwen3AsrRunner::open(dir)` with the same
+  `transcribe` shape and return one clip-level segment.
 
 The Slaney frontend review corrected area normalization from mel units to
 Hz, and now pins OpenAI Whisper v20250625's exported filterbank as the

@@ -21,6 +21,11 @@
 //! pool); the reference's sanitize transposes at load time, so this
 //! port reads the PyTorch order directly.
 
+pub mod frontend;
+pub use frontend::{
+    EnglishFrontend, PhonemeVocabulary, SynthesisRequest, SynthesisSegment, Voice, VoicePack,
+};
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -176,6 +181,7 @@ impl WnConvTranspose1d {
             self.kernel,
             self.stride,
             self.padding,
+            0,
             self.groups,
         )
     }

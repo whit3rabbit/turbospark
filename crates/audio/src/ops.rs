@@ -288,8 +288,8 @@ pub fn pad_left(x: &[f32], ch: usize, pad: usize) -> Vec<f32> {
 
 /// ConvTranspose1d with PyTorch weight layout `w [in_ch, out_ch / groups,
 /// kernel]`. Stride shifts the input sample positions; output length is
-/// `(seq - 1) * stride - 2 * padding + kernel`. Returns `[out_ch,
-/// out_seq]`.
+/// `(seq - 1) * stride - 2 * padding + kernel + output_padding`.
+/// Returns `[out_ch, out_seq]`.
 #[allow(clippy::too_many_arguments)]
 pub fn conv_transpose1d(
     x: &[f32],
@@ -300,12 +300,13 @@ pub fn conv_transpose1d(
     kernel: usize,
     stride: usize,
     padding: usize,
+    output_padding: usize,
     groups: usize,
 ) -> Vec<f32> {
     assert!(x.len() % in_ch == 0);
     assert_eq!(w.len(), in_ch * (out_ch / groups) * kernel);
     let seq = x.len() / in_ch;
-    let out_seq = (seq - 1) * stride + kernel - 2 * padding;
+    let out_seq = (seq - 1) * stride + kernel - 2 * padding + output_padding;
     assert!(out_seq > 0 || seq == 0, "conv_transpose1d empty output");
     let out_per_g = out_ch / groups;
     let in_per_g = in_ch / groups;
@@ -773,7 +774,7 @@ mod tests {
     fn conv_transpose1d_scatter() {
         let x = vec![1.0, 2.0]; // 1ch, seq 2
         let w = vec![1.0f32; 2]; // in 1, out 1, kernel 2
-        let out = conv_transpose1d(&x, &w, None, 1, 1, 2, 2, 0, 1);
+        let out = conv_transpose1d(&x, &w, None, 1, 1, 2, 2, 0, 0, 1);
         // positions: x0 -> out[0..2] += 1; x1 -> out[2..4] += 2
         assert_eq!(out, vec![1.0, 1.0, 2.0, 2.0]);
     }

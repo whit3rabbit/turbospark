@@ -3,16 +3,28 @@
 //! Aligned with `mlx_audio/stt/models/`; individual model ports retain their
 //! own model-family identity and pinned checkpoint profiles.
 
+pub mod canary;
+pub mod fireredasr2;
+pub mod fun_asr_nano;
+pub mod glmasr;
 pub mod granite_speech5_ctc;
+pub mod mega_asr;
 pub mod mms;
 pub mod moonshine;
 pub mod nemotron_asr;
 pub mod parakeet;
 pub mod qwen3_asr;
 pub mod qwen3_forced_aligner;
+pub mod sensevoice;
 pub mod whisper;
 
+pub use canary::{Canary, CanaryProfile, CANARY_1B_V2_Q8};
+pub use fireredasr2::{
+    FireRedAsr2, FireRedAsr2Config, FireRedAsr2Options, FireRedAsr2Profile, FIREREDASR2_AED,
+};
+pub use glmasr::{GlmAsr, GlmAsrProfile, GLM_ASR_NANO_2512};
 pub use granite_speech5_ctc::{GraniteSpeech5Ctc, GraniteSpeech5Profile, GRANITE_SPEECH5_TURBOCTC};
+pub use mega_asr::{MegaAsr, MegaAsrProfile, MEGA_ASR_8BIT};
 pub use mms::{Mms, MmsConfig, MmsProfile, MMS_1B_FL102_ENGLISH};
 pub use moonshine::{Moonshine, MoonshineConfig};
 pub use nemotron_asr::{NemotronAsr, NemotronAsrConfig, NemotronAsrProfile, NEMOTRON_3_5_ASR};
@@ -24,4 +36,5 @@ pub use qwen3_forced_aligner::{
     ForcedAlignItem, ForcedAlignResult, Qwen3ForcedAligner, Qwen3ForcedAlignerConfig,
     Qwen3ForcedAlignerProfile, QWEN3_FORCED_ALIGNER_06B_8BIT,
 };
+pub use sensevoice::{SenseVoiceOutput, SenseVoiceProfile, SenseVoiceSmall, SENSEVOICE_SMALL};
 pub use whisper::{WhisperConfig, WhisperModel, WhisperSpecialTokens, WhisperWeights};

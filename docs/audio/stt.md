@@ -14,6 +14,9 @@ Speech-to-Text (STT) models transcribe spoken audio into written text, perform w
 | **Qwen3-ASR** | [`src/stt/qwen3_asr/`](../../crates/audio/src/stt/qwen3_asr/) | Audio Tower + Qwen3 LM | Grouped-query attention, 128 mel bins, full-prefix/KV decoding | Verified |
 | **Qwen3-ForcedAligner** | [`src/stt/qwen3_forced_aligner/`](../../crates/audio/src/stt/qwen3_forced_aligner/) | CTC Aligner | Precise word/character timestamps for English and Chinese | Verified |
 | **Nemotron ASR** | [`src/stt/nemotron_asr/`](../../crates/audio/src/stt/nemotron_asr/) | FastConformer + RNN-T | Nemotron 3.5 ASR architecture, relative positional attention | Verified |
+| **FireRedASR2-AED** | [`src/stt/fireredasr2/`](../../crates/audio/src/stt/fireredasr2/) | Conformer + Transformer | 80-bin FBANK, relative attention, beam-search decoding | Single-clip parity |
+| **Fun-ASR-Nano** | [`src/stt/fun_asr_nano/`](../../crates/audio/src/stt/fun_asr_nano/) | SANM + audio adaptor + Qwen3 LM | 80-bin FBANK, LFR 7x6, pinned BF16 decoder | Single-clip parity |
+| **GLM-ASR-Nano-2512** | [`src/stt/glmasr/`](../../crates/audio/src/stt/glmasr/) | Whisper + Llama | 128-bin log-mel, RoPE encoder, merge-four adaptor, affine 4-bit decoder | Single-clip parity |
 
 ## Model Family Details & Documentation
 
@@ -36,3 +39,8 @@ Speech-to-Text (STT) models transcribe spoken audio into written text, perform w
   - URLs: `Qwen/Qwen3-ForcedAligner-0.6B`
 - **Nemotron ASR**: [`crates/audio/src/stt/nemotron_asr/README.md`](../../crates/audio/src/stt/nemotron_asr/README.md)
   - URLs: `nvidia/nemotron-speech-asr-0.6b`
+- **Fun-ASR-Nano-2512**: [`crates/audio/src/stt/fun_asr_nano/README.md`](../../crates/audio/src/stt/fun_asr_nano/README.md)
+- **GLM-ASR-Nano-2512**: [`crates/audio/src/stt/glmasr/README.md`](../../crates/audio/src/stt/glmasr/README.md)
+  - Pinned: `mlx-community/GLM-ASR-Nano-2512-4bit` at `35553fa5bebfcc3ece3ce7d47b98827cb0ac9eef`
+- **FireRedASR2-AED**: [`crates/audio/src/stt/fireredasr2/README.md`](../../crates/audio/src/stt/fireredasr2/README.md)
+  - Pinned: `mlx-community/FireRedASR2-AED-mlx` at `f3212eacfa49b851130b97c63653c8e06ee09bdb`; Rust matches the MLX transcript and selected encoder stages on the shared 16 kHz clip.

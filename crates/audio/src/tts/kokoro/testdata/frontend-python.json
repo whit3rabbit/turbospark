@@ -1,0 +1,635 @@
+{
+  "source_revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+  "frontend": "pinned Misaki Python, spacy3.8.7 en_core_web_sm3.8.0",
+  "fallback": "pinned canonical Lexicon.get_NNP letter-spelling fallback",
+  "letters": {
+    "A": "\u02c8A",
+    "B": "b\u02c8i",
+    "C": "s\u02c8i",
+    "D": "d\u02c8i",
+    "E": "\u02c8i",
+    "F": "\u02c8\u025bf",
+    "G": "\u02a4\u02c8i",
+    "H": "\u02c8A\u02a7",
+    "I": "\u02c8I",
+    "J": "\u02a4\u02c8A",
+    "K": "k\u02c8A",
+    "L": "\u02c8\u025bl",
+    "M": "\u02c8\u025bm",
+    "N": "\u02c8\u025bn",
+    "O": "\u02c8O",
+    "P": "p\u02c8i",
+    "Q": "kj\u02c8u",
+    "R": "\u02c8\u0251\u0279",
+    "S": "\u02c8\u025bs",
+    "T": "t\u02c8i",
+    "U": "j\u02c8u",
+    "V": "v\u02c8i",
+    "W": "d\u02c8\u028cb\u1d4alju",
+    "X": "\u02c8\u025bks",
+    "Y": "w\u02c8I",
+    "Z": "z\u02c8i"
+  },
+  "results": [
+    {
+      "text": "Hello, world!",
+      "phonemes": "h\u0259l\u02c8O, w\u02c8\u025c\u0279ld!",
+      "tokens": [
+        {
+          "text": "Hello",
+          "tag": "UH",
+          "phonemes": "h\u0259l\u02c8O"
+        },
+        {
+          "text": ",",
+          "tag": ",",
+          "phonemes": ","
+        },
+        {
+          "text": "world",
+          "tag": "NN",
+          "phonemes": "w\u02c8\u025c\u0279ld"
+        },
+        {
+          "text": "!",
+          "tag": ".",
+          "phonemes": "!"
+        }
+      ]
+    },
+    {
+      "text": "The cats walked quickly.",
+      "phonemes": "\u00f0\u0259 k\u02c8\u00e6ts w\u02c8\u0254kt kw\u02c8\u026akli.",
+      "tokens": [
+        {
+          "text": "The",
+          "tag": "DT",
+          "phonemes": "\u00f0\u0259"
+        },
+        {
+          "text": "cats",
+          "tag": "NNS",
+          "phonemes": "k\u02c8\u00e6ts"
+        },
+        {
+          "text": "walked",
+          "tag": "VBD",
+          "phonemes": "w\u02c8\u0254kt"
+        },
+        {
+          "text": "quickly",
+          "tag": "RB",
+          "phonemes": "kw\u02c8\u026akli"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "NASA and CPU",
+      "phonemes": "n\u02c8\u00e6s\u0259 \u00e6nd s\u02ccip\u02ccij\u02c8u",
+      "tokens": [
+        {
+          "text": "NASA",
+          "tag": "NNP",
+          "phonemes": "n\u02c8\u00e6s\u0259"
+        },
+        {
+          "text": "and",
+          "tag": "CC",
+          "phonemes": "\u00e6nd"
+        },
+        {
+          "text": "CPU",
+          "tag": "NNP",
+          "phonemes": "s\u02ccip\u02ccij\u02c8u"
+        }
+      ]
+    },
+    {
+      "text": "qzxwv",
+      "phonemes": "kj\u02ccuz\u02cci\u02cc\u025bksd\u02cc\u028cb\u1d4aljuv\u02c8i",
+      "tokens": [
+        {
+          "text": "qzxwv",
+          "tag": "NN",
+          "phonemes": "kj\u02ccuz\u02cci\u02cc\u025bksd\u02cc\u028cb\u1d4aljuv\u02c8i"
+        }
+      ]
+    },
+    {
+      "text": "Kokoro says hello.",
+      "phonemes": "k\u02ccA\u02ccOk\u02ccA\u02ccO\u02cc\u0251\u0279\u02c8O s\u02c8\u025bz h\u0259l\u02c8O.",
+      "tokens": [
+        {
+          "text": "Kokoro",
+          "tag": "NNP",
+          "phonemes": "k\u02ccA\u02ccOk\u02ccA\u02ccO\u02cc\u0251\u0279\u02c8O"
+        },
+        {
+          "text": "says",
+          "tag": "VBZ",
+          "phonemes": "s\u02c8\u025bz"
+        },
+        {
+          "text": "hello",
+          "tag": "UH",
+          "phonemes": "h\u0259l\u02c8O"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "Dr. Smith reads the record. Please record it.",
+      "phonemes": "d\u02c8\u0251kt\u0259\u0279 sm\u02c8\u026a\u03b8 \u0279\u02c8idz \u00f0\u0259 \u0279\u02c8\u025bk\u0259\u0279d. pl\u02c8iz \u0279\u0259k\u02c8\u0254\u0279d \u026at.",
+      "tokens": [
+        {
+          "text": "Dr.",
+          "tag": "NNP",
+          "phonemes": "d\u02c8\u0251kt\u0259\u0279"
+        },
+        {
+          "text": "Smith",
+          "tag": "NNP",
+          "phonemes": "sm\u02c8\u026a\u03b8"
+        },
+        {
+          "text": "reads",
+          "tag": "VBZ",
+          "phonemes": "\u0279\u02c8idz"
+        },
+        {
+          "text": "the",
+          "tag": "DT",
+          "phonemes": "\u00f0\u0259"
+        },
+        {
+          "text": "record",
+          "tag": "NN",
+          "phonemes": "\u0279\u02c8\u025bk\u0259\u0279d"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        },
+        {
+          "text": "Please",
+          "tag": "UH",
+          "phonemes": "pl\u02c8iz"
+        },
+        {
+          "text": "record",
+          "tag": "VB",
+          "phonemes": "\u0279\u0259k\u02c8\u0254\u0279d"
+        },
+        {
+          "text": "it",
+          "tag": "PRP",
+          "phonemes": "\u026at"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "She bought 21 apples on January 3rd.",
+      "phonemes": "\u0283\u02cci b\u02c8\u0254t tw\u02c8\u025bnti w\u02c8\u028cn \u02c8\u00e6p\u1d4alz \u02cc\u0254n \u02a4\u02c8\u00e6nj\u0259w\u02cc\u025b\u0279i \u03b8\u02c8\u025c\u0279d.",
+      "tokens": [
+        {
+          "text": "She",
+          "tag": "PRP",
+          "phonemes": "\u0283\u02cci"
+        },
+        {
+          "text": "bought",
+          "tag": "VBD",
+          "phonemes": "b\u02c8\u0254t"
+        },
+        {
+          "text": "21",
+          "tag": "CD",
+          "phonemes": "tw\u02c8\u025bnti w\u02c8\u028cn"
+        },
+        {
+          "text": "apples",
+          "tag": "NNS",
+          "phonemes": "\u02c8\u00e6p\u1d4alz"
+        },
+        {
+          "text": "on",
+          "tag": "IN",
+          "phonemes": "\u02cc\u0254n"
+        },
+        {
+          "text": "January",
+          "tag": "NNP",
+          "phonemes": "\u02a4\u02c8\u00e6nj\u0259w\u02cc\u025b\u0279i"
+        },
+        {
+          "text": "3rd",
+          "tag": "NN",
+          "phonemes": "\u03b8\u02c8\u025c\u0279d"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "I paid $12.50.",
+      "phonemes": "\u02ccI p\u02c8Ad tw\u02c8\u025blv d\u02c8\u0251l\u0259\u0279z \u00e6nd f\u02c8\u026afti s\u02c8\u025bnts.",
+      "tokens": [
+        {
+          "text": "I",
+          "tag": "PRP",
+          "phonemes": "\u02ccI"
+        },
+        {
+          "text": "paid",
+          "tag": "VBD",
+          "phonemes": "p\u02c8Ad"
+        },
+        {
+          "text": "$",
+          "tag": "$",
+          "phonemes": ""
+        },
+        {
+          "text": "12.50",
+          "tag": "CD",
+          "phonemes": "tw\u02c8\u025blv d\u02c8\u0251l\u0259\u0279z \u00e6nd f\u02c8\u026afti s\u02c8\u025bnts"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "The wind blows. Wind the clock.",
+      "phonemes": "\u00f0\u0259 w\u02c8\u026and bl\u02c8Oz. w\u02c8Ind \u00f0\u0259 kl\u02c8\u0251k.",
+      "tokens": [
+        {
+          "text": "The",
+          "tag": "DT",
+          "phonemes": "\u00f0\u0259"
+        },
+        {
+          "text": "wind",
+          "tag": "NN",
+          "phonemes": "w\u02c8\u026and"
+        },
+        {
+          "text": "blows",
+          "tag": "VBZ",
+          "phonemes": "bl\u02c8Oz"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        },
+        {
+          "text": "Wind",
+          "tag": "VB",
+          "phonemes": "w\u02c8Ind"
+        },
+        {
+          "text": "the",
+          "tag": "DT",
+          "phonemes": "\u00f0\u0259"
+        },
+        {
+          "text": "clock",
+          "tag": "NN",
+          "phonemes": "kl\u02c8\u0251k"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "I read yesterday. I read every day.",
+      "phonemes": "\u02ccI \u0279\u02c8\u025bd j\u02c8\u025bst\u0259\u0279d\u02ccA. \u02ccI \u0279\u02c8\u025bd \u02c8\u025bv\u0259\u0279i d\u02c8A.",
+      "tokens": [
+        {
+          "text": "I",
+          "tag": "PRP",
+          "phonemes": "\u02ccI"
+        },
+        {
+          "text": "read",
+          "tag": "VBD",
+          "phonemes": "\u0279\u02c8\u025bd"
+        },
+        {
+          "text": "yesterday",
+          "tag": "NN",
+          "phonemes": "j\u02c8\u025bst\u0259\u0279d\u02ccA"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        },
+        {
+          "text": "I",
+          "tag": "PRP",
+          "phonemes": "\u02ccI"
+        },
+        {
+          "text": "read",
+          "tag": "VBD",
+          "phonemes": "\u0279\u02c8\u025bd"
+        },
+        {
+          "text": "every",
+          "tag": "DT",
+          "phonemes": "\u02c8\u025bv\u0259\u0279i"
+        },
+        {
+          "text": "day",
+          "tag": "NN",
+          "phonemes": "d\u02c8A"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "The object is blue. I object to that.",
+      "phonemes": "\u00f0i \u02c8\u0251b\u02a4\u0259kt \u026az bl\u02c8u. \u02ccI \u0259b\u02a4\u02c8\u025bkt t\u0259 \u00f0\u02c8\u00e6t.",
+      "tokens": [
+        {
+          "text": "The",
+          "tag": "DT",
+          "phonemes": "\u00f0i"
+        },
+        {
+          "text": "object",
+          "tag": "NN",
+          "phonemes": "\u02c8\u0251b\u02a4\u0259kt"
+        },
+        {
+          "text": "is",
+          "tag": "VBZ",
+          "phonemes": "\u026az"
+        },
+        {
+          "text": "blue",
+          "tag": "JJ",
+          "phonemes": "bl\u02c8u"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        },
+        {
+          "text": "I",
+          "tag": "PRP",
+          "phonemes": "\u02ccI"
+        },
+        {
+          "text": "object",
+          "tag": "VBP",
+          "phonemes": "\u0259b\u02a4\u02c8\u025bkt"
+        },
+        {
+          "text": "to",
+          "tag": "IN",
+          "phonemes": "t\u0259"
+        },
+        {
+          "text": "that",
+          "tag": "DT",
+          "phonemes": "\u00f0\u02c8\u00e6t"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "The bass swims. The bass guitar plays.",
+      "phonemes": "\u00f0\u0259 b\u02c8\u00e6s sw\u02c8\u026amz. \u00f0\u0259 b\u02c8\u00e6s \u0261\u0259t\u02c8\u0251\u0279 pl\u02c8Az.",
+      "tokens": [
+        {
+          "text": "The",
+          "tag": "DT",
+          "phonemes": "\u00f0\u0259"
+        },
+        {
+          "text": "bass",
+          "tag": "NN",
+          "phonemes": "b\u02c8\u00e6s"
+        },
+        {
+          "text": "swims",
+          "tag": "VBZ",
+          "phonemes": "sw\u02c8\u026amz"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        },
+        {
+          "text": "The",
+          "tag": "DT",
+          "phonemes": "\u00f0\u0259"
+        },
+        {
+          "text": "bass",
+          "tag": "NN",
+          "phonemes": "b\u02c8\u00e6s"
+        },
+        {
+          "text": "guitar",
+          "tag": "NN",
+          "phonemes": "\u0261\u0259t\u02c8\u0251\u0279"
+        },
+        {
+          "text": "plays",
+          "tag": "VBZ",
+          "phonemes": "pl\u02c8Az"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "An hour, a university, and an apple.",
+      "phonemes": "\u0250n \u02c8W\u0259\u0279, \u0250 j\u02ccun\u0259v\u02c8\u025c\u0279s\u0259Ti, \u00e6nd \u0250n \u02c8\u00e6p\u1d4al.",
+      "tokens": [
+        {
+          "text": "An",
+          "tag": "DT",
+          "phonemes": "\u0250n"
+        },
+        {
+          "text": "hour",
+          "tag": "NN",
+          "phonemes": "\u02c8W\u0259\u0279"
+        },
+        {
+          "text": ",",
+          "tag": ",",
+          "phonemes": ","
+        },
+        {
+          "text": "a",
+          "tag": "DT",
+          "phonemes": "\u0250"
+        },
+        {
+          "text": "university",
+          "tag": "NN",
+          "phonemes": "j\u02ccun\u0259v\u02c8\u025c\u0279s\u0259Ti"
+        },
+        {
+          "text": ",",
+          "tag": ",",
+          "phonemes": ","
+        },
+        {
+          "text": "and",
+          "tag": "CC",
+          "phonemes": "\u00e6nd"
+        },
+        {
+          "text": "an",
+          "tag": "DT",
+          "phonemes": "\u0250n"
+        },
+        {
+          "text": "apple",
+          "tag": "NN",
+          "phonemes": "\u02c8\u00e6p\u1d4al"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "The year is 2026.",
+      "phonemes": "\u00f0\u0259 j\u02c8\u026a\u0279 \u026az tw\u02c8\u025bnti tw\u02c8\u025bnti s\u02c8\u026aks.",
+      "tokens": [
+        {
+          "text": "The",
+          "tag": "DT",
+          "phonemes": "\u00f0\u0259"
+        },
+        {
+          "text": "year",
+          "tag": "NN",
+          "phonemes": "j\u02c8\u026a\u0279"
+        },
+        {
+          "text": "is",
+          "tag": "VBZ",
+          "phonemes": "\u026az"
+        },
+        {
+          "text": "2026",
+          "tag": "CD",
+          "phonemes": "tw\u02c8\u025bnti tw\u02c8\u025bnti s\u02c8\u026aks"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    },
+    {
+      "text": "Testing text to speech, one sentence at a time.",
+      "phonemes": "t\u02c8\u025bst\u026a\u014b t\u02c8\u025bkst t\u0259 sp\u02c8i\u02a7, w\u02c8\u028cn s\u02c8\u025bnt\u1d4ans \u00e6t \u0250 t\u02c8Im.",
+      "tokens": [
+        {
+          "text": "Testing",
+          "tag": "NN",
+          "phonemes": "t\u02c8\u025bst\u026a\u014b"
+        },
+        {
+          "text": "text",
+          "tag": "NN",
+          "phonemes": "t\u02c8\u025bkst"
+        },
+        {
+          "text": "to",
+          "tag": "IN",
+          "phonemes": "t\u0259"
+        },
+        {
+          "text": "speech",
+          "tag": "NN",
+          "phonemes": "sp\u02c8i\u02a7"
+        },
+        {
+          "text": ",",
+          "tag": ",",
+          "phonemes": ","
+        },
+        {
+          "text": "one",
+          "tag": "CD",
+          "phonemes": "w\u02c8\u028cn"
+        },
+        {
+          "text": "sentence",
+          "tag": "NN",
+          "phonemes": "s\u02c8\u025bnt\u1d4ans"
+        },
+        {
+          "text": "at",
+          "tag": "IN",
+          "phonemes": "\u00e6t"
+        },
+        {
+          "text": "a",
+          "tag": "DT",
+          "phonemes": "\u0250"
+        },
+        {
+          "text": "time",
+          "tag": "NN",
+          "phonemes": "t\u02c8Im"
+        },
+        {
+          "text": ".",
+          "tag": ".",
+          "phonemes": "."
+        }
+      ]
+    }
+  ]
+}

@@ -58,3 +58,6 @@ diagnostic only. Retain this CPU implementation as the independent parity
 partner for the Metal path. The GPU path has one known-clip checkpoint witness,
 not broader recognition-quality or paired performance evidence. It remains
 opt-in and is not connected to the product STT session yet.
+The [interleaved benchmark protocol](../../../../../docs/BENCHMARKING.md#moonshine-stt-backend-probe)
+uses the uniquely named runtime probe so the portable example cannot replace
+the measured executable.

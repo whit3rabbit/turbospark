@@ -1,0 +1,16 @@
+{
+  "generator": "tools/gen_ecapa_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_gc0_config.json": "ba42d753dd51ae19311960c77d0a3742b563680c58a58a5e7c3414a482dec10b",
+    "tiny_gc0_weights.safetensors": "0f92c775f6c1ebf57caa8caede1365df0059a444419bb86e6582c83600518c83",
+    "tiny_gc1_config.json": "0f10a4045cd50d7eabda6a4303eec82e75d6a24e5a63fda2ddb959e4222a5bee",
+    "tiny_gc1_weights.safetensors": "23d54a06dbd49c8083878c9dfde65bc519dae876b45b5f6ab37735b9bca6c6a9",
+    "traces.json": "a52621c00fcbcf4ee5bd7e9c5deee38f16a42f3282e44aaafe40299d006fb428",
+    "gc0_a_feats.npy": "bfaff7bc7d8bf72f0976668445b12846c8d6b82b267785711d14cc3f67083bf7",
+    "gc0_b_feats.npy": "50dfbfa8a944f16c0f9531ab83fdbd5ba95a489995d62e1d540e9f1e8670d09b",
+    "gc1_a_feats.npy": "ca7ddcddb0c5813be6208a530510dfc51c0c98a604ae1cec14b55c1787b03785",
+    "gc1_b_feats.npy": "d5d40c6bf952229871d8b8fa2bf9364980adebd1c170ba7112ada1b230fde2c6"
+  }
+}

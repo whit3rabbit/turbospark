@@ -1,0 +1,82 @@
+{
+  "adaptation": "ASCII JSON serialization only; numeric and string values unchanged",
+  "assets": [
+    {
+      "repository": "hexgrad/misaki",
+      "revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+      "path": "misaki/data/us_gold.json",
+      "size": 3000469,
+      "sha256": "dc414872a49a28ae6c141463d502fd945f3b2fde040484fdc47d00cc4612686f",
+      "license": "Apache-2.0",
+      "bundled_path": "resources/us_gold.json",
+      "bundled_size": 4363593,
+      "bundled_sha256": "0e0aa786515802f93540f2a7d9e14def62fbab026452f891076cd2e3a7ba0cff"
+    },
+    {
+      "repository": "hexgrad/misaki",
+      "revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+      "path": "misaki/data/us_silver.json",
+      "size": 3099517,
+      "sha256": "de8f67be911bb6c659187b4a65fd966b6a30e56350e0f790d763210b053ac475",
+      "license": "Apache-2.0",
+      "bundled_path": "resources/us_silver.json",
+      "bundled_size": 4495420,
+      "bundled_sha256": "8e9ae66877394e21ce8b29f37700ce97e723b163befd1ec7042d1c7dd2fcef73"
+    },
+    {
+      "repository": "hexgrad/misaki",
+      "revision": "fba1236595f2d2bf21d414ba6e57d25256afada3",
+      "path": "LICENSE",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "license": "Apache-2.0",
+      "bundled_path": "licenses/MISAKI-APACHE-2.0.txt",
+      "bundled_size": 11357,
+      "bundled_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "repository": "MicheleYin/misaki-rs",
+      "revision": "38bf1a534cce5f6864fb2df595447ca6f6891e74",
+      "path": "src/resources/tagger/weights.json",
+      "size": 5677744,
+      "sha256": "789e8e35f6fac656d9b7eccea29ba4e8a137cbb5b525dd31f39e4291a9e80832",
+      "license": "MIT",
+      "bundled_path": "resources/pos_weights.json",
+      "bundled_size": 5059876,
+      "bundled_sha256": "4fcbc6a570addaaa94275f0b320b34cea77f913c01e6487e9b3fce45b0a72f43"
+    },
+    {
+      "repository": "MicheleYin/misaki-rs",
+      "revision": "38bf1a534cce5f6864fb2df595447ca6f6891e74",
+      "path": "src/resources/tagger/tags.json",
+      "size": 25788,
+      "sha256": "4c713731cb06727736962bc8cd94ad919217a040e76691059af99bc0c2c9c246",
+      "license": "MIT",
+      "bundled_path": "resources/pos_tags.json",
+      "bundled_size": 22692,
+      "bundled_sha256": "1b934bf0b5523fa4ca1a1282c83990433d2c0e08d897dc4cdea4934bc3b76f5e"
+    },
+    {
+      "repository": "MicheleYin/misaki-rs",
+      "revision": "38bf1a534cce5f6864fb2df595447ca6f6891e74",
+      "path": "src/resources/tagger/classes.txt",
+      "size": 149,
+      "sha256": "7812cb7945022cb348bc6670b3eb7c76cdd50920715e86681337adfbf9c85253",
+      "license": "MIT",
+      "bundled_path": "resources/pos_classes.txt",
+      "bundled_size": 149,
+      "bundled_sha256": "7812cb7945022cb348bc6670b3eb7c76cdd50920715e86681337adfbf9c85253"
+    },
+    {
+      "repository": "MicheleYin/misaki-rs",
+      "revision": "38bf1a534cce5f6864fb2df595447ca6f6891e74",
+      "path": "LICENSE",
+      "size": 1068,
+      "sha256": "1bea4b79e660b7477ea5919bed5944d970c86531b508bd1d538309c0d12e8858",
+      "license": "MIT",
+      "bundled_path": "licenses/MISAKI-RS-MIT.txt",
+      "bundled_size": 1068,
+      "bundled_sha256": "1bea4b79e660b7477ea5919bed5944d970c86531b508bd1d538309c0d12e8858"
+    }
+  ]
+}

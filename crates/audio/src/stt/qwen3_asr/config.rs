@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::{Result, SpeechError};
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct AudioEncoderConfig {
+pub struct AudioEncoderConfig {
     pub num_mel_bins: usize,
     pub encoder_layers: usize,
     pub encoder_attention_heads: usize,
@@ -20,7 +20,7 @@ pub(crate) struct AudioEncoderConfig {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TextConfig {
+pub struct TextConfig {
     pub vocab_size: usize,
     pub hidden_size: usize,
     pub intermediate_size: usize,
@@ -28,13 +28,15 @@ pub(crate) struct TextConfig {
     pub num_attention_heads: usize,
     pub num_key_value_heads: usize,
     pub head_dim: usize,
+    pub rotary_dim: usize,
     pub rms_norm_eps: f32,
     pub rope_theta: f32,
+    pub qk_norm: bool,
     pub tie_word_embeddings: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Qwen3Config {
+pub struct Qwen3Config {
     pub audio: AudioEncoderConfig,
     pub text: TextConfig,
     pub audio_token_id: i32,
@@ -82,7 +84,7 @@ fn thinker_config(root: &Value) -> &Value {
 }
 
 impl AudioEncoderConfig {
-    pub(crate) fn from_root(root: &Value) -> Result<Self> {
+    pub fn from_root(root: &Value) -> Result<Self> {
         let thinker = thinker_config(root);
         let value = thinker
             .get("audio_config")
@@ -136,12 +138,13 @@ impl AudioEncoderConfig {
 }
 
 impl TextConfig {
-    fn from_root(root: &Value) -> Result<Self> {
+    pub fn from_root(root: &Value) -> Result<Self> {
         let thinker = thinker_config(root);
         let value = thinker
             .get("text_config")
             .or_else(|| root.get("text_config"))
             .ok_or_else(|| bad("text_config", "missing from config.json"))?;
+        let head_dim = positive(value, "head_dim")?;
         let config = Self {
             vocab_size: positive(value, "vocab_size")?,
             hidden_size: positive(value, "hidden_size")?,
@@ -149,13 +152,24 @@ impl TextConfig {
             num_hidden_layers: positive(value, "num_hidden_layers")?,
             num_attention_heads: positive(value, "num_attention_heads")?,
             num_key_value_heads: positive(value, "num_key_value_heads")?,
-            head_dim: positive(value, "head_dim")?,
+            head_dim,
+            rotary_dim: head_dim,
             rms_norm_eps: number(value, "rms_norm_eps")?,
             rope_theta: number(value, "rope_theta")?,
+            qk_norm: true,
             tie_word_embeddings: bool_value(value, "tie_word_embeddings")?,
         };
         if config.num_attention_heads % config.num_key_value_heads != 0 {
             return Err(bad("text_config", "unsupported Qwen3 decoder dimensions"));
+        }
+        if config.rotary_dim == 0
+            || config.rotary_dim > config.head_dim
+            || config.rotary_dim % 2 != 0
+        {
+            return Err(bad(
+                "text_config.rotary_dim",
+                "must be positive, even, and no wider than head_dim",
+            ));
         }
         if value.get("attention_bias").and_then(Value::as_bool) == Some(true)
             || value
@@ -172,7 +186,7 @@ impl TextConfig {
 }
 
 impl Qwen3Config {
-    pub(crate) fn from_json(root: &Value) -> Result<Self> {
+    pub fn from_json(root: &Value) -> Result<Self> {
         if root.get("model_type").and_then(Value::as_str) != Some("qwen3_asr") {
             return Err(bad("model_type", "expected qwen3_asr"));
         }
@@ -233,6 +247,35 @@ impl Qwen3Config {
             ));
         }
         Ok(config)
+    }
+
+    /// Config-derived working-set estimate for the portable CPU runner:
+    /// every matrix dequantized to f32 plus a fixed margin for the mel
+    /// features, the K/V caches, and dequantization scratch. Norm and bias
+    /// vectors are negligible next to the matrices and are not counted.
+    /// This stays an estimate; the fit gate compares it against free
+    /// memory and no number here is a measured peak.
+    pub fn estimated_resident_bytes(&self) -> u64 {
+        let text = &self.text;
+        let q_width = text.num_attention_heads * text.head_dim;
+        let kv_width = text.num_key_value_heads * text.head_dim;
+        let per_layer: u64 = (q_width * text.hidden_size
+            + 2 * kv_width * text.hidden_size
+            + text.hidden_size * q_width
+            + 3 * text.intermediate_size * text.hidden_size) as u64;
+        let audio = &self.audio;
+        let width = audio.downsample_hidden_size;
+        let audio_frequency = 128usize.div_ceil(2).div_ceil(2).div_ceil(2);
+        let audio_matrices: u64 = (9 * width * (1 + 2 * width)
+            + audio.d_model * width * audio_frequency
+            + audio.encoder_layers
+                * (4 * audio.d_model * audio.d_model + 2 * audio.encoder_ffn_dim * audio.d_model)
+            + audio.d_model * audio.d_model
+            + audio.output_dim * audio.d_model) as u64;
+        let parameters: u64 = text.vocab_size as u64 * text.hidden_size as u64
+            + per_layer * text.num_hidden_layers as u64
+            + audio_matrices;
+        parameters * 4 + 256 * 1024 * 1024
     }
 }
 

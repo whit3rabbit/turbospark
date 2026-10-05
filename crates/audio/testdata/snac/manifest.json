@@ -1,0 +1,28 @@
+{
+  "generator": "tools/gen_snac_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_a_config.json": "036bd9a5bfdf1b1216fc177cccef3869082575c8d9e1ca76a0032291ba1217df",
+    "tiny_a_weights.safetensors": "4b5c8dfb09853b1c76aaaa031f97c69b4bc0ee8d9af62e5f03a50fd490d98e9c",
+    "tiny_b_config.json": "ee8d9f326b8391caea9e0cb63edc454505fbf7db562972fd9a577f402b219eb9",
+    "tiny_b_weights.safetensors": "6f5852a0a24a89e8c7693a8ee8d44ecdcc9e7b6e04551a7cdf73578490772ea0",
+    "traces.json": "2fb4e0d8ec8aadb5ed13f0880439a5c4085264a3a3de7cc15aa5eaadbe5614f6",
+    "weights_manifest.json": "d8243602e43adada0a28db0b7107e0a488935fa0fe53df427fbabc74e5899a62",
+    "a_z.npy": "71fee51ca51265bc9095fc3aa9108beda9649065f6e7f1a62afc5ecc9dad0fbd",
+    "a_zq.npy": "24f608cfc8590455d8089c47334d15bb8a2243d169c0ea6c8e2756167aba72a8",
+    "a_audio_hat.npy": "e0efd361e8c9b519b1747b647e054ddd715f5cab088618cdfda69511e32e7be1",
+    "a_audio_from_codes.npy": "56ea2fae29d54ea54e3d649af4ede2bb9ad5be95e2a3a5d4a3c82c7577e5aa59",
+    "b_z.npy": "861a7a892d4e9772195cec45cba9a25fc8b78158f9f65badc064f5a94105ba35",
+    "b_zq.npy": "352e96e05a9e7b84948789abe1d1d6c47ab2a06c6dffa3559c692dd794502a3d",
+    "b_audio_hat.npy": "c4ff6ef6d38b68b7b66c9c1b9c081a4262f1f1c9a423c9b4c009142cc0d10f5c",
+    "b_audio_from_codes.npy": "0ab620430a22279fcf341f20944a658c017eb68f2798e768f7fb623653b2f352",
+    "noise_decode.npy": "ce44b09af917ffd1cc9248ea853b4a9eace7ae14fb06ffc7a3e56a9c2647a9bc",
+    "vq_in.npy": "cb784b8d16d45ebde7b62ae8c9b2453b4a7b6118ee39ae1bcb5082c2b576fa8b",
+    "vq_zq.npy": "e5849e30fdd5f1615d9c6a0ffb9ecd77a2864151d1ae4ccef89b6e539492752c",
+    "noise_pool.npy": "5c8da6ad1af2e0ade902348f74a0beeeeb14bc5dff3e0e00fbb111db00a03e76",
+    "real_wave.npy": "21a28a7132fb78e49c37b0edd51112e02c9dfc609338735a713ac615d2f88676",
+    "real_encode_codes.json": "03a335d113dd8360a4c58e2900563facdeb44b080c9ba83063dd12cfa63ea59a",
+    "real_decode_zero_noise.npy": "9409b150ac62441221c28e608a85e9d5b389ed4b48a3816f03c73a22b365c2a9"
+  }
+}

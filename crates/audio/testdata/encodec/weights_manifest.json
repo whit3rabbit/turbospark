@@ -1,0 +1,434 @@
+{
+  "tiny": [
+    {
+      "name": "encoder.layers.0.conv.weight",
+      "shape": [
+        8,
+        7,
+        1
+      ]
+    },
+    {
+      "name": "encoder.layers.0.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.layers.1.block.1.conv.weight",
+      "shape": [
+        4,
+        3,
+        8
+      ]
+    },
+    {
+      "name": "encoder.layers.1.block.1.conv.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "encoder.layers.1.block.3.conv.weight",
+      "shape": [
+        8,
+        1,
+        4
+      ]
+    },
+    {
+      "name": "encoder.layers.1.block.3.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.layers.1.shortcut.conv.weight",
+      "shape": [
+        8,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.layers.1.shortcut.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.layers.3.conv.weight",
+      "shape": [
+        16,
+        8,
+        8
+      ]
+    },
+    {
+      "name": "encoder.layers.3.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.layers.4.block.1.conv.weight",
+      "shape": [
+        8,
+        3,
+        16
+      ]
+    },
+    {
+      "name": "encoder.layers.4.block.1.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.layers.4.block.3.conv.weight",
+      "shape": [
+        16,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.layers.4.block.3.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.layers.4.shortcut.conv.weight",
+      "shape": [
+        16,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.layers.4.shortcut.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.layers.6.conv.weight",
+      "shape": [
+        32,
+        4,
+        16
+      ]
+    },
+    {
+      "name": "encoder.layers.6.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.7.lstm.0.Wx",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.7.lstm.0.Wh",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.7.lstm.0.bias",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "encoder.layers.7.lstm.1.Wx",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.7.lstm.1.Wh",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.7.lstm.1.bias",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "encoder.layers.9.conv.weight",
+      "shape": [
+        8,
+        7,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.9.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.0.conv.weight",
+      "shape": [
+        32,
+        7,
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.0.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.lstm.0.Wx",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.lstm.0.Wh",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.lstm.0.bias",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "decoder.layers.1.lstm.1.Wx",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.lstm.1.Wh",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.lstm.1.bias",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "decoder.layers.3.conv.weight",
+      "shape": [
+        16,
+        4,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.3.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.layers.4.block.1.conv.weight",
+      "shape": [
+        8,
+        3,
+        16
+      ]
+    },
+    {
+      "name": "decoder.layers.4.block.1.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.4.block.3.conv.weight",
+      "shape": [
+        16,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.4.block.3.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.layers.4.shortcut.conv.weight",
+      "shape": [
+        16,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "decoder.layers.4.shortcut.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.layers.6.conv.weight",
+      "shape": [
+        8,
+        8,
+        16
+      ]
+    },
+    {
+      "name": "decoder.layers.6.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.7.block.1.conv.weight",
+      "shape": [
+        4,
+        3,
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.7.block.1.conv.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.layers.7.block.3.conv.weight",
+      "shape": [
+        8,
+        1,
+        4
+      ]
+    },
+    {
+      "name": "decoder.layers.7.block.3.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.7.shortcut.conv.weight",
+      "shape": [
+        8,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.7.shortcut.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.9.conv.weight",
+      "shape": [
+        1,
+        7,
+        8
+      ]
+    },
+    {
+      "name": "decoder.layers.9.conv.bias",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "name": "quantizer.layers.0.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    },
+    {
+      "name": "quantizer.layers.1.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    },
+    {
+      "name": "quantizer.layers.2.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    },
+    {
+      "name": "quantizer.layers.3.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    },
+    {
+      "name": "quantizer.layers.4.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    },
+    {
+      "name": "quantizer.layers.5.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    },
+    {
+      "name": "quantizer.layers.6.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    },
+    {
+      "name": "quantizer.layers.7.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    },
+    {
+      "name": "quantizer.layers.8.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    },
+    {
+      "name": "quantizer.layers.9.codebook.embed",
+      "shape": [
+        64,
+        8
+      ]
+    }
+  ]
+}

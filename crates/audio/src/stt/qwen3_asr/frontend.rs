@@ -10,18 +10,18 @@ use turbospark_audio::whisper::whisper_log_mel;
 
 use crate::{Result, SpeechError};
 
-pub(crate) const SAMPLE_RATE: u32 = 16_000;
-pub(crate) const MEL_BINS: usize = 128;
+pub const SAMPLE_RATE: u32 = 16_000;
+pub const MEL_BINS: usize = 128;
 const MAX_SAMPLES: usize = SAMPLE_RATE as usize * 1_200;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct AudioFeatures {
+pub struct AudioFeatures {
     /// Band-major `[mel_bins, frames]`, matching `input_features` in MLX.
     pub values: Vec<f32>,
     pub frames: usize,
 }
 
-pub(crate) fn compute_features(samples: &[f32]) -> Result<AudioFeatures> {
+pub fn compute_features(samples: &[f32]) -> Result<AudioFeatures> {
     if samples.is_empty() {
         return Err(SpeechError::Input {
             why: "audio must contain at least one sample".into(),

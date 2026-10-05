@@ -1,0 +1,21 @@
+{
+  "generator": "tools/gen_dac_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "81c4d4ad9430ea5bc0f36b53bfc103fb8a0c6abf1333070e5e4561ec69d2a434",
+    "tiny_weights.safetensors": "1277cc0cbad9af75f9b7d6ae0f55f691b2cc7c30e0675597c5c49c185d3cdcf7",
+    "traces.json": "a40f951810d1929bdde37d3facc91e31d8acb27fde3731bcaac7b9661d1a9034",
+    "weights_manifest.json": "8c80cc7792dcb11c4943b30e9e08ce5a730d637fc71f691edf7815d738278110",
+    "a_zq.npy": "6158a72a4abac83f621b8cc55b92430dffdea9e3a03be455c71690948443d508",
+    "a_audio_hat.npy": "78c2c67d4b4e79c2ac4b39c5dbdfafb1e072bba7893bfc53891b5b9393c13302",
+    "a_z_from_codes.npy": "bcb589b30e4e369f94a97da1aa0f6021327466f2afc73cf9528f1662e65a0252",
+    "a_audio_from_codes.npy": "e692ee0e4c10996674855d377a6272268a8988c0982ba2e67fe266fa6e2df4ef",
+    "b_zq.npy": "a025f8b3d034db82f2b81ba6806186401069560660cec06a746f8dc4ca6a5871",
+    "b_audio_hat.npy": "3bf44935ee5b060238cc96aff3a1bc876781036c949e8d031fae4c065ee97ece",
+    "b_z_from_codes.npy": "7b85f6d313d8314a1deb02473304415eca71d16c5a9470d3c5e91a22dd0b4758",
+    "b_audio_from_codes.npy": "27b2a050124a5d12bcf8ddb83f725b644c75ecc325b4e4834d3078785a80d100",
+    "compress_wave.npy": "f78d6f37d5d81d0066d93a665e3054c45778273766caf4ceb0dc67a0aaa3a596",
+    "compress_recons.npy": "cb6cf36aff858b9ed25150249063834effeb75f8f18d7b57482dbc0c15ee7212"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "generator": "tools/gen_vocos_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "config.yaml": "7fddb46f9a1872a3f6be82cb6cba3c098e579fafde22d72f7fa2f75f4828b267",
+    "tiny_weights.safetensors": "c13ebc2e8a57e49dde7dc8b816a60352476cd019ca54affe108c864ccf978fc6",
+    "traces.json": "48edd47e570a6ff1b9c751dd9bf4e1d4a543ea03cee9b2a868c7b437d07ec10d",
+    "a_wave.npy": "a147147bf0b2a042dc3cb0142793b7f8ee6b7bee9474d75096c13dccdd8565af",
+    "a_mel.npy": "17db3ee0252217f4200141c0129c3de4516b8046255368b39e2f577e306931db",
+    "a_audio.npy": "478f0aba74e2139dd1b2a0f2d9b35d35d2f2b8d5133c9f37c94d23ffe8f63f26",
+    "b_wave.npy": "8287f08676fc13365c929d8184d347e6dbc374cb27ac0688bafe1323a12a1433",
+    "b_mel.npy": "a9ab8957919aea7c47ba1b60a1b129bb68003ae7627d87b75efd6b1eddae2a0b",
+    "b_audio.npy": "134dc3a1d8351a7c9475c01d6dd0a8ee1c2e6a0fce46401f679a0171c8767956"
+  }
+}

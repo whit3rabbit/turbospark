@@ -1,0 +1,14 @@
+{
+  "generator": "tools/gen_bigvgan_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "783d0b3ad411bc9a3e284d265fff1ca80accb69eccafa453de670b470b6049ff",
+    "tiny_weights.safetensors": "9a6312a6155d6dc73853bb4fcdcf011e7662053e94e6bb2183736d44d3d3f620",
+    "traces.json": "846f7856b3736e0d8b3f30ef12cb67f4bf731b932ec3ea78e86dd8a153332abe",
+    "a_mel.npy": "cf5b23a1e33ac13bada90111ebb8870c4e01b17678f7ba485c9d3790a705869b",
+    "a_audio.npy": "d67c4fa93db04d2b65537c371c6241ee09ecda190ce5ddc7f25d442e6907dce2",
+    "b_mel.npy": "d874d227f710df05f185ea64ea31025b9304ffa02d91b3b5709aad28fddd968b",
+    "b_audio.npy": "8895b76322ae946d2da4ea8602c8ea2631908012c7b04e6816810b440e07948b"
+  }
+}

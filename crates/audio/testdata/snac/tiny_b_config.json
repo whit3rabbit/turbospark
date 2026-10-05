@@ -1,0 +1,26 @@
+{
+  "sampling_rate": 44100,
+  "encoder_dim": 8,
+  "encoder_rates": [
+    2,
+    2,
+    2
+  ],
+  "latent_dim": null,
+  "decoder_dim": 32,
+  "decoder_rates": [
+    2,
+    2,
+    2
+  ],
+  "attn_window_size": null,
+  "codebook_size": 64,
+  "codebook_dim": 4,
+  "vq_strides": [
+    4,
+    2,
+    1
+  ],
+  "noise": true,
+  "depthwise": false
+}

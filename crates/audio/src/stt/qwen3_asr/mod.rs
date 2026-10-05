@@ -4,6 +4,7 @@
 //! commit `e1b19b9054bf163f5d812221a54fcc346f1890e9`.
 
 use std::path::Path;
+use std::time::Instant;
 
 use serde_json::Value;
 use tokenizers::models::bpe::BPE;
@@ -15,10 +16,13 @@ use turbospark_tokenizer::Tokenizer;
 use crate::quant::QuantScheme;
 use crate::{Result, SpeechError};
 
-pub(super) mod config;
+pub use config::Qwen3Config;
+
+pub mod checkpoint;
+pub mod config;
 pub(super) mod decoder;
-pub(super) mod encoder;
-pub(super) mod frontend;
+pub mod encoder;
+pub mod frontend;
 
 /// Immutable Hugging Face checkpoint reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,8 +125,16 @@ impl Qwen3Asr {
             })
             .transpose()?;
 
+        // TURBOSPARK_QWEN3_ASR_PROFILE=1 prints per-phase wall times; the
+        // clock reads are negligible next to the phases they bracket.
+        let profile = std::env::var("TURBOSPARK_QWEN3_ASR_PROFILE").as_deref() == Ok("1");
+        let started = Instant::now();
         let features = frontend::compute_features(samples)?;
+        let features_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        let started = Instant::now();
         let audio_embeddings = self.encoder.forward(&features)?;
+        let encode_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        let started = Instant::now();
         if audio_embeddings.len() % self.decoder.hidden_size != 0 {
             return Err(SpeechError::Tensor {
                 name: "audio_tower.output".into(),
@@ -136,43 +148,11 @@ impl Qwen3Asr {
             });
         }
 
-        let system_content = "";
-        let assistant_prefix = language
-            .map(|language| format!("language {language}<asr_text>"))
-            .unwrap_or_default();
-        let prompt = format!(
-            "<|im_start|>system\n{system_content}<|im_end|>\n<|im_start|>user\n<|audio_start|>{}<|audio_end|><|im_end|>\n<|im_start|>assistant\n{assistant_prefix}",
-            "<|audio_pad|>".repeat(audio_rows)
-        );
-        let encoded = self
-            .tokenizer
-            .encode(prompt, false)
-            .map_err(|error| SpeechError::Input {
-                why: format!("Qwen3 prompt tokenization failed: {error}"),
-            })?;
-        let token_ids = encoded
-            .get_ids()
-            .iter()
-            .map(|&id| {
-                i32::try_from(id).map_err(|_| SpeechError::Input {
-                    why: "Qwen3 prompt token id exceeds signed 32-bit range".into(),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let audio_positions = token_ids
-            .iter()
-            .enumerate()
-            .filter_map(|(position, &id)| (id == self.config.audio_token_id).then_some(position))
-            .collect::<Vec<_>>();
-        if audio_positions.len() != audio_rows {
-            return Err(SpeechError::Input {
-                why: format!(
-                    "Qwen3 prompt has {} audio placeholders for {audio_rows} encoded frames",
-                    audio_positions.len()
-                ),
-            });
-        }
+        let (token_ids, audio_positions) =
+            prompt_token_ids(&self.config, &self.tokenizer, audio_rows, language)?;
         let mut embeddings = self.decoder.embed(&token_ids)?;
+        let prompt_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        let started = Instant::now();
         for (audio_row, &position) in audio_positions.iter().enumerate() {
             let target = position * self.decoder.hidden_size;
             let source = audio_row * self.decoder.hidden_size;
@@ -186,6 +166,8 @@ impl Qwen3Asr {
             .collect::<Vec<_>>();
         let rows = embeddings.len() / self.decoder.hidden_size;
         let (mut last_hidden, mut cache) = self.decoder.prefill(&embeddings, rows);
+        let prefill_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        let started = Instant::now();
         let mut generated = Vec::new();
         for _ in 0..max_tokens {
             let logits = self.decoder.logits(&last_hidden);
@@ -215,6 +197,15 @@ impl Qwen3Asr {
             let next_embedding = self.decoder.embed(&[token_id])?;
             last_hidden = self.decoder.step(&next_embedding, &mut cache);
         }
+        let decode_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        if profile {
+            eprintln!(
+                "qwen3_asr_cpu features_ms={features_ms:.2} encode_ms={encode_ms:.2} \
+                 prompt_ms={prompt_ms:.2} prefill_ms={prefill_ms:.2} decode_ms={decode_ms:.2} \
+                 audio_rows={audio_rows} tokens={}",
+                generated.len()
+            );
+        }
 
         let decoded =
             self.tokenizer
@@ -234,6 +225,82 @@ impl Qwen3Asr {
     }
 }
 
+/// Builds the Qwen3-ASR prompt for one clip and returns its token ids with
+/// the positions of the audio placeholder tokens. `audio_rows` must match
+/// the encoder's frame count; the placeholder count is validated here so
+/// the CPU and Metal decode paths substitute audio embeddings against the
+/// same positions.
+pub fn prompt_token_ids(
+    config: &Qwen3Config,
+    tokenizer: &Tokenizer,
+    audio_rows: usize,
+    language: Option<&str>,
+) -> Result<(Vec<i32>, Vec<usize>)> {
+    if audio_rows == 0 {
+        return Err(SpeechError::Input {
+            why: "Qwen3 audio encoder produced no features".into(),
+        });
+    }
+    let assistant_prefix = language
+        .map(|language| format!("language {language}<asr_text>"))
+        .unwrap_or_default();
+    let prompt = format!(
+        "<|im_start|>system\n<|im_end|>\n<|im_start|>user\n<|audio_start|>{}<|audio_end|><|im_end|>\n<|im_start|>assistant\n{assistant_prefix}",
+        "<|audio_pad|>".repeat(audio_rows)
+    );
+    let encoded = tokenizer
+        .encode(prompt, false)
+        .map_err(|error| SpeechError::Input {
+            why: format!("Qwen3 prompt tokenization failed: {error}"),
+        })?;
+    let token_ids = encoded
+        .get_ids()
+        .iter()
+        .map(|&id| {
+            i32::try_from(id).map_err(|_| SpeechError::Input {
+                why: "Qwen3 prompt token id exceeds signed 32-bit range".into(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let audio_positions = token_ids
+        .iter()
+        .enumerate()
+        .filter_map(|(position, &id)| (id == config.audio_token_id).then_some(position))
+        .collect::<Vec<_>>();
+    if audio_positions.len() != audio_rows {
+        return Err(SpeechError::Input {
+            why: format!(
+                "Qwen3 prompt has {} audio placeholders for {audio_rows} encoded frames",
+                audio_positions.len()
+            ),
+        });
+    }
+    Ok((token_ids, audio_positions))
+}
+
+/// Detokenizes generated ids and, when no language was requested, strips
+/// the scaffolding the model may echo before `<asr_text>`.
+pub fn transcript_from_tokens(
+    tokenizer: &Tokenizer,
+    generated: &[u32],
+    language: Option<&str>,
+) -> Result<String> {
+    let decoded = tokenizer
+        .decode(generated, false)
+        .map_err(|error| SpeechError::Input {
+            why: format!("Qwen3 output detokenization failed: {error}"),
+        })?;
+    let text = if language.is_none() {
+        decoded
+            .find("<asr_text>")
+            .map(|separator| decoded[separator + "<asr_text>".len()..].to_owned())
+            .unwrap_or(decoded)
+    } else {
+        decoded
+    };
+    Ok(text.trim().to_owned())
+}
+
 fn bad_config(field: &str, error: impl std::fmt::Display) -> SpeechError {
     SpeechError::BadConfig {
         field: field.to_owned(),
@@ -241,7 +308,7 @@ fn bad_config(field: &str, error: impl std::fmt::Display) -> SpeechError {
     }
 }
 
-pub(super) fn load_tokenizer(model_dir: &Path) -> Result<Tokenizer> {
+pub fn load_tokenizer(model_dir: &Path) -> Result<Tokenizer> {
     let tokenizer_path = model_dir.join("tokenizer.json");
     if tokenizer_path.is_file() {
         return Tokenizer::from_file(&tokenizer_path)
@@ -272,7 +339,7 @@ pub(super) fn load_tokenizer(model_dir: &Path) -> Result<Tokenizer> {
         .map_err(|error| bad_config("vocab.json/merges.txt", error))?;
     let byte_level = ByteLevel::new(false, true, true);
     let mut tokenizer = Tokenizer::new(bpe);
-    tokenizer.with_pre_tokenizer(Some(byte_level.clone()));
+    tokenizer.with_pre_tokenizer(Some(byte_level));
     tokenizer.with_decoder(Some(byte_level));
 
     let entries = config
@@ -306,13 +373,14 @@ pub(super) fn load_tokenizer(model_dir: &Path) -> Result<Tokenizer> {
         .collect::<Result<Vec<_>>>()?;
     entries.sort_by_key(|(id, _, _)| *id);
 
-    let mut expected_id = u32::try_from(tokenizer.get_vocab_size(false)).map_err(|error| {
+    let base_vocab = u32::try_from(tokenizer.get_vocab_size(false)).map_err(|error| {
         bad_config(
             "vocab.json",
             format!("base vocabulary is too large: {error}"),
         )
     })?;
-    for (id, content, token) in entries {
+    for (offset, (id, content, token)) in entries.into_iter().enumerate() {
+        let expected_id = base_vocab + offset as u32;
         if id != expected_id {
             return Err(bad_config(
                 "tokenizer_config.json.added_tokens_decoder",
@@ -330,7 +398,6 @@ pub(super) fn load_tokenizer(model_dir: &Path) -> Result<Tokenizer> {
                 format!("added token {content} did not retain id {id}"),
             ));
         }
-        expected_id += 1;
     }
     Ok(tokenizer)
 }
