@@ -81,6 +81,7 @@ extension AppModel {
         // root, agent type, step cap, guardrails mode, skill-state toggle,
         // and the permission evaluation of whatever call the turn proposes.
         let turnProject = self.turnProject(chatID: chatID)
+        let memoryTurnQuery = turnMessages(for: chatID).last(where: { $0.role == .user })?.content ?? ""
         let usesSkillState = turnProject?.skillStateEnabled ?? false
         let turnMediaCapability = AppToolMediaCapability(
             supportsImageBearingToolResults: session.info.vision.active,
@@ -121,21 +122,6 @@ extension AppModel {
             prepareToolOutputProjectionsForPrompt(chatID: chatID)
         }
         let turnReasoning = reasoning
-        let rawHistoryProjection: AppChatHistoryProjection
-        if usesSkillState {
-            let skillHistory = buildSkillStateHistory(
-                chatIndex: chatIndex, project: turnProject, availableTools: turnAvailableTools,
-                mediaCapability: turnMediaCapability)
-            rawHistoryProjection = AppChatHistoryProjection(
-                messages: skillHistory,
-                sourceRowIndexByMessage: Array(repeating: nil, count: skillHistory.count),
-                instructionPinBlockIndex: nil,
-                sourceTranscriptRowCount: 0)
-        } else {
-            rawHistoryProjection = buildAppendOnlyHistoryProjection(
-                chatIndex: chatIndex, project: turnProject, availableTools: turnAvailableTools,
-                reasoning: turnReasoning, mediaCapability: turnMediaCapability)
-        }
 
         // Per-chat sampling: the chat's own override when it carries one,
         // the app-wide settings otherwise. Resolved from `chatID`, never the
@@ -153,7 +139,27 @@ extension AppModel {
             var continuationRequestsStarted = 0
             do {
                 await self.interruptTitleGenerationForForeground()
+                await self.interruptMemoryCaptureForForeground()
+                await self.prepareSemanticMemoryRecall(
+                    chatID: turnChatID, project: turnProject, query: memoryTurnQuery)
                 try Task.checkCancellation()
+                let rawHistoryProjection: AppChatHistoryProjection
+                if usesSkillState {
+                    let skillHistory = self.buildSkillStateHistory(
+                        chatIndex: chatIndex, project: turnProject,
+                        availableTools: turnAvailableTools,
+                        mediaCapability: turnMediaCapability)
+                    rawHistoryProjection = AppChatHistoryProjection(
+                        messages: skillHistory,
+                        sourceRowIndexByMessage: Array(repeating: nil, count: skillHistory.count),
+                        instructionPinBlockIndex: nil,
+                        sourceTranscriptRowCount: 0)
+                } else {
+                    rawHistoryProjection = self.buildAppendOnlyHistoryProjection(
+                        chatIndex: chatIndex, project: turnProject,
+                        availableTools: turnAvailableTools,
+                        reasoning: turnReasoning, mediaCapability: turnMediaCapability)
+                }
                 // **AUTO-COMPACTION, BEFORE THE FIT.** Near the window the
                 // choice used to be the no-room error below or `fitWindow`'s
                 // silent drop of older turns; summarizing them first is the

@@ -264,6 +264,13 @@ public final class AppModel: ObservableObject {
     }
     /// Profile-local encoder used for semantic memory recall.
     @Published public var memoryEmbeddingModel: String = ""
+    @Published public var memoryAutoCaptureEnabled = false
+    var memorySchedulerTimer: Timer?
+    var memoryCaptureTask: Task<Void, Never>?
+    var memoryRecallSnapshot: [MemoryClaim] = []
+    var memoryRecallKey: String = ""
+    var memorySemanticInFlight: Task<Void, Never>?
+    var memorySemanticResult: (key: String, claims: [MemoryClaim])?
     /// Whether Syntext code search and project indexing is enabled globally.
     /// Mirrored to `AppToolRegistry.syntextIndexingEnabled` so tool execution and background
     /// indexers can check it without holding an `AppModel`.
@@ -857,6 +864,7 @@ public final class AppModel: ObservableObject {
         }
         loadProjects()
         loadChats()
+        try? MemoryLedgerStore.shared.importLegacyIfNeeded()
         installBackgroundShellObserver()
         // Ghost Mode opt-in, AFTER `loadChats`: the restored archive is
         // already in place and the temporary chat sits on top of it, selected.
@@ -869,6 +877,7 @@ public final class AppModel: ObservableObject {
         reloadPlugins()
         refreshModels()
         startCronScheduler()
+        startMemoryScheduler()
         AppToolRegistry.activeSessionProvider = { [weak self] in
             self?.session
         }
@@ -984,6 +993,7 @@ public final class AppModel: ObservableObject {
     deinit {
         // Releasing our reference alone leaves the run loop polling shared state.
         cronPollTimer?.invalidate()
+        memorySchedulerTimer?.invalidate()
     }
 
     /// Combined list of all currently active (enabled) MCP servers from global settings and active project.

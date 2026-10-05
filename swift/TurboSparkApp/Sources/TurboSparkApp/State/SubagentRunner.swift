@@ -113,12 +113,14 @@ public enum SubagentRunner {
         for agent: AppAgentDefinition,
         project: AppProject?,
         userPrompt: String = "",
-        availableTools: TurnAvailableTools? = nil
+        availableTools: TurnAvailableTools? = nil,
+        recalledClaims: [MemoryClaim] = []
     ) -> String {
         var sections: [String] = []
+        let isMemoryJob = agent.name == "memory-capture" || agent.name == "memory-reflection"
 
-        if MemoryStore.shared.isModelEnabled {
-            sections.append(MemoryPromptBuilder.profileSection(userPrompt: userPrompt))
+        if MemoryStore.shared.isModelEnabled && !isMemoryJob {
+            sections.append(MemoryPromptBuilder.profileSection(recalledClaims: recalledClaims, approvedOnly: true))
         }
 
         // 0. The user's own deployment-wide instructions, ahead of the agent
@@ -160,8 +162,9 @@ public enum SubagentRunner {
             // same builder. A subagent that could not see or save memories
             // would diverge from its parent about what this project already
             // knows -- the divergence this file's header exists to warn of.
-            if MemoryStore.shared.isModelEnabled, let rootURL = project.rootDirectoryURL, !rootURL.path.isEmpty {
-                sections.append(MemoryPromptBuilder.section(store: MemoryStore.shared, projectRoot: rootURL))
+            if MemoryStore.shared.isModelEnabled && !isMemoryJob,
+               let rootURL = project.rootDirectoryURL, !rootURL.path.isEmpty {
+                sections.append(MemoryPromptBuilder.section(store: MemoryStore.shared, projectRoot: rootURL, approvedOnly: true))
             }
         }
 
@@ -404,7 +407,12 @@ public enum SubagentRunner {
         )
         let sysPrompt = buildSystemPrompt(
             for: agent, project: project, userPrompt: userSystemPrompt,
-            availableTools: turnAvailableTools)
+            availableTools: turnAvailableTools,
+            recalledClaims: MemoryLedgerStore.shared.search(
+                taskPrompt,
+                scope: project?.rootDirectoryURL.map {
+                    "project:\(MemoryStore.projectKey(forProjectRoot: $0))"
+                }))
         var history = initialHistory(
             systemPrompt: sysPrompt,
             priorHistory: priorHistory,

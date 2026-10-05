@@ -1,6 +1,4 @@
 import Foundation
-import TurboSpark
-import CryptoKit
 
 /// Profile-wide memory. This is deliberately separate from the project memory
 /// store: a user's preferences should follow them between projects, while
@@ -23,7 +21,7 @@ public final class ProfileMemoryStore {
     }
 
     public var fileURL: URL { directory.appendingPathComponent("MEMORY.md") }
-    public var indexURL: URL { directory.appendingPathComponent(".embeddings.json") }
+    private var legacyIndexURL: URL { directory.appendingPathComponent(".embeddings.json") }
     private var usesVault: Bool { injectedBase == nil && ProfileRepository.shared.isAvailable }
     private let memoryKey = "memory:file:profile/MEMORY.md"
     private let indexKey = "memory:file:profile/.embeddings.json"
@@ -79,58 +77,9 @@ public final class ProfileMemoryStore {
         try atomicWrite(text)
     }
 
-    public func clearIndex() {
+    public func clearLegacyIndex() {
         if usesVault { try? ProfileRepository.shared.deleteRecord(key: indexKey) }
-        else { try? fileManager.removeItem(at: indexURL) }
-    }
-
-    public var hasIndex: Bool {
-        if usesVault { return ((try? ProfileRepository.shared.rawRecord(key: indexKey)) ?? nil) != nil }
-        return fileManager.fileExists(atPath: indexURL.path)
-    }
-
-    public var indexedModel: String? {
-        let stored: Data? = usesVault
-            ? ((try? ProfileRepository.shared.rawRecord(key: indexKey)) ?? nil)
-            : try? Data(contentsOf: indexURL)
-        guard let data = stored,
-              let index = try? JSONDecoder().decode(ProfileMemoryEmbeddingIndex.self, from: data)
-        else { return nil }
-        return index.model
-    }
-
-    public func rebuildIndex(modelPath: String) async throws {
-        let documents = chunks()
-        guard !documents.isEmpty, !modelPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            clearIndex()
-            return
-        }
-        let vectors = try await TurboSparkEmbedding.encode(texts: documents, modelPath: modelPath)
-        guard vectors.count == documents.count else { return }
-        let hash = sourceHash(for: load())
-        let index = ProfileMemoryEmbeddingIndex(
-            model: modelPath,
-            sourceHash: hash,
-            rows: zip(documents, vectors).map { .init(text: $0.0, vector: $0.1) })
-        let data = try JSONEncoder().encode(index)
-        if usesVault { try ProfileRepository.shared.saveRawRecord(data, key: indexKey) }
-        else { try data.write(to: indexURL, options: .atomic) }
-    }
-
-    public func semanticSearch(_ query: String, modelPath: String, limit: Int = 5) async -> [String] {
-        let stored: Data? = usesVault
-            ? ((try? ProfileRepository.shared.rawRecord(key: indexKey)) ?? nil)
-            : try? Data(contentsOf: indexURL)
-        guard let data = stored,
-              let index = try? JSONDecoder().decode(ProfileMemoryEmbeddingIndex.self, from: data),
-              index.model == modelPath,
-              index.sourceHash == sourceHash(for: load()) else { return lexicalSearch(query, limit: limit) }
-        return (try? await index.topK(query: query, limit: limit, modelPath: modelPath)) ?? lexicalSearch(query, limit: limit)
-    }
-
-    private func sourceHash(for text: String) -> String {
-        let digest = SHA256.hash(data: text.data(using: .utf8) ?? Data())
-        return digest.map { String(format: "%02x", $0) }.joined()
+        else { try? fileManager.removeItem(at: legacyIndexURL) }
     }
 
     private func loadUnlocked() -> String {
@@ -158,25 +107,5 @@ public final class ProfileMemoryStore {
         try text.write(to: temporary, atomically: true, encoding: .utf8)
         if fileManager.fileExists(atPath: fileURL.path) { try fileManager.removeItem(at: fileURL) }
         try fileManager.moveItem(at: temporary, to: fileURL)
-    }
-}
-
-/// Disposable semantic index for profile memory. The sidecar stores vectors,
-/// never user-facing Markdown, and can always be rebuilt from MEMORY.md.
-public struct ProfileMemoryEmbeddingIndex: Codable, Equatable {
-    public struct Row: Codable, Equatable {
-        public var text: String
-        public var vector: [Float]
-    }
-    public var model: String
-    public var sourceHash: String
-    public var rows: [Row]
-
-    public func topK(query: String, limit: Int = 5, modelPath: String) async throws -> [String] {
-        guard !rows.isEmpty else { return [] }
-        let queryVector = try await TurboSparkEmbedding.encode(text: query, modelPath: modelPath)
-        return rows.map { row in
-            (TurboSparkEmbedding.cosineSimilarity(queryVector, row.vector), row.text)
-        }.sorted { $0.0 > $1.0 }.prefix(limit).map(\.1)
     }
 }

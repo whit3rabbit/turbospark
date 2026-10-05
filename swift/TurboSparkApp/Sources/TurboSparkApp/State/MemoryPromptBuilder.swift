@@ -96,43 +96,65 @@ public enum MemoryPromptBuilder {
     /// index -- "your memory directory exists and is empty" is the state a
     /// first conversation needs to be told, or the model never saves
     /// anything and the feature never warms up.
-    public static func section(store: MemoryStore, projectRoot: URL) -> String {
+    public static func section(store: MemoryStore, projectRoot: URL, approvedOnly: Bool = false) -> String {
         let directory = store.directory(forProjectRoot: projectRoot).path
-        let (index, _) = truncatedIndex(store.loadIndex(forProjectRoot: projectRoot))
+        let rawIndex: String
+        if approvedOnly {
+            let scope = "project:\(MemoryStore.projectKey(forProjectRoot: projectRoot))"
+            rawIndex = MemoryLedgerStore.shared.snapshot().claims.filter {
+                $0.scope == scope && $0.status == .active
+            }.map { "- [\($0.id.uuidString)] \($0.text)" }.joined(separator: "\n")
+        } else {
+            rawIndex = store.loadIndex(forProjectRoot: projectRoot)
+        }
+        let (index, _) = truncatedIndex(rawIndex)
         var lines: [String] = []
         lines.append("## Memory")
         lines.append("")
-        lines.append("You have a persistent memory directory for this project at `\(directory)`. It exists; reach it with the `memory` tool rather than shell commands.")
+        lines.append("Project memory is stored in the encrypted profile. The legacy logical location is `\(directory)`; use the `memory` tool to inspect or propose changes.")
         lines.append("")
         lines.append("MEMORY.md is the index of what you remember across conversations. Its current contents:")
         lines.append("")
         lines.append(index.isEmpty ? "(empty -- nothing is remembered yet)" : index)
         lines.append("")
-        lines.append("To save something durable, call `memory` with action \"save\", a short kebab-case `name`, a one-line `description`, a `type`, and the `content`. Update an existing memory rather than creating a near-duplicate: action \"read\" shows one (no `name` reads the index), action \"forget\" removes one. Types: `user` is who the user is and how they prefer to work; `feedback` is guidance they have given, with why it matters and how to apply it; `project` is goals, constraints and decisions the code does not record; `reference` is a pointer to something outside this workspace.")
+        lines.append("To propose a durable memory, call `memory` with action \"save\", a short kebab-case `name`, a one-line `description`, a `type`, and the `content`. Saves and forget requests enter user review. Action \"read\" shows an approved claim (no `name` shows the index). Types: `user`, `feedback`, `project`, and `reference`.")
         lines.append("")
         lines.append("Do not save what the repository already records (code shape, git history, fix recipes), ephemeral task state, or secrets. Memories persist across conversations and can be stale; verify one against the current state before relying on it.")
         return lines.joined(separator: "\n")
     }
 
-    /// Profile-wide memory is ordinary Markdown rather than the project
-    /// index format. Keep it bounded, preserve hand-authored structure, and
-    /// add lexical recall when an embedding model is not configured.
+    /// Project approved claims from the encrypted ledger into a bounded
+    /// profile sheet, then append relevant approved claims not on that sheet.
     public static func profileSection(
-        store: ProfileMemoryStore = .shared, userPrompt: String = ""
+        store: ProfileMemoryStore = .shared, userPrompt: String = "",
+        recalledClaims: [MemoryClaim] = [], approvedOnly: Bool = false
     ) -> String {
-        let body = store.load()
-        let bounded = String(body.prefix(12_000))
-        let recalled = userPrompt.isEmpty ? [] : store.lexicalSearch(userPrompt, limit: 5)
+        let body: String
+        if approvedOnly {
+            body = MemoryLedgerStore.curatedProfileText(MemoryLedgerStore.shared.snapshot())
+        } else {
+            body = store.load()
+        }
+        let bounded = String(body.prefix(6_000))
+        let recalled = recalledClaims.filter { claim in
+            claim.status == .active && !bounded.contains(claim.id.uuidString)
+        }.prefix(5)
         var lines = [
             "## Profile Memory",
             "",
-            "This is the active user's persistent memory at `(store.fileURL.path)`. It is user-specific and may be used across projects.",
-            "The current date and time is (currentTimestamp()).",
+            "This is the active user's persistent memory. It is user-specific and may be used across projects.",
+            "The current date and time is \(currentTimestamp()).",
             "",
             bounded.isEmpty ? "(empty -- nothing is remembered yet)" : bounded,
         ]
         if !recalled.isEmpty {
-            lines += ["", "Relevant profile-memory recall:", recalled.joined(separator: "\n\n")]
+            let result = recalled.map { "[\($0.id.uuidString)] \($0.text)" }.joined(separator: "\n")
+            lines += ["", "Relevant approved memory recall:", String(result.prefix(4_000))]
+        }
+        let guidance = MemoryLedgerStore.shared.snapshot().activeGuidance
+        if !guidance.isEmpty {
+            lines += ["", "Approved standing guidance (the current user request takes precedence):",
+                      String(guidance.prefix(2_000))]
         }
         return lines.joined(separator: "\n")
     }

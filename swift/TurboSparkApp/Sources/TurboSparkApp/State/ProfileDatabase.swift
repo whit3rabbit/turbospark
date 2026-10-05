@@ -597,6 +597,43 @@ final class ProfileDatabase: @unchecked Sendable {
                 payload_version INTEGER NOT NULL,
                 payload BLOB
             );
+            CREATE TABLE IF NOT EXISTS memory_system(
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                payload BLOB NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_claims(
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                text TEXT NOT NULL,
+                supersedes_claim_id TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_evidence(
+                id TEXT PRIMARY KEY,
+                claim_id TEXT NOT NULL REFERENCES memory_claims(id) ON DELETE CASCADE,
+                chat_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                quote TEXT NOT NULL,
+                source_hash TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS memory_evidence_source
+                ON memory_evidence(chat_id, message_id);
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_claims_fts USING fts5(
+                claim_id UNINDEXED, text, tokenize='unicode61'
+            );
+            CREATE TABLE IF NOT EXISTS memory_claim_embeddings(
+                claim_id TEXT NOT NULL REFERENCES memory_claims(id) ON DELETE CASCADE,
+                model TEXT NOT NULL,
+                source_hash TEXT NOT NULL,
+                dimensions INTEGER NOT NULL,
+                vector BLOB NOT NULL,
+                PRIMARY KEY(claim_id, model)
+            );
             CREATE TABLE IF NOT EXISTS embeddings(
                 id TEXT PRIMARY KEY,
                 memory_id TEXT REFERENCES memory(id) ON DELETE CASCADE,
@@ -1078,6 +1115,8 @@ final class ProfileDatabase: @unchecked Sendable {
     }
 
     private func transaction(_ body: () throws -> Void) throws {
+        lock.lock()
+        defer { lock.unlock() }
         try execute("BEGIN IMMEDIATE;")
         do {
             try body()
@@ -1085,6 +1124,217 @@ final class ProfileDatabase: @unchecked Sendable {
         } catch {
             try? execute("ROLLBACK;")
             throw error
+        }
+    }
+
+    func loadMemoryLedger() throws -> Data? {
+        try withStatement("SELECT payload FROM memory_system WHERE id = 1") { statement in
+            guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+            return columnData(statement, index: 0)
+        }
+    }
+
+    /// The JSON snapshot is the recovery point. SQL rows and Markdown are
+    /// rebuilt in this same transaction, so search never sees half a change.
+    func saveMemoryLedger(_ payload: Data, projections: [String: Data]) throws {
+        let state = try JSONDecoder().decode(MemoryLedgerState.self, from: payload)
+        try transaction {
+            try withStatement(
+                "INSERT INTO memory_system(id,payload,updated_at) VALUES(1,?1,?2) "
+                    + "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at"
+            ) { statement in
+                try bind(payload, at: 1, to: statement)
+                try bind(Date().timeIntervalSince1970, at: 2, to: statement)
+                try stepDone(statement)
+            }
+            try execute("DELETE FROM memory_claims_fts;")
+            try execute("DELETE FROM memory_evidence;")
+            for claim in state.claims {
+                try withStatement(
+                    "INSERT INTO memory_claims(id,scope,kind,status,confidence,text,supersedes_claim_id,created_at,updated_at) "
+                        + "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) "
+                        + "ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,kind=excluded.kind,"
+                        + "status=excluded.status,confidence=excluded.confidence,text=excluded.text,"
+                        + "supersedes_claim_id=excluded.supersedes_claim_id,updated_at=excluded.updated_at"
+                ) { statement in
+                    try bind(claim.id.uuidString, at: 1, to: statement)
+                    try bind(claim.scope, at: 2, to: statement)
+                    try bind(claim.kind, at: 3, to: statement)
+                    try bind(claim.status.rawValue, at: 4, to: statement)
+                    try bind(claim.confidence, at: 5, to: statement)
+                    try bind(claim.text, at: 6, to: statement)
+                    try bind(claim.supersedesClaimID?.uuidString, at: 7, to: statement)
+                    try bind(claim.createdAt.timeIntervalSince1970, at: 8, to: statement)
+                    try bind(claim.updatedAt.timeIntervalSince1970, at: 9, to: statement)
+                    try stepDone(statement)
+                }
+                for evidence in claim.evidence {
+                    try withStatement(
+                        "INSERT INTO memory_evidence(id,claim_id,chat_id,message_id,quote,source_hash) "
+                            + "VALUES(?1,?2,?3,?4,?5,?6)"
+                    ) { statement in
+                        try bind(evidence.id.uuidString, at: 1, to: statement)
+                        try bind(claim.id.uuidString, at: 2, to: statement)
+                        try bind(evidence.chatID.uuidString, at: 3, to: statement)
+                        try bind(evidence.messageID.uuidString, at: 4, to: statement)
+                        try bind(evidence.quote, at: 5, to: statement)
+                        try bind(evidence.sourceHash, at: 6, to: statement)
+                        try stepDone(statement)
+                    }
+                }
+                if claim.status == .active {
+                    try withStatement("INSERT INTO memory_claims_fts(claim_id,text) VALUES(?1,?2)") { statement in
+                        try bind(claim.id.uuidString, at: 1, to: statement)
+                        try bind(claim.text, at: 2, to: statement)
+                        try stepDone(statement)
+                    }
+                }
+            }
+            let retainedIDs = Set(state.claims.map { $0.id.uuidString })
+            let storedIDs = try withStatement("SELECT id FROM memory_claims") { statement -> [String] in
+                var ids: [String] = []
+                while sqlite3_step(statement) == SQLITE_ROW {
+                    if let id = columnText(statement, index: 0) { ids.append(id) }
+                }
+                return ids
+            }
+            for id in storedIDs where !retainedIDs.contains(id) {
+                try withStatement("DELETE FROM memory_claims WHERE id = ?1") { statement in
+                    try bind(id, at: 1, to: statement)
+                    try stepDone(statement)
+                }
+            }
+            try execute("DELETE FROM memory_claim_embeddings WHERE claim_id IN "
+                + "(SELECT id FROM memory_claims WHERE status != 'active');")
+            let existing = try loadRecords(prefix: "memory:file:profile/")
+            for (key, _) in existing where
+                key == "memory:file:profile/MEMORY.md" ||
+                key == "memory:file:profile/ALIGNMENT_SYNTHESIS.md" ||
+                key.hasPrefix("memory:file:profile/daily/") ||
+                key.hasPrefix("memory:file:profile/bank/") ||
+                key.hasPrefix("memory:file:profile/dreams/") ||
+                key.hasPrefix("memory:file:profile/legacy/") {
+                if projections[key] == nil { try deleteRecord(key: key) }
+            }
+            for (key, data) in projections { try saveRecord(key: key, payload: data) }
+
+            let projectClaims = state.claims.filter { $0.scope.hasPrefix("project:") }
+            let groups = Dictionary(grouping: projectClaims, by: { String($0.scope.dropFirst("project:".count)) })
+            for (projectKey, claims) in groups {
+                let base = "memory:file:projects/\(projectKey)/memory/"
+                let indexKey = base + "MEMORY.md"
+                var index = ""
+                let activeNames = Set(claims.filter { $0.status == .active }.compactMap(\.projectTopicName))
+                let inactive = claims.filter { $0.status != .active }
+                for claim in inactive {
+                    let name = claim.projectTopicName ?? "claim-\(claim.id.uuidString.prefix(12).lowercased())"
+                    guard MemoryStore.isValidTopicName(name), !activeNames.contains(name) else { continue }
+                    try deleteRecord(key: base + name + ".md")
+                }
+                let archive = claims.filter { $0.legacySourceText != nil && $0.status != .retracted }
+                    .compactMap { claim -> String? in
+                        guard let original = claim.legacySourceText else { return nil }
+                        return "<!-- claim \(claim.id.uuidString) -->\n\(original)"
+                    }.joined(separator: "\n\n")
+                if !archive.isEmpty {
+                    try saveRecord(key: "memory:file:projects/\(projectKey)/legacy/IMPORTED_TOPICS.md",
+                                   payload: Data(archive.utf8))
+                } else {
+                    try deleteRecord(key: "memory:file:projects/\(projectKey)/legacy/IMPORTED_TOPICS.md")
+                }
+                for claim in claims where claim.status == .active {
+                    let name = claim.projectTopicName ?? "claim-\(claim.id.uuidString.prefix(12).lowercased())"
+                    guard MemoryStore.isValidTopicName(name) else { continue }
+                    let description = String(claim.text.components(separatedBy: .newlines).first?.prefix(120) ?? "")
+                        .replacingOccurrences(of: "\r", with: " ")
+                    let document = "---\nname: \(name)\ndescription: \(description)\ntype: project\n---\n\n\(claim.text)\n"
+                    try saveRecord(key: base + name + ".md", payload: Data(document.utf8))
+                    index = MemoryStore.upsertingIndexLine(
+                        index, fileName: name + ".md", title: name, hook: description)
+                }
+                try saveRecord(key: indexKey, payload: Data(index.utf8))
+            }
+        }
+    }
+
+    func saveMemoryEmbeddings(_ rows: [MemoryClaimEmbedding]) throws {
+        try transaction {
+            for model in Set(rows.map(\.model)) {
+                try withStatement("DELETE FROM memory_claim_embeddings WHERE model = ?1") { statement in
+                    try bind(model, at: 1, to: statement)
+                    try stepDone(statement)
+                }
+            }
+            for row in rows {
+                guard !row.vector.isEmpty else { continue }
+                let stillActive = try withStatement(
+                    "SELECT status,text FROM memory_claims WHERE id = ?1"
+                ) { statement -> Bool in
+                    try bind(row.claimID.uuidString, at: 1, to: statement)
+                    guard sqlite3_step(statement) == SQLITE_ROW else { return false }
+                    let status = columnText(statement, index: 0) ?? ""
+                    let text = columnText(statement, index: 1) ?? ""
+                    return status == "active" && MemoryLedgerStore.hash(text) == row.sourceHash
+                }
+                guard stillActive else { continue }
+                try withStatement(
+                    "INSERT INTO memory_claim_embeddings(claim_id,model,source_hash,dimensions,vector) "
+                        + "VALUES(?1,?2,?3,?4,?5)"
+                ) { statement in
+                    try bind(row.claimID.uuidString, at: 1, to: statement)
+                    try bind(row.model, at: 2, to: statement)
+                    try bind(row.sourceHash, at: 3, to: statement)
+                    try bind(Int64(row.vector.count), at: 4, to: statement)
+                    try bind(try JSONEncoder().encode(row.vector), at: 5, to: statement)
+                    try stepDone(statement)
+                }
+            }
+        }
+    }
+
+    func loadMemoryEmbeddings(model: String) throws -> [MemoryClaimEmbedding] {
+        try withStatement(
+            "SELECT claim_id,source_hash,dimensions,vector FROM memory_claim_embeddings WHERE model = ?1"
+        ) { statement in
+            try bind(model, at: 1, to: statement)
+            var rows: [MemoryClaimEmbedding] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let idText = columnText(statement, index: 0),
+                      let id = UUID(uuidString: idText),
+                      let sourceHash = columnText(statement, index: 1),
+                      let data = columnData(statement, index: 3),
+                      let vector = try? JSONDecoder().decode([Float].self, from: data),
+                      vector.count == Int(sqlite3_column_int(statement, 2))
+                else { continue }
+                rows.append(MemoryClaimEmbedding(
+                    claimID: id, model: model, sourceHash: sourceHash, vector: vector))
+            }
+            return rows
+        }
+    }
+
+    func clearMemoryEmbeddings() throws {
+        try execute("DELETE FROM memory_claim_embeddings;")
+    }
+
+    func memoryClaimSearchIDs(query: String, limit: Int) throws -> [UUID] {
+        let words = query.lowercased().split { !$0.isLetter && !$0.isNumber }
+            .prefix(12).map(String.init)
+        guard !words.isEmpty else { return [] }
+        let expression = words.map { "\"\($0)\"" }.joined(separator: " OR ")
+        return try withStatement(
+            "SELECT claim_id FROM memory_claims_fts WHERE memory_claims_fts MATCH ?1 "
+                + "ORDER BY rank LIMIT ?2"
+        ) { statement in
+            try bind(expression, at: 1, to: statement)
+            try bind(Int64(max(0, limit)), at: 2, to: statement)
+            var ids: [UUID] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                if let raw = columnText(statement, index: 0), let id = UUID(uuidString: raw) {
+                    ids.append(id)
+                }
+            }
+            return ids
         }
     }
 

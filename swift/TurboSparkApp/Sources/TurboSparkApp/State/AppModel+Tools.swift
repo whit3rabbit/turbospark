@@ -231,7 +231,8 @@ extension AppModel {
     public func buildSystemPromptSections(
         for project: AppProject?,
         userPrompt: String = "",
-        availableTools: TurnAvailableTools? = nil
+        availableTools: TurnAvailableTools? = nil,
+        recalledClaims: [MemoryClaim] = []
     ) -> [(section: SystemPromptSection, content: String)] {
         var sections: [(section: SystemPromptSection, content: String)] = []
 
@@ -241,7 +242,7 @@ extension AppModel {
         }
 
         if MemoryStore.shared.isModelEnabled {
-            sections.append((.memory, MemoryPromptBuilder.profileSection(userPrompt: trimmedUserPrompt)))
+            sections.append((.memory, MemoryPromptBuilder.profileSection(recalledClaims: recalledClaims, approvedOnly: true)))
         }
 
         let personalityPrompt = resolvedPersonalityPrompt
@@ -283,7 +284,7 @@ extension AppModel {
         // on the project root), so the projectless early return above is
         // also the memory gate, exactly as it is for project skills.
         if MemoryStore.shared.isModelEnabled, let root = project.rootDirectoryURL, !root.path.isEmpty {
-            sections.append((.memory, MemoryPromptBuilder.section(store: MemoryStore.shared, projectRoot: root)))
+            sections.append((.memory, MemoryPromptBuilder.section(store: MemoryStore.shared, projectRoot: root, approvedOnly: true)))
         }
 
         let activeMcpServers = AppToolCatalogMcp.visibleServers(global: globalMcpServers, project: project)
@@ -353,10 +354,12 @@ extension AppModel {
     /// second of two locks rather than the only one.
     public func buildSystemPrompt(
         for project: AppProject?, userPrompt: String = "",
-        availableTools: TurnAvailableTools? = nil
+        availableTools: TurnAvailableTools? = nil,
+        recalledClaims: [MemoryClaim] = []
     ) -> String {
         buildSystemPromptSections(
-            for: project, userPrompt: userPrompt, availableTools: availableTools)
+            for: project, userPrompt: userPrompt, availableTools: availableTools,
+            recalledClaims: recalledClaims)
             .map(\.content)
             .joined(separator: "\n\n")
     }

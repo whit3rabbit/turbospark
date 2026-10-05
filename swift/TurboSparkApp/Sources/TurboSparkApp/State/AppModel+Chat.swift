@@ -309,6 +309,7 @@ extension AppModel {
             ghostVault.wipe(for: id)
         } else {
             ToolObservationStore.shared.delete(chatID: id)
+            try? MemoryLedgerStore.shared.invalidateEvidence(chatID: id, messages: [])
         }
         invalidatePendingTitleGeneration(for: id)
         // A deleted chat's queued drafts are discarded WITH it: the user's
@@ -396,6 +397,7 @@ extension AppModel {
                     chats[index].updatedAt = Date()
                 }
         }
+        try? MemoryLedgerStore.shared.invalidateEvidence(chatID: clearedChatID, messages: [])
         skillStateLastError = nil
         if pendingToolCallChatID == clearedChatID {
             clearPendingToolCall()

@@ -71,7 +71,7 @@ struct ToolPresentation: Equatable {
         register("Inspect Context", "scan-text", "ctxinspect ctx_inspect")
         register("Enter Worktree", "git-branch", "enterworktree enter_worktree")
         register("Exit Worktree", "git-merge", "exitworktree exit_worktree")
-        register("Memory", "brain", "memory remember")
+        register("Memory", "brain", "memory remember memory_search memory_explain")
         register("Call Extension", "plug", "call_mcp_tool callmcptool mcp_tool tool_call")
         register("List Resources", "library", "listmcpresources list_mcp_resources list_resources")
         register("Read Resource", "book-open-text", "readmcpresource read_mcp_resource read_resource")

@@ -66,7 +66,8 @@ extension AppModel {
         let systemContent = buildSystemPrompt(
             for: project,
             userPrompt: resolvedUserSystemPrompt(chatIndex: chatIndex),
-            availableTools: availableTools)
+            availableTools: availableTools,
+            recalledClaims: memoryRecall(for: chats[chatIndex].id, project: project))
         if !systemContent.isEmpty {
             append(ChatMessage(role: .system, content: systemContent), sourceRowIndex: nil)
         }
@@ -222,7 +223,8 @@ extension AppModel {
             for: turnProject(chatID: selectedChatID),
             // BY CHAT rather than by index: `selectedChat` falls back to the
             // transient draft, which is not in `chats` and has no index.
-            userPrompt: resolvedUserSystemPrompt(chat: selectedChat))
+            userPrompt: resolvedUserSystemPrompt(chat: selectedChat),
+            recalledClaims: memoryRecall(for: selectedChatID, project: turnProject(chatID: selectedChatID)))
         let systemContent = sections.map(\.content).joined(separator: "\n\n")
         if !systemContent.isEmpty {
             history.append(ChatMessage(role: .system, content: systemContent))

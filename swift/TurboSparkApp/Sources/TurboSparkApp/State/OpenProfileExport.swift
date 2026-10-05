@@ -259,6 +259,10 @@ extension AppModel {
         var memoryFiles: [ProfileExportSnapshot.MemoryFile] = []
         var chatFiles: [ProfileExportSnapshot.MemoryFile] = []
         if ProfileRepository.shared.isAvailable {
+            if let ledger = try ProfileRepository.shared.loadMemoryLedger() {
+                memoryFiles.append(.init(
+                    archivePath: "memory/ledger.json", sourceURL: nil, data: ledger))
+            }
             for (key, data) in try ProfileRepository.shared.rawRecords(prefix: "memory:file:") {
                 let relative = String(key.dropFirst("memory:file:".count))
                 memoryFiles.append(.init(

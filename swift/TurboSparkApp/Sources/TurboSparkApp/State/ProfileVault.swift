@@ -445,6 +445,30 @@ public final class ProfileRepository: @unchecked Sendable {
         try database().loadRecords(prefix: prefix)
     }
 
+    func loadMemoryLedger() throws -> Data? {
+        try database().loadMemoryLedger()
+    }
+
+    func saveMemoryLedger(_ payload: Data, projections: [String: Data]) throws {
+        try database().saveMemoryLedger(payload, projections: projections)
+    }
+
+    func saveMemoryEmbeddings(_ rows: [MemoryClaimEmbedding]) throws {
+        try database().saveMemoryEmbeddings(rows)
+    }
+
+    func loadMemoryEmbeddings(model: String) throws -> [MemoryClaimEmbedding] {
+        try database().loadMemoryEmbeddings(model: model)
+    }
+
+    func clearMemoryEmbeddings() throws {
+        try database().clearMemoryEmbeddings()
+    }
+
+    func memoryClaimSearchIDs(query: String, limit: Int) throws -> [UUID] {
+        try database().memoryClaimSearchIDs(query: query, limit: limit)
+    }
+
     static let protectedFileNames: Set<String> = [
             "appearance.json",
             "chats_archive.json",

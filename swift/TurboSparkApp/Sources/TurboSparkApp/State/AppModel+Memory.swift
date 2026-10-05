@@ -9,6 +9,57 @@ import Foundation
 /// the point of the feature. `/compact` stays below that guard because it
 /// needs the session's own model to summarize with.
 extension AppModel {
+    /// The query is the actual turn text, never the user's saved system prompt.
+    /// The user message key freezes one result through prompt estimates and retries.
+    func memoryRecall(for chatID: UUID, project: AppProject?) -> [MemoryClaim] {
+        guard memoryEnabled else { return [] }
+        let query = turnMessages(for: chatID).last(where: { $0.role == .user })?.content ?? promptText
+        let scope = project?.rootDirectoryURL.map {
+            "project:\(MemoryStore.projectKey(forProjectRoot: $0))"
+        }
+        let messageID = turnMessages(for: chatID).last(where: { $0.role == .user })?.id.uuidString ?? "draft"
+        let key = "\(chatID.uuidString)/\(messageID)/\(MemoryLedgerStore.hash(query))/\(scope ?? "profile")"
+        if memoryRecallKey != key {
+            // Fetch beyond the injected limit because the curated sheet may
+            // already contain the highest-ranked matches.
+            memoryRecallSnapshot = MemoryLedgerStore.shared.search(query, scope: scope, limit: 40)
+            memoryRecallKey = key
+        }
+        return memoryRecallSnapshot
+    }
+
+    /// Wait at most 200 ms for semantic recall. The native FFI encode cannot
+    /// be interrupted mid-call, so one task remains in flight and later turns
+    /// use lexical recall until it finishes.
+    func prepareSemanticMemoryRecall(chatID: UUID, project: AppProject?, query: String) async {
+        let model = memoryEmbeddingModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard memoryEnabled, !model.isEmpty, !query.isEmpty else { return }
+        let scope = project?.rootDirectoryURL.map {
+            "project:\(MemoryStore.projectKey(forProjectRoot: $0))"
+        }
+        let messageID = turnMessages(for: chatID).last(where: { $0.role == .user })?.id.uuidString ?? "draft"
+        let baseKey = "\(chatID.uuidString)/\(messageID)/\(MemoryLedgerStore.hash(query))/\(scope ?? "profile")"
+        let key = "\(baseKey)/\(model)"
+        // A context estimate may already have frozen lexical recall for this
+        // turn. A late semantic result must not change retries or history.
+        guard memoryRecallKey != baseKey else { return }
+        if memorySemanticResult?.key != key && memorySemanticInFlight == nil {
+            memorySemanticInFlight = Task { @MainActor [weak self] in
+                let result = await MemoryLedgerStore.shared.semanticSearch(
+                    query, modelPath: model, scope: scope, limit: 40)
+                self?.memorySemanticResult = (key, result)
+                self?.memorySemanticInFlight = nil
+            }
+        }
+        for _ in 0..<4 {
+            if memorySemanticResult?.key == key { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        guard memorySemanticResult?.key == key else { return }
+        memoryRecallSnapshot = memorySemanticResult?.claims ?? []
+        memoryRecallKey = baseKey
+    }
+
     /// Runs the bounded, read-only memory-capture subagent over the selected
     /// conversation. Only user and assistant text is supplied; tool calls,
     /// tool results, reasoning, system instructions, and attachments stay
@@ -72,30 +123,40 @@ extension AppModel {
             ?? (interactionMode == .projects ? selectedProject : nil)
     }
 
-    /// `/memory` opens the selected project's store, or the profile store in
-    /// a projectless chat. `/memory text` appends a dated profile memory, and
-    /// `/memory search text` performs a bounded search.
+    /// `/memory` opens the Settings manager. Explicit text saves immediately,
+    /// while `/memory search text` performs a bounded approved-claim search.
     func handleMemoryCommand(
         _ draft: String = "/memory",
-        opener: (URL) -> Void = { NSWorkspace.shared.open($0) }
+        settingsOpener: ((AppSettingsView.SettingsTab) -> Void)? = nil
     ) {
         let argument = draft.dropFirst("/memory".count)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        if argument.lowercased().hasPrefix("project ") {
+            guard let root = memoryProject()?.rootDirectoryURL else {
+                showToast("Attach a project before saving project memory.", style: .warning)
+                return
+            }
+            let text = String(argument.dropFirst("project ".count))
+            do {
+                try MemoryLedgerStore.shared.saveUserClaim(
+                    text, scope: "project:\(MemoryStore.projectKey(forProjectRoot: root))",
+                    kind: "decision")
+                showToast("Saved to project memory.", style: .success)
+            } catch { showToast("Could not save memory: \(error.localizedDescription)", style: .error) }
+            return
+        }
         if argument.lowercased().hasPrefix("search ") {
             let query = String(argument.dropFirst("search ".count))
-            let results = ProfileMemoryStore.shared.lexicalSearch(query)
-            showToast(results.isEmpty ? "No matching profile memories." : results.joined(separator: "\n"), style: .info)
+            let results = MemoryLedgerStore.shared.search(query, scope: nil)
+            showToast(results.isEmpty ? "No matching approved memories." : results.map(\.text).joined(separator: "\n"), style: .info)
             return
         }
         if !argument.isEmpty {
             handleProfileMemorySave(argument)
             return
         }
-        if let root = memoryProject()?.rootDirectoryURL, !root.path.isEmpty {
-            opener(MemoryStore.shared.directory(forProjectRoot: root))
-        } else {
-            opener(ProfileMemoryStore.shared.directory)
-        }
+        if let settingsOpener { settingsOpener(.memory) }
+        else { openSettings(tab: .memory) }
     }
 
     /// The `#` quick-save: writes the text as a `user`-type memory and
@@ -110,24 +171,9 @@ extension AppModel {
     func handleMemoryQuickSave(_ trimmedDraft: String) {
         guard !generating, !submitting, pendingToolCall == nil, !opening else { return }
         let chatID = selectedChatID
-        guard MemoryStore.shared.isModelEnabled else {
-            showToast("Memory is disabled in Settings.", style: .warning)
-            return
-        }
         let text = UserMemoryInputMessage.memoryText(of: trimmedDraft)
         do {
-            if let root = memoryProject()?.rootDirectoryURL, !root.path.isEmpty {
-                let firstLine = SkillParser.normalizedLines(text).first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? text
-                let hook = String(firstLine.trimmingCharacters(in: .whitespaces).prefix(120))
-                _ = try MemoryStore.shared.saveTopic(
-                    projectRoot: root,
-                    name: MemoryStore.slug(from: text, dated: true),
-                    type: .user,
-                    description: hook,
-                    body: text)
-            }
-            _ = try ProfileMemoryStore.shared.append(text)
-            Task { try? await ProfileMemoryStore.shared.rebuildIndex(modelPath: memoryEmbeddingModel) }
+            try MemoryLedgerStore.shared.saveUserClaim(text, scope: "profile")
             promptText = ""
             let row = AppChatMessage(
                 role: .user, content: UserMemoryInputMessage.wrapping(text))
@@ -141,8 +187,7 @@ extension AppModel {
     func handleProfileMemorySave(_ text: String) {
         guard !text.isEmpty else { return }
         do {
-            _ = try ProfileMemoryStore.shared.append(text)
-            Task { try? await ProfileMemoryStore.shared.rebuildIndex(modelPath: memoryEmbeddingModel) }
+            try MemoryLedgerStore.shared.saveUserClaim(text, scope: "profile")
             promptText = ""
             showToast("Saved to profile memory.", style: .success)
         } catch {

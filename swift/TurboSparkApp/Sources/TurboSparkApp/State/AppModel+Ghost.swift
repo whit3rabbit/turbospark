@@ -133,6 +133,8 @@ extension AppModel {
             change(&chats[index].messages)
             chats[index].updatedAt = Date()
             persistChats()
+            try? MemoryLedgerStore.shared.invalidateEvidence(
+                chatID: chatID, messages: chats[index].messages)
         }
     }
 

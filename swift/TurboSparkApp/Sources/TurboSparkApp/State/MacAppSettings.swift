@@ -419,6 +419,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var memoryEnabled: Bool
     /// Profile-local encoder model used for semantic memory recall.
     public var memoryEmbeddingModel: String
+    /// Background memory extraction is opt-in independently of prompt recall.
+    public var memoryAutoCaptureEnabled: Bool
     /// Natural-language classifier steering for Agent mode
     /// (`swift/docs/SWIFT_AGENT_MODE.md`): allow / softDeny / hardDeny /
     /// environment sentences embedded in the classifier's policy text.
@@ -505,6 +507,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         hfEndpoint: String = "",
         memoryEnabled: Bool = false,
         memoryEmbeddingModel: String = "",
+        memoryAutoCaptureEnabled: Bool = false,
         agentModeHints: AgentModeHints = AgentModeHints(),
         syntextIndexingEnabled: Bool = true,
         browser: BrowserSettings = BrowserSettings()
@@ -617,6 +620,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.hfEndpoint = hfEndpoint
         self.memoryEnabled = memoryEnabled
         self.memoryEmbeddingModel = memoryEmbeddingModel
+        self.memoryAutoCaptureEnabled = memoryAutoCaptureEnabled
         self.agentModeHints = agentModeHints
         self.syntextIndexingEnabled = syntextIndexingEnabled
         self.browser = browser
@@ -810,6 +814,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .memoryEnabled, fallback: false)
         self.memoryEmbeddingModel = c.decodeLenient(
             String.self, forKey: .memoryEmbeddingModel, fallback: "")
+        self.memoryAutoCaptureEnabled = c.decodeLenient(
+            Bool.self, forKey: .memoryAutoCaptureEnabled, fallback: false)
         self.agentModeHints = c.decodeLenient(
             AgentModeHints.self, forKey: .agentModeHints, fallback: AgentModeHints())
         self.syntextIndexingEnabled = c.decodeLenient(

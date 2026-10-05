@@ -36,6 +36,58 @@ final class ProfileVaultTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
+    func testMemoryLedgerRowsProjectionAndRollbackShareOneTransaction() throws {
+        let vault = makeStore(id: "memory-ledger")
+        _ = try vault.prepareForLaunch()
+        let repository = ProfileRepository(store: vault)
+        var state = MemoryLedgerState()
+        let source = "I prefer short answers."
+        let evidence = MemoryEvidence(chatID: UUID(), messageID: UUID(),
+                                      quote: source, source: source)
+        let claim = MemoryClaim(scope: "profile", kind: "preference", text: "Prefers short answers",
+                                status: .active, evidence: [evidence])
+        state.claims = [claim]
+        let original = try JSONEncoder().encode(state)
+        let projectionKey = "memory:file:profile/MEMORY.md"
+        let projection = Data("approved claim".utf8)
+        try repository.saveMemoryLedger(original, projections: [projectionKey: projection])
+        XCTAssertEqual(try repository.loadMemoryLedger(), original)
+        XCTAssertEqual(try repository.rawRecord(key: projectionKey), projection)
+        XCTAssertEqual(try repository.memoryClaimSearchIDs(query: "short", limit: 5), [claim.id])
+
+        var duplicate = evidence
+        duplicate.chatID = UUID()
+        state.claims[0].evidence.append(duplicate)
+        let invalid = try JSONEncoder().encode(state)
+        XCTAssertThrowsError(try repository.saveMemoryLedger(
+            invalid, projections: [projectionKey: Data("half written".utf8)]))
+        XCTAssertEqual(try repository.loadMemoryLedger(), original)
+        XCTAssertEqual(try repository.rawRecord(key: projectionKey), projection)
+        XCTAssertEqual(try repository.memoryClaimSearchIDs(query: "short", limit: 5), [claim.id])
+
+        try repository.saveMemoryEmbeddings([MemoryClaimEmbedding(
+            claimID: claim.id, model: "test-model", sourceHash: MemoryLedgerStore.hash(claim.text),
+            vector: [0.5, 0.5])])
+        XCTAssertEqual(try repository.loadMemoryEmbeddings(model: "test-model").count, 1)
+        try repository.saveMemoryEmbeddings([MemoryClaimEmbedding(
+            claimID: claim.id, model: "other-model", sourceHash: MemoryLedgerStore.hash(claim.text),
+            vector: [0.3, 0.7])])
+        XCTAssertEqual(try repository.loadMemoryEmbeddings(model: "test-model").count, 1)
+        XCTAssertEqual(try repository.loadMemoryEmbeddings(model: "other-model").count, 1)
+        state.claims[0].evidence = []
+        state.claims[0].text = ""
+        state.claims[0].status = .retracted
+        try repository.saveMemoryLedger(try JSONEncoder().encode(state), projections: [:])
+        XCTAssertTrue(try repository.memoryClaimSearchIDs(query: "short", limit: 5).isEmpty)
+        XCTAssertTrue(try repository.loadMemoryEmbeddings(model: "test-model").isEmpty)
+        XCTAssertTrue(try repository.loadMemoryEmbeddings(model: "other-model").isEmpty)
+        XCTAssertNil(try repository.rawRecord(key: projectionKey))
+        try repository.saveMemoryEmbeddings([MemoryClaimEmbedding(
+            claimID: claim.id, model: "test-model", sourceHash: MemoryLedgerStore.hash(claim.text),
+            vector: [0.5, 0.5])])
+        XCTAssertTrue(try repository.loadMemoryEmbeddings(model: "test-model").isEmpty)
+    }
+
     func testPBKDF2KnownVectorAndCanonicalUnicode() throws {
         let derived = try ProfileVaultCrypto.derivePassphraseKey(
             passphrase: "passwordpassword", salt: Data("salt".utf8), rounds: 1)
@@ -187,6 +239,14 @@ final class ProfileVaultTests: XCTestCase {
                 role: .assistant, content: "restored text", imagePaths: [asset.storedReference])])
         try ProfileRepository(store: source).saveChatArchive(
             AppChatArchive(selectedChatID: chat.id, chats: [chat]))
+        var memory = MemoryLedgerState()
+        let remembered = MemoryClaim(scope: "profile", kind: "preference",
+                                     text: "Keep answers concise", status: .active)
+        memory.claims = [remembered]
+        try ProfileRepository(store: source).saveMemoryLedger(
+            JSONEncoder().encode(memory), projections: [
+                "memory:file:profile/MEMORY.md": Data("Keep answers concise".utf8),
+            ])
         let archive = root.appendingPathComponent("profile.turbospark-profile")
         let password = "portable backup password"
         _ = try EncryptedProfileBackup.export(
@@ -230,6 +290,12 @@ final class ProfileVaultTests: XCTestCase {
         let restoredArchive = try XCTUnwrap(
             try ProfileRepository(store: restored).loadChatArchive())
         XCTAssertEqual(restoredArchive.chats.first?.messages.first?.content, "restored text")
+        let restoredRepository = ProfileRepository(store: restored)
+        let restoredMemory = try XCTUnwrap(restoredRepository.loadMemoryLedger())
+        XCTAssertEqual(try JSONDecoder().decode(MemoryLedgerState.self, from: restoredMemory).claims.first?.id,
+                       remembered.id)
+        XCTAssertEqual(try restoredRepository.rawRecord(key: "memory:file:profile/MEMORY.md"),
+                       Data("Keep answers concise".utf8))
         let restoredAssetURL = destination.appendingPathComponent(
             "private-vault/assets/\(asset.id.prefix(2))/\(asset.id).tsasset")
         XCTAssertTrue(

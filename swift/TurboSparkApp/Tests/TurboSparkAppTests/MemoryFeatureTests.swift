@@ -26,6 +26,284 @@ final class MemoryFeatureTests: XCTestCase {
         AppProject(name: "Memory Demo", rootDirectoryPath: root.path)
     }
 
+    func testLedgerApprovalSupersedesSameProjectTopic() throws {
+        let ledger = MemoryLedgerStore(base: makeScratchDirectory("ledger-supersession"))
+        let old = MemoryClaim(scope: "project:one", kind: "decision", text: "Use obsolete-format",
+                              status: .active, projectTopicName: "format")
+        let replacement = MemoryClaim(scope: "project:one", kind: "decision", text: "Use current-format",
+                                      projectTopicName: "format")
+        try ledger.propose(old)
+        try ledger.propose(replacement)
+        try ledger.approve(replacement.id)
+        let state = ledger.snapshot()
+        XCTAssertEqual(state.claims.first { $0.id == old.id }?.status, .superseded)
+        XCTAssertEqual(state.claims.first { $0.id == replacement.id }?.supersedesClaimID, old.id)
+        XCTAssertEqual(ledger.search("current", scope: "project:one").map(\.id), [replacement.id])
+        XCTAssertTrue(ledger.search("obsolete", scope: "project:one").isEmpty)
+    }
+
+    func testLegacyImportIsIdempotentAndUnverified() {
+        var state = MemoryLedgerState()
+        let topics = [
+            ("memory:file:projects/demo/memory/release.md", Data("Original topic".utf8)),
+            ("memory:file:projects/demo/legacy/IMPORTED_TOPICS.md", Data("Archive only".utf8)),
+        ]
+        MemoryLedgerStore.importLegacy(profileText: "- Old preference\n", topics: topics, into: &state)
+        XCTAssertEqual(state.claims.count, 2)
+        XCTAssertEqual(Set(state.claims.map(\.scope)), ["profile", "project:demo"])
+        XCTAssertTrue(state.claims.allSatisfy {
+            $0.status == .legacy && $0.confidence == "source-unverified" && $0.evidence.isEmpty
+        })
+        XCTAssertEqual(state.claims.first { $0.scope == "project:demo" }?.legacySourceText,
+                       "Original topic")
+        MemoryLedgerStore.importLegacy(profileText: "Changed", topics: topics, into: &state)
+        XCTAssertEqual(state.claims.count, 2)
+    }
+
+    func testLedgerSearchKeepsProjectsIsolatedAndRequiresApproval() throws {
+        let ledger = MemoryLedgerStore(base: makeScratchDirectory("ledger-scope"))
+        let profile = MemoryClaim(scope: "profile", kind: "preference", text: "Prefer concise answers",
+                                  status: .active)
+        let first = MemoryClaim(scope: "project:one", kind: "decision", text: "Use the green format",
+                                status: .active)
+        let second = MemoryClaim(scope: "project:two", kind: "decision", text: "Use the blue format",
+                                 status: .active)
+        let pending = MemoryClaim(scope: "project:one", kind: "decision", text: "Use the red format")
+        for claim in [profile, first, second, pending] { try ledger.propose(claim) }
+        XCTAssertEqual(Set(ledger.search("format", scope: "project:one").map(\.id)), [first.id])
+        XCTAssertEqual(Set(ledger.search("format", scope: nil).map(\.id)), [])
+        XCTAssertEqual(ledger.search("concise", scope: "project:one").map(\.id), [profile.id])
+    }
+
+    @MainActor
+    func testRecallUsesTheUserTurnAndKeepsOneSnapshotForRetries() throws {
+        let model = AppModel()
+        model.memoryEnabled = true
+        let chat = AppChat(title: "recall")
+        model.chats = [chat]
+        model.selectedChatID = chat.id
+        model.promptText = "orchid"
+        model.mutateTurnMessages(for: chat.id) {
+            $0.append(AppChatMessage(role: .user, content: "linden"))
+        }
+        let matching = MemoryClaim(scope: "profile", kind: "preference",
+                                   text: "Linden preference", status: .active)
+        let unrelated = MemoryClaim(scope: "profile", kind: "preference",
+                                    text: "Orchid preference", status: .active)
+        let later = MemoryClaim(scope: "profile", kind: "preference",
+                                text: "Another linden preference", status: .active)
+        let ledger = MemoryLedgerStore.shared
+        defer {
+            try? ledger.forget(matching.id)
+            try? ledger.forget(unrelated.id)
+            try? ledger.forget(later.id)
+        }
+        try ledger.propose(matching)
+        try ledger.propose(unrelated)
+        XCTAssertEqual(model.memoryRecall(for: chat.id, project: nil).map(\.id), [matching.id])
+        try ledger.propose(later)
+        XCTAssertEqual(model.memoryRecall(for: chat.id, project: nil).map(\.id), [matching.id])
+        model.mutateTurnMessages(for: chat.id) {
+            $0.append(AppChatMessage(role: .user, content: "linden"))
+        }
+        XCTAssertEqual(Set(model.memoryRecall(for: chat.id, project: nil).map(\.id)),
+                       [matching.id, later.id])
+    }
+
+    func testReviewBatchPersistsUntilItsClaimIsForgotten() throws {
+        let ledger = MemoryLedgerStore(base: makeScratchDirectory("review-batch"))
+        let proposal = MemoryClaim(scope: "profile", kind: "preference", text: "Prefers tea")
+        try ledger.propose(proposal)
+        let pending = ledger.snapshot()
+        XCTAssertEqual(pending.reviewBatches?.first?.claimIDs, [proposal.id])
+        XCTAssertEqual(try JSONDecoder().decode(MemoryLedgerState.self,
+                                               from: JSONEncoder().encode(pending)).reviewBatches,
+                       pending.reviewBatches)
+        try ledger.approve(proposal.id)
+        XCTAssertEqual(ledger.explain(proposal.id)?.status, .active)
+        try ledger.forget(proposal.id)
+        XCTAssertTrue(ledger.snapshot().reviewBatches?.isEmpty == true)
+    }
+
+    func testRealEncoderColdAndRepeatedCallMeasurement() async throws {
+        guard let model = ProcessInfo.processInfo.environment["TURBOSPARK_ENCODER_TEST_MODEL"] else {
+            throw XCTSkip("Set TURBOSPARK_ENCODER_TEST_MODEL to a local encoder directory.")
+        }
+        func rssKiB() -> Int? {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/ps")
+            process.arguments = ["-o", "rss=", "-p", "\(ProcessInfo.processInfo.processIdentifier)"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            try? process.run()
+            process.waitUntilExit()
+            guard let text = String(data: pipe.fileHandleForReading.readDataToEndOfFile(),
+                                    encoding: .utf8) else { return nil }
+            return Int(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        let before = rssKiB()
+        let coldStart = Date()
+        let cold = try await TurboSparkEmbedding.encode(text: "A short local memory", modelPath: model)
+        let coldSeconds = Date().timeIntervalSince(coldStart)
+        let afterCold = rssKiB()
+        let warmStart = Date()
+        let warm = try await TurboSparkEmbedding.encode(text: "A short local memory", modelPath: model)
+        let warmSeconds = Date().timeIntervalSince(warmStart)
+        let afterWarm = rssKiB()
+        XCTAssertEqual(cold.count, 384)
+        XCTAssertEqual(cold, warm)
+        print("encoder cache cold=\(coldSeconds)s warm=\(warmSeconds)s rss_kib=\(String(describing: before))/\(String(describing: afterCold))/\(String(describing: afterWarm))")
+    }
+
+    func testLedgerInvalidatesEditedOrDeletedEvidence() throws {
+        let ledger = MemoryLedgerStore(base: makeScratchDirectory("ledger-edit"))
+        let chatID = UUID()
+        let message = AppChatMessage(role: .user, content: "I prefer short replies.")
+        let evidence = MemoryEvidence(chatID: chatID, messageID: message.id,
+                                      quote: "short replies", source: message.content)
+        let claim = MemoryClaim(scope: "profile", kind: "preference", text: "Prefers short replies",
+                                status: .active, evidence: [evidence])
+        try ledger.propose(claim)
+        try ledger.invalidateEvidence(chatID: chatID, messages: [message])
+        XCTAssertEqual(ledger.explain(claim.id)?.status, .active)
+        var edited = message
+        edited.content = "I prefer detailed replies."
+        try ledger.invalidateEvidence(chatID: chatID, messages: [edited])
+        XCTAssertEqual(ledger.explain(claim.id)?.status, .pending)
+        XCTAssertTrue(ledger.explain(claim.id)?.evidence.isEmpty == true)
+
+        let another = MemoryClaim(scope: "profile", kind: "preference", text: "Short replies",
+                                  status: .active, evidence: [evidence])
+        try ledger.propose(another)
+        try ledger.invalidateEvidence(chatID: chatID, messages: [])
+        XCTAssertEqual(ledger.explain(another.id)?.status, .pending)
+    }
+
+    func testLedgerForgetSuppressesSourceAndClearsLinkedProposals() throws {
+        let ledger = MemoryLedgerStore(base: makeScratchDirectory("ledger-forget"))
+        let chatID = UUID()
+        let messageID = UUID()
+        let source = "I prefer short replies."
+        let evidence = MemoryEvidence(chatID: chatID, messageID: messageID,
+                                      quote: source, source: source)
+        let active = MemoryClaim(scope: "profile", kind: "preference", text: "Prefers short replies",
+                                 status: .active, evidence: [evidence])
+        let pending = MemoryClaim(scope: "profile", kind: "preference", text: "Likes brief answers",
+                                  evidence: [evidence])
+        try ledger.propose(active)
+        try ledger.propose(pending)
+        try ledger.forget(active.id)
+        let state = ledger.snapshot()
+        XCTAssertEqual(state.claims.first { $0.id == active.id }?.status, .retracted)
+        XCTAssertEqual(state.claims.first { $0.id == pending.id }?.status, .retracted)
+        XCTAssertTrue(state.claims.first { $0.id == active.id }?.text.isEmpty == true)
+        XCTAssertTrue(state.suppressedSources.contains(
+            MemoryLedgerStore.sourceKey(chatID: chatID, messageID: messageID, source: source)))
+        XCTAssertTrue(ledger.search("short", scope: nil).isEmpty)
+    }
+
+    func testLedgerUpdateRollsBackOnFailure() throws {
+        enum Expected: Error { case failure }
+        let ledger = MemoryLedgerStore(base: makeScratchDirectory("ledger-rollback"))
+        let before = ledger.snapshot()
+        XCTAssertThrowsError(try ledger.update { state in
+            state.claims.append(MemoryClaim(scope: "profile", kind: "test", text: "Do not save"))
+            throw Expected.failure
+        })
+        XCTAssertEqual(ledger.snapshot(), before)
+    }
+
+    func testLedgerRefusesToOverwriteCorruptSnapshot() throws {
+        let directory = makeScratchDirectory("ledger-corrupt")
+        let url = directory.appendingPathComponent("ledger.json")
+        try Data("not JSON".utf8).write(to: url)
+        let ledger = MemoryLedgerStore(base: directory)
+        XCTAssertThrowsError(try ledger.saveUserClaim("Keep this", scope: "profile"))
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "not JSON")
+    }
+
+    @MainActor
+    func testMemorySchedulerDueAndCandidateGuards() {
+        let now = Date()
+        let user = AppChatMessage(role: .user, content: "I prefer concise replies.")
+        let assistant = AppChatMessage(role: .assistant, content: "I prefer long replies.")
+        let old = AppChat(messages: [user, assistant], updatedAt: now.addingTimeInterval(-601))
+        XCTAssertEqual(AppModel.memoryCandidates(chat: old, now: now,
+                                                  state: MemoryLedgerState()).map(\.id), [user.id])
+        var ghost = old
+        ghost.isGhost = true
+        XCTAssertTrue(AppModel.memoryCandidates(chat: ghost, now: now,
+                                                state: MemoryLedgerState()).isEmpty)
+        var fresh = old
+        fresh.updatedAt = now.addingTimeInterval(-599)
+        XCTAssertTrue(AppModel.memoryCandidates(chat: fresh, now: now,
+                                                state: MemoryLedgerState()).isEmpty)
+        XCTAssertTrue(AppModel.memoryNightlyIdle(chats: [old], now: now))
+        XCTAssertFalse(AppModel.memoryNightlyIdle(chats: [fresh], now: now))
+        XCTAssertTrue(AppModel.memoryNightlyIdle(chats: [ghost], now: now))
+        var processed = MemoryLedgerState()
+        processed.processedSources.insert(MemoryLedgerStore.sourceKey(
+            chatID: old.id, messageID: user.id, source: user.content))
+        XCTAssertTrue(AppModel.memoryCandidates(chat: old, now: now, state: processed).isEmpty)
+        XCTAssertFalse(AppModel.memoryHourlyDue(now: now, lastRun: nil, enabled: false))
+        XCTAssertTrue(AppModel.memoryHourlyDue(now: now, lastRun: nil, enabled: true))
+        XCTAssertFalse(AppModel.memoryHourlyDue(
+            now: now, lastRun: now.addingTimeInterval(-3599), enabled: true))
+        XCTAssertTrue(AppModel.memoryHourlyDue(
+            now: now, lastRun: now.addingTimeInterval(-3600), enabled: true))
+        let threeAM = Calendar.current.date(bySettingHour: 3, minute: 0, second: 0, of: now)!
+        let oneAM = Calendar.current.date(bySettingHour: 1, minute: 0, second: 0, of: now)!
+        XCTAssertTrue(AppModel.memoryNightlyDue(now: threeAM, lastDay: nil))
+        XCTAssertFalse(AppModel.memoryNightlyDue(now: oneAM, lastDay: nil))
+    }
+
+    @MainActor
+    func testMemoryCaptureRequiresSuppliedExactUserQuoteAndRejectsSecrets() {
+        let message = AppChatMessage(role: .user, content: "I prefer concise replies.")
+        let valid = ExtractedMemory(scope: "profile", kind: "preference",
+                                    text: "Prefers concise replies", messageID: message.id,
+                                    quote: "prefer concise replies")
+        let chatID = UUID()
+        XCTAssertNotNil(AppModel.validatedMemoryClaim(
+            valid, chatID: chatID, source: message, projectScope: nil))
+        let wrongQuote = ExtractedMemory(scope: "profile", kind: "preference",
+                                         text: valid.text, messageID: message.id,
+                                         quote: "prefers concise replies")
+        XCTAssertNil(AppModel.validatedMemoryClaim(
+            wrongQuote, chatID: chatID, source: message, projectScope: nil))
+        let wrongID = ExtractedMemory(scope: "profile", kind: "preference",
+                                      text: valid.text, messageID: UUID(), quote: valid.quote)
+        XCTAssertNil(AppModel.validatedMemoryClaim(
+            wrongID, chatID: chatID, source: message, projectScope: nil))
+        let assistant = AppChatMessage(id: message.id, role: .assistant, content: message.content)
+        XCTAssertNil(AppModel.validatedMemoryClaim(
+            valid, chatID: chatID, source: assistant, projectScope: nil))
+        let project = ExtractedMemory(scope: "project", kind: "decision",
+                                      text: valid.text, messageID: message.id, quote: valid.quote)
+        XCTAssertNil(AppModel.validatedMemoryClaim(
+            project, chatID: chatID, source: message, projectScope: nil))
+        let secret = ExtractedMemory(scope: "profile", kind: "preference",
+                                     text: "api_key: sk-abcdefghijklmnopqrstuvwx",
+                                     messageID: message.id, quote: valid.quote)
+        XCTAssertNil(AppModel.validatedMemoryClaim(
+            secret, chatID: chatID, source: message, projectScope: nil))
+    }
+
+    @MainActor
+    func testMemorySchedulerSkipsWithoutModelAndForegroundCancelsCapture() async {
+        let model = AppModel()
+        model.memoryEnabled = true
+        model.memoryAutoCaptureEnabled = true
+        await model.runMemoryJobsIfDue(now: Date())
+        XCTAssertNil(model.memoryCaptureTask)
+        let pending = Task<Void, Never> {
+            do { try await Task.sleep(for: .seconds(5)) } catch { }
+        }
+        model.memoryCaptureTask = pending
+        await model.interruptMemoryCaptureForForeground()
+        XCTAssertTrue(pending.isCancelled)
+    }
+
     @MainActor
     private func makeProjectModel(project: AppProject) -> AppModel {
         let model = AppModel()
@@ -247,6 +525,20 @@ final class MemoryFeatureTests: XCTestCase {
         XCTAssertFalse(without.contains("## Memory"))
     }
 
+    func testMemoryJobsDoNotInheritStoredClaimsAsCaptureEvidence() {
+        let previous = MemoryStore.shared.isModelEnabled
+        defer { MemoryStore.shared.isModelEnabled = previous }
+        MemoryStore.shared.isModelEnabled = true
+        let agent = AppAgentDefinition(
+            name: "memory-capture", displayName: "Memory Capture",
+            agentDescription: "Capture", systemPrompt: "Cite supplied messages only.",
+            tools: [], maxTurns: 1, omitsProjectInstructions: true)
+        let project = AppProject(name: "Demo", rootDirectoryPath: "/tmp/memory-demo")
+        let prompt = SubagentRunner.buildSystemPrompt(for: agent, project: project)
+        XCTAssertFalse(prompt.contains("## Profile Memory"))
+        XCTAssertFalse(prompt.contains("## Memory\n"))
+    }
+
     // MARK: - The memory tool
 
     private func toolProject(_ root: URL) -> AppProject {
@@ -255,31 +547,40 @@ final class MemoryFeatureTests: XCTestCase {
 
     func testTheToolSavesReadsAndForgets() throws {
         let store = MemoryStore(base: makeScratchDirectory("tool"))
+        let ledger = MemoryLedgerStore(base: makeScratchDirectory("tool-ledger"))
         store.isModelEnabled = true
         let root = makeScratchDirectory("project")
 
         let saved = try MemoryToolExecutor.execute(
             arguments: ["action": "save", "name": "Deploy Flow", "content": "Ship on Thursdays."],
-            project: toolProject(root), store: store)
+            project: toolProject(root), store: store, ledger: ledger)
         XCTAssertTrue(saved.contains("deploy-flow"), saved)
 
+        let proposed = try XCTUnwrap(ledger.snapshot().claims.first)
+        XCTAssertEqual(proposed.status, .pending)
+
         let index = try MemoryToolExecutor.execute(
-            arguments: ["action": "read"], project: toolProject(root), store: store)
-        XCTAssertTrue(index.contains("deploy-flow"))
-        XCTAssertTrue(index.contains("Ship on Thursdays."), "the description falls back to the first body line")
+            arguments: ["action": "read"], project: toolProject(root), store: store, ledger: ledger)
+        XCTAssertTrue(index.contains("empty"), "pending proposals must not reach the model")
+        try ledger.approve(proposed.id)
+        let approvedIndex = try MemoryToolExecutor.execute(
+            arguments: ["action": "read"], project: toolProject(root), store: store, ledger: ledger)
+        XCTAssertTrue(approvedIndex.contains("Ship on Thursdays."))
 
         let named = try MemoryToolExecutor.execute(
             arguments: ["action": "read", "name": "deploy-flow"],
-            project: toolProject(root), store: store)
-        XCTAssertTrue(named.contains("type: project"))
+            project: toolProject(root), store: store, ledger: ledger)
+        XCTAssertTrue(named.contains("Ship on Thursdays."))
 
         let forgotten = try MemoryToolExecutor.execute(
             arguments: ["action": "forget", "name": "deploy-flow"],
-            project: toolProject(root), store: store)
-        XCTAssertTrue(forgotten.contains("Forgot"))
+            project: toolProject(root), store: store, ledger: ledger)
+        XCTAssertTrue(forgotten.contains("Proposed forgetting"))
+        let forgetProposal = try XCTUnwrap(ledger.snapshot().claims.first { $0.requestedForgetID == proposed.id })
+        try ledger.approve(forgetProposal.id)
 
         let empty = try MemoryToolExecutor.execute(
-            arguments: ["action": "read"], project: toolProject(root), store: store)
+            arguments: ["action": "read"], project: toolProject(root), store: store, ledger: ledger)
         XCTAssertTrue(empty.contains("empty"))
     }
 
@@ -356,19 +657,13 @@ final class MemoryFeatureTests: XCTestCase {
         let remembered = UserMemoryInputMessage.parse(row.content)
         XCTAssertEqual(remembered, "Always deploy with pnpm, never npm")
 
-        // The memory itself: type user, dated slug, indexed. Production
-        // memory lives in SQLCipher, so inspect it through the store API.
+        // A quick-save is profile scoped and immediately active.
         let index = MemoryStore.shared.loadIndex(forProjectRoot: root)
-        let topic = MemoryStore.parseIndex(index).first?.fileName
-        XCTAssertNotNil(topic, "expected a topic row, found: \(index)")
-        if let topic {
-            let name = String(topic.dropLast(".md".count))
-            let text = (try? MemoryStore.shared.readTopic(
-                projectRoot: root, name: name)) ?? ""
-            XCTAssertTrue(text.contains("type: user"))
-            XCTAssertTrue(text.contains("Always deploy with pnpm"))
-        }
-        XCTAssertTrue(index.contains("-- Always deploy with pnpm"))
+        XCTAssertTrue(index.isEmpty)
+        XCTAssertTrue(MemoryLedgerStore.shared.snapshot().claims.contains {
+            $0.scope == "profile" && $0.status == .active &&
+            $0.text == "Always deploy with pnpm, never npm"
+        })
     }
 
     @MainActor
@@ -389,15 +684,19 @@ final class MemoryFeatureTests: XCTestCase {
         XCTAssertEqual(model.chats[0].messages.count, 0)
         XCTAssertEqual(model.turnMessages(for: chat.id).count, 1)
         XCTAssertNotNil(UserMemoryInputMessage.parse(model.turnMessages(for: chat.id)[0].content))
-        // And the memory is still written: ghost hides the transcript, not the store.
+        // The explicit memory survives, while the ghost transcript remains sealed.
         let index = MemoryStore.shared.loadIndex(forProjectRoot: root)
-        XCTAssertFalse(MemoryStore.parseIndex(index).isEmpty)
+        XCTAssertTrue(index.isEmpty)
+        XCTAssertTrue(MemoryLedgerStore.shared.snapshot().claims.contains {
+            $0.scope == "profile" && $0.status == .active && $0.text == "prefers terse answers"
+        })
     }
 
     @MainActor
-    func testAHashDraftWithoutAProjectIsRefusedAndKeepsTheDraft() {
+    func testAHashDraftWithoutAProjectOrModelMemorySavesToProfile() {
         let model = AppModel()
         model.interactionMode = .chat
+        model.memoryEnabled = false
         let chat = AppChat(title: "plain")
         model.chats = [chat]
         model.selectedChatID = chat.id
@@ -405,8 +704,12 @@ final class MemoryFeatureTests: XCTestCase {
         model.promptText = "# remember this with no project"
         model.run()
 
-        XCTAssertFalse(model.promptText.isEmpty, "a refused save must keep the draft")
-        XCTAssertTrue(model.turnMessages(for: chat.id).isEmpty)
+        XCTAssertTrue(model.promptText.isEmpty)
+        XCTAssertEqual(model.turnMessages(for: chat.id).count, 1)
+        XCTAssertTrue(MemoryLedgerStore.shared.snapshot().claims.contains {
+            $0.scope == "profile" && $0.status == .active &&
+            $0.text == "remember this with no project"
+        })
     }
 
     @MainActor
@@ -419,27 +722,24 @@ final class MemoryFeatureTests: XCTestCase {
     // MARK: - The /memory command
 
     @MainActor
-    func testTheMemoryCommandOpensTheProjectFolder() {
+    func testTheMemoryCommandOpensSettingsForAProject() {
         let root = makeScratchDirectory("slash-project")
         let model = makeProjectModel(project: makeProject(root: root))
-        var opened: [URL] = []
+        var opened: [AppSettingsView.SettingsTab] = []
         model.handleMemoryCommand { opened.append($0) }
-        XCTAssertEqual(opened.count, 1)
-        XCTAssertEqual(
-            opened.first?.lastPathComponent, "memory",
-            "/memory opens the project's memory directory, not its base")
+        XCTAssertEqual(opened, [.memory])
     }
 
     @MainActor
-    func testTheMemoryCommandWithoutAProjectOpensProfileMemory() {
+    func testTheMemoryCommandWithoutAProjectOpensSettings() {
         let model = AppModel()
         model.interactionMode = .chat
         let chat = AppChat(title: "plain")
         model.chats = [chat]
         model.selectedChatID = chat.id
-        var opened: [URL] = []
+        var opened: [AppSettingsView.SettingsTab] = []
         model.handleMemoryCommand { opened.append($0) }
-        XCTAssertEqual(opened, [ProfileMemoryStore.shared.directory])
+        XCTAssertEqual(opened, [.memory])
     }
 
     // MARK: - Settings plumbing

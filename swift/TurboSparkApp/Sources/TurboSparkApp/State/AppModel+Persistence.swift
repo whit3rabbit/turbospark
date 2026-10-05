@@ -104,6 +104,7 @@ extension AppModel {
         self.todoBoundaryCompactionEnabled = settings.todoBoundaryCompaction
         self.memoryEnabled = settings.memoryEnabled
         self.memoryEmbeddingModel = settings.memoryEmbeddingModel
+        self.memoryAutoCaptureEnabled = settings.memoryAutoCaptureEnabled
         self.syntextIndexingEnabled = settings.syntextIndexingEnabled
         AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
@@ -267,6 +268,7 @@ extension AppModel {
             hfEndpoint: hfEndpointInput,
             memoryEnabled: memoryEnabled,
             memoryEmbeddingModel: memoryEmbeddingModel,
+            memoryAutoCaptureEnabled: memoryAutoCaptureEnabled,
             agentModeHints: agentModeHints,
             syntextIndexingEnabled: syntextIndexingEnabled,
             browser: browserSettings

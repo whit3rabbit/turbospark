@@ -566,6 +566,12 @@ public enum AppToolRegistry {
             case "memory", "remember":
                 output = try MemoryToolExecutor.execute(arguments: call.arguments, project: project)
 
+            case "memory_search":
+                output = try MemoryToolExecutor.searchClaims(arguments: call.arguments, project: project)
+
+            case "memory_explain":
+                output = try MemoryToolExecutor.explainClaim(arguments: call.arguments, project: project)
+
             case "batch":
                 output = try await BatchToolExecutor.execute(
                     arguments: call.arguments,

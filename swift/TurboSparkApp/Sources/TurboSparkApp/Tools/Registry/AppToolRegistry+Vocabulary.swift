@@ -180,7 +180,7 @@ extension AppToolRegistry {
         "ctxinspect", "ctx_inspect",
         "enterworktree", "enter_worktree",
         "exitworktree", "exit_worktree",
-        "memory", "remember",
+        "memory", "remember", "memory_search", "memory_explain",
         "tool_search", "tool_describe", "tool_call",
         "browser_navigate", "browser_click", "browser_type", "browser_press_key",
         "browser_scroll", "browser_screenshot", "browser_snapshot", "browser_wait",

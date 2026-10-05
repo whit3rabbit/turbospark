@@ -14,6 +14,7 @@ Short seams. Verify each one before release.
 - [Swift tool implementation](docs/SWIFT_TOOLS.md)
 - [Swift skills](docs/SWIFT_SKILLS.md)
 - [Swift storage](docs/storage.md)
+- [Swift memory architecture](docs/SWIFT_MEMORY.md)
 - [Swift localization](docs/SWIFT_LOCALIZATION.md)
 - [Swift keyboard and accessibility](docs/KEYBOARD_SHORTCUTS.md)
 - [Swift API workspace](docs/SWIFT_API_WORKSPACE.md)

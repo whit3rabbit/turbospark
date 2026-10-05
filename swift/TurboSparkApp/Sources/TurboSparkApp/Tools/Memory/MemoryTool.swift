@@ -1,23 +1,70 @@
 import Foundation
 
-/// The `memory` tool: save, read, or remove a persistent project memory.
-///
-/// The tool takes a NAME, never a path. Every filesystem decision happens
-/// inside `MemoryStore` from that name (kebab-case stems only, no
-/// separators), so the write surface is contained by construction and
-/// neither `PathContainment` nor the permission engine needed a new carve
-/// out -- the alternative shape, letting the general `write_file` tool reach
-/// outside the workspace root into the memory directory, is exactly the
-/// hole Claude Code plugs with its `isAutoMemPath` permission exception
-/// instead.
+/// The `memory` tool reads approved claims and stages model-issued changes.
+/// Project names are slugs, never paths; the ledger writes their Markdown
+/// projections inside the encrypted profile after review.
 public enum MemoryToolExecutor {
+    public static func searchClaims(arguments: [String: String], project: AppProject?) throws -> String {
+        guard MemoryStore.shared.isModelEnabled else {
+            throw NSError(domain: "TurboSparkMemory", code: 7, userInfo: [
+                NSLocalizedDescriptionKey: "Memory is disabled in Settings."])
+        }
+        let query = arguments["query"] ?? ""
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "Provide a search query."
+        }
+        let requestedScope = (arguments["scope"] ?? "profile").lowercased()
+        guard requestedScope == "profile" || requestedScope == "project" else {
+            return "Scope must be profile or project."
+        }
+        if requestedScope == "project" && project?.rootDirectoryURL == nil {
+            return "No project is attached to this chat."
+        }
+        let scope = requestedScope == "project"
+            ? project?.rootDirectoryURL.map { "project:\(MemoryStore.projectKey(forProjectRoot: $0))" }
+            : nil
+        let limit = min(max(Int(arguments["limit"] ?? "5") ?? 5, 1), 10)
+        let claims = MemoryLedgerStore.shared.search(query, scope: scope, limit: limit)
+        return claims.isEmpty ? "No approved memory matched." : claims.map {
+            "[\($0.id.uuidString)] \($0.text)"
+        }.joined(separator: "\n")
+    }
+
+    public static func explainClaim(arguments: [String: String], project: AppProject?) throws -> String {
+        guard MemoryStore.shared.isModelEnabled else {
+            throw NSError(domain: "TurboSparkMemory", code: 7, userInfo: [
+                NSLocalizedDescriptionKey: "Memory is disabled in Settings."])
+        }
+        guard let id = UUID(uuidString: arguments["claim_id"] ?? ""),
+              let claim = MemoryLedgerStore.shared.explain(id), claim.status == .active,
+              claim.scope == "profile" || project?.rootDirectoryURL.map({
+                  claim.scope == "project:\(MemoryStore.projectKey(forProjectRoot: $0))"
+              }) == true
+        else { return "No approved claim with that ID exists." }
+        let evidence = claim.evidence.map {
+            "chat \($0.chatID.uuidString), message \($0.messageID.uuidString): \($0.quote)"
+        }.joined(separator: "\n")
+        let claims = MemoryLedgerStore.shared.snapshot().claims
+        var chain: [String] = []
+        var next = claim.supersedesClaimID
+        var seen: Set<UUID> = []
+        while let id = next, seen.insert(id).inserted,
+              let prior = claims.first(where: { $0.id == id && $0.scope == claim.scope }) {
+            chain.append("\(prior.id.uuidString) (\(prior.status.rawValue))")
+            next = prior.supersedesClaimID
+        }
+        return "[\(id.uuidString)] \(claim.text)\nStatus: \(claim.status.rawValue)\n"
+            + "Supersession chain: \(chain.isEmpty ? "none" : chain.joined(separator: " <- "))\n\(evidence)"
+    }
+
     /// Executes one `memory` call. Throws with a model-readable message for
     /// a bad name, an unknown memory, or a malformed action; `AppToolRegistry`
     /// wraps the throw into an error result. The store is a parameter with a
     /// `.shared` default so tests can point the executor at a scratch
     /// directory instead of the process-wide one.
     public static func execute(
-        arguments: [String: String], project: AppProject?, store: MemoryStore = .shared
+        arguments: [String: String], project: AppProject?, store: MemoryStore = .shared,
+        ledger: MemoryLedgerStore = .shared
     ) throws -> String {
         guard store.isModelEnabled else {
             throw NSError(domain: "TurboSparkMemory", code: 7, userInfo: [
@@ -27,7 +74,7 @@ public enum MemoryToolExecutor {
         }
         let scope = (arguments["scope"] ?? "project").lowercased()
         if scope == "profile" {
-            return try executeProfile(arguments: arguments)
+            return try executeProfile(arguments: arguments, ledger: ledger)
         }
         guard let root = project?.rootDirectoryURL else {
             throw NSError(domain: "TurboSparkMemory", code: 3, userInfo: [
@@ -65,19 +112,30 @@ public enum MemoryToolExecutor {
                 let trimmed = firstLine.trimmingCharacters(in: .whitespaces)
                 return trimmed.count > 120 ? String(trimmed.prefix(120)) + "..." : trimmed
             }()
-            let saved = try store.saveTopic(
-                projectRoot: root, name: name, type: type, description: description, body: body)
-            return (saved.created ? "Saved a new memory" : "Updated the existing memory")
-                + " '\(name)' in this project's memory. The MEMORY.md index now lists it."
+            let scope = "project:\(MemoryStore.projectKey(forProjectRoot: root))"
+            var proposal = MemoryClaim(scope: scope, kind: type.rawValue,
+                                       text: "\(description)\n\(body)", projectTopicName: name)
+            proposal.confidence = "agent-proposed"
+            try ledger.propose(proposal)
+            return "Proposed memory '\(name)' for review in Settings. It is not active yet."
 
         case "read", "list", "index":
             if rawName.trimmingCharacters(in: .whitespaces).isEmpty {
-                let index = store.loadIndex(forProjectRoot: root)
+                let index = ledger.snapshot().claims.filter {
+                    $0.scope == "project:\(MemoryStore.projectKey(forProjectRoot: root))" && $0.status == .active
+                }.map { "[\($0.id.uuidString)] \($0.text)" }.joined(separator: "\n")
                 return index.isEmpty
                     ? "MEMORY.md is empty: nothing is remembered for this project yet."
                     : "MEMORY.md:\n\n\(index)"
             }
-            return try store.readTopic(projectRoot: root, name: name)
+            let scope = "project:\(MemoryStore.projectKey(forProjectRoot: root))"
+            guard let claim = ledger.snapshot().claims.first(where: {
+                $0.scope == scope && $0.projectTopicName == name && $0.status == .active
+            }) else {
+                throw NSError(domain: "TurboSparkMemory", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "No approved memory named '\(name)' exists."])
+            }
+            return claim.text
 
         case "forget", "delete", "remove":
             guard !rawName.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -85,10 +143,14 @@ public enum MemoryToolExecutor {
                     NSLocalizedDescriptionKey: "Missing 'name': name the memory to forget."
                 ])
             }
-            let removed = try store.forgetTopic(projectRoot: root, name: name)
-            return removed
-                ? "Forgot the memory '\(name)' and removed its index row."
-                : "No memory named '\(name)' exists; nothing was removed."
+            let scope = "project:\(MemoryStore.projectKey(forProjectRoot: root))"
+            guard let target = ledger.snapshot().claims.first(where: {
+                $0.scope == scope && $0.projectTopicName == name && $0.status == .active
+            }) else { return "No approved memory named '\(name)' exists." }
+            var proposal = MemoryClaim(scope: scope, kind: "forget", text: "Forget \(name)")
+            proposal.requestedForgetID = target.id
+            try ledger.propose(proposal)
+            return "Proposed forgetting '\(name)' for review in Settings."
 
         default:
             throw NSError(domain: "TurboSparkMemory", code: 6, userInfo: [
@@ -98,8 +160,9 @@ public enum MemoryToolExecutor {
         }
     }
 
-    private static func executeProfile(arguments: [String: String]) throws -> String {
-        let profile = ProfileMemoryStore.shared
+    private static func executeProfile(
+        arguments: [String: String], ledger: MemoryLedgerStore
+    ) throws -> String {
         let action = (arguments["action"] ?? "read").lowercased()
         switch action {
         case "save", "write", "remember":
@@ -107,15 +170,30 @@ public enum MemoryToolExecutor {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw NSError(domain: "TurboSparkMemory", code: 5, userInfo: [NSLocalizedDescriptionKey: "Missing 'content': the profile memory is empty."])
             }
-            _ = try profile.append(text)
-            return "Saved a dated memory to this user's profile MEMORY.md."
+            var proposal = MemoryClaim(scope: "profile", kind: "preference", text: text)
+            proposal.confidence = "agent-proposed"
+            try ledger.propose(proposal)
+            return "Proposed a profile memory for review in Settings. It is not active yet."
         case "read", "list", "index":
-            let text = profile.load()
+            let text = ledger.snapshot().claims.filter {
+                $0.scope == "profile" && $0.status == .active
+            }.map { "[\($0.id.uuidString)] \($0.text)" }.joined(separator: "\n")
             return text.isEmpty ? "The profile MEMORY.md is empty." : text
         case "search":
             let query = arguments["query"] ?? arguments["text"] ?? arguments["content"] ?? ""
-            let results = profile.lexicalSearch(query)
-            return results.isEmpty ? "No matching profile memories." : results.joined(separator: "\n\n")
+            let results = ledger.search(query, scope: nil)
+            return results.isEmpty ? "No matching approved memories." : results.map {
+                "[\($0.id.uuidString)] \($0.text)"
+            }.joined(separator: "\n\n")
+        case "explain":
+            guard let id = UUID(uuidString: arguments["claim_id"] ?? ""),
+                  let claim = ledger.explain(id), claim.status == .active,
+                  claim.scope == "profile"
+            else { return "No approved claim with that ID exists." }
+            let evidence = claim.evidence.map {
+                "\($0.chatID.uuidString)/\($0.messageID.uuidString): \($0.quote)"
+            }.joined(separator: "\n")
+            return "[\(id.uuidString)] \(claim.text)\n\(evidence)"
         default:
             throw NSError(domain: "TurboSparkMemory", code: 6, userInfo: [NSLocalizedDescriptionKey: "Unknown profile memory action '\(action)'. Use save, read, or search."])
         }
@@ -131,7 +209,7 @@ public enum MemoryToolDefinitions {
 
     public static var all: [OpenAITool] {
         guard MemoryStore.shared.isModelEnabled else { return [] }
-        return [definition]
+        return [definition, searchDefinition, explainDefinition]
     }
 
     public static let definition = OpenAITool.function(
@@ -149,5 +227,23 @@ public enum MemoryToolDefinitions {
             ],
             required: ["action"]
         )
+    )
+
+    public static let searchDefinition = OpenAITool.function(
+        name: "memory_search",
+        description: "Search approved profile and current-project memory. Results include claim IDs.",
+        parameters: .object(properties: [
+            "query": .string(description: "Text to search."),
+            "scope": .string(description: "profile or project."),
+            "limit": .string(description: "Maximum result count, 1 to 10.")
+        ], required: ["query"])
+    )
+
+    public static let explainDefinition = OpenAITool.function(
+        name: "memory_explain",
+        description: "Show the source evidence and status of one approved memory claim.",
+        parameters: .object(properties: [
+            "claim_id": .string(description: "Claim UUID from memory_search.")
+        ], required: ["claim_id"])
     )
 }
