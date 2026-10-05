@@ -1,0 +1,194 @@
+[
+ {
+  "codebook": 0,
+  "hidden": {
+   "dtype": "bfloat16",
+   "file": "warmup_0_hidden.f32",
+   "shape": [
+    2,
+    64
+   ]
+  },
+  "key": [
+   1948237315,
+   1058547403
+  ],
+  "logits": {
+   "dtype": "float32",
+   "file": "warmup_0_logits.f32",
+   "shape": [
+    1,
+    512
+   ]
+  },
+  "sampled": 207
+ },
+ {
+  "codebook": 1,
+  "hidden": {
+   "dtype": "bfloat16",
+   "file": "warmup_1_hidden.f32",
+   "shape": [
+    2,
+    64
+   ]
+  },
+  "key": [
+   3576188743,
+   1381438808
+  ],
+  "logits": {
+   "dtype": "float32",
+   "file": "warmup_1_logits.f32",
+   "shape": [
+    1,
+    32
+   ]
+  },
+  "sampled": 15
+ },
+ {
+  "codebook": 2,
+  "hidden": {
+   "dtype": "bfloat16",
+   "file": "warmup_2_hidden.f32",
+   "shape": [
+    2,
+    64
+   ]
+  },
+  "key": [
+   410200806,
+   1273531566
+  ],
+  "logits": {
+   "dtype": "float32",
+   "file": "warmup_2_logits.f32",
+   "shape": [
+    1,
+    32
+   ]
+  },
+  "sampled": 8
+ },
+ {
+  "codebook": 3,
+  "hidden": {
+   "dtype": "bfloat16",
+   "file": "warmup_3_hidden.f32",
+   "shape": [
+    2,
+    64
+   ]
+  },
+  "key": [
+   3169833450,
+   3629396811
+  ],
+  "logits": {
+   "dtype": "float32",
+   "file": "warmup_3_logits.f32",
+   "shape": [
+    1,
+    32
+   ]
+  },
+  "sampled": 18
+ },
+ {
+  "codebook": 4,
+  "hidden": {
+   "dtype": "bfloat16",
+   "file": "warmup_4_hidden.f32",
+   "shape": [
+    2,
+    64
+   ]
+  },
+  "key": [
+   88810869,
+   1854656995
+  ],
+  "logits": {
+   "dtype": "float32",
+   "file": "warmup_4_logits.f32",
+   "shape": [
+    1,
+    32
+   ]
+  },
+  "sampled": 29
+ },
+ {
+  "codebook": 5,
+  "hidden": {
+   "dtype": "bfloat16",
+   "file": "warmup_5_hidden.f32",
+   "shape": [
+    2,
+    64
+   ]
+  },
+  "key": [
+   75193582,
+   180343778
+  ],
+  "logits": {
+   "dtype": "float32",
+   "file": "warmup_5_logits.f32",
+   "shape": [
+    1,
+    32
+   ]
+  },
+  "sampled": 16
+ },
+ {
+  "codebook": 6,
+  "hidden": {
+   "dtype": "bfloat16",
+   "file": "warmup_6_hidden.f32",
+   "shape": [
+    2,
+    64
+   ]
+  },
+  "key": [
+   135360579,
+   1135049024
+  ],
+  "logits": {
+   "dtype": "float32",
+   "file": "warmup_6_logits.f32",
+   "shape": [
+    1,
+    32
+   ]
+  },
+  "sampled": 26
+ },
+ {
+  "codebook": 7,
+  "hidden": {
+   "dtype": "bfloat16",
+   "file": "warmup_7_hidden.f32",
+   "shape": [
+    2,
+    64
+   ]
+  },
+  "key": [
+   3466701086,
+   387116381
+  ],
+  "logits": {
+   "dtype": "float32",
+   "file": "warmup_7_logits.f32",
+   "shape": [
+    1,
+    32
+   ]
+  },
+  "sampled": 14
+ }
+]

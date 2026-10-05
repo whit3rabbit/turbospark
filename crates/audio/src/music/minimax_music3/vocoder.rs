@@ -13,8 +13,11 @@
 use crate::Result;
 use crate::SpeechError;
 
+use super::backend::{self, ComputeBackend};
 use super::conv::{ConvSpec, MlxConv1d, MlxConvTranspose1d};
-use super::weights::WeightStore;
+use super::precision::DType;
+use super::weights::{Tensor, WeightStore};
+use std::rc::Rc;
 
 pub(crate) struct VocoderDims {
     pub latent_channels: usize,
@@ -24,14 +27,14 @@ pub(crate) struct VocoderDims {
 }
 
 struct ResidualUnit {
-    snake1_alpha: Vec<f32>,
+    snake1_alpha: Tensor,
     conv1: MlxConv1d,
-    snake2_alpha: Vec<f32>,
+    snake2_alpha: Tensor,
     conv2: MlxConv1d,
 }
 
 struct VocoderBlock {
-    snake1_alpha: Vec<f32>,
+    snake1_alpha: Tensor,
     conv_t1: MlxConvTranspose1d,
     res_units: Vec<ResidualUnit>,
     out_dim: usize,
@@ -41,21 +44,40 @@ pub(crate) struct Vocoder {
     dec_in_proj: MlxConv1d,
     conv_in: MlxConv1d,
     blocks: Vec<VocoderBlock>,
-    snake_out_alpha: Vec<f32>,
+    snake_out_alpha: Tensor,
     conv_out: MlxConv1d,
     dims: VocoderDims,
+    backend: Option<Rc<dyn ComputeBackend>>,
 }
 
-fn snake(x: &mut [f32], alpha: &[f32], channels: usize, frames: usize) {
+pub(crate) fn snake(x: &mut [f32], alpha: &[f32], channels: usize, frames: usize, dtype: DType) {
     for c in 0..channels {
-        let a = alpha[c];
-        let denom = a + 1e-9;
+        let a = dtype.round(alpha[c]);
+        let denom = dtype.round(a + dtype.round(1e-9));
         for f in 0..frames {
             let v = &mut x[c * frames + f];
-            let s = (a * *v).sin();
-            *v += s * s / denom;
+            let s = dtype.round(dtype.round(a * *v).sin());
+            *v = dtype.round(*v + dtype.round(dtype.round(s * s) / denom));
         }
     }
+}
+
+fn activate_snake(
+    x: &[f32],
+    alpha: &[f32],
+    channels: usize,
+    frames: usize,
+    dtype: DType,
+    compute: &Option<Rc<dyn ComputeBackend>>,
+) -> Result<Vec<f32>> {
+    if dtype != DType::F32 {
+        if let Some(compute) = compute {
+            return compute.snake(x, alpha, channels, frames, dtype);
+        }
+    }
+    let mut out = x.to_vec();
+    snake(&mut out, alpha, channels, frames, dtype);
+    Ok(out)
 }
 
 impl ResidualUnit {
@@ -95,27 +117,87 @@ impl ResidualUnit {
             });
         }
         Ok(ResidualUnit {
-            snake1_alpha: snake1.data,
+            snake1_alpha: snake1,
             conv1,
-            snake2_alpha: snake2.data,
+            snake2_alpha: snake2,
             conv2,
         })
     }
 
-    fn forward(&self, x: &[f32], frames: usize) -> Vec<f32> {
+    fn dtype(&self, input: DType) -> DType {
+        input.promote(self.conv2.dtype(self.conv1.dtype(input)))
+    }
+    fn forward(
+        &self,
+        x: &[f32],
+        frames: usize,
+        input_dtype: DType,
+        compute: &Option<Rc<dyn ComputeBackend>>,
+        stage: &str,
+    ) -> Result<Vec<f32>> {
         let channels = self.snake1_alpha.len();
-        let mut activated = x.to_vec();
-        snake(&mut activated, &self.snake1_alpha, channels, frames);
-        let y = self.conv1.forward(&activated, frames);
+        let activated = activate_snake(
+            x,
+            &self.snake1_alpha,
+            channels,
+            frames,
+            input_dtype,
+            compute,
+        )?;
+        backend::trace(
+            compute,
+            &format!("{stage}.snake1"),
+            &activated,
+            input_dtype,
+            &[channels, frames],
+        );
+        let y = self.conv1.forward_typed(&activated, frames, input_dtype)?;
         let y_frames = y.len() / channels;
-        let mut activated = y;
-        snake(&mut activated, &self.snake2_alpha, channels, y_frames);
-        let y = self.conv2.forward(&activated, y_frames);
+        let conv1_dtype = self.conv1.dtype(input_dtype);
+        backend::trace(
+            compute,
+            &format!("{stage}.conv1"),
+            &y,
+            conv1_dtype,
+            &[channels, y_frames],
+        );
+        let activated = activate_snake(
+            &y,
+            &self.snake2_alpha,
+            channels,
+            y_frames,
+            conv1_dtype,
+            compute,
+        )?;
+        backend::trace(
+            compute,
+            &format!("{stage}.snake2"),
+            &activated,
+            conv1_dtype,
+            &[channels, y_frames],
+        );
+        let y = self
+            .conv2
+            .forward_typed(&activated, y_frames, conv1_dtype)?;
+        backend::trace(
+            compute,
+            &format!("{stage}.conv2"),
+            &y,
+            self.conv2.dtype(conv1_dtype),
+            &[channels, y_frames],
+        );
         let mut out = x.to_vec();
         for (o, v) in out.iter_mut().zip(y) {
-            *o += v;
+            *o = self.dtype(input_dtype).round(*o + v);
         }
-        out
+        backend::trace(
+            compute,
+            &format!("{stage}.output"),
+            &out,
+            self.dtype(input_dtype),
+            &[channels, frames],
+        );
+        Ok(out)
     }
 }
 
@@ -154,24 +236,54 @@ impl VocoderBlock {
             )?);
         }
         Ok(VocoderBlock {
-            snake1_alpha: snake1.data,
+            snake1_alpha: snake1,
             conv_t1,
             res_units,
             out_dim,
         })
     }
 
-    fn forward(&self, x: &[f32], frames: usize) -> Vec<f32> {
+    fn dtype(&self, input: DType) -> DType {
+        self.res_units
+            .iter()
+            .fold(self.conv_t1.dtype(input), |d, u| u.dtype(d))
+    }
+    fn forward(
+        &self,
+        x: &[f32],
+        frames: usize,
+        input_dtype: DType,
+        compute: &Option<Rc<dyn ComputeBackend>>,
+        stage: &str,
+    ) -> Result<Vec<f32>> {
         let in_dim = self.snake1_alpha.len();
-        let mut activated = x.to_vec();
-        snake(&mut activated, &self.snake1_alpha, in_dim, frames);
-        let mut y = self.conv_t1.forward(&activated, frames);
+        let activated =
+            activate_snake(x, &self.snake1_alpha, in_dim, frames, input_dtype, compute)?;
+        backend::trace(
+            compute,
+            &format!("{stage}.snake"),
+            &activated,
+            input_dtype,
+            &[in_dim, frames],
+        );
+        let mut y = self
+            .conv_t1
+            .forward_typed(&activated, frames, input_dtype)?;
         let mut frames = y.len() / self.out_dim;
-        for unit in &self.res_units {
-            y = unit.forward(&y, frames);
+        let mut dtype = self.conv_t1.dtype(input_dtype);
+        backend::trace(
+            compute,
+            &format!("{stage}.transpose"),
+            &y,
+            dtype,
+            &[self.out_dim, frames],
+        );
+        for (index, unit) in self.res_units.iter().enumerate() {
+            y = unit.forward(&y, frames, dtype, compute, &format!("{stage}.unit.{index}"))?;
+            dtype = unit.dtype(dtype);
             frames = y.len() / unit.snake1_alpha.len();
         }
-        y
+        Ok(y)
     }
 }
 
@@ -231,15 +343,25 @@ impl Vocoder {
             dec_in_proj,
             conv_in,
             blocks,
-            snake_out_alpha: snake_out.data,
+            snake_out_alpha: snake_out,
             conv_out,
             dims,
+            backend: store.backend(),
         })
     }
 
     /// Decode latents `[1, latent_channels, T]` into a planar stereo
     /// waveform `[2, S]`.
+    #[cfg(test)]
     pub(crate) fn forward(&self, latents: &[f32], seq: usize) -> Result<Vec<f32>> {
+        self.forward_typed(latents, seq, self.snake_out_alpha.dtype)
+    }
+    pub(crate) fn forward_typed(
+        &self,
+        latents: &[f32],
+        seq: usize,
+        input_dtype: DType,
+    ) -> Result<Vec<f32>> {
         let half = self.dims.latent_channels / 2;
         if latents.len() != self.dims.latent_channels * seq {
             return Err(SpeechError::Input {
@@ -255,13 +377,51 @@ impl Vocoder {
             // One stereo half as [half, seq], channel-major.
             let mut hidden: Vec<f32> = latents[b * half * seq..(b + 1) * half * seq].to_vec();
             let mut frames = seq;
-            hidden = self.dec_in_proj.forward(&hidden, frames);
+            let mut dtype = input_dtype;
+            backend::trace(
+                &self.backend,
+                &format!("vocoder.{b}.input"),
+                &hidden,
+                dtype,
+                &[half, frames],
+            );
+            hidden = self.dec_in_proj.forward_typed(&hidden, frames, dtype)?;
+            dtype = self.dec_in_proj.dtype(dtype);
+            backend::trace(
+                &self.backend,
+                &format!("vocoder.{b}.proj"),
+                &hidden,
+                dtype,
+                &[self.dims.input_dim, frames],
+            );
             frames = hidden.len() / self.dims.input_dim;
-            hidden = self.conv_in.forward(&hidden, frames);
+            hidden = self.conv_in.forward_typed(&hidden, frames, dtype)?;
+            dtype = self.conv_in.dtype(dtype);
+            backend::trace(
+                &self.backend,
+                &format!("vocoder.{b}.conv_in"),
+                &hidden,
+                dtype,
+                &[self.dims.hidden_dim, frames],
+            );
             frames = hidden.len() / self.dims.hidden_dim;
-            for block in &self.blocks {
-                hidden = block.forward(&hidden, frames);
+            for (index, block) in self.blocks.iter().enumerate() {
+                hidden = block.forward(
+                    &hidden,
+                    frames,
+                    dtype,
+                    &self.backend,
+                    &format!("vocoder.{b}.block.{index}"),
+                )?;
+                dtype = block.dtype(dtype);
                 frames = hidden.len() / block.out_dim;
+                backend::trace(
+                    &self.backend,
+                    &format!("vocoder.{b}.block.{index}"),
+                    &hidden,
+                    dtype,
+                    &[block.out_dim, frames],
+                );
                 if frames == 0 {
                     return Err(SpeechError::Input {
                         why: "vocoder collapsed to zero frames".to_string(),
@@ -269,15 +429,30 @@ impl Vocoder {
                 }
             }
             let channels = hidden.len() / frames;
-            let mut activated = hidden;
-            snake(&mut activated, &self.snake_out_alpha, channels, frames);
-            let wave = self.conv_out.forward(&activated, frames);
+            let activated = activate_snake(
+                &hidden,
+                &self.snake_out_alpha,
+                channels,
+                frames,
+                dtype,
+                &self.backend,
+            )?;
+            let wave = self.conv_out.forward_typed(&activated, frames, dtype)?;
             if wave.len() != frames {
                 return Err(SpeechError::Input {
                     why: "vocoder output conv changed the frame count".to_string(),
                 });
             }
-            out.extend(wave.iter().map(|v| v.tanh()));
+            dtype = self.conv_out.dtype(dtype);
+            let wave: Vec<f32> = wave.iter().map(|v| dtype.round(v.tanh())).collect();
+            backend::trace(
+                &self.backend,
+                &format!("vocoder.{b}.output"),
+                &wave,
+                dtype,
+                &[1, frames],
+            );
+            out.extend(wave);
         }
         Ok(out)
     }

@@ -158,6 +158,48 @@ pub fn normal(key: Key, n: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Pinned MLX Metal erfinv polynomial, applied to the unchanged uniform stream.
+/// The explicit f32 fused polynomial and final cast matter at BF16 halfway cases.
+#[allow(clippy::excessive_precision)]
+pub(crate) fn normal_from_uniform(uniforms: &[f32], dtype: super::precision::DType) -> Vec<f32> {
+    uniforms
+        .iter()
+        .map(|&a| {
+            let t = a.mul_add(-a, 1.0).ln();
+            let coefficients: &[f32] = if t.abs() > 6.125 {
+                &[
+                    3.03697567e-10,
+                    2.93243101e-8,
+                    1.22150334e-6,
+                    2.84108955e-5,
+                    3.93552968e-4,
+                    3.02698812e-3,
+                    4.83185798e-3,
+                    -2.64646143e-1,
+                    8.40016484e-1,
+                ]
+            } else {
+                &[
+                    5.43877832e-9,
+                    1.43285448e-7,
+                    1.22774793e-6,
+                    1.12963626e-7,
+                    -5.61530760e-5,
+                    -1.47697632e-4,
+                    2.31468678e-3,
+                    1.15392581e-2,
+                    -2.32015476e-1,
+                    8.86226892e-1,
+                ]
+            };
+            let polynomial = coefficients[1..]
+                .iter()
+                .fold(coefficients[0], |p, &c| p.mul_add(t, c));
+            dtype.round((a * polynomial) * std::f32::consts::SQRT_2)
+        })
+        .collect()
+}
+
 /// The k-th largest value counting duplicates (MLX `min(topk(v, k))`).
 pub fn kth_largest(values: &[f32], k: usize) -> f32 {
     debug_assert!(k >= 1 && k <= values.len());

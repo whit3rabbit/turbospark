@@ -7,9 +7,11 @@ flow-matching latent decoder and a stereo 44.1 kHz vocoder.
 
 - Source: `mlx_audio/music/models/minimax_music3/` at mlx-audio
   commit
-  [e1b19b9054bf163f5d812221a54fcc346f1890e9](https://github.com/Blaizzy/mlx-audio/tree/e1b19b9054bf163f5d812221a54fcc346f1890e9/mlx_audio/music/models/minimax_music3)
-  (version 0.5.7). The sibling checkout `../mlx-audio` is clean at
-  that commit.
+  [feb25a37b07923bae556e59111995071d66afa0d](https://github.com/Blaizzy/mlx-audio/tree/feb25a37b07923bae556e59111995071d66afa0d/mlx_audio/music/models/minimax_music3).
+  The previous pin was `e1b19b9054bf163f5d812221a54fcc346f1890e9`.
+  The nine generation, prompt, config, and component source files used
+  for this port compare byte-for-byte equal at both revisions; fixtures
+  therefore retain their values and now record the current pin.
 - Upstream attribution: the MLX implementation is adapted from
   [`mikolaj92/minimax-music3-mlx`](https://github.com/mikolaj92/minimax-music3-mlx)
   under Apache-2.0. MiniMax Music 3 weights and tokenizer are released
@@ -33,22 +35,25 @@ flow-matching latent decoder and a stereo 44.1 kHz vocoder.
 - Converted MLX trees (`mlx-community/MiniMax-Music3-*` layout:
   `config.json` plus safetensors shards, optionally sharded through
   `model.safetensors.index.json`): `Model::load_converted`. Affine
-  2/3/4/6/8-bit linears dequantize through the shared crate kernel;
-  `mxfp4`, `mxfp8`, and `nvfp4` modes are refused until verified here.
+  2/3/4/5/6/8-bit linears use the shared dequantizer. MXFP4, MXFP8, and
+  NVFP4 grouped packed linears have format-specific CPU decoding and strict
+  shape/dtype checks. MXFP8 is the recommended profile; MXFP4 and NVFP4 are
+  experimental upstream profiles.
 - The official repos (`MiniMaxAI/MiniMax-Music3`, and the
   `mlx-community` bf16/8bit/6bit/4bit/mxfp8/mxfp4/nvfp4 conversions)
-  are documented pins, not installed or qualified locally; no digests
-  are claimed. Real-checkpoint size (~11B parameters) places it
-  outside this crate's local-install verification class.
+  are catalogued at immutable revisions and installed under audio aliases;
+  no file digests or general profile qualification are claimed. The MXFP8
+  real-checkpoint smoke and controlled precision parity run are described below.
 
 ## Text frontend
 
-Official checkpoints need their Qwen tokenizer (the converted tree's
-`tokenizer` directory), which this crate does not provide;
-`Model::generate` consumes a pre-tokenized conditional id row (build
-the text with `assemble_prompt` first), mirroring the reference's
-`_encode_official_text_pair` contract. The deterministic tiny encoder
-(`encode_tiny_text_pair`) covers local runs and fixtures.
+`Model::generate_text` accepts a caption and lyrics, applies the upstream
+prompt cleanup, loads `tokenizer/tokenizer.json`, and uses the checkpoint's
+Qwen tokenizer. It defaults to 60 seconds, 30 flow steps, and seed 0, and
+validates duration through 360 seconds and the 1..=30 step range. The
+existing `Model::generate` accepts pre-tokenized conditional ids as a
+low-level reference path. Tiny fixture configs may use the deterministic
+local encoder when tokenizer files are absent; full-size models fail closed.
 
 ## Verification
 
@@ -83,7 +88,9 @@ Gates (see `tests.rs`, `stress.rs`, `timing.rs`, and the
   the official-tree conversion path and an affine 8-bit tree load and
   generate.
 - Contract: chunk scheduling, sigma schedule, crop constants, quant
-  predicate, and the conv-transpose key matcher.
+  predicate, and the conv-transpose key matcher. All seven upstream
+  quantization declarations are checked; synthetic packed safetensors
+  exercise MXFP4, MXFP8, and NVFP4 decoding and reject affine-only tensors.
 - Stress (`stress.rs`): valid boundaries (steps 1 and 30, a prompt at
   exactly MAX_PROMPT_TOKENS), empty-prompt refusal, chunk windows at
   200/201/300/301 (three chunks start at 301, two at 300),
@@ -120,14 +127,87 @@ Gates (see `tests.rs`, `stress.rs`, `timing.rs`, and the
   vocab needs explicit values to stay self-consistent, so the fixture
   tree carries them.
 
+## Metal runtime
+
+`runtime::Music3Runner::open` loads converted checkpoints through the portable
+pipeline's `ComputeBackend` interface. Dense F32/F16/BF16 embeddings and
+projections stay resident at checkpoint precision. Affine 2/3/4/5/6/8-bit,
+MXFP4, MXFP8, and NVFP4 matrices retain their packing and decode inside Metal
+projection and embedding kernels. Convolution weights are uploaded once in
+the portable layout. Batched f32 attention handles the AR time-major CFG cache,
+the causal depth sequence, and the DiT's partial rotary sequence. Sampling,
+norms, rotary tables, flow integration, and stitching retain the CPU reference
+implementation. Activations and caches cross the host/device seam at operation
+boundaries; this implementation does not claim fused or real-time execution.
+
+Each request creates fresh KV and overlap state. Every device dispatch drains
+an autorelease pool, checks command-buffer completion before reading outputs,
+and rejects non-finite results. Resident weight bytes are observable through
+`Music3Runner::resident_weight_bytes`.
+
+Run the focused device gates serially:
+
+```sh
+cargo test -p turbospark-gpu --test music3_parity -- --test-threads=1
+cargo test -p turbospark-runtime --test music3_metal -- --test-threads=1
+TURBOSPARK_MUSIC3_INSTALL_DIR=/path/to/pinned/profile \
+  cargo test -p turbospark-runtime --test music3_metal --release \
+  music3_real_checkpoint_generates_stereo_waveform -- --ignored --nocapture
+```
+
+The kernel gates cover known packed float values, affine values that span U32
+word boundaries, nonuniform groups, convolution/transpose edges, and independent
+GQA attention with both KV layouts and offset causal windows. Runtime fixtures
+check exact sampled codebooks, hiddens/waveforms within 2e-4, repeated-request
+state, and two-chunk overlap/stereo stitching. The real-checkpoint smoke checks
+finite, non-silent stereo output with the official tokenizer. These checks do
+not establish song quality, equivalence of every quantization profile, long
+request memory ceilings, or a real-time threshold.
+
+Full-checkpoint verification used `mlx-community/MiniMax-Music3-mxfp8` at
+`d00a12c3c7f80eb66379dd02dd0f30ed0ce2d96e` on a Metal device. The one-second
+caption-and-lyrics CLI smoke (seed 7, two flow steps) emitted 25 frames and
+44,032 non-silent, finite stereo samples. Uploaded weights occupy
+13,964,639,150 bytes. This is resident weight accounting, not a sustained
+process-memory ceiling.
+
+The independent stage probe requires the pinned source above and MLX 0.32.3.
+With floating reference parameters converted to f32, three emitted AR
+codebooks and all warmup decisions match exactly. The 98,304 hidden values
+have maximum absolute error 1.44e-4; the 10,240 waveform values have maximum
+error 1.67e-7. These are controlled f32 comparisons,
+not BF16 activation parity. A preliminary run with MLX 0.31.2 produced
+different residual codes despite close first-step logits; the probe refuses
+that version rather than treating it as the frozen RNG contract.
+
+To reproduce the independent full-checkpoint gate:
+
+```sh
+# Run in an environment with MLX 0.32.3 and the pinned mlx-audio source.
+python crates/audio/tools/probe_minimax_music3_reference.py \
+  --model /path/to/pinned/profile --output /tmp/music3-reference --float32
+TURBOSPARK_MUSIC3_INSTALL_DIR=/path/to/pinned/profile \
+TURBOSPARK_MUSIC3_REFERENCE_DIR=/tmp/music3-reference \
+  cargo test -p turbospark-runtime --test music3_metal --release \
+  music3_real_checkpoint_matches_controlled_float32_reference -- --ignored
+```
+
+`runtime/examples/music3_backend_probe.rs` also dumps warmup keys, logits,
+hiddens, own-AR waveforms and fixed-reference-hiddens waveforms. This lets a
+failed comparison be localized before changing tolerances. Device kernels use
+f32 activations; sampling keeps the pinned MLX 0.32.3 RNG behavior.
+
+The same one-second prompt with the reference's native BF16 activations also
+completed under MLX 0.32.3, but its waveform differs from the Rust CLI WAV:
+correlation 0.470 and RMSE 0.00363 across 44,032 stereo samples. That comparison
+does not pass native-precision parity. The CLI WAV introduces integer PCM
+rounding, which does not explain the larger divergence. Do not promote the
+controlled f32 gate into BF16 equivalence or a song-quality claim.
+
 ## Open gates
 
-Real-checkpoint parity, quality, runtime/catalog/FFI/Swift
-integration, and the official tokenizer port are unqualified; see
-`MODELS.md` for the pinned-profile rules those gates require. The
-CPU timing profiles bound this port's software path only: at real
-backbone widths an AR frame costs seconds on CPU (measured; the depth
-decoder's seven sequential expansions and the per-layer GEMVs
-dominate), so real-checkpoint use waits on the Metal offload, which is
-its own separately gated optimization. The real-dims flow profile and
-the tiny scenarios' rows are recorded in `MODELS.md`.
+Checkpoint-native BF16 activation parity, song quality, sustained memory and real-time performance,
+and FFI/Swift integration require separate qualification. The standalone command
+now routes full-size converted checkpoints through Metal on macOS and keeps the
+CPU reference path for tiny fixtures. Existing CPU timing rows in `MODELS.md`
+remain CPU evidence only.

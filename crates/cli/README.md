@@ -7,6 +7,7 @@ Command-line binaries for [turbospark](https://github.com/whit3rabbit/turbospark
 - `turbospark-model`: Finds, inspects, and installs models.
 - `turbospark-check`: Generates text and runs interactive chat.
 - `turbospark-image`: Generates native diffusion images via Z-Image-Turbo.
+- `turbospark-music`: Generates music audio via MiniMax Music 0.3 flow matching DiT and vocoder.
 - `turbospark`: Unified front end over all subcommands, the HTTP server, and external coding agents.
 
 Generation is macOS-only and requires a Metal-capable Apple Silicon device. On other platforms, the binaries parse arguments and validate configuration.
@@ -44,6 +45,7 @@ Catalog discovery, remote Hugging Face inspection, and streaming install:
 ```sh
 turbospark-model list                         # Browse curated catalog
 turbospark-model list-speech                  # Browse bundled speech models (STT installs)
+turbospark-model list-music                   # Browse bundled music models and assets
 turbospark-model info gemma4                  # Inspect catalog entry details
 turbospark-model probe Qwen/Qwen3-30B-A3B-GGUF # Probe remote HF repo (reads KB, no download)
 turbospark-model pull gemma4                  # Stream and repack directly into ~/.turbospark/models
@@ -81,7 +83,17 @@ turbospark-image --model ~/models/z-image-turbo \
   --output mars.png --steps 9
 ```
 
-### 4. `turbospark` (Unified Front End)
+### 4. `turbospark-music`
+
+Native music generation via MiniMax Music 0.3 flow matching DiT and vocoder:
+
+```sh
+turbospark-music --model ~/models/minimax-music-0.3 \
+  --prompt "A fast upbeat synthwave track with punchy drums" \
+  --output song.wav --steps 30
+```
+
+### 5. `turbospark` (Unified Front End)
 
 Front end routing commands to peer binaries:
 
@@ -125,6 +137,7 @@ MoE expert weights stream from NVMe storage on demand. Setting the cache slot co
 - `bin/turbospark.rs`: Unified front-end command dispatcher.
 - `bin/model.rs` & `bin/model_cmd/`: Subcommands for `turbospark-model`.
 - `bin/image.rs`: Entry point for `turbospark-image`.
+- `bin/music.rs`: Entry point for `turbospark-music`.
 
 ## Development & Test Commands
 

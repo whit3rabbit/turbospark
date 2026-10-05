@@ -176,6 +176,20 @@ impl PassEncoder {
         self.commit().wait();
     }
 
+    /// Return a device failure before a caller reads shared output memory.
+    pub fn commit_and_wait_checked(self) -> Result<(), super::GpuError> {
+        let pass = self.commit();
+        pass.command_buffer.wait_until_completed();
+        let status = pass.command_buffer.status();
+        if status != metal::MTLCommandBufferStatus::Completed {
+            warn_on_command_buffer_error(&pass.command_buffer);
+            return Err(super::GpuError::InvalidInput(format!(
+                "command buffer failed with status {status:?}"
+            )));
+        }
+        Ok(())
+    }
+
     /// [`Self::commit_and_wait`] that also reports the buffer's GPU-side
     /// busy interval in seconds. See [`CommittedPass::wait_with_gpu_time`].
     pub fn commit_and_wait_with_gpu_time(self) -> f64 {

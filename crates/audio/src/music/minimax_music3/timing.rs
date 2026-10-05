@@ -480,7 +480,7 @@ fn tiny_ar_frame_anatomy() {
     for _ in 0..steps {
         let drawn;
         (drawn, key) = rng::sample_top_k(&guided, key, AR_SAMPLING_TOP_K);
-        drop(drawn);
+        let _ = drawn;
     }
     let sample = start.elapsed() / steps as u32;
     println!(

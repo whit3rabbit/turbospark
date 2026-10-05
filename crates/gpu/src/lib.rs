@@ -171,7 +171,7 @@ pub use attention_tq::{
     encode_attention_decode_tq, TqAttentionScratch,
 };
 #[cfg(target_os = "macos")]
-pub use bytes::{read_f32_buffer, read_f32_buffer_at};
+pub use bytes::{half_slice_to_le_bytes, read_f32_buffer, read_f32_buffer_at, read_half_buffer};
 #[cfg(target_os = "macos")]
 pub use context::{
     autorelease_pool, dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,
@@ -400,3 +400,8 @@ pub use foundation::TokenId;
 mod minimax_router;
 #[cfg(target_os = "macos")]
 pub use minimax_router::encode_minimax_router;
+
+#[cfg(target_os = "macos")]
+mod music3;
+#[cfg(target_os = "macos")]
+pub use music3::{Music3DType, Music3Device, Music3Encoding, Music3Weight};

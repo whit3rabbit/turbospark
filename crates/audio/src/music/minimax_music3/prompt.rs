@@ -7,6 +7,10 @@
 //! `to_lowercase`, which matches Python `str.lower` on ASCII input (the
 //! fixture corpus is ASCII).
 
+use tokenizers::Tokenizer;
+
+use crate::{Result, SpeechError};
+
 /// `clean_caption`: rewrite `<|tag value|>` special tags to prose,
 /// strip markdown headings, bullets, bold and italics, drop bullets
 /// and horizontal rules, and collapse blank lines.
@@ -74,6 +78,26 @@ pub(crate) fn encode_tiny_ids(text: &str, max_length: usize) -> Vec<i32> {
     }
     out.push(2);
     out
+}
+
+/// Tokenize the assembled prompt with the checkpoint's Hugging Face
+/// tokenizer. The model builds the unconditional CFG row from this
+/// conditional row after tokenization.
+pub(crate) fn encode_official_text(tokenizer: &Tokenizer, text: &str) -> Result<Vec<i32>> {
+    let encoded = tokenizer
+        .encode(text, true)
+        .map_err(|error| SpeechError::Input {
+            why: format!("MiniMax Music 3 tokenizer failed: {error}"),
+        })?;
+    encoded
+        .get_ids()
+        .iter()
+        .map(|id| {
+            i32::try_from(*id).map_err(|_| SpeechError::Input {
+                why: format!("tokenizer id {id} exceeds the signed 32-bit model boundary"),
+            })
+        })
+        .collect()
 }
 
 /// Build the conditional / unconditional id pair from one conditional

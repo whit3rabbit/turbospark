@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Regenerate the MiniMax Music 3 Rust parity fixtures.
 
-Normative reference: mlx-audio 0.5.7 at commit
-e1b19b9054bf163f5d812221a54fcc346f1890e9 (mlx 0.32.3).
+Normative reference: mlx-audio at commit
+feb25a37b07923bae556e59111995071d66afa0d (mlx 0.32.3).
 
 Run from inside the mlx-audio checkout root so `mlx_audio` imports from
 the pinned source, with the project venv interpreter:
 
     cd ../mlx-audio
     ../.venv-mlxaudio/bin/python \
-        ../turbospark/crates/speech/tools/gen_minimax_music3_fixtures.py
+        ../turbospark/crates/audio/tools/gen_minimax_music3_fixtures.py
 
 Outputs into crates/speech/testdata/minimax_music3/:
 
@@ -247,7 +247,7 @@ def main() -> None:
         OUT / "manifest.json",
         {
             "generator": Path(__file__).name,
-            "mlx_audio_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+            "mlx_audio_commit": "feb25a37b07923bae556e59111995071d66afa0d",
             "mlx_version": mx.__version__,
             "device": device,
             "weight_seed": WEIGHT_SEED,

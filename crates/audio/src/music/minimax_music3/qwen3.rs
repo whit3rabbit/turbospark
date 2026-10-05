@@ -15,7 +15,10 @@ use crate::ops;
 use crate::Result;
 use crate::SpeechError;
 
-use super::weights::WeightStore;
+use super::backend::{self, AttentionShape, ComputeBackend, Weight};
+use super::precision::DType;
+use super::weights::{Tensor, WeightStore};
+use std::rc::Rc;
 
 pub(crate) struct Qwen3Dims {
     pub hidden: usize,
@@ -31,25 +34,47 @@ pub(crate) struct Qwen3Dims {
 }
 
 struct Attention {
-    q_w: Vec<f32>,
-    k_w: Vec<f32>,
-    v_w: Vec<f32>,
-    o_w: Vec<f32>,
-    q_norm_w: Vec<f32>,
-    k_norm_w: Vec<f32>,
+    q_w: Weight,
+    k_w: Weight,
+    v_w: Weight,
+    o_w: Weight,
+    q_norm_w: Tensor,
+    k_norm_w: Tensor,
 }
 
 struct Mlp {
-    gate_w: Vec<f32>,
-    up_w: Vec<f32>,
-    down_w: Vec<f32>,
+    gate_w: Weight,
+    up_w: Weight,
+    down_w: Weight,
 }
 
 struct Block {
     attn: Attention,
     mlp: Mlp,
-    ln1_w: Vec<f32>,
-    ln2_w: Vec<f32>,
+    ln1_w: Tensor,
+    ln2_w: Tensor,
+}
+
+impl Block {
+    fn output_dtype(&self, input: DType) -> DType {
+        let norm = input.promote(self.ln1_w.dtype);
+        let attention = self
+            .attn
+            .q_w
+            .output_dtype(norm)
+            .promote(self.attn.q_norm_w.dtype)
+            .promote(self.attn.k_w.output_dtype(norm))
+            .promote(self.attn.k_norm_w.dtype)
+            .promote(self.attn.v_w.output_dtype(norm));
+        let residual = input.promote(self.attn.o_w.output_dtype(attention));
+        let norm = residual.promote(self.ln2_w.dtype);
+        let fused = self
+            .mlp
+            .gate_w
+            .output_dtype(norm)
+            .promote(self.mlp.up_w.output_dtype(norm));
+        residual.promote(self.mlp.down_w.output_dtype(fused))
+    }
 }
 
 /// One layer's key/value history, `[batch, kv_heads, t, head_dim]`.
@@ -70,10 +95,11 @@ impl KvCache {
 }
 
 pub(crate) struct Qwen3 {
-    embed: Vec<f32>, // [vocab, hidden]
-    lm_head: Vec<f32>,
-    norm_w: Vec<f32>,
+    embed: Weight, // [vocab, hidden]
+    lm_head: Weight,
+    norm_w: Tensor,
     blocks: Vec<Block>,
+    backend: Option<Rc<dyn ComputeBackend>>,
     dims: Qwen3Dims,
 }
 
@@ -92,10 +118,10 @@ impl Qwen3 {
         let hidden = dims.hidden;
         let q_kv = dims.kv_heads * dims.head_dim;
         let q_out = dims.heads * dims.head_dim;
-        let embed = store.tensor(&format!("{base}.model.embed_tokens.weight"))?;
-        expect_len("embed_tokens", embed.data.len(), dims.vocab * hidden)?;
+        let embed = store.embedding(&format!("{base}.model.embed_tokens.weight"))?;
+        expect_len("embed_tokens", embed.len(), dims.vocab * hidden)?;
         let lm_head = if dims.tie_embeddings {
-            Vec::new()
+            embed.clone()
         } else {
             let (head, _) = store.linear(&format!("{base}.lm_head"))?;
             expect_len("lm_head", head.len(), dims.vocab * hidden)?;
@@ -132,25 +158,37 @@ impl Qwen3 {
                     k_w,
                     v_w,
                     o_w,
-                    q_norm_w: q_norm_w.data,
-                    k_norm_w: k_norm_w.data,
+                    q_norm_w,
+                    k_norm_w,
                 },
                 mlp: Mlp {
                     gate_w,
                     up_w,
                     down_w,
                 },
-                ln1_w: ln1_w.data,
-                ln2_w: ln2_w.data,
+                ln1_w,
+                ln2_w,
             });
         }
         Ok(Qwen3 {
-            embed: embed.data,
+            embed,
             lm_head,
-            norm_w: norm_w.data,
+            norm_w,
             blocks,
+            backend: store.backend(),
             dims,
         })
+    }
+
+    pub(crate) fn dtype(&self) -> DType {
+        self.embed.dtype()
+    }
+
+    pub(crate) fn output_dtype(&self) -> DType {
+        self.blocks
+            .iter()
+            .fold(self.dtype(), |d, b| b.output_dtype(d))
+            .promote(self.norm_w.dtype)
     }
 
     /// Token embedding lookup for `[batch, len]` ids.
@@ -160,7 +198,7 @@ impl Qwen3 {
                 why: format!("ids len {} does not match {batch}x{len}", ids.len()),
             });
         }
-        Ok(ops::embedding(&self.embed, self.dims.hidden, ids))
+        self.embed.embedding(ids, self.dims.hidden)
     }
 
     /// The transformer body on precomputed embeddings; returns
@@ -190,32 +228,63 @@ impl Qwen3 {
         // Prefill (offset 0, len > 1) is causal; decode steps are not
         // masked, matching create_attention_mask in the reference.
         let causal = cache.first().is_some_and(|c| c.offset == 0) && len > 1;
+        let mut dtype = self.dtype();
         let mut h = embeddings.to_vec();
-        for (block, layer_cache) in self.blocks.iter().zip(cache.iter_mut()) {
-            h = self.block_forward(block, layer_cache, &h, batch, len, causal);
+        for (layer_index, (block, layer_cache)) in
+            self.blocks.iter().zip(cache.iter_mut()).enumerate()
+        {
+            h = self.block_forward(
+                block,
+                layer_cache,
+                &h,
+                batch,
+                len,
+                causal,
+                dtype,
+                layer_index,
+            )?;
+            dtype = block.output_dtype(dtype);
         }
-        ops::rmsnorm(&mut h, batch * len, hidden, &self.norm_w, dims.eps);
+        h = backend::rms_norm(
+            &self.backend,
+            &h,
+            &self.norm_w,
+            batch * len,
+            hidden,
+            dims.eps,
+            dtype.promote(self.norm_w.dtype),
+        )?;
+        backend::trace(
+            &self.backend,
+            "ar.final_norm",
+            &h,
+            dtype.promote(self.norm_w.dtype),
+            &[batch, len, hidden],
+        );
         Ok(h)
     }
 
     /// Logits for `[rows, hidden]` hidden states.
     pub(crate) fn logits(&self, hidden_rows: &[f32]) -> Result<Vec<f32>> {
+        let dtype = self.output_dtype();
         let rows = hidden_rows.len() / self.dims.hidden;
         if rows == 0 {
             return Err(SpeechError::Input {
                 why: "empty logits input".to_string(),
             });
         }
-        Ok(ops::linear(
+        backend::linear(
             hidden_rows,
             &self.lm_head,
             None,
             rows,
             self.dims.hidden,
             self.dims.vocab,
-        ))
+            dtype,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn block_forward(
         &self,
         block: &Block,
@@ -224,67 +293,141 @@ impl Qwen3 {
         batch: usize,
         len: usize,
         causal: bool,
-    ) -> Vec<f32> {
+        input_dtype: DType,
+        layer_index: usize,
+    ) -> Result<Vec<f32>> {
+        let trace = |stage: &str, data: &[f32], dtype: DType, shape: &[usize]| {
+            backend::trace(
+                &self.backend,
+                &format!("ar.{layer_index}.{stage}"),
+                data,
+                dtype,
+                shape,
+            )
+        };
         let dims = &self.dims;
         let hidden = dims.hidden;
         let (heads, kv_heads, head_dim) = (dims.heads, dims.kv_heads, dims.head_dim);
         let eps = dims.eps;
+        trace("input", x, input_dtype, &[batch, len, hidden]);
         let offset = layer_cache.offset;
 
-        let mut normed = x.to_vec();
-        ops::rmsnorm(&mut normed, batch * len, hidden, &block.ln1_w, eps);
+        let mut dtype = input_dtype.promote(block.ln1_w.dtype);
+        let normed = backend::rms_norm(
+            &self.backend,
+            x,
+            &block.ln1_w,
+            batch * len,
+            hidden,
+            eps,
+            dtype,
+        )?;
+        trace("input_norm", &normed, dtype, &[batch, len, hidden]);
 
-        let mut q = ops::linear(
+        let mut q = backend::linear(
             &normed,
             &block.attn.q_w,
             None,
             batch * len,
             hidden,
             heads * head_dim,
+            dtype,
+        )?;
+        trace(
+            "q",
+            &q,
+            block.attn.q_w.output_dtype(dtype),
+            &[batch, len, heads * head_dim],
         );
-        let mut k = ops::linear(
+        let mut k = backend::linear(
             &normed,
             &block.attn.k_w,
             None,
             batch * len,
             hidden,
             kv_heads * head_dim,
+            dtype,
+        )?;
+        trace(
+            "k",
+            &k,
+            block.attn.k_w.output_dtype(dtype),
+            &[batch, len, kv_heads * head_dim],
         );
-        let v = ops::linear(
+        let v = backend::linear(
             &normed,
             &block.attn.v_w,
             None,
             batch * len,
             hidden,
             kv_heads * head_dim,
+            dtype,
+        )?;
+        trace(
+            "v",
+            &v,
+            block.attn.v_w.output_dtype(dtype),
+            &[batch, len, kv_heads * head_dim],
         );
 
-        // QK norm is per head over head_dim, before rope.
-        qnorm_heads(
-            &mut q,
-            batch * len,
-            heads,
-            head_dim,
+        let q_dtype = block
+            .attn
+            .q_w
+            .output_dtype(dtype)
+            .promote(block.attn.q_norm_w.dtype);
+        let k_dtype = block
+            .attn
+            .k_w
+            .output_dtype(dtype)
+            .promote(block.attn.k_norm_w.dtype);
+        q = backend::rms_norm(
+            &self.backend,
+            &q,
             &block.attn.q_norm_w,
-            eps,
-        );
-        qnorm_heads(
-            &mut k,
-            batch * len,
-            kv_heads,
+            batch * len * heads,
             head_dim,
-            &block.attn.k_norm_w,
             eps,
-        );
+            q_dtype,
+        )?;
+        trace("q_norm", &q, q_dtype, &[batch, len, heads, head_dim]);
+        k = backend::rms_norm(
+            &self.backend,
+            &k,
+            &block.attn.k_norm_w,
+            batch * len * kv_heads,
+            head_dim,
+            eps,
+            k_dtype,
+        )?;
+        trace("k_norm", &k, k_dtype, &[batch, len, kv_heads, head_dim]);
+        if dtype == DType::F32 {
+            let (cos, sin) = ops::rope_tables_range(offset, len, head_dim, dims.rope_theta);
+            rope_strided(&mut q, batch, len, heads, head_dim, &cos, &sin);
+            rope_strided(&mut k, batch, len, kv_heads, head_dim, &cos, &sin);
+        } else {
+            let shape = |heads| backend::RopeShape {
+                batch,
+                seq: len,
+                heads,
+                dim: head_dim,
+                offset,
+                theta: dims.rope_theta,
+            };
+            q = match &self.backend {
+                Some(b) => b.rope(&q, shape(heads), q_dtype)?,
+                None => backend::rope(&q, shape(heads), q_dtype),
+            };
+            k = match &self.backend {
+                Some(b) => b.rope(&k, shape(kv_heads), k_dtype)?,
+                None => backend::rope(&k, shape(kv_heads), k_dtype),
+            };
+        }
+        dtype = q_dtype
+            .promote(k_dtype)
+            .promote(block.attn.v_w.output_dtype(dtype));
 
-        // NeoX rope over absolute positions offset..offset+len, applied
-        // in the per-head view of `[batch, len, heads, head_dim]`. The
-        // tables cover only the new positions: a decode step needs one
-        // row, and recomputing from position 0 is O(t) per step.
-        let (cos, sin) = ops::rope_tables_range(offset, len, head_dim, dims.rope_theta);
-        rope_strided(&mut q, batch, len, heads, head_dim, &cos, &sin);
-        rope_strided(&mut k, batch, len, kv_heads, head_dim, &cos, &sin);
-
+        trace("q_rope", &q, q_dtype, &[batch, len, heads, head_dim]);
+        trace("k_rope", &k, k_dtype, &[batch, len, kv_heads, head_dim]);
         append_kv(&mut layer_cache.keys, &k, batch, len, kv_heads, head_dim);
         append_kv(&mut layer_cache.values, &v, batch, len, kv_heads, head_dim);
         layer_cache.offset += len;
@@ -304,112 +447,180 @@ impl Qwen3 {
         };
         let mask_ref = (!mask.is_empty()).then_some(mask.as_slice());
 
-        let mut attn_out = vec![0.0f32; batch * len * hidden];
-        for b in 0..batch {
-            // Attention reads the time-major cache in place through
-            // strides: each (batch, kv_head) plane's rows are
-            // `batch * kv_heads * dim` apart, shared by the query
-            // heads mapped to it. Materializing contiguous planes per
-            // query head re-copied each plane heads/kv_heads times
-            // (measured 7.3 ms per layer per frame at the real KV
-            // shapes and the 9000-frame ceiling).
-            let kv_stride = batch * kv_heads * head_dim;
-            let mut block_out = vec![0.0f32; len * heads * head_dim];
-            for h in 0..heads {
-                let kv_h = h / (heads / kv_heads);
-                let base = (b * kv_heads + kv_h) * head_dim;
-                let mut q_head = vec![0.0f32; len * head_dim];
-                for t in 0..len {
-                    let src = ((b * len + t) * heads + h) * head_dim;
-                    q_head[t * head_dim..(t + 1) * head_dim]
-                        .copy_from_slice(&q[src..src + head_dim]);
-                }
-                let out = ops::sdpa_strided(
-                    &q_head,
-                    &layer_cache.keys,
-                    base,
-                    kv_stride,
-                    &layer_cache.values,
-                    base,
-                    kv_stride,
-                    mask_ref,
-                    len,
-                    total,
-                    head_dim,
-                    head_dim,
-                    scale,
-                );
-                for t in 0..len {
-                    let dst = (t * heads + h) * head_dim;
-                    block_out[dst..dst + head_dim]
-                        .copy_from_slice(&out[t * head_dim..(t + 1) * head_dim]);
-                }
-            }
-            let proj = ops::linear(
-                &block_out,
+        let attn_out = if self.backend.is_some() || dtype != DType::F32 {
+            let rows = backend::attention(
+                &self.backend,
+                &q,
+                &layer_cache.keys,
+                &layer_cache.values,
+                AttentionShape {
+                    batch,
+                    queries: len,
+                    keys: total,
+                    heads,
+                    kv_heads,
+                    dim: head_dim,
+                    kv_time_major: true,
+                    causal,
+                    offset,
+                },
+                dtype,
+            )?;
+            trace("attention", &rows, dtype, &[batch, len, heads * head_dim]);
+            let projection = backend::linear(
+                &rows,
                 &block.attn.o_w,
                 None,
-                len,
+                batch * len,
                 heads * head_dim,
                 hidden,
-            );
-            let base = b * len * hidden;
-            for (res, (old, p)) in attn_out[base..base + len * hidden]
-                .iter_mut()
-                .zip(x[base..base + len * hidden].iter().zip(proj))
-            {
-                *res = old + p;
+                dtype,
+            )?;
+            x.iter()
+                .zip(projection)
+                .map(|(x, p)| {
+                    input_dtype
+                        .promote(block.attn.o_w.output_dtype(dtype))
+                        .round(x + p)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            let mut attn_out = vec![0.0f32; batch * len * hidden];
+            for b in 0..batch {
+                // Attention reads the time-major cache in place through
+                // strides: each (batch, kv_head) plane's rows are
+                // `batch * kv_heads * dim` apart, shared by the query
+                // heads mapped to it. Materializing contiguous planes per
+                // query head re-copied each plane heads/kv_heads times
+                // (measured 7.3 ms per layer per frame at the real KV
+                // shapes and the 9000-frame ceiling).
+                let kv_stride = batch * kv_heads * head_dim;
+                let mut block_out = vec![0.0f32; len * heads * head_dim];
+                for h in 0..heads {
+                    let kv_h = h / (heads / kv_heads);
+                    let base = (b * kv_heads + kv_h) * head_dim;
+                    let mut q_head = vec![0.0f32; len * head_dim];
+                    for t in 0..len {
+                        let src = ((b * len + t) * heads + h) * head_dim;
+                        q_head[t * head_dim..(t + 1) * head_dim]
+                            .copy_from_slice(&q[src..src + head_dim]);
+                    }
+                    let out = ops::sdpa_strided(
+                        &q_head,
+                        &layer_cache.keys,
+                        base,
+                        kv_stride,
+                        &layer_cache.values,
+                        base,
+                        kv_stride,
+                        mask_ref,
+                        len,
+                        total,
+                        head_dim,
+                        head_dim,
+                        scale,
+                    );
+                    for t in 0..len {
+                        let dst = (t * heads + h) * head_dim;
+                        block_out[dst..dst + head_dim]
+                            .copy_from_slice(&out[t * head_dim..(t + 1) * head_dim]);
+                    }
+                }
+                let proj = backend::linear(
+                    &block_out,
+                    &block.attn.o_w,
+                    None,
+                    len,
+                    heads * head_dim,
+                    hidden,
+                    dtype,
+                )?;
+                let base = b * len * hidden;
+                for (res, (old, p)) in attn_out[base..base + len * hidden]
+                    .iter_mut()
+                    .zip(x[base..base + len * hidden].iter().zip(proj))
+                {
+                    *res = input_dtype
+                        .promote(block.attn.o_w.output_dtype(dtype))
+                        .round(old + p);
+                }
             }
-        }
 
-        let mut normed = attn_out.clone();
-        ops::rmsnorm(&mut normed, batch * len, hidden, &block.ln2_w, eps);
-        let gate = ops::linear(
+            attn_out
+        };
+
+        trace(
+            "residual",
+            &attn_out,
+            input_dtype.promote(block.attn.o_w.output_dtype(dtype)),
+            &[batch, len, hidden],
+        );
+        dtype = input_dtype
+            .promote(block.attn.o_w.output_dtype(dtype))
+            .promote(block.ln2_w.dtype);
+        let normed = backend::rms_norm(
+            &self.backend,
+            &attn_out,
+            &block.ln2_w,
+            batch * len,
+            hidden,
+            eps,
+            dtype,
+        )?;
+        trace("post_norm", &normed, dtype, &[batch, len, hidden]);
+        let gate = backend::linear(
             &normed,
             &block.mlp.gate_w,
             None,
             batch * len,
             hidden,
             dims.intermediate,
-        );
-        let up = ops::linear(
+            dtype,
+        )?;
+        trace("gate", &gate, dtype, &[batch, len, dims.intermediate]);
+        let up = backend::linear(
             &normed,
             &block.mlp.up_w,
             None,
             batch * len,
             hidden,
             dims.intermediate,
-        );
+            dtype,
+        )?;
+        trace("up", &up, dtype, &[batch, len, dims.intermediate]);
         let mut fused = gate;
         for (g, u) in fused.iter_mut().zip(up) {
-            let silu = *g / (1.0 + (-*g).exp());
-            *g = silu * u;
+            let gate_dtype = block.mlp.gate_w.output_dtype(dtype);
+            let fused_dtype = gate_dtype.promote(block.mlp.up_w.output_dtype(dtype));
+            *g = fused_dtype.round(gate_dtype.silu(*g) * u);
         }
-        let down = ops::linear(
+        dtype = block
+            .mlp
+            .gate_w
+            .output_dtype(dtype)
+            .promote(block.mlp.up_w.output_dtype(dtype));
+        trace("swiglu", &fused, dtype, &[batch, len, dims.intermediate]);
+        let down = backend::linear(
             &fused,
             &block.mlp.down_w,
             None,
             batch * len,
             dims.intermediate,
             hidden,
-        );
+            dtype,
+        )?;
+        trace("down", &down, dtype, &[batch, len, hidden]);
         let mut out = attn_out;
         for (o, d) in out.iter_mut().zip(down) {
-            *o += d;
+            *o = block.output_dtype(input_dtype).round(*o + d);
         }
-        out
-    }
-}
-
-/// RMSNorm applied per attention head over `head_dim` features.
-fn qnorm_heads(x: &mut [f32], rows: usize, heads: usize, head_dim: usize, w: &[f32], eps: f32) {
-    for row in 0..rows {
-        for h in 0..heads {
-            let base = (row * heads + h) * head_dim;
-            let mut head = x[base..base + head_dim].to_vec();
-            ops::rmsnorm(&mut head, 1, head_dim, w, eps);
-            x[base..base + head_dim].copy_from_slice(&head);
-        }
+        trace(
+            "output",
+            &out,
+            block.output_dtype(input_dtype),
+            &[batch, len, hidden],
+        );
+        Ok(out)
     }
 }
 

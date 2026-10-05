@@ -85,7 +85,10 @@ pub fn entry(entry: &CatalogEntry, is_user_row: bool, store: &Store) {
 /// One bundled speech entry, with its installed state when present.
 pub fn speech_entry(entry: &SpeechCatalogEntry, store: &Store) {
     println!("{}  ({})", entry.alias, entry.model_id);
-    println!("  kind        speech (whisper)");
+    println!(
+        "  kind        speech ({})",
+        entry.format.speech_family().as_str()
+    );
     println!("  revision    {}", entry.revision);
     println!("  files       {}", entry.required_files.join(", "));
     match store.installed().get(&entry.alias) {
@@ -100,7 +103,7 @@ pub fn speech_entry(entry: &SpeechCatalogEntry, store: &Store) {
 
 /// The speech family table header block.
 pub fn speech_list_header(count: usize) {
-    println!("{count} speech model(s); speech installs are safetensors whisper");
+    println!("{count} speech model(s); speech installs are safetensors");
     println!("distributions consumed through the STT FFI surface, not --model.");
 }
 

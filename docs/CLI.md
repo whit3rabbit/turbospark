@@ -8,8 +8,9 @@ The binaries are:
 
 - `turbospark` -- unified entry point providing intuitive subcommands for chat/generation (`run`, `image`), server management (`serve`, `start`, `stop`, `restart`, `status`), agent connectors (`start claude`, `start codex`), and model operations (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`).
 - `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/AGENTS.md`](../crates/cli/AGENTS.md).
-- `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`. Image installs use `~/.turbospark/models/image`, and audio is reserved at `~/.turbospark/models/audio`. See [`docs/MODELS.md`](MODELS.md).
+- `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`, image models into `~/.turbospark/models/image`, and pinned MiniMax Music 3 profiles into `~/.turbospark/models/audio`. See [`docs/MODELS.md`](MODELS.md).
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
+- `turbospark-music` -- generate MiniMax Music 3 WAV files from an installed profile or local model directory. Full-size converted profiles use the Metal runner on macOS; tiny fixtures also support the portable CPU reference path.
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/AGENTS.md`](../crates/server/AGENTS.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
@@ -77,6 +78,32 @@ default on macOS. The explicit `--backend reference` diagnostic path supports
 cancelled output is not published. Image installs use their own manifest and
 image namespace; they are not text model rows and are not opened by
 `turbospark-check`. Existing legacy `.image.gturbo` installs remain readable.
+
+### MiniMax Music 3
+
+List and install one of the seven pinned MiniMax Music 3 profiles with
+`turbospark-model list-audio` and `turbospark-model pull-audio <alias>`.
+MXFP8 is the recommended profile. MXFP4 and NVFP4 are marked experimental.
+The generation command accepts caption text and exactly one lyrics source:
+
+```sh
+turbospark-music generate \
+  --model minimax-music3-mxfp8 \
+  --caption "A gentle piano ballad" \
+  --lyrics-file lyrics.txt \
+  --duration 30 --steps 20 --seed 42 \
+  --output song.wav
+```
+
+Use `--lyrics "[instrumental]"` for instrumental output. The public request
+defaults to 60 seconds, 30 steps, and seed 0. Full-size converted profiles use
+`runtime::Music3Runner` on macOS with a Metal device. Packed matrices remain
+resident in their checkpoint encoding. Local tiny fixtures exercise the CPU
+reference path. Both paths write 44.1 kHz stereo WAV output.
+
+Metal execution is implemented; profile-specific quality and real-time
+performance qualification remain separate. See the [Music 3 verification
+notes](../crates/audio/src/music/minimax_music3/README.md).
 
 ### oMLX compatibility
 

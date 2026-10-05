@@ -2,7 +2,7 @@
 //! flow-matching latent decoder and a stereo 44.1 kHz vocoder.
 //!
 //! Reference: `mlx_audio/music/models/minimax_music3/` at mlx-audio
-//! commit `e1b19b9054bf163f5d812221a54fcc346f1890e9` (upstream
+//! commit `feb25a37b07923bae556e59111995071d66afa0d` (upstream
 //! attribution: `mikolaj92/minimax-music3-mlx`, Apache-2.0). The
 //! pipeline: a Qwen3 AR backbone emits one semantic code per frame, an
 //! RVQ depth decoder expands it into residual codebooks, the fused
@@ -17,13 +17,14 @@
 //! uses an f64 `erfinv` that agrees with Metal's to f32 rounding only
 //! (see [`rng`] docs); parity tests therefore replay recorded noise.
 //!
-//! Text frontends: the tiny deterministic encoder covers local runs;
-//! official checkpoints need their Qwen tokenizer (the `tokenizer`
-//! directory of the converted tree), which this crate does not
-//! provide. [`Model::generate`] consumes a pre-tokenized conditional
-//! id row, mirroring the reference's `_encode_official_text_pair`
-//! contract (use [`assemble_prompt`] to build the text first).
+//! Official checkpoints use the Qwen tokenizer from the `tokenizer`
+//! directory of the converted tree. [`Model::generate_text`] assembles
+//! and tokenizes caption plus lyrics; [`Model::generate`] remains the
+//! low-level pre-tokenized reference path.
 
+pub mod backend;
+pub mod precision;
+pub use precision::Music3Precision;
 mod conv;
 mod depth;
 mod dit;
@@ -45,19 +46,22 @@ mod timing;
 use std::collections::HashMap;
 use std::path::Path;
 
+use tokenizers::Tokenizer;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::quant::QuantScheme;
 use crate::Result;
 use crate::SpeechError;
 
+use backend::{ComputeBackend, Weight};
 use depth::{DepthDecoder, DepthDims};
 use dit::{DitDims, FlowMatchingTransformer};
 use fusion::{ConditionDims, ConditionEncoder};
 use qwen3::{KvCache, Qwen3, Qwen3Dims};
 use rng::Key;
+use std::rc::Rc;
 use vocoder::{Vocoder, VocoderDims};
-use weights::{open_converted_shards, Tensor, WeightStore};
+use weights::{open_converted_shards, LinearQuantization, Tensor, WeightStore};
 
 /// Classifier-free guidance scale of both AR sampling sites.
 pub const AR_CFG_SCALE: f32 = 1.5;
@@ -292,6 +296,116 @@ impl ModelConfig {
         }
         config
     }
+
+    fn validate(&self) -> Result<()> {
+        let dimensions = [
+            self.hidden_size,
+            self.num_hidden_layers,
+            self.intermediate_size,
+            self.num_attention_heads,
+            self.num_key_value_heads,
+            self.head_dim,
+            self.vocab_size,
+            self.audio_vocab_size,
+            self.semantic_vocab_size,
+            self.depth_num_layers,
+            self.depth_num_heads,
+            self.depth_intermediate_size,
+            self.depth_max_position_embeddings,
+            self.condition_out_dim,
+            self.num_condition_layers,
+            self.input_sampling_rate,
+            self.input_hop_length,
+            self.output_sampling_rate,
+            self.output_hop_length,
+            self.dit_in_channels,
+            self.dit_num_layers,
+            self.dit_num_heads,
+            self.dit_head_dim,
+            self.dit_ff_inner_dim,
+            self.dit_fourier_dim,
+            self.vocoder_input_dim,
+            self.vocoder_hidden_dim,
+        ];
+        if dimensions.contains(&0)
+            || self.num_codebooks < 2
+            || self.num_codebooks != self.num_condition_layers
+            || self.num_attention_heads % self.num_key_value_heads != 0
+            || self.hidden_size % self.depth_num_heads != 0
+            || self.head_dim % 2 != 0
+            || self.dit_rotary_dim % 2 != 0
+            || self.dit_rotary_dim == 0
+            || self.dit_rotary_dim > self.dit_head_dim
+            || self.dit_fourier_dim % 2 != 0
+            || self.audio_cfg_token_id >= self.vocab_size
+            || self.audio_end_token_id >= self.vocab_size
+            || self
+                .audio_code_offset
+                .checked_add(self.semantic_vocab_size)
+                .is_none_or(|end| end > self.vocab_size)
+            || !self.rms_norm_eps.is_finite()
+            || self.rms_norm_eps <= 0.0
+            || !self.rope_theta.is_finite()
+            || self.rope_theta <= 0.0
+            || self.vocoder_upsampling_ratios.is_empty()
+            || self.vocoder_upsampling_ratios.contains(&0)
+            || self
+                .vocoder_upsampling_ratios
+                .iter()
+                .any(|&r| r.checked_mul(2).is_none())
+            || self.vocoder_upsampling_ratios.len() >= usize::BITS as usize - 1
+            || self.vocoder_hidden_dim / (1usize << self.vocoder_upsampling_ratios.len()) == 0
+        {
+            return Err(SpeechError::BadConfig {
+                field: "geometry".into(),
+                why: "inconsistent Music 3 dimensions, token range, or numeric parameters".into(),
+            });
+        }
+        if self.sample_rate != SAMPLING_RATE {
+            return Err(SpeechError::BadConfig {
+                field: "sample_rate".to_string(),
+                why: format!(
+                    "MiniMax Music 3 outputs 44.1 kHz audio, config requested {} Hz",
+                    self.sample_rate
+                ),
+            });
+        }
+        // Reject corrupt dimensions before component loaders multiply them or
+        // allocate request buffers. The bound is Vec<f32>'s addressable size.
+        let products: &[&[usize]] = &[
+            &[self.vocab_size, self.hidden_size],
+            &[self.num_codebooks, self.hidden_size, MAX_AUDIO_FRAMES],
+            &[
+                self.audio_vocab_size,
+                self.num_codebooks - 1,
+                self.hidden_size,
+            ],
+            &[self.depth_max_position_embeddings, self.hidden_size],
+            &[self.hidden_size, self.hidden_size],
+            &[self.hidden_size, self.intermediate_size],
+            &[self.hidden_size, self.depth_intermediate_size],
+            &[self.num_attention_heads, self.head_dim, self.hidden_size],
+            &[self.dit_num_heads, self.dit_head_dim, self.dit_ff_inner_dim],
+            &[self.vocoder_hidden_dim, self.vocoder_hidden_dim, 7],
+        ];
+        if products.iter().any(|dims| {
+            dims.iter()
+                .try_fold(1usize, |n, &d| n.checked_mul(d))
+                .is_none_or(|n| n > isize::MAX as usize / 4)
+        }) {
+            return Err(SpeechError::BadConfig {
+                field: "geometry".into(),
+                why: "Music 3 dimension product exceeds addressable memory".into(),
+            });
+        }
+        if !self.frame_rate.is_finite() || self.frame_rate <= 0.0 {
+            return Err(SpeechError::BadConfig {
+                field: "frame_rate".to_string(),
+                why: "frame rate must be a finite positive number".to_string(),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// One generation request. `text_ids` is the conditional row (BOS,
@@ -304,6 +418,71 @@ pub struct GenerateRequest {
     pub frames: usize,
     pub steps: usize,
     pub seed: u64,
+}
+
+/// Borrowed AR sampling inputs for independent stage diagnostics. Frame zero
+/// is the warmup frame; semantic samples are vocabulary IDs, residuals local IDs.
+pub struct SamplingTrace<'a> {
+    pub frame: usize,
+    pub codebook: usize,
+    pub key: (u32, u32),
+    pub hiddens: &'a [f32],
+    pub guided_logits: &'a [f32],
+    pub sampled: usize,
+}
+
+/// Caption-and-lyrics request matching mlx-audio's MiniMax Music 3 API.
+/// Duration, steps, and seed default to 60 seconds, 30, and 0.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextGenerateRequest {
+    pub caption: String,
+    pub lyrics: String,
+    pub duration_seconds: Option<f64>,
+    pub steps: Option<usize>,
+    pub seed: Option<u64>,
+}
+
+impl TextGenerateRequest {
+    pub fn new(caption: impl Into<String>, lyrics: impl Into<String>) -> Self {
+        Self {
+            caption: caption.into(),
+            lyrics: lyrics.into(),
+            duration_seconds: None,
+            steps: None,
+            seed: None,
+        }
+    }
+
+    /// Check request values without loading a model or tokenizing the prompt.
+    pub fn validate(&self) -> Result<()> {
+        self.resolve().map(|_| ())
+    }
+
+    fn resolve(&self) -> Result<(f64, usize, u64)> {
+        if self.caption.trim().is_empty() {
+            return Err(SpeechError::Input {
+                why: "A music description is required".to_string(),
+            });
+        }
+        if self.lyrics.trim().is_empty() {
+            return Err(SpeechError::Input {
+                why: "Lyrics are required; use [instrumental] explicitly".to_string(),
+            });
+        }
+        let duration = self.duration_seconds.unwrap_or(60.0);
+        if !duration.is_finite() || duration <= 0.0 || duration > 360.0 {
+            return Err(SpeechError::Input {
+                why: "duration must be greater than 0 and no more than 360 seconds".to_string(),
+            });
+        }
+        let steps = self.steps.unwrap_or(30);
+        if !(1..=30).contains(&steps) {
+            return Err(SpeechError::Input {
+                why: "steps must be between 1 and 30".to_string(),
+            });
+        }
+        Ok((duration, steps, self.seed.unwrap_or(0)))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -322,6 +501,9 @@ pub struct Model {
     condition: ConditionEncoder,
     transformer: FlowMatchingTransformer,
     vocoder: Vocoder,
+    tokenizer: Option<Tokenizer>,
+    backend: Option<Rc<dyn ComputeBackend>>,
+    precision: Music3Precision,
 }
 
 /// Chunk windows over `num_frames` AR frames: 200-frame windows hopping
@@ -360,15 +542,21 @@ pub fn model_quant_predicate(path: &str, is_linear: bool) -> bool {
 }
 
 impl Model {
-    pub(crate) fn config(&self) -> &ModelConfig {
+    pub fn precision(&self) -> Music3Precision {
+        self.precision
+    }
+    pub fn config(&self) -> &ModelConfig {
         &self.config
     }
 
     /// Load a converted MLX tree (`config.json` plus safetensors
-    /// shards). Affine-quantized linears dequantize at load; other
-    /// quantization modes (mxfp4/mxfp8/nvfp4) are refused until this
-    /// port verifies them.
+    /// shards). Affine-quantized linears dequantize at load; supported
+    /// floating-point and MXFP formats are parsed by the same strict loader.
     pub fn load_converted(dir: &Path) -> Result<Model> {
+        Self::load_converted_with_precision(dir, Music3Precision::Float32)
+    }
+
+    pub fn load_converted_with_precision(dir: &Path, precision: Music3Precision) -> Result<Model> {
         let config_path = dir.join("config.json");
         if !config_path.is_file() {
             return Err(SpeechError::BadConfig {
@@ -380,9 +568,36 @@ impl Model {
         let config = ModelConfig::from_json(&value);
         let scheme = parse_quant_scheme(&value)?;
         let files = open_converted_shards(dir)?;
-        let mut store = WeightStore::from_files(files, scheme);
-        let model = Model::from_store(&mut store, &config)?;
+        let mut store = WeightStore::from_files(files, scheme).with_precision(precision);
+        let mut model = Model::from_store(&mut store, &config)?;
         store.finish()?;
+        model.tokenizer = load_tokenizer(dir)?;
+        Ok(model)
+    }
+
+    /// Load converted weights directly into a device backend without CPU
+    /// expansion of packed matrices. The same pipeline owns both paths.
+    pub fn load_converted_with_backend(
+        dir: &Path,
+        backend: Rc<dyn ComputeBackend>,
+    ) -> Result<Model> {
+        Self::load_converted_with_backend_and_precision(dir, backend, Music3Precision::Float32)
+    }
+
+    pub fn load_converted_with_backend_and_precision(
+        dir: &Path,
+        backend: Rc<dyn ComputeBackend>,
+        precision: Music3Precision,
+    ) -> Result<Model> {
+        let value = crate::quant::read_json(&dir.join("config.json"))?;
+        let config = ModelConfig::from_json(&value);
+        let scheme = parse_quant_scheme(&value)?;
+        let files = open_converted_shards(dir)?;
+        let mut store =
+            WeightStore::from_files_with_backend(files, scheme, backend).with_precision(precision);
+        let mut model = Model::from_store(&mut store, &config)?;
+        store.finish()?;
+        model.tokenizer = load_tokenizer(dir)?;
         Ok(model)
     }
 
@@ -390,15 +605,23 @@ impl Model {
     /// directories): flatten the component configs, fuse vocoder
     /// weight-norm pairs, and remap the PyTorch conv layouts.
     pub fn load_official_tree(dir: &Path) -> Result<Model> {
+        Self::load_official_tree_with_precision(dir, Music3Precision::Float32)
+    }
+    pub fn load_official_tree_with_precision(
+        dir: &Path,
+        precision: Music3Precision,
+    ) -> Result<Model> {
         let config = prepare_official_config(dir)?;
         let tensors = load_official_tensors(dir)?;
-        let mut store = WeightStore::from_map(tensors);
-        let model = Model::from_store(&mut store, &config)?;
+        let mut store = WeightStore::from_map(tensors).with_precision(precision);
+        let mut model = Model::from_store(&mut store, &config)?;
         store.finish()?;
+        model.tokenizer = load_tokenizer(dir)?;
         Ok(model)
     }
 
     fn from_store(store: &mut WeightStore, config: &ModelConfig) -> Result<Model> {
+        config.validate()?;
         let lm = Qwen3::load(
             store,
             "language_model",
@@ -472,6 +695,42 @@ impl Model {
             condition,
             transformer,
             vocoder,
+            tokenizer: None,
+            backend: store.backend(),
+            precision: store.precision(),
+        })
+    }
+
+    /// Generate from the public caption-and-lyrics contract using the
+    /// tokenizer shipped with the converted checkpoint.
+    pub fn generate_text(&self, request: &TextGenerateRequest) -> Result<Generation> {
+        let (duration, steps, seed) = request.resolve()?;
+        let frames = ((duration * self.config.frame_rate).trunc() as usize).max(1);
+        let prompt_text = assemble_prompt(&request.caption, &request.lyrics);
+        let text_ids = match &self.tokenizer {
+            Some(tokenizer) => prompt::encode_official_text(tokenizer, &prompt_text)?,
+            None if self.config.vocab_size <= 512 && self.config.hidden_size <= 64 => {
+                prompt::encode_tiny_ids(&prompt_text, 32)
+            }
+            None => {
+                return Err(SpeechError::Unsupported {
+                    why: "the checkpoint is missing tokenizer/tokenizer.json; MiniMax Music 3 text generation requires its official tokenizer".to_string(),
+                });
+            }
+        };
+        if text_ids.len() > MAX_PROMPT_TOKENS {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "The assembled prompt has {} tokens; the maximum is {MAX_PROMPT_TOKENS}",
+                    text_ids.len()
+                ),
+            });
+        }
+        self.generate(&GenerateRequest {
+            text_ids,
+            frames,
+            steps,
+            seed,
         })
     }
 
@@ -537,6 +796,18 @@ impl Model {
         max_frames: usize,
         seed: u64,
     ) -> Result<(Vec<f32>, Vec<Vec<i32>>)> {
+        self.generate_frame_hiddens_traced(text_ids, max_frames, seed, |_| {})
+    }
+
+    /// Generate while observing the exact inputs of each sampling decision.
+    /// The ordinary generation path does not retain diagnostic tensors.
+    pub fn generate_frame_hiddens_traced(
+        &self,
+        text_ids: &[i32],
+        max_frames: usize,
+        seed: u64,
+        mut observe: impl FnMut(SamplingTrace<'_>),
+    ) -> Result<(Vec<f32>, Vec<Vec<i32>>)> {
         let config = &self.config;
         let hidden = config.hidden_size;
         let vocab = config.vocab_size;
@@ -544,6 +815,24 @@ impl Model {
         if prompt_len == 0 {
             return Err(SpeechError::Input {
                 why: "empty prompt".to_string(),
+            });
+        }
+        if max_frames == 0 || max_frames > MAX_AUDIO_FRAMES {
+            return Err(SpeechError::Input {
+                why: format!("frames must be in 1..={MAX_AUDIO_FRAMES}"),
+            });
+        }
+        if let Some(id) = text_ids
+            .iter()
+            .find(|id| **id < 0 || **id as usize >= vocab)
+        {
+            return Err(SpeechError::Input {
+                why: format!("prompt token id {id} is outside the model vocabulary {vocab}"),
+            });
+        }
+        if prompt_len > MAX_PROMPT_TOKENS {
+            return Err(SpeechError::Input {
+                why: "prompt exceeds Music 3 token limit".into(),
             });
         }
         // Build the conditional / unconditional pair.
@@ -605,6 +894,14 @@ impl Model {
                 }
             }
             let (sampled, mut rng_key) = rng::sample_top_k(&guided, subkey, AR_SAMPLING_TOP_K);
+            observe(SamplingTrace {
+                frame: frame_index,
+                codebook: 0,
+                key: (subkey.0, subkey.1),
+                hiddens: &last_hidden,
+                guided_logits: &guided,
+                sampled,
+            });
             if sampled == config.audio_end_token_id {
                 break;
             }
@@ -618,7 +915,8 @@ impl Model {
                     &self.depth.projection,
                     hidden,
                     hidden,
-                ));
+                    self.lm.output_dtype(),
+                )?);
             }
             // Reorder the two rows into [2, 1, hidden].
             let semantic_embed = self.lm.embed_ids(
@@ -636,7 +934,8 @@ impl Model {
                     &self.depth.projection,
                     hidden,
                     hidden,
-                ));
+                    self.lm.dtype(),
+                )?);
             }
             let residual = config.num_codebooks - 1;
             let mut codes = vec![semantic_code];
@@ -644,6 +943,11 @@ impl Model {
             // Projected residual embeddings appended to the depth
             // sequence; identical for both CFG rows.
             let mut extra_embeddings: Vec<f32> = Vec::new();
+            let mut depth_input_dtype = self
+                .depth
+                .projection
+                .output_dtype(self.lm.output_dtype())
+                .promote(self.depth.projection.output_dtype(self.lm.dtype()));
             for index in 1..config.num_codebooks {
                 let seq_len = 2 + (index - 1);
                 let mut depth_in = vec![0.0f32; 2 * seq_len * hidden];
@@ -659,7 +963,9 @@ impl Model {
                             .copy_from_slice(&extra_embeddings[src..src + hidden]);
                     }
                 }
-                let depth_out = self.depth.forward(&depth_in, 2, seq_len)?;
+                let depth_out =
+                    self.depth
+                        .forward_typed(&depth_in, 2, seq_len, depth_input_dtype)?;
                 // Last-position rows for both CFG halves.
                 let mut last_rows = Vec::with_capacity(2 * hidden);
                 for b in 0..2 {
@@ -674,7 +980,8 @@ impl Model {
                         head,
                         hidden,
                         config.audio_vocab_size,
-                    );
+                        self.depth.output_dtype(depth_input_dtype),
+                    )?;
                     head_logits[b * config.audio_vocab_size..(b + 1) * config.audio_vocab_size]
                         .copy_from_slice(&out);
                 }
@@ -685,17 +992,28 @@ impl Model {
                     guided_d[v] = unconditional + AR_CFG_SCALE * (conditional - unconditional);
                 }
                 let (code, next_rng) = rng::sample_top_k(&guided_d, rng_key, AR_SAMPLING_TOP_K);
+                observe(SamplingTrace {
+                    frame: frame_index,
+                    codebook: index,
+                    key: (rng_key.0, rng_key.1),
+                    hiddens: &last_rows,
+                    guided_logits: &guided_d,
+                    sampled: code,
+                });
                 rng_key = next_rng;
                 codes.push(code);
                 hidden_parts.extend_from_slice(&last_rows[..hidden]);
                 if index < config.num_codebooks - 1 {
+                    depth_input_dtype = depth_input_dtype
+                        .promote(self.depth.projection.output_dtype(self.depth.dtype()));
                     let embed = self.depth.embed_code(code, index - 1);
                     extra_embeddings.extend(ops_linear_no_bias(
                         embed,
                         &self.depth.projection,
                         hidden,
                         hidden,
-                    ));
+                        self.depth.dtype(),
+                    )?);
                 }
             }
 
@@ -712,16 +1030,20 @@ impl Model {
             let mut feedback_row =
                 self.lm
                     .embed_ids(&[(semantic_code + config.audio_code_offset) as i32], 1, 1)?;
-            let mut residual_sum = vec![0.0f32; hidden];
-            for (c, code) in codes[1..].iter().enumerate() {
-                let embed = self.depth.embed_code(*code, c);
-                for d in 0..hidden {
-                    residual_sum[d] += embed[d];
-                }
-            }
-            let scale = (config.num_codebooks as f32).powf(-0.5);
+            let residual_dtype = self.depth.dtype();
+            let residual_values: Vec<f32> = codes[1..]
+                .iter()
+                .enumerate()
+                .flat_map(|(c, code)| self.depth.embed_code(*code, c).to_vec())
+                .collect();
+            let mut residual_sum =
+                precision::sum_rows(&residual_values, codes.len() - 1, hidden, residual_dtype);
+            let feedback_dtype = self.lm.dtype();
+            feedback_dtype.round_slice(&mut residual_sum);
+            let scale = feedback_dtype.round((config.num_codebooks as f32).powf(-0.5));
             for d in 0..hidden {
-                feedback_row[d] = (feedback_row[d] + residual_sum[d]) * scale;
+                feedback_row[d] = feedback_dtype
+                    .round(feedback_dtype.round(feedback_row[d] + residual_sum[d]) * scale);
             }
             let feedback = [feedback_row.clone(), feedback_row];
             hidden_state = self
@@ -740,9 +1062,27 @@ impl Model {
         Ok((frames, frame_codes))
     }
 
-    /// The flow stage: condition, denoise in overlapping chunks, decode
-    /// with the vocoder, and crop-stitch. Returns planar stereo
-    /// `[2, S]` flattened.
+    // Concatenation promotes across every residual codebook, including
+    // embeddings appended after the first depth-decoder call.
+    fn frame_hidden_dtype(&self) -> precision::DType {
+        let mut fused = self.lm.output_dtype();
+        let mut depth_input = self
+            .depth
+            .projection
+            .output_dtype(fused)
+            .promote(self.depth.projection.output_dtype(self.lm.dtype()));
+        for index in 1..self.config.num_codebooks {
+            fused = fused.promote(self.depth.output_dtype(depth_input));
+            if index < self.config.num_codebooks - 1 {
+                depth_input =
+                    depth_input.promote(self.depth.projection.output_dtype(self.depth.dtype()));
+            }
+        }
+        fused
+    }
+
+    /// Condition, denoise overlapping chunks, decode, and crop-stitch.
+    /// Returns the planar stereo waveform `[2, S]` flattened.
     pub fn run_flow(
         &self,
         frame_hiddens: &[f32],
@@ -750,6 +1090,34 @@ impl Model {
         steps: usize,
         seed: u64,
     ) -> Result<Vec<f32>> {
+        self.run_flow_internal(frame_hiddens, frames, steps, seed, None)
+    }
+
+    /// Replay flow with supplied channel-major initial noise per chunk.
+    /// Each chunk is cast to the conditioning tensor's logical dtype.
+    pub fn run_flow_with_noise(
+        &self,
+        frame_hiddens: &[f32],
+        frames: usize,
+        steps: usize,
+        noise_chunks: &[Vec<f32>],
+    ) -> Result<Vec<f32>> {
+        self.run_flow_internal(frame_hiddens, frames, steps, 0, Some(noise_chunks))
+    }
+
+    fn run_flow_internal(
+        &self,
+        frame_hiddens: &[f32],
+        frames: usize,
+        steps: usize,
+        seed: u64,
+        supplied_noise: Option<&[Vec<f32>]>,
+    ) -> Result<Vec<f32>> {
+        if frames == 0 || frames > MAX_AUDIO_FRAMES || !(1..=30).contains(&steps) {
+            return Err(SpeechError::Input {
+                why: "flow requires 1..=9000 frames and 1..=30 steps".into(),
+            });
+        }
         let config = &self.config;
         let fused = config.num_codebooks * config.hidden_size;
         if frame_hiddens.len() != frames * fused {
@@ -761,20 +1129,91 @@ impl Model {
             });
         }
         let starts = chunk_starts(frames);
+        if let Some(noise) = supplied_noise {
+            if noise.len() != starts.len() {
+                return Err(SpeechError::Input {
+                    why: format!(
+                        "supplied noise has {} chunks, expected {}",
+                        noise.len(),
+                        starts.len()
+                    ),
+                });
+            }
+            if noise.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(SpeechError::Input {
+                    why: "supplied flow noise must contain finite values".into(),
+                });
+            }
+        }
         let mut waves: Vec<Vec<f32>> = Vec::with_capacity(starts.len());
         let mut previous_latent: Option<Vec<f32>> = None;
         let mut previous_condition: Option<Vec<f32>> = None;
-        let mut noise_sequence = rng::KeySequence::new(seed + 7);
-        for start in starts {
+        // Keys are 64 bits, including the flow stream's fixed seed offset.
+        let mut noise_sequence = rng::KeySequence::new(seed.wrapping_add(7));
+        for (chunk_index, start) in starts.into_iter().enumerate() {
             let end = (start + CHUNK_FRAMES).min(frames);
             let chunk_frames = end - start;
-            let condition = self
-                .condition
-                .forward(&frame_hiddens[start * fused..end * fused], chunk_frames)?;
+            let condition = self.condition.forward_typed(
+                &frame_hiddens[start * fused..end * fused],
+                chunk_frames,
+                self.frame_hidden_dtype(),
+            )?;
             let cond_dim = config.condition_out_dim;
             let target = condition.len() / cond_dim;
-            let noise = rng::normal(noise_sequence.next(), config.dit_in_channels * target);
-            let (latents, cond_out) = euler::denoise_chunk(
+            let hidden_dtype = self.frame_hidden_dtype();
+            let condition_dtype = self.condition.dtype(hidden_dtype);
+            backend::trace(
+                &self.backend,
+                "flow.condition",
+                &condition,
+                condition_dtype,
+                &[1, target, cond_dim],
+            );
+            let noise = if let Some(supplied) = supplied_noise {
+                let mut noise = supplied[chunk_index].clone();
+                let expected = config.dit_in_channels * target;
+                if noise.len() != expected {
+                    return Err(SpeechError::Input {
+                        why: format!(
+                            "supplied noise chunk {chunk_index} has {} values, expected {expected}",
+                            noise.len()
+                        ),
+                    });
+                }
+                condition_dtype.round_slice(&mut noise);
+                if noise.iter().any(|v| !v.is_finite()) {
+                    return Err(SpeechError::Input {
+                        why: format!("supplied noise chunk {chunk_index} is non-finite after dtype conversion"),
+                    });
+                }
+                noise
+            } else {
+                let noise_key = noise_sequence.next();
+                if self.precision == Music3Precision::Float32 {
+                    rng::normal(noise_key, config.dit_in_channels * target)
+                } else {
+                    let uniforms: Vec<f32> =
+                        rng::uniform01(noise_key, config.dit_in_channels * target)
+                            .into_iter()
+                            .map(|u| {
+                                let above_minus_one = -(1.0f32 - f32::EPSILON / 2.0);
+                                (1.0 - above_minus_one) * u + above_minus_one
+                            })
+                            .collect();
+                    match &self.backend {
+                        Some(b) => b.normal_from_uniform(&uniforms, condition_dtype)?,
+                        None => rng::normal_from_uniform(&uniforms, condition_dtype),
+                    }
+                }
+            };
+            backend::trace(
+                &self.backend,
+                "flow.noise",
+                &noise,
+                condition_dtype,
+                &[config.dit_in_channels, target],
+            );
+            let (latents, cond_out) = euler::denoise_chunk_typed(
                 &self.transformer,
                 &noise,
                 &condition_row_major_to_channel(&condition, cond_dim, target),
@@ -785,6 +1224,7 @@ impl Model {
                 DIT_CFG_SCALE,
                 previous_latent.as_deref(),
                 previous_condition.as_deref(),
+                condition_dtype,
             )?;
             let carry_start = target.saturating_sub(2 * OVERLAP_LATENT_LENGTH);
             let carry_end = carry_start.max(target.saturating_sub(OVERLAP_LATENT_LENGTH));
@@ -802,7 +1242,12 @@ impl Model {
                 carry_start,
                 carry_end,
             ));
-            waves.push(self.vocoder.forward(&latents, target)?);
+            let mut latent_dtype = condition_dtype;
+            for _ in 0..steps {
+                latent_dtype = latent_dtype
+                    .promote(self.transformer.output_dtype(latent_dtype, condition_dtype));
+            }
+            waves.push(self.vocoder.forward_typed(&latents, target, latent_dtype)?);
         }
         // Crop-stitch along the sample axis per channel: the reference
         // concatenates the cropped `[1, 2, S_i]` waves on the last
@@ -838,9 +1283,33 @@ impl Model {
     }
 }
 
+fn load_tokenizer(dir: &Path) -> Result<Option<Tokenizer>> {
+    let nested = dir.join("tokenizer/tokenizer.json");
+    let flat = dir.join("tokenizer.json");
+    let path = if nested.is_file() {
+        nested
+    } else if flat.is_file() {
+        flat
+    } else {
+        return Ok(None);
+    };
+    Tokenizer::from_file(&path)
+        .map(Some)
+        .map_err(|error| SpeechError::BadConfig {
+            field: path.display().to_string(),
+            why: format!("loading MiniMax Music 3 tokenizer: {error}"),
+        })
+}
+
 /// `x [1, rows] @ w.T` with no bias, `w` stored `[out, in]`.
-fn ops_linear_no_bias(x: &[f32], w: &[f32], inn: usize, out: usize) -> Vec<f32> {
-    crate::ops::linear(x, w, None, 1, inn, out)
+fn ops_linear_no_bias(
+    x: &[f32],
+    w: &Weight,
+    inn: usize,
+    out: usize,
+    dtype: precision::DType,
+) -> Result<Vec<f32>> {
+    backend::linear(x, w, None, 1, inn, out, dtype)
 }
 
 /// `[1, target, dim]` row-major -> `[dim, target]` channel-major.
@@ -863,39 +1332,58 @@ fn slice_channel_rows(x: &[f32], dim: usize, len: usize, start: usize, end: usiz
     out
 }
 
-fn parse_quant_scheme(value: &serde_json::Value) -> Result<QuantScheme> {
+fn parse_quant_scheme(value: &serde_json::Value) -> Result<LinearQuantization> {
     let block = match value.get("quantization") {
         Some(block) => block,
-        None => {
-            return Ok(QuantScheme {
-                bits: 0,
-                group_size: 0,
-            })
-        }
+        None => return Ok(LinearQuantization::Dense),
     };
     let mode = block
         .get("mode")
         .and_then(|m| m.as_str())
         .unwrap_or("affine");
-    if mode != "affine" {
-        return Err(SpeechError::Unsupported {
-            why: format!(
-                "quantization mode {mode} is not verified for MiniMax Music 3; only affine"
-            ),
-        });
-    }
-    let bits = block.get("bits").and_then(|b| b.as_u64()).unwrap_or(0) as u32;
+    let bits = block.get("bits").and_then(|b| b.as_u64()).unwrap_or(0);
     let group_size = block
         .get("group_size")
         .and_then(|g| g.as_u64())
-        .unwrap_or(0) as usize;
-    if bits == 0 || group_size == 0 {
-        return Err(SpeechError::BadConfig {
+        .unwrap_or(0);
+    match mode {
+        "affine" => {
+            if bits == 0
+                || group_size == 0
+                || bits > u32::MAX as u64
+                || group_size > usize::MAX as u64
+            {
+                return Err(SpeechError::BadConfig {
+                    field: "quantization".to_string(),
+                    why: "affine quantization requires representable bits and group_size"
+                        .to_string(),
+                });
+            }
+            let scheme = QuantScheme {
+                bits: bits as u32,
+                group_size: group_size as usize,
+            };
+            if !matches!(scheme.bits, 2 | 3 | 4 | 5 | 6 | 8) {
+                return Err(SpeechError::Unsupported {
+                    why: format!(
+                        "affine quantization with {} bits is unsupported",
+                        scheme.bits
+                    ),
+                });
+            }
+            Ok(LinearQuantization::Affine(scheme))
+        }
+        "mxfp4" if bits == 4 && group_size == 32 => Ok(LinearQuantization::MxFp4),
+        "mxfp8" if bits == 8 && group_size == 32 => Ok(LinearQuantization::MxFp8),
+        "nvfp4" if bits == 4 && group_size == 16 => Ok(LinearQuantization::NvFp4),
+        "mxfp4" | "mxfp8" | "nvfp4" => Err(SpeechError::BadConfig {
             field: "quantization".to_string(),
-            why: "affine quantization requires bits and group_size".to_string(),
-        });
+            why: format!("{mode} requires its upstream bits and group_size geometry"),
+        }),
+        _ => Err(SpeechError::Unsupported {
+            why: format!("quantization mode {mode} is not supported for MiniMax Music 3"),
+        }),
     }
-    Ok(QuantScheme { bits, group_size })
 }
 
 fn read_component_json(dir: &Path, component: &str) -> Result<serde_json::Value> {
@@ -1088,7 +1576,16 @@ fn load_official_tensors(dir: &Path) -> Result<HashMap<String, Tensor>> {
                     .map(|d| d.shape.clone())
                     .unwrap_or_default();
                 let data = file.load_as_f32(name)?;
-                raw.push((name.to_string(), Tensor { data, shape }));
+                raw.push((
+                    name.to_string(),
+                    Tensor {
+                        data,
+                        shape,
+                        dtype: precision::DType::from_checkpoint(
+                            &file.descriptor(name).unwrap().dtype,
+                        )?,
+                    },
+                ));
             }
         }
         let mut state: HashMap<String, Tensor> = raw.into_iter().collect();
@@ -1141,6 +1638,9 @@ fn fuse_weight_norm_pairs(state: HashMap<String, Tensor>) -> HashMap<String, Ten
                     Tensor {
                         data: fused,
                         shape: v.shape.clone(),
+                        // Upstream conversion explicitly casts both operands
+                        // to float32 and leaves the fused weight in float32.
+                        dtype: precision::DType::F32,
                     },
                 );
                 continue;
@@ -1161,6 +1661,7 @@ fn fuse_weight_norm_pairs(state: HashMap<String, Tensor>) -> HashMap<String, Ten
             Tensor {
                 data: tensor.data.clone(),
                 shape: tensor.shape.clone(),
+                dtype: tensor.dtype,
             },
         );
     }
@@ -1213,6 +1714,7 @@ fn remap_official_tensor(key: &str, tensor: Tensor) -> Tensor {
         Tensor {
             data,
             shape: vec![b, c, a],
+            dtype: tensor.dtype,
         }
     } else {
         // PyTorch [out=a, in=b, K=c] -> MLX [out, K, in].
@@ -1226,6 +1728,7 @@ fn remap_official_tensor(key: &str, tensor: Tensor) -> Tensor {
         Tensor {
             data,
             shape: vec![a, c, b],
+            dtype: tensor.dtype,
         }
     }
 }

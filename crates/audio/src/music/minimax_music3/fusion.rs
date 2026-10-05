@@ -10,8 +10,11 @@ use crate::ops;
 use crate::Result;
 use crate::SpeechError;
 
+use super::backend::{self, ComputeBackend};
 use super::conv::{ConvSpec, MlxConv1d};
-use super::weights::WeightStore;
+use super::precision::DType;
+use super::weights::{Tensor, WeightStore};
+use std::rc::Rc;
 
 pub(crate) struct ConditionDims {
     pub hidden: usize,
@@ -23,10 +26,11 @@ pub(crate) struct ConditionDims {
 }
 
 pub(crate) struct ConditionEncoder {
-    layer_weight_logits: Vec<f32>,
-    layer_scale: Vec<f32>,
+    layer_weight_logits: Tensor,
+    layer_scale: Tensor,
     proj: MlxConv1d,
     dims: ConditionDims,
+    backend: Option<Rc<dyn ComputeBackend>>,
 }
 
 /// The latent length for `num_frames` AR frames: the reference computes
@@ -96,15 +100,28 @@ impl ConditionEncoder {
             },
         )?;
         Ok(ConditionEncoder {
-            layer_weight_logits: logits.data,
-            layer_scale: scale.data,
+            layer_weight_logits: logits,
+            layer_scale: scale,
             proj,
             dims,
+            backend: store.backend(),
         })
     }
 
     /// `[1, frames, codebooks * hidden]` -> `[1, target, out_dim]`.
+    pub(crate) fn dtype(&self, input: DType) -> DType {
+        self.proj.dtype(input)
+    }
+    #[cfg(test)]
     pub(crate) fn forward(&self, frame_hiddens: &[f32], frames: usize) -> Result<Vec<f32>> {
+        self.forward_typed(frame_hiddens, frames, self.layer_scale.dtype)
+    }
+    pub(crate) fn forward_typed(
+        &self,
+        frame_hiddens: &[f32],
+        frames: usize,
+        dtype: DType,
+    ) -> Result<Vec<f32>> {
         let dims = &self.dims;
         let fused = dims.num_layers * dims.hidden;
         if frame_hiddens.len() != frames * fused {
@@ -115,9 +132,31 @@ impl ConditionEncoder {
                 ),
             });
         }
+        backend::trace(
+            &self.backend,
+            "flow.condition.input",
+            frame_hiddens,
+            dtype,
+            &[1, frames, fused],
+        );
         // Softmax over the layer mixing weights, in f32.
-        let mut weights = self.layer_weight_logits.clone();
+        let mut weights = self.layer_weight_logits.data.clone();
         ops::softmax_row(&mut weights);
+        backend::trace(
+            &self.backend,
+            "flow.condition.weights_f32",
+            &weights,
+            DType::F32,
+            &[dims.num_layers],
+        );
+        dtype.round_slice(&mut weights);
+        backend::trace(
+            &self.backend,
+            "flow.condition.weights",
+            &weights,
+            dtype,
+            &[dims.num_layers],
+        );
         // Weighted sum over layers into a channel-major [hidden, frames]
         // buffer for the conv.
         let mut mixed = vec![0.0f32; dims.hidden * frames];
@@ -125,16 +164,42 @@ impl ConditionEncoder {
             let w = weights[l];
             for f in 0..frames {
                 for d in 0..dims.hidden {
-                    mixed[d * frames + f] += w * frame_hiddens[f * fused + l * dims.hidden + d];
+                    mixed[d * frames + f] = dtype.round(
+                        mixed[d * frames + f]
+                            + dtype.round(w * frame_hiddens[f * fused + l * dims.hidden + d]),
+                    );
                 }
             }
         }
-        let scale = self.layer_scale[0];
+        dtype.round_slice(&mut mixed);
+        backend::trace(
+            &self.backend,
+            "flow.condition.reduced",
+            &mixed,
+            dtype,
+            &[dims.hidden, frames],
+        );
+        let scale = dtype.round(self.layer_scale[0]);
         for v in &mut mixed {
-            *v *= scale;
+            *v = dtype.round(*v * scale);
         }
-        let projected = self.proj.forward(&mixed, frames);
+        backend::trace(
+            &self.backend,
+            "flow.condition.scaled",
+            &mixed,
+            dtype,
+            &[dims.hidden, frames],
+        );
+        let projected = self.proj.forward_typed(&mixed, frames, dtype)?;
         let out_ch = projected.len() / frames;
+        let projected_dtype = self.proj.dtype(dtype);
+        backend::trace(
+            &self.backend,
+            "flow.condition.projected",
+            &projected,
+            projected_dtype,
+            &[out_ch, frames],
+        );
         let target = latent_length_from_frames(
             frames,
             dims.input_sampling_rate,
@@ -143,6 +208,13 @@ impl ConditionEncoder {
             dims.output_hop_length,
         );
         let resampled = nearest_interpolate_1d(&projected, out_ch, frames, target);
+        backend::trace(
+            &self.backend,
+            "flow.condition.resampled",
+            &resampled,
+            projected_dtype,
+            &[out_ch, target],
+        );
         // Back to row-major [1, target, out_dim].
         let mut out = vec![0.0f32; target * out_ch];
         for t in 0..target {

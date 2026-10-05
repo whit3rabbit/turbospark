@@ -153,3 +153,8 @@ pub use turn_stream::{TurnEvent, TurnSplitter};
 // Token id width consumed from the core primitives, keeping the dependency
 // edge live and documenting the interchange type this crate uses throughout.
 pub use foundation::TokenId;
+
+#[cfg(target_os = "macos")]
+pub mod music3;
+#[cfg(target_os = "macos")]
+pub use music3::Music3Runner;

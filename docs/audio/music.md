@@ -4,7 +4,7 @@ Music generation models in TurboSpark produce polyphonic musical compositions an
 
 ## Implemented Model Families
 
-### MiniMax Music 0.5 (`minimax_music3`)
+### MiniMax Music 3 (`minimax_music3`)
 
 - **In-Crate Directory**: [`crates/audio/src/music/minimax_music3/`](../../crates/audio/src/music/minimax_music3/)
 - **Documentation**: [`crates/audio/src/music/minimax_music3/README.md`](../../crates/audio/src/music/minimax_music3/README.md)
@@ -22,7 +22,7 @@ Music generation models in TurboSpark produce polyphonic musical compositions an
   - Apple M4 Max (CPU f32 software path):
     - Tiny AR (9000 frames): 64.3 s
     - Tiny Flow per chunk: 169.1 ms
-    - Full-scale official model (~11B parameters) requires Metal GPU offload for real-time streaming.
+    - Full-size converted models use `runtime::Music3Runner` on macOS with packed resident Metal weights. Real-time performance remains unqualified.
 - **Numeric Contracts**:
   - Bit-exact RNG reproduction of MLX keys, splits, and uniforms.
   - Audio output: 44.1 kHz, stereo (2 channels).

@@ -32,6 +32,52 @@ Only the third mode is comparable to published text-model throughput rows.
 The first two exist so the loop and dispatch path can be timed without a
 multi-gigabyte checkout.
 
+## Moonshine STT backend probe
+
+Build the uniquely named runtime probe, then run the audio crate's macOS
+benchmark script with a pinned Moonshine Tiny directory and the same WAV for
+both backends:
+
+```sh
+cargo build --release -p turbospark-runtime --example moonshine_backend_probe
+python3 crates/audio/scripts/benchmark_moonshine.py <model-dir> <wav> \
+  --runs 5 --output /tmp/moonshine-benchmark.json
+```
+
+Each fresh process opens one backend, discards one warmup transcription,
+measures the next, and reports process peak `phys_footprint` from
+`/usr/bin/time -l`. Run order alternates CPU/Metal and Metal/CPU. The script
+checks backend labels, sample counts, and transcript hashes, and records
+checkpoint and WAV hashes. Run on a quiet device and retain the raw samples;
+the script does not establish recognition quality or a default-on decision.
+`TURBOSPARK_MOONSHINE_PROFILE=1` reports Metal frontend, encoder, cross-cache,
+and decode phases using separate passes, so run that diagnostic separately
+from the interleaved benchmark.
+
+## Qwen3-ASR STT backend probe
+
+Build the uniquely named runtime probe, then run the audio crate's macOS
+benchmark script with the pinned `mlx-community/Qwen3-ASR-0.6B-8bit`
+directory and the same WAV for both backends:
+
+```sh
+cargo build --release -p turbospark-runtime --example qwen3_asr_backend_probe
+python3 crates/audio/scripts/benchmark_qwen3_asr.py <model-dir> <wav> \
+  --runs 3 --output /tmp/qwen3-asr-benchmark.json
+```
+
+Each fresh process opens one explicit backend (the portable CPU reference or
+the opt-in packed 8-bit Metal decoder), discards one warmup transcription,
+measures the next, and reports process peak `phys_footprint` from
+`/usr/bin/time -l`. Run order alternates CPU/Metal and Metal/CPU. The script
+checks backend labels, sample counts, and transcript hashes, and records
+checkpoint and WAV hashes. Both backends share the portable CPU audio tower,
+so the comparison isolates the text decoder while the end-to-end numbers stay
+dominated by that tower. Run on a quiet device and retain the raw samples;
+the script does not establish recognition quality or a default-on decision.
+`TURBOSPARK_QWEN3_ASR_PROFILE=1` reports per-phase timings on both paths; run
+that diagnostic separately from the interleaved benchmark.
+
 ## Image generation (macOS, MLX)
 
 The release benchmark executable uses the same vendored `ZImagePipeline` as

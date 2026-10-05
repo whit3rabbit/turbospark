@@ -27,6 +27,7 @@ USAGE:
 COMMANDS:
     list [--filter TEXT]        curated models, marking the ones installed
     list-speech                 bundled whisper entries (STT installs)
+    list-audio                  pinned MiniMax Music 3 profiles
     info <ALIAS>                one model in full, with its gate targets
     probe <REPO>[@REV]          what this engine makes of a Hugging Face repo,
                                 reading headers only: no download
@@ -39,6 +40,7 @@ COMMANDS:
                                 download and install a pinned HF image export
     pull-image --alias z-image-turbo
                                 install the pinned image-catalog source
+    pull-audio <ALIAS>           install one pinned MiniMax Music 3 profile
     pull-vision <ALIAS>         install a curated vision-tower sidecar
     pull-vision --repo <REPO>[@REV] --alias <NAME>
                                 install any repo's vision tower directly,
@@ -202,6 +204,14 @@ fn run(args: &[String]) -> Result<(), Error> {
             model_cmd::list_speech(&store);
             Ok(())
         }
+        "list-audio" => {
+            options.reject_unused(&[])?;
+            if !positionals.is_empty() {
+                return Err(Error::Usage("list-audio takes no arguments".to_string()));
+            }
+            model_cmd::list_audio(&store);
+            Ok(())
+        }
         "info" => {
             options.reject_unused(&[])?;
             let alias = one_positional(&positionals, "info", "<ALIAS>")?;
@@ -237,6 +247,11 @@ fn run(args: &[String]) -> Result<(), Error> {
         "pull-image" => {
             options.reject_unused(&["out", "alias", "source", "model-id", "model-revision"])?;
             model_cmd::pull_image(&catalog, &store, &client, &positionals, &options)
+        }
+        "pull-audio" => {
+            options.reject_unused(&[])?;
+            let alias = one_positional(&positionals, "pull-audio", "<ALIAS>")?;
+            model_cmd::pull_audio(&catalog, &store, &client, alias)
         }
         "pull-vision" => {
             options.reject_unused(&["out", "alias", "file", "force"])?;

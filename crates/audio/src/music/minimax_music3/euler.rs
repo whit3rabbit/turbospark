@@ -10,6 +10,7 @@ use crate::Result;
 use crate::SpeechError;
 
 use super::dit::FlowMatchingTransformer;
+use super::precision::DType;
 
 /// `(1.0 - 1e-6)` evaluated in f64 then narrowed, the way the Python
 /// scalar reaches the f32 blend in the reference.
@@ -41,11 +42,44 @@ pub(crate) fn sigma_schedule(steps: usize) -> Result<Vec<f32>> {
     Ok(sigmas)
 }
 
+pub(crate) fn guided_velocity(
+    unconditional: f32,
+    conditional: f32,
+    guidance: f32,
+    dtype: DType,
+) -> f32 {
+    dtype.round(
+        unconditional
+            + dtype.round(dtype.round(guidance) * dtype.round(conditional - unconditional)),
+    )
+}
+
+pub(crate) fn update(
+    latent: f32,
+    velocity: f32,
+    delta: f32,
+    dtype: DType,
+    velocity_dtype: DType,
+) -> f32 {
+    dtype
+        .promote(velocity_dtype)
+        .round(latent + velocity_dtype.round(velocity_dtype.round(delta) * velocity))
+}
+
+pub(crate) fn overlap_blend(noise: f32, previous: f32, sigma: f32, dtype: DType) -> f32 {
+    if dtype == DType::F32 {
+        return (1.0f32 - ONE_MINUS_EPS * sigma) * noise + sigma * previous;
+    }
+    let blend = dtype.round((1.0f64 - (1.0f64 - 1e-6) * sigma as f64) as f32);
+    dtype.round(dtype.round(blend * noise) + dtype.round(dtype.round(sigma) * previous))
+}
+
 /// Euler-denoise one chunk. `latents` and the returned buffers are
 /// channel-major `[1, in_channels, len]`; `condition` is
 /// `[1, condition_dim, len]` and may be spliced with
 /// `previous_condition` at the front, in which case the returned
 /// condition covers the spliced length.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn denoise_chunk(
     transformer: &FlowMatchingTransformer,
@@ -59,6 +93,36 @@ pub(crate) fn denoise_chunk(
     previous_latent: Option<&[f32]>,
     previous_condition: Option<&[f32]>,
 ) -> Result<(Vec<f32>, Vec<f32>)> {
+    denoise_chunk_typed(
+        transformer,
+        latents,
+        condition,
+        channels,
+        cond_dim,
+        len,
+        steps,
+        guidance_scale,
+        previous_latent,
+        previous_condition,
+        transformer.dtype(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn denoise_chunk_typed(
+    transformer: &FlowMatchingTransformer,
+    latents: &[f32],
+    condition: &[f32],
+    channels: usize,
+    cond_dim: usize,
+    len: usize,
+    steps: usize,
+    guidance_scale: f32,
+    previous_latent: Option<&[f32]>,
+    previous_condition: Option<&[f32]>,
+    condition_dtype: DType,
+) -> Result<(Vec<f32>, Vec<f32>)> {
+    let mut dtype = condition_dtype;
     let mut condition = condition.to_vec();
     let mut overlap = 0usize;
     if let (Some(prev_lat), Some(prev_cond)) = (previous_latent, previous_condition) {
@@ -93,29 +157,62 @@ pub(crate) fn denoise_chunk(
             let prev = previous_latent.unwrap();
             for c in 0..channels {
                 for i in 0..overlap {
-                    x[c * len + i] = (1.0f32 - ONE_MINUS_EPS * sigma)
-                        * noise_prompt[c * overlap + i]
-                        + sigma * prev[c * overlap + i];
+                    x[c * len + i] = overlap_blend(
+                        noise_prompt[c * overlap + i],
+                        prev[c * overlap + i],
+                        sigma,
+                        dtype,
+                    );
                 }
             }
         }
-        let conditional = transformer.forward(&x, sigma, &condition, len)?;
+        transformer.trace(&format!("euler.{index}.input"), &x, dtype, &[channels, len]);
+        let conditional =
+            transformer.forward_typed(&x, sigma, &condition, len, dtype, condition_dtype)?;
+        let velocity_dtype = transformer.output_dtype(dtype, condition_dtype);
+        transformer.trace(
+            &format!("euler.{index}.conditional"),
+            &conditional,
+            velocity_dtype,
+            &[channels, len],
+        );
         let velocity = if guidance_scale == 1.0 {
             conditional
         } else {
-            let unconditional = transformer.forward(&x, sigma, &zeros, len)?;
+            let unconditional =
+                transformer.forward_typed(&x, sigma, &zeros, len, dtype, condition_dtype)?;
+            transformer.trace(
+                &format!("euler.{index}.unconditional"),
+                &unconditional,
+                velocity_dtype,
+                &[channels, len],
+            );
             let mut guided = Vec::with_capacity(unconditional.len());
             for (u, c) in unconditional.iter().zip(&conditional) {
-                guided.push(u + guidance_scale * (c - u));
+                guided.push(guided_velocity(*u, *c, guidance_scale, velocity_dtype));
             }
             guided
         };
         // (sigma_next - sigma) is computed in Python floats (f64) and
         // multiplies the f32 velocity field.
         let delta = (sigma_next as f64 - sigma as f64) as f32;
+        transformer.trace(
+            &format!("euler.{index}.velocity"),
+            &velocity,
+            velocity_dtype,
+            &[channels, len],
+        );
+        let update_dtype = dtype.promote(velocity_dtype);
         for (v, vel) in x.iter_mut().zip(velocity) {
-            *v += delta * vel;
+            *v = update(*v, vel, delta, dtype, velocity_dtype);
         }
+        dtype = update_dtype;
+        transformer.trace(
+            &format!("euler.{index}.output"),
+            &x,
+            dtype,
+            &[channels, len],
+        );
     }
     if overlap > 0 {
         let prev = previous_latent.unwrap();

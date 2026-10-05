@@ -167,11 +167,19 @@ fn tool(args: &[&str]) -> Result<String, String> {
     }
 }
 
-fn compile(source: &Path, library: &Path) -> Result<(), String> {
+fn compile(source: &Path, library: &Path, precise: bool) -> Result<(), String> {
     let air = source.with_extension("air");
     let temporary = library.with_extension("metallib.tmp");
     let mut args = vec!["metal"];
-    args.extend(FLAGS);
+    args.extend(
+        FLAGS
+            .iter()
+            .copied()
+            .filter(|flag| !precise || *flag != "-ffast-math"),
+    );
+    if precise {
+        args.push("-fno-fast-math");
+    }
     args.extend(["-c", source.to_str().unwrap(), "-o", air.to_str().unwrap()]);
     tool(&args)?;
     let result = tool(&[
@@ -249,7 +257,11 @@ fn main() {
         let result = match &compiler {
             Err(err) => Err(err.clone()),
             Ok(_) if library_path.exists() => Ok(()),
-            Ok(_) => compile(&source_path, &library_path),
+            Ok(_) => compile(
+                &source_path,
+                &library_path,
+                shader.source.starts_with("// turbospark: precise-math\n"),
+            ),
         };
         match result {
             Ok(()) => {

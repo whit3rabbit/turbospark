@@ -25,6 +25,31 @@ fn read_json(name: &str) -> serde_json::Value {
     serde_json::from_str(&text).expect(name)
 }
 
+#[test]
+fn official_weight_norm_conversion_keeps_explicit_float32_exception() {
+    let fused = fuse_weight_norm_pairs(HashMap::from([
+        (
+            "conv.weight_v".to_string(),
+            Tensor {
+                data: vec![3.0, 4.0],
+                shape: vec![1, 2],
+                dtype: precision::DType::Bf16,
+            },
+        ),
+        (
+            "conv.weight_g".to_string(),
+            Tensor {
+                data: vec![2.0],
+                shape: vec![1, 1],
+                dtype: precision::DType::Bf16,
+            },
+        ),
+    ]));
+    let weight = &fused["conv.weight"];
+    assert_eq!(weight.dtype, precision::DType::F32);
+    assert_eq!(weight.data, vec![1.2, 1.6]);
+}
+
 /// Read a little-endian f32 .npy (the sortformer reader convention).
 fn read_npy(name: &str) -> (Vec<usize>, Vec<f32>) {
     let bytes = std::fs::read(testdata(name)).expect(name);
@@ -809,6 +834,7 @@ fn loader_tensor_map_is_strict_about_extra_tensors() {
     tensors.insert(
         "mystery.weight".to_string(),
         weights::Tensor {
+            dtype: super::precision::DType::F32,
             data: vec![0.0],
             shape: vec![1],
         },
@@ -841,5 +867,359 @@ fn depth_decoder_steps_match_the_reference() {
             step["index"],
             diff
         );
+    }
+}
+
+#[test]
+fn caption_request_matches_upstream_defaults_and_validation() {
+    let request = TextGenerateRequest::new("soft piano ballad", "[verse]\nFirst line");
+    assert_eq!(request.resolve().unwrap(), (60.0, 30, 0));
+
+    let mut custom = request.clone();
+    custom.duration_seconds = Some(1.99);
+    custom.steps = Some(4);
+    custom.seed = Some(17);
+    assert_eq!(custom.resolve().unwrap(), (1.99, 4, 17));
+
+    assert!(TextGenerateRequest::new("  ", "[instrumental]")
+        .resolve()
+        .is_err());
+    assert!(TextGenerateRequest::new("piano", " \n ").resolve().is_err());
+    for duration in [0.0, -1.0, 360.01, f64::NAN, f64::INFINITY] {
+        let mut invalid = request.clone();
+        invalid.duration_seconds = Some(duration);
+        assert!(invalid.resolve().is_err(), "duration {duration}");
+    }
+    for steps in [0, 31] {
+        let mut invalid = request.clone();
+        invalid.steps = Some(steps);
+        assert!(invalid.resolve().is_err(), "steps {steps}");
+    }
+}
+
+#[test]
+fn corrupt_config_dimension_products_are_refused() {
+    let mut config = ModelConfig::tiny();
+    config.num_codebooks = usize::MAX;
+    config.num_condition_layers = usize::MAX;
+    assert!(matches!(
+        config.validate(),
+        Err(SpeechError::BadConfig { .. })
+    ));
+    let mut config = ModelConfig::tiny();
+    config.vocab_size = usize::MAX;
+    assert!(matches!(
+        config.validate(),
+        Err(SpeechError::BadConfig { .. })
+    ));
+}
+
+#[test]
+fn flow_accepts_the_largest_64_bit_seed() {
+    let model = Model::load_converted(&testdata("converted_plain")).unwrap();
+    let hiddens = vec![0.0; model.config.num_codebooks * model.config.hidden_size];
+    let wave = model.run_flow(&hiddens, 1, 1, u64::MAX).unwrap();
+    assert!(!wave.is_empty());
+    assert!(wave.iter().all(|v| v.is_finite()));
+}
+
+#[test]
+fn official_tokenizer_loader_finds_nested_huggingface_layout() {
+    use std::collections::HashMap;
+    use tokenizers::models::wordlevel::WordLevel;
+    use tokenizers::pre_tokenizers::whitespace::Whitespace;
+    use tokenizers::Tokenizer;
+
+    let vocab = HashMap::from([
+        ("[UNK]".to_string(), 0),
+        ("warm".to_string(), 7),
+        ("piano".to_string(), 11),
+    ]);
+    let model = WordLevel::builder()
+        .vocab(vocab)
+        .unk_token("[UNK]".to_string())
+        .build()
+        .unwrap();
+    let mut tokenizer = Tokenizer::new(model);
+    tokenizer.with_pre_tokenizer(Some(Whitespace));
+    let temp =
+        std::env::temp_dir().join(format!("minimax-music3-tokenizer-{}", std::process::id()));
+    let tokenizer_dir = temp.join("tokenizer");
+    std::fs::create_dir_all(&tokenizer_dir).unwrap();
+    tokenizer
+        .save(tokenizer_dir.join("tokenizer.json"), false)
+        .unwrap();
+
+    let loaded = load_tokenizer(&temp).unwrap().expect("tokenizer loaded");
+    let ids = prompt::encode_official_text(&loaded, "warm piano").unwrap();
+    assert_eq!(ids, vec![7, 11]);
+    assert!(load_tokenizer(&std::env::temp_dir()).unwrap().is_none());
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn caption_generation_uses_tiny_fixture_path_and_returns_stereo_44100() {
+    let model = load_plain_model();
+    let mut request = TextGenerateRequest::new("soft piano ballad", "[instrumental]");
+    request.duration_seconds = Some(0.04);
+    request.steps = Some(1);
+    request.seed = Some(7);
+    let generated = model.generate_text(&request).unwrap();
+    assert_eq!(generated.sample_rate, 44_100);
+    assert_eq!(generated.waveform.len(), generated.samples * 2);
+    assert!(generated.samples > 0);
+    assert!(generated.waveform.iter().all(|sample| sample.is_finite()));
+}
+
+#[test]
+fn all_upstream_quantization_profiles_parse_with_exact_geometry() {
+    use weights::LinearQuantization;
+
+    assert!(matches!(
+        parse_quant_scheme(&serde_json::json!({})).unwrap(),
+        LinearQuantization::Dense
+    ));
+    for (mode, bits, group_size, expected) in [
+        (
+            "affine",
+            8,
+            64,
+            LinearQuantization::Affine(QuantScheme {
+                bits: 8,
+                group_size: 64,
+            }),
+        ),
+        (
+            "affine",
+            6,
+            64,
+            LinearQuantization::Affine(QuantScheme {
+                bits: 6,
+                group_size: 64,
+            }),
+        ),
+        (
+            "affine",
+            4,
+            64,
+            LinearQuantization::Affine(QuantScheme {
+                bits: 4,
+                group_size: 64,
+            }),
+        ),
+        ("mxfp4", 4, 32, LinearQuantization::MxFp4),
+        ("mxfp8", 8, 32, LinearQuantization::MxFp8),
+        ("nvfp4", 4, 16, LinearQuantization::NvFp4),
+    ] {
+        let actual = parse_quant_scheme(&serde_json::json!({
+            "quantization": {"mode": mode, "bits": bits, "group_size": group_size}
+        }))
+        .unwrap();
+        assert!(
+            same_quantization(actual, expected),
+            "mode {mode}: {actual:?}"
+        );
+    }
+
+    for (mode, bits, group_size) in [("mxfp4", 8, 32), ("mxfp8", 8, 16), ("nvfp4", 4, 32)] {
+        assert!(parse_quant_scheme(&serde_json::json!({
+            "quantization": {"mode": mode, "bits": bits, "group_size": group_size}
+        }))
+        .is_err());
+    }
+    assert!(parse_quant_scheme(&serde_json::json!({
+        "quantization": {"mode": "unknown", "bits": 4, "group_size": 32}
+    }))
+    .is_err());
+}
+
+fn same_quantization(a: weights::LinearQuantization, b: weights::LinearQuantization) -> bool {
+    use weights::LinearQuantization;
+    match (a, b) {
+        (LinearQuantization::Dense, LinearQuantization::Dense)
+        | (LinearQuantization::MxFp4, LinearQuantization::MxFp4)
+        | (LinearQuantization::MxFp8, LinearQuantization::MxFp8)
+        | (LinearQuantization::NvFp4, LinearQuantization::NvFp4) => true,
+        (LinearQuantization::Affine(a), LinearQuantization::Affine(b)) => a == b,
+        _ => false,
+    }
+}
+
+struct DTypeRecorder {
+    dtypes: std::rc::Rc<std::cell::RefCell<Vec<precision::DType>>>,
+    noise: Option<std::rc::Rc<std::cell::RefCell<Vec<f32>>>>,
+}
+impl backend::DeviceWeight for DTypeRecorder {
+    fn linear(
+        &self,
+        _input: &[f32],
+        _bias: Option<&[f32]>,
+        rows: usize,
+        _input_dim: usize,
+        output_dim: usize,
+        dtype: precision::DType,
+    ) -> crate::Result<Vec<f32>> {
+        self.dtypes.borrow_mut().push(dtype);
+        Ok(vec![0.0; rows * output_dim])
+    }
+    fn embedding(&self, _ids: &[i32], _width: usize) -> crate::Result<Vec<f32>> {
+        unreachable!("head recorder does not embed")
+    }
+    fn convolution(
+        &self,
+        _input: &[f32],
+        _bias: Option<&[f32]>,
+        _shape: backend::ConvShape,
+        _dtype: precision::DType,
+    ) -> crate::Result<Vec<f32>> {
+        unreachable!("head recorder does not convolve")
+    }
+}
+impl backend::ComputeBackend for DTypeRecorder {
+    fn load_weight(
+        &self,
+        _data: backend::WeightData<'_>,
+    ) -> crate::Result<std::rc::Rc<dyn backend::DeviceWeight>> {
+        unreachable!("recorder installed after loading")
+    }
+    fn attention(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        shape: backend::AttentionShape,
+        dtype: precision::DType,
+    ) -> crate::Result<Vec<f32>> {
+        backend::attention(&None, q, k, v, shape, dtype)
+    }
+    fn trace(&self, stage: &str, _data: &[f32], dtype: precision::DType, _shape: &[usize]) {
+        if stage == "flow.condition" {
+            self.dtypes.borrow_mut().push(dtype);
+        }
+        if stage == "flow.noise" {
+            if let Some(noise) = &self.noise {
+                *noise.borrow_mut() = _data.to_vec();
+            }
+        }
+    }
+}
+
+#[test]
+fn mixed_residual_embeddings_promote_each_depth_head_after_the_first() {
+    let mut model = Model::load_converted_with_precision(
+        &testdata("precision/mxfp8"),
+        Music3Precision::Checkpoint,
+    )
+    .unwrap();
+    model.depth.audio_embeddings.dtype = precision::DType::F32;
+    let recorded = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    for head in &mut model.depth.audio_heads {
+        *head = backend::Weight::Device {
+            elements: model.config.hidden_size * model.config.audio_vocab_size,
+            dtype: precision::DType::Bf16,
+            packed: true,
+            dynamic: true,
+            weight: std::rc::Rc::new(DTypeRecorder {
+                dtypes: recorded.clone(),
+                noise: None,
+            }),
+        };
+    }
+    let text = assemble_prompt("Soft piano, warm melody, instrumental", "[instrumental]");
+    let ids = prompt::encode_tiny_ids(&text, MAX_PROMPT_TOKENS);
+    model.generate_frame_hiddens(&ids, 1, 7).unwrap();
+    let calls = recorded.borrow();
+    assert!(!calls.is_empty());
+    assert_eq!(calls.len() % (2 * (model.config.num_codebooks - 1)), 0);
+    for frame in calls.chunks_exact(2 * (model.config.num_codebooks - 1)) {
+        assert_eq!(&frame[..2], &[precision::DType::Bf16; 2]);
+        assert!(
+            frame[2..].iter().all(|d| *d == precision::DType::F32),
+            "later depth heads: {frame:?}"
+        );
+    }
+}
+
+#[test]
+fn mixed_residual_embeddings_promote_fused_flow_condition() {
+    let mut model = Model::load_converted_with_precision(
+        &testdata("precision/mxfp8"),
+        Music3Precision::Checkpoint,
+    )
+    .unwrap();
+    model.depth.audio_embeddings.dtype = precision::DType::F32;
+    let recorded = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    model.backend = Some(std::rc::Rc::new(DTypeRecorder {
+        dtypes: recorded.clone(),
+        noise: None,
+    }));
+    model
+        .run_flow(
+            &vec![0.0; model.config.num_codebooks * model.config.hidden_size],
+            1,
+            1,
+            7,
+        )
+        .unwrap();
+    assert_eq!(*recorded.borrow(), vec![precision::DType::F32]);
+}
+
+#[test]
+fn supplied_flow_noise_validates_chunks_and_replays_at_logical_precision() {
+    for precision in [Music3Precision::Checkpoint, Music3Precision::Float32] {
+        let mut model =
+            Model::load_converted_with_precision(&testdata("precision/mxfp8"), precision).unwrap();
+        let hiddens = vec![0.0; model.config.num_codebooks * model.config.hidden_size];
+        let target = fusion::latent_length_from_frames(
+            1,
+            model.config.input_sampling_rate,
+            model.config.input_hop_length,
+            model.config.output_sampling_rate,
+            model.config.output_hop_length,
+        );
+        let count = model.config.dit_in_channels * target;
+        let noise: Vec<f32> = (0..count)
+            .map(|i| [0.12345, -0.67891, 0.01993][i % 3])
+            .collect();
+        let captured = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        model.backend = Some(std::rc::Rc::new(DTypeRecorder {
+            dtypes: Default::default(),
+            noise: Some(captured.clone()),
+        }));
+        let chunks = vec![noise.clone()];
+        let wave = model.run_flow_with_noise(&hiddens, 1, 1, &chunks).unwrap();
+        let replay = model.run_flow_with_noise(&hiddens, 1, 1, &chunks).unwrap();
+        assert_eq!(wave, replay);
+        assert!(wave.iter().all(|v| v.is_finite()));
+        let dtype = if precision == Music3Precision::Checkpoint {
+            precision::DType::Bf16
+        } else {
+            precision::DType::F32
+        };
+        assert_eq!(
+            *captured.borrow(),
+            noise.iter().map(|v| dtype.round(*v)).collect::<Vec<_>>()
+        );
+        assert!(model.run_flow_with_noise(&hiddens, 1, 1, &[]).is_err());
+        assert!(model
+            .run_flow_with_noise(&hiddens, 1, 1, &[noise.clone(), noise.clone()])
+            .is_err());
+        assert!(model
+            .run_flow_with_noise(&hiddens, 1, 1, &[vec![0.0; count - 1]])
+            .is_err());
+        for value in [f32::NAN, f32::INFINITY] {
+            let mut invalid = noise.clone();
+            invalid[0] = value;
+            assert!(model
+                .run_flow_with_noise(&hiddens, 1, 1, &[invalid])
+                .is_err());
+        }
+        if precision == Music3Precision::Checkpoint {
+            let mut invalid = noise.clone();
+            invalid[0] = f32::MAX;
+            assert!(model
+                .run_flow_with_noise(&hiddens, 1, 1, &[invalid])
+                .is_err());
+        }
     }
 }

@@ -7,15 +7,16 @@
 //! the two conventions compute the same convolution, which the fixture
 //! parity tests pin.
 
-use crate::ops;
+use super::backend::{ConvShape, Weight};
 use crate::Result;
 use crate::SpeechError;
 
-use super::weights::WeightStore;
+use super::precision::DType;
+use super::weights::{Tensor, WeightStore};
 
 pub(crate) struct MlxConv1d {
-    weight: Vec<f32>, // PyTorch [out, in, K]
-    bias: Option<Vec<f32>>,
+    weight: Weight, // PyTorch [out, in, K]
+    bias: Option<Tensor>,
     out_ch: usize,
     in_ch: usize,
     kernel: usize,
@@ -25,8 +26,8 @@ pub(crate) struct MlxConv1d {
 }
 
 pub(crate) struct MlxConvTranspose1d {
-    weight: Vec<f32>, // PyTorch [in, out, K]
-    bias: Option<Vec<f32>>,
+    weight: Weight, // PyTorch [in, out, K]
+    bias: Option<Tensor>,
     out_ch: usize,
     in_ch: usize,
     kernel: usize,
@@ -87,7 +88,11 @@ impl MlxConv1d {
         }
         let bias = load_optional_bias(store, name, out_ch)?;
         Ok(MlxConv1d {
-            weight: permute_out_k_in_to_out_in_k(&weight.data, &weight.shape),
+            weight: store.dense_weight(
+                permute_out_k_in_to_out_in_k(&weight.data, &weight.shape),
+                &[out_ch, in_ch, kernel],
+                weight.dtype,
+            )?,
             bias,
             out_ch,
             in_ch,
@@ -99,19 +104,51 @@ impl MlxConv1d {
     }
 
     /// Channel-major `[in, seq]` in, `[out, seq']` out.
-    pub(crate) fn forward(&self, x: &[f32], _seq: usize) -> Vec<f32> {
-        ops::conv1d(
+    pub(crate) fn dtype(&self, input: DType) -> DType {
+        self.bias
+            .as_ref()
+            .map_or(self.weight.output_dtype(input), |b| {
+                self.weight.output_dtype(input).promote(b.dtype)
+            })
+    }
+    pub(crate) fn forward_typed(
+        &self,
+        x: &[f32],
+        _seq: usize,
+        input_dtype: DType,
+    ) -> Result<Vec<f32>> {
+        let projection_dtype = self.weight.output_dtype(input_dtype);
+        let dtype = self.dtype(input_dtype);
+        let separate_bias = dtype != projection_dtype;
+        let mut output = self.weight.convolution(
             x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            self.padding,
-            self.dilation,
-            1,
-        )
+            if separate_bias {
+                None
+            } else {
+                self.bias.as_deref()
+            },
+            ConvShape {
+                input_channels: self.in_ch,
+                output_channels: self.out_ch,
+                kernel: self.kernel,
+                stride: self.stride,
+                padding: self.padding,
+                dilation: self.dilation,
+                transpose: false,
+            },
+            projection_dtype,
+        )?;
+        if separate_bias {
+            if let Some(bias) = &self.bias {
+                let frames = output.len() / self.out_ch;
+                for (c, row) in output.chunks_exact_mut(frames).enumerate() {
+                    for value in row {
+                        *value = dtype.round(*value + bias[c]);
+                    }
+                }
+            }
+        }
+        Ok(output)
     }
 }
 
@@ -139,7 +176,11 @@ impl MlxConvTranspose1d {
         }
         let bias = load_optional_bias(store, name, out_ch)?;
         Ok(MlxConvTranspose1d {
-            weight: permute_out_k_in_to_in_out_k(&weight.data, &weight.shape),
+            weight: store.dense_weight(
+                permute_out_k_in_to_in_out_k(&weight.data, &weight.shape),
+                &[in_ch, out_ch, kernel],
+                weight.dtype,
+            )?,
             bias,
             out_ch,
             in_ch,
@@ -150,18 +191,51 @@ impl MlxConvTranspose1d {
     }
 
     /// Channel-major `[in, seq]` in, `[out, seq']` out.
-    pub(crate) fn forward(&self, x: &[f32], _seq: usize) -> Vec<f32> {
-        ops::conv_transpose1d(
+    pub(crate) fn dtype(&self, input: DType) -> DType {
+        self.bias
+            .as_ref()
+            .map_or(self.weight.output_dtype(input), |b| {
+                self.weight.output_dtype(input).promote(b.dtype)
+            })
+    }
+    pub(crate) fn forward_typed(
+        &self,
+        x: &[f32],
+        _seq: usize,
+        input_dtype: DType,
+    ) -> Result<Vec<f32>> {
+        let projection_dtype = self.weight.output_dtype(input_dtype);
+        let dtype = self.dtype(input_dtype);
+        let separate_bias = dtype != projection_dtype;
+        let mut output = self.weight.convolution(
             x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            self.padding,
-            1,
-        )
+            if separate_bias {
+                None
+            } else {
+                self.bias.as_deref()
+            },
+            ConvShape {
+                input_channels: self.in_ch,
+                output_channels: self.out_ch,
+                kernel: self.kernel,
+                stride: self.stride,
+                padding: self.padding,
+                dilation: 1,
+                transpose: true,
+            },
+            projection_dtype,
+        )?;
+        if separate_bias {
+            if let Some(bias) = &self.bias {
+                let frames = output.len() / self.out_ch;
+                for (c, row) in output.chunks_exact_mut(frames).enumerate() {
+                    for value in row {
+                        *value = dtype.round(*value + bias[c]);
+                    }
+                }
+            }
+        }
+        Ok(output)
     }
 }
 
@@ -171,7 +245,7 @@ fn load_optional_bias(
     store: &mut WeightStore,
     name: &str,
     out_ch: usize,
-) -> Result<Option<Vec<f32>>> {
+) -> Result<Option<Tensor>> {
     let bias_name = format!("{name}.bias");
     if !store.has(&bias_name) {
         return Ok(None);
@@ -183,5 +257,5 @@ fn load_optional_bias(
             why: format!("expected {out_ch} bias values"),
         });
     }
-    Ok(Some(bias.data))
+    Ok(Some(bias))
 }

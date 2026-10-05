@@ -292,7 +292,7 @@ impl MetalContext {
         // mode to separate compiler arithmetic from model/layout drift. Keep
         // the platform default unless the caller explicitly requests this
         // experiment.
-        if self.precise_math {
+        if self.precise_math || source.starts_with("// turbospark: precise-math\n") {
             options.set_fast_math_enabled(false);
         }
         let precompiled = if self.use_precompiled && !self.precise_math {
