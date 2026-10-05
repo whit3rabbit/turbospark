@@ -1,0 +1,1 @@
+{"condition_hidden_dim": 64, "num_condition_layers": 8, "out_dim": 32, "input_sampling_rate": 24000, "input_hop_length": 960, "output_sampling_rate": 44100, "output_hop_length": 512}

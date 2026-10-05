@@ -2033,6 +2033,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "turbospark-audio"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokenizers",
+ "turbospark-model-io",
+ "turbospark-tokenizer",
+]
+
+[[package]]
 name = "turbospark-bench"
 version = "0.2.0"
 dependencies = [
@@ -2106,6 +2117,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "turbospark-audio",
  "turbospark-bench",
  "turbospark-catalog",
  "turbospark-compute",
@@ -2128,6 +2140,9 @@ dependencies = [
  "half",
  "libc",
  "metal",
+ "sha2",
+ "syn 2.0.119",
+ "turbospark-audio",
  "turbospark-compute",
  "turbospark-core",
  "turbospark-model-io",
@@ -2190,6 +2205,7 @@ version = "0.2.0"
 dependencies = [
  "half",
  "serde_json",
+ "turbospark-audio",
  "turbospark-compute",
  "turbospark-core",
  "turbospark-gpu",

@@ -1,0 +1,1 @@
+{"latent_channels": 16, "decoder_input_dim": 16, "decoder_hidden_dim": 32, "upsampling_ratios": [4, 2], "sampling_rate": 44100}

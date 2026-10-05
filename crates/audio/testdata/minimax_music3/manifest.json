@@ -1,0 +1,239 @@
+{
+ "device": "Device(gpu, 0)",
+ "files": [
+  {
+   "bytes": 55424,
+   "path": "ar_frame_hiddens_long.npy",
+   "sha256": "5ec11e9d0703ad7a4c9c9db09f8ff229d56a43e64dea8b1102c04faa814b4ada"
+  },
+  {
+   "bytes": 123019,
+   "path": "ar_trace_long.json",
+   "sha256": "6dd7e274c16019e5162076269407fb9d98ce0d6add721b264dd9a925e1a99e91"
+  },
+  {
+   "bytes": 805912,
+   "path": "ar_trace_short.json",
+   "sha256": "9fded137808e9104dcbb913e448cfcf249b0b92f1a170dcb9beefad697458f0f"
+  },
+  {
+   "bytes": 1241,
+   "path": "converted_plain/config.json",
+   "sha256": "4b175df44edef1503b8223580d62645d3c49846a8887fb1fe80888c730fd8420"
+  },
+  {
+   "bytes": 1420067,
+   "path": "converted_plain/model.safetensors",
+   "sha256": "d0e3922e06419132a728e9ff1db338e6117b1aadbd7079d6359d2c908622be07"
+  },
+  {
+   "bytes": 10432,
+   "path": "converted_plain/model.safetensors.index.json",
+   "sha256": "f973656251cea50da08f5281ba55cd3543b32025443b6e6257674633adb20cd4"
+  },
+  {
+   "bytes": 1398,
+   "path": "converted_q8/config.json",
+   "sha256": "aa7f2b7cbd6a009a4e84b446d71c489c3c847a0e788d6c475590d9247aebbbb9"
+  },
+  {
+   "bytes": 802282,
+   "path": "converted_q8/model.safetensors",
+   "sha256": "ad40453a3ea08900e100f625865596dd913e6b11665a623be3d6d4d69262d92e"
+  },
+  {
+   "bytes": 17117,
+   "path": "converted_q8/model.safetensors.index.json",
+   "sha256": "0f75b563cbbd93dc77ea60420e843ad20fcc403fc577469206396f95b9e227c8"
+  },
+  {
+   "bytes": 88320,
+   "path": "dit_condition.npy",
+   "sha256": "039e0e00fb43f6dbc14d6071217e3e44928ea7ed5a9f5cff704e6bcc78d8fae4"
+  },
+  {
+   "bytes": 44224,
+   "path": "dit_input_noise.npy",
+   "sha256": "e5ec48e7f86a6676dce81615cbac5a9693876e1d3b12afae028a64f120176251"
+  },
+  {
+   "bytes": 874,
+   "path": "dit_op.json",
+   "sha256": "6fd5857acc723b47822f27f0422a61c8ad4f67d070a87ffdb898ca27d181eea6"
+  },
+  {
+   "bytes": 44224,
+   "path": "dit_velocity_sigma_0.npy",
+   "sha256": "8c17d2edc61592b98635b5ee288947177d2c99f7c48f2bc06ffb1be64a1793b5"
+  },
+  {
+   "bytes": 44224,
+   "path": "dit_velocity_sigma_0_uncond.npy",
+   "sha256": "9af81900a4fdf89913da9fe1d717ad17d540e2cc9a43cb93dcc4a9391fddaf16"
+  },
+  {
+   "bytes": 44224,
+   "path": "dit_velocity_sigma_1.npy",
+   "sha256": "dd4bacab11d2289780d885b9223eb9438f4572c97eac424da7004fd6e671f870"
+  },
+  {
+   "bytes": 44224,
+   "path": "dit_velocity_sigma_1_uncond.npy",
+   "sha256": "ab488ddda38feb99f35ecc2b8cef4b97eebee5a7ad03fe8d8d2abef1f447b632"
+  },
+  {
+   "bytes": 44224,
+   "path": "dit_velocity_sigma_half.npy",
+   "sha256": "88008717b0d56b60d5ba28e9dacf094542dd6902ffa8bb59a59138abb353ebd7"
+  },
+  {
+   "bytes": 44224,
+   "path": "dit_velocity_sigma_half_uncond.npy",
+   "sha256": "9f3f38c7eb7348ad2f7f1653bdb860d126bed749ccaae3b32f53c30de17af17e"
+  },
+  {
+   "bytes": 209909,
+   "path": "flow_trace_long.json",
+   "sha256": "dcde4fd2f70d20e73490beb43cda121767918d61b8c74634577c9164eea70891"
+  },
+  {
+   "bytes": 19705,
+   "path": "flow_trace_short.json",
+   "sha256": "9550d33e3110b89ac643647634ea3134988bba3b30b1b233ee8c5ba0c64bbdde"
+  },
+  {
+   "bytes": 139,
+   "path": "loaded_plain.json",
+   "sha256": "a0f20544fd26bf1e5d0e82e9752039b5d523add32e0fa5bc89b81c4384bb2725"
+  },
+  {
+   "bytes": 512,
+   "path": "loaded_plain_wave.npy",
+   "sha256": "8092588306b76a560d1740a5b6038fe2b03903fbcc2adee64f900894ced9ba18"
+  },
+  {
+   "bytes": 88320,
+   "path": "long_condition_0.npy",
+   "sha256": "039e0e00fb43f6dbc14d6071217e3e44928ea7ed5a9f5cff704e6bcc78d8fae4"
+  },
+  {
+   "bytes": 44544,
+   "path": "long_condition_1.npy",
+   "sha256": "c89fee3255eafa48ef090e89607a4af655aa2b0576c55e2009898f7f66f1e267"
+  },
+  {
+   "bytes": 411776,
+   "path": "long_flow_hiddens.npy",
+   "sha256": "2cef97ea83c5503f71c1ba6bec09c32bee1f5101cce93bfb9afc1cdbcb4e49ba"
+  },
+  {
+   "bytes": 44224,
+   "path": "long_latents_0.npy",
+   "sha256": "04c2838f7d312da3c75e2b3b5ea54cafa5031b2ce94c6230f02eab287f6d4fbc"
+  },
+  {
+   "bytes": 22336,
+   "path": "long_latents_1.npy",
+   "sha256": "713406759f47d9874157b1c9fc3bdd03a8cb008a629ace5e96ffd00bd1e71ede"
+  },
+  {
+   "bytes": 44224,
+   "path": "long_noise_0.npy",
+   "sha256": "340d7548f92e4de3e628e8fbad4dd4c41cd06b81146f2f9fcf809df03d7fd59d"
+  },
+  {
+   "bytes": 22336,
+   "path": "long_noise_1.npy",
+   "sha256": "34a3cc8eccbe51b6d3b923c94af78656d317f9537032f5a8a0da8e37e670b948"
+  },
+  {
+   "bytes": 182,
+   "path": "official_tiny/condition_encoder/config.json",
+   "sha256": "89849b0cc989b65c7b226527c1e9975bf762a007717e2a013cd066faf1359e96"
+  },
+  {
+   "bytes": 25058,
+   "path": "official_tiny/condition_encoder/diffusion_pytorch_model.safetensors",
+   "sha256": "4b2488388ef24da1db9515e85ddea81c9fc4acdaa46109a53042daca821a19b1"
+  },
+  {
+   "bytes": 392,
+   "path": "official_tiny/language_model/config.json",
+   "sha256": "fcaf61f02d5143e0fba1d9bd6c36fe02e7c96e282f9085ca7fae1cfc11040aa9"
+  },
+  {
+   "bytes": 561111,
+   "path": "official_tiny/language_model/diffusion_pytorch_model.safetensors",
+   "sha256": "c9cb4dc28ef1d8d250da5b8fb39fe1b34bd34f39bc0854dd1307c496a1b9765b"
+  },
+  {
+   "bytes": 84,
+   "path": "official_tiny/modular_model_index.json",
+   "sha256": "bbe4663ec559da4fc977cdc1e965f297b2482ecc4544670be9379824de627380"
+  },
+  {
+   "bytes": 132,
+   "path": "official_tiny/rvq_depth_decoder/config.json",
+   "sha256": "f14226977a1e5d7bc2bcc49ecb6dc1374b31f9e2a40433a5c9dbaf8e898807b0"
+  },
+  {
+   "bytes": 466747,
+   "path": "official_tiny/rvq_depth_decoder/diffusion_pytorch_model.safetensors",
+   "sha256": "36922bda26903470ee87f274b731aaa1472f40d5a5e977e5db1d890f88d7166b"
+  },
+  {
+   "bytes": 175,
+   "path": "official_tiny/transformer/config.json",
+   "sha256": "8ff7929ce27d2af569898bd82422be5a4f9329f0a17bf5788e18f56bad08c283"
+  },
+  {
+   "bytes": 295018,
+   "path": "official_tiny/transformer/diffusion_pytorch_model.safetensors",
+   "sha256": "8326b545ae4885028dd9193c2e1d15cffb64ad3e62227340121794775c49ce06"
+  },
+  {
+   "bytes": 127,
+   "path": "official_tiny/vocoder/config.json",
+   "sha256": "8dc4bf78c6bb74f973dd33203169bfe2f43c9af728ea353b157db9d7bde623f6"
+  },
+  {
+   "bytes": 70552,
+   "path": "official_tiny/vocoder/diffusion_pytorch_model.safetensors",
+   "sha256": "b33ea05933a5e7ce0e58f95f858cdd3d77d2c57b8ecb54f9e7186e661aa97e89"
+  },
+  {
+   "bytes": 2804,
+   "path": "prompt_fixtures.json",
+   "sha256": "c8de645529e278d6a51ca04da4aefd1cb3ad35885ee44c97aaa2ee48a16b9b80"
+  },
+  {
+   "bytes": 66433,
+   "path": "rng_fixtures.json",
+   "sha256": "7a3ceae60d554bdb2dbed0ab7b294c85a2759b4328f94fa07689cd2b3e291962"
+  },
+  {
+   "bytes": 1089,
+   "path": "tiny_config.json",
+   "sha256": "d9ded79bb1d350d62aaef76e013008b3685fe416ec2d1c60e88b1ffddfd0f29b"
+  },
+  {
+   "bytes": 1420055,
+   "path": "tiny_weights.safetensors",
+   "sha256": "a945e988dc82c5b31dfe1a4a682295da658a9486f6dad5a8ece801d348455b00"
+  }
+ ],
+ "generator": "gen_minimax_music3_fixtures.py",
+ "long": {
+  "frames": 201,
+  "seed": 7,
+  "steps": 2
+ },
+ "mlx_audio_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+ "mlx_version": "0.32.3",
+ "short": {
+  "frames": 2,
+  "seed": 7,
+  "steps": 2
+ },
+ "weight_seed": 1234
+}

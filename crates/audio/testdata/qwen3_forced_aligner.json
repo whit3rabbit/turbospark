@@ -1,0 +1,58 @@
+{
+  "reference": "mlx-audio 0.5.7 Qwen3-ForcedAligner.generate",
+  "mlx_audio_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "model_repo": "mlx-community/Qwen3-ForcedAligner-0.6B-8bit",
+  "model_revision": "0e1a68e91d815300c7c9754b2a7639378b23db15",
+  "sample_rate": 16000,
+  "sample_count": 44715,
+  "audio_sha256": "ea38d350100b5d532fbc3e3517499dbd9915b9b0890d9e819bae384fa1384bcb",
+  "transcript": "The quick brown fox jumps over the lazy dog.",
+  "language": "English",
+  "items": [
+    {
+      "text": "The",
+      "start_time": 0.0,
+      "end_time": 0.08
+    },
+    {
+      "text": "quick",
+      "start_time": 0.08,
+      "end_time": 0.4
+    },
+    {
+      "text": "brown",
+      "start_time": 0.48,
+      "end_time": 0.8
+    },
+    {
+      "text": "fox",
+      "start_time": 0.8,
+      "end_time": 1.2
+    },
+    {
+      "text": "jumps",
+      "start_time": 1.2,
+      "end_time": 1.6
+    },
+    {
+      "text": "over",
+      "start_time": 1.68,
+      "end_time": 1.84
+    },
+    {
+      "text": "the",
+      "start_time": 1.84,
+      "end_time": 1.92
+    },
+    {
+      "text": "lazy",
+      "start_time": 1.92,
+      "end_time": 2.32
+    },
+    {
+      "text": "dog",
+      "start_time": 2.32,
+      "end_time": 2.72
+    }
+  ]
+}

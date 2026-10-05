@@ -1,0 +1,66 @@
+{
+ "condition_npy": {
+  "file": "dit_condition.npy",
+  "shape": [
+   1,
+   689,
+   32
+  ]
+ },
+ "input_npy": {
+  "file": "dit_input_noise.npy",
+  "shape": [
+   1,
+   16,
+   689
+  ]
+ },
+ "sigma_0_uncond_velocity_npy": {
+  "file": "dit_velocity_sigma_0_uncond.npy",
+  "shape": [
+   1,
+   16,
+   689
+  ]
+ },
+ "sigma_0_velocity_npy": {
+  "file": "dit_velocity_sigma_0.npy",
+  "shape": [
+   1,
+   16,
+   689
+  ]
+ },
+ "sigma_1_uncond_velocity_npy": {
+  "file": "dit_velocity_sigma_1_uncond.npy",
+  "shape": [
+   1,
+   16,
+   689
+  ]
+ },
+ "sigma_1_velocity_npy": {
+  "file": "dit_velocity_sigma_1.npy",
+  "shape": [
+   1,
+   16,
+   689
+  ]
+ },
+ "sigma_half_uncond_velocity_npy": {
+  "file": "dit_velocity_sigma_half_uncond.npy",
+  "shape": [
+   1,
+   16,
+   689
+  ]
+ },
+ "sigma_half_velocity_npy": {
+  "file": "dit_velocity_sigma_half.npy",
+  "shape": [
+   1,
+   16,
+   689
+  ]
+ }
+}

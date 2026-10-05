@@ -1,0 +1,1 @@
+{"in_channels": 16, "condition_dim": 32, "num_layers": 2, "num_attention_heads": 4, "attention_head_dim": 16, "ff_inner_dim": 64, "rotary_dim": 8, "fourier_embedding_dim": 16}

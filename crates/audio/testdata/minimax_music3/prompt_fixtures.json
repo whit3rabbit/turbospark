@@ -1,0 +1,177 @@
+{
+ "captions": [
+  {
+   "clean": "Genre: acoustic pop. BPM: 96. Warm female vocal.",
+   "input": "Genre: acoustic pop. BPM: 96. Warm female vocal."
+  },
+  {
+   "clean": "genre: is rock Loud guitars\ndrums\ntempo",
+   "input": "<|genre: rock|> **Loud** guitars\n- drums\n\n\n### tempo"
+  },
+  {
+   "clean": "A long is special tag and a <tag>",
+   "input": "A <|long special|> tag and a <tag>"
+  },
+  {
+   "clean": "Line one\nLine twowith spaces\nbullet - point\n",
+   "input": "Line one\n\n\nLine two    with spaces\nbullet - point\n___"
+  }
+ ],
+ "lyrics": [
+  {
+   "input": "[verse]\nMorning light\n[chorus]\nSing with me",
+   "normalized": "[start]\n[verse]\nMorning light\n[chorus]\nSing with me"
+  },
+  {
+   "input": "[Verse 1] Hello ] there [ Chorus ] ^ tail",
+   "normalized": "[start]\n[verse 1]"
+  }
+ ],
+ "tiny_text": {
+  "audio_cfg_token_id": 198,
+  "cases": [
+   {
+    "assembled": "<|im_start|><|caption_start|>Genre: acoustic pop. BPM: 96. Warm female vocal.<|caption_end|><|lyrics_start|>[start]\n[verse]\nMorning light\n[chorus]\nSing with me<|lyrics_end|><|im_end|><|audio_start|>",
+    "conditional": [
+     1,
+     121,
+     132,
+     172,
+     63,
+     8,
+     171,
+     11,
+     51,
+     163,
+     20,
+     159,
+     8,
+     157,
+     168,
+     106,
+     75,
+     153,
+     44,
+     40,
+     145,
+     131,
+     59,
+     42,
+     62,
+     102,
+     34,
+     71,
+     30,
+     59,
+     2
+    ],
+    "lyrics": "[verse]\nMorning light\n[chorus]\nSing with me",
+    "text": "Genre: acoustic pop. BPM: 96. Warm female vocal.",
+    "unconditional": [
+     1,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     59,
+     2
+    ]
+   },
+   {
+    "assembled": "<|im_start|><|caption_start|>ab<|caption_end|><|lyrics_start|>[start]\n[verse]\nMorning light\n[chorus]\nSing with me<|lyrics_end|><|im_end|><|audio_start|>",
+    "conditional": [
+     1,
+     121,
+     132,
+     172,
+     63,
+     8,
+     171,
+     11,
+     51,
+     163,
+     20,
+     159,
+     8,
+     157,
+     168,
+     106,
+     75,
+     153,
+     44,
+     40,
+     145,
+     131,
+     59,
+     42,
+     62,
+     102,
+     34,
+     71,
+     30,
+     59,
+     2
+    ],
+    "lyrics": "[verse]\nMorning light\n[chorus]\nSing with me",
+    "text": "ab",
+    "unconditional": [
+     1,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     198,
+     59,
+     2
+    ]
+   }
+  ]
+ }
+}
