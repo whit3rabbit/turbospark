@@ -105,6 +105,11 @@ public final class AppSpeechSynthesizer: NSObject, ObservableObject, AVSpeechSyn
                 }
             }
         }
+        // A voice that rendered nothing leaves no file; say so rather than
+        // hand the export sheet a path that does not exist.
+        guard FileManager.default.fileExists(atPath: destination.path) else {
+            throw AudioTranscriptionError.noSpeech
+        }
         return destination
     }
 

@@ -373,6 +373,10 @@ final class ProfileDatabase: @unchecked Sendable {
         }
         func count(_ message: AppChatMessage) {
             message.imagePaths.forEach { count($0) }
+            // Sent voice notes hold their asset by reference exactly like
+            // pictures; uncounted, the clip is collected once the draft
+            // that first referenced it is cleared on send.
+            message.audioPaths.forEach { count($0) }
             message.alternates.forEach(count)
         }
         for chat in archive.chats {

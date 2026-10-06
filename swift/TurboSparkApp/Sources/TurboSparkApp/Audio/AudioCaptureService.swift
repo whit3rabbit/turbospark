@@ -158,6 +158,11 @@ final class CaptureSink: @unchecked Sendable {
     private let lock = NSLock()
     private var file: AVAudioFile?
     private let onLevel: @Sendable (Float) -> Void
+    /// Frames since the last reported level. Levels go out about 12 times a
+    /// second whatever the IO buffer size, so the meter's history spans the
+    /// same time for the microphone (4096-frame taps) and a process tap
+    /// (often 512 frames, ~90 callbacks a second).
+    private var framesSinceLevel: AVAudioFrameCount = 0
 
     init(file: AVAudioFile, onLevel: @escaping @Sendable (Float) -> Void) {
         self.file = file
@@ -167,9 +172,16 @@ final class CaptureSink: @unchecked Sendable {
     func consume(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
         try? file?.write(from: buffer)
+        framesSinceLevel += buffer.frameLength
+        let interval = AVAudioFrameCount(max(1, buffer.format.sampleRate / 12))
+        let due = framesSinceLevel >= interval
+        if due { framesSinceLevel = 0 }
         lock.unlock()
-        guard let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
-        onLevel(TurboSparkAudio.displayLevel(channel, count: Int(buffer.frameLength)))
+        guard due, let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+        // Interleaved buffers keep every channel in plane 0.
+        let samples = Int(buffer.frameLength)
+            * (buffer.format.isInterleaved ? Int(buffer.format.channelCount) : 1)
+        onLevel(TurboSparkAudio.displayLevel(channel, count: samples))
     }
 
     /// Releasing the `AVAudioFile` finalizes the WAV header.

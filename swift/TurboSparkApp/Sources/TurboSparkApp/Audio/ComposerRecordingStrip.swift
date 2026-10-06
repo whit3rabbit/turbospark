@@ -5,6 +5,9 @@ import SwiftUI
 ///
 /// The footer stays put underneath, so the Stop button the user just
 /// pressed is still where their pointer is.
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct ComposerRecordingStrip: View {
     @ObservedObject var model: AppModel
     @ObservedObject var recorder: ComposerAudioRecorder

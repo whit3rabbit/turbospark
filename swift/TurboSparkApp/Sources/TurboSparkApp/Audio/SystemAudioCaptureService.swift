@@ -64,6 +64,8 @@ final class SystemAudioCaptureService: ObservableObject {
     @Published private(set) var levels: [Float] = []
 
     private var session: AnyObject?
+    /// The model a running capture attaches to when it hits the length cap.
+    private weak var model: AppModel?
     private var outputURL: URL?
     private var startedAt: Date?
     private var clock: Task<Void, Never>?
@@ -88,7 +90,7 @@ final class SystemAudioCaptureService: ObservableObject {
         return sources
     }
 
-    func start(source: SystemAudioSource) throws {
+    func start(source: SystemAudioSource, model: AppModel) throws {
         guard !isRecording else { return }
         guard #available(macOS 14.2, *) else { throw CaptureError.unsupportedOS }
         let url = AudioEngineBridge.temporaryURL(extension: "wav")
@@ -96,6 +98,7 @@ final class SystemAudioCaptureService: ObservableObject {
             Task { @MainActor in self?.push(level: level) }
         }
         session = tap
+        self.model = model
         outputURL = url
         self.source = source
         levels = Array(repeating: 0, count: AudioCaptureService.levelHistory)
@@ -164,7 +167,13 @@ final class SystemAudioCaptureService: ObservableObject {
                 guard let self, let startedAt = self.startedAt, self.isRecording else { return }
                 self.elapsed = Date().timeIntervalSince(startedAt)
                 if self.elapsed >= limit {
-                    _ = self.stop()
+                    // Finish, not stop: a capture that reaches the cap is
+                    // attached like any other, never silently dropped.
+                    if let model = self.model {
+                        self.finish(into: model)
+                    } else {
+                        self.cancel()
+                    }
                     return
                 }
             }
@@ -180,7 +189,11 @@ private final class ProcessTapSession {
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
-    private let sink: CaptureSink
+    /// Optional so every stored property has a value from the first line of
+    /// `init`: a failure after the tap exists can then call `invalidate()`,
+    /// which a partially initialized object could not, and leaked the tap
+    /// and the aggregate device.
+    private var sink: CaptureSink?
     private let queue = DispatchQueue(label: "com.turbospark.process-tap", qos: .userInitiated)
 
     init(
@@ -257,9 +270,15 @@ private final class ProcessTapSession {
         }
         aggregateID = device
 
-        let file = try AVAudioFile(
-            forWriting: outputURL, settings: AudioCaptureService.wavSettings(for: format),
-            commonFormat: .pcmFormatFloat32, interleaved: format.isInterleaved)
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(
+                forWriting: outputURL, settings: AudioCaptureService.wavSettings(for: format),
+                commonFormat: .pcmFormatFloat32, interleaved: format.isInterleaved)
+        } catch {
+            invalidate()
+            throw error
+        }
         let sink = CaptureSink(file: file, onLevel: onLevel)
         self.sink = sink
 
@@ -300,7 +319,7 @@ private final class ProcessTapSession {
             Self.destroyTap(tapID)
         }
         tapID = AudioObjectID(kAudioObjectUnknown)
-        sink.close()
+        sink?.close()
     }
 
     private static func destroyTap(_ tap: AudioObjectID) {
@@ -310,7 +329,9 @@ private final class ProcessTapSession {
     /// UID of the current default output device.
     static func defaultOutputDeviceUID() -> String? {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+            // DefaultOutputDevice, not DefaultSystemOutputDevice: the
+            // latter is the alert-sound device.
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
         var device = AudioObjectID(kAudioObjectUnknown)

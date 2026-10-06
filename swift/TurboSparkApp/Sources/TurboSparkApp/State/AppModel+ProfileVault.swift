@@ -26,6 +26,7 @@ extension AppModel {
             }
             func collect(_ message: AppChatMessage) {
                 message.imagePaths.forEach { add($0) }
+                message.audioPaths.forEach { add($0) }
                 message.alternates.forEach(collect)
             }
             chat.messages.forEach(collect)
@@ -57,6 +58,9 @@ extension AppModel {
 
         func migrate(_ message: inout AppChatMessage) {
             message.imagePaths = message.imagePaths.map {
+                migrated[$0]?.storedReference ?? $0
+            }
+            message.audioPaths = message.audioPaths.map {
                 migrated[$0]?.storedReference ?? $0
             }
             for index in message.alternates.indices {

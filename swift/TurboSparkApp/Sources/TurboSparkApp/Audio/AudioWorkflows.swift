@@ -93,8 +93,10 @@ final class ComposerAudioRecorder: ObservableObject {
                     try? FileManager.default.removeItem(at: url)
                     insert(transcript.text, into: model)
                     phase = .idle
-                    _ = AccessibilityNotification.Announcement.post(.init(
-                        String(localized: "Transcript inserted", bundle: .module)))
+                    // An INSTANCE call: `Announcement.post(.init(...))` is the
+                    // unapplied method and announces nothing.
+                    AccessibilityNotification.Announcement(
+                        String(localized: "Transcript inserted", bundle: .module)).post()
                     if AudioPreferences.autoSendAfterDictation && !model.isRunning {
                         model.run()
                     }

@@ -65,6 +65,7 @@ extension AppModel {
         message.toolCalls = activated.toolCalls
         message.toolResults = activated.toolResults
         message.imagePaths = activated.imagePaths
+        message.audioPaths = activated.audioPaths
         message.createdAt = activated.createdAt
         message.alternates = versions.map { version in
             var flat = version

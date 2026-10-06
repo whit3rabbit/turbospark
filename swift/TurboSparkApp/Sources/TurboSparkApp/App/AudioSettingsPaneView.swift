@@ -7,6 +7,9 @@ import TurboSpark
 /// Each section is its own computed property: a Section inline in a larger
 /// Form expression is the shape that blew the macOS 14 SDK type-checker
 /// (see `GeneralSettingsPaneView`).
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct AudioSettingsPaneView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var capabilities = AudioCapabilities.shared
@@ -33,7 +36,11 @@ struct AudioSettingsPaneView: View {
         }
         .formStyle(.grouped)
         .padding(16)
-        .onAppear { capabilities.refresh() }
+        .onAppear {
+            capabilities.refresh()
+            // The test is a meter, not a recording: stop at the length cap.
+            micTest.onLimitReached = { [weak micTest] in micTest?.cancel() }
+        }
         .onDisappear { micTest.cancel() }
         .onChange(of: audioEnabled) { _, _ in capabilities.refresh() }
         .onChange(of: speechEngine) { _, _ in capabilities.refresh() }

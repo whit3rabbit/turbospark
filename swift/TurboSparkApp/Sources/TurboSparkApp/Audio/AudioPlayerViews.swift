@@ -4,6 +4,9 @@ import TurboSpark
 
 /// `AudioWaveformView` over a file, with peaks from the engine
 /// (`ts_audio_peaks_json` through `AudioPeaksCache`).
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct AudioFileWaveformView: View {
     let url: URL
     var buckets: Int = 160
@@ -33,6 +36,9 @@ struct AudioFileWaveformView: View {
 /// A sent voice note or audio file in a message bubble: play, scrub,
 /// duration, export (docs/AUDIO_UI.md, capability 2). The transcript the
 /// model read is already in the bubble text, so the row does not repeat it.
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct AudioAttachmentRow: View {
     let storedPath: String
     @ObservedObject private var player = AudioPlaybackController.shared
@@ -96,7 +102,10 @@ struct AudioAttachmentRow: View {
             .sheet(isPresented: $showingExport) {
                 AudioExportSheet(
                     source: url,
-                    suggestedName: (storedPath as NSString).lastPathComponent,
+                    // A managed reference is `turbospark-asset:<id>`, not a
+                    // file name a save panel should propose.
+                    suggestedName: ManagedAssetStore.assetID(from: storedPath) == nil
+                        ? (storedPath as NSString).lastPathComponent : "Voice note.m4a",
                     range: nil)
             }
         } else {
@@ -118,6 +127,9 @@ struct AudioAttachmentRow: View {
 
 /// The preview pane for an audio attachment: waveform with playhead and
 /// trim selection, transport, transcript (docs/AUDIO_UI.md, capability 2).
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct AudioPreviewView: View {
     @ObservedObject var model: AppModel
     let attachment: AppPromptAttachment
@@ -198,11 +210,11 @@ struct AudioPreviewView: View {
                     Button {
                         player.setRate(rate)
                     } label: {
-                        Text(verbatim: Self.rateLabel(rate))
+                        Text(verbatim: WaveformMath.rateLabel(rate))
                     }
                 }
             } label: {
-                Text(verbatim: Self.rateLabel(player.rate))
+                Text(verbatim: WaveformMath.rateLabel(player.rate))
                     .themedCode(.tiny)
             }
             .menuStyle(.borderlessButton)
@@ -304,10 +316,6 @@ struct AudioPreviewView: View {
         (fraction.lowerBound * duration)...(fraction.upperBound * duration)
     }
 
-    static func rateLabel(_ rate: Float) -> String {
-        rate == rate.rounded() ? String(format: "%.0fx", rate) : String(format: "%.2gx", rate)
-    }
-
     /// Trims through the engine, stores the result as a new managed asset,
     /// and points the attachment at it. The old transcript described the
     /// whole clip, so it is cleared and transcription starts again.
@@ -344,6 +352,9 @@ struct AudioPreviewView: View {
 }
 
 /// Export to M4A (Apple AAC over an engine-rendered WAV) or WAV (engine).
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct AudioExportSheet: View {
     let source: URL
     let suggestedName: String
@@ -419,8 +430,11 @@ struct AudioExportSheet: View {
         let stem = (suggestedName as NSString).deletingPathExtension
         panel.nameFieldStringValue = "\(stem).\(options.format.fileExtension)"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
-        var request = options
-        request.range = range
+        // A `let` copy: a captured `var` in the task closures below is an
+        // error on the Swift 5.9 toolchain's `@Sendable` closures.
+        var built = options
+        built.range = range
+        let request = built
         isExporting = true
         errorText = nil
         Task {

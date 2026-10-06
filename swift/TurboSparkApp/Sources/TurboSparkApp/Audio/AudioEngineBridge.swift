@@ -27,6 +27,11 @@ enum WaveformMath {
         }
     }
 
+    /// Playback-rate menu label: `1x`, `1.5x`, `0.75x`.
+    static func rateLabel(_ rate: Float) -> String {
+        rate == rate.rounded() ? String(format: "%.0fx", rate) : String(format: "%.2gx", rate)
+    }
+
     /// `m:ss` under an hour, `h:mm:ss` otherwise. ASCII only.
     static func formatDuration(_ seconds: TimeInterval) -> String {
         guard seconds.isFinite, seconds > 0 else { return "0:00" }
@@ -196,6 +201,14 @@ enum AudioEngineBridge {
         }
     }
 
+    /// AAC-LC caps the bit rate by sample rate and channel count (128 kbps
+    /// is above what 16 kHz mono allows, and the encoder throws rather than
+    /// clamping). Four bits per sample per channel stays inside every
+    /// rate the export sheet offers.
+    static func clampedAACBitRate(_ requested: Int, sampleRate: Double, channels: Int) -> Int {
+        min(requested, Int(sampleRate * 4) * max(1, channels))
+    }
+
     /// Apple's AAC encoder over an engine-rendered WAV. No resampling or
     /// remixing happens here: the WAV is already in its final shape, so the
     /// processing format is copied straight through.
@@ -210,7 +223,8 @@ enum AudioEngineBridge {
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: format.sampleRate,
             AVNumberOfChannelsKey: Int(format.channelCount),
-            AVEncoderBitRateKey: bitRate,
+            AVEncoderBitRateKey: clampedAACBitRate(
+                bitRate, sampleRate: format.sampleRate, channels: Int(format.channelCount)),
         ]
         let output = try AVAudioFile(
             forWriting: destination, settings: settings,

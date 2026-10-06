@@ -4,6 +4,9 @@ import SwiftUI
 /// Pick an app (or all system audio) and record what it plays
 /// (docs/AUDIO_UI.md, capability 3). The finished clip becomes an ordinary
 /// audio attachment, so trim, transcript and export all apply.
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct SystemAudioCaptureSheet: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var service = SystemAudioCaptureService.shared
@@ -103,7 +106,6 @@ struct SystemAudioCaptureSheet: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
-                .tag(Optional(source.pid))
                 .opacity(source.hasAudioProcess ? 1 : 0.55)
             }
         }
@@ -153,7 +155,7 @@ struct SystemAudioCaptureSheet: View {
         guard let selected else { return }
         errorText = nil
         do {
-            try service.start(source: selected)
+            try service.start(source: selected, model: model)
         } catch {
             errorText = error.localizedDescription
         }
@@ -164,6 +166,9 @@ struct SystemAudioCaptureSheet: View {
 /// red dot, the source, the elapsed time, in the top bar of every section.
 /// Clicking it stops and attaches, so the user is never one navigation away
 /// from a recording they cannot find.
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct RecordingIndicatorPill: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var service = SystemAudioCaptureService.shared

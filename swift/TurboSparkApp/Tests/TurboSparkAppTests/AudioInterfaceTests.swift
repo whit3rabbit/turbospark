@@ -174,8 +174,14 @@ final class AudioInterfaceTests: XCTestCase {
     }
 
     func testRateLabels() {
-        XCTAssertEqual(AudioPreviewView.rateLabel(1), "1x")
-        XCTAssertEqual(AudioPreviewView.rateLabel(1.5), "1.5x")
-        XCTAssertEqual(AudioPreviewView.rateLabel(0.75), "0.75x")
+        XCTAssertEqual(WaveformMath.rateLabel(1), "1x")
+        XCTAssertEqual(WaveformMath.rateLabel(1.5), "1.5x")
+        XCTAssertEqual(WaveformMath.rateLabel(0.75), "0.75x")
+    }
+
+    func testAACBitRateIsClampedForLowRatesOnly() {
+        XCTAssertEqual(AudioEngineBridge.clampedAACBitRate(128_000, sampleRate: 16_000, channels: 1), 64_000)
+        XCTAssertEqual(AudioEngineBridge.clampedAACBitRate(128_000, sampleRate: 44_100, channels: 2), 128_000)
+        XCTAssertEqual(AudioEngineBridge.clampedAACBitRate(256_000, sampleRate: 48_000, channels: 1), 192_000)
     }
 }

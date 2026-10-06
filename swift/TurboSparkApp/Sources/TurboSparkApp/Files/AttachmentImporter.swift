@@ -67,7 +67,14 @@ enum AttachmentImporter {
                 // and lands in `extractedText`, which the send path already
                 // inlines. A format the engine refuses gets the engine's
                 // "convert it" sentence instead of an extraction failure.
-                switch AudioFileClass.classify(extension: url.pathExtension) {
+                let audioClass = AudioFileClass.classify(extension: url.pathExtension)
+                if audioClass != .notAudio && !AudioPreferences.experimentalEnabled {
+                    // Off means off for every intake (mentions, Files, drop),
+                    // not only the picker: an audio chip nothing can
+                    // transcribe would block the send.
+                    return (url, .failure(AudioImportError.disabled))
+                }
+                switch audioClass {
                 case .supported:
                     do {
                         let document = ExtractedPromptDocument(
@@ -315,12 +322,17 @@ enum AttachmentImporter {
 /// Why an audio file was not attached.
 enum AudioImportError: LocalizedError {
     case unsupported(String)
+    case disabled
 
     var errorDescription: String? {
         switch self {
         case .unsupported(let ext):
             return String(
                 localized: "Unsupported audio format (.\(ext)). Convert to M4A or WAV and try again.",
+                bundle: .module)
+        case .disabled:
+            return String(
+                localized: "In-app audio is off. Turn it on in Settings > Audio & Voice.",
                 bundle: .module)
         }
     }

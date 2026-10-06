@@ -183,6 +183,9 @@ enum OpenProfileExport {
                 for path in message.imagePaths where ManagedAssetStore.assetID(from: path) != nil {
                     if !generated.contains(path) { attachments.insert(path) }
                 }
+                for path in message.audioPaths where ManagedAssetStore.assetID(from: path) != nil {
+                    attachments.insert(path)
+                }
                 message.alternates.forEach(collectMessageAssets)
             }
             chat.messages.forEach(collectMessageAssets)
@@ -228,6 +231,9 @@ enum OpenProfileExport {
         func portableMessage(_ source: AppChatMessage) -> AppChatMessage {
             var copy = source
             copy.imagePaths = source.imagePaths.compactMap { reference in
+                assetPaths[reference].map { "../../../\($0)" }
+            }
+            copy.audioPaths = source.audioPaths.compactMap { reference in
                 assetPaths[reference].map { "../../../\($0)" }
             }
             copy.alternates = source.alternates.map(portableMessage)

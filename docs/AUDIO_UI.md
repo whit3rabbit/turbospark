@@ -275,3 +275,12 @@ Not verified here, and required on macOS before merge:
 
 Process-tap code paths (`SystemAudioCaptureService`) carry the most
 compile and runtime risk.
+
+Known open issues from static review:
+
+- A file dropped onto the prompt text itself may be taken by the editor's
+  `NSTextView` (inserting the path) before the composer's
+  `dropDestination` sees it; drops elsewhere on the composer import.
+- Capture sinks write to `AVAudioFile` on the IO thread. That is buffered,
+  but a ring buffer drained off-thread would be the real-time-clean design.
+- `renderToFile` waits on the synthesizer's write callback with no timeout.
