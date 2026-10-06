@@ -97,7 +97,7 @@ struct ChatTranscriptView: View {
                     let announcement = count == 1
                         ? "Assistant is asking a question. Please choose an answer."
                         : "Assistant is asking \(count) questions. Please choose your answers."
-                    _ = AccessibilityNotification.Announcement.post(.init(announcement))
+                    AccessibilityNotification.Announcement(announcement).post()
                     withAnimation(.easeInOut(duration: 0.2)) {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }

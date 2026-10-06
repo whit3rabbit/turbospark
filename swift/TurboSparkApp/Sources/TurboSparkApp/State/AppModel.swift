@@ -945,7 +945,7 @@ public final class AppModel: ObservableObject {
     /// Displays a toast notification and posts an accessible VoiceOver announcement.
     public func showToast(_ message: String, style: AppToast.Style = .info, duration: TimeInterval = 3.0) {
         activeToast = AppToast(message: message, style: style, duration: duration)
-        _ = AccessibilityNotification.Announcement.post(.init(message))
+        AccessibilityNotification.Announcement(message).post()
     }
 
     /// Dismisses the active toast notification immediately.

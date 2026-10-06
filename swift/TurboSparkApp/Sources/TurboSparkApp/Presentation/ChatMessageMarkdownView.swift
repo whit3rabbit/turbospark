@@ -337,9 +337,7 @@ private struct CodeBlockContainer<Content: View>: View {
     private func copyCode() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
-        _ = AccessibilityNotification.Announcement.post(
-            .init("Copied \(language ?? "code") block to clipboard")
-        )
+        AccessibilityNotification.Announcement("Copied \(language ?? "code") block to clipboard").post()
         withAnimation(.easeInOut(duration: 0.15)) {
             isCopied = true
         }

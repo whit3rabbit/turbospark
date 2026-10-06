@@ -48,10 +48,10 @@ struct ErrorBanner: View {
             }
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .onAppear {
-                _ = AccessibilityNotification.Announcement.post(.init("Error: \(error)"))
+                AccessibilityNotification.Announcement("Error: \(error)").post()
             }
             .onChange(of: error) { _, newError in
-                _ = AccessibilityNotification.Announcement.post(.init("Error: \(newError)"))
+                AccessibilityNotification.Announcement("Error: \(newError)").post()
             }
         }
     }

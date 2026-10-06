@@ -134,7 +134,7 @@ struct ModelInstallToastView: View {
         .onAppear {
             let message = String(localized: "Installing", bundle: .module)
                 + ": " + (model.installingAlias ?? "")
-            _ = AccessibilityNotification.Announcement.post(.init(message))
+            AccessibilityNotification.Announcement(message).post()
         }
     }
 }

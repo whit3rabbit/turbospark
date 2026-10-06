@@ -325,13 +325,11 @@ struct ModelProbeSheet: View {
                     context: model.activeFitContext,
                     expertCacheSlots: model.activeCacheSlots,
                     loadGuard: model.activeLoadGuard)
-                _ = AccessibilityNotification.Announcement.post(
-                    .init("Probe complete. Report is available.")
-                )
+                AccessibilityNotification.Announcement("Probe complete. Report is available.").post()
             } catch {
                 let msg = "Probe failed: \(error.localizedDescription)"
                 probeError = msg
-                _ = AccessibilityNotification.Announcement.post(.init(msg))
+                AccessibilityNotification.Announcement(msg).post()
             }
             isProbing = false
         }

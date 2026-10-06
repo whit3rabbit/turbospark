@@ -140,10 +140,12 @@ struct OutputPaneView: View {
             // Announce when generation finishes so a screen-reader user knows
             // they can read the response. Streaming text itself is too
             // granular to announce per token, but the completion moment is.
-            // This app is macOS-only (.macOS(.v14) in Package.swift), so the
-            // static AccessibilityNotification.Announcement.post is the
-            // cross-platform API to use here; the iOS-only
+            // This app is macOS-only (.macOS(.v14) in Package.swift), so
+            // AccessibilityNotification is the API to use here; the iOS-only
             // \.accessibilityAnnouncementQueue environment value is not.
+            // `post()` is an INSTANCE method: the old spelling
+            // `_ = Announcement.post(.init(message))` evaluated the unapplied
+            // method, discarded it, and announced nothing.
             if wasRunning && !isRunning {
                 // A turn that ends by itself disarms a two-stage Esc that
                 // never got its second press.
@@ -152,10 +154,10 @@ struct OutputPaneView: View {
                 let message = count > 0
                     ? "Generation finished. \(count) tokens."
                     : "Generation finished."
-                _ = AccessibilityNotification.Announcement.post(.init(message))
+                AccessibilityNotification.Announcement(message).post()
             } else if !wasRunning && isRunning {
                 let message = model.reasoning != .off ? "Generation started. Thinking." : "Generation started."
-                _ = AccessibilityNotification.Announcement.post(.init(message))
+                AccessibilityNotification.Announcement(message).post()
             }
             lastRunningState = isRunning
         }
