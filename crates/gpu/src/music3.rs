@@ -336,9 +336,24 @@ impl Music3Device {
                 let mut fp = p.clone();
                 fp[36..40].copy_from_slice(&(threads as u32).to_le_bytes());
                 let constants = crate::rms_norm::unused_function_constants();
-                let qk = c.pipeline(NATIVE_SOURCE, "music3_attention_fallback_qk", &constants, b"")?;
-                let softmax = c.pipeline(NATIVE_SOURCE, "music3_attention_fallback_softmax", &constants, b"")?;
-                let pv = c.pipeline(NATIVE_SOURCE, "music3_attention_fallback_pv", &constants, b"")?;
+                let qk = c.pipeline(
+                    NATIVE_SOURCE,
+                    "music3_attention_fallback_qk",
+                    &constants,
+                    b"",
+                )?;
+                let softmax = c.pipeline(
+                    NATIVE_SOURCE,
+                    "music3_attention_fallback_softmax",
+                    &constants,
+                    b"",
+                )?;
+                let pv = c.pipeline(
+                    NATIVE_SOURCE,
+                    "music3_attention_fallback_pv",
+                    &constants,
+                    b"",
+                )?;
                 let qb = c.new_buffer_with_data(q);
                 let kb = c.new_buffer_with_data(k);
                 let vb = c.new_buffer_with_data(v);
@@ -347,9 +362,27 @@ impl Music3Device {
                 let scores = c.new_output_buffer(size);
                 let probabilities = c.new_output_buffer(size);
                 let pass = c.begin_pass();
-                pass.encode_threadgroups(&qk, &[(&qb, 0, 0), (&kb, 1, 0), (&scores, 2, 0)], &[(&fp, 3)], (batch * heads * queries.div_ceil(8) * keys.div_ceil(8)) as u64, 32);
-                pass.encode_threadgroups(&softmax, &[(&scores, 0, 0), (&probabilities, 1, 0)], &[(&fp, 2)], (batch * heads * queries) as u64, threads as u64);
-                pass.encode_threadgroups(&pv, &[(&probabilities, 0, 0), (&vb, 1, 0), (&out, 2, 0)], &[(&fp, 3)], (batch * heads * queries.div_ceil(8) * dim.div_ceil(8)) as u64, 32);
+                pass.encode_threadgroups(
+                    &qk,
+                    &[(&qb, 0, 0), (&kb, 1, 0), (&scores, 2, 0)],
+                    &[(&fp, 3)],
+                    (batch * heads * queries.div_ceil(8) * keys.div_ceil(8)) as u64,
+                    32,
+                );
+                pass.encode_threadgroups(
+                    &softmax,
+                    &[(&scores, 0, 0), (&probabilities, 1, 0)],
+                    &[(&fp, 2)],
+                    (batch * heads * queries) as u64,
+                    threads as u64,
+                );
+                pass.encode_threadgroups(
+                    &pv,
+                    &[(&probabilities, 0, 0), (&vb, 1, 0), (&out, 2, 0)],
+                    &[(&fp, 3)],
+                    (batch * heads * queries.div_ceil(8) * dim.div_ceil(8)) as u64,
+                    32,
+                );
                 pass.commit_and_wait_checked()?;
                 return finite_output(&out, qcount);
             }
@@ -733,6 +766,16 @@ impl Music3Weight {
         let mma = dtype != Music3DType::F32
             && rows > 1
             && (self.encoding.parameters().0 < 3 || rows >= limit);
+        // The affine wide branch of `music3_linear`, repacked sixteen pairs
+        // per threadgroup. Same conditions as that branch, plus the group
+        // geometry the packed kernel assumes.
+        let (mode, _, group) = self.encoding.parameters();
+        let packed_wide = mode == 3
+            && dtype != Music3DType::F32
+            && rows < limit
+            && wide
+            && group % 8 == 0
+            && input_dim % group == 0;
         let p = bytes(&p);
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
@@ -740,6 +783,8 @@ impl Music3Weight {
                 source(dtype),
                 if mma {
                     "music3_linear_mma"
+                } else if packed_wide {
+                    "music3_linear_wide"
                 } else {
                     "music3_linear"
                 },
@@ -764,6 +809,8 @@ impl Music3Weight {
                 &[(&p, 7)],
                 if mma {
                     (rows.div_ceil(8) * output_dim.div_ceil(8)) as u64
+                } else if packed_wide {
+                    count.div_ceil(16) as u64
                 } else {
                     count as u64
                 },
@@ -912,7 +959,11 @@ impl Music3Weight {
             let mut c = self.state.context.borrow_mut();
             let pipeline = c.pipeline(
                 source(dtype),
-                if mma { "music3_conv_mma" } else { "music3_conv" },
+                if mma {
+                    "music3_conv_mma"
+                } else {
+                    "music3_conv"
+                },
                 &crate::rms_norm::unused_function_constants(),
                 b"",
             )?;
@@ -924,7 +975,11 @@ impl Music3Weight {
                 &pipeline,
                 &[(&self.bytes, 0, 0), (&x, 1, 0), (&b, 2, 0), (&out, 3, 0)],
                 &[(&p, 4)],
-                if mma { (outlen.div_ceil(8) * oc.div_ceil(8)) as u64 } else { count as u64 },
+                if mma {
+                    (outlen.div_ceil(8) * oc.div_ceil(8)) as u64
+                } else {
+                    count as u64
+                },
                 if mma { 32 } else { 128 },
             );
             pass.commit_and_wait_checked()?;

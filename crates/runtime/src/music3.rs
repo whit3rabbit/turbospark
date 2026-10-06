@@ -5,14 +5,16 @@ use audio::music::minimax_music3::backend::{
 };
 use audio::music::minimax_music3::precision::DType;
 use audio::music::minimax_music3::{
-    GenerateRequest, Generation, Model, ModelConfig, Music3Precision, SamplingTrace,
+    GenerateRequest, Generation, Model, ModelConfig, Music3Precision, SamplingTrace, StageTimings,
     TextGenerateRequest,
 };
 use audio::{Result, SpeechError};
 use gpu::{Music3DType, Music3Device, Music3Encoding, Music3Weight};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 fn device_error(error: gpu::GpuError) -> SpeechError {
     SpeechError::Unsupported {
@@ -27,9 +29,31 @@ pub struct Music3Stage<'a> {
     pub shape: &'a [usize],
 }
 type Observer = Rc<RefCell<Option<Box<dyn FnMut(Music3Stage<'_>)>>>>;
+/// Wall time and call count of one device operation at one shape, as the
+/// pipeline sees it (buffer setup, dispatch, wait, and readback included).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DispatchStat {
+    pub op: &'static str,
+    /// Operation geometry: linear is `[rows, input, output]`, attention is
+    /// `[queries, keys, heads]`, norms are `[rows, cols]`, and so on.
+    pub shape: Vec<usize>,
+    pub calls: u64,
+    pub total: Duration,
+}
+
+type Profile = Rc<RefCell<HashMap<(&'static str, Vec<usize>), (u64, Duration)>>>;
+
+fn record(profile: &Profile, op: &'static str, shape: &[usize], started: Instant) {
+    let mut table = profile.borrow_mut();
+    let entry = table.entry((op, shape.to_vec())).or_default();
+    entry.0 += 1;
+    entry.1 += started.elapsed();
+}
+
 struct Backend {
     device: Music3Device,
     observer: Observer,
+    profile: Profile,
 }
 fn dtype(d: DType) -> Music3DType {
     match d {
@@ -38,7 +62,7 @@ fn dtype(d: DType) -> Music3DType {
         DType::Bf16 => Music3DType::Bf16,
     }
 }
-struct Weight(Music3Weight);
+struct Weight(Music3Weight, Profile);
 impl ComputeBackend for Backend {
     fn load_weight(&self, data: WeightData<'_>) -> Result<Rc<dyn DeviceWeight>> {
         let encoding = match data.encoding {
@@ -66,7 +90,7 @@ impl ComputeBackend for Backend {
                 name: data.name.into(),
                 why: error.to_string(),
             })?;
-        Ok(Rc::new(Weight(weight)))
+        Ok(Rc::new(Weight(weight, self.profile.clone())))
     }
     fn attention(
         &self,
@@ -76,7 +100,9 @@ impl ComputeBackend for Backend {
         s: AttentionShape,
         d: DType,
     ) -> Result<Vec<f32>> {
-        self.device
+        let started = Instant::now();
+        let out = self
+            .device
             .attention_typed(
                 q,
                 k,
@@ -92,7 +118,14 @@ impl ComputeBackend for Backend {
                 s.offset,
                 dtype(d),
             )
-            .map_err(device_error)
+            .map_err(device_error);
+        record(
+            &self.profile,
+            "attention",
+            &[s.batch, s.queries, s.keys, s.heads, s.dim],
+            started,
+        );
+        out
     }
     fn rms_norm(
         &self,
@@ -103,9 +136,13 @@ impl ComputeBackend for Backend {
         eps: f32,
         d: DType,
     ) -> Result<Vec<f32>> {
-        self.device
+        let started = Instant::now();
+        let out = self
+            .device
             .rms_norm(x, w, rows, cols, eps, dtype(d))
-            .map_err(device_error)
+            .map_err(device_error);
+        record(&self.profile, "rms_norm", &[rows, cols], started);
+        out
     }
     fn layer_norm(
         &self,
@@ -117,12 +154,18 @@ impl ComputeBackend for Backend {
         eps: f32,
         d: DType,
     ) -> Result<Vec<f32>> {
-        self.device
+        let started = Instant::now();
+        let out = self
+            .device
             .layer_norm(x, w, bias, rows, cols, eps, dtype(d))
-            .map_err(device_error)
+            .map_err(device_error);
+        record(&self.profile, "layer_norm", &[rows, cols], started);
+        out
     }
     fn rope(&self, x: &[f32], s: RopeShape, d: DType) -> Result<Vec<f32>> {
-        self.device
+        let started = Instant::now();
+        let out = self
+            .device
             .rope(
                 x,
                 s.batch,
@@ -133,7 +176,14 @@ impl ComputeBackend for Backend {
                 s.theta,
                 dtype(d),
             )
-            .map_err(device_error)
+            .map_err(device_error);
+        record(
+            &self.profile,
+            "rope",
+            &[s.batch, s.seq, s.heads, s.dim],
+            started,
+        );
+        out
     }
     fn normal_from_uniform(&self, x: &[f32], d: DType) -> Result<Vec<f32>> {
         self.device
@@ -153,9 +203,13 @@ impl ComputeBackend for Backend {
         frames: usize,
         d: DType,
     ) -> Result<Vec<f32>> {
-        self.device
+        let started = Instant::now();
+        let out = self
+            .device
             .snake(x, alpha, channels, frames, dtype(d))
-            .map_err(device_error)
+            .map_err(device_error);
+        record(&self.profile, "snake", &[channels, frames], started);
+        out
     }
     fn trace(&self, stage: &str, data: &[f32], d: DType, shape: &[usize]) {
         if let Some(f) = self.observer.borrow_mut().as_mut() {
@@ -178,12 +232,19 @@ impl DeviceWeight for Weight {
         out: usize,
         d: DType,
     ) -> Result<Vec<f32>> {
-        self.0
+        let started = Instant::now();
+        let result = self
+            .0
             .linear_typed(input, bias, rows, inn, out, dtype(d))
-            .map_err(device_error)
+            .map_err(device_error);
+        record(&self.1, "linear", &[rows, inn, out], started);
+        result
     }
     fn embedding(&self, ids: &[i32], width: usize) -> Result<Vec<f32>> {
-        self.0.embedding(ids, width).map_err(device_error)
+        let started = Instant::now();
+        let result = self.0.embedding(ids, width).map_err(device_error);
+        record(&self.1, "embedding", &[ids.len(), width], started);
+        result
     }
     fn convolution(
         &self,
@@ -192,7 +253,9 @@ impl DeviceWeight for Weight {
         s: ConvShape,
         d: DType,
     ) -> Result<Vec<f32>> {
-        self.0
+        let started = Instant::now();
+        let result = self
+            .0
             .convolution_typed(
                 input,
                 bias,
@@ -205,7 +268,18 @@ impl DeviceWeight for Weight {
                 s.transpose,
                 dtype(d),
             )
-            .map_err(device_error)
+            .map_err(device_error);
+        record(
+            &self.1,
+            if s.transpose {
+                "conv_transpose"
+            } else {
+                "conv"
+            },
+            &[s.input_channels, s.output_channels, s.kernel],
+            started,
+        );
+        result
     }
 }
 
@@ -215,6 +289,7 @@ pub struct Music3Runner {
     model: Model,
     device: Music3Device,
     observer: Observer,
+    profile: Profile,
 }
 impl Music3Runner {
     pub fn open(path: &Path) -> Result<Self> {
@@ -223,15 +298,18 @@ impl Music3Runner {
     pub fn open_with_precision(path: &Path, precision: Music3Precision) -> Result<Self> {
         let device = Music3Device::new().map_err(device_error)?;
         let observer = Rc::new(RefCell::new(None));
+        let profile = Profile::default();
         let backend = Rc::new(Backend {
             device: device.clone(),
             observer: observer.clone(),
+            profile: profile.clone(),
         });
         let model = Model::load_converted_with_backend_and_precision(path, backend, precision)?;
         Ok(Self {
             model,
             device,
             observer,
+            profile,
         })
     }
     pub fn set_trace_observer(&self, observer: impl FnMut(Music3Stage<'_>) + 'static) {
@@ -243,11 +321,38 @@ impl Music3Runner {
     pub fn config(&self) -> &ModelConfig {
         self.model.config()
     }
+    /// Per-operation call counts and wall time since the last reset,
+    /// slowest total first. Weight upload during `open` is not included.
+    pub fn dispatch_profile(&self) -> Vec<DispatchStat> {
+        let mut stats: Vec<DispatchStat> = self
+            .profile
+            .borrow()
+            .iter()
+            .map(|((op, shape), (calls, total))| DispatchStat {
+                op,
+                shape: shape.clone(),
+                calls: *calls,
+                total: *total,
+            })
+            .collect();
+        stats.sort_by(|a, b| b.total.cmp(&a.total));
+        stats
+    }
+    pub fn reset_dispatch_profile(&self) {
+        self.profile.borrow_mut().clear();
+    }
     pub fn resident_weight_bytes(&self) -> usize {
         self.device.resident_weight_bytes()
     }
     pub fn generate_text(&self, request: &TextGenerateRequest) -> Result<Generation> {
         self.model.generate_text(request)
+    }
+    /// [`Self::generate_text`] plus a per-stage wall-time breakdown.
+    pub fn generate_text_timed(
+        &self,
+        request: &TextGenerateRequest,
+    ) -> Result<(Generation, StageTimings)> {
+        self.model.generate_text_timed(request)
     }
     pub fn generate(&self, request: &GenerateRequest) -> Result<Generation> {
         self.model.generate(request)

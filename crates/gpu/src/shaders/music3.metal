@@ -179,6 +179,55 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
     }
 }
 
+// Packed form of the affine "wide" branch of music3_linear (qmv_fast
+// emulation: eight lanes per output, lane t owns groups t, t+8, ..., each
+// 8-element chunk is summed in order into `acc`, `acc` is added to the
+// lane's running total, and lanes reduce with shuffle-down 4, 2, 1). The
+// per-output arithmetic is unchanged; the gain is layout only: sixteen
+// (row, output) pairs share one threadgroup instead of one pair using
+// eight of 128 threads, and a four-bit chunk of eight codes is one 32-bit
+// load with the group's scale and offset hoisted out of the element loop.
+// Requires group % 8 == 0 and cols % group == 0 (checked on the host).
+kernel void music3_linear_wide(device const uchar *w [[buffer(0)]],
+ device const float *sc [[buffer(1)]], device const float *off [[buffer(2)]],
+ device const uchar *bs [[buffer(3)]], device const float *x [[buffer(4)]],
+ device const float *bias [[buffer(5)]], device float *y [[buffer(6)]],
+ constant uint *p [[buffer(7)]], uint tid [[thread_index_in_threadgroup]],
+ uint tg [[threadgroup_position_in_grid]]) {
+    uint out=p[4], cols=p[1], bits=p[2], group=p[3];
+    ulong pair=ulong(tg)*16+tid/8;
+    uint lane=tid%8;
+    bool live=pair<ulong(p[7])*out;
+    float result=0;
+    if(live) {
+        uint row=uint(pair/out), o=uint(pair%out), groups=cols/group;
+        device const uint *u=(device const uint*)w+ulong(o)*((cols*bits+31)/32);
+        device const float *xr=x+ulong(row)*cols;
+        for(uint g=lane;g<groups;g+=8) {
+            float s=sc[ulong(o)*groups+g], f=off[ulong(o)*groups+g];
+            for(uint c=g*group;c<(g+1)*group;c+=8) {
+                float acc=0;
+                if(bits==4) {
+                    uint word=u[c/8];
+                    float4 xa=*(device const float4*)(xr+c), xb=*(device const float4*)(xr+c+4);
+                    float xv[8]={xa.x,xa.y,xa.z,xa.w,xb.x,xb.y,xb.z,xb.w};
+                    for(uint i=0;i<8;i++) acc+=xv[i]*(float((word>>(4*i))&15u)*s+f);
+                } else {
+                    for(uint i=0;i<8;i++) {
+                        uint bit=(c+i)*bits,shift=bit%32;
+                        uint code=u[bit/32]>>shift; if(shift+bits>32) code|=u[bit/32+1]<<(32-shift);
+                        code&=(1u<<bits)-1;
+                        acc+=xr[c+i]*(float(code)*s+f);
+                    }
+                }
+                result+=acc;
+            }
+        }
+    }
+    result+=simd_shuffle_down(result,ushort(4));result+=simd_shuffle_down(result,ushort(2));result+=simd_shuffle_down(result,ushort(1));
+    if(live && lane==0) y[pair]=music_round(music_round(result,p[6])+(p[5] ? bias[uint(pair%out)] : 0),p[6]);
+}
+
 kernel void music3_embedding(device const uchar *w [[buffer(0)]],
  device const float *sc [[buffer(1)]], device const float *off [[buffer(2)]],
  device const uchar *bs [[buffer(3)]], device const int *ids [[buffer(4)]],
