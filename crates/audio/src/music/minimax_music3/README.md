@@ -208,6 +208,80 @@ does not pass native-precision parity. The CLI WAV introduces integer PCM
 rounding, which does not explain the larger divergence. Do not promote the
 controlled f32 gate into BF16 equivalence or a song-quality claim.
 
+## Metal performance
+
+Indicative, not frozen: Apple M4 Max, AC power, release build, the cached
+`mlx-community/MiniMax-Music3-4bit` snapshot (`c7ea32923b24`), seed 7, caption
+"upbeat acoustic folk with warm guitar", lyrics `[instrumental]`, one discarded
+in-process warmup, median of three fresh processes from
+`crates/audio/scripts/benchmark_music3.py`. The host was **not quiet** (1-minute
+load average 6 to 10 from unrelated applications), so these are not benchmark
+rows and nothing here is a real-time or quality claim. Only this profile and
+these durations were measured.
+
+| Scenario | Before | After | Notes |
+|---|---|---|---|
+| 1 s audio, 2 flow steps, generate | 118.3 s (115.7 to 123.2) | 11.9 s (11.6 to 13.2) | interleaved A/B, same session |
+| 1 s, peak `phys_footprint` | 10.23 GiB | 9.64 GiB | includes open and warmup |
+| 8 s audio, 1 flow step, generate | not measured under the protocol | 75.3 s (RTF 9.4) | after-only; one unprotocolled pristine run took about 25 min wall |
+| 8 s, peak `phys_footprint` | not measured | 11.66 GiB | |
+| 16 s audio (362 frames, 3 chunks), peak | not measured | 11.76 GiB | memory plateaus; RTF 11.1 |
+| resident weights | 9.93 GB | 9.31 GB | bf16 scales and offsets |
+
+Every WAV above is byte-identical to the output of the unmodified code at the
+start of this work (SHA-256 of the 1 s file `29c340d1...`; the 8 s file
+`16c5db73...` was checked against a separate pristine build). The optimizations
+are bit-preserving by construction and by test: no tolerance was widened.
+
+Where the time goes (8 s, 1 step, after): depth decoder 31.1 s, LM decode 24.5 s,
+LM head 3.7 s, DiT 8.4 s, vocoder 6.3 s, prefill 0.8 s, sampling 0.4 s. The AR
+stage costs about 0.30 s per frame against the 0.04 s that real time needs, so
+it is roughly 7x too slow on its own. DiT cost scales with flow steps: one step
+is two forwards over the 690-latent chunk, about 4.2 s each, so a default
+30-step chunk projects to about 250 s (arithmetic on the 1-step measurement,
+not a measurement). The default 60 s request is far from real time.
+
+What changed, all verified bit-identical against the previous kernels:
+
+- `music3_linear_wide`: the affine "wide" GEMV branch used 8 of 128 threads per
+  output and decoded one element at a time. It now packs 16 outputs per
+  threadgroup and decodes eight four-bit codes per 32-bit load. This was
+  93 percent of the original runtime (124 of 133 s in the 1 s scenario).
+- `music3_linear_tiled` and `music3_conv_tiled`: the 8x8-tile MMA kernels now
+  stage a 32-wide K chunk once per threadgroup and keep 2x2 accumulators per
+  simdgroup. Every output keeps the same K-ordered chain of 8x8x8 products and
+  split-K folding. DiT-sized linears about 3x, vocoder convolutions 3x to 4x.
+- Affine scales and offsets that are exactly representable in bf16 are stored
+  at 16 bits and widened by a shift in the kernel (-621 MB resident on the
+  4-bit profile). Any weight with a non-bf16 scale stays on f32.
+
+Verification instruments, kept in the tree:
+
+- `crates/gpu/examples/music3_linear_bench.rs`: `hashes` and `conv_hashes`
+  print an FNV-1a hash of kernel output bits over 847 linear/embedding and 20
+  convolution configurations (bit widths, groups, row counts, dtypes, ragged
+  tile tails, split-K). Diff the output before and after a kernel change; any
+  difference means the arithmetic changed. `timing` and `conv_timing` use the
+  real checkpoint shapes.
+- `crates/runtime/examples/music3_bench.rs`: per-stage timings, the runtime
+  dispatch table (`Music3Runner::dispatch_profile`, per-op and per-shape wall
+  time), output statistics, and `--flow-only` to time DiT and vocoder without
+  the slow AR stage (synthetic conditioning; not music).
+
+Tried and not kept (no demonstrated gain on a busy host, so no code):
+
+- Pooling the per-dispatch scratch buffers, and spin-waiting on command-buffer
+  completion instead of the condvar: the 64x64 linear floor moved from about
+  0.29 to 0.21 ms but end-to-end timing did not separate from noise.
+- A 64x32 tile for tall inputs, and remapping the weight-tile write to avoid
+  threadgroup bank conflicts: no measurable difference.
+- Skipping the zero-padded taps of transposed convolution: it can flip the sign
+  of a zero accumulator, which is observable in the output, so it is not
+  bit-preserving.
+- Restricting the LM head to the 16,385 audio rows and replacing the full
+  sorts in sampling: exact, but the head is about 5 percent and sampling under
+  1 percent of the 8 s run. Candidates, not done.
+
 ## Rust API
 
 `Model::generate_text` stays the simple entry point. Callers that need more use:
@@ -232,8 +306,17 @@ exposes the same data on the command line.
 
 ## Open gates
 
-Checkpoint-native BF16 activation parity, song quality, sustained memory and real-time performance,
-and FFI/Swift integration require separate qualification. The standalone command
+Checkpoint-native BF16 activation parity, song quality, quiet-host frozen
+performance rows, durations beyond the 16 s memory probe, the other pinned
+profiles (8-bit, MXFP8, and the rest), real-time performance, and FFI/Swift
+integration require separate qualification.
+
+The next structural cost is dispatch count: about 830 synchronous Metal
+dispatches per AR frame at roughly 0.2 to 0.3 ms of fixed round-trip each, a
+floor that tuning individual kernels cannot remove. Removing it needs
+device-resident layer execution (residual adds, dtype rounding, and SiLU on
+the device with the same arithmetic as the host code), then a depth-decoder KV
+cache. Both must keep the byte-identical-output check. The standalone command
 now routes full-size converted checkpoints through Metal on macOS and keeps the
 CPU reference path for tiny fixtures. Existing CPU timing rows in `MODELS.md`
 remain CPU evidence only.
