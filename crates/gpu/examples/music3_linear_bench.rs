@@ -173,6 +173,48 @@ fn main() {
                     }
                 }
             }
+            // Scales and offsets that are not exactly bf16 take the f32 path in the
+            // device; embedding gathers dequantize through the same helper.
+            for (label, exact) in [("bf16-exact", true), ("f32-scales", false)] {
+                let mut rng = Rng(1234);
+                let (rows, cols, group, bits) = (40usize, 512usize, 64usize, 4u32);
+                let codes: Vec<u32> = (0..rows * cols).map(|_| (rng.next() as u32) & 15).collect();
+                let groups = rows * cols / group;
+                let widen = |v: f32| if exact { bf16_trunc(v) } else { v };
+                let scales: Vec<f32> = (0..groups)
+                    .map(|_| widen(0.002 + 0.01 * rng.unit()))
+                    .collect();
+                let offsets: Vec<f32> = (0..groups)
+                    .map(|_| widen(-0.05 + 0.1 * rng.unit()))
+                    .collect();
+                let before = device.resident_weight_bytes();
+                let weight = device
+                    .load_weight(
+                        &[rows, cols],
+                        &pack(&codes, rows, cols, bits),
+                        Music3Encoding::Affine {
+                            bits,
+                            group_size: group,
+                        },
+                        &scales,
+                        &offsets,
+                        &[],
+                    )
+                    .unwrap();
+                let ids: Vec<i32> = (0..rows as i32).rev().collect();
+                println!(
+                    "embedding {label} {:016x} resident={}",
+                    fnv(&weight.embedding(&ids, cols).unwrap()),
+                    device.resident_weight_bytes() - before
+                );
+                let x: Vec<f32> = (0..9 * cols)
+                    .map(|_| bf16_trunc(rng.unit() - 0.5))
+                    .collect();
+                let out = weight
+                    .linear_typed(&x, None, 9, cols, rows, Music3DType::Bf16)
+                    .unwrap();
+                println!("scales {label} {:016x}", fnv(&out));
+            }
             // A decode-sized shape at the real width, hashed for the 4-bit case.
             let case = build(&device, 4, 64, 4096, 1024, 99);
             for rows in [2usize, 6, 14] {

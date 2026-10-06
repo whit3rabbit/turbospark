@@ -29,7 +29,7 @@ For comprehensive model and role documentation, see [TurboSpark Audio Architectu
 ### 3. Models Organized by Role
 | Role | Modality | Key Families & Documentation |
 |---|---|---|
-| `music` | Music Generation | [MiniMax Music 0.5](audio/music.md) (`minimax_music3`) |
+| `music` | Music Generation | [MiniMax Music 3](audio/music.md) (`minimax_music3`) |
 | `stt` | Speech-to-Text & Alignment | [Whisper, Moonshine, Parakeet, Granite, MMS, Qwen3 ASR, Nemotron ASR](audio/stt.md) |
 | `tts` | Text-to-Speech | [Kokoro 82M](audio/tts.md) |
 | `vad` | VAD & Diarization | [Silero VAD, Sortformer, Nemotron Diarization](audio/vad.md) |

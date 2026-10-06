@@ -22,8 +22,12 @@ flow-matching latent decoder and a stereo 44.1 kHz vocoder.
   `depth.rs` the RVQ residual decoder; `fusion.rs` the condition
   encoder; `dit.rs` + `euler.rs` the flow-matching stage; `vocoder.rs`
   the DAC-style decoder; `prompt.rs` the text frontend; `weights.rs`
-  the loaders; `stress.rs` boundary and error-path gates; `timing.rs`
-  and the `qwen3::bench` micro-bench the release-only timing profiles.
+  the loaders; `stage_timings.rs` the per-stage wall-time record returned by
+  `generate_text_timed`; `progress.rs` the callback and cancellation types of
+  `generate_text_with_progress`; `output_stats.rs` the cheap objective checks
+  on a generated waveform; `stress.rs` boundary and error-path gates;
+  `timing.rs` and the `qwen3::bench` micro-bench the release-only CPU timing
+  profiles.
 
 ## Checkpoints
 
@@ -203,6 +207,28 @@ correlation 0.470 and RMSE 0.00363 across 44,032 stereo samples. That comparison
 does not pass native-precision parity. The CLI WAV introduces integer PCM
 rounding, which does not explain the larger divergence. Do not promote the
 controlled f32 gate into BF16 equivalence or a song-quality claim.
+
+## Rust API
+
+`Model::generate_text` stays the simple entry point. Callers that need more use:
+
+- `generate_text_timed`: the same audio plus a `StageTimings` (tokenize,
+  prefill, LM head, sampling, depth, LM decode, condition, DiT, vocoder,
+  stitch). The timing code is always on and costs a few `Instant::now()` calls
+  per frame, so the timed and plain paths run identical arithmetic.
+- `generate_text_with_progress`: a callback receives `Progress::Tokenized`,
+  one `ArFrame` per emitted frame, and one `FlowChunk` before each chunk, and
+  answers `Control::Continue` or `Control::Cancel`. A cancelled request returns
+  `Ok(None)` and the model is immediately reusable (each request builds fresh
+  KV and overlap state). `runtime::Music3Runner` forwards both.
+- `output_stats`: finite, peak, RMS, clip and silence ratios, DC offset, and
+  left/right correlation of an interleaved stereo waveform. These catch broken
+  output (NaN, silence, a duplicated channel); they say nothing about quality.
+
+The model is single-threaded (`Rc` backend) and not `Send`. Open and use it on
+one thread. `crates/runtime/examples/music3_generate.rs` is the minimal
+library example; `turbospark-music generate --timings --wav-format float32`
+exposes the same data on the command line.
 
 ## Open gates
 

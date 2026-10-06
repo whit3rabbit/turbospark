@@ -14,7 +14,7 @@ Variants:
 - tiny_long
     ModelConfig.tiny() with the end token pushed out of the mask.
     Small enough to commit under
-    crates/speech/testdata/minimax_music3_bench/tiny_long; regenerate
+    crates/audio/testdata/minimax_music3_bench/tiny_long; regenerate
     it there when the fixture set regenerates.
 - ar_real
     Real-width AR backbone (hidden 4096, real ffn width, 32/8 heads at
@@ -31,9 +31,9 @@ from the pinned source:
 
     cd ../mlx-audio
     PYTHONPATH=$PWD ../.venv-mlxaudio/bin/python \
-        ../turbospark/crates/speech/tools/gen_minimax_music3_bench_tree.py \
+        ../turbospark/crates/audio/tools/gen_minimax_music3_bench_tree.py \
         --variant tiny_long \
-        --out ../turbospark/crates/speech/testdata/minimax_music3_bench
+        --out ../turbospark/crates/audio/testdata/minimax_music3_bench
 
 The default --out is /tmp/minimax_music3_bench, sized for the large
 variants; pass the testdata path for tiny_long. Disk: tiny_long is a

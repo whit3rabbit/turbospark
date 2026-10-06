@@ -42,6 +42,16 @@ inline float music_unscaled(uint mode,uint code) {
     const float table[8]={0,0.5f,1,1.5f,2,3,4,6};
     return code&8 ? -table[code&7] : table[code&7];
 }
+// Affine scales and offsets are uploaded at checkpoint width (bf16) when every
+// value is exactly representable, and widened here: the conversion is a shift,
+// so the value is bit-identical to the f32 upload it replaces.
+#ifdef MUSIC3_SCALES_BF16
+inline float music_sc(device const float *a, ulong i) {
+    return as_type<float>(uint(((device const ushort*)a)[i])<<16);
+}
+#else
+inline float music_sc(device const float *a, ulong i) { return a[i]; }
+#endif
 inline float music_value(device const uchar *w, device const float *sc,
                          device const float *off, device const uchar *bs,
                          constant uint *p, uint row, uint col) {
@@ -56,7 +66,7 @@ inline float music_value(device const uchar *w, device const float *sc,
     if (shift+bits>32) code|=u[bit/32+1]<<(32-shift);
     code&=(1u<<bits)-1;
     ulong g=ulong(row)*(cols/group)+col/group;
-    if (mode==3) return float(code)*sc[g]+off[g];
+    if (mode==3) return float(code)*music_sc(sc,g)+music_sc(off,g);
     float scale=mode==6 ? music_e4m3(bs[g]) : exp2(float(int(bs[g])-127));
     if (mode==5) return music_e4m3(code)*scale;
     const float table[8]={0,0.5f,1,1.5f,2,3,4,6};
@@ -157,7 +167,7 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
                     }
                     xsum+=xs;
                 }
-                sum+=dot*sc[ulong(o)*(cols/p[3])+g]+xsum*off[ulong(o)*(cols/p[3])+g];
+                sum+=dot*music_sc(sc,ulong(o)*(cols/p[3])+g)+xsum*music_sc(off,ulong(o)*(cols/p[3])+g);
             }
         } else for(uint c=begin+tid;c<end;c+=128) {
             float weight=music_value(w,sc,off,bs,p,o,c);
@@ -204,7 +214,7 @@ kernel void music3_linear_wide(device const uchar *w [[buffer(0)]],
         device const uint *u=(device const uint*)w+ulong(o)*((cols*bits+31)/32);
         device const float *xr=x+ulong(row)*cols;
         for(uint g=lane;g<groups;g+=8) {
-            float s=sc[ulong(o)*groups+g], f=off[ulong(o)*groups+g];
+            float s=music_sc(sc,ulong(o)*groups+g), f=music_sc(off,ulong(o)*groups+g);
             for(uint c=g*group;c<(g+1)*group;c+=8) {
                 float acc=0;
                 if(bits==4) {
@@ -576,7 +586,7 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
                         if(o<out && kk<end) {
                             uint code=((device const uint*)w)[ulong(o)*words+kk/8]>>(4*i)&15u;
                             ulong g=ulong(o)*(cols/p[3])+kk/p[3];
-                            weight=float(code)*sc[g]+off[g];
+                            weight=float(code)*music_sc(sc,g)+music_sc(off,g);
                         }
                         ws[(q*8+i)*TO+oo]=music_round(weight,p[6]);
                     }

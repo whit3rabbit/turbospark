@@ -13,6 +13,27 @@ static NATIVE_SOURCE: &str = concat!(
     include_str!("shaders/music3.metal"),
     include_str!("shaders/music3_attention_fallback.metal")
 );
+// The same kernels with affine scales and offsets stored as 16-bit values
+// (`MUSIC3_SCALES_BF16`); see `Music3Weight::scales_bf16`.
+static SCALES_BF16_SOURCE: &str = concat!(
+    "#define MUSIC3_SCALES_BF16\n",
+    include_str!("shaders/music3.metal")
+);
+static NATIVE_SCALES_BF16_SOURCE: &str = concat!(
+    "// turbospark: precise-math\n",
+    "#define MUSIC3_SCALES_BF16\n",
+    include_str!("shaders/music3.metal"),
+    include_str!("shaders/music3_attention_fallback.metal")
+);
+/// Source for a kernel that reads a weight's scales and offsets.
+fn weight_source(dtype: Music3DType, scales_bf16: bool) -> &'static str {
+    match (dtype == Music3DType::F32, scales_bf16) {
+        (true, false) => SOURCE,
+        (true, true) => SCALES_BF16_SOURCE,
+        (false, false) => NATIVE_SOURCE,
+        (false, true) => NATIVE_SCALES_BF16_SOURCE,
+    }
+}
 fn source(dtype: Music3DType) -> &'static str {
     if dtype == Music3DType::F32 {
         SOURCE
@@ -71,6 +92,8 @@ pub struct Music3Weight {
     shape: Vec<usize>,
     encoding: Music3Encoding,
     resident: usize,
+    /// Scales and offsets are stored as bf16 (bit-identical widening).
+    scales_bf16: bool,
 }
 impl Drop for Music3Weight {
     fn drop(&mut self) {
@@ -79,6 +102,10 @@ impl Drop for Music3Weight {
             .set(self.state.resident.get() - self.resident);
     }
 }
+fn to_bf16_bits(values: &[f32]) -> Vec<u16> {
+    values.iter().map(|v| (v.to_bits() >> 16) as u16).collect()
+}
+
 fn bad(message: impl Into<String>) -> GpuError {
     GpuError::InvalidInput(message.into())
 }
@@ -206,12 +233,29 @@ impl Music3Device {
                 return Err(bad("Music 3 non-finite dense weight"));
             }
         }
+        // Checkpoint scales and offsets are bf16 values held as f32; storing
+        // them at 16 bits halves their footprint and widening is exact. Any
+        // value that is not exactly bf16 keeps the whole weight on f32.
+        let scales_bf16 = mode == 3
+            && !scales.is_empty()
+            && scales
+                .iter()
+                .chain(offsets)
+                .all(|v| v.to_bits() & 0xffff == 0);
         autorelease_pool(|| {
             let c = self.state.context.borrow();
             // Metal refuses zero-length buffers; unused companions bind a single zero.
             let weight = c.new_buffer_with_data(data);
-            let sc = c.new_buffer_with_data(if scales.is_empty() { &[0.0] } else { scales });
-            let off = c.new_buffer_with_data(if offsets.is_empty() { &[0.0] } else { offsets });
+            let sc = if scales_bf16 {
+                c.new_buffer_with_data(&to_bf16_bits(scales))
+            } else {
+                c.new_buffer_with_data(if scales.is_empty() { &[0.0] } else { scales })
+            };
+            let off = if scales_bf16 {
+                c.new_buffer_with_data(&to_bf16_bits(offsets))
+            } else {
+                c.new_buffer_with_data(if offsets.is_empty() { &[0.0] } else { offsets })
+            };
             let bs = c.new_buffer_with_data(if block_scales.is_empty() {
                 &[0u8]
             } else {
@@ -233,6 +277,7 @@ impl Music3Device {
                 shape: shape.to_vec(),
                 encoding,
                 resident,
+                scales_bf16,
             })
         })
     }
@@ -780,7 +825,7 @@ impl Music3Weight {
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
             let pipeline = c.pipeline(
-                source(dtype),
+                weight_source(dtype, self.scales_bf16),
                 if mma && rows <= 16 {
                     "music3_linear_tiled_16x64"
                 } else if mma {
@@ -837,7 +882,7 @@ impl Music3Weight {
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
             let pipeline = c.pipeline(
-                SOURCE,
+                weight_source(Music3DType::F32, self.scales_bf16),
                 "music3_embedding",
                 &crate::rms_norm::unused_function_constants(),
                 b"",

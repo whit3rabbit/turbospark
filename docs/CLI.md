@@ -95,7 +95,9 @@ turbospark-music generate \
   --output song.wav
 ```
 
-Use `--lyrics "[instrumental]"` for instrumental output. The public request
+Use `--lyrics "[instrumental]"` for instrumental output. `--wav-format float32`
+writes the generated samples without the default 16-bit rounding, and
+`--timings` prints per-stage wall time and the real-time factor to stderr. The public request
 defaults to 60 seconds, 30 steps, and seed 0. Full-size converted profiles use
 `runtime::Music3Runner` on macOS with a Metal device. Packed matrices remain
 resident in their checkpoint encoding. Local tiny fixtures exercise the CPU

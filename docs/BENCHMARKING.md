@@ -78,6 +78,58 @@ the script does not establish recognition quality or a default-on decision.
 `TURBOSPARK_QWEN3_ASR_PROFILE=1` reports per-phase timings on both paths; run
 that diagnostic separately from the interleaved benchmark.
 
+## MiniMax Music 3 (Metal)
+
+Build the runtime example and run the audio crate's driver against a
+converted checkpoint directory (any of the pinned profiles; the numbers
+belong to that profile only):
+
+```sh
+cargo build --release -p turbospark-runtime --example music3_bench
+python3 crates/audio/scripts/benchmark_music3.py <model-dir> \
+  --scenario smoke=1:2 --scenario short=8:1 --runs 3 \
+  --output /tmp/music3-benchmark.json
+```
+
+Each sample is a fresh `music3_bench` process under `/usr/bin/time -l`. It
+discards one in-process warmup request (1 s, 1 step), then times a single
+request and reports open time, per-stage wall time (prefill, LM head,
+sampling, depth, LM decode, condition, DiT, vocoder, stitch), RTF, the
+dispatch table, objective output statistics, and process peak
+`phys_footprint`. `--binary LABEL=PATH` is repeatable and the variants are
+interleaved per run, so a before/after comparison shares thermal drift.
+
+The prompt is fixed (the script pins the bytes) and the seed is 7. The output
+is deterministic, so every sample of a scenario must produce a byte-identical
+WAV: the driver fails the run if it does not, and `--expect-wav-sha256
+SCENARIO=HEX` pins the hash to a recorded baseline. Performance work on this
+family is bit-preserving, so an optimization that changes the hash is a
+numerics change that needs the parity gates, not a speedup.
+
+The driver refuses a host that is not on AC power with a low 1-minute load
+average. `--allow-busy` records the load and runs anyway; such numbers are
+indicative and are not benchmark rows. Do not freeze a row from one.
+
+Kernel-level work has its own oracle, because the checkpoint run is slow:
+
+```sh
+cargo run --release -p turbospark-gpu --example music3_linear_bench -- hashes       > before.txt
+# change a kernel, then:
+cargo run --release -p turbospark-gpu --example music3_linear_bench -- hashes       > after.txt
+diff before.txt after.txt          # any difference means the arithmetic changed
+cargo run --release -p turbospark-gpu --example music3_linear_bench -- timing
+```
+
+`hashes` and `conv_hashes` print an FNV-1a hash of the output bits across
+affine bit widths, group sizes, row counts, dtypes, ragged tile tails and
+split-K cases; `timing` and `conv_timing` use the real checkpoint shapes.
+`music3_bench --flow-only` feeds the flow stage synthetic conditioning so DiT
+and vocoder work can be timed without the slow AR stage; its audio is not
+music and no quality statistic applies to it.
+
+CPU timing profiles for the portable path remain in the family README and are
+never Metal or quality claims.
+
 ## Image generation (macOS, MLX)
 
 The release benchmark executable uses the same vendored `ZImagePipeline` as
