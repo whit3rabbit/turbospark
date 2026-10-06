@@ -781,8 +781,10 @@ impl Music3Weight {
             let mut c = self.state.context.borrow_mut();
             let pipeline = c.pipeline(
                 source(dtype),
-                if mma {
-                    "music3_linear_mma"
+                if mma && rows <= 16 {
+                    "music3_linear_tiled_16x64"
+                } else if mma {
+                    "music3_linear_tiled_32x32"
                 } else if packed_wide {
                     "music3_linear_wide"
                 } else {
@@ -807,14 +809,16 @@ impl Music3Weight {
                     (&out, 6, 0),
                 ],
                 &[(&p, 7)],
-                if mma {
-                    (rows.div_ceil(8) * output_dim.div_ceil(8)) as u64
+                if mma && rows <= 16 {
+                    (rows.div_ceil(16) * output_dim.div_ceil(64)) as u64
+                } else if mma {
+                    (rows.div_ceil(32) * output_dim.div_ceil(32)) as u64
                 } else if packed_wide {
                     count.div_ceil(16) as u64
                 } else {
                     count as u64
                 },
-                if mma { 32 } else { 128 },
+                128,
             );
             pass.commit_and_wait_checked()?;
             finite_output(&out, count)
@@ -960,7 +964,7 @@ impl Music3Weight {
             let pipeline = c.pipeline(
                 source(dtype),
                 if mma {
-                    "music3_conv_mma"
+                    "music3_conv_tiled_32x32"
                 } else {
                     "music3_conv"
                 },
@@ -976,11 +980,11 @@ impl Music3Weight {
                 &[(&self.bytes, 0, 0), (&x, 1, 0), (&b, 2, 0), (&out, 3, 0)],
                 &[(&p, 4)],
                 if mma {
-                    (outlen.div_ceil(8) * oc.div_ceil(8)) as u64
+                    (outlen.div_ceil(32) * oc.div_ceil(32)) as u64
                 } else {
                     count as u64
                 },
-                if mma { 32 } else { 128 },
+                128,
             );
             pass.commit_and_wait_checked()?;
             finite_output(&out, count)

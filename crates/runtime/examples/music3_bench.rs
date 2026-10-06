@@ -3,6 +3,10 @@
 //! Usage: music3_bench <model-dir> --caption TEXT --lyrics TEXT --output WAV
 //!        [--duration S] [--steps N] [--seed N] [--precision checkpoint|float32] [--warmup]
 //!
+//! `--flow-only` skips the AR stage and feeds the flow stage deterministic
+//! synthetic frame hiddens, for iterating on DiT and vocoder kernels. It is a
+//! timing aid: the audio is not music and no quality statistic applies.
+//!
 //! `--warmup` runs one discarded 1 s, 1 step request first so Metal pipeline
 //! compilation and first-touch costs stay out of the measured request. Peak
 //! process memory is not measured here: run under `/usr/bin/time -l` (the
@@ -23,9 +27,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mut duration, mut steps, mut seed) = (None, None, None);
     let mut precision = Music3Precision::Checkpoint;
     let mut warmup = false;
+    let mut flow_only = false;
     while let Some(flag) = args.next() {
         if flag == "--warmup" {
             warmup = true;
+            continue;
+        }
+        if flag == "--flow-only" {
+            flow_only = true;
             continue;
         }
         let value = args
@@ -71,6 +80,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     runner.reset_dispatch_profile();
+    if flow_only {
+        let config = runner.config();
+        let frames =
+            (request.duration_seconds.unwrap_or(60.0) * config.frame_rate).trunc() as usize;
+        let fused = config.num_codebooks * config.hidden_size;
+        let mut state = 0x9e3779b97f4a7c15u64;
+        let hiddens: Vec<f32> = (0..frames * fused)
+            .map(|_| {
+                state ^= state >> 12;
+                state ^= state << 25;
+                state ^= state >> 27;
+                let unit =
+                    (state.wrapping_mul(0x2545F4914F6CDD1D) >> 40) as f32 / (1u64 << 24) as f32;
+                0.5 * (2.0 * unit - 1.0)
+            })
+            .collect();
+        let started = Instant::now();
+        let planar = runner.run_flow(
+            &hiddens,
+            frames,
+            request.steps.unwrap_or(30),
+            request.seed.unwrap_or(0),
+        )?;
+        let wall = started.elapsed();
+        let dispatch: Vec<_> = runner
+            .dispatch_profile()
+            .into_iter()
+            .map(|d| {
+                serde_json::json!({
+                    "op": d.op, "shape": d.shape, "calls": d.calls,
+                    "total_ms": ms(d.total), "mean_ms": ms(d.total) / d.calls as f64,
+                })
+            })
+            .collect();
+        let hash = planar.iter().fold(0xcbf29ce484222325u64, |h, v| {
+            (h ^ u64::from(v.to_bits())).wrapping_mul(0x100000001b3)
+        });
+        println!(
+            "{}",
+            serde_json::json!({
+                "flow_only": true, "frames": frames, "steps": request.steps.unwrap_or(30),
+                "flow_ms": ms(wall), "samples": planar.len() / 2,
+                "waveform_fnv": format!("{hash:016x}"), "dispatch": dispatch,
+            })
+        );
+        return Ok(());
+    }
     let started = Instant::now();
     let (generation, timings) = runner.generate_text_timed(&request)?;
     let wall = started.elapsed();

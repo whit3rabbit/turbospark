@@ -139,6 +139,40 @@ fn main() {
                     }
                 }
             }
+            // Tall and ragged shapes: tile tails in rows, outputs and K, plus
+            // the split-K parts the dispatcher chooses for small tiles.
+            for bits in [4u32, 8] {
+                for (input_dim, output_dim) in [(576usize, 100usize), (640, 33), (1024, 256)] {
+                    let case = build(
+                        &device,
+                        bits,
+                        64,
+                        input_dim,
+                        output_dim,
+                        31 + u64::from(bits),
+                    );
+                    for dtype in [Music3DType::F16, Music3DType::Bf16] {
+                        for rows in [14usize, 16, 17, 31, 32, 33, 64, 65, 100, 200] {
+                            let x = input(&case, rows);
+                            let out = case
+                                .weight
+                                .linear_typed(
+                                    &x,
+                                    Some(&case.bias),
+                                    rows,
+                                    input_dim,
+                                    output_dim,
+                                    dtype,
+                                )
+                                .unwrap();
+                            println!(
+                                "tall bits={bits} {input_dim}x{output_dim} {dtype:?} rows={rows} {:016x}",
+                                fnv(&out)
+                            );
+                        }
+                    }
+                }
+            }
             // A decode-sized shape at the real width, hashed for the 4-bit case.
             let case = build(&device, 4, 64, 4096, 1024, 99);
             for rows in [2usize, 6, 14] {
@@ -152,13 +186,20 @@ fn main() {
         }
         "timing" => {
             for (rows, input_dim, output_dim) in [
-                (2usize, 4096usize, 4096usize),
+                // Smallest real projection: fixed per-call cost, not kernel time.
+                (2usize, 64usize, 64usize),
+                (2, 4096, 1024),
+                (2, 4096, 4096),
                 (2, 4096, 12288),
                 (2, 12288, 4096),
                 (2, 4096, 6144),
                 (6, 4096, 4096),
                 (14, 4096, 4096),
                 (12, 4096, 6144),
+                // DiT-sized: the shapes that dominate multi-step flow.
+                (690, 2048, 2048),
+                (690, 2048, 16384),
+                (690, 8192, 2048),
             ] {
                 let case = build(&device, 4, 64, input_dim, output_dim, 5);
                 let x = input(&case, rows);
@@ -186,7 +227,93 @@ fn main() {
                 );
             }
         }
-        other => panic!("unknown mode {other}; use hashes or timing"),
+        "conv_hashes" | "conv_timing" => {
+            use half::bf16;
+            // (ic, oc, kernel, stride, pad, dilation, transpose, len)
+            type ConvCase = (usize, usize, usize, usize, usize, usize, bool, usize);
+            let hash_cases: Vec<ConvCase> = vec![
+                (96, 96, 7, 1, 3, 1, false, 1000),
+                (96, 96, 7, 1, 9, 3, false, 1000),
+                (96, 96, 7, 1, 27, 9, false, 1000),
+                (96, 96, 1, 1, 0, 1, false, 513),
+                (128, 100, 7, 1, 3, 1, false, 300),
+                (40, 33, 7, 1, 3, 1, false, 77),
+                (192, 96, 16, 8, 4, 1, true, 37),
+                (96, 50, 4, 2, 1, 1, true, 101),
+                (64, 100, 16, 8, 4, 1, true, 29),
+                (130, 70, 8, 4, 2, 1, true, 55),
+            ];
+            let timing_cases: Vec<ConvCase> = vec![
+                (192, 192, 7, 1, 3, 1, false, 176384),
+                (192, 192, 1, 1, 0, 1, false, 176384),
+                (384, 192, 8, 4, 2, 1, true, 44096),
+                (1536, 768, 16, 8, 4, 1, true, 689),
+            ];
+            let cases = if mode == "conv_hashes" {
+                hash_cases
+            } else {
+                timing_cases
+            };
+            for (ic, oc, kernel, stride, pad, dilation, transpose, len) in cases {
+                let mut rng = Rng(77 + (ic * 31 + oc) as u64);
+                let shape = if transpose {
+                    [ic, oc, kernel]
+                } else {
+                    [oc, ic, kernel]
+                };
+                let count = shape.iter().product::<usize>();
+                let bytes: Vec<u8> = (0..count)
+                    .flat_map(|_| {
+                        bf16::from_f32(0.2 * rng.unit() - 0.1)
+                            .to_bits()
+                            .to_le_bytes()
+                    })
+                    .collect();
+                let weight = device
+                    .load_weight(&shape, &bytes, Music3Encoding::Bf16, &[], &[], &[])
+                    .unwrap();
+                let x: Vec<f32> = (0..ic * len)
+                    .map(|_| bf16_trunc(2.0 * rng.unit() - 1.0))
+                    .collect();
+                let bias: Vec<f32> = (0..oc).map(|_| bf16_trunc(rng.unit() - 0.5)).collect();
+                for dtype in [Music3DType::F16, Music3DType::Bf16] {
+                    if mode == "conv_timing" && dtype == Music3DType::F16 {
+                        continue;
+                    }
+                    let run = || {
+                        weight
+                            .convolution_typed(
+                                &x,
+                                Some(&bias),
+                                ic,
+                                oc,
+                                kernel,
+                                stride,
+                                pad,
+                                dilation,
+                                transpose,
+                                dtype,
+                            )
+                            .unwrap()
+                    };
+                    let mut last = run();
+                    let mut mean_ms = 0.0;
+                    if mode == "conv_timing" {
+                        let started = Instant::now();
+                        let iterations = 3;
+                        for _ in 0..iterations {
+                            last = run();
+                        }
+                        mean_ms = started.elapsed().as_secs_f64() * 1e3 / f64::from(iterations);
+                    }
+                    println!(
+                        "conv ic={ic} oc={oc} k={kernel} s={stride} p={pad} d={dilation} t={transpose} len={len} {dtype:?} mean_ms={mean_ms:.2} {:016x}",
+                        fnv(&last)
+                    );
+                }
+            }
+        }
+        other => panic!("unknown mode {other}; use hashes, timing, conv_hashes or conv_timing"),
     }
 }
 
