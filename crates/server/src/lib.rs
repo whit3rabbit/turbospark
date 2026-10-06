@@ -14,6 +14,9 @@
 //! `RealForwardRunner` forward pass against a `.gturbo` install). Model
 //! dialect auto-selection is the tokenizer's job here, not the server's.
 
+pub mod audio;
+#[cfg(target_os = "macos")]
+pub mod audio_real;
 mod auth;
 
 // Resolution may open installed models synchronously. Keep that complete path off
@@ -129,6 +132,10 @@ pub(crate) const DEGRADATION_HEADER: &str = "x-anyllm-degradation";
 /// images.
 const MAX_REQUEST_BODY_BYTES: usize = 25 * 1024 * 1024;
 
+pub use audio::{
+    AudioError, AudioModelInfo, AudioProvider, AudioTask, GenerateRequest, GeneratedAudio,
+    SpeechRequest, SpeechStream, TranscribeRequest, TranscribedSegment, Transcription,
+};
 #[cfg(target_os = "macos")]
 /// Embedding model running encoder forward passes for embeddings.
 pub use encoder_model::RealEncoderModel;
@@ -194,6 +201,7 @@ pub struct ServerState {
     pub(crate) observer: Option<Arc<dyn observe::ServerObserver>>,
     pub(crate) ids: Arc<observe::RequestIds>,
     pub(crate) image_provider: Option<Arc<dyn ImageProvider>>,
+    pub(crate) audio: Option<audio::AudioState>,
 }
 
 impl ServerState {
@@ -204,11 +212,20 @@ impl ServerState {
             observer: None,
             ids: Arc::new(observe::RequestIds::default()),
             image_provider: None,
+            audio: None,
         }
     }
 
     pub fn with_image_provider(mut self, provider: Arc<dyn ImageProvider>) -> Self {
         self.image_provider = Some(provider);
+        self
+    }
+
+    /// Attaches speech-to-text, text-to-speech and music generation. The
+    /// `/v1/audio/*` routes (and `/v1/metrics`) exist only on a state that
+    /// has one, so an embedding host that sets none keeps its route surface.
+    pub fn with_audio_provider(mut self, provider: Arc<dyn AudioProvider>) -> Self {
+        self.audio = Some(audio::AudioState::new(provider));
         self
     }
 }
@@ -290,6 +307,14 @@ pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterO
         // `MAX_REQUEST_BODY_BYTES`'s own doc. `/health` is unaffected: it
         // carries no body and is never a member of this router.
         .layer(axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES));
+    // Audio routes get their own, larger body limit and are merged AFTER the
+    // chat router's 25 MiB layer so that layer does not wrap them. They still
+    // join `protected` before the auth layer below.
+    let protected = if state.audio.is_some() {
+        protected.merge(audio_router())
+    } else {
+        protected
+    };
     let protected = match options.api_key {
         Some(key) => protected.layer(axum::middleware::from_fn_with_state(
             auth::ApiKey(key.into()),
@@ -333,6 +358,33 @@ pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterO
     router
         .layer(axum::middleware::from_fn(handler::request_lease_layer))
         .with_state(state)
+}
+
+fn audio_router() -> Router<ServerState> {
+    use axum::routing::delete;
+    Router::new()
+        .route("/v1/audio/transcriptions", post(audio::transcriptions))
+        .route(
+            "/v1/audio/translations",
+            post(audio::translations_unsupported),
+        )
+        .route("/v1/audio/transcriptions/realtime", get(audio::realtime))
+        .route("/v1/audio/speech", post(audio::speech))
+        .route("/v1/audio/generate", post(audio::generate))
+        .route(
+            "/v1/audio/jobs/:id",
+            get(audio::get_job).delete(audio::delete_job),
+        )
+        .route("/v1/audio/jobs/:id/result", get(audio::get_job_result))
+        .route(
+            "/v1/audio/models",
+            get(audio::list_models).post(audio::load_model),
+        )
+        .route("/v1/audio/models/:id", delete(audio::delete_model))
+        .route("/v1/metrics", get(audio::metrics_endpoint))
+        .layer(axum::extract::DefaultBodyLimit::max(
+            audio::MAX_AUDIO_UPLOAD_BYTES,
+        ))
 }
 
 /// Mints a request id, records the HTTP-level facts around a request, and

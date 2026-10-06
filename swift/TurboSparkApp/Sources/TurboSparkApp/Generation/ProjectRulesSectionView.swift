@@ -30,7 +30,7 @@ struct ProjectRulesSectionView: View {
                         }
                     }
 
-                    Text(verbatim: "Loads live AGENTS.md or CLAUDE.md instructions from the repository root.")
+                    Text("Loads live AGENTS.md or CLAUDE.md instructions from the repository root.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }

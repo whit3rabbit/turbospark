@@ -290,3 +290,40 @@ impl WnConvTranspose1d {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snake1d_computes_guarded_activation() {
+        let mut x = vec![0.0f32, std::f32::consts::FRAC_PI_2];
+        let alpha = vec![1.0f32];
+        snake1d(&mut x, &alpha, 1, 2);
+        assert!((x[0] - 0.0).abs() < 1e-6);
+        let expected_1 = std::f32::consts::FRAC_PI_2 + 1.0 / (1.0 + 1e-9);
+        assert!((x[1] - expected_1).abs() < 1e-5);
+    }
+
+    #[test]
+    fn wn_conv1d_forward_shapes_and_values() {
+        // 1 in_ch, 1 out_ch, kernel 3, stride 1, padding 1 (same conv).
+        let conv = WnConv1d {
+            in_ch: 1,
+            out_ch: 1,
+            kernel: 3,
+            stride: 1,
+            padding: 1,
+            dilation: 1,
+            groups: 1,
+            weight: vec![0.0, 1.0, 0.0],
+            bias: Some(vec![0.5]),
+        };
+        let input = vec![1.0, 2.0, 3.0, 4.0];
+        let output = conv.forward(&input);
+        assert_eq!(output.len(), 4);
+        for (out_val, in_val) in output.iter().zip(&input) {
+            assert!((out_val - (in_val + 0.5)).abs() < 1e-6);
+        }
+    }
+}

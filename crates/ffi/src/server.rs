@@ -102,6 +102,8 @@ pub struct Server {
     /// so a request cut this way reports `stopReason: cancelled`, same as
     /// `ts_session_cancel` reports for a direct `ts_generate` call.
     stopping: Arc<AtomicBool>,
+    #[cfg(target_os = "macos")]
+    audio_provider: Option<Arc<turbospark_server::audio_real::RealAudioProvider>>,
     // `Option` so `stop` can be called from both `ts_server_stop` and `Drop`
     // without sending on a closed channel or joining a thread twice.
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
@@ -169,13 +171,27 @@ impl Server {
         let idle_sweep_task = Arc::clone(&idle_sweep);
 
         let image_bridge = Arc::new(crate::server_image::ImageBridge::default());
-        let router = turbospark_server::build_router_with_options(
+        #[cfg(target_os = "macos")]
+        let audio_provider = Arc::new(turbospark_server::audio_real::RealAudioProvider::new());
+        #[cfg(target_os = "macos")]
+        let state = turbospark_server::ServerState::new(
+            resolver as Arc<dyn turbospark_server::registry::ModelRegistry>,
+        )
+        .with_image_provider(Arc::clone(&image_bridge) as Arc<dyn turbospark_server::ImageProvider>)
+        .with_audio_provider(
+            Arc::clone(&audio_provider) as Arc<dyn turbospark_server::AudioProvider>
+        );
+        #[cfg(not(target_os = "macos"))]
+        let state =
             turbospark_server::ServerState::new(
                 resolver as Arc<dyn turbospark_server::registry::ModelRegistry>,
             )
             .with_image_provider(
                 Arc::clone(&image_bridge) as Arc<dyn turbospark_server::ImageProvider>
-            ),
+            );
+
+        let router = turbospark_server::build_router_with_options(
+            state,
             turbospark_server::RouterOptions {
                 api_key,
                 observer: Some(
@@ -291,6 +307,8 @@ impl Server {
             events,
             idle_sweep,
             image_bridge,
+            #[cfg(target_os = "macos")]
+            audio_provider: Some(audio_provider),
             stopping,
             shutdown: Some(shutdown_tx),
             thread: Some(thread),
@@ -376,6 +394,58 @@ impl Server {
         &self.image_bridge
     }
 
+    pub(crate) fn attach_audio_model(
+        &self,
+        spec: &str,
+        task: turbospark_server::AudioTask,
+    ) -> Result<String, String> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(audio) = &self.audio_provider {
+                let info = audio.attach(spec, task)?;
+                ServerObserver::record(
+                    &*self.events,
+                    turbospark_server::observe::ServerEvent::ModelAttached {
+                        at_ms: now_ms(),
+                        model: info.id.clone(),
+                    },
+                );
+                Ok(info.id)
+            } else {
+                Err("audio provider is not available".to_string())
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (spec, task);
+            Err("audio models are supported on macOS only".to_string())
+        }
+    }
+
+    pub(crate) fn detach_audio_model(&self, id: &str) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(audio) = &self.audio_provider {
+                audio.detach(id)?;
+                ServerObserver::record(
+                    &*self.events,
+                    turbospark_server::observe::ServerEvent::ModelDetached {
+                        at_ms: now_ms(),
+                        model: id.to_string(),
+                    },
+                );
+                Ok(())
+            } else {
+                Err("audio provider is not available".to_string())
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = id;
+            Err("audio models are supported on macOS only".to_string())
+        }
+    }
+
     /// Takes up to `max` buffered events, with however many were dropped
     /// since the last call.
     pub(crate) fn drain_events(&self, max: usize) -> crate::wire::ServerEvents {
@@ -385,6 +455,20 @@ impl Server {
 
     pub(crate) fn info(&self) -> crate::wire::ServerInfo {
         let ids = self.registry.ids();
+        #[cfg(target_os = "macos")]
+        let audio_models = self
+            .audio_provider
+            .as_ref()
+            .map(|p| {
+                turbospark_server::AudioProvider::models(&**p)
+                    .into_iter()
+                    .map(|m| m.id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        #[cfg(not(target_os = "macos"))]
+        let audio_models = Vec::new();
+
         crate::wire::ServerInfo {
             port: self.port,
             host: self.host.clone(),
@@ -396,6 +480,7 @@ impl Server {
             model_id: ids.first().cloned().unwrap_or_default(),
             models: ids,
             image_models: self.image_bridge.model().into_iter().collect(),
+            audio_models,
             auth_enabled: self.auth_enabled,
             uptime_seconds: self.started.elapsed().as_secs(),
             traffic: self.traffic.snapshot(),

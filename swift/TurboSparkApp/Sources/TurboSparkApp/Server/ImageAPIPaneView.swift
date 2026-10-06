@@ -39,8 +39,8 @@ struct ImageAPIPaneView: View {
         VStack(alignment: .leading, spacing: 18) {
             ServerHeaderBandView(model: model)
             VStack(alignment: .leading, spacing: 12) {
-                Text(verbatim: "Image API").themedFont(.title3, weight: .semibold)
-                Text(verbatim: "The same address and API key as Text. One installed MLX image model can be attached at a time.")
+                Text("Image API", bundle: .module).themedFont(.title3, weight: .semibold)
+                Text("The same address and API key as Text. One installed MLX image model can be attached at a time.", bundle: .module)
                     .foregroundStyle(.secondary)
                 HStack {
                     Picker("Image model", selection: $selectedAlias) {
@@ -59,7 +59,7 @@ struct ImageAPIPaneView: View {
                         .disabled(model.serverImageAttachedModel == nil)
                 }
                 if supported.isEmpty {
-                    Text(verbatim: "Install a supported Z-Image or Qwen-Image model in Image Generation first.")
+                    Text("Install a supported Z-Image or Qwen-Image model in Image Generation first.", bundle: .module)
                         .foregroundStyle(.secondary)
                 }
                 if let info = model.serverInfo?.baseURL {
@@ -78,7 +78,7 @@ struct ImageAPIPaneView: View {
             .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
 
             VStack(alignment: .leading, spacing: 12) {
-                Text(verbatim: "Test image request").themedFont(.title3, weight: .semibold)
+                Text("Test image request", bundle: .module).themedFont(.title3, weight: .semibold)
                 TextEditor(text: $prompt)
                     .frame(height: 74)
                     .border(.appBorder)
@@ -104,7 +104,7 @@ struct ImageAPIPaneView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(maxHeight: 420)
-                        .accessibilityLabel(Text(verbatim: "Generated image preview"))
+                        .accessibilityLabel(Text("Generated image preview", bundle: .module))
                     Button {
                         saved = model.saveAPIImageToGallery(
                             png: result, prompt: resultPrompt, seed: resultSeed ?? 0,

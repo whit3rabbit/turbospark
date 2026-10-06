@@ -516,17 +516,6 @@ impl Moonshine {
             .map_or(0, |(k, _)| k.len() / (kv_heads * head_dim));
         let (cos, sin) = ops::rope_tables(pos + 1, rotary, self.config.rope_theta);
         let mut x = ops::embedding(&self.embed, d, &[token as i32]);
-        let _debug = std::env::var("MOONSHINE_DEBUG").is_ok();
-        let first_step = std::env::var("MOONSHINE_DUMP_STEPOK").is_ok();
-        if first_step {
-            std::env::remove_var("MOONSHINE_DUMP_STEPOK");
-            eprintln!("rust decode_step token={} embed[:4]={:?}", token, &x[..4]);
-            let mut bytes = Vec::new();
-            for v in &x {
-                bytes.extend_from_slice(&v.to_le_bytes());
-            }
-            let _ = std::fs::write("/tmp/rust_emb1.raw", bytes);
-        }
         for (i, layer) in self.dec_layers.iter().enumerate() {
             // Self attention over the single new token, keys/values
             // appended to the cache. With one query position the

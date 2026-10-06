@@ -121,6 +121,24 @@ pub unsafe extern "C" fn ts_server_start(
                 .attach_embedding_model(emb)
                 .map_err(|e| (abi::TS_ERR_OPEN, e))?;
         }
+        #[cfg(target_os = "macos")]
+        {
+            for spec in &options.stt_models {
+                server
+                    .attach_audio_model(spec, turbospark_server::AudioTask::SpeechToText)
+                    .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+            }
+            for spec in &options.tts_models {
+                server
+                    .attach_audio_model(spec, turbospark_server::AudioTask::TextToSpeech)
+                    .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+            }
+            for spec in &options.music_models {
+                server
+                    .attach_audio_model(spec, turbospark_server::AudioTask::Music)
+                    .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+            }
+        }
         *out = Box::into_raw(Box::new(server));
         Ok(())
     })
@@ -329,6 +347,88 @@ pub unsafe extern "C" fn ts_server_complete_image_request(
         server
             .image_bridge()
             .complete(request_id, result)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+fn parse_audio_task(raw: &str) -> Result<turbospark_server::AudioTask, String> {
+    match raw.trim().to_lowercase().as_str() {
+        "stt" | "speech_to_text" | "speech-to-text" | "transcribe" | "transcription" => {
+            Ok(turbospark_server::AudioTask::SpeechToText)
+        }
+        "tts" | "text_to_speech" | "text-to-speech" | "speech" | "speak" => {
+            Ok(turbospark_server::AudioTask::TextToSpeech)
+        }
+        "music" | "generate" => Ok(turbospark_server::AudioTask::Music),
+        other => Err(format!(
+            "task must be 'stt', 'tts', or 'music', got \"{other}\""
+        )),
+    }
+}
+
+/// Registers one audio model (STT, TTS, or music) on the running HTTP server.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_attach_audio_model(
+    server: *const TsServer,
+    model_path: *const c_char,
+    task: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(server).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let path = strings::required(model_path, "modelPath")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let task_opt =
+            strings::optional(task, "task").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let task = match task_opt {
+            Some(t) => parse_audio_task(t).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?,
+            None => catalog::audio_catalog::AudioCatalog::embedded()
+                .ok()
+                .and_then(|c| c.get(path).cloned())
+                .map(|profile| match profile.identity.task {
+                    catalog::audio_catalog::AudioTask::SpeechToText => {
+                        turbospark_server::AudioTask::SpeechToText
+                    }
+                    catalog::audio_catalog::AudioTask::TextToSpeech => {
+                        turbospark_server::AudioTask::TextToSpeech
+                    }
+                    catalog::audio_catalog::AudioTask::Music => turbospark_server::AudioTask::Music,
+                })
+                .or_else(|| {
+                    if catalog::speech::embedded_entry(path).is_ok() {
+                        Some(turbospark_server::AudioTask::SpeechToText)
+                    } else if catalog::music::embedded_music_entry(path).is_ok() {
+                        Some(turbospark_server::AudioTask::Music)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    (
+                        abi::TS_ERR_INVALID_ARGUMENT,
+                        format!("could not determine audio task for {path:?}; specify 'stt', 'tts', or 'music'"),
+                    )
+                })?,
+        };
+        let id = server
+            .attach_audio_model(path, task)
+            .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+        strings::emit(&id, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Unregisters an audio model by id.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_detach_audio_model(
+    server: *const TsServer,
+    model_id: *const c_char,
+) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(server).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let id = strings::required(model_id, "modelId")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        server
+            .detach_audio_model(id)
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }

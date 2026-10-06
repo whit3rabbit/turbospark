@@ -93,3 +93,34 @@ impl CodebookIndex {
         (best_idx, best_dist)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearest_finds_closest_normalized_codebook_vector() {
+        let codebook = vec![
+            1.0, 0.0, // idx 0: [1, 0]
+            0.0, 1.0, // idx 1: [0, 1]
+            -1.0, 0.0, // idx 2: [-1, 0]
+        ];
+        let rows_norm = codebook.clone();
+        let rows_sq = vec![1.0, 1.0, 1.0];
+        let cb = CodebookIndex {
+            codebook,
+            rows_norm,
+            rows_sq,
+            dim: 2,
+        };
+
+        let (idx, _dist) = cb.nearest(&[0.9, 0.1]);
+        assert_eq!(idx, 0);
+
+        let (idx, _dist) = cb.nearest(&[0.1, 0.9]);
+        assert_eq!(idx, 1);
+
+        let (idx, _dist) = cb.nearest(&[-0.8, 0.2]);
+        assert_eq!(idx, 2);
+    }
+}

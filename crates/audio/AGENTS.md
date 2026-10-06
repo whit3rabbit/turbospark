@@ -23,12 +23,12 @@ Unified portable audio crate: DSP primitives (waveform, WAV I/O, resampling, FFT
 
 All models and model families reside under their respective role directories:
 - `src/music/<family>/`: Music generation (e.g. `minimax_music3`)
-- `src/stt/<family>/`: Speech-to-text (e.g. `whisper`, `moonshine`, `parakeet`, `granite_speech5_ctc`, `mms`, `qwen3_asr`, `qwen3_forced_aligner`, `nemotron_asr`)
+- `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
 - `src/tts/<family>/`: Text-to-speech (e.g. `kokoro`)
 - `src/vad/<family>/`: Voice activity detection and diarization (e.g. `silero_vad`, `sortformer`, `nemotron_diarization`)
 - `src/sts/<family>/`: Speech-to-speech and enhancement (e.g. `deepfilternet`)
-- `src/codec/<family>/`: Neural audio codecs and vocoders
-- `src/lid/<family>/`: Spoken language identification
+- `src/codec/<family>/`: Neural audio codecs and vocoders (e.g. `bigvgan`, `dacvae`, `descript`, `ecapa_tdnn`, `encodec`, `fish_s1_dac`, `higgs_audio`, `mimi`, `mimo_audio_tokenizer`, `moss_audio_tokenizer`, `nemotron_voicechat`, `s3`, `snac`, `vocos`)
+- `src/lid/<family>/`: Spoken language identification (e.g. `ecapa_tdnn`, `wav2vec2_lid`)
 
 Every model family directory contains its implementation code, configuration, weight loader, and a comprehensive markdown document (`README.md`) detailing:
 1. Overview & model description

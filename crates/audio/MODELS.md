@@ -302,20 +302,20 @@ Forced alignment and audio understanding retain their own capabilities.
 | `fireredasr2` | [Family port](src/stt/fireredasr2/README.md) | 55 | Pinned `mlx-community/FireRedASR2-AED-mlx` @ `f3212eacfa49b851130b97c63653c8e06ee09bdb`; full Rust decode matches the MLX transcript and selected encoder stages | One English clip; broader quality, memory/performance, runtime/catalog, FFI, and Swift gates remain open |
 | `fun_asr_nano` | Family port | 56 | Pinned `mlx-community/Fun-ASR-Nano-2512` @ `a7bc96fceaafce39ed6748e0c0fa9a9508b67f86`; MLX and Rust matched the transcript and selected LFR, encoder, and adaptor values within `0.01` on one English clip | [Family port](src/stt/fun_asr_nano/README.md) |
 | `glmasr` | Family port | 57 | Alias `glm`; pinned `mlx-community/GLM-ASR-Nano-2512-4bit` @ `35553fa5bebfcc3ece3ce7d47b98827cb0ac9eef`; one-clip MLX/Rust transcript and stage parity passed | [Family port](src/stt/glmasr/README.md) |
-| `granite_speech` | README | 13 | Default task-qualified family | None |
+| `granite_speech` | [Family port](src/stt/granite_speech/README.md) | 13 | Pinned `ibm-granite/granite-4.0-1b-speech` @ `bd87ab862416353633ea431fe49b1614003623c5`; Rust checkpoint transcript and all 9 greedy ids exact (features 1.19e-6, top-8 logits 0.6% relative); streaming and translation checkpoints remain open | [Family port](src/stt/granite_speech/mod.rs) |
 | `granite_speech5_ctc` | Port in progress | 14 | Pinned 470M TurboCTC profile; exact one-clip Python/Rust transcript match | [Family port](src/stt/granite_speech5_ctc/mod.rs) |
 | `granite_speech_nar` | Source | 58 | Pinned MLX conversion `mlx-community/granite-speech-4.1-2b-nar-mlx` @ `6acb7892068dd30227f20aba6eb7c4b0ae5c7e7c`; English MLX smoke passed, Rust port pending | None |
-| `higgs_audio_3` | Source | 59 | Pinned `bosonai/higgs-audio-v3-stt` @ `2ffd1aa39f5a1266931e405cba12e404a9f994b2`; English MLX smoke passed, Rust port pending | None |
+| `higgs_audio_3` | [Family port](src/stt/higgs_audio_3/README.md) | 59 | Pinned `bosonai/higgs-audio-v3-stt` @ `2ffd1aa39f5a1266931e405cba12e404a9f994b2`; prompt ids 27/27 and greedy ids 9/10 exact (final token is a documented one-bf16-ulp near tie, prefix identical); VAD chunking reuses silero_vad | [Family port](src/stt/higgs_audio_3/mod.rs) |
 | `lasr_ctc` | Source | 60 | Google MedASR official pin is gated; public `drankush-ai/medasr-mlx-fp32` @ `3b967580b5176144bc633fac60420d1b122dfba8` runs only after bypassing an upstream double-transpose, and upstream has no working generate path | None |
 | `mega_asr` | [Family port](src/stt/mega_asr/README.md) | 17 | Pinned `mlx-community/Mega-ASR-8bit` @ `b9c3c7020f94944205df7f7b5d5d1ce96678d74f`; router and full 539-module LoRA inventory fixture-verified; pinned checkpoint transcript byte-identical (13 tokens); reuses the qwen3_asr tower and decoder | [Family port](src/stt/mega_asr/mod.rs) |
 | `mms` | Port in progress | 12 | Pinned English adapter; MLX requires explicit `model_type="mms"`; Rust matches one transcript, but sampled numeric drift through the encoder remains open | [Profile and pin](src/stt/mms/README.md) |
 | `moonshine` | README | 8 | Default task-qualified family | [Port](src/stt/moonshine/mod.rs) |
 | `moss_music` | README | 23 | Pinned 4-bit profile; explicit transcription prompt required | None |
-| `moss_transcribe_diarize` | README | 22 | Pinned 4-bit MLX profile; smoke passed, Rust port pending | None |
+| `moss_transcribe_diarize` | [Family port](src/stt/moss_transcribe_diarize/README.md) | 22 | Pinned `vanch007/mlx-MOSS-Transcribe-Diarize-4bit` @ `d42a296ee807e933ddd7588e2041dbbc84aff85d`; Rust checkpoint run matches the marked output, all 112 prompt ids and 25 greedy ids; single 30 s window | [Family port](src/stt/moss_transcribe_diarize/mod.rs) |
 | `nemo` | Shared | None | Alignment helpers reused by Parakeet/Nemotron ASR | None |
 | `nemotron_asr` | Family port | 10 | Pinned offline RNN-T transcription; cache-aware streaming remains open | [Family port](src/stt/nemotron_asr/README.md) |
 | `parakeet` | README | 9 | v2/v3/Redux profiles; alias `parakeet_tdt` | [TDT v2/v3](src/stt/parakeet/mod.rs) |
-| `phonon` | Source | 61 | Pinned `FermionResearch/Phonon-1` @ `0428da04625c51b6f069a9829c7060e6b167b92a`; MLX English smoke passed, Rust port pending | None |
+| `phonon` | [Family port](src/stt/phonon/README.md) | 61 | Pinned `FermionResearch/Phonon-1` @ `0428da04625c51b6f069a9829c7060e6b167b92a`; quint5 unpack word-exact, checkpoint transcript byte-identical (13 tokens); consumes the materialized release, refuses raw archives | [Family port](src/stt/phonon/mod.rs) |
 | `qwen2_audio` | README | 21 | Pinned 7B 4-bit profile; MLX smoke passed, Rust port pending | None |
 | `qwen3_asr` | README | 15 | Pinned 0.6B 8-bit profile; exact one-clip Rust/MLX transcript parity, debug run took 491.94 seconds | [Port](src/stt/qwen3_asr/mod.rs) |
 | `qwen3_forced_aligner` | README | 16 | Pinned 0.6B 8-bit alignment profile; MLX and Rust fixture parity passed | [Port](src/stt/qwen3_forced_aligner/README.md) |
@@ -323,7 +323,7 @@ Forced alignment and audio understanding retain their own capabilities.
 | `vibevoice_asr` | README | 20 | Pinned 1.5B profile; loader needs explicit family route | None |
 | `voxtral` | README | 18 | Pinned 3B BF16 profile; MLX smoke passed | None |
 | `voxtral_realtime` | README | 19 | Pinned 4B 4-bit profile; MLX smoke passed | None |
-| `wav2vec` | Source | None | Default task-qualified family | None |
+| `wav2vec` | [Family port](src/stt/wav2vec/README.md) | None | Pinned `facebook/wav2vec2-base-960h` @ `22aad52d435eb6dbaf354bdad9b0da84ce7d6156`; post-norm encoder plus the checkpoint's own CTC head; Rust checkpoint transcript byte-identical (`THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG`); upstream does not auto-route this family | [Family port](src/stt/wav2vec/mod.rs) |
 | `whisper` | README | 6, 7 | Whisper and distilled profiles share one family | [Port](src/stt/whisper/mod.rs) & [Runtime](../runtime/src/whisper/mod.rs) |
 
 ### Initial pinned MLX reference runs
@@ -435,17 +435,17 @@ Codecs and shared learned components. [Pinned source directory](https://github.c
 | Source directory | Class | Local task(s) | Identity / profile notes | Current Rust path |
 |---|---|---|---|---|
 | `bigvgan` | Family port | None | Tiny fixture end to end (codes/wave parity, kaiser Activation1d, checkpointed filters); snake refused, see [family README](src/codec/bigvgan/README.md) | Yes |
-| `dacvae` | Shared | None | Default task-qualified family | None |
+| `dacvae` | Family port | None | Tiny fixture end to end (VAE-mean latents + decode parity, pad path); watermark subsystem out of contract, see [family README](src/codec/dacvae/README.md) | Yes |
 | `descript` | Family port | None | Tiny fixture end to end (all-level codes exact with margins, z_q/audio/from_codes parity, compress round trip); delay-0 quirk documented, see [family README](src/codec/descript/README.md) | Yes |
 | `ecapa_tdnn` | Family port | None | Tiny fixtures (plain + global-context pooling) embedding parity, see [family README](src/codec/ecapa_tdnn/README.md) | Yes |
 | `encodec` | Family port | None | Tiny fixture end to end (codes exact at two bandwidths with Euclidean margins, audio parity, isolated LSTM); mono + weight_norm only, see [family README](src/codec/encodec/README.md) | Yes |
-| `fish_s1_dac` | Shared | None | Default task-qualified family | None |
-| `higgs_audio` | Shared | None | Audio tokenizer; distinct from TTS generation family | None |
-| `mimi` | Shared | None | Default task-qualified family | None |
-| `mimo_audio_tokenizer` | Shared | None | Default task-qualified family | None |
-| `moss_audio_tokenizer` | Shared | None | Default task-qualified family | None |
-| `nemotron_voicechat` | Shared | None | Codec dependency; distinct from STS pipeline | None |
-| `s3` | Shared | None | Tokenizer / codec dependency | None |
+| `fish_s1_dac` | Family port | None | Tiny fixture end to end (codes exact per book, decoded waveform + random-codes decode parity); causal build_ae geometry only, freqs_cis/masks recomputed, see [family README](src/codec/fish_s1_dac/README.md) | Yes |
+| `higgs_audio` | Family port | None | Tiny fixture end to end (acoustic encode, RVQ codes/reconstruction, token decode); semantic fusion (wav2vec2 tower) out of contract, see [family README](src/codec/higgs_audio/README.md) | Yes |
+| `mimi` | Family port | None | Tiny fixture end to end (32-level codes exact with margins, decode path stage parity); batch paths (reset-state streaming contract), see [family README](src/codec/mimi/README.md) | Yes |
+| `mimo_audio_tokenizer` | Family port | None | Tiny fixture end to end (HTK log-mel, encoder hidden + RVQ codes exact, full codes-to-waveform decode); segment chunking out of contract, see [family README](src/codec/mimo_audio_tokenizer/README.md) | Yes |
+| `moss_audio_tokenizer` | Family port | None | Tiny fixture end to end (interleave/patch encode codes exact, decoded stereo waveform); streaming step path out of contract, see [family README](src/codec/moss_audio_tokenizer/README.md) | Yes |
+| `nemotron_voicechat` | Family port | None | Tiny fixture end to end (codes exact with margins, latents + decoded waveform, random-codes decode); streaming decode_step out of contract, see [family README](src/codec/nemotron_voicechat/README.md) | Yes |
+| `s3` | Family port | None | Tiny fixture end to end (v1 Euclidean codes exact both strides, v2 FSQ codes + >30 s sliding-window merge, log-mel front end); v1 codebook loader quirk documented, see [family README](src/codec/s3/README.md) | Yes |
 | `snac` | Family port | None | snac_24khz verified end to end (fixture codes exact, real checkpoint encode exact + zero-noise decode parity); LocalMHA refused, see [family README](src/codec/snac/README.md) | Yes |
-| `stepaudio2` | Shared | None | Token-to-waveform dependency | None |
+| `stepaudio2` | Shared | None | Token-to-waveform dependency; flow + HiFT + speaker pipeline, Rust port pending (consumes the s3 family port) | None |
 | `vocos` | Family port | None | Tiny fixture end to end (log-mel front end + ConvNeXt + iSTFT head parity, numpy-convention irfft); mel variant, see [family README](src/codec/vocos/README.md) | Yes |

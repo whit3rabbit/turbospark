@@ -59,7 +59,7 @@ struct SteeringVectorImportSheet: View {
                 Text(verbatim: "Add steering for " + installedModel.alias)
                     .themedFont(.base, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Text(verbatim: "Download a GGUF control vector, check its shape, and select it for the next model load.")
+                Text("Download a GGUF control vector, check its shape, and select it for the next model load.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
@@ -82,7 +82,7 @@ struct SteeringVectorImportSheet: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(verbatim: "Hugging Face source")
+                        Text("Hugging Face source", bundle: .module)
                             .themedFont(.small, weight: .semibold)
                         TextField("owner/repository", text: $repo)
                             .textFieldStyle(.roundedBorder)
@@ -95,12 +95,12 @@ struct SteeringVectorImportSheet: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(verbatim: "Preset")
+                        Text("Preset", bundle: .module)
                             .themedFont(.small, weight: .semibold)
                         TextField("Direction name", text: $name)
                             .textFieldStyle(.roundedBorder)
                         HStack {
-                            Text(verbatim: "Ablate strength")
+                            Text("Ablate strength", bundle: .module)
                             Spacer()
                             TextField("0.3", text: $scale)
                                 .textFieldStyle(.roundedBorder)
@@ -109,15 +109,15 @@ struct SteeringVectorImportSheet: View {
                     }
                 }
 
-                Text(verbatim: "Ablation is an activation edit. It can be used on an ordinary model, including one that was not pre-abliterated. The vector still needs to come from this checkpoint, and this check cannot prove that semantic match.")
+                Text("Ablation is an activation edit. It can be used on an ordinary model, including one that was not pre-abliterated. The vector still needs to come from this checkpoint, and this check cannot prove that semantic match.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(verbatim: "Community sources")
+                    Text("Community sources", bundle: .module)
                         .themedFont(.small, weight: .semibold)
-                    Text(verbatim: "TurboSpark accepts GGUF control vectors here. Research .pt axes need offline conversion first.")
+                    Text("TurboSpark accepts GGUF control vectors here. Research .pt axes need offline conversion first.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -185,10 +185,10 @@ struct SteeringVectorImportSheet: View {
                     if isDownloading {
                         ProgressView()
                             .controlSize(.small)
-                        Text(verbatim: "Checking vector...")
+                        Text("Checking vector...", bundle: .module)
                     } else {
                         Label {
-                            Text(verbatim: "Download and Use")
+                            Text("Download and Use", bundle: .module)
                         } icon: {
                             Image(systemName: "arrow.down.circle.fill")
                         }

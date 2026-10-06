@@ -7,8 +7,8 @@ struct TypeSafeAPIPaneView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 12) {
-                Text(verbatim: "TypeSafe API").themedFont(.title3, weight: .semibold)
-                Text(verbatim: "OpenKind runs as a separate loopback service with its own API key.")
+                Text("TypeSafe API", bundle: .module).themedFont(.title3, weight: .semibold)
+                Text("OpenKind runs as a separate loopback service with its own API key.", bundle: .module)
                     .foregroundStyle(.secondary)
                 HStack {
                     Text(verbatim: "127.0.0.1:")
@@ -22,7 +22,7 @@ struct TypeSafeAPIPaneView: View {
                 }
                 SecureField("TypeSafe API key", text: $model.typeSafeAPIKeyInput)
                     .disabled(model.typeSafeServer != nil)
-                    .accessibilityLabel(Text(verbatim: "TypeSafe API key"))
+                    .accessibilityLabel(Text("TypeSafe API key", bundle: .module))
                 HStack {
                     Button {
                         Task {
@@ -52,7 +52,7 @@ struct TypeSafeAPIPaneView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Models", bundle: .module).themedFont(.title3, weight: .semibold)
                 if model.typeSafeModels.isEmpty {
-                    Text(verbatim: "No local model status available.").foregroundStyle(.secondary)
+                    Text("No local model status available.", bundle: .module).foregroundStyle(.secondary)
                 }
                 ForEach(model.typeSafeModels) { item in
                     HStack {

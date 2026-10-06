@@ -2,6 +2,13 @@
 //!
 //! The prompt is evaluated once, then each greedy token appends to a
 //! per-layer KV cache. The full-prefix path remains the parity reference.
+//!
+//! Every loader accepts a shard list: single-file callers pass one file
+//! through [`Decoder::load`] and behavior is unchanged. The shard-aware
+//! resolution exists for Higgs Audio v3, whose checkpoint stores the Qwen3
+//! backbone under the raw HF names (`layers.*`, `embed_tokens.weight`,
+//! `norm.weight`) across `model.safetensors` shards, with the untied LM head
+//! under `audio_decoder_proj.text_lm_head.weight`.
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
@@ -10,16 +17,36 @@ use crate::ops;
 use crate::quant::{load_quantized, QuantScheme};
 use crate::{Result, SpeechError};
 
-fn weight_base(file: &SafetensorsFile, base: &str) -> String {
-    if file.contains_tensor(&format!("{base}.weight")) {
-        base.to_owned()
-    } else if file.contains_tensor(&format!("thinker.{base}.weight")) {
-        format!("thinker.{base}")
-    } else if file.contains_tensor(&format!("llm.{base}.weight")) {
-        format!("llm.{base}")
-    } else {
-        base.to_owned()
+/// Resolves `base` against the shards, returning the carrying file plus the
+/// actual key prefix. Candidate order preserves the historical single-file
+/// behavior exactly; the last two candidates are the Higgs Audio v3
+/// additions and can only match where every earlier candidate misses.
+fn resolve_weight<'a>(files: &'a [SafetensorsFile], base: &str) -> (&'a SafetensorsFile, String) {
+    let mut candidates = vec![
+        format!("{base}.weight"),
+        format!("thinker.{base}.weight"),
+        format!("llm.{base}.weight"),
+    ];
+    if let Some(rest) = base.strip_prefix("model.") {
+        candidates.push(format!("model.language_model.{rest}.weight"));
+        // Higgs Audio v3 stores the shared qwen3 decoder under the raw HF
+        // names without any "model." prefix.
+        candidates.push(format!("{rest}.weight"));
     }
+    if base == "lm_head" {
+        // Higgs Audio v3 keeps the untied text LM head under its audio
+        // decoder projection name; the reference sanitize renames it to
+        // "lm_head.weight" at load.
+        candidates.push("audio_decoder_proj.text_lm_head.weight".to_owned());
+    }
+    for name in &candidates {
+        if let Some(file) = files.iter().find(|f| f.contains_tensor(name)) {
+            return (file, name[..name.len() - ".weight".len()].to_owned());
+        }
+    }
+    // Nothing resolved: hand back the first shard and the requested base so
+    // the downstream load fails with the familiar missing-tensor error.
+    (&files[0], base.to_owned())
 }
 
 #[derive(Clone)]
@@ -38,7 +65,17 @@ impl Linear {
         output: usize,
         scheme: QuantScheme,
     ) -> Result<Self> {
-        let base = weight_base(file, base);
+        Self::load_sharded(std::slice::from_ref(file), base, input, output, scheme)
+    }
+
+    pub(crate) fn load_sharded(
+        files: &[SafetensorsFile],
+        base: &str,
+        input: usize,
+        output: usize,
+        scheme: QuantScheme,
+    ) -> Result<Self> {
+        let (file, base) = resolve_weight(files, base);
         let (weight, bias) = load_quantized(file, &base, scheme)?;
         if weight.len() != input * output {
             return Err(SpeechError::Tensor {
@@ -76,8 +113,13 @@ struct RmsNorm {
 }
 
 impl RmsNorm {
-    fn load(file: &SafetensorsFile, base: &str, width: usize, epsilon: f32) -> Result<Self> {
-        let base = weight_base(file, base);
+    fn load_sharded(
+        files: &[SafetensorsFile],
+        base: &str,
+        width: usize,
+        epsilon: f32,
+    ) -> Result<Self> {
+        let (file, base) = resolve_weight(files, base);
         let name = format!("{base}.weight");
         let values = file.load_as_f32(&name)?;
         if values.len() != width {
@@ -134,7 +176,7 @@ pub(crate) struct DecodeCache {
 
 impl TextAttention {
     fn load(
-        file: &SafetensorsFile,
+        files: &[SafetensorsFile],
         prefix: &str,
         config: &TextConfig,
         scheme: QuantScheme,
@@ -142,29 +184,29 @@ impl TextAttention {
         let q_width = config.num_attention_heads * config.head_dim;
         let kv_width = config.num_key_value_heads * config.head_dim;
         Ok(Self {
-            q_proj: Linear::load(
-                file,
+            q_proj: Linear::load_sharded(
+                files,
                 &format!("{prefix}.q_proj"),
                 config.hidden_size,
                 q_width,
                 scheme,
             )?,
-            k_proj: Linear::load(
-                file,
+            k_proj: Linear::load_sharded(
+                files,
                 &format!("{prefix}.k_proj"),
                 config.hidden_size,
                 kv_width,
                 scheme,
             )?,
-            v_proj: Linear::load(
-                file,
+            v_proj: Linear::load_sharded(
+                files,
                 &format!("{prefix}.v_proj"),
                 config.hidden_size,
                 kv_width,
                 scheme,
             )?,
-            o_proj: Linear::load(
-                file,
+            o_proj: Linear::load_sharded(
+                files,
                 &format!("{prefix}.o_proj"),
                 q_width,
                 config.hidden_size,
@@ -173,8 +215,8 @@ impl TextAttention {
             q_norm: config
                 .qk_norm
                 .then(|| {
-                    RmsNorm::load(
-                        file,
+                    RmsNorm::load_sharded(
+                        files,
                         &format!("{prefix}.q_norm"),
                         config.head_dim,
                         config.rms_norm_eps,
@@ -184,8 +226,8 @@ impl TextAttention {
             k_norm: config
                 .qk_norm
                 .then(|| {
-                    RmsNorm::load(
-                        file,
+                    RmsNorm::load_sharded(
+                        files,
                         &format!("{prefix}.k_norm"),
                         config.head_dim,
                         config.rms_norm_eps,
@@ -363,28 +405,28 @@ struct Mlp {
 
 impl Mlp {
     fn load(
-        file: &SafetensorsFile,
+        files: &[SafetensorsFile],
         prefix: &str,
         config: &TextConfig,
         scheme: QuantScheme,
     ) -> Result<Self> {
         Ok(Self {
-            gate: Linear::load(
-                file,
+            gate: Linear::load_sharded(
+                files,
                 &format!("{prefix}.gate_proj"),
                 config.hidden_size,
                 config.intermediate_size,
                 scheme,
             )?,
-            up: Linear::load(
-                file,
+            up: Linear::load_sharded(
+                files,
                 &format!("{prefix}.up_proj"),
                 config.hidden_size,
                 config.intermediate_size,
                 scheme,
             )?,
-            down: Linear::load(
-                file,
+            down: Linear::load_sharded(
+                files,
                 &format!("{prefix}.down_proj"),
                 config.intermediate_size,
                 config.hidden_size,
@@ -416,23 +458,23 @@ struct DecoderLayer {
 
 impl DecoderLayer {
     fn load(
-        file: &SafetensorsFile,
+        files: &[SafetensorsFile],
         index: usize,
         config: &TextConfig,
         scheme: QuantScheme,
     ) -> Result<Self> {
         let prefix = format!("model.layers.{index}");
         Ok(Self {
-            attention: TextAttention::load(file, &format!("{prefix}.self_attn"), config, scheme)?,
-            mlp: Mlp::load(file, &format!("{prefix}.mlp"), config, scheme)?,
-            input_norm: RmsNorm::load(
-                file,
+            attention: TextAttention::load(files, &format!("{prefix}.self_attn"), config, scheme)?,
+            mlp: Mlp::load(files, &format!("{prefix}.mlp"), config, scheme)?,
+            input_norm: RmsNorm::load_sharded(
+                files,
                 &format!("{prefix}.input_layernorm"),
                 config.hidden_size,
                 config.rms_norm_eps,
             )?,
-            post_attention_norm: RmsNorm::load(
-                file,
+            post_attention_norm: RmsNorm::load_sharded(
+                files,
                 &format!("{prefix}.post_attention_layernorm"),
                 config.hidden_size,
                 config.rms_norm_eps,
@@ -502,8 +544,19 @@ impl Decoder {
         config: &TextConfig,
         scheme: QuantScheme,
     ) -> Result<Self> {
-        let embedding_base = weight_base(file, "model.embed_tokens");
-        let (embeddings, _) = load_quantized(file, &embedding_base, scheme)?;
+        Self::load_sharded(std::slice::from_ref(file), config, scheme)
+    }
+
+    /// Loads the decoder from one or more safetensors shards. Weights are
+    /// resolved per tensor, so a family may keep its backbone and LM head in
+    /// different shards (Higgs Audio v3 does).
+    pub(crate) fn load_sharded(
+        files: &[SafetensorsFile],
+        config: &TextConfig,
+        scheme: QuantScheme,
+    ) -> Result<Self> {
+        let (embedding_file, embedding_base) = resolve_weight(files, "model.embed_tokens");
+        let (embeddings, _) = load_quantized(embedding_file, &embedding_base, scheme)?;
         let expected = config.vocab_size * config.hidden_size;
         if embeddings.len() != expected {
             return Err(SpeechError::Tensor {
@@ -515,24 +568,26 @@ impl Decoder {
             });
         }
         let layers = (0..config.num_hidden_layers)
-            .map(|index| DecoderLayer::load(file, index, config, scheme))
+            .map(|index| DecoderLayer::load(files, index, config, scheme))
             .collect::<Result<Vec<_>>>()?;
         let lm_head = if config.tie_word_embeddings {
             None
         } else {
-            Some(Linear::load(
-                file,
+            Some(Linear::load_sharded(
+                files,
                 "lm_head",
                 config.hidden_size,
                 config.vocab_size,
                 scheme,
             )?)
         };
+        let final_norm =
+            RmsNorm::load_sharded(files, "model.norm", config.hidden_size, config.rms_norm_eps)?;
         Ok(Self {
             embeddings,
             lm_head,
             layers,
-            final_norm: RmsNorm::load(file, "model.norm", config.hidden_size, config.rms_norm_eps)?,
+            final_norm,
             vocab_size: config.vocab_size,
             hidden_size: config.hidden_size,
         })

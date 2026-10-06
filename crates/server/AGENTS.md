@@ -8,6 +8,7 @@ OpenAI, Anthropic, Ollama-compatible, and scripted server surfaces.
 - [Tool calling](../../docs/TOOL_CALLING.md)
 - [Streaming](../../docs/STREAMING.md)
 - [CLI reference](../../docs/CLI.md)
+- [Audio API](../../docs/AUDIO_API.md) and its OpenAPI file
 
 ## Rules
 
@@ -21,6 +22,9 @@ OpenAI, Anthropic, Ollama-compatible, and scripted server surfaces.
   required. Requests without tools must keep streaming behavior.
 - Preserve stop reasons, finish events, cancellation, and error responses at
   the protocol boundary.
+- Audio routes exist only with an attached `AudioProvider`; keep them out of
+  the FFI host's route surface. HTTP model loading takes catalog aliases, never
+  paths.
 - Validate server model aliases through the same catalog resolution contract as
   the CLI.
 

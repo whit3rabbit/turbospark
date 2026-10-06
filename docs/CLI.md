@@ -134,6 +134,10 @@ turbospark serve --model-dir ~/models --hf-endpoint https://hf-mirror.com
 # API key authentication
 turbospark serve --model-dir ~/models --api-key your-secret-key
 
+# Audio endpoints (STT, TTS, music): see docs/AUDIO_API.md. With no --model
+# this is an audio-only server.
+turbospark serve --stt-model whisper-base-en --tts-model ~/models/kokoro-82m --api-key your-secret-key
+
 # Extended cache and MCP configuration options
 turbospark serve --model-dir ~/models --paged-ssd-cache-dir ~/.omlx/cache --hot-cache-max-size 20% --mcp-config mcp.json
 ```

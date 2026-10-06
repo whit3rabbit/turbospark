@@ -65,7 +65,7 @@ private struct PersonalityEditorSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(verbatim: "Add Personality")
+                Text("Add Personality", bundle: .module)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Button { dismiss() } label: { Text("Cancel", bundle: .module) }

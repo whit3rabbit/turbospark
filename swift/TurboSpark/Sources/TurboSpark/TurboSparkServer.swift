@@ -47,6 +47,12 @@ public struct ServerOptions: Encodable, Sendable {
     public var defaultSystem: String?
     /// Default reasoning effort when a request omits reasoning_effort (turbospark-server --reasoning).
     public var defaultReasoning: GenerateOptions.Reasoning?
+    /// Speech-to-text models to attach at startup.
+    public var sttModels: [String]
+    /// Text-to-speech models to attach at startup.
+    public var ttsModels: [String]
+    /// Music models to attach at startup.
+    public var musicModels: [String]
 
     /// The server's own `on` | `off` spelling, matching the CLI flag. Anything
     /// else is refused by the engine rather than silently defaulted.
@@ -64,7 +70,10 @@ public struct ServerOptions: Encodable, Sendable {
         embeddingModel: String? = nil,
         hfEndpoint: String? = nil,
         defaultSystem: String? = nil,
-        defaultReasoning: GenerateOptions.Reasoning? = nil
+        defaultReasoning: GenerateOptions.Reasoning? = nil,
+        sttModels: [String] = [],
+        ttsModels: [String] = [],
+        musicModels: [String] = []
     ) {
         self.host = host
         self.captureText = captureText
@@ -75,6 +84,9 @@ public struct ServerOptions: Encodable, Sendable {
         self.hfEndpoint = hfEndpoint
         self.defaultSystem = defaultSystem
         self.defaultReasoning = defaultReasoning
+        self.sttModels = sttModels
+        self.ttsModels = ttsModels
+        self.musicModels = musicModels
     }
 }
 
@@ -106,6 +118,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// identify and detach exactly one session.
     public let models: [String]
     public let imageModels: [String]
+    public let audioModels: [String]
     public let authEnabled: Bool
     /// Seconds since the server started, from a monotonic clock.
     public let uptimeSeconds: UInt64
@@ -113,7 +126,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// Spelled out because a hand-written `init(from:)` suppresses the
     /// synthesized one.
     private enum CodingKeys: String, CodingKey {
-        case port, host, modelId, models, imageModels, authEnabled, uptimeSeconds, traffic
+        case port, host, modelId, models, imageModels, audioModels, authEnabled, uptimeSeconds, traffic
     }
 
     /// Decoded tolerantly for the two fields added after this struct
@@ -130,6 +143,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
         models = try c.decodeIfPresent([String].self, forKey: .models)
             ?? (modelId.isEmpty ? [] : [modelId])
         imageModels = try c.decodeIfPresent([String].self, forKey: .imageModels) ?? []
+        audioModels = try c.decodeIfPresent([String].self, forKey: .audioModels) ?? []
         authEnabled = try c.decode(Bool.self, forKey: .authEnabled)
         uptimeSeconds = try c.decodeIfPresent(UInt64.self, forKey: .uptimeSeconds) ?? 0
     }
@@ -413,6 +427,32 @@ public final class TurboSparkServer: @unchecked Sendable {
             }
         } else {
             throw TurboSparkError(code: .invalidArgument, message: "image result is empty")
+        }
+    }
+
+    /// Adds an audio model (STT, TTS, or music) to this running server.
+    ///
+    /// The model path can be a directory or catalog alias.
+    /// `task` is "stt", "tts", "music", or empty for automatic detection.
+    @discardableResult
+    public func attachAudioModel(_ modelPath: String, task: String = "") throws -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        return try modelPath.withCString { path in
+            try task.withCString { t in
+                try takeString { ts_server_attach_audio_model(handle.raw, path, t, $0) }
+            }
+        }
+    }
+
+    /// Detaches an audio model from this running server by id.
+    public func detachAudioModel(id: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        try id.withCString { path in
+            try check(ts_server_detach_audio_model(handle.raw, path))
         }
     }
 

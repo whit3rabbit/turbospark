@@ -155,7 +155,9 @@ pub fn read_wav_f32(path: &Path) -> Result<Waveform, AudioError> {
 
 /// Encodes a [`Waveform`] as a 32-bit IEEE float WAVE file (format tag 3).
 pub fn write_wav_f32(wave: &Waveform) -> Vec<u8> {
-    encode_wav(wave, FORMAT_IEEE_FLOAT, 32, |s| s.to_le_bytes().to_vec())
+    encode_wav(wave, FORMAT_IEEE_FLOAT, 32, |s, data| {
+        data.extend_from_slice(&s.to_le_bytes());
+    })
 }
 
 /// Encodes a [`Waveform`] as a 16-bit PCM WAVE file (format tag 1).
@@ -165,9 +167,9 @@ pub fn write_wav_f32(wave: &Waveform) -> Vec<u8> {
 /// decodes back to exactly -1.0, while +1.0 clips to the representable top
 /// endpoint 32767.
 pub fn write_wav_i16(wave: &Waveform) -> Vec<u8> {
-    encode_wav(wave, FORMAT_PCM, 16, |s| {
+    encode_wav(wave, FORMAT_PCM, 16, |s, data| {
         let scaled = (s * 32768.0).round().clamp(-32768.0, 32767.0) as i16;
-        scaled.to_le_bytes().to_vec()
+        data.extend_from_slice(&scaled.to_le_bytes());
     })
 }
 
@@ -175,14 +177,17 @@ fn encode_wav(
     wave: &Waveform,
     format_tag: u16,
     bits: u16,
-    encode_sample: impl Fn(f32) -> Vec<u8>,
+    // Appends one sample's little-endian bytes (exactly `bits / 8` of them)
+    // straight into the data chunk; a per-sample `Vec` costs an allocation
+    // for every sample of every encode.
+    encode_sample: impl Fn(f32, &mut Vec<u8>),
 ) -> Vec<u8> {
     let width = bits as usize / 8;
     let mut data = Vec::with_capacity(wave.samples.len() * width);
     for &s in &wave.samples {
-        let bytes = encode_sample(s);
-        data.extend_from_slice(&bytes[..width]);
+        encode_sample(s, &mut data);
     }
+    debug_assert_eq!(data.len(), wave.samples.len() * width);
     let pad = data.len() % 2;
     // 4 "WAVE" + 8 fmt header + 16 fmt body + 8 data header + data + pad.
     let riff_size = 4 + 8 + 16 + 8 + data.len() + pad;

@@ -861,6 +861,58 @@ fn neither_model_nor_embedding_model_is_refused() {
     assert!(err.contains("--embedding-model"), "{err}");
 }
 
+/// Audio flags are repeatable per task and stand in for `--model`: an
+/// audio-only server is a real configuration.
+#[test]
+fn audio_models_alone_are_accepted_and_repeat_per_task() {
+    let args = parse(&[
+        "--stt-model",
+        "whisper-base-en",
+        "--stt-model",
+        "/tmp/qwen",
+        "--tts-model",
+        "kokoro-82m",
+        "--music-model",
+        "minimax-music3-4bit",
+    ])
+    .unwrap()
+    .unwrap();
+    assert!(args.model.is_empty() && args.models.is_empty(), "{args:?}");
+    assert_eq!(args.stt_models, ["whisper-base-en", "/tmp/qwen"]);
+    assert_eq!(args.tts_models, ["kokoro-82m"]);
+    assert_eq!(args.music_models, ["minimax-music3-4bit"]);
+    assert!(args.has_audio());
+}
+
+#[test]
+fn audio_models_ride_along_with_a_chat_model() {
+    let args = parse(&["--model", "/tmp/m", "--stt-model", "whisper-base-en"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(args.models, ["/tmp/m"]);
+    assert_eq!(args.stt_models, ["whisper-base-en"]);
+}
+
+#[test]
+fn no_audio_flags_means_no_audio() {
+    let args = parse(&["--model", "/tmp/m"]).unwrap().unwrap();
+    assert!(!args.has_audio());
+}
+
+#[test]
+fn an_audio_flag_without_a_value_is_refused() {
+    let err = parse(&["--model", "/tmp/m", "--tts-model"]).unwrap_err();
+    assert!(err.contains("--tts-model"), "{err}");
+}
+
+#[test]
+fn help_text_names_the_audio_flags() {
+    let usage = super::args::usage();
+    for flag in ["--stt-model", "--tts-model", "--music-model"] {
+        assert!(usage.contains(flag), "{flag} missing from --help");
+    }
+}
+
 /// F21: a `--memory-guard-gb` large enough to overflow a byte count must be
 /// refused rather than silently wrapping (release) or panicking (debug).
 #[test]

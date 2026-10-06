@@ -56,7 +56,7 @@ struct SoulSettingsSection: View {
                 .themedCode(.base)
                 .frame(minHeight: 150)
                 .disabled(!model.soulPromptEnabled)
-                .accessibilityLabel(Text(verbatim: "SOUL.md content"))
+                .accessibilityLabel(Text("SOUL.md content", bundle: .module))
 
             HStack {
                 Button {
@@ -233,7 +233,7 @@ private struct SoulNameSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(verbatim: "Save Soul As New")
+                Text("Save Soul As New", bundle: .module)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 Button { dismiss() } label: { Text("Cancel", bundle: .module) }

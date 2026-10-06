@@ -85,10 +85,10 @@ struct ModelSteeringCardView: View {
 
     private var notInstalledMessage: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(verbatim: "Install this model first. Then this card can check the vector's shape against its manifest before enabling it.")
+            Text("Install this model first. Then this card can check the vector's shape against its manifest before enabling it.", bundle: .module)
                 .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(verbatim: "Live steering edits activations at runtime. The model does not need to be pre-abliterated, but a refusal vector should be extracted for this exact checkpoint.")
+            Text("Live steering edits activations at runtime. The model does not need to be pre-abliterated, but a refusal vector should be extracted for this exact checkpoint.", bundle: .module)
                 .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -99,7 +99,7 @@ struct ModelSteeringCardView: View {
             statusLine
 
             if model.steeringPresets.isEmpty {
-                Text(verbatim: "No control vectors registered for this profile.")
+                Text("No control vectors registered for this profile.", bundle: .module)
                     .foregroundStyle(.appSecondary)
             } else {
                 ForEach(model.steeringPresets) { preset in
@@ -107,7 +107,7 @@ struct ModelSteeringCardView: View {
                 }
             }
 
-            Text(verbatim: "The selection is used when a model loads. A currently loaded session changes only after reload.")
+            Text("The selection is used when a model loads. A currently loaded session changes only after reload.", bundle: .module)
                 .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -116,7 +116,7 @@ struct ModelSteeringCardView: View {
                     showingImport = true
                 } label: {
                     Label {
-                        Text(verbatim: "Download from Hugging Face")
+                        Text("Download from Hugging Face", bundle: .module)
                     } icon: {
                         Image(systemName: "arrow.down.circle")
                     }
@@ -132,13 +132,13 @@ struct ModelSteeringCardView: View {
                 Button {
                     model.openSettings(tab: .safety)
                 } label: {
-                    Text(verbatim: "Manage local vectors")
+                    Text("Manage local vectors", bundle: .module)
                 }
                 .buttonStyle(.link)
                 .controlSize(.small)
             }
 
-            Text(verbatim: "Shape is checked here. Meaning is not: a same-width vector from another checkpoint can still steer the wrong direction.")
+            Text("Shape is checked here. Meaning is not: a same-width vector from another checkpoint can still steer the wrong direction.", bundle: .module)
                 .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -155,7 +155,7 @@ struct ModelSteeringCardView: View {
                 .foregroundStyle(.green)
             } else {
                 Label {
-                    Text(verbatim: "Steering is off")
+                    Text("Steering is off", bundle: .module)
                 } icon: {
                     Image(systemName: "circle")
                 }
@@ -169,7 +169,7 @@ struct ModelSteeringCardView: View {
                     model.reloadForSteering()
                 } label: {
                     Label {
-                        Text(verbatim: "Reload to apply")
+                        Text("Reload to apply", bundle: .module)
                     } icon: {
                         Image(systemName: "arrow.clockwise")
                     }

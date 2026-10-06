@@ -22,9 +22,11 @@
 //! port reads the PyTorch order directly.
 
 pub mod frontend;
+mod synth;
 pub use frontend::{
     EnglishFrontend, PhonemeVocabulary, SynthesisRequest, SynthesisSegment, Voice, VoicePack,
 };
+pub use synth::{KokoroSynthesizer, SAMPLE_RATE as OUTPUT_SAMPLE_RATE};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -715,27 +717,13 @@ impl AdaInResBlock1 {
         for i in 0..3 {
             let mut xt = base.clone();
             self.adain1[i].forward(&mut xt, seq, s);
-            let dump = std::env::var("KOKORO_BLK_DUMP").is_ok();
-            if dump && i == 0 {
-                std::env::remove_var("KOKORO_BLK_DUMP");
-                let bytes: Vec<u8> = xt.iter().flat_map(|v| v.to_le_bytes()).collect();
-                let _ = std::fs::write("/tmp/rust_blk_a10.raw", bytes);
-            }
             for ch in 0..c {
                 let a1 = self.alpha1[i][ch];
                 for v in &mut xt[ch * seq..(ch + 1) * seq] {
                     *v += (a1 * *v).sin().powi(2) / a1;
                 }
             }
-            if dump {
-                let bytes: Vec<u8> = xt.iter().flat_map(|v| v.to_le_bytes()).collect();
-                let _ = std::fs::write(format!("/tmp/rust_blk_sn1{i}.raw"), bytes);
-            }
             xt = self.convs1[i].forward(&xt, seq);
-            if dump {
-                let bytes: Vec<u8> = xt.iter().flat_map(|v| v.to_le_bytes()).collect();
-                let _ = std::fs::write(format!("/tmp/rust_blk_c1{i}.raw"), bytes);
-            }
             self.adain2[i].forward(&mut xt, seq, s);
             for ch in 0..c {
                 let a2 = self.alpha2[i][ch];
@@ -744,16 +732,11 @@ impl AdaInResBlock1 {
                 }
             }
             xt = self.convs2[i].forward(&xt, seq);
-            if dump && i == 0 {
-                let bytes: Vec<u8> = xt.iter().flat_map(|v| v.to_le_bytes()).collect();
-                let _ = std::fs::write("/tmp/rust_blk_c20.raw", bytes);
-            }
             for (a, b) in xt.iter_mut().zip(&base) {
                 *a += b;
             }
             base = xt;
         }
-        std::env::remove_var("KOKORO_BLK_DUMP");
         base
     }
 }
@@ -1856,6 +1839,18 @@ impl Kokoro {
             vocab,
             seed: 0,
         })
+    }
+
+    /// The phoneme vocabulary checked against THIS model's embedding tables
+    /// and position table, so a segment the frontend emits can never index
+    /// past either. `config` is the model's `config.json`.
+    pub fn phoneme_vocabulary(&self, config: &serde_json::Value) -> Result<PhonemeVocabulary> {
+        PhonemeVocabulary::from_config(
+            config,
+            self.bert.word_emb.len() / self.bert.embedding_size,
+            self.text_encoder.embedding.len() / self.text_encoder.channels,
+            self.bert.max_pos,
+        )
     }
 
     /// Maps a phoneme string to input ids the way the reference does:

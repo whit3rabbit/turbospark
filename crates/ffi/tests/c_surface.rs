@@ -30,15 +30,15 @@ use turbospark_ffi::{
     ts_hf_token_clear, ts_hf_token_get, ts_hf_token_set, ts_hf_token_validate_json,
     ts_image_buffer_free, ts_image_session_open, ts_last_error, ts_model_delete, ts_probe_json,
     ts_recommend_json, ts_recommend_progress_json, ts_repo_variants_json,
-    ts_server_attach_embedding_model, ts_server_attach_session, ts_server_detach_model,
-    ts_server_info_json, ts_server_poll_events_json, ts_server_start, ts_server_stop,
-    ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
-    ts_session_detokenize_json, ts_session_fit_window_json, ts_session_info_json, ts_session_open,
-    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_stt_close, ts_stt_open,
-    ts_stt_stream_append, ts_stt_stream_cancel, ts_stt_stream_close, ts_stt_stream_finish,
-    ts_stt_stream_open, ts_system_info_json, Server, Session, TsImageSession, TsSttModel,
-    TsSttStream, TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING,
-    TS_EVENT_TOOL,
+    ts_server_attach_audio_model, ts_server_attach_embedding_model, ts_server_attach_session,
+    ts_server_detach_audio_model, ts_server_detach_model, ts_server_info_json,
+    ts_server_poll_events_json, ts_server_start, ts_server_stop, ts_session_cancel,
+    ts_session_count_text_tokens, ts_session_count_tokens, ts_session_detokenize_json,
+    ts_session_fit_window_json, ts_session_info_json, ts_session_open, ts_session_render_prompt,
+    ts_session_tokenize_json, ts_string_free, ts_stt_close, ts_stt_open, ts_stt_stream_append,
+    ts_stt_stream_cancel, ts_stt_stream_close, ts_stt_stream_finish, ts_stt_stream_open,
+    ts_system_info_json, Server, Session, TsImageSession, TsSttModel, TsSttStream,
+    TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING, TS_EVENT_TOOL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -1963,6 +1963,18 @@ fn stt_handles_reject_null_and_unknown_inputs() {
     assert_eq!(code, abi::TS_OK);
     let code = unsafe { ts_stt_stream_close(ptr::null_mut()) };
     assert_eq!(code, abi::TS_OK);
+}
+
+#[test]
+fn server_audio_symbols_validate_arguments() {
+    let mut out = ptr::null_mut();
+    let code =
+        unsafe { ts_server_attach_audio_model(ptr::null(), ptr::null(), ptr::null(), &mut out) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(out.is_null());
+
+    let code = unsafe { ts_server_detach_audio_model(ptr::null(), ptr::null()) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
 }
 
 #[test]

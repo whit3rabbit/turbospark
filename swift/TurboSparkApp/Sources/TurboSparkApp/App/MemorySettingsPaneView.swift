@@ -29,7 +29,7 @@ struct MemorySettingsPaneView: View {
         .onAppear { reloadLedger() }
         .sheet(item: $editingClaim) { claim in
             VStack(alignment: .leading, spacing: 12) {
-                Text(verbatim: "Edit Memory").themedFont(.title3)
+                Text("Edit Memory", bundle: .module).themedFont(.title3)
                 TextEditor(text: $draftText)
                     .frame(minWidth: 520, minHeight: 220)
                 HStack {
@@ -86,7 +86,7 @@ struct MemorySettingsPaneView: View {
                 Picker("Scope", selection: $scopeSelection) {
                     Text("Profile", bundle: .module).tag("profile")
                     if selectedProjectRoot != nil {
-                        Text(verbatim: "This Project").tag("project")
+                        Text("This Project", bundle: .module).tag("project")
                     }
                 }
                 .pickerStyle(.segmented)
@@ -103,7 +103,7 @@ struct MemorySettingsPaneView: View {
                 Text(verbatim: managerError).foregroundStyle(.red)
             }
             if visibleClaims.isEmpty {
-                Text(verbatim: "No memories match this view.")
+                Text("No memories match this view.", bundle: .module)
                     .foregroundStyle(.appSecondary)
             }
             ForEach(visibleClaims) { claim in
@@ -131,7 +131,7 @@ struct MemorySettingsPaneView: View {
                                     model.turnNavigationTargetID = evidence.messageID
                                     model.turnNavigationToken += 1
                                 }
-                            } label: { Text(verbatim: "Open Source Message") }
+                            } label: { Text("Open Source Message", bundle: .module) }
                             .disabled(!model.chats.contains(where: { $0.id == evidence.chatID }))
                         }
                     }
@@ -157,7 +157,7 @@ struct MemorySettingsPaneView: View {
                                                 supersedes: existing.id) }
                                         }
                                     }
-                                } label: { Text(verbatim: "Merge or Replace") }
+                                } label: { Text("Merge or Replace", bundle: .module) }
                             }
                         }
                         if claim.status == .pending {
@@ -172,13 +172,13 @@ struct MemorySettingsPaneView: View {
                             } label: { Text("Edit", bundle: .module) }
                             Button(role: .destructive) {
                                 perform { try MemoryLedgerStore.shared.forget(claim.id) }
-                            } label: { Text(verbatim: "Forget") }
+                            } label: { Text("Forget", bundle: .module) }
                         }
                     }
                 }
                 .padding(.vertical, 5)
             }
-            Text(verbatim: "Forgetting removes this profile's memory records and future exports. Existing external backups must be deleted separately. Original chat messages remain visible in chat history.")
+            Text("Forgetting removes this profile's memory records and future exports. Existing external backups must be deleted separately. Original chat messages remain visible in chat history.", bundle: .module)
                 .font(theme.ui(.small)).foregroundStyle(.appSecondary)
             Text(verbatim: "Base prompt preview: \(promptPreview)")
                 .font(theme.code(.small)).textSelection(.enabled)
@@ -194,9 +194,9 @@ struct MemorySettingsPaneView: View {
     }
 
     private var reflectionsSection: some View {
-        Section(header: Text(verbatim: "Nightly Reflections")) {
+        Section(header: Text("Nightly Reflections", bundle: .module)) {
             if ledgerState.reflections.isEmpty {
-                Text(verbatim: "No reflections yet.")
+                Text("No reflections yet.", bundle: .module)
                     .foregroundStyle(.appSecondary)
             }
             ForEach(visibleReflections, id: \.id) { reflection in
@@ -208,7 +208,7 @@ struct MemorySettingsPaneView: View {
                     if !reflection.approved {
                         Button {
                             perform { try MemoryLedgerStore.shared.approveReflection(reflection.id) }
-                        } label: { Text(verbatim: "Activate Guidance") }
+                        } label: { Text("Activate Guidance", bundle: .module) }
                     }
                 }
             }
@@ -239,11 +239,11 @@ struct MemorySettingsPaneView: View {
                             model.memoryAutoCaptureEnabled = value
                             model.persistSettingsDebounced()
                         })) {
-                        Text(verbatim: "Suggest memories from idle conversations")
+                        Text("Suggest memories from idle conversations", bundle: .module)
                     }
                     .disabled(!model.memoryEnabled)
 
-                    Text(verbatim: "Use # or /memory text for profile memory. Use /memory project text for this project's memory. Review model suggestions below.")
+                    Text("Use # or /memory text for profile memory. Use /memory project text for this project's memory. Review model suggestions below.", bundle: .module)
                         .font(theme.ui(.small))
                         .foregroundStyle(.appSecondary)
                 }
@@ -254,13 +254,13 @@ struct MemorySettingsPaneView: View {
     }
 
     private var profileSection: some View {
-        Section(header: Text(verbatim: "Profile Memory")) {
-            Text(verbatim: "Claims and evidence are stored in the encrypted profile. Profile export includes the ledger and readable Markdown projections.")
+        Section(header: Text("Profile Memory", bundle: .module)) {
+            Text("Claims and evidence are stored in the encrypted profile. Profile export includes the ledger and readable Markdown projections.", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
             TextField("Arctic embedding model path or alias", text: $model.memoryEmbeddingModel)
                 .onSubmit { model.persistSettingsDebounced() }
-            Text(verbatim: "Embeddings are optional. Approved claims remain searchable without a model.")
+            Text("Embeddings are optional. Approved claims remain searchable without a model.", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
             HStack {
@@ -281,11 +281,11 @@ struct MemorySettingsPaneView: View {
                             reloadLedger()
                         } catch { managerError = error.localizedDescription }
                     }
-                } label: { Text(verbatim: "Rebuild Index") }
+                } label: { Text("Rebuild Index", bundle: .module) }
                 .disabled(model.memoryEmbeddingModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button {
                     perform { try MemoryLedgerStore.shared.clearEmbeddings() }
-                } label: { Text(verbatim: "Clear Index") }
+                } label: { Text("Clear Index", bundle: .module) }
                 .disabled(!MemoryLedgerStore.shared.hasEmbeddingIndex(modelPath: model.memoryEmbeddingModel))
             }
         }

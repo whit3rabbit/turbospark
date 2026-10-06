@@ -656,6 +656,15 @@ pub struct ServerOptions {
     /// Default reasoning effort when a request omits reasoning_effort
     /// (turbospark-server --reasoning).
     pub default_reasoning: Option<String>,
+    /// Optional speech-to-text models to attach at startup.
+    #[serde(default)]
+    pub stt_models: Vec<String>,
+    /// Optional text-to-speech models to attach at startup.
+    #[serde(default)]
+    pub tts_models: Vec<String>,
+    /// Optional music generation models to attach at startup.
+    #[serde(default)]
+    pub music_models: Vec<String>,
 }
 
 /// What `ts_server_info_json` returns.
@@ -687,6 +696,7 @@ pub struct ServerInfo {
     /// by attach to identify and detach its session.
     pub models: Vec<String>,
     pub image_models: Vec<String>,
+    pub audio_models: Vec<String>,
     pub auth_enabled: bool,
     /// Seconds since `ts_server_start` returned. From a monotonic clock, so
     /// it is unaffected by the wall clock moving under a long-running host.

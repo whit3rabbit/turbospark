@@ -326,6 +326,12 @@ fn open_models_registry(
                 emb_model,
             )))
         }
+        // An audio-only server has no chat model. The empty registry answers
+        // chat routes with the same retryable 503 an unattached model does,
+        // and `/health` counts the audio provider as ready.
+        (false, None) if parsed.has_audio() => Ok(Arc::new(
+            turbospark_server::registry::StaticRegistry::new(vec![])?,
+        )),
         (false, None) => Err("neither --model nor --embedding-model was provided".to_string()),
     }
 }
@@ -338,6 +344,40 @@ fn open_scripted(tokenizer_dir: &str) -> Result<Arc<dyn turbospark_server::ChatM
         4096,
         Vec::new(),
     )))
+}
+
+/// Attaches every `--stt-model` / `--tts-model` / `--music-model`. A model
+/// that fails to open refuses the whole start, like `--model` does: a server
+/// that quietly lacks a requested endpoint is harder to diagnose than one
+/// that never came up.
+#[cfg(target_os = "macos")]
+fn open_audio_provider(
+    parsed: &ModelArgs,
+) -> Result<Option<Arc<dyn turbospark_server::AudioProvider>>, String> {
+    use turbospark_server::AudioTask;
+    if !parsed.has_audio() {
+        return Ok(None);
+    }
+    let provider = turbospark_server::audio_real::RealAudioProvider::new();
+    let groups = [
+        (&parsed.stt_models, AudioTask::SpeechToText, "--stt-model"),
+        (&parsed.tts_models, AudioTask::TextToSpeech, "--tts-model"),
+        (&parsed.music_models, AudioTask::Music, "--music-model"),
+    ];
+    for (specs, task, flag) in groups {
+        for spec in specs {
+            eprintln!("opening {flag} {spec} ...");
+            let info = provider
+                .attach(spec, task)
+                .map_err(|e| format!("{flag} {spec}: {e}"))?;
+            eprintln!(
+                "  attached audio model {} ({})",
+                info.id,
+                info.task.as_str()
+            );
+        }
+    }
+    Ok(Some(Arc::new(provider)))
 }
 
 fn resolve_api_key(
@@ -366,7 +406,7 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
 
-    let (registry, port, bind, api_key) = match parse_model_args(&args) {
+    let (registry, port, bind, api_key, audio) = match parse_model_args(&args) {
         Err(e) => {
             eprintln!("{e}");
             return std::process::ExitCode::from(2);
@@ -401,12 +441,22 @@ async fn main() -> std::process::ExitCode {
                 std::env::set_var("HF_ENDPOINT", endpoint);
             }
             #[cfg(target_os = "macos")]
-            match open_models_registry(&parsed) {
-                Ok(reg) => (reg, parsed.port, host, api_key),
-                Err(e) => {
-                    eprintln!("{e}");
-                    return std::process::ExitCode::from(2);
-                }
+            {
+                let reg = match open_models_registry(&parsed) {
+                    Ok(reg) => reg,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        return std::process::ExitCode::from(2);
+                    }
+                };
+                let audio = match open_audio_provider(&parsed) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        return std::process::ExitCode::from(2);
+                    }
+                };
+                (reg, parsed.port, host, api_key, audio)
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -427,6 +477,7 @@ async fn main() -> std::process::ExitCode {
                     port,
                     "127.0.0.1".to_string(),
                     None,
+                    None,
                 ),
                 Err(e) => {
                     eprintln!("{e}");
@@ -436,8 +487,13 @@ async fn main() -> std::process::ExitCode {
         }
     };
 
+    let has_audio = audio.is_some();
+    let mut state = turbospark_server::ServerState::from(registry);
+    if let Some(audio) = audio {
+        state = state.with_audio_provider(audio);
+    }
     let router = turbospark_server::build_router_with_options(
-        registry,
+        state,
         turbospark_server::RouterOptions {
             api_key: api_key.clone(),
             // The standalone binary records nothing. Events exist for a host
@@ -491,6 +547,17 @@ async fn main() -> std::process::ExitCode {
     eprintln!("  POST /api/generate          (Ollama)");
     eprintln!("  POST /api/embeddings        (Ollama)");
     eprintln!("  POST /api/embed             (Ollama)");
+    if has_audio {
+        eprintln!("  POST /v1/audio/transcriptions  (WAV in; json, verbose_json, text, srt, vtt)");
+        eprintln!("  GET  /v1/audio/transcriptions/realtime  (WebSocket, commit per utterance)");
+        eprintln!("  POST /v1/audio/speech       (Kokoro, wav or pcm)");
+        eprintln!("  POST /v1/audio/generate     (Music 3, wav; async=true for a job)");
+        eprintln!("  GET  /v1/audio/jobs/:id     (and /result; DELETE cancels)");
+        eprintln!(
+            "  GET  /v1/audio/models       (POST loads an installed alias, DELETE :id unloads)"
+        );
+        eprintln!("  GET  /v1/metrics            (Prometheus, audio series)");
+    }
     if let Err(e) = axum::serve(listener, router).await {
         eprintln!("server error: {e}");
         return std::process::ExitCode::from(1);

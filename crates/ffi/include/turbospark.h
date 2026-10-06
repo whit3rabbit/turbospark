@@ -815,6 +815,16 @@ int32_t ts_server_complete_image_request(const TsServer *server, uint64_t reques
                                          const uint8_t *png, size_t png_len,
                                          const char *error_message);
 
+/* Registers an audio model (STT, TTS, or music) on the running server.
+ * model_path can be an install directory or installed catalog alias.
+ * task can be "stt", "tts", "music", or NULL/empty for automatic detection.
+ * Writes the attached model id to *out. Free with ts_string_free. */
+int32_t ts_server_attach_audio_model(const TsServer *server, const char *model_path,
+                                     const char *task, char **out);
+
+/* Detaches an audio model from the running server by id. */
+int32_t ts_server_detach_audio_model(const TsServer *server, const char *model_id);
+
 /* ---- model management (available on every platform) ---- */
 
 /* Returns the active model store root. The caller owns the result. */

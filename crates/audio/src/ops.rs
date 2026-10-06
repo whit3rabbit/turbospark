@@ -22,7 +22,7 @@ pub fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     assert_eq!(a.len(), m * k, "matmul lhs {} != {}x{}", a.len(), m, k);
     assert_eq!(b.len(), k * n, "matmul rhs {} != {}x{}", b.len(), k, n);
     let mut out = vec![0.0f32; m * n];
-    par_rows(m, &mut out, n, |row_start, row_end, rows| {
+    par_rows(m, &mut out, n, k * n, |row_start, row_end, rows| {
         for i in row_start..row_end {
             let a_row = &a[i * k..(i + 1) * k];
             let out_row = &mut rows[(i - row_start) * n..(i - row_start + 1) * n];
@@ -42,6 +42,12 @@ pub fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
 /// This is the HF linear convention and the hot path of every model in
 /// the crate; it fuses the transpose access pattern and the bias add so
 /// callers never materialize `w.T`.
+///
+/// Each output is one sequential `k`-ascending sum starting at `0.0`
+/// with the bias added last, exactly as the plain loop computes it. The
+/// speedup comes only from computing several independent outputs at once
+/// and from splitting outputs across threads; a single dot product is
+/// never split, so the bits do not change.
 pub fn linear(
     x: &[f32],
     w: &[f32],
@@ -53,40 +59,103 @@ pub fn linear(
     assert_eq!(x.len(), m * k, "linear input {} != {}x{}", x.len(), m, k);
     assert_eq!(w.len(), n * k, "linear weight {} != {}x{}", w.len(), n, k);
     let mut out = vec![0.0f32; m * n];
-    par_rows(m, &mut out, n, |row_start, row_end, rows| {
-        for i in row_start..row_end {
-            let x_row = &x[i * k..(i + 1) * k];
-            let out_row = &mut rows[(i - row_start) * n..(i - row_start + 1) * n];
-            for (ni, out_val) in out_row.iter_mut().enumerate() {
-                let w_row = &w[ni * k..(ni + 1) * k];
-                let mut acc = 0.0f32;
-                for (ki, &x_val) in x_row.iter().enumerate() {
-                    acc += x_val * w_row[ki];
-                }
-                *out_val = acc + bias.map_or(0.0, |b| b[ni]);
+    if m >= 4 {
+        par_rows(m, &mut out, n, k * n, |row_start, row_end, rows| {
+            for i in row_start..row_end {
+                let x_row = &x[i * k..(i + 1) * k];
+                let out_row = &mut rows[(i - row_start) * n..(i - row_start + 1) * n];
+                linear_cols(x_row, w, bias, k, 0, out_row);
             }
+        });
+    } else {
+        // Decode shapes (m == 1) have no rows to split, and the vocabulary
+        // projection is the largest matvec in the crate, so split the
+        // output columns instead.
+        for i in 0..m {
+            let x_row = &x[i * k..(i + 1) * k];
+            let out_row = &mut out[i * n..(i + 1) * n];
+            par_rows(n, out_row, 1, k, |c0, _c1, cols| {
+                linear_cols(x_row, w, bias, k, c0, cols);
+            });
         }
-    });
+    }
     out
 }
 
-/// Runs `body` over row ranges of an `m x row_len` output, splitting rows
-/// across threads when the work justifies it. Small problems (one short
-/// row) stay on the calling thread so per-call thread churn does not
-/// dominate tiny layers.
+/// Output columns `col0..col0 + out.len()` of one `linear` row. Four
+/// columns share each pass over `x_row` so four independent accumulators
+/// overlap their add latency; every accumulator still walks `k`
+/// ascending.
+fn linear_cols(
+    x_row: &[f32],
+    w: &[f32],
+    bias: Option<&[f32]>,
+    k: usize,
+    col0: usize,
+    out: &mut [f32],
+) {
+    let mut chunks = out.chunks_exact_mut(4);
+    let mut ni = col0;
+    for quad in &mut chunks {
+        let w0 = &w[ni * k..(ni + 1) * k];
+        let w1 = &w[(ni + 1) * k..(ni + 2) * k];
+        let w2 = &w[(ni + 2) * k..(ni + 3) * k];
+        let w3 = &w[(ni + 3) * k..(ni + 4) * k];
+        let (mut a0, mut a1, mut a2, mut a3) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        for ki in 0..k {
+            let xv = x_row[ki];
+            a0 += xv * w0[ki];
+            a1 += xv * w1[ki];
+            a2 += xv * w2[ki];
+            a3 += xv * w3[ki];
+        }
+        quad[0] = a0 + bias.map_or(0.0, |b| b[ni]);
+        quad[1] = a1 + bias.map_or(0.0, |b| b[ni + 1]);
+        quad[2] = a2 + bias.map_or(0.0, |b| b[ni + 2]);
+        quad[3] = a3 + bias.map_or(0.0, |b| b[ni + 3]);
+        ni += 4;
+    }
+    for out_val in chunks.into_remainder() {
+        let w_row = &w[ni * k..(ni + 1) * k];
+        let mut acc = 0.0f32;
+        for (&x_val, &w_val) in x_row.iter().zip(w_row) {
+            acc += x_val * w_val;
+        }
+        *out_val = acc + bias.map_or(0.0, |b| b[ni]);
+        ni += 1;
+    }
+}
+
+/// Smallest total multiply-add count worth waking threads for. A scoped
+/// thread costs tens of microseconds to start and join, so smaller
+/// problems stay on the caller; decode calls this with tiny `m` thousands
+/// of times in a row.
+const PAR_MIN_WORK: usize = 1 << 18;
+
+/// Worker threads available to the kernels, read once. The OS query is
+/// not free on every platform and the answer does not change mid-run.
+fn thread_count() -> usize {
+    static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *THREADS.get_or_init(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    })
+}
+
+/// Runs `body(start, end, rows)` over contiguous row ranges of an
+/// `m x row_len` output, splitting across threads when `m * work_per_row`
+/// multiply-adds justify it. Rows are independent, so how they are
+/// grouped never changes any value.
 fn par_rows(
     m: usize,
     out: &mut [f32],
     row_len: usize,
+    work_per_row: usize,
     body: impl Fn(usize, usize, &mut [f32]) + Sync,
 ) {
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    // Rows are split only when there are enough of them to amortize the
-    // scope join; the threshold is deliberately low because decode calls
-    // this with m == 1 thousands of times in a row.
-    if threads <= 1 || m < 4 {
+    let threads = thread_count();
+    if threads <= 1 || m < 2 || m.saturating_mul(work_per_row) < PAR_MIN_WORK {
         body(0, m, out);
         return;
     }
@@ -249,28 +318,61 @@ pub fn conv1d(
     let k_eff = (kernel - 1) * dilation + 1;
     let out_seq = (seq + 2 * padding - k_eff) / stride + 1;
     let mut out = vec![0.0f32; out_ch * out_seq];
-    par_rows(out_ch, &mut out, out_seq, |o0, o1, rows| {
-        for oc in o0..o1 {
-            let g = oc / out_per_g;
-            for os in 0..out_seq {
-                let base_in = (os * stride) as isize - padding as isize;
-                let mut acc = bias.map_or(0.0, |b| b[oc]);
+    par_rows(
+        out_ch,
+        &mut out,
+        out_seq,
+        in_per_g * kernel * out_seq,
+        |o0, o1, rows| {
+            for oc in o0..o1 {
+                let g = oc / out_per_g;
+                let out_row = &mut rows[(oc - o0) * out_seq..(oc - o0 + 1) * out_seq];
+                // Each output starts at its bias and then takes taps in
+                // (input channel, kernel offset) ascending order, skipping
+                // taps that fall in the padding: the same sequence the
+                // per-output loop walks. Making the output index the inner
+                // loop turns each tap into one branch-free pass over a
+                // contiguous run.
+                out_row.fill(bias.map_or(0.0, |b| b[oc]));
                 for ic_in_g in 0..in_per_g {
                     let ic = g * in_per_g + ic_in_g;
                     let w_base = ((oc * in_per_g) + ic_in_g) * kernel;
                     let x_ch = &x[ic * seq..(ic + 1) * seq];
                     for kk in 0..kernel {
-                        let pos = base_in + (kk * dilation) as isize;
-                        if pos < 0 || pos as usize >= seq {
+                        let w_val = w[w_base + kk];
+                        // Input position of output `os` is `os * stride + off`.
+                        let off = (kk * dilation) as isize - padding as isize;
+                        // Smallest `os` with a non-negative position, and one
+                        // past the largest `os` still inside the signal.
+                        let lo = if off >= 0 {
+                            0
+                        } else {
+                            ((-off) as usize).div_ceil(stride)
+                        };
+                        let hi = if off > seq as isize - 1 {
+                            0
+                        } else {
+                            (((seq as isize - 1 - off) as usize) / stride + 1).min(out_seq)
+                        };
+                        if lo >= hi {
                             continue;
                         }
-                        acc += x_ch[pos as usize] * w[w_base + kk];
+                        let pos0 = (lo as isize * stride as isize + off) as usize;
+                        if stride == 1 {
+                            let src = &x_ch[pos0..pos0 + (hi - lo)];
+                            for (o, &xv) in out_row[lo..hi].iter_mut().zip(src) {
+                                *o += xv * w_val;
+                            }
+                        } else {
+                            for (n, o) in out_row[lo..hi].iter_mut().enumerate() {
+                                *o += x_ch[pos0 + n * stride] * w_val;
+                            }
+                        }
                     }
                 }
-                rows[(oc - o0) * out_seq + os] = acc;
             }
-        }
-    });
+        },
+    );
     out
 }
 
@@ -311,33 +413,58 @@ pub fn conv_transpose1d(
     let out_per_g = out_ch / groups;
     let in_per_g = in_ch / groups;
     let mut out = vec![0.0f32; out_ch * out_seq];
-    for ic in 0..in_ch {
-        let g = ic / in_per_g;
-        let x_ch = &x[ic * seq..(ic + 1) * seq];
-        for (is, &xv) in x_ch.iter().enumerate() {
-            if xv == 0.0 {
-                continue;
-            }
-            for oc_in_g in 0..out_per_g {
-                let oc = g * out_per_g + oc_in_g;
-                let w_base = ((ic * out_per_g) + oc_in_g) * kernel;
-                for kk in 0..kernel {
-                    let pos = is * stride + kk;
-                    if pos < padding || pos - padding >= out_seq {
-                        continue;
+    // One output channel per row, so rows are independent and can be
+    // threaded. Within a row the input channels, then input positions,
+    // are visited in ascending order, which is the order each output
+    // element accumulated in when the loops scattered channel by channel;
+    // for a fixed element every (channel, position) pair contributes at
+    // most one kernel tap, so the per-element sum is unchanged.
+    par_rows(
+        out_ch,
+        &mut out,
+        out_seq,
+        in_per_g * seq * kernel,
+        |o0, o1, rows| {
+            for oc in o0..o1 {
+                let g = oc / out_per_g;
+                let oc_in_g = oc % out_per_g;
+                let out_row = &mut rows[(oc - o0) * out_seq..(oc - o0 + 1) * out_seq];
+                for ic in g * in_per_g..(g + 1) * in_per_g {
+                    let w_base = ((ic * out_per_g) + oc_in_g) * kernel;
+                    let w_taps = &w[w_base..w_base + kernel];
+                    let x_ch = &x[ic * seq..(ic + 1) * seq];
+                    for (is, &xv) in x_ch.iter().enumerate() {
+                        if xv == 0.0 {
+                            continue;
+                        }
+                        // Taps land at `is * stride + kk - padding`; keep the
+                        // ones inside `0..out_seq`.
+                        let base = is * stride;
+                        if base >= padding + out_seq {
+                            continue;
+                        }
+                        let lo = padding.saturating_sub(base);
+                        let hi = kernel.min(padding + out_seq - base);
+                        if lo >= hi {
+                            continue;
+                        }
+                        let dst = base + lo - padding;
+                        for (o, &wv) in out_row[dst..dst + (hi - lo)]
+                            .iter_mut()
+                            .zip(&w_taps[lo..hi])
+                        {
+                            *o += xv * wv;
+                        }
                     }
-                    out[oc * out_seq + (pos - padding)] += xv * w[w_base + kk];
+                }
+                if let Some(b) = bias {
+                    for v in out_row.iter_mut() {
+                        *v += b[oc];
+                    }
                 }
             }
-        }
-    }
-    if let Some(b) = bias {
-        for oc in 0..out_ch {
-            for v in &mut out[oc * out_seq..(oc + 1) * out_seq] {
-                *v += b[oc];
-            }
-        }
-    }
+        },
+    );
     out
 }
 
@@ -469,25 +596,7 @@ pub fn sdpa(
     assert_eq!(q.len(), qh * dq);
     assert_eq!(k.len(), kv * dq);
     assert_eq!(v.len(), kv * dv);
-    let mut out = vec![0.0f32; qh * dv];
-    let mut scores = vec![0.0f32; qh * kv.max(1)];
-    for h in 0..qh {
-        for j in 0..kv {
-            let mut acc = 0.0f32;
-            for d in 0..dq {
-                acc += q[h * dq + d] * k[j * dq + d];
-            }
-            scores[h * kv + j] = acc * scale + mask.map_or(0.0, |m| m[h * kv + j]);
-        }
-        softmax_row(&mut scores[h * kv..(h + 1) * kv]);
-        for j in 0..kv {
-            let p = scores[h * kv + j];
-            for d in 0..dv {
-                out[h * dv + d] += p * v[j * dv + d];
-            }
-        }
-    }
-    out
+    sdpa_strided(q, k, 0, dq, v, 0, dv, mask, qh, kv, dq, dv, scale)
 }
 
 /// `sdpa` reading K and V rows in place through explicit strides: row
@@ -515,25 +624,30 @@ pub fn sdpa_strided(
     debug_assert!(k.len() >= k_base + (kv.max(1) - 1) * k_stride + dq);
     debug_assert!(v.len() >= v_base + (kv.max(1) - 1) * v_stride + dv);
     let mut out = vec![0.0f32; qh * dv];
-    let mut scores = vec![0.0f32; qh * kv.max(1)];
-    for h in 0..qh {
-        for j in 0..kv {
-            let mut acc = 0.0f32;
-            let k_row = k_base + j * k_stride;
-            for d in 0..dq {
-                acc += q[h * dq + d] * k[k_row + d];
+    // Heads are independent, so they split across threads; each worker
+    // reuses one scores row for all of its heads.
+    par_rows(qh, &mut out, dv, kv * (dq + dv), |h0, h1, rows| {
+        let mut scores = vec![0.0f32; kv];
+        for h in h0..h1 {
+            let q_row = &q[h * dq..(h + 1) * dq];
+            for (j, score) in scores.iter_mut().enumerate() {
+                let k_row = &k[k_base + j * k_stride..k_base + j * k_stride + dq];
+                let mut acc = 0.0f32;
+                for (&qv, &kv_val) in q_row.iter().zip(k_row) {
+                    acc += qv * kv_val;
+                }
+                *score = acc * scale + mask.map_or(0.0, |m| m[h * kv + j]);
             }
-            scores[h * kv + j] = acc * scale + mask.map_or(0.0, |m| m[h * kv + j]);
-        }
-        softmax_row(&mut scores[h * kv..(h + 1) * kv]);
-        for j in 0..kv {
-            let p = scores[h * kv + j];
-            let v_row = v_base + j * v_stride;
-            for d in 0..dv {
-                out[h * dv + d] += p * v[v_row + d];
+            softmax_row(&mut scores);
+            let out_row = &mut rows[(h - h0) * dv..(h - h0 + 1) * dv];
+            for (j, &p) in scores.iter().enumerate() {
+                let v_row = &v[v_base + j * v_stride..v_base + j * v_stride + dv];
+                for (o, &vv) in out_row.iter_mut().zip(v_row) {
+                    *o += p * vv;
+                }
             }
         }
-    }
+    });
     out
 }
 
@@ -610,6 +724,15 @@ pub fn rope_interleaved(
     }
 }
 
+/// `theta^(-2d / rotary_dim)` for `d in 0..half`. It depends only on the
+/// feature index, so the table builders evaluate it once per index rather
+/// than once per position; the expression itself is unchanged.
+fn rope_freqs(half: usize, rotary_dim: usize, theta: f32) -> Vec<f32> {
+    (0..half)
+        .map(|d| theta.powf(-2.0 * d as f32 / rotary_dim as f32))
+        .collect()
+}
+
 /// Builds the per-position cos/sin tables for a rotary embedding with
 /// base `theta`: `freq_d = theta^(-2d / rotary_dim)`. Returns
 /// `(cos, sin)`, each `[seq, rotary_dim / 2]` flattened.
@@ -617,9 +740,9 @@ pub fn rope_tables(seq: usize, rotary_dim: usize, theta: f32) -> (Vec<f32>, Vec<
     let half = rotary_dim / 2;
     let mut cos = vec![0.0f32; seq * half];
     let mut sin = vec![0.0f32; seq * half];
+    let freqs = rope_freqs(half, rotary_dim, theta);
     for t in 0..seq {
-        for d in 0..half {
-            let freq = theta.powf(-2.0 * d as f32 / rotary_dim as f32);
+        for (d, &freq) in freqs.iter().enumerate() {
             let ang = t as f32 * freq;
             cos[t * half + d] = ang.cos();
             sin[t * half + d] = ang.sin();
@@ -641,9 +764,9 @@ pub fn rope_tables_range(
     let half = rotary_dim / 2;
     let mut cos = vec![0.0f32; len * half];
     let mut sin = vec![0.0f32; len * half];
+    let freqs = rope_freqs(half, rotary_dim, theta);
     for (row, t) in (start..start + len).enumerate() {
-        for d in 0..half {
-            let freq = theta.powf(-2.0 * d as f32 / rotary_dim as f32);
+        for (d, &freq) in freqs.iter().enumerate() {
             let ang = t as f32 * freq;
             cos[row * half + d] = ang.cos();
             sin[row * half + d] = ang.sin();
@@ -661,6 +784,9 @@ pub fn checksum(x: &[f32]) -> f32 {
 pub fn shape_product(shape: &[usize]) -> usize {
     product(shape)
 }
+
+#[cfg(test)]
+mod kernel_parity;
 
 #[cfg(test)]
 mod tests {

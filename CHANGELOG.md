@@ -14,6 +14,28 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `swift/TurboSpark`: added native Swift speech-to-text bindings (`Speech.swift`)
+  wrapping the C ABI: `TurboSparkSTTModel`, `TurboSparkSTTStream`, `STTOptions`,
+  `STTAppendProgress`, `STTSegment`, and `STTTranscription`.
+- `swift/TurboSpark`: added audio model management to `TurboSparkServer`,
+  including `ServerOptions` audio model maps (`sttModels`, `ttsModels`,
+  `musicModels`), `ServerInfo.audioModels`, and dynamic `attachAudioModel` and
+  `detachAudioModel` methods.
+- `crates/ffi`: exported `ts_server_attach_audio_model` and
+  `ts_server_detach_audio_model` C ABI entry points in `turbospark.h`, wired
+  `RealAudioProvider` into `ServerState` for startup and dynamic audio model
+  attachment and detachment, and populated `audio_models` in `ServerInfo`.
+- `crates/server`: added REST and streaming audio API endpoints
+  (`POST /v1/audio/transcriptions`, `POST /v1/audio/speech`,
+  `POST /v1/audio/music`, `GET /v1/audio/models`, `POST /v1/audio/models/attach`,
+  `POST /v1/audio/models/detach`, and `GET /v1/audio/transcriptions/stream`),
+  backed by multi-threaded `RealAudioProvider` workers and OpenAPI documentation.
+- `crates/audio`: added speech-to-text model families: Granite Speech,
+  Higgs Audio 3, LASR CTC, Moss Transcribe & Diarize, Phonon, and Wav2Vec.
+- `crates/audio`: added neural audio codecs and tokenizers: DAC-VAE, Fish S1 DAC,
+  Higgs Audio Codec, Mimi, Mimo Audio Tokenizer, Moss Audio Tokenizer,
+  Nemotron VoiceChat Codec, S3 Codec, and StepAudio2 Codec.
+- `crates/audio`: added Kokoro multi-voice speech synthesis support (`synth.rs`).
 - `swift/TurboSparkApp`: encrypted profile memory system featuring
   `ProfileDatabase`, `ProfileMemoryStore`, and Keychain-backed `ProfileVault`.
 - `swift/TurboSparkApp`: added `MemoryLedger` for append-only audit tracking

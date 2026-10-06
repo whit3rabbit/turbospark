@@ -20,9 +20,9 @@ struct ProfileMemoryCaptureSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(verbatim: "Add conversation to memory")
+            Text("Add conversation to memory", bundle: .module)
                 .themedFont(.title3, weight: .semibold)
-            Text(verbatim: "Review and edit what will be appended to this user's profile MEMORY.md. Nothing is saved until you confirm.")
+            Text("Review and edit what will be appended to this user's profile MEMORY.md. Nothing is saved until you confirm.", bundle: .module)
                 .foregroundStyle(.secondary)
             TextEditor(text: $draft)
                 .themedFont(.base)
@@ -31,14 +31,18 @@ struct ProfileMemoryCaptureSheet: View {
             HStack {
                 if isSummarizing {
                     ProgressView()
-                    Text(verbatim: "Extracting durable memories…")
+                    Text("Extracting durable memories\u{2026}", bundle: .module)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Cancel") { isPresented = false }
-                Button("Save to Memory") {
+                Button { isPresented = false } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                Button {
                     model.handleProfileMemorySave(draft)
                     isPresented = false
+                } label: {
+                    Text("Save to Memory", bundle: .module)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isSummarizing || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

@@ -7,10 +7,19 @@
 //! families, checkpoint profiles, and verification status.
 
 pub mod bigvgan;
+pub mod dacvae;
 pub mod descript;
 pub mod ecapa_tdnn;
 pub mod encodec;
+pub mod fish_s1_dac;
+pub mod higgs_audio;
+pub mod mimi;
+pub mod mimo_audio_tokenizer;
+pub mod moss_audio_tokenizer;
+pub mod nemotron_voicechat;
+pub mod s3;
 pub mod snac;
+pub mod stepaudio2;
 pub mod vocos;
 pub mod vq;
 pub mod wnconv;

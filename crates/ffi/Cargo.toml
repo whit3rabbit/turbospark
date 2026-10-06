@@ -52,7 +52,7 @@ turbospark-server = { path = "../server", version = "0.2.0" }
 # a `Router` built from ITS axum, so this crate's `axum::serve` call has to
 # be literally the same crate version, not just API-compatible.
 http-body-util = "0.1"
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.7", features = ["json", "multipart", "ws"] }
 # Image decode, preprocessing and the mRoPE splice for `ts_generate`'s image
 # content parts. Portable BY DESIGN rather than by luck (the whole point of
 # splitting vision preprocessing out is that it lives somewhere a non-macOS

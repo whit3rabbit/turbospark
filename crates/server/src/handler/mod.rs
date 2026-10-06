@@ -373,9 +373,13 @@ pub async fn health(State(state): State<crate::ServerState>) -> Response {
         .image_provider
         .as_ref()
         .is_some_and(|provider| !provider.models().is_empty());
+    let audio_ready = state
+        .audio
+        .as_ref()
+        .is_some_and(|audio| !audio.provider.models().is_empty());
     Json(serde_json::json!({
         "status": "ok",
-        "state": if rows.is_empty() && !images_ready { "empty" } else { "ready" },
+        "state": if rows.is_empty() && !images_ready && !audio_ready { "empty" } else { "ready" },
     }))
     .into_response()
 }
@@ -414,6 +418,18 @@ pub async fn models(State(state): State<crate::ServerState>) -> Response {
                 "created": created,
                 "owned_by": "turbospark",
                 "capabilities": ["image_generation"],
+            })
+        }));
+    }
+    if let Some(audio) = &state.audio {
+        data.extend(audio.provider.models().into_iter().map(|m| {
+            serde_json::json!({
+                "display_name": m.id,
+                "id": m.id,
+                "object": "model",
+                "created": created,
+                "owned_by": "turbospark",
+                "capabilities": [m.task.as_str()],
             })
         }));
     }

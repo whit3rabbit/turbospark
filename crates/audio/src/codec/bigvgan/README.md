@@ -50,3 +50,19 @@ against the pinned mlx-audio commit.
 - `snake_activation_is_refused`: verifies that the un-broadcastable plain `snake`
   variant is rejected at load in favor of `snakebeta`.
 - `real_checkpoint_gate`: tests real checkpoint synthesis against MLX reference audio.
+- `multi_kernel_blocks_load_from_flat_reference_indices`: the reference keeps
+  every AMP block in one flat `resblocks` list, so block `j` of upsample stage
+  `i` is `resblocks.{i * num_kernels + j}`, and each of its activations owns its
+  own `act.alpha`/`act.beta`. The loader previously used the stage index alone
+  and shared `activations.0`'s alpha/beta across a block. The tiny fixture has a
+  single resblock kernel, where both readings coincide, so the golden audio could
+  not see it; a real multi-kernel checkpoint would have failed to load with a
+  shape error. This synthetic two-kernel checkpoint pins every block and
+  activation to its own tensors (mutation-checked against both old behaviors).
+
+Open gap: there is no multi-kernel numeric golden. Add one by running
+`tools/gen_bigvgan_fixtures.py` with `resblock_kernel_sizes` of two or more
+entries (needs `mlx`, not installed on the dev host that made this fix), or by
+running `real_checkpoint_gate` against `bigvgan-v2-24khz` with
+`TURBOSPARK_BIGVGAN_MODEL` set. Until then multi-kernel parity is verified for
+tensor routing only.

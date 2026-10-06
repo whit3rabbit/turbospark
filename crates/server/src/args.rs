@@ -1,5 +1,5 @@
 /// Command line usage and flag description text for `turbospark-server`.
-pub const USAGE: &str = "usage: turbospark-server [--model <install-dir|alias>]... [--embedding-model <install-dir|alias>] [--model-dir PATH] [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--memory-guard TIER] [--memory-guard-gb N] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--max-concurrent-requests N] [--pool-size N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--hf-endpoint URL] [--paged-ssd-cache-dir PATH] [--hot-cache-max-size SIZE] [--mcp-config PATH] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F] [--vision-sidecar PATH|auto] [--kv-bits off|2|3|3.5|4]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`); repeat to attach distinct generation models\n  --embedding-model    path to an embedding model (.safetensors directory) or alias\n                       to serve for /v1/embeddings alongside generation\n  --model-dir          directory containing .gturbo models (omlx compatibility)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,\n                       relaxed (default), balanced, strict, or a byte ceiling on\n                       what the engine ALLOCATES. relaxed is what shipped before\n                       this flag and what every published memory figure was\n                       measured under; see docs/LOAD_GUARD.md\n  --memory-guard       alias for --load-guard: safe (balanced), balanced, strict,\n                       relaxed, off (omlx compatibility)\n  --memory-guard-gb    set custom memory guard ceiling in gigabytes (omlx compatibility)\n  --min-auto-context   refuse to open when --max-context auto resolves below this\n                       many tokens (default 0, no floor). Says nothing about an\n                       explicit --max-context\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet requires\n                       --api-key or $TURBOSPARK_API_KEY)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default off). When explicitly enabled, a request\n                       continues from the previous request's KV cache wherever\n                       the prompts agree, instead of re-prefilling the whole\n                       transcript. Enable only when every request belongs to one\n                       trusted client: the shared cache is not partitioned by API\n                       key or client, so reuse can expose prefix matches through\n                       response timing. It also raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on,\n                       since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --pool-size          how many independent runners to open of --model's ONE install
+pub const USAGE: &str = "usage: turbospark-server [--model <install-dir|alias>]... [--embedding-model <install-dir|alias>] [--stt-model <install-dir|alias>]... [--tts-model <install-dir|alias>]... [--music-model <install-dir|alias>]... [--model-dir PATH] [--port N] [--max-context N|auto] [--load-guard TIER|BYTES] [--memory-guard TIER] [--memory-guard-gb N] [--min-auto-context N] [--expert-cache-slots auto|N] [--bind loopback|tailnet] [--power-profile performance|balanced|efficiency] [--max-tokens-per-sec R] [--speculative off|auto|N] [--speculative-drafter auto|mtp|dflash] [--guardrails on|off] [--prefix-reuse on|off] [--session-slots N] [--max-concurrent-requests N] [--pool-size N] [--reasoning off|low|medium|high|xhigh] [--system TEXT] [--system-file PATH] [--api-key KEY] [--hf-endpoint URL] [--paged-ssd-cache-dir PATH] [--hot-cache-max-size SIZE] [--mcp-config PATH] [--steering PATH] [--steering-mode ablate|add|clamp|renorm] [--steering-scale F] [--steering-layers S:E] [--steering-target F] [--steering-gate F] [--vision-sidecar PATH|auto] [--kv-bits off|2|3|3.5|4]\n       turbospark-server <tokenizer-dir> [port]\n       turbospark-server --help | --version\n\noptions:\n  --model              a .gturbo directory or a turbospark-model alias (`turbospark-model list`); repeat to attach distinct generation models\n  --embedding-model    path to an embedding model (.safetensors directory) or alias\n                       to serve for /v1/embeddings alongside generation\n  --stt-model          a speech-to-text install (Whisper or Qwen3-ASR) directory or\n                       alias; repeat for several. Enables POST /v1/audio/transcriptions (WAV\n                       uploads only) and, with no --model, an audio-only server\n  --tts-model          a Kokoro text-to-speech install directory or alias; enables\n                       POST /v1/audio/speech (English, voice af_heart)\n  --music-model        a MiniMax Music 3 install directory or alias; enables POST\n                       /v1/audio/generate (macOS and Metal only)\n  --model-dir          directory containing .gturbo models (omlx compatibility)\n  --port               listen port (default 8080)\n  --max-context        context window in tokens, or auto (default auto: the\n                       checkpoint's trained context, capped by what memory\n                       holds, and 4096 when the install declares none)\n  --load-guard         how much of the machine a session may commit: off,\n                       relaxed (default), balanced, strict, or a byte ceiling on\n                       what the engine ALLOCATES. relaxed is what shipped before\n                       this flag and what every published memory figure was\n                       measured under; see docs/LOAD_GUARD.md\n  --memory-guard       alias for --load-guard: safe (balanced), balanced, strict,\n                       relaxed, off (omlx compatibility)\n  --memory-guard-gb    set custom memory guard ceiling in gigabytes (omlx compatibility)\n  --min-auto-context   refuse to open when --max-context auto resolves below this\n                       many tokens (default 0, no floor). Says nothing about an\n                       explicit --max-context\n  --expert-cache-slots routed-cache slots per layer: auto or 8/16/24/32/48/64/96/128 (default auto)\n  --bind               loopback or tailnet (default loopback; tailnet requires\n                       --api-key or $TURBOSPARK_API_KEY)\n  --power-profile      performance, balanced or efficiency\n  --max-tokens-per-sec decode rate cap, greater than 0\n  --speculative        off, auto, or a block size 1-15 (default auto). Speculation\n                       applies to temperature-0 requests only; others decode\n                       sequentially\n  --speculative-drafter auto, mtp or dflash (default auto; auto reports a DFlash2\n                       drafter but does not enable it -- see docs/DFLASH2.md)\n  --guardrails         on or off (default on). Rescues a tool call the decoder\n                       could not parse, checks arguments against the request's\n                       own schema, and re-asks once. A request carrying TOOLS is\n                       buffered rather than streamed while this is on, because a\n                       verdict needs the whole turn; requests without tools are\n                       unaffected\n  --prefix-reuse       on or off (default off). When explicitly enabled, a request\n                       continues from the previous request's KV cache wherever\n                       the prompts agree, instead of re-prefilling the whole\n                       transcript. Enable only when every request belongs to one\n                       trusted client: the shared cache is not partitioned by API\n                       key or client, so reuse can expose prefix matches through\n                       response timing. It also raises the\n                       idle-memory floor between requests, not the peak, since\n                       pages that would normally be released stay resident.\n                       See crates/runtime/CLAUDE.md Gotcha 30\n  --session-slots      how many DISTINCT conversations this runner may keep\n                       reusable KV/recurrent state for at once (default 1, i.e.\n                       no pool). Real committed memory per extra slot, unlike\n                       --prefix-reuse's floor-only cost; needs --prefix-reuse on,\n                       since a parked session is never reused\n                       without it. See crates/server/CLAUDE.md's --session-slots\n                       Gotcha\n  --pool-size          how many independent runners to open of --model's ONE install
                        (default 1, i.e. one runner per process as always). N > 1
                        serves N CONCURRENT generations of one model: each member
                        has its own KV, session pool and admission gate, and
@@ -13,6 +13,12 @@ pub use crate::bind::BindMode;
 /// Add flags introduced after the legacy usage string was frozen. Keeping
 /// this small compatibility shim avoids duplicating the long help text while
 /// ensuring `--help` advertises every accepted residency mode.
+impl ModelArgs {
+    pub fn has_audio(&self) -> bool {
+        !(self.stt_models.is_empty() && self.tts_models.is_empty() && self.music_models.is_empty())
+    }
+}
+
 pub fn usage() -> String {
     USAGE.replace(
         "[--expert-cache-slots auto|N]",
@@ -37,6 +43,11 @@ pub struct ModelArgs {
     /// later.
     pub pool_size: u32,
     pub embedding_model: Option<String>,
+    /// Audio installs to attach at startup, by task. Each entry is a
+    /// directory or an installed alias; HTTP model loading is alias-only.
+    pub stt_models: Vec<String>,
+    pub tts_models: Vec<String>,
+    pub music_models: Vec<String>,
     pub model_dir: Option<std::path::PathBuf>,
     pub port: u16,
     /// `None` is `auto`, which is also the default -- resolved against the
@@ -147,6 +158,9 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         models: Vec::new(),
         model: String::new(),
         embedding_model: None,
+        stt_models: Vec::new(),
+        tts_models: Vec::new(),
+        music_models: Vec::new(),
         port: 8080,
         max_context: None,
         expert_cache_slots: None,
@@ -214,6 +228,9 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                 parsed.models.push(value.clone());
             }
             "--embedding-model" => parsed.embedding_model = Some(value.clone()),
+            "--stt-model" => parsed.stt_models.push(value.clone()),
+            "--tts-model" => parsed.tts_models.push(value.clone()),
+            "--music-model" => parsed.music_models.push(value.clone()),
             "--port" => parsed.port = value.parse::<u16>().map_err(|e| format!("--port: {e}"))?,
             "--max-context" => {
                 parsed.max_context = if value == "auto" {
@@ -498,6 +515,7 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
         }
         i += 2;
     }
+    let has_audio = parsed.has_audio();
     if parsed.models.is_empty() {
         if let Some(ref dir) = parsed.model_dir {
             if dir.join("manifest.json").exists() {
@@ -522,13 +540,13 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
                     }
                 }
             }
-            if parsed.model.is_empty() && parsed.embedding_model.is_none() {
+            if parsed.model.is_empty() && parsed.embedding_model.is_none() && !has_audio {
                 return Err(format!(
                     "no .gturbo model found in --model-dir {}\n{USAGE}",
                     dir.display()
                 ));
             }
-        } else if parsed.embedding_model.is_none() {
+        } else if parsed.embedding_model.is_none() && !has_audio {
             // `--model` alone is required, UNLESS `--embedding-model` was
             // given instead: `main.rs::open_models_registry`'s
             // `(false, Some(emb_arg))` arm serves an embedding-only server

@@ -33,6 +33,13 @@ The Image tab's test sends this HTTP request. Its PNG remains in memory
 until **Save to gallery** is selected. The Image tab shares one resident image
 session with the Images screen; image jobs run one at a time.
 
+## Audio
+
+Speech-to-text, text-to-speech, and music generation are supported on the
+in-process server via attached audio models (`ServerOptions`,
+`attachAudioModel`) and standalone `turbospark-server` (`--stt-model`,
+`--tts-model`, `--music-model`). See [Audio API](AUDIO_API.md).
+
 ## TypeSafe service
 
 The TypeSafe tab starts bundled `openkindd` with loopback HTTP and gRPC off.

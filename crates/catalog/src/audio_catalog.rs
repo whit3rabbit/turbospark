@@ -908,18 +908,30 @@ fn validate_frontend(frontend: &AudioFrontendProvenance) -> Result<(), String> {
     // transcoding. Both participate in the persisted catalog identity.
     let provenance: serde_json::Value = serde_json::from_str(include_str!(
         "../../audio/src/tts/kokoro/frontend/resources/provenance.json"
-    )).map_err(|e| e.to_string())?;
-    let assets = provenance["assets"].as_array().ok_or("missing bundled frontend provenance")?;
-    let expected: Vec<AudioFrontendResource> = assets[..6].iter().cloned()
-        .map(serde_json::from_value).collect::<Result<_, _>>().map_err(|e| e.to_string())?;
-    let license: AudioFrontendResource = serde_json::from_value(assets[6].clone()).map_err(|e| e.to_string())?;
-    if frontend.repository != license.repository || frontend.revision != license.revision
-        || frontend.license != license.license || frontend.license_path != license.path
-        || frontend.license_size != license.size || frontend.license_sha256 != license.sha256
+    ))
+    .map_err(|e| e.to_string())?;
+    let assets = provenance["assets"]
+        .as_array()
+        .ok_or("missing bundled frontend provenance")?;
+    let expected: Vec<AudioFrontendResource> = assets[..6]
+        .iter()
+        .cloned()
+        .map(serde_json::from_value)
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    let license: AudioFrontendResource =
+        serde_json::from_value(assets[6].clone()).map_err(|e| e.to_string())?;
+    if frontend.repository != license.repository
+        || frontend.revision != license.revision
+        || frontend.license != license.license
+        || frontend.license_path != license.path
+        || frontend.license_size != license.size
+        || frontend.license_sha256 != license.sha256
         || frontend.bundled_license_path != license.bundled_path
         || frontend.bundled_license_size != license.bundled_size
         || frontend.bundled_license_sha256 != license.bundled_sha256
-        || frontend.resources.len() != 6 {
+        || frontend.resources.len() != 6
+    {
         return Err("invalid Kokoro frontend source/license provenance".into());
     }
     let bundled: [&[u8]; 6] = [
@@ -932,16 +944,23 @@ fn validate_frontend(frontend: &AudioFrontendProvenance) -> Result<(), String> {
     ];
     let mut paths = std::collections::HashSet::new();
     for resource in &frontend.resources {
-        let index = expected.iter().position(|pin| pin == resource)
-            .ok_or("Kokoro frontend resource differs from its pinned upstream/bundled provenance")?;
-        if !paths.insert(&resource.path) || resource.bundled_size != bundled[index].len() as u64
-            || resource.bundled_sha256 != format!("{:x}", Sha256::digest(bundled[index])) {
-            return Err("Kokoro frontend bundled resource is missing, changed or duplicated".into());
+        let index = expected.iter().position(|pin| pin == resource).ok_or(
+            "Kokoro frontend resource differs from its pinned upstream/bundled provenance",
+        )?;
+        if !paths.insert(&resource.path)
+            || resource.bundled_size != bundled[index].len() as u64
+            || resource.bundled_sha256 != format!("{:x}", Sha256::digest(bundled[index]))
+        {
+            return Err(
+                "Kokoro frontend bundled resource is missing, changed or duplicated".into(),
+            );
         }
     }
-    let license_bytes = include_bytes!("../../audio/src/tts/kokoro/frontend/licenses/MISAKI-RS-MIT.txt");
+    let license_bytes =
+        include_bytes!("../../audio/src/tts/kokoro/frontend/licenses/MISAKI-RS-MIT.txt");
     if frontend.bundled_license_size != license_bytes.len() as u64
-        || frontend.bundled_license_sha256 != format!("{:x}", Sha256::digest(license_bytes)) {
+        || frontend.bundled_license_sha256 != format!("{:x}", Sha256::digest(license_bytes))
+    {
         return Err("Kokoro bundled frontend license differs from its pin".into());
     }
     Ok(())
@@ -1565,12 +1584,30 @@ mod tests {
         let profile = catalog.get("kokoro-82m-bf16").unwrap();
         let frontend = profile.frontend.as_ref().unwrap();
         assert_eq!(frontend.resources.len(), 6);
-        for path in ["src/resources/tagger/weights.json", "src/resources/tagger/tags.json", "src/resources/tagger/classes.txt"] {
-            let resource = frontend.resources.iter().find(|r| r.path == path).expect("POS asset pin");
+        for path in [
+            "src/resources/tagger/weights.json",
+            "src/resources/tagger/tags.json",
+            "src/resources/tagger/classes.txt",
+        ] {
+            let resource = frontend
+                .resources
+                .iter()
+                .find(|r| r.path == path)
+                .expect("POS asset pin");
             assert_eq!(resource.license, "MIT");
             let mut changed = profile.frontend.clone();
-            changed.as_mut().unwrap().resources.iter_mut().find(|r| r.path == path).unwrap().sha256 = "0".repeat(64);
-            assert_ne!(asset_fingerprint(&profile.assets, &changed).unwrap(), profile.identity.asset_fingerprint);
+            changed
+                .as_mut()
+                .unwrap()
+                .resources
+                .iter_mut()
+                .find(|r| r.path == path)
+                .unwrap()
+                .sha256 = "0".repeat(64);
+            assert_ne!(
+                asset_fingerprint(&profile.assets, &changed).unwrap(),
+                profile.identity.asset_fingerprint
+            );
             assert!(validate_frontend(changed.as_ref().unwrap()).is_err());
         }
     }

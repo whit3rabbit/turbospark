@@ -1050,3 +1050,25 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     helpers directly in `[dev-dependencies]` and run the full workspace test
     gate after adding image coverage.
 
+
+36. **THE AUDIO ROUTES ARE CONDITIONAL, AND EACH MODEL LIVES ON ITS OWN
+    THREAD.** `/v1/audio/*` and `/v1/metrics` are merged into the router only
+    when `ServerState::with_audio_provider` was called, so the FFI host (which
+    sets none) keeps its route surface and `ServerEndpointCatalogTests` needs no
+    rows. They join `protected` AFTER the 25 MiB chat body limit is applied and
+    carry their own 128 MiB `DefaultBodyLimit`; merging them before that layer
+    would silently cap uploads at 25 MiB (`upload_limit_is_larger_than_the_chat_limit_and_still_enforced`
+    is the guard). The standalone provider (`audio_real.rs`) opens each model
+    ON a dedicated thread because `Music3Runner` is `Rc`-based and Whisper's
+    Metal engine is `RefCell`-based, so neither can be built elsewhere and
+    moved. Work reaches the thread over a bounded channel, so a full queue is
+    429 rather than an unbounded pile of sample buffers. Dropping the HTTP
+    future drops the oneshot receiver, which the worker checks before it
+    starts: queued work cancels, running work does not (no runner exposes a
+    cancel hook). Three further constraints: HTTP `POST /v1/audio/models`
+    resolves catalog aliases only (never `Store::resolve_audio`, which accepts
+    any directory), the audio worker is NOT gated against chat generation on
+    the same GPU (`HeavyWorkGuard` is FFI-only), and "streaming" is
+    segment-granular because every runner decodes a whole clip. Contract:
+    `docs/openapi/audio.openapi.yaml`, compared to
+    `audio::AUDIO_ROUTE_PATHS` by a test. User guide: `docs/AUDIO_API.md`.

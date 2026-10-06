@@ -354,7 +354,9 @@ impl Bigvgan {
                 (kernel - rate) / 2,
             )?);
             // One AMPBlock per (kernel, dilation) pair per stage; the
-            // stage output is the mean over its blocks.
+            // stage output is the mean over its blocks. The reference
+            // keeps all blocks in one flat list, so block `j` of stage
+            // `i` lives under `resblocks.{i * num_kernels + j}`.
             let mut stage_blocks = Vec::new();
             for (j, (&k, d)) in config
                 .resblock_kernel_sizes
@@ -362,13 +364,13 @@ impl Bigvgan {
                 .zip(&config.resblock_dilation_sizes)
                 .enumerate()
             {
-                let _ = j;
+                let block = i * config.resblock_kernel_sizes.len() + j;
                 let mut convs1 = Vec::new();
                 let mut convs2 = Vec::new();
                 for (d_idx, &dilation) in d.iter().enumerate() {
                     convs1.push(WnConv1d::load(
                         file,
-                        &format!("resblocks.{i}.convs1.{d_idx}"),
+                        &format!("resblocks.{block}.convs1.{d_idx}"),
                         out_ch,
                         out_ch,
                         k,
@@ -379,7 +381,7 @@ impl Bigvgan {
                     )?);
                     convs2.push(WnConv1d::load(
                         file,
-                        &format!("resblocks.{i}.convs2.{d_idx}"),
+                        &format!("resblocks.{block}.convs2.{d_idx}"),
                         out_ch,
                         out_ch,
                         k,
@@ -389,30 +391,32 @@ impl Bigvgan {
                         1,
                     )?);
                 }
-                let alpha_raw = load_f32_shaped(
-                    file,
-                    &format!("resblocks.{i}.activations.0.act.alpha"),
-                    &[out_ch],
-                )?;
-                let beta_raw = load_f32_shaped(
-                    file,
-                    &format!("resblocks.{i}.activations.0.act.beta"),
-                    &[out_ch],
-                )?;
+                // Each activation owns its own alpha/beta (checkpointed in
+                // log space), as in the reference's per-block list.
                 let mut activations = Vec::with_capacity(d.len() * 2);
                 for a in 0..d.len() * 2 {
+                    let alpha_raw = load_f32_shaped(
+                        file,
+                        &format!("resblocks.{block}.activations.{a}.act.alpha"),
+                        &[out_ch],
+                    )?;
+                    let beta_raw = load_f32_shaped(
+                        file,
+                        &format!("resblocks.{block}.activations.{a}.act.beta"),
+                        &[out_ch],
+                    )?;
                     activations.push(Activation1d {
                         alpha: alpha_raw.iter().map(|v| v.exp()).collect(),
                         beta: beta_raw.iter().map(|v| v.exp()).collect(),
                         channels: out_ch,
                         up_filter: load_f32_shaped(
                             file,
-                            &format!("resblocks.{i}.activations.{a}.upsample.filter"),
+                            &format!("resblocks.{block}.activations.{a}.upsample.filter"),
                             &[1, 12, 1],
                         )?,
                         down_filter: load_f32_shaped(
                             file,
-                            &format!("resblocks.{i}.activations.{a}.downsample.lowpass.filter"),
+                            &format!("resblocks.{block}.activations.{a}.downsample.lowpass.filter"),
                             &[1, 12, 1],
                         )?,
                         kernel: 12,

@@ -112,7 +112,7 @@ public struct AgentsSettingsPaneView: View {
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 } else {
-                    Text(verbatim: "No project folder attached. Set a folder in project settings to read AGENTS.md.")
+                    Text("No project folder attached. Set a folder in project settings to read AGENTS.md.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }

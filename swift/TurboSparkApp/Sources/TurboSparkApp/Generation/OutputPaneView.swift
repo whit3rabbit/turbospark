@@ -40,7 +40,7 @@ struct OutputPaneView: View {
             if model.memoryEnabled {
                 Button {
                     showingMemoryCapture = true
-                } label: { Text(verbatim: "Add conversation to memory") }
+                } label: { Text("Add conversation to memory", bundle: .module) }
                 .disabled(model.outputConversationPlainText.isEmpty)
             }
 

@@ -126,3 +126,142 @@ fn real_checkpoint_gate() {
     assert_eq!(audio.len(), expected);
     assert!(audio.iter().all(|v| v.is_finite()));
 }
+
+/// F32 little-endian bytes of a constant-filled tensor.
+fn const_bytes(len: usize, value: f32) -> Vec<u8> {
+    std::iter::repeat_n(value, len)
+        .flat_map(|v| v.to_le_bytes())
+        .collect()
+}
+
+/// Writes a safetensors file from `(name, shape, f32 bytes)` triples.
+fn write_f32_safetensors(path: &Path, tensors: &[(String, Vec<usize>, Vec<u8>)]) {
+    let mut header = serde_json::Map::new();
+    let mut data = Vec::new();
+    for (name, shape, bytes) in tensors {
+        let start = data.len();
+        data.extend_from_slice(bytes);
+        header.insert(
+            name.clone(),
+            serde_json::json!({
+                "dtype": "F32",
+                "shape": shape,
+                "data_offsets": [start, data.len()],
+            }),
+        );
+    }
+    let header = serde_json::to_string(&serde_json::Value::Object(header)).unwrap();
+    let mut out = Vec::new();
+    out.extend_from_slice(&(header.len() as u64).to_le_bytes());
+    out.extend_from_slice(header.as_bytes());
+    out.extend_from_slice(&data);
+    std::fs::write(path, out).unwrap();
+}
+
+/// The tiny fixture has a single resblock kernel, so the flat reference
+/// index `stage * num_kernels + j` equals the stage index and a loader
+/// that used the stage index alone (or shared `activations.0` across a
+/// block) still matched the golden audio. This builds a two-kernel
+/// checkpoint whose every block and activation carries a distinct
+/// marker, and checks each one is read from its own flat-indexed
+/// tensors. Numeric multi-kernel parity still needs a golden from
+/// `tools/gen_bigvgan_fixtures.py` with a multi-kernel config.
+#[test]
+fn multi_kernel_blocks_load_from_flat_reference_indices() {
+    let mut config = read_json("tiny_config.json");
+    config["resblock_kernel_sizes"] = serde_json::json!([3, 5]);
+    config["resblock_dilation_sizes"] = serde_json::json!([[1], [1]]);
+    let config = BigvganConfig::from_json(&config).unwrap();
+    let num_kernels = config.resblock_kernel_sizes.len();
+
+    // Everything outside `resblocks` is shape-compatible with the tiny
+    // fixture, so copy it verbatim.
+    let tiny = SafetensorsFile::open(&testdata("tiny_weights.safetensors")).unwrap();
+    let mut tensors: Vec<(String, Vec<usize>, Vec<u8>)> = tiny
+        .tensor_names()
+        .filter(|name| !name.starts_with("resblocks."))
+        .map(|name| {
+            let desc = tiny.descriptor(name).unwrap();
+            assert_eq!(desc.dtype, "F32", "{name}");
+            (
+                name.to_string(),
+                desc.shape.clone(),
+                tiny.raw_bytes(name).unwrap().to_vec(),
+            )
+        })
+        .collect();
+
+    // alpha marker for (flat block b, activation a); exp() of it lands
+    // in `Activation1d::alpha`.
+    let marker = |b: usize, a: usize| 0.1 * (b * 2 + a + 1) as f32;
+    let init = config.upsample_initial_channel;
+    for stage in 0..config.upsample_rates.len() {
+        let ch = init >> (stage + 1);
+        for (j, &k) in config.resblock_kernel_sizes.iter().enumerate() {
+            let b = stage * num_kernels + j;
+            for conv in ["convs1", "convs2"] {
+                let p = format!("resblocks.{b}.{conv}.0");
+                tensors.push((
+                    format!("{p}.weight_v"),
+                    vec![ch, k, ch],
+                    const_bytes(ch * k * ch, 0.5),
+                ));
+                tensors.push((
+                    format!("{p}.weight_g"),
+                    vec![ch, 1, 1],
+                    const_bytes(ch, 1.0),
+                ));
+                tensors.push((format!("{p}.bias"), vec![ch], const_bytes(ch, 0.0)));
+            }
+            for a in 0..2 {
+                let p = format!("resblocks.{b}.activations.{a}");
+                tensors.push((
+                    format!("{p}.act.alpha"),
+                    vec![ch],
+                    const_bytes(ch, marker(b, a)),
+                ));
+                tensors.push((format!("{p}.act.beta"), vec![ch], const_bytes(ch, 0.0)));
+                tensors.push((
+                    format!("{p}.upsample.filter"),
+                    vec![1, 12, 1],
+                    const_bytes(12, 0.1),
+                ));
+                tensors.push((
+                    format!("{p}.downsample.lowpass.filter"),
+                    vec![1, 12, 1],
+                    const_bytes(12, 0.1),
+                ));
+            }
+        }
+    }
+
+    let dir = std::env::temp_dir().join(format!("turbospark_bigvgan_mk_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("model.safetensors");
+    write_f32_safetensors(&path, &tensors);
+    let file = SafetensorsFile::open(&path).unwrap();
+    let loaded = Bigvgan::load(config, &file);
+    drop(file);
+    let _ = std::fs::remove_dir_all(&dir);
+    let model = loaded.expect("two-kernel checkpoint loads");
+
+    for stage in 0..model.config.upsample_rates.len() {
+        assert_eq!(model.resblocks[stage].len(), num_kernels);
+        for (j, block) in model.resblocks[stage].iter().enumerate() {
+            let b = stage * num_kernels + j;
+            assert_eq!(
+                block.convs1[0].kernel, model.config.resblock_kernel_sizes[j],
+                "stage {stage} block {j} kernel"
+            );
+            for (a, act) in block.activations.iter().enumerate() {
+                let want = marker(b, a).exp();
+                assert!(
+                    act.alpha.iter().all(|&v| (v - want).abs() < 1e-6),
+                    "stage {stage} block {j} activation {a}: alpha {:?} != exp({})",
+                    &act.alpha[..1],
+                    marker(b, a)
+                );
+            }
+        }
+    }
+}

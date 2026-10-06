@@ -787,12 +787,63 @@ final class SurfaceTests: XCTestCase {
         let statusDetach = ts_server_detach_model(nil, nil)
         XCTAssertEqual(statusDetach, TS_ERR_INVALID_ARGUMENT)
 
+        let statusAttachAudio = ts_server_attach_audio_model(nil, nil, nil, &out)
+        XCTAssertEqual(statusAttachAudio, TS_ERR_INVALID_ARGUMENT)
+
+        let statusDetachAudio = ts_server_detach_audio_model(nil, nil)
+        XCTAssertEqual(statusDetachAudio, TS_ERR_INVALID_ARGUMENT)
+
         let statusPoll = ts_server_poll_events_json(nil, 16, &out)
         XCTAssertEqual(statusPoll, TS_ERR_INVALID_ARGUMENT)
 
         // NULL is a documented no-op, not an error to check a status code
         // for.
         ts_server_stop(nil)
+    }
+
+    /// Tests speech C ABI symbols link and validate null arguments.
+    func testSpeechCABISymbolsLinkAndValidateNullArgs() {
+        var modelOut: OpaquePointer?
+        let statusOpen = ts_stt_open(nil, &modelOut)
+        XCTAssertEqual(statusOpen, TS_ERR_INVALID_ARGUMENT)
+
+        let statusClose = ts_stt_close(nil)
+        XCTAssertEqual(statusClose, TS_OK)
+
+        var streamOut: OpaquePointer?
+        let statusStreamOpen = ts_stt_stream_open(nil, nil, &streamOut)
+        XCTAssertEqual(statusStreamOpen, TS_ERR_INVALID_ARGUMENT)
+
+        var stringOut: UnsafeMutablePointer<CChar>?
+        let statusAppend = ts_stt_stream_append(nil, nil, &stringOut)
+        XCTAssertEqual(statusAppend, TS_ERR_INVALID_ARGUMENT)
+
+        let statusFinish = ts_stt_stream_finish(nil, &stringOut)
+        XCTAssertEqual(statusFinish, TS_ERR_INVALID_ARGUMENT)
+
+        let statusCancel = ts_stt_stream_cancel(nil)
+        XCTAssertEqual(statusCancel, TS_OK)
+
+        let statusStreamClose = ts_stt_stream_close(nil)
+        XCTAssertEqual(statusStreamClose, TS_OK)
+    }
+
+    func testSpeechTypesEncodeAndDecode() throws {
+        let options = STTOptions(language: "en")
+        let data = try JSONEncoder().encode(options)
+        let decoded = try JSONDecoder().decode([String: String].self, from: data)
+        XCTAssertEqual(decoded["language"], "en")
+
+        let progressJSON = "{\"bufferedSamples\": 16000, \"bufferedSeconds\": 1.0}"
+        let progress = try JSONDecoder().decode(STTAppendProgress.self, from: Data(progressJSON.utf8))
+        XCTAssertEqual(progress.bufferedSamples, 16000)
+        XCTAssertEqual(progress.bufferedSeconds, 1.0)
+
+        let transJSON = "{\"segments\": [{\"index\": 0, \"startSeconds\": 0.0, \"endSeconds\": 1.5, \"text\": \" Hello world\"}], \"languageDetected\": \"en\"}"
+        let trans = try JSONDecoder().decode(STTTranscription.self, from: Data(transJSON.utf8))
+        XCTAssertEqual(trans.languageDetected, "en")
+        XCTAssertEqual(trans.segments.count, 1)
+        XCTAssertEqual(trans.text, " Hello world")
     }
 
     /// **A NULL SESSION STARTS AN EMPTY SERVER RATHER THAN FAILING**, and
