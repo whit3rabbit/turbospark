@@ -565,18 +565,29 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
                 uint r=idx/BK,kc=idx%BK;
                 xs[idx]=r0+r<rows && k0+kc<end ? x[ulong(r0+r)*cols+k0+kc] : 0;
             }
-            for(uint idx=tid;idx<TO*BK;idx+=128) {
-                uint oo=idx/BK,kc=idx%BK,o=o0+oo,kk=k0+kc;
-                float weight=0;
-                if(o<out && kk<end) {
-                    if(fast4) {
-                        // Same value as music_value for four-bit affine.
-                        uint code=((device const uint*)w)[ulong(o)*words+kk/8]>>(4*(kk%8))&15u;
-                        ulong g=ulong(o)*(cols/p[3])+kk/p[3];
-                        weight=float(code)*sc[g]+off[g];
-                    } else weight=music_value(w,sc,off,bs,p,o,kk);
+            if(fast4) {
+                // Eight consecutive four-bit codes share one 32-bit word and
+                // one scale/offset (group % 8 == 0); same per-element value as
+                // music_value. Consecutive lanes take consecutive outputs.
+                for(uint idx=tid;idx<TO*(BK/8);idx+=128) {
+                    uint oo=idx%TO,q=idx/TO,o=o0+oo,kk=k0+q*8;
+                    for(uint i=0;i<8;i++) {
+                        float weight=0;
+                        if(o<out && kk<end) {
+                            uint code=((device const uint*)w)[ulong(o)*words+kk/8]>>(4*i)&15u;
+                            ulong g=ulong(o)*(cols/p[3])+kk/p[3];
+                            weight=float(code)*sc[g]+off[g];
+                        }
+                        ws[(q*8+i)*TO+oo]=music_round(weight,p[6]);
+                    }
                 }
-                ws[kc*TO+oo]=quant ? music_round(weight,p[6]) : weight;
+            } else {
+                for(uint idx=tid;idx<TO*BK;idx+=128) {
+                    uint oo=idx/BK,kc=idx%BK,o=o0+oo,kk=k0+kc;
+                    float weight=0;
+                    if(o<out && kk<end) weight=music_value(w,sc,off,bs,p,o,kk);
+                    ws[kc*TO+oo]=quant ? music_round(weight,p[6]) : weight;
+                }
             }
             threadgroup_barrier(mem_flags::mem_threadgroup);
             for(uint kb=0;kb<BK/8;kb++) {
