@@ -12,8 +12,8 @@ the speech model session contract.
 ## Rules
 
 - Keep this crate buildable off macOS. It belongs in the portable-subset
-  `cargo check` next to `vision-io` (add `-p turbospark-audio` to that step in
-  `.github/workflows/ci.yml`).
+  `cargo check` next to `vision-io`; until `.github/workflows/ci.yml` lists
+  `-p turbospark-audio` there, run that check by hand.
 - Rust owns arithmetic and inference; Swift owns OS I/O. Capture, playback,
   permissions and AAC encoding stay in the app. Do not add an OS audio API
   dependency here.

@@ -924,6 +924,23 @@ keeps resolving.
     on `ResolvedAppTheme` and passing `reduceTransparency` to background
     accessors. Text, border, and accent colors retain their requested alpha.
 
+80. **`Announcement.post(.init(x))` ANNOUNCES NOTHING.**
+    `AccessibilityNotification.post()` is an instance method, so
+    `_ = AccessibilityNotification.Announcement.post(.init(message))`
+    evaluates the unapplied method, and `_ =` discards the resulting
+    closure. It compiled at ten sites, so toasts, error banners and
+    generation start/finish were silent to VoiceOver until 2026-10. Write
+    `AccessibilityNotification.Announcement(message).post()`.
+    `AccessibilityAnnouncementTests` scans for the old spelling.
+
+81. **A NEW ASSET REFERENCE ON A MESSAGE MUST BE COUNTED.**
+    `ProfileDatabase.reconcileAssetReferences` deletes any managed asset
+    nothing counts. Sending clears `draftAttachments`, so a field like
+    `AppChatMessage.audioPaths` that holds the only remaining reference must
+    be counted there, and carried by `OpenProfileExport`, vault
+    collect/migrate and message version switching. Otherwise the clip is
+    collected about a minute after send. Mirror every `imagePaths` site.
+
 
 
 ## The `state#N` ledger

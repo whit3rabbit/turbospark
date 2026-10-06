@@ -4,6 +4,24 @@ Source audit on 2026-09-10 for ROADMAP Priority 0 item 8. The audit is
 needed: a file-system redirect does not isolate work already acting on a
 shared object. Two concrete gaps were confirmed after the cron repair and are now fixed.
 
+## Audio singletons (added 2026-10)
+
+The audio interface (docs/AUDIO_UI.md) adds five app singletons. Each one
+starts background work only on an explicit user action, and none of them
+starts work in `init`. `AudioCapabilities.shared` is the exception: its
+`init` reads permissions and the engine's static capability table, and
+starts no task.
+
+| Singleton | Background work | Ends when |
+|---|---|---|
+| `AudioCapabilities.shared` | none | n/a |
+| `AudioPlaybackController.shared` | 20 Hz playhead ticker `Task` | pause, stop, or clip end |
+| `ComposerAudioRecorder.shared` | `AVAudioEngine` input tap plus a 5 Hz clock `Task` (in its `AudioCaptureService`) | finish, cancel, or the length cap |
+| `AudioAttachmentTranscriber.shared` | one transcription `Task` per attachment ID | the transcript lands or fails; a removed attachment makes the write a no-op |
+| `SystemAudioCaptureService.shared` | a Core Audio process tap, a private aggregate device, an IO proc, and a clock `Task` | stop, cancel, or the length cap (which attaches) |
+
+Not audited: interleavings with profile switches while a capture is running.
+
 ## Selection and scope
 
 The referenced roadmap task finished the batched GEMV A/B. The current

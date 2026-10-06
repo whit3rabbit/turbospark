@@ -238,11 +238,10 @@ install until an audio family exists.
   `NSSpeechRecognitionUsageDescription` and `NSAudioCaptureUsageDescription`.
 - Signing stays ad hoc with no sandbox. Enabling hardened runtime later
   requires the `com.apple.security.device.audio-input` entitlement.
-- `crates/audio` is `publish = false`. It is portable and passes the
-  portable-subset `cargo check`, but the CI step does not list it yet: add
-  `-p turbospark-audio` to the "Portable-subset check (Linux)" step in
-  `.github/workflows/ci.yml` (the session that wrote this could not edit
-  workflow files).
+- `crates/audio` is `publish = false`. It passes the portable-subset
+  `cargo check`, but the "Portable-subset check (Linux)" step in
+  `.github/workflows/ci.yml` does not list it yet: workflow edits need a push
+  with the `workflows` scope, which the authoring session's GitHub App lacked.
 
 ## Verification status
 

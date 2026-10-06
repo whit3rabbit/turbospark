@@ -53,6 +53,18 @@ TurboSparkApp provides complete keyboard-driven navigation, command menus, and V
 | `Shift+Return` | Inserts a newline character without submitting. |
 | `Escape` | Clears focus from editor; cancels if generation is active. |
 
+While the composer is recording (in-app audio on, docs/AUDIO_UI.md) the
+recording strip replaces the editor:
+
+| Key Combination | Action |
+| :--- | :--- |
+| `Return` | Finishes the recording (insert the transcript, or attach the voice note). |
+| `Escape` | Discards the recording. |
+
+The audio preview pane deliberately registers NO bare `Space` or arrow
+shortcuts: an unmodified key equivalent fires before the prompt editor sees
+the keystroke, so playback uses its buttons and VoiceOver actions instead.
+
 ---
 
 ## Accessibility, Display Modes and VoiceOver
@@ -64,6 +76,8 @@ TurboSparkApp provides complete keyboard-driven navigation, command menus, and V
    - Token generation completion posts non-blocking announcements via `AccessibilityNotification.Announcement` ("Generation finished. N tokens.").
    - Interactive user questions announce "Interactive question from model: [Question text]".
    - Model download, installation, loading, cancellation, and error events trigger spoken announcements and floating visual toasts.
+   - Dictation announces "Transcript inserted" when text lands in the prompt.
+   - Announcements are posted as `AccessibilityNotification.Announcement(message).post()`. Until 2026-10 every site used `_ = AccessibilityNotification.Announcement.post(.init(message))`, which compiles and announces nothing; `AccessibilityAnnouncementTests` now fails on that spelling.
 
 2. **Transcript Rotor & Heading Navigation**:
    - The conversation transcript provides an accessibility rotor titled "Messages". Switch to the Messages rotor (`VO + U` or gesture) to skip between user prompts and assistant answers.
@@ -76,6 +90,9 @@ TurboSparkApp provides complete keyboard-driven navigation, command menus, and V
      - Edit message (for user prompts)
      - Regenerate response (for assistant messages)
      - Branch conversation into a new chat
+     - Play voice note (sent audio attachments)
+   - Waveforms are single accessibility elements with a "position of duration" value and an adjustable action (VoiceOver increment/decrement seeks by 5% of the clip).
+   - The composer mic reads "Voice input" or "Stop recording"; the recording strip's elapsed time and the top-bar app-audio pill ("Recording app audio") are labelled, and recording state is always shown with text beside the red dot, never color alone.
    - Chat sidebar rows provide custom actions: Pin chat, Rename chat, Duplicate chat, Delete chat.
 
 4. **Custom Labels and Hints**:

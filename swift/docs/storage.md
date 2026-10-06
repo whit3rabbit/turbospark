@@ -21,14 +21,14 @@ $TURBOSPARK_HOME/                  # or ~/.turbospark/
     text/<alias>.gturbo             # chat, completion, embedding, and vision-enabled text
     text/<alias>.gturbo-vision      # vision tower accessory for a text model
     image/<alias>.gturbo             # image-generation install
-    audio/<alias>.gturbo             # reserved for future transcription
+    audio/<alias>.gturbo             # reserved for engine STT/TTS models
   installed.json                    # text-install registry, with legacy rows tolerated
 ```
 
 The modality directory is part of the storage contract, not a display hint.
 The text resolver only considers `models/text`; the image CLI and image FFI
-use the image resolver; audio has a reserved path and resolver but no runtime
-yet. Image installs are listed through the dedicated image catalog APIs and
+use the image resolver; audio has a reserved path and resolver but no model
+family yet (`ts_audio_session_open` refuses every path; docs/AUDIO_UI.md). Image installs are listed through the dedicated image catalog APIs and
 must not be added to the text `installed.json` index. Vision sidecars remain
 in the text namespace because they are accessories to text models.
 
@@ -75,6 +75,13 @@ store documented in [PROFILE_VAULT.md](PROFILE_VAULT.md). Legacy
 migration inputs, not the active persistence format. The test-isolation rules
 below still apply because each test process receives its own
 `AppStorageRoot`, including its own private vault.
+
+Audio attachments and voice notes are managed assets like images: the draft
+holds the reference in `AppPromptAttachment.sourcePath` (transcript in
+`extractedText`), and a sent message keeps it in `AppChatMessage.audioPaths`,
+which `ProfileDatabase.reconcileAssetReferences` counts. Raw captures are
+written to `$TMPDIR/turbospark-audio/` and deleted once imported; nothing
+audio-related is written under the engine store's `models/audio/` today.
 
 Hook option values have a separate split store. Ordinary values live in
 `Hooks/hook_options_values.json`, written with mode 0600. Options whose

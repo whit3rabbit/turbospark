@@ -51,7 +51,19 @@ staging files changed.
 - Keep user data and model storage scoped through the documented profile and
   storage abstractions. Do not invent another `~/.turbospark` path.
 - Accessibility and keyboard changes must follow the existing shortcuts and
-  VoiceOver contracts.
+  VoiceOver contracts. Post announcements as
+  `AccessibilityNotification.Announcement(message).post()`; the
+  `Announcement.post(.init(...))` spelling compiles and announces nothing
+  (`AccessibilityAnnouncementTests` guards it).
+- Audio follows the split in [docs/AUDIO_UI.md](../docs/AUDIO_UI.md):
+  decode, resample, peaks, levels, trim and speech models are Rust
+  (`crates/audio` via `ts_audio_*`); Swift does capture, playback,
+  permissions, AAC encoding and UI. Apple speech APIs are a labelled fallback
+  only while the engine reports no model. Do not add Swift-side DSP.
+- A new asset reference on `AppChatMessage` (as `imagePaths` and
+  `audioPaths` are) must be counted in `ProfileDatabase.reconcileAssetReferences`
+  and carried by profile export, vault migration and version switching, or
+  the asset is collected after its draft is cleared.
 - The Sparkle updater starts only inside a real .app bundle (see
   `SparkleUpdateController`); never bypass that guard for `swift run` builds.
   Update trust is the EdDSA signature, not Apple code signing -- the bundle
