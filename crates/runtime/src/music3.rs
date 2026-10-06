@@ -5,8 +5,8 @@ use audio::music::minimax_music3::backend::{
 };
 use audio::music::minimax_music3::precision::DType;
 use audio::music::minimax_music3::{
-    GenerateRequest, Generation, Model, ModelConfig, Music3Precision, SamplingTrace, StageTimings,
-    TextGenerateRequest,
+    Control, GenerateRequest, Generation, Model, ModelConfig, Music3Precision, Progress,
+    SamplingTrace, StageTimings, TextGenerateRequest,
 };
 use audio::{Result, SpeechError};
 use gpu::{Music3DType, Music3Device, Music3Encoding, Music3Weight};
@@ -335,7 +335,7 @@ impl Music3Runner {
                 total: *total,
             })
             .collect();
-        stats.sort_by(|a, b| b.total.cmp(&a.total));
+        stats.sort_by_key(|stat| std::cmp::Reverse(stat.total));
         stats
     }
     pub fn reset_dispatch_profile(&self) {
@@ -353,6 +353,16 @@ impl Music3Runner {
         request: &TextGenerateRequest,
     ) -> Result<(Generation, StageTimings)> {
         self.model.generate_text_timed(request)
+    }
+    /// [`Self::generate_text_timed`] with milestone callbacks. Return
+    /// [`Control::Cancel`] to stop at the next frame or chunk boundary; the
+    /// result is then `Ok(None)` and the runner is ready for the next request.
+    pub fn generate_text_with_progress(
+        &self,
+        request: &TextGenerateRequest,
+        on_progress: impl FnMut(Progress) -> Control,
+    ) -> Result<Option<(Generation, StageTimings)>> {
+        self.model.generate_text_with_progress(request, on_progress)
     }
     pub fn generate(&self, request: &GenerateRequest) -> Result<Generation> {
         self.model.generate(request)

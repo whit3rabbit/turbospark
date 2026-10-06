@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use audio::music::minimax_music3::{Model, Music3Precision, TextGenerateRequest};
+use audio::music::minimax_music3::{
+    is_tiny_fixture_dims, Generation, Model, Music3Precision, StageTimings, TextGenerateRequest,
+};
 use audio::Waveform;
 use catalog::Store;
 
@@ -13,11 +15,15 @@ turbospark-music: generate MiniMax Music 3 audio
 USAGE:
     turbospark-music generate --model ALIAS_OR_DIR --caption TEXT \\
         (--lyrics TEXT | --lyrics-file PATH) --output WAV \\
-        [--duration SECONDS] [--steps N] [--seed N] [--precision checkpoint|float32]
+        [--duration SECONDS] [--steps N] [--seed N] [--precision checkpoint|float32] \\
+        [--wav-format pcm16|float32] [--timings]
 
 The model must be a pinned MiniMax Music 3 profile installed by
 `turbospark-model pull-audio`, or a local converted model directory.
 Lyrics are required. Use `[instrumental]` explicitly for instrumental output.
+--wav-format pcm16 (default) rounds to 16-bit integers; float32 writes the
+generated samples unrounded. --timings prints per-stage wall time and the
+real-time factor to stderr.
 ";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +36,14 @@ struct GenerateOptions {
     seed: Option<u64>,
     output: PathBuf,
     precision: Music3Precision,
+    wav_format: WavFormat,
+    timings: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WavFormat {
+    Pcm16,
+    Float32,
 }
 
 #[derive(Debug)]
@@ -76,9 +90,21 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
     let mut seed = None;
     let mut output = None;
     let mut precision = None;
+    let mut wav_format = None;
+    let mut timings = false;
     let mut index = 1usize;
     while index < args.len() {
         let flag = args[index].as_str();
+        if flag == "--timings" {
+            if timings {
+                return Err(Error::Usage(
+                    "--timings may be specified only once".to_string(),
+                ));
+            }
+            timings = true;
+            index += 1;
+            continue;
+        }
         let value = || -> Result<&str, Error> {
             args.get(index + 1)
                 .map(String::as_str)
@@ -122,6 +148,18 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
                 };
                 set_once(&mut precision, selected, flag)?;
             }
+            "--wav-format" => {
+                let selected = match value()? {
+                    "pcm16" => WavFormat::Pcm16,
+                    "float32" => WavFormat::Float32,
+                    other => {
+                        return Err(Error::Usage(format!(
+                            "unknown WAV format {other:?}; expected pcm16 or float32"
+                        )))
+                    }
+                };
+                set_once(&mut wav_format, selected, flag)?;
+            }
             "--output" => set_once(&mut output, PathBuf::from(value()?), flag)?,
             "--help" | "-h" => return Err(Error::Usage(USAGE.to_string())),
             other if other.starts_with('-') => {
@@ -153,6 +191,8 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
         seed,
         output: required(output, "--output")?,
         precision: precision.unwrap_or(Music3Precision::Checkpoint),
+        wav_format: wav_format.unwrap_or(WavFormat::Pcm16),
+        timings,
     };
     text_request(&options)
         .validate()
@@ -199,30 +239,39 @@ fn is_tiny_fixture(path: &Path) -> Result<bool, Error> {
         .map_err(|error| Error::Failed(format!("reading {}: {error}", config_path.display())))?;
     let config: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| Error::Failed(format!("parsing {}: {error}", config_path.display())))?;
-    Ok(config
-        .get("hidden_size")
-        .and_then(serde_json::Value::as_u64)
-        .is_some_and(|size| size <= 64)
-        && config
-            .get("vocab_size")
+    let dimension = |key: &str| {
+        config
+            .get(key)
             .and_then(serde_json::Value::as_u64)
-            .is_some_and(|size| size <= 512))
+            .and_then(|value| usize::try_from(value).ok())
+    };
+    Ok(match (dimension("hidden_size"), dimension("vocab_size")) {
+        (Some(hidden), Some(vocab)) => is_tiny_fixture_dims(hidden, vocab),
+        _ => false,
+    })
 }
 
 fn generate_to_file(store: &Store, options: &GenerateOptions) -> Result<(), Error> {
     let model_path = resolve_audio_model(store, &options.model)?;
     let request = text_request(options);
-    let generated = if is_tiny_fixture(&model_path)? {
+    let (generated, timings) = if is_tiny_fixture(&model_path)? {
         Model::load_converted_with_precision(&model_path, options.precision)
-            .and_then(|model| model.generate_text(&request))
+            .and_then(|model| model.generate_text_timed(&request))
             .map_err(|error| Error::Failed(error.to_string()))?
     } else {
         generate_metal(&model_path, &request, options.precision)?
     };
     let waveform = Waveform::new(generated.sample_rate, 2, generated.waveform)
         .map_err(|error| Error::Failed(error.to_string()))?;
-    std::fs::write(&options.output, audio::write_wav_i16(&waveform))
+    let encoded = match options.wav_format {
+        WavFormat::Pcm16 => audio::write_wav_i16(&waveform),
+        WavFormat::Float32 => audio::write_wav_f32(&waveform),
+    };
+    std::fs::write(&options.output, encoded)
         .map_err(|error| Error::Failed(format!("writing {}: {error}", options.output.display())))?;
+    if options.timings {
+        print_timings(&timings, generated.samples, generated.sample_rate);
+    }
     println!(
         "wrote {} samples at {} Hz, stereo, to {}",
         generated.samples,
@@ -232,12 +281,42 @@ fn generate_to_file(store: &Store, options: &GenerateOptions) -> Result<(), Erro
     Ok(())
 }
 
+fn print_timings(timings: &StageTimings, samples: usize, sample_rate: u32) {
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
+    let audio_seconds = samples as f64 / f64::from(sample_rate);
+    eprintln!(
+        "timings: total {:.0} ms for {audio_seconds:.2} s of audio (RTF {:.2}), {} AR frames, {} flow chunks",
+        ms(timings.total),
+        timings.total.as_secs_f64() / audio_seconds,
+        timings.frames,
+        timings.chunks
+    );
+    eprintln!(
+        "  ar {:.0} ms: prefill {:.0}, lm_head {:.0}, sampling {:.0}, depth {:.0}, lm_decode {:.0}",
+        ms(timings.autoregressive()),
+        ms(timings.prefill),
+        ms(timings.lm_head),
+        ms(timings.sampling),
+        ms(timings.depth),
+        ms(timings.lm_decode)
+    );
+    eprintln!(
+        "  flow {:.0} ms: condition {:.0}, dit {:.0}, vocoder {:.0}; stitch {:.0}; tokenize {:.0}",
+        ms(timings.flow()),
+        ms(timings.condition),
+        ms(timings.dit),
+        ms(timings.vocoder),
+        ms(timings.stitch),
+        ms(timings.tokenize)
+    );
+}
+
 #[cfg(target_os = "macos")]
 fn generate_metal(
     path: &Path,
     request: &TextGenerateRequest,
     precision: Music3Precision,
-) -> Result<audio::music::minimax_music3::Generation, Error> {
+) -> Result<(Generation, StageTimings), Error> {
     let runner = runtime::Music3Runner::open_with_precision(path, precision)
         .map_err(|error| Error::Failed(error.to_string()))?;
     eprintln!(
@@ -245,7 +324,7 @@ fn generate_metal(
         runner.resident_weight_bytes() as f64 / 1073741824.0
     );
     runner
-        .generate_text(request)
+        .generate_text_timed(request)
         .map_err(|error| Error::Failed(error.to_string()))
 }
 
@@ -254,7 +333,7 @@ fn generate_metal(
     _path: &Path,
     _request: &TextGenerateRequest,
     _precision: Music3Precision,
-) -> Result<audio::music::minimax_music3::Generation, Error> {
+) -> Result<(Generation, StageTimings), Error> {
     Err(Error::Failed(
         "full-size Music 3 generation requires macOS and a Metal device".into(),
     ))
@@ -332,6 +411,59 @@ mod tests {
         let mut invalid = args;
         invalid.extend(["--precision".into(), "bf16".into()]);
         assert!(parse_args(&invalid).is_err());
+    }
+
+    #[test]
+    fn wav_format_and_timings_flags_parse_once() {
+        let args = base_args("tiny-model".to_string());
+        let defaults = parse_args(&args).unwrap();
+        assert_eq!(defaults.wav_format, WavFormat::Pcm16);
+        assert!(!defaults.timings);
+        let mut selected = args.clone();
+        selected.extend(["--wav-format".into(), "float32".into(), "--timings".into()]);
+        let options = parse_args(&selected).unwrap();
+        assert_eq!(options.wav_format, WavFormat::Float32);
+        assert!(options.timings);
+        let mut duplicate = selected.clone();
+        duplicate.push("--timings".into());
+        assert!(parse_args(&duplicate).is_err());
+        let mut invalid = args;
+        invalid.extend(["--wav-format".into(), "mp3".into()]);
+        assert!(parse_args(&invalid).is_err());
+    }
+
+    #[test]
+    fn float32_wav_keeps_samples_that_pcm16_rounds() {
+        let model = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../audio/testdata/minimax_music3/converted_plain");
+        let mut decoded = vec![];
+        for format in ["pcm16", "float32"] {
+            let output = std::env::temp_dir()
+                .join(format!("music3-format-{}-{format}.wav", std::process::id()));
+            let mut args = base_args(model.to_string_lossy().into_owned());
+            let index = args.iter().position(|s| s == "song.wav").unwrap();
+            args[index] = output.to_string_lossy().into_owned();
+            args.extend(["--wav-format".into(), format.into()]);
+            generate_to_file(
+                &Store::new(std::env::temp_dir()),
+                &parse_args(&args).unwrap(),
+            )
+            .unwrap();
+            decoded.push(audio::read_wav_f32_bytes(&std::fs::read(&output).unwrap()).unwrap());
+            std::fs::remove_file(output).unwrap();
+        }
+        assert_eq!(decoded[0].samples.len(), decoded[1].samples.len());
+        // PCM16 lands on multiples of 1/32768; the float file does not.
+        let on_grid = |v: f32| (v * 32768.0 - (v * 32768.0).round()).abs() < 1e-3;
+        assert!(decoded[0].samples.iter().copied().all(on_grid));
+        assert!(!decoded[1].samples.iter().copied().all(on_grid));
+        let worst = decoded[0]
+            .samples
+            .iter()
+            .zip(&decoded[1].samples)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst <= 0.5 / 32768.0 + 1e-7, "pcm16 error {worst}");
     }
 
     #[test]

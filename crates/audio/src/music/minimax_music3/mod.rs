@@ -26,6 +26,7 @@ pub mod backend;
 pub mod precision;
 pub use output_stats::{output_stats, OutputStats};
 pub use precision::Music3Precision;
+pub use progress::{Control, Progress};
 pub use stage_timings::StageTimings;
 mod conv;
 mod depth;
@@ -33,6 +34,7 @@ mod dit;
 mod euler;
 mod fusion;
 mod output_stats;
+mod progress;
 mod prompt;
 mod qwen3;
 mod rng;
@@ -524,6 +526,23 @@ pub(crate) fn chunk_starts(num_frames: usize) -> Vec<usize> {
     (0..num_frames - CHUNK_HOP).step_by(CHUNK_HOP).collect()
 }
 
+/// Whether a config's dimensions describe a tiny test fixture. Only such
+/// models may fall back to the deterministic local text encoder when no
+/// tokenizer ships with the checkpoint; full-size models fail closed.
+pub fn is_tiny_fixture_dims(hidden_size: usize, vocab_size: usize) -> bool {
+    hidden_size <= 64 && vocab_size <= 512
+}
+
+/// Fused frame hiddens plus the sampled codebooks of each frame.
+type FrameHiddens = (Vec<f32>, Vec<Vec<i32>>);
+
+// Only reachable if a path that cannot cancel somehow did.
+fn never_cancelled() -> SpeechError {
+    SpeechError::Input {
+        why: "generation was cancelled".to_string(),
+    }
+}
+
 /// Assemble prompt text from caption and lyrics.
 pub fn assemble_prompt(caption: &str, lyrics: &str) -> String {
     prompt::assemble_prompt(caption, lyrics)
@@ -724,6 +743,28 @@ impl Model {
         &self,
         request: &TextGenerateRequest,
     ) -> Result<(Generation, StageTimings)> {
+        self.generate_text_inner(request, &mut progress::ignore)?
+            .ok_or_else(never_cancelled)
+    }
+
+    /// [`Model::generate_text_timed`] that reports milestones and can be
+    /// cancelled. `on_progress` runs on the calling thread between units of
+    /// work (once per AR frame and per flow chunk), so it should be cheap.
+    /// Returns `Ok(None)` if it answered [`Control::Cancel`]; the model keeps
+    /// no state across requests, so it is immediately reusable.
+    pub fn generate_text_with_progress(
+        &self,
+        request: &TextGenerateRequest,
+        mut on_progress: impl FnMut(Progress) -> Control,
+    ) -> Result<Option<(Generation, StageTimings)>> {
+        self.generate_text_inner(request, &mut on_progress)
+    }
+
+    fn generate_text_inner(
+        &self,
+        request: &TextGenerateRequest,
+        progress: &mut dyn FnMut(Progress) -> Control,
+    ) -> Result<Option<(Generation, StageTimings)>> {
         let started = Instant::now();
         *self.stage.borrow_mut() = StageTimings::default();
         let (duration, steps, seed) = request.resolve()?;
@@ -731,7 +772,7 @@ impl Model {
         let prompt_text = assemble_prompt(&request.caption, &request.lyrics);
         let text_ids = match &self.tokenizer {
             Some(tokenizer) => prompt::encode_official_text(tokenizer, &prompt_text)?,
-            None if self.config.vocab_size <= 512 && self.config.hidden_size <= 64 => {
+            None if is_tiny_fixture_dims(self.config.hidden_size, self.config.vocab_size) => {
                 prompt::encode_tiny_ids(&prompt_text, 32)
             }
             None => {
@@ -749,20 +790,41 @@ impl Model {
             });
         }
         self.stage.borrow_mut().tokenize = started.elapsed();
-        let generation = self.generate(&GenerateRequest {
-            text_ids,
-            frames,
-            steps,
-            seed,
-        })?;
+        if progress(Progress::Tokenized {
+            prompt_tokens: text_ids.len(),
+        }) == Control::Cancel
+        {
+            return Ok(None);
+        }
+        let Some(generation) = self.generate_inner(
+            &GenerateRequest {
+                text_ids,
+                frames,
+                steps,
+                seed,
+            },
+            progress,
+        )?
+        else {
+            return Ok(None);
+        };
         let mut timings = self.stage.borrow().clone();
         timings.total = started.elapsed();
-        Ok((generation, timings))
+        Ok(Some((generation, timings)))
     }
 
     /// Full generation: AR frame hiddens, flow decoding, and stereo
     /// output clipped to [-1, 1].
     pub fn generate(&self, request: &GenerateRequest) -> Result<Generation> {
+        self.generate_inner(request, &mut progress::ignore)?
+            .ok_or_else(never_cancelled)
+    }
+
+    fn generate_inner(
+        &self,
+        request: &GenerateRequest,
+        progress: &mut dyn FnMut(Progress) -> Control,
+    ) -> Result<Option<Generation>> {
         if request.frames == 0 || request.frames > MAX_AUDIO_FRAMES {
             return Err(SpeechError::Input {
                 why: format!("frames must be in 1..={MAX_AUDIO_FRAMES}"),
@@ -781,15 +843,33 @@ impl Model {
                 ),
             });
         }
-        let (hiddens, _codes) =
-            self.generate_frame_hiddens(&request.text_ids, request.frames, request.seed)?;
+        let Some((hiddens, _codes)) = self.generate_frame_hiddens_inner(
+            &request.text_ids,
+            request.frames,
+            request.seed,
+            |_| {},
+            progress,
+        )?
+        else {
+            return Ok(None);
+        };
         // The end token can stop the AR stage before `frames`; the
         // flow stage consumes the emitted count, matching the
         // reference, which derives chunking from the hiddens' own
         // length.
         let fused = self.config.num_codebooks * self.config.hidden_size;
         let emitted = hiddens.len() / fused;
-        let stereo = self.run_flow(&hiddens, emitted, request.steps, request.seed)?;
+        let Some(stereo) = self.run_flow_internal(
+            &hiddens,
+            emitted,
+            request.steps,
+            request.seed,
+            None,
+            progress,
+        )?
+        else {
+            return Ok(None);
+        };
         let interleave_started = Instant::now();
         let samples = stereo.len() / 2;
         // Interleave planar stereo into the reference's [S, 2] frame
@@ -807,12 +887,12 @@ impl Model {
             }
         }
         self.stage.borrow_mut().stitch += interleave_started.elapsed();
-        Ok(Generation {
+        Ok(Some(Generation {
             waveform,
             samples,
             sample_rate: self.config.sample_rate,
             frames: emitted,
-        })
+        }))
     }
 
     /// The AR stage: prefill the text pair, then emit up to
@@ -834,8 +914,26 @@ impl Model {
         text_ids: &[i32],
         max_frames: usize,
         seed: u64,
-        mut observe: impl FnMut(SamplingTrace<'_>),
+        observe: impl FnMut(SamplingTrace<'_>),
     ) -> Result<(Vec<f32>, Vec<Vec<i32>>)> {
+        self.generate_frame_hiddens_inner(
+            text_ids,
+            max_frames,
+            seed,
+            observe,
+            &mut progress::ignore,
+        )?
+        .ok_or_else(never_cancelled)
+    }
+
+    fn generate_frame_hiddens_inner(
+        &self,
+        text_ids: &[i32],
+        max_frames: usize,
+        seed: u64,
+        mut observe: impl FnMut(SamplingTrace<'_>),
+        progress: &mut dyn FnMut(Progress) -> Control,
+    ) -> Result<Option<FrameHiddens>> {
         let config = &self.config;
         let hidden = config.hidden_size;
         let vocab = config.vocab_size;
@@ -1060,6 +1158,13 @@ impl Model {
                 frames.extend_from_slice(&frame);
                 frame_codes.push(codes.iter().map(|c| *c as i32).collect());
                 emitted += 1;
+                if progress(Progress::ArFrame {
+                    emitted,
+                    target: max_frames,
+                }) == Control::Cancel
+                {
+                    return Ok(None);
+                }
             }
 
             // Feedback embedding for the LM step (both rows identical).
@@ -1098,7 +1203,7 @@ impl Model {
                 why: "MiniMax Music 3 generated zero audio frames".to_string(),
             });
         }
-        Ok((frames, frame_codes))
+        Ok(Some((frames, frame_codes)))
     }
 
     // Concatenation promotes across every residual codebook, including
@@ -1129,7 +1234,15 @@ impl Model {
         steps: usize,
         seed: u64,
     ) -> Result<Vec<f32>> {
-        self.run_flow_internal(frame_hiddens, frames, steps, seed, None)
+        self.run_flow_internal(
+            frame_hiddens,
+            frames,
+            steps,
+            seed,
+            None,
+            &mut progress::ignore,
+        )?
+        .ok_or_else(never_cancelled)
     }
 
     /// Replay flow with supplied channel-major initial noise per chunk.
@@ -1141,7 +1254,15 @@ impl Model {
         steps: usize,
         noise_chunks: &[Vec<f32>],
     ) -> Result<Vec<f32>> {
-        self.run_flow_internal(frame_hiddens, frames, steps, 0, Some(noise_chunks))
+        self.run_flow_internal(
+            frame_hiddens,
+            frames,
+            steps,
+            0,
+            Some(noise_chunks),
+            &mut progress::ignore,
+        )?
+        .ok_or_else(never_cancelled)
     }
 
     fn run_flow_internal(
@@ -1151,7 +1272,8 @@ impl Model {
         steps: usize,
         seed: u64,
         supplied_noise: Option<&[Vec<f32>]>,
-    ) -> Result<Vec<f32>> {
+        progress: &mut dyn FnMut(Progress) -> Control,
+    ) -> Result<Option<Vec<f32>>> {
         if frames == 0 || frames > MAX_AUDIO_FRAMES || !(1..=30).contains(&steps) {
             return Err(SpeechError::Input {
                 why: "flow requires 1..=9000 frames and 1..=30 steps".into(),
@@ -1168,6 +1290,7 @@ impl Model {
             });
         }
         let starts = chunk_starts(frames);
+        let total_chunks = starts.len();
         if let Some(noise) = supplied_noise {
             if noise.len() != starts.len() {
                 return Err(SpeechError::Input {
@@ -1190,6 +1313,13 @@ impl Model {
         // Keys are 64 bits, including the flow stream's fixed seed offset.
         let mut noise_sequence = rng::KeySequence::new(seed.wrapping_add(7));
         for (chunk_index, start) in starts.into_iter().enumerate() {
+            if progress(Progress::FlowChunk {
+                index: chunk_index,
+                total: total_chunks,
+            }) == Control::Cancel
+            {
+                return Ok(None);
+            }
             let end = (start + CHUNK_FRAMES).min(frames);
             let chunk_frames = end - start;
             let lap = Instant::now();
@@ -1328,7 +1458,7 @@ impl Model {
         }
         out_left.extend_from_slice(&out_right);
         self.stage.borrow_mut().stitch += stitch_started.elapsed();
-        Ok(out_left)
+        Ok(Some(out_left))
     }
 }
 

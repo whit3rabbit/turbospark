@@ -1223,3 +1223,112 @@ fn supplied_flow_noise_validates_chunks_and_replays_at_logical_precision() {
         }
     }
 }
+
+fn progress_request(duration: f64) -> TextGenerateRequest {
+    let mut request = TextGenerateRequest::new("soft piano ballad", "[instrumental]");
+    request.duration_seconds = Some(duration);
+    request.steps = Some(1);
+    request.seed = Some(7);
+    request
+}
+
+#[test]
+fn progress_reports_each_stage_and_leaves_output_unchanged() {
+    let model = load_plain_model();
+    // Twelve frames: fewer than the fixture's 27 before its end token.
+    let request = progress_request(0.5);
+    let target = (0.5 * model.config().frame_rate).trunc() as usize;
+    let mut events = vec![];
+    let (generated, timings) = model
+        .generate_text_with_progress(&request, |event| {
+            events.push(event);
+            Control::Continue
+        })
+        .unwrap()
+        .expect("not cancelled");
+    assert!(matches!(events[0], Progress::Tokenized { prompt_tokens } if prompt_tokens > 0));
+    let frames: Vec<usize> = events
+        .iter()
+        .filter_map(|e| match e {
+            Progress::ArFrame {
+                emitted,
+                target: reported,
+            } => {
+                assert_eq!(*reported, target);
+                Some(*emitted)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(frames, (1..=target).collect::<Vec<_>>());
+    assert_eq!(
+        events.last(),
+        Some(&Progress::FlowChunk { index: 0, total: 1 })
+    );
+    assert_eq!((timings.frames, timings.chunks), (target, 1));
+    // The callback path runs identical arithmetic.
+    let plain = model.generate_text(&request).unwrap();
+    assert_eq!(plain.waveform, generated.waveform);
+}
+
+#[test]
+fn cancelling_before_or_during_ar_returns_none_and_the_model_stays_reusable() {
+    let model = load_plain_model();
+    let request = progress_request(0.5);
+    let reference = model.generate_text(&request).unwrap();
+    for stage in ["tokenized", "frame"] {
+        let mut seen = 0usize;
+        let outcome = model
+            .generate_text_with_progress(&request, |event| {
+                seen += 1;
+                let hit = match (stage, event) {
+                    ("tokenized", Progress::Tokenized { .. }) => true,
+                    ("frame", Progress::ArFrame { emitted, .. }) => emitted == 3,
+                    _ => false,
+                };
+                if hit {
+                    Control::Cancel
+                } else {
+                    Control::Continue
+                }
+            })
+            .unwrap();
+        assert!(outcome.is_none(), "{stage} cancel must return None");
+        // Tokenized, then frames 1..=3; nothing after the cancel.
+        assert_eq!(seen, if stage == "tokenized" { 1 } else { 4 });
+        let again = model.generate_text(&request).unwrap();
+        assert_eq!(again.waveform, reference.waveform, "after {stage} cancel");
+    }
+}
+
+#[test]
+fn flow_reports_chunks_and_cancelling_mid_flow_leaves_no_state() {
+    let model = load_plain_model();
+    let (shape, hiddens) = read_npy("long_flow_hiddens.npy");
+    let frames = shape[1];
+    let reference = model.run_flow(&hiddens, frames, 1, 7).unwrap();
+    let mut chunks = vec![];
+    let observed = model
+        .run_flow_internal(&hiddens, frames, 1, 7, None, &mut |event| {
+            chunks.push(event);
+            Control::Continue
+        })
+        .unwrap()
+        .expect("not cancelled");
+    assert_eq!(
+        chunks,
+        vec![
+            Progress::FlowChunk { index: 0, total: 2 },
+            Progress::FlowChunk { index: 1, total: 2 },
+        ]
+    );
+    assert_eq!(observed, reference);
+    let cancelled = model
+        .run_flow_internal(&hiddens, frames, 1, 7, None, &mut |event| match event {
+            Progress::FlowChunk { index: 1, .. } => Control::Cancel,
+            _ => Control::Continue,
+        })
+        .unwrap();
+    assert!(cancelled.is_none());
+    assert_eq!(model.run_flow(&hiddens, frames, 1, 7).unwrap(), reference);
+}
