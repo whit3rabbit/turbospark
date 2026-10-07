@@ -68,7 +68,7 @@ impl EspnetPosEnc {
         // div_term[i] = exp(-(ln(10000) / d_model) * 2i), i over D/2.
         let half = self.d_model / 2;
         let div: Vec<f32> = (0..half)
-            .map(|i| (-(10.0f32.ln() / self.d_model as f32) * (2 * i) as f32).exp())
+            .map(|i| (-(10_000.0f32.ln() / self.d_model as f32) * (2 * i) as f32).exp())
             .collect();
         let mut pe = vec![0.0f32; (2 * l - 1) * self.d_model];
         for m in 0..2 * l - 1 {
@@ -173,8 +173,10 @@ impl RelPosAttention {
             let p_off = h * d_head;
             for i in 0..t {
                 // Content term with pos_bias_u and position term with
-                // pos_bias_v, the latter indexed at relative position
-                // i - j (the closed form of rel_shift).
+                // pos_bias_v. The reference rel_shift maps result
+                // [i, j] to the flat position table at index
+                // (T-1) + j - i (verified against the literal
+                // pad/reshape/slice on the fixture).
                 for j in 0..t {
                     let mut ac = 0.0f32;
                     let mut bd = 0.0f32;
@@ -182,7 +184,7 @@ impl RelPosAttention {
                         let qv = q[i * self.d_model + q_off + d];
                         ac += (qv + self.pos_bias_u[h * d_head + d])
                             * k[j * self.d_model + k_off + d];
-                        let prow = (t - 1 + i - j) * self.d_model + p_off + d;
+                        let prow = (t - 1 + j - i) * self.d_model + p_off + d;
                         bd += (qv + self.pos_bias_v[h * d_head + d]) * p[prow];
                     }
                     scores[i * t + j] = (ac + bd) / scale;
@@ -248,14 +250,14 @@ impl ConformerLayer {
         })
     }
 
-    fn forward(&self, x: &mut Vec<f32>, pos_emb: &[f32], t: usize) {
-        let residual = x.clone();
+    fn forward(&self, x: &mut [f32], pos_emb: &[f32], t: usize) {
+        let residual = x.to_vec();
         self.norm_mha.forward(x, t, 1e-12);
         let attended = self.attn.forward(x, pos_emb, t);
         for (v, (r, a)) in x.iter_mut().zip(residual.iter().zip(&attended)) {
             *v = r + a;
         }
-        let residual = x.clone();
+        let residual = x.to_vec();
         self.norm_ff.forward(x, t, 1e-12);
         let mut hidden = self.w_1.forward(x, t);
         ops::silu(&mut hidden);
@@ -675,7 +677,6 @@ impl CausalConvBlock {
 /// attention, conv, MLP.
 #[derive(Debug, Clone)]
 struct DitBlock {
-    norm1_dim: usize,
     attn: DitAttention,
     mlp: DitMlp,
     conv: CausalConvBlock,
@@ -693,7 +694,6 @@ impl DitBlock {
         mlp_hidden: usize,
     ) -> Result<Self> {
         Ok(DitBlock {
-            norm1_dim: hidden,
             attn: DitAttention::load(file, &format!("{prefix}.attn"), hidden, n_head, head_dim)?,
             mlp: DitMlp::load(file, &format!("{prefix}.mlp"), hidden, mlp_hidden)?,
             conv: CausalConvBlock::load(file, &format!("{prefix}.conv"), hidden)?,
@@ -707,7 +707,7 @@ impl DitBlock {
         })
     }
 
-    fn forward(&self, x: &mut Vec<f32>, t_emb: &[f32], t: usize) {
+    fn forward(&self, x: &mut [f32], t_emb: &[f32], t: usize) {
         let h = self.hidden;
         let mut mod_in = t_emb.to_vec();
         ops::silu(&mut mod_in);
@@ -718,7 +718,7 @@ impl DitBlock {
         let (shift_conv, scale_conv, gate_conv) = (chunk(6), chunk(7), chunk(8));
 
         // Attention branch.
-        let mut normed = x.clone();
+        let mut normed = x.to_vec();
         layernorm_noaffine(&mut normed, t, h, 1e-6);
         for (v, (s, sc)) in normed
             .iter_mut()
@@ -735,7 +735,7 @@ impl DitBlock {
         }
 
         // Conv branch.
-        let mut normed = x.clone();
+        let mut normed = x.to_vec();
         layernorm_noaffine(&mut normed, t, h, 1e-6);
         for (v, (s, sc)) in normed
             .iter_mut()
@@ -752,7 +752,7 @@ impl DitBlock {
         }
 
         // MLP branch.
-        let mut normed = x.clone();
+        let mut normed = x.to_vec();
         layernorm_noaffine(&mut normed, t, h, 1e-6);
         for (v, (s, sc)) in normed
             .iter_mut()
@@ -789,7 +789,6 @@ struct FinalLayer {
     adaln: SaLinear,
     linear: SaLinear,
     hidden: usize,
-    out_channels: usize,
 }
 
 impl FinalLayer {
@@ -808,24 +807,24 @@ impl FinalLayer {
             )?,
             linear: SaLinear::load(file, &format!("{prefix}.linear"), hidden, out_channels)?,
             hidden,
-            out_channels,
         })
     }
 
-    fn forward(&self, x: &mut Vec<f32>, t_emb: &[f32], t: usize) {
+    fn forward(&self, x: &mut [f32], t_emb: &[f32], t: usize) -> Vec<f32> {
         let h = self.hidden;
         let mut mod_in = t_emb.to_vec();
         ops::silu(&mut mod_in);
         let mod_v = self.adaln.forward(&mod_in, 1);
         let (shift, scale) = mod_v.split_at(h);
+        // Reference order: norm_final first, then modulate.
+        layernorm_noaffine(x, t, h, 1e-6);
         for (v, (s, sc)) in x
             .iter_mut()
             .zip(shift.iter().cycle().zip(scale.iter().cycle()))
         {
             *v = *v * (1.0 + sc) + s;
         }
-        layernorm_noaffine(x, t, h, 1e-6);
-        *x = self.linear.forward(x, t);
+        self.linear.forward(x, t)
     }
 }
 
@@ -852,7 +851,7 @@ impl TimestepEmbedder {
         let half = dim / 2;
         let mut emb = vec![0.0f32; dim];
         for d in 0..half {
-            let freq = (-(10.0f32.ln()) * d as f32 / half as f32).exp();
+            let freq = (-(10_000.0f32.ln()) * d as f32 / half as f32).exp();
             let arg = t * freq;
             emb[d] = arg.cos();
             emb[half + d] = arg.sin();
@@ -880,7 +879,6 @@ struct DiT {
     final_layer: FinalLayer,
     in_channels: usize,
     out_channels: usize,
-    hidden: usize,
 }
 
 impl DiT {
@@ -912,7 +910,6 @@ impl DiT {
             )?,
             in_channels,
             out_channels: config.output_size,
-            hidden,
         })
     }
 
@@ -933,11 +930,13 @@ impl DiT {
         packed[..mel * frames].copy_from_slice(x);
         packed[mel * frames..2 * mel * frames].copy_from_slice(mu);
         if let Some(s) = spks {
+            // Channel-major broadcast: every time slot of channel c
+            // carries s[c].
             for (i, v) in packed[2 * mel * frames..3 * mel * frames]
                 .iter_mut()
                 .enumerate()
             {
-                *v = s[i % mel];
+                *v = s[i / frames];
             }
         }
         if let Some(c) = cond {
@@ -949,7 +948,7 @@ impl DiT {
         for block in &self.blocks {
             block.forward(&mut rows, &t_emb, frames);
         }
-        self.final_layer.forward(&mut rows, &t_emb, frames);
+        let rows = self.final_layer.forward(&mut rows, &t_emb, frames);
         Ok(to_cm(&rows, frames, mel))
     }
 }
@@ -967,16 +966,33 @@ struct CausalConditionalCfm {
 
 impl CausalConditionalCfm {
     fn load(file: &SafetensorsFile, prefix: &str, config: &StepAudio2Config) -> Result<Self> {
+        // The reference keeps the (1, mel, 50*600) batch layout; the
+        // singleton batch axis is contiguous, so the flat buffer is
+        // used directly as [mel, 50*600].
         let rand_noise = load_f32_shaped(
             file,
             &format!("{prefix}.rand_noise"),
-            &[config.output_size, 50 * 600],
+            &[1, config.output_size, 50 * 600],
         )?;
         Ok(CausalConditionalCfm {
             estimator: DiT::load(file, &format!("{prefix}.estimator"), config)?,
             cfg_rate: config.inference_cfg_rate,
             rand_noise,
         })
+    }
+
+    /// The first `frames` noise frames per channel: the checkpoint
+    /// buffer is `[mel, 50 * 600]`, so the slice is strided per channel
+    /// (`rand_noise[:, :, :T]` in the reference).
+    fn noise_window(&self, frames: usize) -> Vec<f32> {
+        let mel = self.estimator.out_channels;
+        let stride = self.rand_noise.len() / mel;
+        let mut x = vec![0.0f32; mel * frames];
+        for c in 0..mel {
+            x[c * frames..(c + 1) * frames]
+                .copy_from_slice(&self.rand_noise[c * stride..c * stride + frames]);
+        }
+        x
     }
 
     /// `mu` and `cond` are channel-major `[mel, T]`, `spks` is `[mel]`.
@@ -996,7 +1012,7 @@ impl CausalConditionalCfm {
         let t_span: Vec<f32> = (0..=n_timesteps)
             .map(|i| 1.0 - ((i as f32 / n_timesteps as f32) * 0.5 * std::f32::consts::PI).cos())
             .collect();
-        let mut x = self.rand_noise[..mel * frames].to_vec();
+        let mut x = self.noise_window(frames);
         let mut t = t_span[0];
         let mut dt = t_span[1] - t_span[0];
         for step in 1..t_span.len() {

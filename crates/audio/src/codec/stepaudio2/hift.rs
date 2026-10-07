@@ -160,9 +160,9 @@ impl ResBlock {
         })
     }
 
-    fn forward(&self, x: &mut Vec<f32>, frames: usize) {
+    fn forward(&self, x: &mut [f32], frames: usize) {
         for d in 0..self.convs1.len() {
-            let mut xt = x.clone();
+            let mut xt = x.to_vec();
             snake_hift(&mut xt, &self.alphas1[d], self.channels, frames);
             xt = self.convs1[d].forward(&xt);
             snake_hift(&mut xt, &self.alphas2[d], self.channels, frames);
@@ -465,7 +465,9 @@ impl StepAudio2HiFT {
             x = acc;
         }
 
-        leaky_relu(&mut x, LRELU_SLOPE);
+        // The reference decode's final leaky ReLU uses the nn default
+        // slope (0.01), not the lrelu_slope of the upsample stages.
+        leaky_relu(&mut x, 0.01);
         let out_frames = x.len() / (BASE_CHANNELS >> self.ups.len());
         let x = self.conv_post.forward(&x);
         let bins = ISTFT_N_FFT / 2 + 1;
@@ -553,11 +555,11 @@ impl StepAudio2HiFT {
         // Voiced gating and the noise bed.
         let zeros = vec![0.0f32; harmonics * t_wav];
         let noise = draws.map(|d| d.sine_noise.as_slice()).unwrap_or(&zeros);
-        for t in 0..t_wav {
-            let amp = uv[t] * NOISE_STD + (1.0 - uv[t]) * SINE_AMP / 3.0;
+        for (t, &u) in uv.iter().enumerate() {
+            let amp = u * NOISE_STD + (1.0 - u) * SINE_AMP / 3.0;
             for h in 0..harmonics {
                 let i = h * t_wav + t;
-                sine[i] = sine[i] * uv[t] + amp * noise[i];
+                sine[i] = sine[i] * u + amp * noise[i];
             }
         }
         Ok(sine)

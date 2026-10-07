@@ -451,7 +451,9 @@ pub(crate) fn reflect_pad_cm(x: &[f32], ch: usize, pad: usize) -> Vec<f32> {
         let src = &x[c * seq..(c + 1) * seq];
         let dst = &mut out[c * (seq + 2 * pad)..(c + 1) * (seq + 2 * pad)];
         for p in 0..pad {
-            dst[p] = src[1 + p];
+            // torch reflect: descending prefix [x_pad, ..., x_1], the
+            // edge sample is not repeated.
+            dst[p] = src[pad - p];
             dst[pad + seq + p] = src[seq - 2 - p];
         }
         dst[pad..pad + seq].copy_from_slice(src);

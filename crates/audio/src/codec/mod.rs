@@ -5,7 +5,10 @@
 //! conv containers and weight-layout helpers in [`conv`]; each
 //! family owns its block stack and loader under its subfolder. The
 //! [central inventory](../../MODELS.md#codec) tracks upstream source
-//! families, checkpoint profiles, and verification status.
+//! families, checkpoint profiles, and verification status. The
+//! [`stepaudio2`] family is the one generative exception: a conditional
+//! token-to-waveform pipeline (flow-matching DiT + NSF vocoder + speaker
+//! encoder) rather than an encode/decode tokenizer.
 
 pub mod bigvgan;
 pub mod conv;

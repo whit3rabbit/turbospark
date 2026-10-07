@@ -179,6 +179,10 @@ struct Conv2dNhwc {
 }
 
 impl Conv2dNhwc {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the PyTorch conv2d signature"
+    )]
     fn load(
         file: &SafetensorsFile,
         prefix: &str,
@@ -315,10 +319,11 @@ impl FusedResBlock {
         let oh = (h + 2 - 3) / self.conv1.stride_h + 1;
         let ow = (w + 2 - 3) / self.conv1.stride_w + 1;
         let out2 = self.conv2.forward(&out, oh, ow);
-        // The conv2 and shortcut planes share the (oh, ow) geometry.
+        // The residual is the block INPUT when there is no shortcut
+        // conv (stride 1 and matching width).
         let shortcut = match &self.shortcut {
             Some(sc) => sc.forward(x, h, w),
-            None => out,
+            None => x.clone(),
         };
         let mut merged = out2;
         for (v, s) in merged.iter_mut().zip(&shortcut) {
@@ -467,14 +472,18 @@ impl CamLayer {
     /// Channel-major `[bn_channels, T]` in, `[out_channels, T]` out.
     fn forward(&self, x: &[f32], in_ch: usize, frames: usize) -> Vec<f32> {
         let mut y = self.linear_local.forward(x);
-        // context = mean over time + segment pool, both of the input.
-        let mut context = vec![0.0f32; in_ch];
+        // context = mean over time (broadcast per frame) + segment
+        // pool, both of the input: the gate varies per frame.
+        let mut context = vec![0.0f32; in_ch * frames];
         for c in 0..in_ch {
-            context[c] = x[c * frames..(c + 1) * frames].iter().sum::<f32>() / frames as f32;
+            let mean = x[c * frames..(c + 1) * frames].iter().sum::<f32>() / frames as f32;
+            for v in &mut context[c * frames..(c + 1) * frames] {
+                *v = mean;
+            }
         }
         let pooled = seg_pool(x, in_ch, frames);
-        for (c, v) in context.iter_mut().enumerate() {
-            *v += pooled[c];
+        for (v, p) in context.iter_mut().zip(&pooled) {
+            *v += p;
         }
         let mut ctx = self.linear1.forward(&context);
         for v in &mut ctx {
@@ -484,24 +493,27 @@ impl CamLayer {
         for v in &mut m {
             *v = 1.0 / (1.0 + (-*v).exp());
         }
-        for (i, v) in y.iter_mut().enumerate() {
-            *v *= m[i / frames];
+        for (v, mv) in y.iter_mut().zip(&m) {
+            *v *= mv;
         }
         y
     }
 }
 
-/// `seg_pooling`: average over 100-frame segments (ceil mode), then
-/// broadcast back and truncate. Channel-major `[ch, T]`.
+/// `seg_pooling`: zero-pad to whole 100-frame segments (ceil mode),
+/// average each segment over the PADDED length (the zeros count in the
+/// denominator, matching the reference reshape + mean), then truncate
+/// back. Channel-major `[ch, T]`.
 fn seg_pool(x: &[f32], ch: usize, frames: usize) -> Vec<f32> {
-    let n_segs = (frames + SEG_POOL_LEN - 1) / SEG_POOL_LEN;
+    let n_segs = frames.div_ceil(SEG_POOL_LEN);
     let mut out = vec![0.0f32; ch * frames];
     for c in 0..ch {
         let row = &x[c * frames..(c + 1) * frames];
         for s in 0..n_segs {
             let start = s * SEG_POOL_LEN;
             let end = (start + SEG_POOL_LEN).min(frames);
-            let mean = row[start..end].iter().sum::<f32>() / (end - start) as f32;
+            let sum: f32 = row[start..end].iter().sum();
+            let mean = sum / SEG_POOL_LEN as f32;
             for v in &mut out[c * frames + start..c * frames + end] {
                 *v = mean;
             }
@@ -516,7 +528,6 @@ struct CamDenseLayer {
     bn: BatchNorm,
     linear1: SaConv1d,
     cam: CamLayer,
-    in_channels: usize,
     out_channels: usize,
 }
 
@@ -551,7 +562,6 @@ impl CamDenseLayer {
                 kernel,
                 dilation,
             )?,
-            in_channels,
             out_channels,
         })
     }
@@ -765,12 +775,10 @@ impl StepAudio2CampPlus {
             stats[channels + c] = (var + 1e-5).sqrt();
         }
 
-        // Dense head: 1x1 conv (no bias) -> BN (no affine) -> ReLU.
+        // Dense head: 1x1 conv (no bias) -> affine-free BN. The
+        // "batchnorm_" config has no ReLU (unlike "batchnorm-relu").
         let mut out = self.dense_linear.forward(&stats);
         self.dense_bn.forward(&mut out, 1);
-        for v in &mut out {
-            *v = v.max(0.0);
-        }
         Ok(out)
     }
 
@@ -804,3 +812,6 @@ impl StepAudio2CampPlus {
         Ok(embedding)
     }
 }
+
+#[cfg(test)]
+impl StepAudio2CampPlus {}

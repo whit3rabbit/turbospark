@@ -70,18 +70,19 @@ N_TIMESTEPS = 10
 PROMPT_TOKENS_LEN = 12
 GEN_TOKENS_LEN = 8
 
+# Keys match the reference keyword names the Rust config parser reads.
 TINY_FLOW = dict(
     input_size=64,
     output_size=N_MELS,
     spk_embed_dim=SPK_DIM,
     vocab_size=VOCAB,
-    enc_linear_units=128,
-    enc_attention_heads=4,
-    enc_num_blocks=2,
-    enc_num_up_blocks=2,
-    enc_pre_lookahead_len=3,
-    enc_up_stride=2,
-    enc_up_scale_factor=2,
+    linear_units=128,
+    attention_heads=4,
+    num_blocks=2,
+    num_up_blocks=2,
+    pre_lookahead_len=3,
+    up_stride=2,
+    up_scale_factor=2,
     dit_hidden=64,
     dit_depth=2,
     dit_heads=4,
@@ -108,16 +109,16 @@ def build_flow(cfg: dict) -> CausalMaskedDiffWithXvec:
         input_size=cfg["input_size"],
         output_size=cfg["input_size"],
         input_layer="linear",
-        pre_lookahead_len=cfg["enc_pre_lookahead_len"],
-        num_blocks=cfg["enc_num_blocks"],
-        num_up_blocks=cfg["enc_num_up_blocks"],
-        up_stride=cfg["enc_up_stride"],
-        up_scale_factor=cfg["enc_up_scale_factor"],
-        attention_heads=cfg["enc_attention_heads"],
+        pre_lookahead_len=cfg["pre_lookahead_len"],
+        num_blocks=cfg["num_blocks"],
+        num_up_blocks=cfg["num_up_blocks"],
+        up_stride=cfg["up_stride"],
+        up_scale_factor=cfg["up_scale_factor"],
+        attention_heads=cfg["attention_heads"],
         pos_enc_layer_type="rel_pos_espnet",
         selfattention_layer_type="rel_selfattn",
         key_bias=True,
-        linear_units=cfg["enc_linear_units"],
+        linear_units=cfg["linear_units"],
         dropout_rate=0.1,
         positional_dropout_rate=0.1,
         attention_dropout_rate=0.1,
@@ -228,6 +229,12 @@ def main() -> None:
                 # BatchNorm variance must stay positive; mirror the
                 # positive-by-construction checkpoint statistic.
                 seeded = 0.3 + np.abs(rng.standard_normal(value.shape)) * 0.4
+            elif name.endswith("pos_enc.pe"):
+                # The positional-encoding buffer is derived at init and
+                # convert.py only ever saves the derived values (the
+                # torch state has no pe); keep the deterministic table
+                # so the fixture matches a real checkpoint.
+                seeded = np.asarray(value, dtype=np.float32)
             else:
                 seeded = rng.standard_normal(value.shape) * scale
             weights[f"{prefix}.{name}"] = mx.array(seeded.astype(np.float32))
@@ -296,9 +303,11 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Stage: CAMPPlus speaker encoder. kaldi fbank, per-feature mean
     # removal, batch-of-one forward.
+    # Raw fbank gate first; the embedding consumes the mean-removed
+    # variant exactly as the reference inference does.
     fbank = np.asarray(kaldi_fbank(mx.array(wave_16k), num_mel_bins=N_MELS))
-    fbank = fbank - fbank.mean(axis=0, keepdims=True)
     save_npy("campplus_fbank.npy", fbank)
+    fbank = fbank - fbank.mean(axis=0, keepdims=True)
     embedding = np.asarray(campplus(mx.array(fbank)[None]))
     assert embedding.shape == (1, SPK_DIM), embedding.shape
     save_npy("embedding.npy", embedding[0])
@@ -371,7 +380,11 @@ def main() -> None:
     assert len(recorder.draws) >= 2, recorder.draws
     assert recorder.pre_clip_wav is not None, "clip hook did not fire"
     pre_clip = recorder.pre_clip_wav[0]
-    save_npy("sine_rand_ini.npy", recorder.draws[0])
+    # The reference zeroes the first harmonic's drawn initial phase
+    # before use; save the processed tensor so the Rust input matches.
+    rand_ini_saved = recorder.draws[0].copy()
+    rand_ini_saved[..., 0] = 0.0
+    save_npy("sine_rand_ini.npy", rand_ini_saved)
     save_npy("sine_noise.npy", recorder.draws[1])
     save_npy("hift_wav_raw.npy", pre_clip)
     save_npy("hift_wav.npy", wav)
