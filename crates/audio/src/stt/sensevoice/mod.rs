@@ -6,6 +6,7 @@
 //! kernels in the raw `[channels, 1, kernel]` layout consumed here.
 
 pub(super) mod frontend;
+pub(super) mod sanm;
 
 use std::fs;
 use std::path::Path;
@@ -13,8 +14,10 @@ use std::path::Path;
 use serde_json::Value;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
-use crate::ops;
+use crate::nn::{argmax, bad_config, load_tensor, LayerNorm, Linear};
+use crate::stt::wav2vec::ctc::CtcCollapse;
 use crate::{Result, SpeechError};
+use sanm::{add_sinusoidal_positions, FsmnLayout, SanmConfig, SanmEncoderLayer};
 
 /// Immutable Hugging Face checkpoint profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +44,9 @@ const FSMN_KERNEL: usize = 11;
 const MEL_BINS: usize = 80;
 const LFR_M: usize = 7;
 const LFR_N: usize = 6;
+/// Every SenseVoice LayerNorm uses this epsilon; the shared `nn::LayerNorm`
+/// stores it instead of hardcoding it in `apply`.
+const LAYER_NORM_EPS: f32 = 1e-5;
 
 /// Output from a single offline SenseVoice inference pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +72,27 @@ struct Config {
     sanm_shift: usize,
 }
 
+fn validate_sanm(_: usize, _: usize, kernel: usize, left_padding: usize) -> Result<()> {
+    if left_padding > kernel - 1 {
+        return Err(bad_config("sanm_shift", "padding exceeds the FSMN kernel"));
+    }
+    Ok(())
+}
+
 impl Config {
+    fn sanm(&self) -> SanmConfig {
+        SanmConfig {
+            output_size: self.output_size,
+            linear_units: self.linear_units,
+            attention_heads: self.attention_heads,
+            fsmn_kernel: self.fsmn_kernel,
+            sanm_shift: self.sanm_shift,
+            layer_norm_eps: LAYER_NORM_EPS,
+            fsmn_layout: FsmnLayout::ChannelsOneKernel,
+            validate: validate_sanm,
+        }
+    }
+
     fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path).map_err(|error| SpeechError::Input {
             why: format!("cannot read {}: {error}", path.display()),
@@ -181,10 +207,10 @@ impl Config {
 pub struct SenseVoiceSmall {
     config: Config,
     embedding: Vec<f32>,
-    first_block: EncoderLayer,
-    encoder: Vec<EncoderLayer>,
+    first_block: SanmEncoderLayer,
+    encoder: Vec<SanmEncoderLayer>,
     after_norm: LayerNorm,
-    tp_encoder: Vec<EncoderLayer>,
+    tp_encoder: Vec<SanmEncoderLayer>,
     tp_norm: LayerNorm,
     ctc: Linear,
     cmvn_means: Vec<f32>,
@@ -198,33 +224,45 @@ impl SenseVoiceSmall {
         let config = Config::load(&model_dir.join("config.json"))?;
         let weights = SafetensorsFile::open(&model_dir.join("model.safetensors"))?;
         let embedding = load_tensor(&weights, "embed.weight", &[16, config.input_size])?;
+        let sanm = config.sanm();
         let first_block =
-            EncoderLayer::load(&weights, "encoder.encoders0.0", config.input_size, &config)?;
+            SanmEncoderLayer::load(&weights, "encoder.encoders0.0", config.input_size, &sanm)?;
         let mut encoder = Vec::with_capacity(config.encoder_blocks - 1);
         for index in 0..config.encoder_blocks - 1 {
-            encoder.push(EncoderLayer::load(
+            encoder.push(SanmEncoderLayer::load(
                 &weights,
                 &format!("encoder.encoders.{index}"),
                 config.output_size,
-                &config,
+                &sanm,
             )?);
         }
-        let after_norm = LayerNorm::load(&weights, "encoder.after_norm", config.output_size)?;
+        let after_norm = LayerNorm::load(
+            &weights,
+            "encoder.after_norm",
+            config.output_size,
+            LAYER_NORM_EPS,
+        )?;
         let mut tp_encoder = Vec::with_capacity(config.tp_blocks);
         for index in 0..config.tp_blocks {
-            tp_encoder.push(EncoderLayer::load(
+            tp_encoder.push(SanmEncoderLayer::load(
                 &weights,
                 &format!("encoder.tp_encoders.{index}"),
                 config.output_size,
-                &config,
+                &sanm,
             )?);
         }
-        let tp_norm = LayerNorm::load(&weights, "encoder.tp_norm", config.output_size)?;
+        let tp_norm = LayerNorm::load(
+            &weights,
+            "encoder.tp_norm",
+            config.output_size,
+            LAYER_NORM_EPS,
+        )?;
         let ctc = Linear::load(
             &weights,
             "ctc.ctc_lo",
             config.output_size,
             config.vocabulary,
+            true,
         )?;
         let (cmvn_means, cmvn_istd) = parse_mvn(&model_dir.join("am.mvn"), config.input_size)?;
         let pieces = parse_sentencepiece(&model_dir.join("chn_jpn_yue_eng_ko_spectok.bpe.model"))?;
@@ -423,218 +461,9 @@ fn capture_stage(
     });
 }
 
-struct Linear {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    input: usize,
-    output: usize,
-}
-
-impl Linear {
-    fn load(file: &SafetensorsFile, prefix: &str, input: usize, output: usize) -> Result<Self> {
-        Ok(Self {
-            weight: load_tensor(file, &format!("{prefix}.weight"), &[output, input])?,
-            bias: load_tensor(file, &format!("{prefix}.bias"), &[output])?,
-            input,
-            output,
-        })
-    }
-
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        ops::linear(
-            x,
-            &self.weight,
-            Some(&self.bias),
-            rows,
-            self.input,
-            self.output,
-        )
-    }
-}
-
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-}
-
-impl LayerNorm {
-    fn load(file: &SafetensorsFile, prefix: &str, width: usize) -> Result<Self> {
-        Ok(Self {
-            weight: load_tensor(file, &format!("{prefix}.weight"), &[width])?,
-            bias: load_tensor(file, &format!("{prefix}.bias"), &[width])?,
-            width,
-        })
-    }
-
-    fn apply(&self, x: &mut [f32], rows: usize) {
-        ops::layernorm(x, rows, self.width, &self.weight, Some(&self.bias), 1e-5);
-    }
-}
-
-struct SelfAttentionSanm {
-    qkv: Linear,
-    output: Linear,
-    fsmn_weight: Vec<f32>,
-    width: usize,
-    heads: usize,
-    kernel: usize,
-    left_padding: usize,
-}
-
-impl SelfAttentionSanm {
-    fn load(file: &SafetensorsFile, prefix: &str, input: usize, config: &Config) -> Result<Self> {
-        let width = config.output_size;
-        let kernel = config.fsmn_kernel;
-        let left_padding = (kernel - 1) / 2 + config.sanm_shift;
-        if left_padding > kernel - 1 {
-            return Err(bad_config("sanm_shift", "padding exceeds the FSMN kernel"));
-        }
-        Ok(Self {
-            qkv: Linear::load(file, &format!("{prefix}.linear_q_k_v"), input, 3 * width)?,
-            output: Linear::load(file, &format!("{prefix}.linear_out"), width, width)?,
-            fsmn_weight: load_tensor(
-                file,
-                &format!("{prefix}.fsmn_block.weight"),
-                &[width, 1, kernel],
-            )?,
-            width,
-            heads: config.attention_heads,
-            kernel,
-            left_padding,
-        })
-    }
-
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        let width = self.width;
-        let head_width = width / self.heads;
-        let qkv = self.qkv.forward(x, rows);
-        let mut attended = vec![0.0f32; rows * width];
-        let mut scores = vec![0.0f32; rows];
-        let scale = (head_width as f32).sqrt().recip();
-
-        for time in 0..rows {
-            for head in 0..self.heads {
-                for source in 0..rows {
-                    let mut dot = 0.0f32;
-                    for dim in 0..head_width {
-                        let col = head * head_width + dim;
-                        let q = qkv[time * 3 * width + col];
-                        let k = qkv[source * 3 * width + width + col];
-                        dot += q * k;
-                    }
-                    scores[source] = dot * scale;
-                }
-                ops::softmax_row(&mut scores);
-                for dim in 0..head_width {
-                    let col = head * head_width + dim;
-                    let mut sum = 0.0f32;
-                    for source in 0..rows {
-                        let value = qkv[source * 3 * width + 2 * width + col];
-                        sum += scores[source] * value;
-                    }
-                    attended[time * width + col] = sum;
-                }
-            }
-        }
-        let mut output = self.output.forward(&attended, rows);
-        for time in 0..rows {
-            for channel in 0..width {
-                let mut memory = 0.0f32;
-                for kernel_index in 0..self.kernel {
-                    let source = time as isize + kernel_index as isize - self.left_padding as isize;
-                    if source >= 0 && source < rows as isize {
-                        let value = qkv[source as usize * 3 * width + 2 * width + channel];
-                        memory += value * self.fsmn_weight[channel * self.kernel + kernel_index];
-                    }
-                }
-                let value = qkv[time * 3 * width + 2 * width + channel];
-                output[time * width + channel] += memory + value;
-            }
-        }
-        output
-    }
-}
-
-struct EncoderLayer {
-    norm1: LayerNorm,
-    norm2: LayerNorm,
-    attention: SelfAttentionSanm,
-    ff1: Linear,
-    ff2: Linear,
-    input: usize,
-    output: usize,
-}
-
-impl EncoderLayer {
-    fn load(file: &SafetensorsFile, prefix: &str, input: usize, config: &Config) -> Result<Self> {
-        let output = config.output_size;
-        let attention_prefix = format!("{prefix}.self_attn");
-        Ok(Self {
-            norm1: LayerNorm::load(file, &format!("{prefix}.norm1"), input)?,
-            norm2: LayerNorm::load(file, &format!("{prefix}.norm2"), output)?,
-            attention: SelfAttentionSanm::load(file, &attention_prefix, input, config)?,
-            ff1: Linear::load(
-                file,
-                &format!("{prefix}.feed_forward.w_1"),
-                output,
-                config.linear_units,
-            )?,
-            ff2: Linear::load(
-                file,
-                &format!("{prefix}.feed_forward.w_2"),
-                config.linear_units,
-                output,
-            )?,
-            input,
-            output,
-        })
-    }
-
-    fn forward(&self, input: &[f32], rows: usize) -> Vec<f32> {
-        let mut normalized = input.to_vec();
-        self.norm1.apply(&mut normalized, rows);
-        let attended = self.attention.forward(&normalized, rows);
-        let mut hidden = vec![0.0f32; rows * self.output];
-        if self.input == self.output {
-            for index in 0..hidden.len() {
-                hidden[index] = input[index] + attended[index];
-            }
-        } else {
-            hidden.copy_from_slice(&attended);
-        }
-
-        let residual = hidden.clone();
-        self.norm2.apply(&mut hidden, rows);
-        let mut feedforward = self.ff1.forward(&hidden, rows);
-        for value in &mut feedforward {
-            *value = value.max(0.0);
-        }
-        let mut feedforward = self.ff2.forward(&feedforward, rows);
-        for (value, skip) in feedforward.iter_mut().zip(residual) {
-            *value += skip;
-        }
-        feedforward
-    }
-}
-
 struct SentencePiece {
     text: String,
     kind: u64,
-}
-
-fn load_tensor(file: &SafetensorsFile, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
-    let descriptor = file.descriptor(name).ok_or_else(|| SpeechError::Tensor {
-        name: name.to_owned(),
-        why: "tensor is missing".into(),
-    })?;
-    if descriptor.shape != shape {
-        return Err(SpeechError::Tensor {
-            name: name.to_owned(),
-            why: format!("expected shape {shape:?}, got {:?}", descriptor.shape),
-        });
-    }
-    Ok(file.load_as_f32(name)?)
 }
 
 fn parse_mvn(path: &Path, width: usize) -> Result<(Vec<f32>, Vec<f32>)> {
@@ -796,44 +625,12 @@ fn parse_byte_piece(piece: &str) -> Option<u8> {
     u8::from_str_radix(value, 16).ok()
 }
 
-fn add_sinusoidal_positions(x: &mut [f32], rows: usize, width: usize, scale_width: usize) {
-    let scale = (scale_width as f32).sqrt();
-    let half = width / 2;
-    let log_increment = 10_000.0f32.ln() / (half - 1) as f32;
-    for row in 0..rows {
-        let position = (row + 1) as f32;
-        for dim in 0..half {
-            let inverse_timescale = (-log_increment * dim as f32).exp();
-            let phase = position * inverse_timescale;
-            x[row * width + dim] = x[row * width + dim] * scale + phase.sin();
-            x[row * width + half + dim] = x[row * width + half + dim] * scale + phase.cos();
-        }
-    }
-}
-
-fn argmax(row: &[f32]) -> usize {
-    let mut best_index = 0usize;
-    let mut best_value = f32::NEG_INFINITY;
-    for (index, &value) in row.iter().enumerate() {
-        if value > best_value {
-            best_value = value;
-            best_index = index;
-        }
-    }
-    best_index
-}
-
 fn greedy_ctc(logits: &[f32], frames: usize, vocab: usize) -> Vec<usize> {
-    let mut token_ids = Vec::new();
-    let mut previous = None;
+    let mut collapse = CtcCollapse::new(0);
     for frame in 0..frames {
-        let token = argmax(&logits[frame * vocab..(frame + 1) * vocab]);
-        if Some(token) != previous && token != 0 {
-            token_ids.push(token);
-        }
-        previous = Some(token);
+        collapse.push(argmax(&logits[frame * vocab..(frame + 1) * vocab]));
     }
-    token_ids
+    collapse.finish()
 }
 
 fn rich_tag(token: usize, kind: &str) -> String {
@@ -867,13 +664,6 @@ fn rich_tag(token: usize, kind: &str) -> String {
             _ => format!("token_{token}"),
         },
         _ => unreachable!("known SenseVoice tag kind"),
-    }
-}
-
-fn bad_config(field: &str, why: impl Into<String>) -> SpeechError {
-    SpeechError::BadConfig {
-        field: field.to_owned(),
-        why: why.into(),
     }
 }
 

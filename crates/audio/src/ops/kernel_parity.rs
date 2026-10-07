@@ -476,6 +476,240 @@ fn rope_tables_match_original_builder_bitwise() {
     }
 }
 
+/// Verbatim copy of the head-major half-split loop the S3, Qwen3-ASR and
+/// Granite decoders carried locally (`values [heads, rows, dim]`,
+/// `[rows, half]` tables).
+fn rope_neox_reference(
+    values: &mut [f32],
+    heads: usize,
+    seq: usize,
+    dim: usize,
+    rotary_dim: usize,
+    cos: &[f32],
+    sin: &[f32],
+) {
+    let half = rotary_dim / 2;
+    for h in 0..heads {
+        for t in 0..seq {
+            let base = (h * seq + t) * dim;
+            for d in 0..half {
+                let a = values[base + d];
+                let b = values[base + half + d];
+                let table = t * half + d;
+                values[base + d] = a * cos[table] - b * sin[table];
+                values[base + half + d] = b * cos[table] + a * sin[table];
+            }
+        }
+    }
+}
+
+/// The MOSS interleaved loop. GLM-ASR's copy writes its second output as
+/// `a * sin + b * cos`; IEEE addition is commutative, so the same bits
+/// come out, which `rope_interleaved_matches_both_local_forms` checks.
+#[allow(clippy::too_many_arguments)]
+fn rope_interleaved_reference(
+    x: &mut [f32],
+    heads: usize,
+    seq: usize,
+    dim: usize,
+    rotary_dim: usize,
+    cos: &[f32],
+    sin: &[f32],
+    glm_operand_order: bool,
+) {
+    let half = rotary_dim / 2;
+    for h in 0..heads {
+        for t in 0..seq {
+            let base = (h * seq + t) * dim;
+            for d in 0..half {
+                let a = x[base + 2 * d];
+                let b = x[base + 2 * d + 1];
+                let c = cos[t * half + d];
+                let s = sin[t * half + d];
+                x[base + 2 * d] = a * c - b * s;
+                // Clippy sees the two arms as the same expression; the test exists
+                // to prove the swapped operand order gives the same bits.
+                #[allow(clippy::if_same_then_else)]
+                let second = if glm_operand_order {
+                    a * s + b * c
+                } else {
+                    b * c + a * s
+                };
+                x[base + 2 * d + 1] = second;
+            }
+        }
+    }
+}
+
+#[test]
+fn rope_neox_matches_local_decoder_loops() {
+    let mut rng = Rng(0xC2B2_AE3D_27D4_EB4F);
+    // (heads, seq, dim, rotary_dim): full-width rotation, partial rotation
+    // with a pass-through tail, a single decode row, and an odd head count.
+    for &(heads, seq, dim, rotary) in &[
+        (1, 1, 2, 2),
+        (2, 5, 8, 8),
+        (3, 7, 16, 8),
+        (4, 1, 64, 64),
+        (16, 33, 128, 128),
+        (2, 9, 20, 12),
+    ] {
+        let x = rng.vec(heads * seq * dim);
+        let (cos, sin) = rope_tables(seq, rotary, 10_000.0);
+        let mut want = x.clone();
+        rope_neox_reference(&mut want, heads, seq, dim, rotary, &cos, &sin);
+        let mut got = x.clone();
+        rope_neox(&mut got, heads, seq, rotary, &cos, &sin);
+        assert_bits_eq(
+            &format!("rope_neox {heads}x{seq}x{dim}/{rotary}"),
+            &got,
+            &want,
+        );
+    }
+}
+
+#[test]
+fn rope_interleaved_matches_both_local_forms() {
+    let mut rng = Rng(0x1656_67B1_9E37_79F9);
+    for &(heads, seq, dim, rotary) in &[
+        (1, 1, 2, 2),
+        (2, 5, 8, 8),
+        (3, 7, 16, 8),
+        (16, 33, 128, 128),
+        (2, 9, 20, 12),
+    ] {
+        let x = rng.vec(heads * seq * dim);
+        let (cos, sin) = rope_tables(seq, rotary, 10_000.0);
+        let mut got = x.clone();
+        rope_interleaved(&mut got, heads, seq, rotary, &cos, &sin);
+        for glm in [false, true] {
+            let mut want = x.clone();
+            rope_interleaved_reference(&mut want, heads, seq, dim, rotary, &cos, &sin, glm);
+            assert_bits_eq(
+                &format!("rope_interleaved {heads}x{seq}x{dim}/{rotary} glm={glm}"),
+                &got,
+                &want,
+            );
+        }
+    }
+}
+
+/// MOSS's fused-QKV head split, verbatim: `qkv [seq, 3 * dim]` into one
+/// head-major plane per third.
+fn split_qkv_reference(
+    qkv: &[f32],
+    seq: usize,
+    heads: usize,
+    head_dim: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let dim = heads * head_dim;
+    let mut qh = vec![0.0f32; heads * seq * head_dim];
+    let mut kh = qh.clone();
+    let mut vh = qh.clone();
+    for h in 0..heads {
+        for t in 0..seq {
+            for d in 0..head_dim {
+                qh[(h * seq + t) * head_dim + d] = qkv[t * 3 * dim + h * head_dim + d];
+                kh[(h * seq + t) * head_dim + d] = qkv[t * 3 * dim + dim + h * head_dim + d];
+                vh[(h * seq + t) * head_dim + d] = qkv[t * 3 * dim + 2 * dim + h * head_dim + d];
+            }
+        }
+    }
+    (qh, kh, vh)
+}
+
+#[test]
+fn head_split_attention_merge_matches_the_per_head_loop() {
+    let mut rng = Rng(0x2545_F491_4F6C_DD1D);
+    for &(seq, heads, head_dim) in &[(1, 1, 2), (5, 2, 8), (9, 3, 16), (40, 4, 32), (130, 8, 64)] {
+        let dim = heads * head_dim;
+        let qkv = rng.vec(seq * 3 * dim);
+        let (qr, kr, vr) = split_qkv_reference(&qkv, seq, heads, head_dim);
+        let q = split_heads_strided(&qkv, 3 * dim, 0, seq, heads, head_dim);
+        let k = split_heads_strided(&qkv, 3 * dim, dim, seq, heads, head_dim);
+        let v = split_heads_strided(&qkv, 3 * dim, 2 * dim, seq, heads, head_dim);
+        assert_bits_eq("split q", &q, &qr);
+        assert_bits_eq("split k", &k, &kr);
+        assert_bits_eq("split v", &v, &vr);
+
+        // The dense (non-fused) split reads rows of `dim` floats.
+        let dense = rng.vec(seq * dim);
+        let plane = split_heads(&dense, seq, heads, head_dim);
+        for h in 0..heads {
+            for t in 0..seq {
+                let want = &dense[t * dim + h * head_dim..t * dim + (h + 1) * head_dim];
+                let got = &plane[(h * seq + t) * head_dim..(h * seq + t + 1) * head_dim];
+                assert_bits_eq("split_heads row", got, want);
+            }
+        }
+        assert_bits_eq(
+            "merge(split) roundtrip",
+            &merge_heads(&plane, seq, heads, head_dim),
+            &dense,
+        );
+
+        // The MOSS attention core: additive mask, per-head sdpa into a
+        // scratch Vec, copy into the output plane.
+        let mask: Vec<f32> = (0..seq * seq)
+            .map(|i| if (i / seq) < (i % seq) { f32::MIN } else { 0.0 })
+            .collect();
+        let scale = (head_dim as f32).powf(-0.5);
+        for with_mask in [false, true] {
+            let m = with_mask.then_some(&mask[..]);
+            let mut want = vec![0.0f32; qr.len()];
+            for h in 0..heads {
+                let plane = h * seq * head_dim;
+                let o = sdpa(
+                    &qr[plane..plane + seq * head_dim],
+                    &kr[plane..plane + seq * head_dim],
+                    &vr[plane..plane + seq * head_dim],
+                    m,
+                    seq,
+                    seq,
+                    head_dim,
+                    head_dim,
+                    scale,
+                );
+                want[plane..plane + o.len()].copy_from_slice(&o);
+            }
+            assert_bits_eq(
+                &format!("mha seq={seq} heads={heads} hd={head_dim} mask={with_mask}"),
+                &mha(&q, &k, &v, m, heads, seq, seq, head_dim, scale),
+                &want,
+            );
+        }
+    }
+}
+
+#[test]
+fn mha_handles_cross_attention_lengths() {
+    let mut rng = Rng(0x94D0_49BB_1331_11EB);
+    let (heads, seq_q, seq_kv, hd) = (3, 4, 11, 8);
+    let q = rng.vec(heads * seq_q * hd);
+    let k = rng.vec(heads * seq_kv * hd);
+    let v = rng.vec(heads * seq_kv * hd);
+    let mut want = vec![0.0f32; q.len()];
+    for h in 0..heads {
+        let o = sdpa(
+            &q[h * seq_q * hd..(h + 1) * seq_q * hd],
+            &k[h * seq_kv * hd..(h + 1) * seq_kv * hd],
+            &v[h * seq_kv * hd..(h + 1) * seq_kv * hd],
+            None,
+            seq_q,
+            seq_kv,
+            hd,
+            hd,
+            0.25,
+        );
+        want[h * seq_q * hd..(h + 1) * seq_q * hd].copy_from_slice(&o);
+    }
+    assert_bits_eq(
+        "mha cross",
+        &mha(&q, &k, &v, None, heads, seq_q, seq_kv, hd, 0.25),
+        &want,
+    );
+}
+
 /// Micro-benchmark for the shared kernels. Ignored by default; run with
 /// `cargo test -p turbospark-audio --release --lib -- --ignored --nocapture
 /// kernel_bench`. Reports the median of several runs after discarding a
@@ -543,4 +777,273 @@ fn kernel_bench() {
         println!("sdpa qh={qh} kv={kv} d={dq}: {ms:.3} ms");
     }
     println!("sink {sink}");
+}
+
+// ---------------------------------------------------------------------
+// Shared helpers lifted out of the codec/VAD/TTS families. Each
+// `*_reference` below is the family's original code, kept verbatim.
+// ---------------------------------------------------------------------
+
+/// mimi `layernorm_rows` (explicit loops, `0.0` start).
+fn layernorm_rows_reference(
+    x: &mut [f32],
+    frames: usize,
+    dim: usize,
+    w: &[f32],
+    b: &[f32],
+    eps: f32,
+) {
+    for t in 0..frames {
+        let mut mean = 0.0f32;
+        for c in 0..dim {
+            mean += x[c * frames + t];
+        }
+        mean /= dim as f32;
+        let mut var = 0.0f32;
+        for c in 0..dim {
+            let dd = x[c * frames + t] - mean;
+            var += dd * dd;
+        }
+        var /= dim as f32;
+        let inv = 1.0 / (var + eps).sqrt();
+        for c in 0..dim {
+            x[c * frames + t] = (x[c * frames + t] - mean) * inv * w[c] + b[c];
+        }
+    }
+}
+
+/// vocos `layernorm_affine_free`.
+fn layernorm_affine_free_reference(x: &mut [f32], ch: usize, frames: usize, eps: f32) {
+    for f in 0..frames {
+        let mut mean = 0.0f32;
+        for c in 0..ch {
+            mean += x[c * frames + f];
+        }
+        mean /= ch as f32;
+        let mut var = 0.0f32;
+        for c in 0..ch {
+            let d = x[c * frames + f] - mean;
+            var += d * d;
+        }
+        var /= ch as f32;
+        let inv = 1.0 / (var + eps).sqrt();
+        for c in 0..ch {
+            x[c * frames + f] = (x[c * frames + f] - mean) * inv;
+        }
+    }
+}
+
+/// vocos `layernorm_channels` (weight always, bias optional).
+fn layernorm_channels_reference(
+    x: &mut [f32],
+    ch: usize,
+    frames: usize,
+    w: &[f32],
+    b: Option<&[f32]>,
+    eps: f32,
+) {
+    for f in 0..frames {
+        let mut mean = 0.0f32;
+        for c in 0..ch {
+            mean += x[c * frames + f];
+        }
+        mean /= ch as f32;
+        let mut var = 0.0f32;
+        for c in 0..ch {
+            let d = x[c * frames + f] - mean;
+            var += d * d;
+        }
+        var /= ch as f32;
+        let inv = 1.0 / (var + eps).sqrt();
+        for c in 0..ch {
+            x[c * frames + f] = (x[c * frames + f] - mean) * inv * w[c] + b.map_or(0.0, |bb| bb[c]);
+        }
+    }
+}
+
+#[test]
+fn layernorm_cm_matches_family_references_bitwise() {
+    let mut rng = Rng(0x1357_9bdf_2468_ace1);
+    for &(ch, frames) in &[(1, 1), (2, 3), (8, 5), (64, 17), (96, 4), (257, 9)] {
+        for &eps in &[1e-5f32, 1e-6, 1e-4] {
+            let x = rng.vec(ch * frames);
+            let w = rng.vec(ch);
+            let b = rng.vec(ch);
+
+            let mut want = x.clone();
+            layernorm_rows_reference(&mut want, frames, ch, &w, &b, eps);
+            let mut got = x.clone();
+            layernorm_cm(&mut got, ch, frames, Some(&w), Some(&b), eps);
+            assert_bits_eq("mimi layernorm_rows", &got, &want);
+
+            let mut want = x.clone();
+            layernorm_affine_free_reference(&mut want, ch, frames, eps);
+            let mut got = x.clone();
+            layernorm_cm(&mut got, ch, frames, None, None, eps);
+            assert_bits_eq("vocos affine free", &got, &want);
+
+            let mut want = x.clone();
+            layernorm_channels_reference(&mut want, ch, frames, &w, None, eps);
+            let mut got = x.clone();
+            layernorm_cm(&mut got, ch, frames, Some(&w), None, eps);
+            assert_bits_eq("vocos channels, no bias", &got, &want);
+
+            let mut want = x.clone();
+            layernorm_channels_reference(&mut want, ch, frames, &w, Some(&b), eps);
+            let mut got = x.clone();
+            layernorm_cm(&mut got, ch, frames, Some(&w), Some(&b), eps);
+            assert_bits_eq("vocos channels, bias", &got, &want);
+        }
+    }
+}
+
+/// Constant frames (every channel equal) make the variance exactly zero
+/// and exercise the `-0.0`/`0.0` corner of the channel sum, including a
+/// column of negative zeros.
+#[test]
+fn layernorm_cm_degenerate_columns_match_references_bitwise() {
+    let ch = 6;
+    let frames = 4;
+    let w = [1.5f32, -2.0, 0.0, 0.25, -0.0, 3.0];
+    let b = [0.5f32, -0.5, 0.0, 1.0, 2.0, -3.0];
+    let mut x = vec![0.0f32; ch * frames];
+    let col_values = [0.0f32, -0.0, 3.5, -2.25];
+    for c in 0..ch {
+        for (t, v) in col_values.iter().enumerate() {
+            x[c * frames + t] = *v;
+        }
+    }
+    let mut want = x.clone();
+    layernorm_rows_reference(&mut want, frames, ch, &w, &b, 1e-5);
+    let mut got = x.clone();
+    layernorm_cm(&mut got, ch, frames, Some(&w), Some(&b), 1e-5);
+    assert_bits_eq("loop reference", &got, &want);
+
+    // The vocos forms: weight with and without bias, and affine-free.
+    let mut want = x.clone();
+    layernorm_channels_reference(&mut want, ch, frames, &w, None, 1e-6);
+    let mut got = x.clone();
+    layernorm_cm(&mut got, ch, frames, Some(&w), None, 1e-6);
+    assert_bits_eq("vocos no bias", &got, &want);
+    let mut want = x.clone();
+    layernorm_affine_free_reference(&mut want, ch, frames, 1e-6);
+    let mut got = x.clone();
+    layernorm_cm(&mut got, ch, frames, None, None, 1e-6);
+    assert_bits_eq("vocos affine free", &got, &want);
+}
+
+#[test]
+fn sigmoid_and_elu_match_inline_originals_bitwise() {
+    let mut rng = Rng(0x0dd_ba11_f00d);
+    let mut xs = rng.vec(4096);
+    xs.extend([
+        0.0, -0.0, 1e-30, -1e-30, 20.0, -20.0, 88.0, -88.0, 104.0, -104.0,
+    ]);
+    for &v in &xs {
+        let want = 1.0 / (1.0 + (-v).exp());
+        assert_eq!(sigmoid(v).to_bits(), want.to_bits(), "sigmoid({v})");
+    }
+    // encodec / mimi `elu`, verbatim.
+    fn elu_reference(x: &mut [f32]) {
+        for v in x.iter_mut() {
+            if *v <= 0.0 {
+                *v = v.exp() - 1.0;
+            }
+        }
+    }
+    let mut want = xs.clone();
+    elu_reference(&mut want);
+    let mut got = xs.clone();
+    elu(&mut got);
+    assert_bits_eq("elu", &got, &want);
+}
+
+// The dense loops are the originals (MiMo bin-outer, Vocos band-outer, both
+// from +0.0), kept index-for-index. The shared projector must reproduce them
+// for the non-negative finite magnitudes both front ends feed it.
+#[allow(clippy::needless_range_loop)]
+#[test]
+fn mel_projector_matches_both_dense_front_end_loops_bitwise() {
+    use crate::mel::{mel_projector_cached, MelScale};
+    let mut rng = Rng(0x0bad_cafe_d00d_f00d);
+    for &(n_mels, nfft, sr, fmin, fmax) in &[
+        (100usize, 1024usize, 24_000u32, 0.0f32, None),
+        (128, 960, 24_000, 0.0, None),
+        (80, 400, 16_000, 20.0, Some(7600.0f32)),
+    ] {
+        let projector = mel_projector_cached(n_mels, nfft, sr, fmin, fmax, MelScale::Htk).unwrap();
+        let fb = projector.filterbank();
+        assert_eq!(fb.num_mels, n_mels);
+        let bins = fb.num_bins;
+        // Magnitude-like input: non-negative with exact zeros.
+        let frames = 5;
+        let mags: Vec<f32> = rng.vec(bins * frames).iter().map(|v| v.abs()).collect();
+        for f in 0..frames {
+            let mut want_mimo = vec![0.0f32; n_mels];
+            for b in 0..bins {
+                let mag = mags[b * frames + f];
+                for (m, slot) in want_mimo.iter_mut().enumerate() {
+                    *slot += mag * fb.weights[m * bins + b];
+                }
+            }
+            let mut want_vocos = vec![0.0f32; n_mels];
+            for m in 0..n_mels {
+                let weights = &fb.weights[m * bins..(m + 1) * bins];
+                let mut acc = 0.0f32;
+                for b in 0..bins {
+                    acc += mags[b * frames + f] * weights[b];
+                }
+                want_vocos[m] = acc;
+            }
+            let spectrum: Vec<f32> = (0..bins).map(|b| mags[b * frames + f]).collect();
+            let mut got = Vec::new();
+            projector.project_into(&spectrum, &mut got).unwrap();
+            assert_bits_eq("mimo dense loop", &got, &want_mimo);
+            assert_bits_eq("vocos dense loop", &got, &want_vocos);
+        }
+    }
+}
+
+/// kokoro's per-channel inline snake loop, verbatim, against `ops::snake`.
+#[test]
+fn ops_snake_matches_kokoro_inline_snake_bitwise() {
+    let mut rng = Rng(0x5eed_0f5a_4e00_0001);
+    let (c, seq) = (7, 33);
+    let x = rng.vec(c * seq);
+    // Alphas must be nonzero in the checkpoint; keep them away from 0.
+    let alpha: Vec<f32> = rng.vec(c).iter().map(|v| v + 8.5).collect();
+    let mut want = x.clone();
+    for ch in 0..c {
+        let a1 = alpha[ch];
+        for v in &mut want[ch * seq..(ch + 1) * seq] {
+            *v += (a1 * *v).sin().powi(2) / a1;
+        }
+    }
+    let mut got = x.clone();
+    snake(&mut got, &alpha[..c], c, seq);
+    assert_bits_eq("kokoro snake", &got, &want);
+}
+
+/// dacvae's local snake, verbatim, against `codec::wnconv::snake1d`.
+#[test]
+fn snake1d_matches_dacvae_local_snake_bitwise() {
+    let mut rng = Rng(0x00da_c0de_1234_5678);
+    let (c, seq) = (6, 41);
+    let x = rng.vec(c * seq);
+    // Includes a zero alpha: the 1e-9 guard must behave identically.
+    let mut alpha: Vec<f32> = rng.vec(c);
+    alpha[0] = 0.0;
+    alpha[1] = -1e-9;
+    let mut want = x.clone();
+    for ch in 0..c {
+        let a = alpha[ch];
+        let recip = 1.0 / (a + 1e-9);
+        for f in 0..seq {
+            let v = &mut want[ch * seq + f];
+            *v += recip * (a * *v).sin().powi(2);
+        }
+    }
+    let mut got = x.clone();
+    crate::codec::wnconv::snake1d(&mut got, &alpha, c, seq);
+    assert_bits_eq("dacvae snake", &got, &want);
 }

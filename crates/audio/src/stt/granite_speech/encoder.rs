@@ -23,6 +23,7 @@
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::{LayerNorm, Linear};
 use crate::ops;
 use crate::{Result, SpeechError};
 
@@ -61,12 +62,12 @@ fn load_linear(
     input: usize,
     output: usize,
 ) -> Result<Linear> {
-    Ok(Linear {
-        weight: load_vector(files, &format!("{base}.weight"), input * output)?,
-        bias: Some(load_vector(files, &format!("{base}.bias"), output)?),
+    Ok(Linear::new(
+        load_vector(files, &format!("{base}.weight"), input * output)?,
+        Some(load_vector(files, &format!("{base}.bias"), output)?),
         input,
         output,
-    })
+    ))
 }
 
 /// Loads one bias-free linear weight in `[out, in]` layout, refusing a
@@ -83,69 +84,29 @@ fn load_bias_free_linear(
             why: format!("{base} must stay bias-free like the reference projection"),
         });
     }
-    Ok(Linear {
-        weight: load_vector(files, &format!("{base}.weight"), input * output)?,
-        bias: None,
+    Ok(Linear::new(
+        load_vector(files, &format!("{base}.weight"), input * output)?,
+        None,
         input,
         output,
-    })
+    ))
 }
 
-#[derive(Debug, Clone)]
-struct Linear {
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-    input: usize,
-    output: usize,
+/// Applies the linear over channel-major input `[input, frames]`,
+/// returning channel-major `[output, frames]`.
+fn linear_channels(layer: &Linear, x: &[f32], frames: usize) -> Vec<f32> {
+    debug_assert_eq!(x.len() % layer.input, 0);
+    let rows_layout = transpose_to_rows(x, frames, layer.input);
+    let out = layer.forward(&rows_layout, frames);
+    transpose_to_channels(&out, frames, layer.output)
 }
 
-impl Linear {
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        ops::linear(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            rows,
-            self.input,
-            self.output,
-        )
-    }
-
-    /// Applies the linear over channel-major input `[input, frames]`,
-    /// returning channel-major `[output, frames]`.
-    fn forward_channels(&self, x: &[f32], frames: usize) -> Vec<f32> {
-        debug_assert_eq!(x.len() % self.input, 0);
-        let rows_layout = transpose_to_rows(x, frames, self.input);
-        let out = self.forward(&rows_layout, frames);
-        transpose_to_channels(&out, frames, self.output)
-    }
-}
-
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-}
-
-impl LayerNorm {
-    fn load(files: &[SafetensorsFile], base: &str, width: usize) -> Result<Self> {
-        Ok(Self {
-            weight: load_vector(files, &format!("{base}.weight"), width)?,
-            bias: load_vector(files, &format!("{base}.bias"), width)?,
-            width,
-        })
-    }
-
-    fn apply(&self, values: &mut [f32], rows: usize) {
-        ops::layernorm(
-            values,
-            rows,
-            self.width,
-            &self.weight,
-            Some(&self.bias),
-            NORM_EPS,
-        );
-    }
+fn load_layer_norm(files: &[SafetensorsFile], base: &str, width: usize) -> Result<LayerNorm> {
+    Ok(LayerNorm::new(
+        load_vector(files, &format!("{base}.weight"), width)?,
+        Some(load_vector(files, &format!("{base}.bias"), width)?),
+        NORM_EPS,
+    ))
 }
 
 /// BatchNorm1d in inference form, precomputed to per-channel scale and
@@ -212,7 +173,7 @@ impl ConformerAttention {
     ) -> Result<Self> {
         let inner = config.num_heads * config.dim_head;
         Ok(Self {
-            pre_norm: LayerNorm::load(files, &format!("{base}.pre_norm"), config.hidden_dim)?,
+            pre_norm: load_layer_norm(files, &format!("{base}.pre_norm"), config.hidden_dim)?,
             to_q: load_bias_free_linear(files, &format!("{base}.to_q"), config.hidden_dim, inner)?,
             to_kv: load_bias_free_linear(
                 files,
@@ -357,7 +318,7 @@ impl ConformerFeedForward {
     ) -> Result<Self> {
         let wide = config.hidden_dim * config.feedforward_mult;
         Ok(Self {
-            pre_norm: LayerNorm::load(files, &format!("{base}.pre_norm"), config.hidden_dim)?,
+            pre_norm: load_layer_norm(files, &format!("{base}.pre_norm"), config.hidden_dim)?,
             up: load_linear(files, &format!("{base}.up_proj"), config.hidden_dim, wide)?,
             down: load_linear(files, &format!("{base}.down_proj"), wide, config.hidden_dim)?,
         })
@@ -391,7 +352,7 @@ impl ConformerConvModule {
     ) -> Result<Self> {
         let inner = config.hidden_dim * config.conv_expansion_factor;
         Ok(Self {
-            norm: LayerNorm::load(files, &format!("{base}.norm"), config.hidden_dim)?,
+            norm: load_layer_norm(files, &format!("{base}.norm"), config.hidden_dim)?,
             up_conv: load_linear(
                 files,
                 &format!("{base}.up_conv"),
@@ -422,7 +383,7 @@ impl ConformerConvModule {
         self.norm.apply(&mut normalized, rows);
         // Channel-major [hidden, rows] for the pointwise convolutions.
         let channels = transpose_to_channels(&normalized, rows, self.hidden);
-        let wide = self.up_conv.forward_channels(&channels, rows);
+        let wide = linear_channels(&self.up_conv, &channels, rows);
         // GLU: the first half gates the second half channelwise.
         let mut gated = vec![0.0f32; self.channels * rows];
         for channel in 0..self.channels {
@@ -450,7 +411,7 @@ impl ConformerConvModule {
         );
         self.batch_norm.apply(&mut deep, rows);
         ops::silu(&mut deep);
-        let projected = self.down_conv.forward_channels(&deep, rows);
+        let projected = linear_channels(&self.down_conv, &deep, rows);
         Ok(transpose_to_rows(&projected, rows, self.hidden))
     }
 }
@@ -494,7 +455,7 @@ impl ConformerBlock {
             attn: ConformerAttention::load(files, &format!("{base}.attn"), config)?,
             conv: ConformerConvModule::load(files, &format!("{base}.conv"), config)?,
             ff2: ConformerFeedForward::load(files, &format!("{base}.ff2"), config)?,
-            post_norm: LayerNorm::load(files, &format!("{base}.post_norm"), config.hidden_dim)?,
+            post_norm: load_layer_norm(files, &format!("{base}.post_norm"), config.hidden_dim)?,
         })
     }
 

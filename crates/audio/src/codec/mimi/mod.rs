@@ -21,6 +21,7 @@
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{load_bias, load_mlx_conv_weight, BiasMode, Conv1d};
 use crate::codec::wnconv::load_f32_shaped;
 use crate::ops;
 use crate::{Result, SpeechError};
@@ -267,15 +268,6 @@ impl MimiConfig {
     }
 }
 
-/// ELU with alpha 1 (`nn.elu`).
-fn elu(x: &mut [f32]) {
-    for v in x.iter_mut() {
-        if *v <= 0.0 {
-            *v = v.exp() - 1.0;
-        }
-    }
-}
-
 /// The reference `get_extra_padding_for_conv1d`.
 fn extra_padding(len: usize, ksize: usize, stride: usize, padding_total: usize) -> usize {
     let nframes = (len + padding_total).saturating_sub(ksize) as f64 / stride as f64 + 1.0;
@@ -290,41 +282,10 @@ fn causal_pad_amounts(len: usize, k_eff: usize, stride: usize) -> (usize, usize)
     (padding_total, extra)
 }
 
-/// A plain conv1d over channel-major `[ch, seq]` with the stored MLX
-/// weight `[out, K, in]` (converted at load).
-struct MimiConv1d {
-    in_ch: usize,
-    out_ch: usize,
-    kernel: usize,
-    stride: usize,
-    dilation: usize,
-    /// PyTorch layout `[out, in, K]`.
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-impl MimiConv1d {
-    fn load(file: &SafetensorsFile, name: &str) -> Result<Self> {
-        load_conv_named(file, name, 1)
-    }
-
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            0,
-            self.dilation,
-            1,
-        )
-    }
-}
-
-fn load_conv_named(file: &SafetensorsFile, name: &str, groups: usize) -> Result<MimiConv1d> {
+/// Plain conv1d over channel-major `[ch, seq]`: loads the stored MLX
+/// weight `[out, K, in]` and converts it at load. Every Mimi conv is
+/// ungrouped; stride and dilation are set by the caller afterwards.
+fn load_conv_named(file: &SafetensorsFile, name: &str) -> Result<Conv1d> {
     let desc = file.descriptor(name).ok_or_else(|| SpeechError::Tensor {
         name: name.to_string(),
         why: "missing conv weight".to_string(),
@@ -335,29 +296,18 @@ fn load_conv_named(file: &SafetensorsFile, name: &str, groups: usize) -> Result<
             why: format!("expected 3-D conv weight, got {:?}", desc.shape),
         });
     }
-    let (out_ch, kernel, in_g) = (desc.shape[0], desc.shape[1], desc.shape[2]);
-    let in_ch = in_g * groups;
-    let v = load_f32_shaped(file, name, &[out_ch, kernel, in_g])?;
-    let mut weight = vec![0.0f32; out_ch * in_ch * kernel];
-    for o in 0..out_ch {
-        for k in 0..kernel {
-            for i in 0..in_g {
-                weight[o * in_ch * kernel + i * kernel + k] = v[o * kernel * in_g + k * in_g + i];
-            }
-        }
-    }
+    let (out_ch, kernel, in_ch) = (desc.shape[0], desc.shape[1], desc.shape[2]);
+    let weight = load_mlx_conv_weight(file, name, out_ch, kernel, in_ch)?;
     let bias_name = format!("{}.bias", name.strip_suffix(".weight").unwrap_or(name));
-    let bias = if file.contains_tensor(&bias_name) {
-        Some(load_f32_shaped(file, &bias_name, &[out_ch])?)
-    } else {
-        None
-    };
-    Ok(MimiConv1d {
+    let bias = load_bias(file, &bias_name, out_ch, BiasMode::Optional)?;
+    Ok(Conv1d {
         in_ch,
         out_ch,
         kernel,
         stride: 1,
+        padding: 0,
         dilation: 1,
+        groups: 1,
         weight,
         bias,
     })
@@ -365,7 +315,7 @@ fn load_conv_named(file: &SafetensorsFile, name: &str, groups: usize) -> Result<
 
 /// Causal conv with the reference extra-padding formula and pad mode.
 struct StreamableConv1d {
-    conv: MimiConv1d,
+    conv: Conv1d,
     causal: bool,
     reflect_edge: bool,
 }
@@ -456,11 +406,7 @@ impl StreamableConvTranspose1d {
             }
         }
         let bias_name = format!("{}.bias", name.strip_suffix(".weight").unwrap_or(name));
-        let bias = if file.contains_tensor(&bias_name) {
-            Some(load_f32_shaped(file, &bias_name, &[out_ch])?)
-        } else {
-            None
-        };
+        let bias = load_bias(file, &bias_name, out_ch, BiasMode::Optional)?;
         Ok(StreamableConvTranspose1d {
             in_ch,
             out_ch,
@@ -509,7 +455,7 @@ impl SeanetResnetBlock {
         let mut h = x.to_vec();
         for conv in &self.block {
             let mut a = h;
-            elu(&mut a);
+            ops::elu(&mut a);
             h = conv.forward(&a)?;
         }
         Ok(h.iter().zip(x).map(|(a, b)| a + b).collect())
@@ -527,7 +473,7 @@ impl EncoderLayer {
         for r in &self.residuals {
             h = r.forward(&h)?;
         }
-        elu(&mut h);
+        ops::elu(&mut h);
         self.downsample.forward(&h)
     }
 }
@@ -544,7 +490,7 @@ impl SeanetEncoder {
         for layer in &self.layers {
             h = layer.forward(&h)?;
         }
-        elu(&mut h);
+        ops::elu(&mut h);
         self.final_conv1d.forward(&h)
     }
 }
@@ -557,7 +503,7 @@ struct DecoderLayer {
 impl DecoderLayer {
     fn forward(&self, x: &[f32]) -> Result<Vec<f32>> {
         let mut h = x.to_vec();
-        elu(&mut h);
+        ops::elu(&mut h);
         let h = self.upsample.forward(&h);
         let mut h = h;
         for r in &self.residuals {
@@ -579,7 +525,7 @@ impl SeanetDecoder {
         for layer in &self.layers {
             h = layer.forward(&h)?;
         }
-        elu(&mut h);
+        ops::elu(&mut h);
         self.final_conv1d.forward(&h)
     }
 }
@@ -872,16 +818,31 @@ impl TransformerLayer {
         let d = self.d_model;
         // norm1 -> attention
         let mut n1 = x.to_vec();
-        layernorm_rows(&mut n1, frames, d, &self.norm1_w, &self.norm1_b, 1e-5);
+        ops::layernorm_cm(
+            &mut n1,
+            d,
+            frames,
+            Some(&self.norm1_w),
+            Some(&self.norm1_b),
+            1e-5,
+        );
         let attn = self.attention(&n1, frames, pos_offset);
-        for (t, a) in attn.iter().enumerate() {
+        for t in 0..frames {
+            let a = &attn[t * d..(t + 1) * d];
             for c in 0..d {
                 x[c * frames + t] += a[c] * self.layer_scale_1[c];
             }
         }
         // norm2 -> mlp
         let mut n2 = x.to_vec();
-        layernorm_rows(&mut n2, frames, d, &self.norm2_w, &self.norm2_b, 1e-5);
+        ops::layernorm_cm(
+            &mut n2,
+            d,
+            frames,
+            Some(&self.norm2_w),
+            Some(&self.norm2_b),
+            1e-5,
+        );
         let mlp = self.mlp(&n2, frames);
         for (t, a) in mlp.iter().enumerate() {
             for c in 0..d {
@@ -890,7 +851,8 @@ impl TransformerLayer {
         }
     }
 
-    fn attention(&self, x: &[f32], frames: usize, pos_offset: usize) -> Vec<Vec<f32>> {
+    /// `[frames, d]` rows, flat.
+    fn attention(&self, x: &[f32], frames: usize, pos_offset: usize) -> Vec<f32> {
         let d = self.d_model;
         let h = self.heads;
         let hd = self.head_dim;
@@ -923,14 +885,19 @@ impl TransformerLayer {
         // Traditional (interleaved) RoPE at the absolute positions:
         // pair (x[2i], x[2i+1]) rotated by position * base^(-2i/hd)
         // (the nn.RoPE(traditional=True) contract).
-        apply_traditional_rope(&mut q, h, frames, hd, pos_offset, self.rope_base);
-        apply_traditional_rope(&mut k, h, frames, hd, pos_offset, self.rope_base);
+        // The per-position cos/sin are built once for q and k instead of
+        // per head; each entry is the same expression the inline rotation
+        // evaluated.
+        let (cos, sin) = ops::rope_tables_range(pos_offset, frames, hd, self.rope_base);
+        ops::rope_interleaved(&mut q, h, frames, hd, &cos, &sin);
+        ops::rope_interleaved(&mut k, h, frames, hd, &cos, &sin);
         // Causal attention with the context bound.
         let scale = 1.0 / (hd as f32).sqrt();
         let mut out = vec![0.0f32; h * frames * hd];
+        let mut scores_buf = vec![0.0f32; frames];
         for head in 0..h {
             for t in 0..frames {
-                let mut scores = vec![0.0f32; t + 1];
+                let scores = &mut scores_buf[..t + 1];
                 for s in 0..=t {
                     let delta = pos_offset + t - (pos_offset + s);
                     let allowed = delta < self.context;
@@ -944,7 +911,7 @@ impl TransformerLayer {
                     }
                     scores[s] = acc * scale;
                 }
-                ops::softmax_row(&mut scores);
+                ops::softmax_row(scores);
                 for dd in 0..hd {
                     let mut acc = 0.0f32;
                     for s in 0..=t {
@@ -963,18 +930,16 @@ impl TransformerLayer {
                 }
             }
         }
-        let mut outs = Vec::with_capacity(frames);
+        let mut outs = vec![0.0f32; frames * d];
         for t in 0..frames {
-            let mut o = vec![0.0f32; d];
-            for (oi, ow) in o.iter_mut().enumerate() {
+            for oi in 0..d {
                 let wr = &self.out_proj_w[oi * d..(oi + 1) * d];
                 let mut acc = 0.0f32;
                 for c in 0..d {
                     acc += concat[t * d + c] * wr[c];
                 }
-                *ow = acc;
+                outs[t * d + oi] = acc;
             }
-            outs.push(o);
         }
         outs
     }
@@ -1008,55 +973,6 @@ impl TransformerLayer {
             outs.push(o);
         }
         outs
-    }
-}
-
-/// MLX `nn.RoPE(traditional=True)`: interleaved pairs rotated with
-/// per-pair frequencies `base^(-2i / dim)` at absolute positions
-/// `offset..offset + seq`. `x` is `[heads, seq, dim]`.
-fn apply_traditional_rope(
-    x: &mut [f32],
-    heads: usize,
-    seq: usize,
-    dim: usize,
-    offset: usize,
-    base: f32,
-) {
-    let half = dim / 2;
-    for head in 0..heads {
-        for t in 0..seq {
-            let position = (offset + t) as f32;
-            let ro = (head * seq + t) * dim;
-            for d in 0..half {
-                let freq = base.powf(-2.0 * d as f32 / dim as f32);
-                let angle = position * freq;
-                let (c, s) = (angle.cos(), angle.sin());
-                let a = x[ro + 2 * d];
-                let b = x[ro + 2 * d + 1];
-                x[ro + 2 * d] = a * c - b * s;
-                x[ro + 2 * d + 1] = b * c + a * s;
-            }
-        }
-    }
-}
-
-fn layernorm_rows(x: &mut [f32], frames: usize, dim: usize, w: &[f32], b: &[f32], eps: f32) {
-    for t in 0..frames {
-        let mut mean = 0.0f32;
-        for c in 0..dim {
-            mean += x[c * frames + t];
-        }
-        mean /= dim as f32;
-        let mut var = 0.0f32;
-        for c in 0..dim {
-            let dd = x[c * frames + t] - mean;
-            var += dd * dd;
-        }
-        var /= dim as f32;
-        let inv = 1.0 / (var + eps).sqrt();
-        for c in 0..dim {
-            x[c * frames + t] = (x[c * frames + t] - mean) * inv * w[c] + b[c];
-        }
     }
 }
 
@@ -1124,7 +1040,7 @@ impl Mimi {
         let ds_stride = (config.sample_rate
             / (config.seanet.ratios.iter().product::<usize>() as f32)
             / config.frame_rate) as usize;
-        let mut ds_conv = load_conv_named(file, "downsample.conv.conv.conv.weight", 1)?;
+        let mut ds_conv = load_conv_named(file, "downsample.conv.conv.conv.weight")?;
         ds_conv.stride = ds_stride;
         let downsample = StreamableConv1d {
             conv: ds_conv,
@@ -1156,7 +1072,7 @@ impl Mimi {
         let pad_edge = sn.pad_mode == "edge";
         let stream_conv =
             |name: String, stride: usize, dilation: usize| -> Result<StreamableConv1d> {
-                let mut conv = load_conv_named(file, &name, 1)?;
+                let mut conv = load_conv_named(file, &name)?;
                 conv.stride = stride;
                 conv.dilation = dilation;
                 Ok(StreamableConv1d {
@@ -1177,7 +1093,6 @@ impl Mimi {
                         let mut c = load_conv_named(
                             file,
                             &format!("encoder.layers.{li}.residuals.{ri}.block.0.conv.conv.weight"),
-                            1,
                         )?;
                         c.dilation = dilation;
                         StreamableConv1d {
@@ -1190,7 +1105,6 @@ impl Mimi {
                         conv: load_conv_named(
                             file,
                             &format!("encoder.layers.{li}.residuals.{ri}.block.1.conv.conv.weight"),
-                            1,
                         )?,
                         causal: sn.causal,
                         reflect_edge: pad_edge,
@@ -1223,7 +1137,7 @@ impl Mimi {
         let pad_edge = sn.pad_mode == "edge";
         let stream_conv =
             |name: String, stride: usize, dilation: usize| -> Result<StreamableConv1d> {
-                let mut conv = load_conv_named(file, &name, 1)?;
+                let mut conv = load_conv_named(file, &name)?;
                 conv.stride = stride;
                 conv.dilation = dilation;
                 Ok(StreamableConv1d {
@@ -1252,7 +1166,6 @@ impl Mimi {
                         let mut c = load_conv_named(
                             file,
                             &format!("decoder.layers.{li}.residuals.{ri}.block.0.conv.conv.weight"),
-                            1,
                         )?;
                         c.dilation = dilation;
                         StreamableConv1d {
@@ -1265,7 +1178,6 @@ impl Mimi {
                         conv: load_conv_named(
                             file,
                             &format!("decoder.layers.{li}.residuals.{ri}.block.1.conv.conv.weight"),
-                            1,
                         )?,
                         causal: sn.causal,
                         reflect_edge: pad_edge,

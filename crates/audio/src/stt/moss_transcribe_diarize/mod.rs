@@ -17,8 +17,9 @@ use std::path::Path;
 use serde_json::Value;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::bad_config;
 use crate::quant::QuantScheme;
-use crate::stt::qwen3_asr::decoder::Decoder;
+use crate::stt::qwen3_asr::decoder::{greedy_generate, Decoder};
 use crate::stt::qwen3_asr::load_tokenizer;
 use crate::whisper::{whisper_log_mel, WHISPER_WINDOW_SAMPLES};
 use crate::{Result, SpeechError};
@@ -357,7 +358,7 @@ impl MossTranscribeDiarize {
         }
 
         let rows = embeddings.len() / self.decoder.hidden_size;
-        let (mut last_hidden, mut cache) = self.decoder.prefill(&embeddings, rows);
+        let (last_hidden, cache) = self.decoder.prefill(&embeddings, rows);
         if let Some(stages) = stages.as_deref_mut() {
             stages.prefill_last_hidden = Some(last_hidden.clone());
         }
@@ -366,20 +367,15 @@ impl MossTranscribeDiarize {
             stages.first_logits = Some(top_logits(&logits));
         }
 
-        let mut generated: Vec<u32> = Vec::new();
-        let mut next = argmax(&logits);
-        for _ in 0..max_tokens {
-            if self.stop_ids.contains(&next) {
-                break;
-            }
-            generated.push(next);
-            let token_id = i32::try_from(next).map_err(|_| SpeechError::Input {
-                why: "MOSS generated token id exceeds signed 32-bit range".into(),
-            })?;
-            let next_embedding = self.decoder.embed(&[token_id])?;
-            last_hidden = self.decoder.step(&next_embedding, &mut cache);
-            next = argmax(&self.decoder.logits(&last_hidden));
-        }
+        let generated = greedy_generate(
+            &self.decoder,
+            &logits,
+            cache,
+            max_tokens,
+            |next| self.stop_ids.contains(&next),
+            "MOSS",
+            |_, _| {},
+        )?;
         if let Some(stages) = stages {
             stages.generated_token_ids = generated.clone();
         }
@@ -431,13 +427,6 @@ impl MossTranscribeDiarize {
             &self.digit_token_ids,
             audio_seq_len,
         )
-    }
-}
-
-fn bad_config(field: &str, error: impl std::fmt::Display) -> SpeechError {
-    SpeechError::BadConfig {
-        field: field.to_owned(),
-        why: error.to_string(),
     }
 }
 
@@ -539,20 +528,6 @@ fn compute_mel_features(samples: &[f32]) -> Result<(Vec<f32>, usize)> {
         values.extend_from_slice(frame);
     }
     Ok((values, frames))
-}
-
-fn argmax(logits: &[f32]) -> u32 {
-    logits
-        .iter()
-        .enumerate()
-        .fold((0usize, f32::NEG_INFINITY), |best, (id, &value)| {
-            if value > best.1 {
-                (id, value)
-            } else {
-                best
-            }
-        })
-        .0 as u32
 }
 
 fn top_logits(logits: &[f32]) -> FirstLogits {

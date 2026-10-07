@@ -11,10 +11,10 @@ use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::ops;
 use crate::quant::{is_quantized, QuantScheme};
-use crate::stt::qwen3_asr::decoder::Linear;
+use crate::stt::qwen3_asr::decoder::{load_linear, Linear};
 use crate::{Result, SpeechError};
 
-/// Placeholder scheme for [`Linear::load`]; every adaptor tensor is
+/// Placeholder scheme for [`load_linear`]; every adaptor tensor is
 /// unquantized in the verified profile, so the plain path never reads it.
 const UNUSED_SCHEME: QuantScheme = QuantScheme {
     bits: 4,
@@ -59,14 +59,14 @@ impl VqAdaptor {
         let norm_weight = load_exact(file, &format!("{prefix}.3.weight"), &[hidden_size])?;
         let norm_bias = load_exact(file, &format!("{prefix}.3.bias"), &[hidden_size])?;
         Ok(Self {
-            fc: Linear::load(
+            fc: load_linear(
                 file,
                 &format!("{prefix}.0"),
                 input_dim,
                 hidden_size,
                 UNUSED_SCHEME,
             )?,
-            proj: Linear::load(
+            proj: load_linear(
                 file,
                 &format!("{prefix}.2"),
                 hidden_size,

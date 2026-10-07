@@ -50,6 +50,62 @@ fn official_weight_norm_conversion_keeps_explicit_float32_exception() {
     assert_eq!(weight.data, vec![1.2, 1.6]);
 }
 
+#[test]
+fn weight_norm_fusion_passes_unpaired_tensors_through_unchanged() {
+    let tensor = |data: Vec<f32>, dtype| Tensor {
+        shape: vec![data.len()],
+        data,
+        dtype,
+    };
+    let fused = fuse_weight_norm_pairs(HashMap::from([
+        (
+            "plain.weight".to_string(),
+            tensor(vec![1.0, -2.0, 0.5], precision::DType::Bf16),
+        ),
+        (
+            "lone.weight_g".to_string(),
+            tensor(vec![7.0], precision::DType::F32),
+        ),
+        (
+            "lone2.weight_v".to_string(),
+            tensor(vec![0.25, 8.0], precision::DType::Bf16),
+        ),
+        (
+            "paired.weight_g".to_string(),
+            tensor(vec![2.0], precision::DType::Bf16),
+        ),
+        (
+            "paired.weight_v".to_string(),
+            Tensor {
+                data: vec![3.0, 4.0],
+                shape: vec![1, 2],
+                dtype: precision::DType::Bf16,
+            },
+        ),
+    ]));
+    let mut keys: Vec<&str> = fused.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "lone.weight_g",
+            "lone2.weight_v",
+            "paired.weight",
+            "plain.weight"
+        ]
+    );
+    let plain = &fused["plain.weight"];
+    assert_eq!(plain.data, vec![1.0, -2.0, 0.5]);
+    assert_eq!(plain.shape, vec![3]);
+    assert_eq!(plain.dtype, precision::DType::Bf16);
+    assert_eq!(fused["lone.weight_g"].data, vec![7.0]);
+    assert_eq!(fused["lone.weight_g"].dtype, precision::DType::F32);
+    assert_eq!(fused["lone2.weight_v"].data, vec![0.25, 8.0]);
+    assert_eq!(fused["lone2.weight_v"].dtype, precision::DType::Bf16);
+    // Pairs still fuse to float32 next to the pass-through entries.
+    assert_eq!(fused["paired.weight"].dtype, precision::DType::F32);
+}
+
 /// Read a little-endian f32 .npy (the sortformer reader convention).
 fn read_npy(name: &str) -> (Vec<usize>, Vec<f32>) {
     let bytes = std::fs::read(testdata(name)).expect(name);

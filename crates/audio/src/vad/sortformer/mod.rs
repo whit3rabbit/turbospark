@@ -1232,10 +1232,6 @@ fn split_heads(x: &[f32], t: usize, h: usize, dk: usize) -> Vec<f32> {
     out
 }
 
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
-}
-
 impl RelPosAttention {
     fn forward(
         &self,
@@ -1316,7 +1312,7 @@ impl ConformerFeedForward {
     fn forward(&self, x: &[f32], t: usize, d: usize, d_ff: usize) -> Vec<f32> {
         let mut h = ops::linear(x, &self.l1_w, self.l1_b.as_deref(), t, d, d_ff);
         for v in h.iter_mut() {
-            *v *= sigmoid(*v);
+            *v *= ops::sigmoid(*v);
         }
         ops::linear(&h, &self.l2_w, self.l2_b.as_deref(), t, d_ff, d)
     }
@@ -1348,7 +1344,7 @@ impl ConformerConvolution {
         let mut g = vec![0.0f32; d * t];
         for c in 0..d {
             for tt in 0..t {
-                g[c * t + tt] = pw1[c * t + tt] * sigmoid(pw1[(d + c) * t + tt]);
+                g[c * t + tt] = pw1[c * t + tt] * ops::sigmoid(pw1[(d + c) * t + tt]);
             }
         }
         let mut dw = ops::conv1d(
@@ -1373,7 +1369,7 @@ impl ConformerConvolution {
             }
         }
         for v in dw.iter_mut() {
-            *v *= sigmoid(*v);
+            *v *= ops::sigmoid(*v);
         }
         let pw2 = ops::conv1d(&dw, &self.pw2_w, self.pw2_b.as_deref(), d, d, 1, 1, 0, 1, 1);
         let mut out = vec![0.0f32; t * d];
@@ -1688,7 +1684,7 @@ impl SortformerModules {
             din,
             cfg.num_speakers,
         );
-        s.iter().map(|v| sigmoid(*v)).collect()
+        s.iter().map(|v| ops::sigmoid(*v)).collect()
     }
 }
 

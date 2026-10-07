@@ -14,18 +14,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Map, Value};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::tensor_error;
 use crate::{Result, SpeechError};
 
 fn bad(field: &str, why: impl Into<String>) -> SpeechError {
     SpeechError::BadConfig {
         field: field.to_string(),
-        why: why.into(),
-    }
-}
-
-fn tensor_error(name: &str, why: impl Into<String>) -> SpeechError {
-    SpeechError::Tensor {
-        name: name.to_string(),
         why: why.into(),
     }
 }

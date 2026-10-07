@@ -20,8 +20,12 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{
+    load_bias, load_mlx_conv_weight, load_mlx_convt_weight, BiasMode, Conv1d, ConvTranspose1d,
+};
 use crate::codec::wnconv::load_f32_shaped;
-use crate::{ops, Result, SpeechError};
+use crate::ops;
+use crate::{Result, SpeechError};
 
 /// Pinned mlx-audio commit this port was transcribed from.
 pub const REFERENCE_COMMIT: &str = "e1b19b9054bf163f5d812221a54fcc346f1890e9";
@@ -144,88 +148,51 @@ impl EncodecConfig {
     }
 }
 
-/// ELU with alpha 1 (`nn.ELU`).
-fn elu(x: &mut [f32]) {
-    for v in x.iter_mut() {
-        if *v <= 0.0 {
-            *v = v.exp() - 1.0;
-        }
+/// `(out, K, in)` of the conv weight at `{prefix}.conv.weight`, stored
+/// MLX layout `[out, K, in]` (weight norm already folded at conversion).
+fn plain_conv_dims(file: &SafetensorsFile, prefix: &str) -> Result<(usize, usize, usize)> {
+    let v_name = format!("{prefix}.conv.weight");
+    let desc = file
+        .descriptor(&v_name)
+        .ok_or_else(|| SpeechError::Tensor {
+            name: v_name.clone(),
+            why: "missing conv weight".to_string(),
+        })?;
+    if desc.shape.len() != 3 {
+        return Err(SpeechError::Tensor {
+            name: v_name.clone(),
+            why: format!("expected 3-D weight, got {:?}", desc.shape),
+        });
     }
+    Ok((desc.shape[0], desc.shape[1], desc.shape[2]))
 }
 
-/// Plain (weight-norm-folded at conversion) Conv1d, stored MLX layout
-/// `[out, K, in]`.
-struct PlainConv1d {
-    in_ch: usize,
-    out_ch: usize,
-    kernel: usize,
-    stride: usize,
-    dilation: usize,
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-impl PlainConv1d {
-    fn load(file: &SafetensorsFile, prefix: &str) -> Result<Self> {
-        let v_name = format!("{prefix}.conv.weight");
-        let desc = file
-            .descriptor(&v_name)
-            .ok_or_else(|| SpeechError::Tensor {
-                name: v_name.clone(),
-                why: "missing conv weight".to_string(),
-            })?;
-        if desc.shape.len() != 3 {
-            return Err(SpeechError::Tensor {
-                name: v_name.clone(),
-                why: format!("expected 3-D weight, got {:?}", desc.shape),
-            });
-        }
-        let (out_ch, kernel, in_ch) = (desc.shape[0], desc.shape[1], desc.shape[2]);
-        let v = load_f32_shaped(file, &v_name, &[out_ch, kernel, in_ch])?;
-        let bias = if file.contains_tensor(&format!("{prefix}.conv.bias")) {
-            Some(load_f32_shaped(
-                file,
-                &format!("{prefix}.conv.bias"),
-                &[out_ch],
-            )?)
-        } else {
-            None
-        };
-        // PyTorch layout [out, in, K] from stored [out, K, in].
-        let mut weight = vec![0.0f32; out_ch * in_ch * kernel];
-        for o in 0..out_ch {
-            for k in 0..kernel {
-                for i in 0..in_ch {
-                    weight[o * in_ch * kernel + i * kernel + k] =
-                        v[o * kernel * in_ch + k * in_ch + i];
-                }
-            }
-        }
-        Ok(PlainConv1d {
-            in_ch,
-            out_ch,
-            kernel,
-            stride: 1,
-            dilation: 1,
-            weight,
-            bias,
-        })
-    }
-
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            0,
-            self.dilation,
-            1,
-        )
-    }
+fn load_plain_conv(file: &SafetensorsFile, prefix: &str) -> Result<Conv1d> {
+    let (out_ch, kernel, in_ch) = plain_conv_dims(file, prefix)?;
+    let weight = load_mlx_conv_weight(
+        file,
+        &format!("{prefix}.conv.weight"),
+        out_ch,
+        kernel,
+        in_ch,
+    )?;
+    let bias = load_bias(
+        file,
+        &format!("{prefix}.conv.bias"),
+        out_ch,
+        BiasMode::Optional,
+    )?;
+    Ok(Conv1d {
+        in_ch,
+        out_ch,
+        kernel,
+        stride: 1,
+        padding: 0,
+        dilation: 1,
+        groups: 1,
+        weight,
+        bias,
+    })
 }
 
 /// Reflect or zero padding of `x [ch, seq]`, matching the reference's
@@ -279,7 +246,7 @@ fn pad1d(
 /// Conv1d with causal or asymmetric extra padding (the reference
 /// `EncodecConv1d`); `norm_type == "weight_norm"` means no norm module.
 struct EncodecConv1d {
-    conv: PlainConv1d,
+    conv: Conv1d,
     causal: bool,
     reflect: bool,
     /// Effective kernel with dilations.
@@ -299,7 +266,7 @@ impl EncodecConv1d {
         causal: bool,
         reflect: bool,
     ) -> Result<Self> {
-        let mut conv = PlainConv1d::load(file, prefix)?;
+        let mut conv = load_plain_conv(file, prefix)?;
         conv.stride = stride;
         conv.dilation = dilation;
         Ok(EncodecConv1d {
@@ -339,7 +306,7 @@ impl EncodecConv1d {
 
 /// ConvTranspose1d with the reference's post-conv trim.
 struct EncodecConvT1d {
-    conv: PlainConv1d,
+    conv: ConvTranspose1d,
     causal: bool,
     trim_right_ratio: f32,
     padding_total: usize,
@@ -354,22 +321,29 @@ impl EncodecConvT1d {
         causal: bool,
         trim_right_ratio: f32,
     ) -> Result<Self> {
-        let mut conv = PlainConv1d::load(file, prefix)?;
-        conv.stride = stride;
+        let (out_ch, k, in_ch) = plain_conv_dims(file, prefix)?;
         // MLX ConvTranspose1d stores [out, K, in] like conv1d, but the
         // op expects the PyTorch [in, out, K] orientation.
-        let (out_ch, k, in_ch) = (conv.out_ch, conv.kernel, conv.in_ch);
-        let mut weight = vec![0.0f32; in_ch * out_ch * k];
-        for o in 0..out_ch {
-            for kk in 0..k {
-                for i in 0..in_ch {
-                    weight[i * out_ch * k + o * k + kk] = conv.weight[o * in_ch * k + i * k + kk];
-                }
-            }
-        }
-        conv.weight = weight;
+        let weight =
+            load_mlx_convt_weight(file, &format!("{prefix}.conv.weight"), out_ch, k, in_ch)?;
+        let bias = load_bias(
+            file,
+            &format!("{prefix}.conv.bias"),
+            out_ch,
+            BiasMode::Optional,
+        )?;
         Ok(EncodecConvT1d {
-            conv,
+            conv: ConvTranspose1d {
+                in_ch,
+                out_ch,
+                kernel: k,
+                stride,
+                padding: 0,
+                output_padding: 0,
+                groups: 1,
+                weight,
+                bias,
+            },
             causal,
             trim_right_ratio,
             padding_total: kernel - stride,
@@ -377,18 +351,7 @@ impl EncodecConvT1d {
     }
 
     fn forward(&self, x: &[f32]) -> Vec<f32> {
-        let y = ops::conv_transpose1d(
-            x,
-            &self.conv.weight,
-            self.conv.bias.as_deref(),
-            self.conv.in_ch,
-            self.conv.out_ch,
-            self.conv.kernel,
-            self.conv.stride,
-            0,
-            0,
-            1,
-        );
+        let y = self.conv.forward(x);
         let ch = self.conv.out_ch;
         let out_len = y.len() / ch;
         let padding_right = if self.causal {
@@ -456,51 +419,60 @@ impl Lstm {
     fn forward(&self, x: &[f32]) -> Vec<f32> {
         let t = x.len() / self.in_dim;
         let h = self.hidden;
-        // Pre-map inputs: pre_x[t][j] = bias[j] + sum_i x[i, t] * wx[j, i].
-        let mut pre_x = vec![0.0f32; t * 4 * h];
-        for step in 0..t {
-            for j in 0..4 * h {
-                let mut acc = self.bias.as_deref().map_or(0.0, |b| b[j]);
-                let w_row = &self.wx[j * self.in_dim..(j + 1) * self.in_dim];
-                for i in 0..self.in_dim {
-                    acc += x[i * t + step] * w_row[i];
-                }
-                pre_x[step * 4 * h + j] = acc;
+        // Transpose once so each step's input projection reads one
+        // contiguous row; the sums still walk `i` ascending, bias first.
+        let mut x_rows = vec![0.0f32; t * self.in_dim];
+        for i in 0..self.in_dim {
+            for step in 0..t {
+                x_rows[step * self.in_dim + i] = x[i * t + step];
             }
         }
         let mut out = vec![0.0f32; h * t];
         let mut cell = vec![0.0f32; h];
+        // Hidden state of the previous step, kept contiguous (the strided
+        // `out` column holds the same values).
+        let mut h_prev = vec![0.0f32; h];
+        // pre[j] = bias[j] + sum_i x[i, step] * wx[j, i] for this step.
+        let mut pre = vec![0.0f32; 4 * h];
         // h_pre is the (4H) hidden-side gate input; the reference skips
         // the Wh multiply on step 0 (zeros), which is identical.
         let mut h_pre = vec![0.0f32; 4 * h];
         for step in 0..t {
+            let x_row = &x_rows[step * self.in_dim..(step + 1) * self.in_dim];
+            for j in 0..4 * h {
+                let mut acc = self.bias.as_deref().map_or(0.0, |b| b[j]);
+                let w_row = &self.wx[j * self.in_dim..(j + 1) * self.in_dim];
+                for i in 0..self.in_dim {
+                    acc += x_row[i] * w_row[i];
+                }
+                pre[j] = acc;
+            }
             if step > 0 {
                 // h_pre = h_prev @ wh.T: wh [4H, H], h_prev [H].
                 for j in 0..4 * h {
                     let mut acc = 0.0f32;
                     let w_row = &self.wh[j * h..(j + 1) * h];
                     for i in 0..h {
-                        acc += out[i * t + step - 1] * w_row[i];
+                        acc += h_prev[i] * w_row[i];
                     }
                     h_pre[j] = acc;
                 }
             }
-            // Gates in the kernel's stable form.
-            let mut new_hidden = vec![0.0f32; h];
+            // Gates in the kernel's stable form. `h_pre` is complete, so
+            // the new hidden value can overwrite `h_prev` in place.
             for i in 0..h {
-                let pi = h_pre[i] + pre_x[step * 4 * h + i];
-                let pf = h_pre[h + i] + pre_x[step * 4 * h + h + i];
-                let pg = h_pre[2 * h + i] + pre_x[step * 4 * h + 2 * h + i];
-                let po = h_pre[3 * h + i] + pre_x[step * 4 * h + 3 * h + i];
+                let pi = h_pre[i] + pre[i];
+                let pf = h_pre[h + i] + pre[h + i];
+                let pg = h_pre[2 * h + i] + pre[2 * h + i];
+                let po = h_pre[3 * h + i] + pre[3 * h + i];
                 let gi = stable_sigmoid(pi);
                 let gf = stable_sigmoid(pf);
                 let gg = pg.tanh();
                 let go = stable_sigmoid(po);
                 cell[i] = gf * cell[i] + gi * gg;
-                new_hidden[i] = go * cell[i].tanh();
-            }
-            for i in 0..h {
-                out[i * t + step] = new_hidden[i];
+                let new_hidden = go * cell[i].tanh();
+                h_prev[i] = new_hidden;
+                out[i * t + step] = new_hidden;
             }
         }
         out
@@ -605,10 +577,10 @@ impl ResnetBlock {
 
     fn forward(&self, x: &[f32]) -> Result<Vec<f32>> {
         let mut h = x.to_vec();
-        elu(&mut h);
+        ops::elu(&mut h);
         let h = self.first.forward(&h)?;
         let mut h = h;
-        elu(&mut h);
+        ops::elu(&mut h);
         let h = self.second.forward(&h)?;
         let sc = self.shortcut.forward(x)?;
         Ok(sc.iter().zip(h).map(|(a, b)| a + b).collect())
@@ -642,7 +614,7 @@ impl Encoder {
                 EncLayer::Conv(l) => h = l.forward(&h)?,
                 EncLayer::Resnet(l) => h = l.forward(&h)?,
                 EncLayer::Lstm(l) => h = l.forward(&h),
-                EncLayer::Elu => elu(&mut h),
+                EncLayer::Elu => ops::elu(&mut h),
             }
         }
         Ok(h)
@@ -662,7 +634,7 @@ impl Decoder {
                 DecLayer::ConvT(l) => h = l.forward(&h),
                 DecLayer::Resnet(l) => h = l.forward(&h)?,
                 DecLayer::Lstm(l) => h = l.forward(&h),
-                DecLayer::Elu => elu(&mut h),
+                DecLayer::Elu => ops::elu(&mut h),
             }
         }
         Ok(h)

@@ -22,7 +22,6 @@ use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::codec::wnconv::load_f32_shaped;
 use crate::fft::RealFftPlan;
-use crate::mel::{mel_filterbank, MelScale};
 use crate::ops;
 use crate::{AudioError, Result, SpeechError};
 
@@ -409,15 +408,24 @@ pub fn log_mel_spectrogram(samples: &[f32], cfg: &VocosMelConfig) -> Result<Vec<
     }
     // Drop the final frame (the reference slices freqs[:-1]).
     let frames_kept = num_frames - 1;
-    let filterbank = mel_filterbank(cfg.n_mels, n_fft, cfg.sample_rate, 0.0, None, MelScale::Htk)?;
+    let projector = crate::mel::mel_projector_cached(
+        cfg.n_mels,
+        n_fft,
+        cfg.sample_rate,
+        0.0,
+        None,
+        crate::mel::MelScale::Htk,
+    )?;
     let mut out = vec![0.0f32; cfg.n_mels * frames_kept];
-    for m in 0..cfg.n_mels {
-        let weights = &filterbank.weights[m * filterbank.num_bins..(m + 1) * filterbank.num_bins];
-        for f in 0..frames_kept {
-            let mut acc = 0.0f32;
-            for b in 0..bins {
-                acc += magnitudes[b * num_frames + f] * weights[b];
-            }
+    // `magnitudes` is bin-major; the projector wants one frame's spectrum.
+    let mut spectrum = vec![0.0f32; bins];
+    let mut band = Vec::with_capacity(cfg.n_mels);
+    for f in 0..frames_kept {
+        for (b, slot) in spectrum.iter_mut().enumerate() {
+            *slot = magnitudes[b * num_frames + f];
+        }
+        projector.project_into(&spectrum, &mut band)?;
+        for (m, &acc) in band.iter().enumerate() {
             let v = acc.max(1e-5);
             out[m * frames_kept + f] = v.ln();
         }
@@ -465,63 +473,13 @@ impl AdaLayerNorm {
             scale[c] = s;
             shift[c] = self.shift_bias[c];
         }
-        layernorm_affine_free(x, self.dim, frames, self.eps);
+        ops::layernorm_cm(x, self.dim, frames, None, None, self.eps);
         for f in 0..frames {
             for c in 0..self.dim {
                 x[c * frames + f] = x[c * frames + f] * scale[c] + shift[c];
             }
         }
         let _ = self.num_embeddings;
-    }
-}
-
-/// LayerNorm over the channel dimension of `x [ch, frames]` with no
-/// affine parameters (`mx.fast.layer_norm` with weight=None).
-fn layernorm_affine_free(x: &mut [f32], ch: usize, frames: usize, eps: f32) {
-    for f in 0..frames {
-        let mut mean = 0.0f32;
-        for c in 0..ch {
-            mean += x[c * frames + f];
-        }
-        mean /= ch as f32;
-        let mut var = 0.0f32;
-        for c in 0..ch {
-            let d = x[c * frames + f] - mean;
-            var += d * d;
-        }
-        var /= ch as f32;
-        let inv = 1.0 / (var + eps).sqrt();
-        for c in 0..ch {
-            x[c * frames + f] = (x[c * frames + f] - mean) * inv;
-        }
-    }
-}
-
-/// LayerNorm over channels of `x [ch, frames]` with affine weights.
-fn layernorm_channels(
-    x: &mut [f32],
-    ch: usize,
-    frames: usize,
-    w: &[f32],
-    b: Option<&[f32]>,
-    eps: f32,
-) {
-    for f in 0..frames {
-        let mut mean = 0.0f32;
-        for c in 0..ch {
-            mean += x[c * frames + f];
-        }
-        mean /= ch as f32;
-        let mut var = 0.0f32;
-        for c in 0..ch {
-            let d = x[c * frames + f] - mean;
-            var += d * d;
-        }
-        var /= ch as f32;
-        let inv = 1.0 / (var + eps).sqrt();
-        for c in 0..ch {
-            x[c * frames + f] = (x[c * frames + f] - mean) * inv * w[c] + b.map_or(0.0, |bb| bb[c]);
-        }
     }
 }
 
@@ -547,11 +505,11 @@ impl ConvNeXtBlock {
                 .unwrap_or_else(|| vec![0.0; adanorm.num_embeddings]);
             adanorm.forward(&mut h, &emb, frames);
         } else {
-            layernorm_channels(
+            ops::layernorm_cm(
                 &mut h,
                 dim,
                 frames,
-                &self.norm_w,
+                Some(&self.norm_w),
                 self.norm_b.as_deref(),
                 1e-6,
             );
@@ -631,11 +589,11 @@ impl Backbone {
                 .unwrap_or_else(|| vec![0.0; adanorm.num_embeddings]);
             adanorm.forward(&mut h, &emb, frames);
         } else {
-            layernorm_channels(
+            ops::layernorm_cm(
                 &mut h,
                 self.dim,
                 frames,
-                &self.norm_w,
+                Some(&self.norm_w),
                 self.norm_b.as_deref(),
                 1e-6,
             );
@@ -643,11 +601,11 @@ impl Backbone {
         for block in &self.blocks {
             block.forward(&mut h, frames, bandwidth_embedding);
         }
-        layernorm_channels(
+        ops::layernorm_cm(
             &mut h,
             self.dim,
             frames,
-            &self.final_norm_w,
+            Some(&self.final_norm_w),
             self.final_norm_b.as_deref(),
             1e-6,
         );

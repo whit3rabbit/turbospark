@@ -13,6 +13,7 @@ use tokenizers::AddedToken;
 use turbospark_model_io::safetensors::SafetensorsFile;
 use turbospark_tokenizer::Tokenizer;
 
+use crate::nn::bad_config;
 use crate::quant::QuantScheme;
 use crate::{Result, SpeechError};
 
@@ -160,43 +161,21 @@ impl Qwen3Asr {
                 .copy_from_slice(&audio_embeddings[source..source + self.decoder.hidden_size]);
         }
 
-        let stop_ids = ["<|im_end|>", "<|endoftext|>"]
-            .into_iter()
-            .filter_map(|token| self.tokenizer.token_to_id(token))
-            .collect::<Vec<_>>();
+        let stop_ids = decoder::chat_stop_ids(&self.tokenizer);
         let rows = embeddings.len() / self.decoder.hidden_size;
-        let (mut last_hidden, mut cache) = self.decoder.prefill(&embeddings, rows);
+        let (last_hidden, cache) = self.decoder.prefill(&embeddings, rows);
         let prefill_ms = started.elapsed().as_secs_f64() * 1_000.0;
         let started = Instant::now();
-        let mut generated = Vec::new();
-        for _ in 0..max_tokens {
-            let logits = self.decoder.logits(&last_hidden);
-            let next = logits
-                .iter()
-                .enumerate()
-                .fold((0usize, f32::NEG_INFINITY), |best, (id, &value)| {
-                    if value > best.1 {
-                        (id, value)
-                    } else {
-                        best
-                    }
-                })
-                .0;
-            let next = u32::try_from(next).map_err(|_| SpeechError::Input {
-                why: "Qwen3 generated token id exceeds u32 range".into(),
-            })?;
-            if stop_ids.contains(&next)
-                || (stop_ids.is_empty() && matches!(next, 151_645 | 151_643))
-            {
-                break;
-            }
-            generated.push(next);
-            let token_id = i32::try_from(next).map_err(|_| SpeechError::Input {
-                why: "Qwen3 generated token id exceeds signed 32-bit range".into(),
-            })?;
-            let next_embedding = self.decoder.embed(&[token_id])?;
-            last_hidden = self.decoder.step(&next_embedding, &mut cache);
-        }
+        let logits = self.decoder.logits(&last_hidden);
+        let generated = decoder::greedy_generate(
+            &self.decoder,
+            &logits,
+            cache,
+            max_tokens,
+            |next| decoder::is_chat_stop(&stop_ids, next),
+            "Qwen3",
+            |_, _| {},
+        )?;
         let decode_ms = started.elapsed().as_secs_f64() * 1_000.0;
         if profile {
             eprintln!(
@@ -299,13 +278,6 @@ pub fn transcript_from_tokens(
         decoded
     };
     Ok(text.trim().to_owned())
-}
-
-fn bad_config(field: &str, error: impl std::fmt::Display) -> SpeechError {
-    SpeechError::BadConfig {
-        field: field.to_owned(),
-        why: error.to_string(),
-    }
 }
 
 pub fn load_tokenizer(model_dir: &Path) -> Result<Tokenizer> {

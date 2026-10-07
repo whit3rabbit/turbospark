@@ -10,6 +10,8 @@ use serde_json::Value;
 use turbospark_audio::nemo_mel::{NemoMelNormalization, NemoMelOptions};
 use turbospark_audio::stft::StftOptions;
 
+use crate::nn::json::{bool_field, required, text_field, usize_field};
+use crate::nn::symmetric_hann;
 use crate::quant::QuantScheme;
 use crate::vad::sortformer::FcEncoderConfig;
 use crate::{Result, SpeechError};
@@ -41,43 +43,6 @@ fn bad(field: impl Into<String>, why: impl Into<String>) -> SpeechError {
         field: field.into(),
         why: why.into(),
     }
-}
-
-fn required<'a>(v: &'a Value, key: &str) -> Result<&'a Value> {
-    v.get(key)
-        .ok_or_else(|| bad(key, "missing from config.json"))
-}
-
-fn usize_field(v: &Value, key: &str) -> Result<usize> {
-    required(v, key)?
-        .as_u64()
-        .and_then(|n| usize::try_from(n).ok())
-        .filter(|&n| n > 0)
-        .ok_or_else(|| bad(key, "must be a positive integer fitting usize"))
-}
-
-fn text_field(v: &Value, key: &str) -> Result<String> {
-    required(v, key)?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| bad(key, "must be a string"))
-}
-
-fn bool_field(v: &Value, key: &str) -> Result<bool> {
-    required(v, key)?
-        .as_bool()
-        .ok_or_else(|| bad(key, "must be a boolean"))
-}
-
-fn symmetric_hann(size: usize) -> Vec<f32> {
-    if size <= 1 {
-        return vec![1.0; size];
-    }
-    (0..size)
-        .map(|i| {
-            (0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (size - 1) as f64).cos())) as f32
-        })
-        .collect()
 }
 
 impl CanaryConfig {

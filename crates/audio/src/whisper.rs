@@ -49,6 +49,28 @@ pub fn whisper_mel_filterbank(n_mels: usize) -> Result<crate::mel::MelFilterbank
     )
 }
 
+/// [`whisper_mel_filterbank`] from the shared cache, with per-band spans for
+/// fast projection: the same weights, built once per process.
+pub fn whisper_mel_projector(
+    n_mels: usize,
+) -> Result<std::sync::Arc<crate::mel::MelProjector>, AudioError> {
+    if n_mels != 80 && n_mels != 128 {
+        return Err(AudioError::InvalidParameter {
+            name: "n_mels".to_string(),
+            value: n_mels.to_string(),
+            why: "whisper models use 80 or 128 mel bands".to_string(),
+        });
+    }
+    crate::mel::mel_projector_cached(
+        n_mels,
+        WHISPER_N_FFT,
+        WHISPER_SAMPLE_RATE,
+        0.0,
+        Some(WHISPER_FMAX),
+        MelScale::Slaney,
+    )
+}
+
 /// Log-mel spectrogram for arbitrary-length PCM at 16 kHz, one row per
 /// frame: the log10/peak-clamp/normalize pipeline over the power mel
 /// spectrogram. For the fixed 30-second windows the encoder consumes, use
@@ -113,12 +135,14 @@ pub fn whisper_log_mel_window(samples: &[f32], n_mels: usize) -> Result<Vec<Vec<
 
 /// The reference's post-processing: `log10(max(x, 1e-10))`, clamp at the
 /// global peak minus 8, then `(x + 4) / 4`.
-fn normalize_log_mel(mel: Vec<Vec<f32>>) -> Result<Vec<Vec<f32>>, AudioError> {
+fn normalize_log_mel(mut mel: Vec<Vec<f32>>) -> Result<Vec<Vec<f32>>, AudioError> {
+    // Store the logged value in place so the output pass reuses it instead
+    // of taking log10 a second time (same input, same bits).
     let mut peak = f32::NEG_INFINITY;
-    for frame in &mel {
-        for &x in frame {
-            let logged = x.max(1e-10).log10();
-            peak = peak.max(logged);
+    for frame in &mut mel {
+        for x in frame.iter_mut() {
+            *x = x.max(1e-10).log10();
+            peak = peak.max(*x);
         }
     }
     if !peak.is_finite() {
@@ -129,15 +153,12 @@ fn normalize_log_mel(mel: Vec<Vec<f32>>) -> Result<Vec<Vec<f32>>, AudioError> {
         });
     }
     let clamp_at = peak - 8.0;
-    Ok(mel
-        .into_iter()
-        .map(|frame| {
-            frame
-                .into_iter()
-                .map(|x| ((x.max(1e-10).log10()).max(clamp_at) + 4.0) / 4.0)
-                .collect()
-        })
-        .collect())
+    for frame in &mut mel {
+        for x in frame.iter_mut() {
+            *x = (x.max(clamp_at) + 4.0) / 4.0;
+        }
+    }
+    Ok(mel)
 }
 
 #[cfg(test)]
@@ -307,5 +328,140 @@ mod tests {
         assert!(err.to_string().contains("80 or 128"), "{err}");
         let err = whisper_log_mel_window(&[0.0; 1000], 80).unwrap_err();
         assert!(err.to_string().contains("whisper window samples"), "{err}");
+    }
+}
+
+/// Bitwise parity of the single-log normalization, the cached projector,
+/// and the streaming mel path against the previous pipeline, retained
+/// verbatim in `old`.
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+    use crate::dsp::TestRng;
+
+    mod old {
+        use super::super::*;
+
+        /// `normalize_log_mel` before the log10 was stored once.
+        pub(super) fn normalize_log_mel(mel: Vec<Vec<f32>>) -> Result<Vec<Vec<f32>>, AudioError> {
+            let mut peak = f32::NEG_INFINITY;
+            for frame in &mel {
+                for &x in frame {
+                    let logged = x.max(1e-10).log10();
+                    peak = peak.max(logged);
+                }
+            }
+            if !peak.is_finite() {
+                return Err(AudioError::InvalidParameter {
+                    name: "mel".to_string(),
+                    value: "empty".to_string(),
+                    why: "spectrogram carries no frames".to_string(),
+                });
+            }
+            let clamp_at = peak - 8.0;
+            Ok(mel
+                .into_iter()
+                .map(|frame| {
+                    frame
+                        .into_iter()
+                        .map(|x| ((x.max(1e-10).log10()).max(clamp_at) + 4.0) / 4.0)
+                        .collect()
+                })
+                .collect())
+        }
+
+        /// The whole whisper frontend with a per-call filterbank, dense
+        /// projection, and fully materialized spectra.
+        pub(super) fn whisper_log_mel(
+            samples: &[f32],
+            n_mels: usize,
+        ) -> Result<Vec<Vec<f32>>, AudioError> {
+            let bank = whisper_mel_filterbank(n_mels)?;
+            let options = StftOptions {
+                fft_size: WHISPER_N_FFT,
+                hop: WHISPER_HOP,
+                window: crate::dsp::hann_window(WHISPER_N_FFT),
+                center: true,
+            };
+            let spectra = crate::stft::stft(samples, &options)?;
+            let mut mel = Vec::new();
+            for spectrum in spectra {
+                let power: Vec<f32> = spectrum
+                    .iter()
+                    .map(|c| c.re.hypot(c.im).powf(2.0))
+                    .collect();
+                mel.push(bank.project(&power)?);
+            }
+            mel.pop();
+            normalize_log_mel(mel)
+        }
+    }
+
+    #[test]
+    fn normalize_matches_old_bitwise() {
+        let mut rng = TestRng(0x00C0_FFEE_1234_5678);
+        for frames in [1usize, 3, 50] {
+            for width in [1usize, 7, 80] {
+                let mel: Vec<Vec<f32>> = (0..frames)
+                    .map(|_| {
+                        rng.vec(width)
+                            .into_iter()
+                            // Exact zeros and sub-floor values hit the clamp.
+                            .map(|v| if v.abs() < 0.01 { v * 1e-12 } else { v.abs() })
+                            .collect()
+                    })
+                    .collect();
+                let want = old::normalize_log_mel(mel.clone()).unwrap();
+                let got = normalize_log_mel(mel).unwrap();
+                for (g, w) in got.iter().flatten().zip(want.iter().flatten()) {
+                    assert_eq!(g.to_bits(), w.to_bits());
+                }
+                assert_eq!(got.len(), want.len());
+            }
+        }
+        // Empty and non-finite inputs refuse identically.
+        for mel in [vec![], vec![vec![]], vec![vec![f32::INFINITY]]] {
+            let want = old::normalize_log_mel(mel.clone()).map_err(|e| e.to_string());
+            let got = normalize_log_mel(mel).map_err(|e| e.to_string());
+            assert_eq!(got, want);
+        }
+    }
+
+    #[test]
+    fn whisper_log_mel_matches_old_pipeline_bitwise() {
+        let mut rng = TestRng(0x0BAD_5EED_F00D_0001);
+        for n_mels in [80usize, 128] {
+            for len in [3_200usize, 16_000, 40_001] {
+                let samples = rng.vec(len);
+                let got = whisper_log_mel(&samples, n_mels).unwrap();
+                let want = old::whisper_log_mel(&samples, n_mels).unwrap();
+                assert_eq!(got.len(), want.len());
+                for (f, (g, w)) in got.iter().zip(&want).enumerate() {
+                    assert_eq!(g.len(), w.len());
+                    for (b, (a, c)) in g.iter().zip(w).enumerate() {
+                        assert_eq!(
+                            a.to_bits(),
+                            c.to_bits(),
+                            "{n_mels} mels len {len} [{f}][{b}]"
+                        );
+                    }
+                }
+            }
+        }
+        let silent = vec![0.0f32; 16_000];
+        assert_eq!(
+            whisper_log_mel(&silent, 80).unwrap(),
+            old::whisper_log_mel(&silent, 80).unwrap()
+        );
+    }
+
+    #[test]
+    fn cached_projector_carries_the_whisper_weights() {
+        for n_mels in [80usize, 128] {
+            let projector = whisper_mel_projector(n_mels).unwrap();
+            let fresh = whisper_mel_filterbank(n_mels).unwrap();
+            assert_eq!(projector.filterbank(), &fresh);
+        }
+        assert!(whisper_mel_projector(64).is_err());
     }
 }

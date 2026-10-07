@@ -22,6 +22,7 @@ use std::path::Path;
 use serde_json::Value;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::bad_config;
 use crate::ops;
 use crate::{Result, SpeechError};
 
@@ -56,13 +57,6 @@ const MEL_CLAMP: f64 = 1e-5;
 /// upstream dataclass carries it; both MLX `nn.BatchNorm` and the
 /// transformers `BatchNorm1d` the conversion mirrors default to 1e-5.
 const BATCH_NORM_EPS: f32 = 1e-5;
-
-fn bad_config(field: &str, why: impl Into<String>) -> SpeechError {
-    SpeechError::BadConfig {
-        field: field.to_owned(),
-        why: why.into(),
-    }
-}
 
 fn positive(value: &Value, field: &str) -> Result<usize> {
     value

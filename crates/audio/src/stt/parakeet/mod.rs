@@ -15,7 +15,10 @@ use turbospark_audio::stft::StftOptions;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::models::vad::sortformer::{FastConformer, FcEncoderConfig};
-use crate::ops;
+use crate::nn::json::{bool_field, required, text_field, usize_field};
+use crate::nn::symmetric_hann;
+use crate::nn::Linear;
+use crate::stt::nemotron_asr::rnnt::{lstm_stack, Joint, LstmLayer};
 use crate::{Result, SpeechError};
 
 mod redux;
@@ -70,43 +73,6 @@ fn bad(field: impl Into<String>, why: impl Into<String>) -> SpeechError {
         field: field.into(),
         why: why.into(),
     }
-}
-
-fn required<'a>(v: &'a Value, key: &str) -> Result<&'a Value> {
-    v.get(key)
-        .ok_or_else(|| bad(key, "missing from config.json"))
-}
-
-fn usize_field(v: &Value, key: &str) -> Result<usize> {
-    required(v, key)?
-        .as_u64()
-        .and_then(|n| usize::try_from(n).ok())
-        .filter(|&n| n > 0)
-        .ok_or_else(|| bad(key, "must be a positive integer fitting usize"))
-}
-
-fn bool_field(v: &Value, key: &str) -> Result<bool> {
-    required(v, key)?
-        .as_bool()
-        .ok_or_else(|| bad(key, "must be a boolean"))
-}
-
-fn text_field(v: &Value, key: &str) -> Result<String> {
-    required(v, key)?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| bad(key, "must be a string"))
-}
-
-fn symmetric_hann(size: usize) -> Vec<f32> {
-    if size <= 1 {
-        return vec![1.0; size];
-    }
-    (0..size)
-        .map(|i| {
-            (0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (size - 1) as f64).cos())) as f32
-        })
-        .collect()
 }
 
 impl ParakeetConfig {
@@ -317,21 +283,10 @@ impl ParakeetConfig {
     }
 }
 
-struct LstmLayer {
-    input_weight: Vec<f32>,
-    recurrent_weight: Vec<f32>,
-    bias: Vec<f32>,
-}
-
 struct TdtDecoder {
     embedding: Vec<f32>,
     layers: Vec<LstmLayer>,
-    joint_encoder: Vec<f32>,
-    joint_encoder_bias: Vec<f32>,
-    joint_predictor: Vec<f32>,
-    joint_predictor_bias: Vec<f32>,
-    joint_output: Vec<f32>,
-    joint_output_bias: Vec<f32>,
+    joint_net: Joint,
 }
 
 fn load_checked(file: &SafetensorsFile, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
@@ -360,8 +315,8 @@ impl TdtDecoder {
             .map(|i| {
                 let prefix = format!("decoder.prediction.dec_rnn.lstm.{i}");
                 Ok(LstmLayer {
-                    input_weight: load_checked(file, &format!("{prefix}.Wx"), &[4 * h, h])?,
-                    recurrent_weight: load_checked(file, &format!("{prefix}.Wh"), &[4 * h, h])?,
+                    wx: load_checked(file, &format!("{prefix}.Wx"), &[4 * h, h])?,
+                    wh: load_checked(file, &format!("{prefix}.Wh"), &[4 * h, h])?,
                     bias: load_checked(file, &format!("{prefix}.bias"), &[4 * h])?,
                 })
             })
@@ -371,16 +326,34 @@ impl TdtDecoder {
         Ok(Self {
             embedding,
             layers,
-            joint_encoder: load_checked(
-                file,
-                "joint.enc.weight",
-                &[joint_h, cfg.encoder.hidden_size],
-            )?,
-            joint_encoder_bias: load_checked(file, "joint.enc.bias", &[joint_h])?,
-            joint_predictor: load_checked(file, "joint.pred.weight", &[joint_h, h])?,
-            joint_predictor_bias: load_checked(file, "joint.pred.bias", &[joint_h])?,
-            joint_output: load_checked(file, "joint.joint_net.2.weight", &[output_rows, joint_h])?,
-            joint_output_bias: load_checked(file, "joint.joint_net.2.bias", &[output_rows])?,
+            joint_net: Joint::new(
+                Linear::new(
+                    load_checked(
+                        file,
+                        "joint.enc.weight",
+                        &[joint_h, cfg.encoder.hidden_size],
+                    )?,
+                    Some(load_checked(file, "joint.enc.bias", &[joint_h])?),
+                    cfg.encoder.hidden_size,
+                    joint_h,
+                ),
+                Linear::new(
+                    load_checked(file, "joint.pred.weight", &[joint_h, h])?,
+                    Some(load_checked(file, "joint.pred.bias", &[joint_h])?),
+                    h,
+                    joint_h,
+                ),
+                Linear::new(
+                    load_checked(file, "joint.joint_net.2.weight", &[output_rows, joint_h])?,
+                    Some(load_checked(
+                        file,
+                        "joint.joint_net.2.bias",
+                        &[output_rows],
+                    )?),
+                    joint_h,
+                    output_rows,
+                ),
+            ),
         })
     }
 
@@ -397,69 +370,47 @@ impl TdtDecoder {
         } else {
             self.embedding[token * h..(token + 1) * h].to_vec()
         };
-        let mut next_hidden = Vec::with_capacity(self.layers.len());
-        let mut next_cell = Vec::with_capacity(self.layers.len());
-        let mut layer_input = input;
-        for (i, layer) in self.layers.iter().enumerate() {
-            let mut gates = ops::linear(
-                &layer_input,
-                &layer.input_weight,
-                Some(&layer.bias),
-                1,
-                h,
-                4 * h,
-            );
-            let recurrent = ops::linear(&hidden[i], &layer.recurrent_weight, None, 1, h, 4 * h);
-            for (gate, r) in gates.iter_mut().zip(recurrent) {
-                *gate += r;
-            }
-            let mut h_out = vec![0.0; h];
-            let mut c_out = vec![0.0; h];
-            for j in 0..h {
-                let input_gate = sigmoid(gates[j]);
-                let forget_gate = sigmoid(gates[h + j]);
-                let candidate = gates[2 * h + j].tanh();
-                let output_gate = sigmoid(gates[3 * h + j]);
-                c_out[j] = forget_gate * cell[i][j] + input_gate * candidate;
-                h_out[j] = output_gate * c_out[j].tanh();
-            }
-            layer_input = h_out.clone();
-            next_hidden.push(h_out);
-            next_cell.push(c_out);
-        }
-        (layer_input, next_hidden, next_cell)
+        lstm_stack(&self.layers, h, input, hidden, cell)
     }
 
-    fn joint(&self, encoder: &[f32], predictor: &[f32], cfg: &ParakeetConfig) -> Vec<f32> {
-        let mut enc = ops::linear(
-            encoder,
-            &self.joint_encoder,
-            Some(&self.joint_encoder_bias),
-            1,
-            cfg.encoder.hidden_size,
-            cfg.joint_hidden,
-        );
-        let pred = ops::linear(
-            predictor,
-            &self.joint_predictor,
-            Some(&self.joint_predictor_bias),
-            1,
-            cfg.decoder_hidden,
-            cfg.joint_hidden,
-        );
-        for (x, p) in enc.iter_mut().zip(pred) {
-            *x = (*x + p).max(0.0);
-        }
-        ops::linear(
-            &enc,
-            &self.joint_output,
-            Some(&self.joint_output_bias),
-            1,
-            cfg.joint_hidden,
-            cfg.vocab_size + 1 + cfg.num_extra_outputs,
+    /// Per-step joint logits; the decode loops use the projected pieces of
+    /// `Joint` directly, this stays for the checkpoint-gated reference test.
+    #[cfg(test)]
+    fn joint(&self, encoder: &[f32], predictor: &[f32], _cfg: &ParakeetConfig) -> Vec<f32> {
+        self.joint_net.logits(
+            &self.joint_net.project_encoder(encoder, 1),
+            &self.joint_net.project_predictor(predictor),
         )
     }
+
+    /// Joint logits for one projected encoder row. The predictor output
+    /// depends only on `(last_token, hidden, cell)`, which change only when
+    /// a non-blank token is emitted, so `proposal` keeps the projected
+    /// prediction and the proposed next state until the caller takes it.
+    fn logits(
+        &self,
+        proposal: &mut Option<Proposal>,
+        last_token: usize,
+        hidden: &[Vec<f32>],
+        cell: &[Vec<f32>],
+        h: usize,
+        encoder_projected: &[f32],
+    ) -> Vec<f32> {
+        let (predictor_projected, _, _) = proposal.get_or_insert_with(|| {
+            let (predictor, next_hidden, next_cell) = self.step(last_token, hidden, cell, h);
+            (
+                self.joint_net.project_predictor(&predictor),
+                next_hidden,
+                next_cell,
+            )
+        });
+        self.joint_net
+            .logits(encoder_projected, predictor_projected)
+    }
 }
+
+/// Projected prediction plus the hidden and cell state it would advance to.
+type Proposal = (Vec<f32>, Vec<Vec<f32>>, Vec<Vec<f32>>);
 
 /// Loaded Parakeet TDT model with the v2/v3 or ternary Redux checkpoint.
 pub struct ParakeetTdt {
@@ -562,7 +513,15 @@ impl ParakeetTdt {
     }
 
     fn decode(&self, features: &[f32], frame_count: usize) -> Result<String> {
-        let cfg = &self.config;
+        Self::greedy_decode(&self.config, &self.decoder, features, frame_count)
+    }
+
+    fn greedy_decode(
+        cfg: &ParakeetConfig,
+        decoder: &TdtDecoder,
+        features: &[f32],
+        frame_count: usize,
+    ) -> Result<String> {
         let blank_id = cfg.vocab_size;
         let mut last_token = blank_id;
         let mut hidden = vec![vec![0.0f32; cfg.decoder_hidden]; cfg.decoder_layers];
@@ -570,26 +529,32 @@ impl ParakeetTdt {
         let mut time = 0usize;
         let mut zero_duration_symbols = 0usize;
         let mut pieces = Vec::new();
+        // Encoder-side joint projection for every frame in one call.
+        let encoder_projected = decoder.joint_net.project_encoder(
+            &features[..frame_count * cfg.encoder.hidden_size],
+            frame_count,
+        );
+        let mut proposal: Option<Proposal> = None;
         if cfg.redux_mode {
             for _ in 0..cfg.max_symbols.saturating_mul(frame_count) {
                 if time >= frame_count {
                     break;
                 }
-                let encoder_start = time * cfg.encoder.hidden_size;
-                let encoder_frame =
-                    &features[encoder_start..encoder_start + cfg.encoder.hidden_size];
-                let (predictor, proposed_hidden, proposed_cell) =
-                    self.decoder
-                        .step(last_token, &hidden, &cell, cfg.decoder_hidden);
-                let logits = self.decoder.joint(encoder_frame, &predictor, cfg);
+                let logits = decoder.logits(
+                    &mut proposal,
+                    last_token,
+                    &hidden,
+                    &cell,
+                    cfg.decoder_hidden,
+                    &encoder_projected[time * cfg.joint_hidden..(time + 1) * cfg.joint_hidden],
+                );
                 let token = argmax(&logits[..=blank_id]);
                 let mut duration = cfg.durations[argmax(&logits[blank_id + 1..])];
                 if token == blank_id {
                     duration = duration.max(1);
                 } else {
                     last_token = token;
-                    hidden = proposed_hidden;
-                    cell = proposed_cell;
+                    (_, hidden, cell) = proposal.take().expect("proposal computed above");
                     let piece = &cfg.vocabulary[token];
                     if !is_special_piece(piece) {
                         pieces.push(piece.replace('▁', " "));
@@ -600,18 +565,19 @@ impl ParakeetTdt {
             return Ok(pieces.concat().trim().to_string());
         }
         while time < frame_count {
-            let encoder_start = time * cfg.encoder.hidden_size;
-            let encoder_frame = &features[encoder_start..encoder_start + cfg.encoder.hidden_size];
-            let (predictor, proposed_hidden, proposed_cell) =
-                self.decoder
-                    .step(last_token, &hidden, &cell, cfg.decoder_hidden);
-            let logits = self.decoder.joint(encoder_frame, &predictor, cfg);
+            let logits = decoder.logits(
+                &mut proposal,
+                last_token,
+                &hidden,
+                &cell,
+                cfg.decoder_hidden,
+                &encoder_projected[time * cfg.joint_hidden..(time + 1) * cfg.joint_hidden],
+            );
             let token = argmax(&logits[..=blank_id]);
             let duration = cfg.durations[argmax(&logits[blank_id + 1..])];
             if token != blank_id {
                 last_token = token;
-                hidden = proposed_hidden;
-                cell = proposed_cell;
+                (_, hidden, cell) = proposal.take().expect("proposal computed above");
                 let piece = &cfg.vocabulary[token];
                 if !is_special_piece(piece) {
                     pieces.push(piece.replace('▁', " "));
@@ -628,10 +594,6 @@ impl ParakeetTdt {
         }
         Ok(pieces.concat().trim().to_string())
     }
-}
-
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
 }
 
 fn argmax(values: &[f32]) -> usize {
@@ -941,5 +903,299 @@ mod tests {
             model.transcribe(&samples, 16_000).unwrap(),
             manifest["transcript"].as_str().unwrap()
         );
+    }
+}
+
+/// Retained-reference parity for the cached/projected TDT decode: the
+/// `reference_*` functions are the original per-iteration code, kept
+/// verbatim, so the new loop must produce the same logits bitwise and the
+/// same transcript.
+#[cfg(test)]
+mod decode_parity {
+    use super::*;
+    use crate::ops;
+    use crate::stt::nemotron_asr::rnnt::sigmoid;
+    use serde_json::json;
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn vec(&mut self, n: usize, scale: f32) -> Vec<f32> {
+            (0..n)
+                .map(|_| {
+                    self.0 ^= self.0 << 13;
+                    self.0 ^= self.0 >> 7;
+                    self.0 ^= self.0 << 17;
+                    ((self.0 >> 8) % 20001) as f32 / 10000.0 * scale - scale
+                })
+                .collect()
+        }
+
+        fn linear(&mut self, input: usize, output: usize) -> Linear {
+            Linear::new(
+                self.vec(input * output, 2.5 / (input as f32).sqrt()),
+                Some(self.vec(output, 0.5)),
+                input,
+                output,
+            )
+        }
+    }
+
+    const ENCODER: usize = 8;
+    const HIDDEN: usize = 6;
+    const LAYERS: usize = 2;
+    const VOCAB: usize = 5;
+
+    fn config(redux: bool, max_symbols: usize) -> ParakeetConfig {
+        let value = json!({
+            "preprocessor": {"sample_rate": 16000, "window": "hann", "normalize": "per_feature",
+                "log": true, "frame_splicing": 1, "features": 80, "n_fft": 512,
+                "window_size": 0.025, "window_stride": 0.01},
+            "encoder": {"subsampling": "dw_striding", "self_attention_model": "rel_pos",
+                "conv_norm_type": "batch_norm", "subsampling_factor": 8, "d_model": ENCODER,
+                "n_heads": 2, "ff_expansion_factor": 4, "conv_kernel_size": 9, "n_layers": 1,
+                "subsampling_conv_channels": 4, "use_bias": false, "xscaling": false},
+            "decoder": {"blank_as_pad": true, "vocab_size": VOCAB,
+                "prednet": {"pred_hidden": HIDDEN, "pred_rnn_layers": LAYERS}},
+            "joint": {"num_classes": VOCAB, "num_extra_outputs": 4,
+                "vocabulary": ["\u{2581}a", "b", "<unk>", "\u{2581}c", "d"],
+                "jointnet": {"joint_hidden": HIDDEN, "encoder_hidden": ENCODER,
+                    "pred_hidden": HIDDEN, "activation": "relu"}},
+            "decoding": {"model_type": "tdt", "durations": [0, 1, 2, 3],
+                "greedy": {"max_symbols": max_symbols}}
+        });
+        let mut config = ParakeetConfig::from_json(&value).unwrap();
+        config.redux_mode = redux;
+        config
+    }
+
+    fn decoder(rng: &mut Rng, blank_bias: f32) -> TdtDecoder {
+        let outputs = VOCAB + 1 + 4;
+        let mut output = rng.linear(HIDDEN, outputs);
+        output.bias.as_mut().unwrap()[VOCAB] += blank_bias;
+        TdtDecoder {
+            embedding: rng.vec((VOCAB + 1) * HIDDEN, 1.0),
+            layers: (0..LAYERS)
+                .map(|_| LstmLayer {
+                    wx: rng.vec(4 * HIDDEN * HIDDEN, 1.0),
+                    wh: rng.vec(4 * HIDDEN * HIDDEN, 1.0),
+                    bias: rng.vec(4 * HIDDEN, 0.5),
+                })
+                .collect(),
+            joint_net: Joint::new(
+                rng.linear(ENCODER, HIDDEN),
+                rng.linear(HIDDEN, HIDDEN),
+                output,
+            ),
+        }
+    }
+
+    fn reference_step(
+        decoder: &TdtDecoder,
+        token: usize,
+        hidden: &[Vec<f32>],
+        cell: &[Vec<f32>],
+        h: usize,
+    ) -> (Vec<f32>, Vec<Vec<f32>>, Vec<Vec<f32>>) {
+        let blank = decoder.embedding.len() / h - 1;
+        let input = if token == blank {
+            vec![0.0; h]
+        } else {
+            decoder.embedding[token * h..(token + 1) * h].to_vec()
+        };
+        let mut next_hidden = Vec::with_capacity(decoder.layers.len());
+        let mut next_cell = Vec::with_capacity(decoder.layers.len());
+        let mut layer_input = input;
+        for (i, layer) in decoder.layers.iter().enumerate() {
+            let mut gates = ops::linear(&layer_input, &layer.wx, Some(&layer.bias), 1, h, 4 * h);
+            let recurrent = ops::linear(&hidden[i], &layer.wh, None, 1, h, 4 * h);
+            for (gate, r) in gates.iter_mut().zip(recurrent) {
+                *gate += r;
+            }
+            let mut h_out = vec![0.0; h];
+            let mut c_out = vec![0.0; h];
+            for j in 0..h {
+                let input_gate = sigmoid(gates[j]);
+                let forget_gate = sigmoid(gates[h + j]);
+                let candidate = gates[2 * h + j].tanh();
+                let output_gate = sigmoid(gates[3 * h + j]);
+                c_out[j] = forget_gate * cell[i][j] + input_gate * candidate;
+                h_out[j] = output_gate * c_out[j].tanh();
+            }
+            layer_input = h_out.clone();
+            next_hidden.push(h_out);
+            next_cell.push(c_out);
+        }
+        (layer_input, next_hidden, next_cell)
+    }
+
+    fn reference_joint(
+        decoder: &TdtDecoder,
+        encoder: &[f32],
+        predictor: &[f32],
+        cfg: &ParakeetConfig,
+    ) -> Vec<f32> {
+        let joint = &decoder.joint_net;
+        let mut enc = ops::linear(
+            encoder,
+            &joint.encoder.weight,
+            joint.encoder.bias.as_deref(),
+            1,
+            cfg.encoder.hidden_size,
+            cfg.joint_hidden,
+        );
+        let pred = ops::linear(
+            predictor,
+            &joint.predictor.weight,
+            joint.predictor.bias.as_deref(),
+            1,
+            cfg.decoder_hidden,
+            cfg.joint_hidden,
+        );
+        for (x, p) in enc.iter_mut().zip(pred) {
+            *x = (*x + p).max(0.0);
+        }
+        ops::linear(
+            &enc,
+            &joint.output.weight,
+            joint.output.bias.as_deref(),
+            1,
+            cfg.joint_hidden,
+            cfg.vocab_size + 1 + cfg.num_extra_outputs,
+        )
+    }
+
+    /// The original `ParakeetTdt::decode`, with the decoder passed in.
+    fn reference_decode(
+        decoder: &TdtDecoder,
+        cfg: &ParakeetConfig,
+        features: &[f32],
+        frame_count: usize,
+    ) -> String {
+        let blank_id = cfg.vocab_size;
+        let mut last_token = blank_id;
+        let mut hidden = vec![vec![0.0f32; cfg.decoder_hidden]; cfg.decoder_layers];
+        let mut cell = vec![vec![0.0f32; cfg.decoder_hidden]; cfg.decoder_layers];
+        let mut time = 0usize;
+        let mut zero_duration_symbols = 0usize;
+        let mut pieces = Vec::new();
+        if cfg.redux_mode {
+            for _ in 0..cfg.max_symbols.saturating_mul(frame_count) {
+                if time >= frame_count {
+                    break;
+                }
+                let encoder_start = time * cfg.encoder.hidden_size;
+                let encoder_frame =
+                    &features[encoder_start..encoder_start + cfg.encoder.hidden_size];
+                let (predictor, proposed_hidden, proposed_cell) =
+                    reference_step(decoder, last_token, &hidden, &cell, cfg.decoder_hidden);
+                let logits = reference_joint(decoder, encoder_frame, &predictor, cfg);
+                let token = argmax(&logits[..=blank_id]);
+                let mut duration = cfg.durations[argmax(&logits[blank_id + 1..])];
+                if token == blank_id {
+                    duration = duration.max(1);
+                } else {
+                    last_token = token;
+                    hidden = proposed_hidden;
+                    cell = proposed_cell;
+                    let piece = &cfg.vocabulary[token];
+                    if !is_special_piece(piece) {
+                        pieces.push(piece.replace('▁', " "));
+                    }
+                }
+                time = time.saturating_add(duration);
+            }
+            return pieces.concat().trim().to_string();
+        }
+        while time < frame_count {
+            let encoder_start = time * cfg.encoder.hidden_size;
+            let encoder_frame = &features[encoder_start..encoder_start + cfg.encoder.hidden_size];
+            let (predictor, proposed_hidden, proposed_cell) =
+                reference_step(decoder, last_token, &hidden, &cell, cfg.decoder_hidden);
+            let logits = reference_joint(decoder, encoder_frame, &predictor, cfg);
+            let token = argmax(&logits[..=blank_id]);
+            let duration = cfg.durations[argmax(&logits[blank_id + 1..])];
+            if token != blank_id {
+                last_token = token;
+                hidden = proposed_hidden;
+                cell = proposed_cell;
+                let piece = &cfg.vocabulary[token];
+                if !is_special_piece(piece) {
+                    pieces.push(piece.replace('▁', " "));
+                }
+            }
+            time = time.saturating_add(duration);
+            zero_duration_symbols += 1;
+            if duration != 0 {
+                zero_duration_symbols = 0;
+            } else if zero_duration_symbols >= cfg.max_symbols {
+                time += 1;
+                zero_duration_symbols = 0;
+            }
+        }
+        pieces.concat().trim().to_string()
+    }
+
+    #[test]
+    fn step_and_projected_joint_match_the_originals_bitwise() {
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let cfg = config(false, 3);
+        let decoder = decoder(&mut rng, 0.0);
+        let mut hidden: Vec<Vec<f32>> = (0..LAYERS).map(|_| rng.vec(HIDDEN, 1.0)).collect();
+        let mut cell: Vec<Vec<f32>> = (0..LAYERS).map(|_| rng.vec(HIDDEN, 1.0)).collect();
+        let frames = 5;
+        let features = rng.vec(frames * ENCODER, 1.5);
+        let projected = decoder.joint_net.project_encoder(&features, frames);
+        for (n, token) in [VOCAB, 0, 3, VOCAB, 4].into_iter().enumerate() {
+            let want = reference_step(&decoder, token, &hidden, &cell, HIDDEN);
+            let got = decoder.step(token, &hidden, &cell, HIDDEN);
+            assert_eq!(got.0, want.0, "prediction {n}");
+            assert_eq!(got.1, want.1, "hidden {n}");
+            assert_eq!(got.2, want.2, "cell {n}");
+            let encoder_frame = &features[n * ENCODER..(n + 1) * ENCODER];
+            let want_logits = reference_joint(&decoder, encoder_frame, &want.0, &cfg);
+            let mut proposal = None;
+            let got_logits = decoder.logits(
+                &mut proposal,
+                token,
+                &hidden,
+                &cell,
+                HIDDEN,
+                &projected[n * HIDDEN..(n + 1) * HIDDEN],
+            );
+            assert!(
+                want_logits
+                    .iter()
+                    .zip(&got_logits)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "logits {n}"
+            );
+            (hidden, cell) = (got.1, got.2);
+        }
+    }
+
+    #[test]
+    fn cached_decode_matches_the_original_transcript() {
+        let mut non_empty = 0;
+        for redux in [false, true] {
+            for (seed, frames, max_symbols, blank_bias) in [
+                (1u64, 12usize, 3usize, 1.0f32),
+                (2, 25, 2, 2.0),
+                (3, 40, 4, 0.0),
+                (4, 17, 1, 0.5),
+                (5, 33, 3, 2.5),
+                (6, 30, 5, 3.0),
+            ] {
+                let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+                let cfg = config(redux, max_symbols);
+                let decoder = decoder(&mut rng, blank_bias);
+                let features = rng.vec(frames * ENCODER, 1.5);
+                let want = reference_decode(&decoder, &cfg, &features, frames);
+                let got = ParakeetTdt::greedy_decode(&cfg, &decoder, &features, frames).unwrap();
+                assert_eq!(got, want, "redux {redux} seed {seed}");
+                non_empty += usize::from(!want.is_empty());
+            }
+        }
+        assert!(non_empty > 0, "vacuous test inputs");
     }
 }

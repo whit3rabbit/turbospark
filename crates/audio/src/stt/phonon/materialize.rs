@@ -21,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Map, Value};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::tensor_error;
 use crate::quant::{load_quantized, QuantScheme};
 use crate::stt::qwen3_asr::decoder::Decoder;
 use crate::stt::qwen3_asr::encoder::AudioEncoder;
@@ -34,13 +35,6 @@ use super::packed::{materialize_weight, slim_metadata, unpack_codes};
 pub(super) struct ConvertedTensor {
     shape: Vec<usize>,
     values: Vec<f32>,
-}
-
-fn tensor_error(name: &str, why: impl Into<String>) -> SpeechError {
-    SpeechError::Tensor {
-        name: name.to_owned(),
-        why: why.into(),
-    }
 }
 
 fn insert_tensor(

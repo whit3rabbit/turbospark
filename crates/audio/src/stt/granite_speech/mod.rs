@@ -20,8 +20,9 @@
 use std::path::Path;
 
 use serde_json::Value;
-use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::{bad_config, open_shards};
+use crate::stt::qwen3_asr::decoder::greedy_generate;
 use crate::stt::qwen3_asr::load_tokenizer;
 use crate::{Result, SpeechError};
 
@@ -319,7 +320,7 @@ impl GraniteSpeech {
         }
         let rows = embeddings.len() / text_width;
 
-        let (mut last_hidden, mut cache) = self.llm.prefill(&embeddings, rows);
+        let (last_hidden, cache) = self.llm.prefill(&embeddings, rows);
         if let Some(stages) = stages.as_deref_mut() {
             stages.prefill_last_hidden = Some(last_hidden.clone());
         }
@@ -328,35 +329,28 @@ impl GraniteSpeech {
             stages.first_logits = Some(step_logits(&logits));
         }
 
-        let mut generated: Vec<u32> = Vec::new();
-        let mut next = argmax(&logits);
         // The decision that produced the most recent emitted token: the
         // prefill logits for the first, then the per-step logits. Recorded
         // as last_logits with the same semantics as the fixture's
         // final_step_logits.
-        let mut decision: Vec<f32> = logits;
-        for _ in 0..max_tokens {
-            if next as i32 == self.eos_token_id {
-                break;
-            }
-            generated.push(next);
-            let token_id = i32::try_from(next).map_err(|_| SpeechError::Input {
-                why: "Granite Speech generated token id exceeds signed 32-bit range".into(),
-            })?;
-            let mut input = self.llm.embed(&[token_id])?;
-            for value in &mut input {
-                *value *= self.llm.embedding_multiplier;
-            }
-            last_hidden = self.llm.step(&input, &mut cache);
-            let new_decision = self.llm.logits(&last_hidden);
-            next = argmax(&new_decision);
-            // Retain only decisions that emitted a token, so last_logits
-            // names the logits behind the final generated token, matching
-            // the fixture's final_step_logits.
-            if next as i32 != self.eos_token_id {
-                decision = new_decision;
-            }
-        }
+        let mut decision: Vec<f32> = logits.clone();
+        let eos = self.eos_token_id;
+        let generated = greedy_generate(
+            &self.llm,
+            &logits,
+            cache,
+            max_tokens,
+            |next| next as i32 == eos,
+            "Granite Speech",
+            |new_decision, next| {
+                // Retain only decisions that emitted a token, so last_logits
+                // names the logits behind the final generated token,
+                // matching the fixture's final_step_logits.
+                if next as i32 != eos {
+                    decision = new_decision.to_vec();
+                }
+            },
+        )?;
         if let Some(stages) = stages.as_deref_mut() {
             stages.last_logits = Some(step_logits(&decision));
         }
@@ -406,54 +400,6 @@ impl GraniteSpeech {
     }
 }
 
-fn bad_config(field: &str, error: impl std::fmt::Display) -> SpeechError {
-    SpeechError::BadConfig {
-        field: field.to_owned(),
-        why: error.to_string(),
-    }
-}
-
-/// Opens the checkpoint shards: the `model.safetensors.index.json`
-/// `weight_map` order when present, otherwise the single model file.
-fn open_shards(dir: &Path) -> Result<Vec<SafetensorsFile>> {
-    let index_path = dir.join("model.safetensors.index.json");
-    let mut names: Vec<String> = Vec::new();
-    if index_path.is_file() {
-        let value: Value = serde_json::from_slice(
-            &std::fs::read(&index_path)
-                .map_err(|error| bad_config("model.safetensors.index.json", error))?,
-        )
-        .map_err(|error| bad_config("model.safetensors.index.json", error))?;
-        let map = value
-            .get("weight_map")
-            .and_then(Value::as_object)
-            .ok_or_else(|| bad_config("model.safetensors.index.json", "weight_map missing"))?;
-        for shard in map.values().filter_map(Value::as_str) {
-            if !names.iter().any(|name| name == shard) {
-                names.push(shard.to_owned());
-            }
-        }
-        names.sort();
-    } else {
-        names.push("model.safetensors".to_owned());
-    }
-    if names.is_empty() {
-        return Err(SpeechError::Tensor {
-            name: "model.safetensors".to_owned(),
-            why: "no shards listed in model.safetensors.index.json".to_owned(),
-        });
-    }
-    names
-        .iter()
-        .map(|name| {
-            SafetensorsFile::open(&dir.join(name)).map_err(|error| SpeechError::BadConfig {
-                field: name.clone(),
-                why: error.to_string(),
-            })
-        })
-        .collect()
-}
-
 fn encode_ids(tokenizer: &turbospark_tokenizer::Tokenizer, text: &str) -> Result<Vec<i32>> {
     let encoded = tokenizer
         .encode(text, false)
@@ -469,20 +415,6 @@ fn encode_ids(tokenizer: &turbospark_tokenizer::Tokenizer, text: &str) -> Result
             })
         })
         .collect()
-}
-
-fn argmax(logits: &[f32]) -> u32 {
-    logits
-        .iter()
-        .enumerate()
-        .fold((0usize, f32::NEG_INFINITY), |best, (id, &value)| {
-            if value > best.1 {
-                (id, value)
-            } else {
-                best
-            }
-        })
-        .0 as u32
 }
 
 fn step_logits(logits: &[f32]) -> StepLogits {
@@ -545,9 +477,10 @@ fn witness(name: &str, shape: &[usize], values: &[f32]) -> StageWitness {
 #[cfg(test)]
 mod tests {
     use super::{
-        argmax, expand_chat_template, translation_prompt, witness, GraniteSpeech, StepLogits,
+        expand_chat_template, translation_prompt, witness, GraniteSpeech, StepLogits,
         DEFAULT_ASR_PROMPT, GRANITE_4_0_1B_SPEECH, LANGUAGE_CODES,
     };
+    use crate::nn::argmax;
     use serde_json::Value;
     use std::path::Path;
 

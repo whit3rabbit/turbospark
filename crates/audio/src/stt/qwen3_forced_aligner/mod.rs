@@ -11,6 +11,7 @@ use turbospark_model_io::safetensors::SafetensorsFile;
 use turbospark_tokenizer::Tokenizer;
 
 use crate::models::stt::qwen3_asr::{config, decoder, encoder, frontend, load_tokenizer};
+use crate::nn::argmax;
 use crate::quant::QuantScheme;
 use crate::{Result, SpeechError};
 
@@ -147,7 +148,7 @@ impl Qwen3ForcedAligner {
         };
         let encoder = encoder::AudioEncoder::load(&weights, &config.base.audio)?;
         let decoder = decoder::Decoder::load(&weights, &config.base.text, scheme)?;
-        let timestamp_head = decoder::Linear::load(
+        let timestamp_head = decoder::load_linear(
             &weights,
             "lm_head",
             config.base.text.hidden_size,
@@ -315,20 +316,6 @@ fn matching_positions(ids: &[i32], target: i32) -> Vec<usize> {
         .enumerate()
         .filter_map(|(index, &id)| (id == target).then_some(index))
         .collect()
-}
-
-fn argmax(values: &[f32]) -> usize {
-    values
-        .iter()
-        .enumerate()
-        .fold((0usize, f32::NEG_INFINITY), |best, (index, &value)| {
-            if value > best.1 {
-                (index, value)
-            } else {
-                best
-            }
-        })
-        .0
 }
 
 fn round_millis(seconds: f32) -> f32 {

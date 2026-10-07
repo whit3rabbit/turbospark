@@ -3,72 +3,37 @@
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::models::stt::granite_speech5_ctc::GraniteSpeech5Config;
+use crate::nn::{LayerNorm, Linear};
 use crate::ops;
+use crate::stt::wav2vec::ctc::CtcCollapse;
 use crate::{Result, SpeechError};
 
 const LOGIT_ROW_BATCH: usize = 8;
 
-#[derive(Clone)]
-struct Linear {
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
+// Local loaders keep this family's own error text (see `load_tensor` below)
+// rather than the shared `nn::Linear::load` messages.
+fn load_linear(
+    file: &SafetensorsFile,
+    prefix: &str,
     input: usize,
     output: usize,
+    has_bias: bool,
+) -> Result<Linear> {
+    let weight = load_tensor(file, &format!("{prefix}.weight"), &[output, input])?;
+    let bias = if has_bias {
+        Some(load_tensor(file, &format!("{prefix}.bias"), &[output])?)
+    } else {
+        None
+    };
+    Ok(Linear::new(weight, bias, input, output))
 }
 
-impl Linear {
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        input: usize,
-        output: usize,
-        has_bias: bool,
-    ) -> Result<Self> {
-        let weight = load_tensor(file, &format!("{prefix}.weight"), &[output, input])?;
-        let bias = if has_bias {
-            Some(load_tensor(file, &format!("{prefix}.bias"), &[output])?)
-        } else {
-            None
-        };
-        Ok(Self {
-            weight,
-            bias,
-            input,
-            output,
-        })
-    }
-
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        ops::linear(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            rows,
-            self.input,
-            self.output,
-        )
-    }
-}
-
-#[derive(Clone)]
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-}
-
-impl LayerNorm {
-    fn load(file: &SafetensorsFile, prefix: &str, width: usize) -> Result<Self> {
-        Ok(Self {
-            weight: load_tensor(file, &format!("{prefix}.weight"), &[width])?,
-            bias: load_tensor(file, &format!("{prefix}.bias"), &[width])?,
-            width,
-        })
-    }
-
-    fn apply(&self, x: &mut [f32], rows: usize) {
-        ops::layernorm(x, rows, self.width, &self.weight, Some(&self.bias), 1e-5);
-    }
+fn load_layer_norm(file: &SafetensorsFile, prefix: &str, width: usize) -> Result<LayerNorm> {
+    Ok(LayerNorm::new(
+        load_tensor(file, &format!("{prefix}.weight"), &[width])?,
+        Some(load_tensor(file, &format!("{prefix}.bias"), &[width])?),
+        1e-5,
+    ))
 }
 
 struct FeedForward {
@@ -79,8 +44,8 @@ struct FeedForward {
 impl FeedForward {
     fn load(file: &SafetensorsFile, prefix: &str, hidden: usize, inner: usize) -> Result<Self> {
         Ok(Self {
-            first: Linear::load(file, &format!("{prefix}.linear1"), hidden, inner, true)?,
-            second: Linear::load(file, &format!("{prefix}.linear2"), inner, hidden, true)?,
+            first: load_linear(file, &format!("{prefix}.linear1"), hidden, inner, true)?,
+            second: load_linear(file, &format!("{prefix}.linear2"), inner, hidden, true)?,
         })
     }
 
@@ -110,10 +75,10 @@ impl Attention {
         let head_dim = config.head_dim;
         let relative_rows = 2 * config.max_position_embeddings + 1;
         Ok(Self {
-            query: Linear::load(file, &format!("{prefix}.q_proj"), hidden, hidden, false)?,
-            key: Linear::load(file, &format!("{prefix}.k_proj"), hidden, hidden, false)?,
-            value: Linear::load(file, &format!("{prefix}.v_proj"), hidden, hidden, false)?,
-            output: Linear::load(file, &format!("{prefix}.o_proj"), hidden, hidden, true)?,
+            query: load_linear(file, &format!("{prefix}.q_proj"), hidden, hidden, false)?,
+            key: load_linear(file, &format!("{prefix}.k_proj"), hidden, hidden, false)?,
+            value: load_linear(file, &format!("{prefix}.v_proj"), hidden, hidden, false)?,
+            output: load_linear(file, &format!("{prefix}.o_proj"), hidden, hidden, true)?,
             relative_embedding: load_tensor(
                 file,
                 &format!("{prefix}.rel_pos_emb.weight"),
@@ -202,7 +167,7 @@ impl Convolution {
         let channels = hidden * config.conv_expansion_factor;
         let kernel = config.conv_kernel_size;
         Ok(Self {
-            pointwise_in: Linear::load(
+            pointwise_in: load_linear(
                 file,
                 &format!("{prefix}.pointwise_lin1"),
                 hidden,
@@ -218,7 +183,7 @@ impl Convolution {
             norm_bias: load_tensor(file, &format!("{prefix}.norm.bias"), &[channels])?,
             running_mean: load_tensor(file, &format!("{prefix}.norm.running_mean"), &[channels])?,
             running_var: load_tensor(file, &format!("{prefix}.norm.running_var"), &[channels])?,
-            pointwise_out: Linear::load(
+            pointwise_out: load_linear(
                 file,
                 &format!("{prefix}.pointwise_lin2"),
                 channels,
@@ -304,27 +269,27 @@ impl EncoderBlock {
                 hidden,
                 inner,
             )?,
-            norm_feed_forward1: LayerNorm::load(
+            norm_feed_forward1: load_layer_norm(
                 file,
                 &format!("{prefix}.norm_feed_forward1"),
                 hidden,
             )?,
             attention: Attention::load(file, &format!("{prefix}.self_attn"), config)?,
-            norm_attention: LayerNorm::load(file, &format!("{prefix}.norm_self_att"), hidden)?,
+            norm_attention: load_layer_norm(file, &format!("{prefix}.norm_self_att"), hidden)?,
             convolution: Convolution::load(file, &format!("{prefix}.conv"), config, subsample)?,
-            norm_convolution: LayerNorm::load(file, &format!("{prefix}.norm_conv"), hidden)?,
+            norm_convolution: load_layer_norm(file, &format!("{prefix}.norm_conv"), hidden)?,
             feed_forward2: FeedForward::load(
                 file,
                 &format!("{prefix}.feed_forward2"),
                 hidden,
                 inner,
             )?,
-            norm_feed_forward2: LayerNorm::load(
+            norm_feed_forward2: load_layer_norm(
                 file,
                 &format!("{prefix}.norm_feed_forward2"),
                 hidden,
             )?,
-            norm_out: LayerNorm::load(file, &format!("{prefix}.norm_out"), hidden)?,
+            norm_out: load_layer_norm(file, &format!("{prefix}.norm_out"), hidden)?,
             subsample,
             hidden,
         })
@@ -395,7 +360,7 @@ impl Encoder {
     pub(crate) fn load(file: &SafetensorsFile, config: &GraniteSpeech5Config) -> Result<Self> {
         let hidden = config.hidden_size;
         Ok(Self {
-            input: Linear::load(
+            input: load_linear(
                 file,
                 "encoder.input_linear",
                 config.num_mel_bins * 4,
@@ -405,8 +370,8 @@ impl Encoder {
             layers: (0..config.num_hidden_layers)
                 .map(|index| EncoderBlock::load(file, index, config))
                 .collect::<Result<Vec<_>>>()?,
-            output: Linear::load(file, "encoder.out", hidden, config.vocab_size, true)?,
-            output_mid: Linear::load(file, "encoder.out_mid", config.vocab_size, hidden, true)?,
+            output: load_linear(file, "encoder.out", hidden, config.vocab_size, true)?,
+            output_mid: load_linear(file, "encoder.out_mid", config.vocab_size, hidden, true)?,
         })
     }
 
@@ -464,8 +429,7 @@ fn collapse_final_logits(
     rows: usize,
     blank_id: usize,
 ) -> Vec<usize> {
-    let mut output = Vec::new();
-    let mut previous = None;
+    let mut collapse = CtcCollapse::new(blank_id);
     for first_row in (0..rows).step_by(LOGIT_ROW_BATCH) {
         let count = (rows - first_row).min(LOGIT_ROW_BATCH);
         let start = first_row * projection.input;
@@ -486,35 +450,33 @@ fn collapse_final_logits(
                     },
                 )
                 .0;
-            if Some(token) != previous && token != blank_id {
-                output.push(token);
-            }
-            previous = Some(token);
+            collapse.push(token);
         }
     }
-    output
+    collapse.finish()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_midpoint_conditioning, collapse_final_logits, Linear};
+    use super::{apply_midpoint_conditioning, collapse_final_logits};
     use crate::models::stt::granite_speech5_ctc::ctc_collapse;
+    use crate::nn::Linear;
     use crate::ops;
 
     #[test]
     fn midpoint_conditioning_matches_full_probabilities_across_batches() {
-        let output = Linear {
-            weight: vec![0.3, -0.1, 0.2, 0.4, -0.5, 0.1],
-            bias: Some(vec![0.1, -0.2, 0.05]),
-            input: 2,
-            output: 3,
-        };
-        let output_mid = Linear {
-            weight: vec![0.2, -0.3, 0.1, -0.2, 0.4, 0.3],
-            bias: Some(vec![0.05, -0.1]),
-            input: 3,
-            output: 2,
-        };
+        let output = Linear::new(
+            vec![0.3, -0.1, 0.2, 0.4, -0.5, 0.1],
+            Some(vec![0.1, -0.2, 0.05]),
+            2,
+            3,
+        );
+        let output_mid = Linear::new(
+            vec![0.2, -0.3, 0.1, -0.2, 0.4, 0.3],
+            Some(vec![0.05, -0.1]),
+            3,
+            2,
+        );
         let hidden: Vec<f32> = (0..19 * 2)
             .map(|index| ((index * 7 + 3) % 17) as f32 * 0.09 - 0.4)
             .collect();
@@ -536,12 +498,12 @@ mod tests {
 
     #[test]
     fn final_ctc_collapse_matches_full_logits_across_batches() {
-        let projection = Linear {
-            weight: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
-            bias: Some(vec![0.5, 0.0, 0.0]),
-            input: 2,
-            output: 3,
-        };
+        let projection = Linear::new(
+            vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            Some(vec![0.5, 0.0, 0.0]),
+            2,
+            3,
+        );
         let hidden: Vec<f32> = (0..19)
             .flat_map(|row| match row {
                 0 | 9 => [0.0, 0.0],

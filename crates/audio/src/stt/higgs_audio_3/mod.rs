@@ -17,10 +17,10 @@
 use std::path::Path;
 
 use serde_json::Value;
-use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::{bad_config, open_shards};
 use crate::quant::QuantScheme;
-use crate::stt::qwen3_asr::decoder::Decoder;
+use crate::stt::qwen3_asr::decoder::{greedy_generate, Decoder};
 use crate::stt::qwen3_asr::load_tokenizer;
 use crate::{Result, SpeechError};
 
@@ -364,7 +364,7 @@ impl HiggsAudioV3Stt {
         embeddings.extend(self.decoder.embed(&suffix_ids)?);
         let rows = embeddings.len() / hidden;
 
-        let (mut last_hidden, mut cache) = self.decoder.prefill(&embeddings, rows);
+        let (last_hidden, cache) = self.decoder.prefill(&embeddings, rows);
         if let Some(stages) = stages.as_deref_mut() {
             stages.prefill_last_hidden = Some(last_hidden.clone());
         }
@@ -373,24 +373,19 @@ impl HiggsAudioV3Stt {
             stages.first_logits = Some(top_logits(&logits));
         }
 
-        let mut generated: Vec<u32> = Vec::new();
-        let mut next = argmax(&logits);
-        for _ in 0..max_tokens {
-            if STOP_IDS.contains(&next) {
-                break;
-            }
-            generated.push(next);
-            let token_id = i32::try_from(next).map_err(|_| SpeechError::Input {
-                why: "Higgs generated token id exceeds signed 32-bit range".into(),
-            })?;
-            let next_embedding = self.decoder.embed(&[token_id])?;
-            last_hidden = self.decoder.step(&next_embedding, &mut cache);
-            let step_logits = self.decoder.logits(&last_hidden);
-            next = argmax(&step_logits);
-            if let Some(stages) = stages.as_deref_mut() {
-                stages.last_logits = Some(top_logits(&step_logits));
-            }
-        }
+        let generated = greedy_generate(
+            &self.decoder,
+            &logits,
+            cache,
+            max_tokens,
+            |next| STOP_IDS.contains(&next),
+            "Higgs",
+            |step_logits, _| {
+                if let Some(stages) = stages.as_deref_mut() {
+                    stages.last_logits = Some(top_logits(step_logits));
+                }
+            },
+        )?;
         if let Some(stages) = stages {
             stages.generated_token_ids = generated.clone();
         }
@@ -438,54 +433,6 @@ impl HiggsAudioV3Stt {
         ids.extend(encode_ids(&self.tokenizer, "<|im_start|>assistant\n")?);
         Ok(ids)
     }
-}
-
-fn bad_config(field: &str, error: impl std::fmt::Display) -> SpeechError {
-    SpeechError::BadConfig {
-        field: field.to_owned(),
-        why: error.to_string(),
-    }
-}
-
-/// Opens the checkpoint shards: the `model.safetensors.index.json`
-/// `weight_map` order when present, otherwise the single model file.
-fn open_shards(dir: &Path) -> Result<Vec<SafetensorsFile>> {
-    let index_path = dir.join("model.safetensors.index.json");
-    let mut names: Vec<String> = Vec::new();
-    if index_path.is_file() {
-        let value: Value = serde_json::from_slice(
-            &std::fs::read(&index_path)
-                .map_err(|error| bad_config("model.safetensors.index.json", error))?,
-        )
-        .map_err(|error| bad_config("model.safetensors.index.json", error))?;
-        let map = value
-            .get("weight_map")
-            .and_then(Value::as_object)
-            .ok_or_else(|| bad_config("model.safetensors.index.json", "weight_map missing"))?;
-        for shard in map.values().filter_map(Value::as_str) {
-            if !names.iter().any(|name| name == shard) {
-                names.push(shard.to_owned());
-            }
-        }
-        names.sort();
-    } else {
-        names.push("model.safetensors".to_owned());
-    }
-    if names.is_empty() {
-        return Err(SpeechError::Tensor {
-            name: "model.safetensors".to_owned(),
-            why: "no shards listed in model.safetensors.index.json".to_owned(),
-        });
-    }
-    names
-        .iter()
-        .map(|name| {
-            SafetensorsFile::open(&dir.join(name)).map_err(|error| SpeechError::BadConfig {
-                field: name.clone(),
-                why: error.to_string(),
-            })
-        })
-        .collect()
 }
 
 fn encode_ids(tokenizer: &turbospark_tokenizer::Tokenizer, text: &str) -> Result<Vec<i32>> {
@@ -565,20 +512,6 @@ fn remove_special_spans(text: &str) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
-fn argmax(logits: &[f32]) -> u32 {
-    logits
-        .iter()
-        .enumerate()
-        .fold((0usize, f32::NEG_INFINITY), |best, (id, &value)| {
-            if value > best.1 {
-                (id, value)
-            } else {
-                best
-            }
-        })
-        .0 as u32
-}
-
 fn top_logits(logits: &[f32]) -> FirstLogits {
     let mut order: Vec<usize> = (0..logits.len()).collect();
     order.sort_by(|a, b| logits[*b].total_cmp(&logits[*a]));
@@ -639,9 +572,10 @@ fn witness(name: &str, shape: &[usize], values: &[f32]) -> StageWitness {
 #[cfg(test)]
 mod tests {
     use super::{
-        argmax, parse_output, remove_special_spans, witness, HiggsAudioV3Stt, DEFAULT_PROMPT,
+        parse_output, remove_special_spans, witness, HiggsAudioV3Stt, DEFAULT_PROMPT,
         HIGGS_AUDIO_V3_STT,
     };
+    use crate::nn::argmax;
     use serde_json::Value;
     use std::path::Path;
 

@@ -15,7 +15,7 @@ use std::path::Path;
 
 use turbospark_tokenizer::Tokenizer;
 
-use crate::stt::qwen3_asr::decoder::Decoder;
+use crate::stt::qwen3_asr::decoder::{chat_stop_ids, greedy_generate, is_chat_stop, Decoder};
 use crate::stt::qwen3_asr::encoder::AudioEncoder;
 use crate::stt::qwen3_asr::frontend::compute_features;
 use crate::stt::qwen3_asr::{load_tokenizer, prompt_token_ids, transcript_from_tokens};
@@ -275,36 +275,24 @@ impl Phonon {
                 .copy_from_slice(&audio_embeddings[source..source + self.decoder.hidden_size]);
         }
 
-        let stop_ids = ["<|im_end|>", "<|endoftext|>"]
-            .into_iter()
-            .filter_map(|token| self.tokenizer.token_to_id(token))
-            .collect::<Vec<_>>();
+        let stop_ids = chat_stop_ids(&self.tokenizer);
         let rows = embeddings.len() / self.decoder.hidden_size;
-        let (mut last_hidden, mut cache) = self.decoder.prefill(&embeddings, rows);
+        let (last_hidden, cache) = self.decoder.prefill(&embeddings, rows);
         if let Some(stages) = stages.as_deref_mut() {
             stages.prefill_last_hidden = Some(last_hidden.clone());
         }
         let logits = self.decoder.logits(&last_hidden);
-        let mut first_logits = None;
-        let mut generated: Vec<u32> = Vec::new();
-        let mut next = argmax(&logits);
-        for _ in 0..max_tokens {
-            if first_logits.is_none() {
-                first_logits = Some(top_logits(&logits));
-            }
-            if stop_ids.contains(&next)
-                || (stop_ids.is_empty() && matches!(next, 151_645 | 151_643))
-            {
-                break;
-            }
-            generated.push(next);
-            let token_id = i32::try_from(next).map_err(|_| SpeechError::Input {
-                why: "Phonon generated token id exceeds signed 32-bit range".into(),
-            })?;
-            let next_embedding = self.decoder.embed(&[token_id])?;
-            last_hidden = self.decoder.step(&next_embedding, &mut cache);
-            next = argmax(&self.decoder.logits(&last_hidden));
-        }
+        // Recorded only when the loop is entered, as before.
+        let first_logits = (max_tokens > 0).then(|| top_logits(&logits));
+        let generated = greedy_generate(
+            &self.decoder,
+            &logits,
+            cache,
+            max_tokens,
+            |next| is_chat_stop(&stop_ids, next),
+            "Phonon",
+            |_, _| {},
+        )?;
         if let Some(stages) = stages {
             stages.first_logits = first_logits;
             stages.generated_token_ids = generated.clone();
@@ -313,20 +301,6 @@ impl Phonon {
         let text = transcript_from_tokens(&self.tokenizer, &generated, language)?;
         Ok((text, generated))
     }
-}
-
-fn argmax(logits: &[f32]) -> u32 {
-    logits
-        .iter()
-        .enumerate()
-        .fold((0usize, f32::NEG_INFINITY), |best, (id, &value)| {
-            if value > best.1 {
-                (id, value)
-            } else {
-                best
-            }
-        })
-        .0 as u32
 }
 
 fn top_logits(logits: &[f32]) -> FirstLogits {

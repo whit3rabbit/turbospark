@@ -22,6 +22,7 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::dac::{load_alpha, DecoderBlock, EncoderBlock, ResidualUnit};
 use crate::codec::vq::CodebookIndex;
 use crate::codec::wnconv::{snake1d, WnConv1d, WnConvTranspose1d};
 use crate::{Result, SpeechError};
@@ -120,39 +121,6 @@ impl DacConfig {
     }
 }
 
-struct ResidualUnit {
-    snake1: Vec<f32>,
-    conv1: WnConv1d,
-    snake2: Vec<f32>,
-    conv2: WnConv1d,
-}
-
-impl ResidualUnit {
-    fn forward(&self, x: &[f32], ch: usize) -> Vec<f32> {
-        let seq = x.len() / ch;
-        let mut h = x.to_vec();
-        snake1d(&mut h, &self.snake1, ch, seq);
-        let seq2 = h.len() / ch;
-        let mut h = self.conv1.forward(&h);
-        snake1d(&mut h, &self.snake2, ch, seq2);
-        let h = self.conv2.forward(&h);
-        let out_seq = h.len() / ch;
-        let pad = seq.saturating_sub(out_seq) / 2;
-        let mut out = vec![0.0f32; ch * out_seq];
-        for c in 0..ch {
-            for t in 0..out_seq {
-                let residual = if t + pad < seq {
-                    x[c * seq + t + pad]
-                } else {
-                    0.0
-                };
-                out[c * out_seq + t] = residual + h[c * out_seq + t];
-            }
-        }
-        out
-    }
-}
-
 fn load_residual_unit(
     file: &SafetensorsFile,
     prefix: &str,
@@ -161,6 +129,7 @@ fn load_residual_unit(
 ) -> Result<ResidualUnit> {
     let pad = ((7 - 1) * dilation) / 2;
     Ok(ResidualUnit {
+        ch: dim,
         snake1: load_alpha(file, &format!("{prefix}.block.layers.0.alpha"), dim)?,
         conv1: WnConv1d::load(
             file,
@@ -188,31 +157,6 @@ fn load_residual_unit(
     })
 }
 
-/// Snake1d alpha, stored `[1, 1, C]` in the descript layout.
-fn load_alpha(file: &SafetensorsFile, name: &str, channels: usize) -> Result<Vec<f32>> {
-    crate::codec::wnconv::load_f32_shaped(file, name, &[1, 1, channels])
-}
-
-struct EncoderBlock {
-    units: [ResidualUnit; 3],
-    snake: Vec<f32>,
-    down: WnConv1d,
-}
-
-impl EncoderBlock {
-    /// `ch` is the block input width; the reference builds RUs at
-    /// `output_dim // 2`, which equals this input width.
-    fn forward(&self, x: &[f32], ch: usize) -> Vec<f32> {
-        let mut h = self.units[0].forward(x, ch);
-        h = self.units[1].forward(&h, ch);
-        h = self.units[2].forward(&h, ch);
-        let seq = h.len() / ch;
-        let mut h = h;
-        snake1d(&mut h, &self.snake, ch, seq);
-        self.down.forward(&h)
-    }
-}
-
 struct Encoder {
     first: WnConv1d,
     blocks: Vec<EncoderBlock>,
@@ -225,7 +169,7 @@ impl Encoder {
         let mut h = self.first.forward(samples);
         let mut ch = self.first.out_ch;
         for block in &self.blocks {
-            h = block.forward(&h, ch);
+            h = block.forward(&h);
             ch = block.down.out_ch;
         }
         let seq = h.len() / ch;
@@ -308,25 +252,6 @@ impl DacQuantizer {
             }
         }
         self.out_proj.forward(&quantized)
-    }
-}
-
-struct DecoderBlock {
-    snake: Vec<f32>,
-    up: WnConvTranspose1d,
-    units: [ResidualUnit; 3],
-}
-
-impl DecoderBlock {
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        let seq = x.len() / self.up.in_ch;
-        let mut h = x.to_vec();
-        snake1d(&mut h, &self.snake, self.up.in_ch, seq);
-        let mut h = self.up.forward(&h);
-        let ch = self.up.out_ch;
-        h = self.units[0].forward(&h, ch);
-        h = self.units[1].forward(&h, ch);
-        self.units[2].forward(&h, ch)
     }
 }
 
@@ -464,7 +389,12 @@ impl Dac {
                 1,
                 1,
             )?;
-            blocks.push(EncoderBlock { units, snake, down });
+            blocks.push(EncoderBlock {
+                units,
+                snake,
+                down,
+                ch: half,
+            });
         }
         let final_index = config.encoder_rates.len() + 1;
         let out_snake = load_alpha(

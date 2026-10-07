@@ -22,6 +22,9 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{
+    load_bias, load_mlx_conv_weight, load_mlx_convt_weight, BiasMode, Conv1d, ConvTranspose1d,
+};
 use crate::codec::wnconv::load_f32_shaped;
 use crate::fft::{ComplexF32, RealFftPlan};
 use crate::ops;
@@ -164,130 +167,59 @@ impl NvcPointwise {
 /// Strided (or plain) Conv1d over channel-major activations, loaded
 /// from the MLX layout `[out, K, in/groups]`. The depthwise variant
 /// (`groups = channels`) stores `[C, K, 1]`.
-#[derive(Debug, Clone)]
-struct NvcConv1d {
+///
+/// `depthwise` selects the `[C, K, 1]` stored layout and
+/// `groups = channels`; otherwise the layout is `[out, K, in]`
+/// with groups 1.
+fn load_nvc_conv(
+    file: &SafetensorsFile,
+    prefix: &str,
     in_ch: usize,
     out_ch: usize,
     kernel: usize,
     stride: usize,
-    groups: usize,
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
+    depthwise: bool,
+) -> Result<Conv1d> {
+    let (groups, stored_in) = if depthwise { (in_ch, 1) } else { (1, in_ch) };
+    let weight =
+        load_mlx_conv_weight(file, &format!("{prefix}.weight"), out_ch, kernel, stored_in)?;
+    let bias = load_bias(file, &format!("{prefix}.bias"), out_ch, BiasMode::Optional)?;
+    Ok(Conv1d {
+        in_ch,
+        out_ch,
+        kernel,
+        stride,
+        padding: 0,
+        dilation: 1,
+        groups,
+        weight,
+        bias,
+    })
 }
 
-impl NvcConv1d {
-    /// `depthwise` selects the `[C, K, 1]` stored layout and
-    /// `groups = channels`; otherwise the layout is `[out, K, in]`
-    /// with groups 1.
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        in_ch: usize,
-        out_ch: usize,
-        kernel: usize,
-        stride: usize,
-        depthwise: bool,
-    ) -> Result<Self> {
-        let (groups, stored_in) = if depthwise { (in_ch, 1) } else { (1, in_ch) };
-        let stored = load_f32_shaped(
-            file,
-            &format!("{prefix}.weight"),
-            &[out_ch, kernel, stored_in],
-        )?;
-        let mut weight = vec![0.0f32; out_ch * stored_in * kernel];
-        for oc in 0..out_ch {
-            for kk in 0..kernel {
-                for ic in 0..stored_in {
-                    weight[oc * stored_in * kernel + ic * kernel + kk] =
-                        stored[oc * kernel * stored_in + kk * stored_in + ic];
-                }
-            }
-        }
-        let bias_name = format!("{prefix}.bias");
-        let bias = if file.contains_tensor(&bias_name) {
-            Some(load_f32_shaped(file, &bias_name, &[out_ch])?)
-        } else {
-            None
-        };
-        Ok(NvcConv1d {
-            in_ch,
-            out_ch,
-            kernel,
-            stride,
-            groups,
-            weight,
-            bias,
-        })
-    }
-
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            0,
-            1,
-            self.groups,
-        )
-    }
-}
-
-/// ConvTranspose1d loaded from the MLX layout `[in, K, out]`, stored
-/// PyTorch `[in, out, K]`. No bias, output_padding 0, groups 1.
-#[derive(Debug, Clone)]
-struct NvcConvTr {
+/// ConvTranspose1d stored PyTorch `[in, out, K]` (`kernel = stride =
+/// rate`). No bias, output_padding 0, groups 1. MLX stores the
+/// transposed conv out-first `[out, K, in]`; converts to the PyTorch
+/// `[in, out, K]` the crate kernel takes.
+fn load_nvc_convtr(
+    file: &SafetensorsFile,
+    prefix: &str,
     in_ch: usize,
     out_ch: usize,
-    kernel: usize,
-    weight: Vec<f32>,
-}
-
-impl NvcConvTr {
-    /// MLX stores the transposed conv out-first `[out, K, in]`;
-    /// converts to the PyTorch `[in, out, K]` the crate kernel takes.
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        in_ch: usize,
-        out_ch: usize,
-        rate: usize,
-    ) -> Result<Self> {
-        let stored = load_f32_shaped(file, &format!("{prefix}.weight"), &[out_ch, rate, in_ch])?;
-        let mut weight = vec![0.0f32; stored.len()];
-        for ic in 0..in_ch {
-            for kk in 0..rate {
-                for oc in 0..out_ch {
-                    weight[ic * out_ch * rate + oc * rate + kk] =
-                        stored[oc * rate * in_ch + kk * in_ch + ic];
-                }
-            }
-        }
-        Ok(NvcConvTr {
-            in_ch,
-            out_ch,
-            kernel: rate,
-            weight,
-        })
-    }
-
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv_transpose1d(
-            x,
-            &self.weight,
-            None,
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.kernel,
-            0,
-            0,
-            1,
-        )
-    }
+    rate: usize,
+) -> Result<ConvTranspose1d> {
+    let weight = load_mlx_convt_weight(file, &format!("{prefix}.weight"), out_ch, rate, in_ch)?;
+    Ok(ConvTranspose1d {
+        in_ch,
+        out_ch,
+        kernel: rate,
+        stride: rate,
+        padding: 0,
+        output_padding: 0,
+        groups: 1,
+        weight,
+        bias: None,
+    })
 }
 
 /// LayerNorm over the channel axis (per frame), eps 1e-6.
@@ -329,7 +261,7 @@ impl ChannelLayerNorm {
 /// norm, pwconv1, exact GELU, pwconv2, residual.
 #[derive(Debug, Clone)]
 struct ConvNeXtBlock {
-    dwconv: NvcConv1d,
+    dwconv: Conv1d,
     norm: ChannelLayerNorm,
     pwconv1: NvcPointwise,
     pwconv2: NvcPointwise,
@@ -339,7 +271,7 @@ struct ConvNeXtBlock {
 impl ConvNeXtBlock {
     fn load(file: &SafetensorsFile, prefix: &str, channels: usize, kernel: usize) -> Result<Self> {
         Ok(ConvNeXtBlock {
-            dwconv: NvcConv1d::load(
+            dwconv: load_nvc_conv(
                 file,
                 &format!("{prefix}.dwconv"),
                 channels,
@@ -381,7 +313,7 @@ impl ConvNeXtBlock {
 
 struct EncoderStage {
     blocks: Vec<ConvNeXtBlock>,
-    downsample: NvcConv1d,
+    downsample: Conv1d,
 }
 
 struct Encoder {
@@ -390,7 +322,7 @@ struct Encoder {
 }
 
 struct DecoderStage {
-    upsample: NvcConvTr,
+    upsample: ConvTranspose1d,
     blocks: Vec<ConvNeXtBlock>,
 }
 
@@ -566,7 +498,7 @@ impl NemotronVoiceChatCodec {
             } else {
                 config.latent_dim
             };
-            let downsample = NvcConv1d::load(
+            let downsample = load_nvc_conv(
                 file,
                 &format!("encoder.layers.{layer}"),
                 stage_channels,
@@ -591,7 +523,7 @@ impl NemotronVoiceChatCodec {
         let mut source = config.latent_dim;
         let mut layer = 0usize;
         for (stage_index, stage_channels) in reversed {
-            let upsample = NvcConvTr::load(
+            let upsample = load_nvc_convtr(
                 file,
                 &format!("decoder.layers.{layer}"),
                 source,

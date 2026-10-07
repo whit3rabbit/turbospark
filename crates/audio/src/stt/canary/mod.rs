@@ -17,6 +17,7 @@ use serde_json::Value;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::nemo_mel::nemo_log_mel_spectrogram;
+use crate::nn::argmax;
 use crate::vad::sortformer::FastConformer;
 use crate::{Result, SpeechError};
 
@@ -281,7 +282,7 @@ impl Canary {
                     &mut cache,
                     &self.positional,
                 )?;
-                next = argmax(&step_logits[step_logits.len() - vocab..]);
+                next = argmax(&step_logits[step_logits.len() - vocab..]) as u32;
                 if next as i32 == eos {
                     break;
                 }
@@ -295,20 +296,6 @@ impl Canary {
         let text = self.tokenizer.decode(&generated)?;
         Ok((text, generated))
     }
-}
-
-fn argmax(logits: &[f32]) -> u32 {
-    logits
-        .iter()
-        .enumerate()
-        .fold((0usize, f32::NEG_INFINITY), |best, (id, &value)| {
-            if value > best.1 {
-                (id, value)
-            } else {
-                best
-            }
-        })
-        .0 as u32
 }
 
 fn top_logits(logits: &[f32]) -> FirstLogits {

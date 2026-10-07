@@ -689,39 +689,16 @@ impl NemotronDiarization {
         let rotary_dim = self.rotary_dim();
         let qkv = ops::linear(x, &attn.w_qkv_w, attn.w_qkv_b.as_deref(), rows, d, 3 * d);
         let scale = (head_dim as f32).powf(-0.5);
-        let mut gathered = vec![0.0f32; rows * d];
-        let mut q = vec![0.0f32; rows * head_dim];
-        let mut k = vec![0.0f32; rows * head_dim];
-        let mut v = vec![0.0f32; rows * head_dim];
-        for h in 0..heads {
-            for t in 0..rows {
-                for dd in 0..head_dim {
-                    q[t * head_dim + dd] = qkv[t * 3 * d + h * head_dim + dd];
-                    k[t * head_dim + dd] = qkv[t * 3 * d + d + h * head_dim + dd];
-                    v[t * head_dim + dd] = qkv[t * 3 * d + 2 * d + h * head_dim + dd];
-                }
-            }
-            rope_neox(&mut q, rows, head_dim, rotary_dim, cos, sin);
-            rope_neox(&mut k, rows, head_dim, rotary_dim, cos, sin);
-            // ops::sdpa consumes one head's rows; the key mask repeats on
-            // every query row: mask[t * rows + j] = key_mask[j].
-            let head_mask: Vec<f32> = (0..rows).flat_map(|_| key_mask.iter().copied()).collect();
-            let o = ops::sdpa(
-                &q,
-                &k,
-                &v,
-                Some(&head_mask),
-                rows,
-                rows,
-                head_dim,
-                head_dim,
-                scale,
-            );
-            for t in 0..rows {
-                gathered[t * d + h * head_dim..t * d + (h + 1) * head_dim]
-                    .copy_from_slice(&o[t * head_dim..(t + 1) * head_dim]);
-            }
-        }
+        let mut q = ops::split_heads_strided(&qkv, 3 * d, 0, rows, heads, head_dim);
+        let mut k = ops::split_heads_strided(&qkv, 3 * d, d, rows, heads, head_dim);
+        let v = ops::split_heads_strided(&qkv, 3 * d, 2 * d, rows, heads, head_dim);
+        ops::rope_neox(&mut q, heads, rows, rotary_dim, cos, sin);
+        ops::rope_neox(&mut k, heads, rows, rotary_dim, cos, sin);
+        // The key mask repeats on every query row: mask[t * rows + j] =
+        // key_mask[j]. It is the same for every head, so build it once.
+        let mask: Vec<f32> = (0..rows).flat_map(|_| key_mask.iter().copied()).collect();
+        let o = ops::mha(&q, &k, &v, Some(&mask), heads, rows, rows, head_dim, scale);
+        let gathered = ops::merge_heads(&o, rows, heads, head_dim);
         ops::linear(&gathered, &attn.out_w, Some(&attn.out_b), rows, d, d)
     }
 
@@ -851,7 +828,7 @@ impl NemotronDiarization {
             n_spk,
         );
         for v in logits.iter_mut() {
-            *v = 1.0 / (1.0 + (-*v).exp());
+            *v = ops::sigmoid(*v);
         }
         logits
     }
@@ -879,24 +856,6 @@ impl NemotronDiarization {
             }
         }
         probs
-    }
-}
-
-/// NeoX-style (half-split) rotary embedding, the MLX
-/// `nn.RoPE(traditional=False)` convention, applied in place to
-/// `x [seq, dim]` rows. `cos`/`sin` are `[seq, rotary_dim / 2]` tables.
-fn rope_neox(x: &mut [f32], seq: usize, dim: usize, rotary_dim: usize, cos: &[f32], sin: &[f32]) {
-    let half = rotary_dim / 2;
-    for t in 0..seq {
-        let base = t * dim;
-        for d in 0..half {
-            let c = cos[t * half + d];
-            let s = sin[t * half + d];
-            let a = x[base + d];
-            let b = x[base + half + d];
-            x[base + d] = a * c - b * s;
-            x[base + half + d] = b * c + a * s;
-        }
     }
 }
 
@@ -1476,7 +1435,7 @@ mod tests {
         // -0.2] (relu keeps only the positive), head doubles and
         // sigmoids: each frame becomes [sigmoid(0.2), sigmoid(0)].
         let probs = model.speaker_head(&[0.1, -0.2], 1);
-        let active = 1.0 / (1.0 + (-(0.2f32)).exp());
+        let active = ops::sigmoid(0.2f32);
         let silent = 0.5f32;
         assert_eq!(probs.len(), 4);
         for frame in probs.chunks_exact(2) {
@@ -1494,13 +1453,13 @@ mod tests {
         let mut x = vec![1.0f32, 0.0];
         let cos = vec![0.0f32];
         let sin = vec![1.0f32];
-        rope_neox(&mut x, 1, 2, 2, &cos, &sin);
+        ops::rope_neox(&mut x, 1, 1, 2, &cos, &sin);
         assert!(close(x[0], 0.0, 1e-6) && close(x[1], 1.0, 1e-6));
         // Angle 0 is the identity.
         let mut x = vec![0.5f32, -0.25];
         let cos = vec![1.0f32];
         let sin = vec![0.0f32];
-        rope_neox(&mut x, 1, 2, 2, &cos, &sin);
+        ops::rope_neox(&mut x, 1, 1, 2, &cos, &sin);
         assert!(close(x[0], 0.5, 1e-6) && close(x[1], -0.25, 1e-6));
     }
 

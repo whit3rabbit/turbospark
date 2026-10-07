@@ -31,6 +31,7 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{load_bias, load_mlx_conv_weight, BiasMode, Conv1d};
 use crate::codec::wnconv::load_f32_shaped;
 use crate::ops;
 use crate::whisper::{WHISPER_FMAX, WHISPER_HOP, WHISPER_N_FFT, WHISPER_SAMPLE_RATE};
@@ -170,73 +171,31 @@ impl S3Linear {
 
 /// Conv1d loaded from the MLX checkpoint layout `[out, K, in]`, stored
 /// PyTorch `[out, in, K]` for the crate kernel.
-#[derive(Debug, Clone)]
-struct S3Conv1d {
+#[allow(clippy::too_many_arguments)]
+fn load_s3_conv(
+    file: &SafetensorsFile,
+    prefix: &str,
     in_ch: usize,
     out_ch: usize,
     kernel: usize,
     stride: usize,
     padding: usize,
     groups: usize,
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-impl S3Conv1d {
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        in_ch: usize,
-        out_ch: usize,
-        kernel: usize,
-        stride: usize,
-        padding: usize,
-        groups: usize,
-    ) -> Result<Self> {
-        let in_g = in_ch / groups;
-        let stored = load_f32_shaped(file, &format!("{prefix}.weight"), &[out_ch, kernel, in_g])?;
-        let mut weight = vec![0.0f32; stored.len()];
-        for oc in 0..out_ch {
-            for kk in 0..kernel {
-                for ic in 0..in_g {
-                    weight[oc * in_g * kernel + ic * kernel + kk] =
-                        stored[oc * kernel * in_g + kk * in_g + ic];
-                }
-            }
-        }
-        let bias_name = format!("{prefix}.bias");
-        let bias = if file.contains_tensor(&bias_name) {
-            Some(load_f32_shaped(file, &bias_name, &[out_ch])?)
-        } else {
-            None
-        };
-        Ok(S3Conv1d {
-            in_ch,
-            out_ch,
-            kernel,
-            stride,
-            padding,
-            groups,
-            weight,
-            bias,
-        })
-    }
-
-    /// Channel-major `x [in_ch, seq]` -> `[out_ch, out_seq]`.
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            self.padding,
-            1,
-            self.groups,
-        )
-    }
+) -> Result<Conv1d> {
+    let in_g = in_ch / groups;
+    let weight = load_mlx_conv_weight(file, &format!("{prefix}.weight"), out_ch, kernel, in_g)?;
+    let bias = load_bias(file, &format!("{prefix}.bias"), out_ch, BiasMode::Optional)?;
+    Ok(Conv1d {
+        in_ch,
+        out_ch,
+        kernel,
+        stride,
+        padding,
+        dilation: 1,
+        groups,
+        weight,
+        bias,
+    })
 }
 
 /// Multi-head self-attention with the reference scaling contract: both
@@ -255,7 +214,7 @@ struct S3Attention {
     out: S3Linear,
     /// v2 only: depthwise conv (kernel 31, no bias, symmetric zero pad
     /// 15/15), residual on v, masked by the valid frames.
-    fsmn: Option<S3Conv1d>,
+    fsmn: Option<Conv1d>,
 }
 
 impl S3Attention {
@@ -271,7 +230,7 @@ impl S3Attention {
         };
         let fsmn = match fsmn_kernel {
             None => None,
-            Some(kernel) => Some(S3Conv1d::load(
+            Some(kernel) => Some(load_s3_conv(
                 file,
                 &format!("{prefix}.fsmn_block"),
                 state,
@@ -402,22 +361,15 @@ impl S3Block {
         let scale = (d_head as f32).powf(-0.25);
 
         // Per-head planes [head, seq, d_head]; q and k pre-scaled.
-        let mut qh = vec![0.0f32; heads * seq * d_head];
-        let mut kh = vec![0.0f32; heads * seq * d_head];
-        let mut vh = vec![0.0f32; heads * seq * d_head];
-        for h in 0..heads {
-            for t in 0..seq {
-                let src = t * self.state + h * d_head;
-                for d in 0..d_head {
-                    qh[(h * seq + t) * d_head + d] = q[src + d] * scale;
-                    kh[(h * seq + t) * d_head + d] = k[src + d] * scale;
-                    vh[(h * seq + t) * d_head + d] = v[src + d];
-                }
-            }
+        let mut qh = ops::split_heads(&q, seq, heads, d_head);
+        let mut kh = ops::split_heads(&k, seq, heads, d_head);
+        let vh = ops::split_heads(&v, seq, heads, d_head);
+        for x in qh.iter_mut().chain(kh.iter_mut()) {
+            *x *= scale;
         }
         if let Some((cos, sin)) = rope {
-            apply_rope_neox(&mut qh, heads, seq, d_head, V2_ROPE_DIM, cos, sin);
-            apply_rope_neox(&mut kh, heads, seq, d_head, V2_ROPE_DIM, cos, sin);
+            ops::rope_neox(&mut qh, heads, seq, V2_ROPE_DIM, cos, sin);
+            ops::rope_neox(&mut kh, heads, seq, V2_ROPE_DIM, cos, sin);
         }
 
         // FSMN memory branch on v (channel-major round trip).
@@ -454,30 +406,19 @@ impl S3Block {
             m
         };
 
-        let mut out = vec![0.0f32; heads * seq * d_head];
-        for h in 0..heads {
-            let o = ops::sdpa(
-                &qh[h * seq * d_head..(h + 1) * seq * d_head],
-                &kh[h * seq * d_head..(h + 1) * seq * d_head],
-                &vh[h * seq * d_head..(h + 1) * seq * d_head],
-                if mask.is_empty() { None } else { Some(&mask) },
-                seq,
-                seq,
-                d_head,
-                d_head,
-                1.0,
-            );
-            out[h * seq * d_head..(h + 1) * seq * d_head].copy_from_slice(&o);
-        }
+        let out = ops::mha(
+            &qh,
+            &kh,
+            &vh,
+            if mask.is_empty() { None } else { Some(&mask) },
+            heads,
+            seq,
+            seq,
+            d_head,
+            1.0,
+        );
         // Back to row-major, then the output projection + FSMN add.
-        let mut merged = vec![0.0f32; seq * self.state];
-        for h in 0..heads {
-            for t in 0..seq {
-                let src = (h * seq + t) * d_head;
-                merged[t * self.state + h * d_head..t * self.state + (h + 1) * d_head]
-                    .copy_from_slice(&out[src..src + d_head]);
-            }
-        }
+        let merged = ops::merge_heads(&out, seq, heads, d_head);
         let projected = self.attn.out.forward(&merged, seq);
         for (v, a) in x.iter_mut().zip(projected) {
             *v += a;
@@ -523,37 +464,13 @@ fn sinusoids(length: usize, channels: usize) -> Vec<f32> {
     table
 }
 
-fn apply_rope_neox(
-    values: &mut [f32],
-    heads: usize,
-    seq: usize,
-    dim: usize,
-    rotary_dim: usize,
-    cos: &[f32],
-    sin: &[f32],
-) {
-    let half = rotary_dim / 2;
-    for h in 0..heads {
-        for t in 0..seq {
-            let base = (h * seq + t) * dim;
-            for d in 0..half {
-                let a = values[base + d];
-                let b = values[base + half + d];
-                let table = t * half + d;
-                values[base + d] = a * cos[table] - b * sin[table];
-                values[base + half + d] = b * cos[table] + a * sin[table];
-            }
-        }
-    }
-}
-
 /// Shared conv front end: conv1 (k=3, pad 1) + gelu, conv2 (k=3,
 /// stride 2, pad 1) + gelu, with the reference's frame masking between
 /// stages. Length updates follow
 /// `(x_len + 2 - (3 - 1) - 1) // stride + 1`.
 struct ConvFrontend {
-    conv1: S3Conv1d,
-    conv2: S3Conv1d,
+    conv1: Conv1d,
+    conv2: Conv1d,
     stride: usize,
 }
 
@@ -566,7 +483,7 @@ impl ConvFrontend {
         stride: usize,
     ) -> Result<Self> {
         Ok(ConvFrontend {
-            conv1: S3Conv1d::load(
+            conv1: load_s3_conv(
                 file,
                 &format!("{prefix}.conv1"),
                 n_mels,
@@ -576,18 +493,19 @@ impl ConvFrontend {
                 1,
                 1,
             )?,
-            conv2: S3Conv1d::load(file, &format!("{prefix}.conv2"), state, state, 3, 2, 1, 1)?,
+            conv2: load_s3_conv(file, &format!("{prefix}.conv2"), state, state, 3, 2, 1, 1)?,
             stride,
         })
     }
 
     fn uninit(n_mels: usize, state: usize, stride: usize) -> Self {
-        let conv = |in_ch: usize, out_ch: usize, k_stride: usize| S3Conv1d {
+        let conv = |in_ch: usize, out_ch: usize, k_stride: usize| Conv1d {
             in_ch,
             out_ch,
             kernel: 3,
             stride: k_stride,
             padding: 1,
+            dilation: 1,
             groups: 1,
             weight: Vec::new(),
             bias: None,

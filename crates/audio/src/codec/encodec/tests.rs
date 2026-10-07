@@ -218,3 +218,116 @@ fn real_checkpoint_gate() {
     assert_eq!(audio.len(), model.config.hop_length() * codes[0].len());
     assert!(audio.iter().all(|v| v.is_finite()));
 }
+
+// ---------------------------------------------------------------------
+// Bitwise parity of the allocation-trimmed LSTM against the original
+// per-step implementation (kept verbatim below).
+// ---------------------------------------------------------------------
+
+use super::{stable_sigmoid, Lstm};
+
+#[allow(clippy::needless_range_loop)]
+fn lstm_forward_reference(this: &Lstm, x: &[f32]) -> Vec<f32> {
+    let t = x.len() / this.in_dim;
+    let h = this.hidden;
+    // Pre-map inputs: pre_x[t][j] = bias[j] + sum_i x[i, t] * wx[j, i].
+    let mut pre_x = vec![0.0f32; t * 4 * h];
+    for step in 0..t {
+        for j in 0..4 * h {
+            let mut acc = this.bias.as_deref().map_or(0.0, |b| b[j]);
+            let w_row = &this.wx[j * this.in_dim..(j + 1) * this.in_dim];
+            for i in 0..this.in_dim {
+                acc += x[i * t + step] * w_row[i];
+            }
+            pre_x[step * 4 * h + j] = acc;
+        }
+    }
+    let mut out = vec![0.0f32; h * t];
+    let mut cell = vec![0.0f32; h];
+    // h_pre is the (4H) hidden-side gate input; the reference skips
+    // the Wh multiply on step 0 (zeros), which is identical.
+    let mut h_pre = vec![0.0f32; 4 * h];
+    for step in 0..t {
+        if step > 0 {
+            // h_pre = h_prev @ wh.T: wh [4H, H], h_prev [H].
+            for j in 0..4 * h {
+                let mut acc = 0.0f32;
+                let w_row = &this.wh[j * h..(j + 1) * h];
+                for i in 0..h {
+                    acc += out[i * t + step - 1] * w_row[i];
+                }
+                h_pre[j] = acc;
+            }
+        }
+        // Gates in the kernel's stable form.
+        let mut new_hidden = vec![0.0f32; h];
+        for i in 0..h {
+            let pi = h_pre[i] + pre_x[step * 4 * h + i];
+            let pf = h_pre[h + i] + pre_x[step * 4 * h + h + i];
+            let pg = h_pre[2 * h + i] + pre_x[step * 4 * h + 2 * h + i];
+            let po = h_pre[3 * h + i] + pre_x[step * 4 * h + 3 * h + i];
+            let gi = stable_sigmoid(pi);
+            let gf = stable_sigmoid(pf);
+            let gg = pg.tanh();
+            let go = stable_sigmoid(po);
+            cell[i] = gf * cell[i] + gi * gg;
+            new_hidden[i] = go * cell[i].tanh();
+        }
+        for i in 0..h {
+            out[i * t + step] = new_hidden[i];
+        }
+    }
+    out
+}
+
+/// Deterministic xorshift stream with ~1 in 6 exact zeros; avoids a
+/// dev-dependency.
+struct Rng(u64);
+
+impl Rng {
+    fn value(&mut self) -> f32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        let r = self.0;
+        if r % 6 == 0 {
+            return 0.0;
+        }
+        (((r >> 8) % 20001) as f32 / 10000.0 - 1.0) * [0.1f32, 1.0, 3.0][((r >> 40) % 3) as usize]
+    }
+
+    fn vec(&mut self, n: usize) -> Vec<f32> {
+        (0..n).map(|_| self.value()).collect()
+    }
+}
+
+#[test]
+fn lstm_forward_matches_original_over_many_steps_bitwise() {
+    let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+    for &(dim, steps, with_bias) in &[
+        (4usize, 1usize, true),
+        (4, 2, false),
+        (6, 11, true),
+        (16, 25, false),
+        (9, 40, true),
+    ] {
+        let lstm = Lstm {
+            wx: rng.vec(4 * dim * dim),
+            wh: rng.vec(4 * dim * dim),
+            bias: with_bias.then(|| rng.vec(4 * dim)),
+            hidden: dim,
+            in_dim: dim,
+        };
+        let x = rng.vec(dim * steps);
+        let want = lstm_forward_reference(&lstm, &x);
+        let got = lstm.forward(&x);
+        assert_eq!(got.len(), want.len());
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert_eq!(
+                g.to_bits(),
+                w.to_bits(),
+                "dim={dim} steps={steps} bias={with_bias} element {i}: got {g} want {w}"
+            );
+        }
+    }
+}

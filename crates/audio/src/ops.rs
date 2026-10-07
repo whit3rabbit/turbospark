@@ -134,7 +134,7 @@ const PAR_MIN_WORK: usize = 1 << 18;
 
 /// Worker threads available to the kernels, read once. The OS query is
 /// not free on every platform and the answer does not change mid-run.
-fn thread_count() -> usize {
+pub(crate) fn thread_count() -> usize {
     static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *THREADS.get_or_init(|| {
         std::thread::available_parallelism()
@@ -176,6 +176,51 @@ fn par_rows(
             start = end;
         }
     });
+}
+
+/// Runs `job(0..count)` on scoped worker threads and returns the results in
+/// index order. For independent, single-threaded jobs (each result depends
+/// only on its index), so the output equals `(0..count).map(job)` exactly;
+/// jobs are handed out dynamically but placed by index.
+pub(crate) fn par_map<T: Send>(count: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
+    let threads = thread_count().min(count);
+    if threads <= 1 {
+        return (0..count).map(job).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let parts: Vec<Vec<(usize, T)>> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if index >= count {
+                            break;
+                        }
+                        mine.push((index, job(index)));
+                    }
+                    mine
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    let mut slots: Vec<Option<T>> = (0..count).map(|_| None).collect();
+    for (index, value) in parts.into_iter().flatten() {
+        slots[index] = Some(value);
+    }
+    slots
+        .into_iter()
+        .map(|slot| slot.expect("every job index ran once"))
+        .collect()
 }
 
 /// Row-wise LayerNorm: `(x - mean) / sqrt(var + eps) * w (+ b)`. The
@@ -620,13 +665,42 @@ pub fn sdpa_strided(
     dv: usize,
     scale: f32,
 ) -> Vec<f32> {
+    let mut out = vec![0.0f32; qh * dv];
+    sdpa_strided_into(
+        &mut out, q, k, k_base, k_stride, v, v_base, v_stride, mask, qh, kv, dq, dv, scale,
+    );
+    out
+}
+
+/// [`sdpa_strided`] writing into a caller-owned `out [qh, dv]`, which is
+/// zeroed first. Lets multi-head callers fill one buffer instead of
+/// allocating and copying a result per head.
+#[allow(clippy::too_many_arguments)]
+pub fn sdpa_strided_into(
+    out: &mut [f32],
+
+    q: &[f32],
+    k: &[f32],
+    k_base: usize,
+    k_stride: usize,
+    v: &[f32],
+    v_base: usize,
+    v_stride: usize,
+    mask: Option<&[f32]>,
+    qh: usize,
+    kv: usize,
+    dq: usize,
+    dv: usize,
+    scale: f32,
+) {
+    assert_eq!(out.len(), qh * dv);
+    out.fill(0.0);
     assert_eq!(q.len(), qh * dq);
     debug_assert!(k.len() >= k_base + (kv.max(1) - 1) * k_stride + dq);
     debug_assert!(v.len() >= v_base + (kv.max(1) - 1) * v_stride + dv);
-    let mut out = vec![0.0f32; qh * dv];
     // Heads are independent, so they split across threads; each worker
     // reuses one scores row for all of its heads.
-    par_rows(qh, &mut out, dv, kv * (dq + dv), |h0, h1, rows| {
+    par_rows(qh, out, dv, kv * (dq + dv), |h0, h1, rows| {
         let mut scores = vec![0.0f32; kv];
         for h in h0..h1 {
             let q_row = &q[h * dq..(h + 1) * dq];
@@ -648,6 +722,94 @@ pub fn sdpa_strided(
             }
         }
     });
+}
+
+/// Splits a row-major `[seq, heads * head_dim]` activation into head-major
+/// planes `[heads, seq, head_dim]`.
+pub fn split_heads(x: &[f32], seq: usize, heads: usize, head_dim: usize) -> Vec<f32> {
+    split_heads_strided(x, heads * head_dim, 0, seq, heads, head_dim)
+}
+
+/// [`split_heads`] reading rows of `row_stride` floats and starting each
+/// row at `col_offset`, for the q/k/v thirds of a fused `[seq, 3 * dim]`
+/// projection (`col_offset` is `0`, `dim`, `2 * dim`).
+pub fn split_heads_strided(
+    x: &[f32],
+    row_stride: usize,
+    col_offset: usize,
+    seq: usize,
+    heads: usize,
+    head_dim: usize,
+) -> Vec<f32> {
+    assert!(seq == 0 || x.len() >= (seq - 1) * row_stride + col_offset + heads * head_dim);
+    let mut out = vec![0.0f32; heads * seq * head_dim];
+    for h in 0..heads {
+        for t in 0..seq {
+            let src = t * row_stride + col_offset + h * head_dim;
+            let dst = (h * seq + t) * head_dim;
+            out[dst..dst + head_dim].copy_from_slice(&x[src..src + head_dim]);
+        }
+    }
+    out
+}
+
+/// Inverse of [`split_heads`]: head-major `[heads, seq, head_dim]` back to
+/// row-major `[seq, heads * head_dim]`.
+pub fn merge_heads(x: &[f32], seq: usize, heads: usize, head_dim: usize) -> Vec<f32> {
+    assert_eq!(x.len(), heads * seq * head_dim);
+    let dim = heads * head_dim;
+    let mut out = vec![0.0f32; seq * dim];
+    for h in 0..heads {
+        for t in 0..seq {
+            let src = (h * seq + t) * head_dim;
+            out[t * dim + h * head_dim..t * dim + (h + 1) * head_dim]
+                .copy_from_slice(&x[src..src + head_dim]);
+        }
+    }
+    out
+}
+
+/// Multi-head attention over head-major planes: `q [heads, seq_q,
+/// head_dim]`, `k`/`v [heads, seq_kv, head_dim]` to `[heads, seq_q,
+/// head_dim]`. `mask` is one additive `[seq_q, seq_kv]` bias shared by
+/// every head. Each head runs [`sdpa`] unchanged and writes straight into
+/// the result, so the values match a per-head `sdpa` loop bit for bit.
+#[allow(clippy::too_many_arguments)]
+pub fn mha(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    mask: Option<&[f32]>,
+    heads: usize,
+    seq_q: usize,
+    seq_kv: usize,
+    head_dim: usize,
+    scale: f32,
+) -> Vec<f32> {
+    assert_eq!(q.len(), heads * seq_q * head_dim);
+    assert_eq!(k.len(), heads * seq_kv * head_dim);
+    assert_eq!(v.len(), heads * seq_kv * head_dim);
+    let mut out = vec![0.0f32; heads * seq_q * head_dim];
+    for h in 0..heads {
+        let qp = h * seq_q * head_dim;
+        let kp = h * seq_kv * head_dim;
+        sdpa_strided_into(
+            &mut out[qp..qp + seq_q * head_dim],
+            &q[qp..qp + seq_q * head_dim],
+            k,
+            kp,
+            head_dim,
+            v,
+            kp,
+            head_dim,
+            mask,
+            seq_q,
+            seq_kv,
+            head_dim,
+            head_dim,
+            scale,
+        );
+    }
     out
 }
 
@@ -670,9 +832,12 @@ pub fn repeat_kv(x: &[f32], kv_heads: usize, len: usize, dim: usize, q_heads: us
     out
 }
 
-/// NeoX-style rotary embedding applied in place to `x [heads, seq,
-/// rotary_dim]` (rotary_dim leading features; the tail passes through).
-/// `cos/sin` are per-position tables of length `rotary_dim / 2`.
+/// NeoX-style (half-split) rotary embedding applied in place to
+/// `x [heads, seq, dim]`: the leading `rotary_dim` features of every row
+/// rotate as pairs `(x[d], x[d + rotary_dim / 2])` and the tail passes
+/// through. `cos`/`sin` are per-position tables `[seq, rotary_dim / 2]`
+/// (see [`rope_tables`]); `dim` is inferred from the buffer length. A
+/// single decode row is `heads == 1, seq == 1` with one table row.
 pub fn rope_neox(
     x: &mut [f32],
     heads: usize,
@@ -681,25 +846,32 @@ pub fn rope_neox(
     cos: &[f32],
     sin: &[f32],
 ) {
-    assert_eq!(cos.len(), rotary_dim / 2);
-    assert_eq!(sin.len(), rotary_dim / 2);
+    let half = rotary_dim / 2;
+    assert!(cos.len() >= seq * half && sin.len() >= seq * half);
+    if heads * seq == 0 {
+        return;
+    }
     let dim = x.len() / (heads * seq);
     assert!(dim >= rotary_dim);
     for h in 0..heads {
         for t in 0..seq {
             let base = (h * seq + t) * dim;
-            for d in 0..rotary_dim / 2 {
-                let a = x[base + d];
-                let b = x[base + rotary_dim / 2 + d];
-                x[base + d] = a * cos[t] - b * sin[t];
-                x[base + rotary_dim / 2 + d] = b * cos[t] + a * sin[t];
+            let c = &cos[t * half..(t + 1) * half];
+            let s = &sin[t * half..(t + 1) * half];
+            let (lo, hi) = x[base..base + rotary_dim].split_at_mut(half);
+            for d in 0..half {
+                let a = lo[d];
+                let b = hi[d];
+                lo[d] = a * c[d] - b * s[d];
+                hi[d] = b * c[d] + a * s[d];
             }
         }
     }
 }
 
 /// GPT-J-style interleaved rotary embedding: pairs are `(x[2i],
-/// x[2i+1])`. Applied in place to `x [heads, seq, rotary_dim]`.
+/// x[2i + 1])`. Applied in place to `x [heads, seq, dim]` with the same
+/// `[seq, rotary_dim / 2]` tables and tail pass-through as [`rope_neox`].
 pub fn rope_interleaved(
     x: &mut [f32],
     heads: usize,
@@ -708,17 +880,23 @@ pub fn rope_interleaved(
     cos: &[f32],
     sin: &[f32],
 ) {
-    assert_eq!(cos.len(), rotary_dim / 2);
+    let half = rotary_dim / 2;
+    assert!(cos.len() >= seq * half && sin.len() >= seq * half);
+    if heads * seq == 0 {
+        return;
+    }
     let dim = x.len() / (heads * seq);
     assert!(dim >= rotary_dim);
     for h in 0..heads {
         for t in 0..seq {
             let base = (h * seq + t) * dim;
-            for d in 0..rotary_dim / 2 {
-                let a = x[base + 2 * d];
-                let b = x[base + 2 * d + 1];
-                x[base + 2 * d] = a * cos[t] - b * sin[t];
-                x[base + 2 * d + 1] = b * cos[t] + a * sin[t];
+            let c = &cos[t * half..(t + 1) * half];
+            let s = &sin[t * half..(t + 1) * half];
+            for (d, pair) in x[base..base + rotary_dim].chunks_exact_mut(2).enumerate() {
+                let a = pair[0];
+                let b = pair[1];
+                pair[0] = a * c[d] - b * s[d];
+                pair[1] = b * c[d] + a * s[d];
             }
         }
     }
@@ -783,6 +961,72 @@ pub fn checksum(x: &[f32]) -> f32 {
 /// Shape helper exported for model loaders: element count of `shape`.
 pub fn shape_product(shape: &[usize]) -> usize {
     product(shape)
+}
+
+/// Logistic sigmoid `1 / (1 + exp(-v))`. One shared copy of the
+/// expression the VAD, TTS and speech-enhancement models each wrote
+/// inline; the operation order is unchanged.
+#[inline]
+pub fn sigmoid(v: f32) -> f32 {
+    1.0 / (1.0 + (-v).exp())
+}
+
+/// ELU with alpha 1 (`nn.ELU`), in place.
+pub fn elu(x: &mut [f32]) {
+    for v in x.iter_mut() {
+        if *v <= 0.0 {
+            *v = v.exp() - 1.0;
+        }
+    }
+}
+
+/// LayerNorm over the channel axis of a channel-major `x [ch, frames]`,
+/// one frame (column) at a time. `w`/`b` are optional so the same
+/// kernel serves the affine and affine-free norms.
+///
+/// Each frame's channel sums run channel-ascending from `0.0`, exactly
+/// the strided loops the codec families wrote by hand. With a weight and
+/// no bias, `0.0` is still added after the scale (as the hand loops did,
+/// and as [`layernorm`] does); with neither, the plain `(x - mean) * inv`
+/// is stored.
+pub fn layernorm_cm(
+    x: &mut [f32],
+    ch: usize,
+    frames: usize,
+    w: Option<&[f32]>,
+    b: Option<&[f32]>,
+    eps: f32,
+) {
+    assert_eq!(x.len(), ch * frames);
+    if let Some(w) = w {
+        assert_eq!(w.len(), ch);
+    }
+    if let Some(b) = b {
+        assert_eq!(b.len(), ch);
+    }
+    for t in 0..frames {
+        let mut mean = 0.0f32;
+        for c in 0..ch {
+            mean += x[c * frames + t];
+        }
+        mean /= ch as f32;
+        let mut var = 0.0f32;
+        for c in 0..ch {
+            let d = x[c * frames + t] - mean;
+            var += d * d;
+        }
+        var /= ch as f32;
+        let inv = 1.0 / (var + eps).sqrt();
+        for c in 0..ch {
+            let i = c * frames + t;
+            let n = (x[i] - mean) * inv;
+            x[i] = match (w, b) {
+                (Some(w), b) => n * w[c] + b.map_or(0.0, |b| b[c]),
+                (None, Some(b)) => n + b[c],
+                (None, None) => n,
+            };
+        }
+    }
 }
 
 #[cfg(test)]
@@ -993,5 +1237,14 @@ mod tests {
         snake_beta(&mut x, &[0.5], &[0.25], 1, 1);
         let want = 2.0 + (0.5 * 2.0f32).sin().powi(2) / (0.25 + 1e-9);
         assert!(close(x[0], want, 1e-4));
+    }
+
+    #[test]
+    fn par_map_returns_results_in_index_order() {
+        for count in [0usize, 1, 2, 7, 64] {
+            let got = par_map(count, |index| index * index + 1);
+            let want: Vec<usize> = (0..count).map(|index| index * index + 1).collect();
+            assert_eq!(got, want);
+        }
     }
 }

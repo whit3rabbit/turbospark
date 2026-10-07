@@ -120,38 +120,31 @@ struct MlxGru {
 impl MlxGru {
     fn forward(&self, x: &[f32], t_len: usize) -> Vec<f32> {
         let h = self.hidden;
-        let mut proj = ops::linear(x, &self.wx, Some(&self.b), t_len, self.in_dim, 3 * h);
+        let proj = ops::linear(x, &self.wx, Some(&self.b), t_len, self.in_dim, 3 * h);
         let mut hidden = vec![0.0f32; h];
         let mut out = vec![0.0f32; t_len * h];
-        let mut h_proj = vec![0.0f32; t_len * 3 * h];
+        // Recurrent projection of one step; only the current step's row
+        // is ever read, so a full `t_len * 3h` buffer is not needed.
+        let mut h_proj = vec![0.0f32; 3 * h];
         for t in 0..t_len {
             let row = t * 3 * h;
             // hidden @ Wh: the hidden state is nonzero from frame 1 on,
             // so the recurrent projection affects every gate.
-            for g in 0..3 * h {
+            for (g, slot) in h_proj.iter_mut().enumerate() {
                 let w_row = &self.wh[g * h..(g + 1) * h];
-                h_proj[row + g] = hidden
+                *slot = hidden
                     .iter()
                     .zip(w_row.iter())
                     .map(|(a, b)| a * b)
                     .sum::<f32>();
             }
-            let (r_slice, z_slice, n_slice) = (
-                proj[row..row + h].to_vec(),
-                proj[row + h..row + 2 * h].to_vec(),
-                proj[row + 2 * h..row + 3 * h].to_vec(),
-            );
-            let mut r_row = r_slice;
-            let mut z_row = z_slice;
-            let n_row = n_slice;
+            // r and z only feed their own `d`, and `hidden[d]` is read
+            // only at `d`, so the gates fuse into one pass over `d`.
             for d in 0..h {
-                r_row[d] = 1.0 / (1.0 + (-(r_row[d] + h_proj[row + d])).exp());
-                z_row[d] = 1.0 / (1.0 + (-(z_row[d] + h_proj[row + h + d])).exp());
-            }
-            for d in 0..h {
-                proj[row + 2 * h + d] =
-                    (n_row[d] + r_row[d] * (h_proj[row + 2 * h + d] + self.bhn[d])).tanh();
-                hidden[d] = (1.0 - z_row[d]) * proj[row + 2 * h + d] + z_row[d] * hidden[d];
+                let r = ops::sigmoid(proj[row + d] + h_proj[d]);
+                let z = ops::sigmoid(proj[row + h + d] + h_proj[h + d]);
+                let n = (proj[row + 2 * h + d] + r * (h_proj[2 * h + d] + self.bhn[d])).tanh();
+                hidden[d] = (1.0 - z) * n + z * hidden[d];
             }
             out[t * h..(t + 1) * h].copy_from_slice(&hidden);
         }
@@ -554,7 +547,7 @@ impl DfNet {
         let (mut m, _, _) = self.erb_dec.conv0_out.0.forward(&d0, t_len, f_e0);
         self.erb_dec.conv0_out.1.forward(&mut m, 1);
         for v in m.iter_mut() {
-            *v = 1.0 / (1.0 + (-*v).exp());
+            *v = ops::sigmoid(*v);
         }
         // mask[T, 32] @ inv_fb[32, 481]
         let mut mask = vec![0.0f32; t_len * f_bins];
@@ -1206,4 +1199,101 @@ fn load_squeezed_gru(
         grus,
         linear_out,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deterministic xorshift stream with ~1 in 6 exact zeros; avoids a
+    /// dev-dependency.
+    struct Rng(u64);
+
+    impl Rng {
+        fn value(&mut self) -> f32 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            let r = self.0;
+            if r % 6 == 0 {
+                return 0.0;
+            }
+            (((r >> 8) % 20001) as f32 / 10000.0 - 1.0)
+                * [0.1f32, 1.0, 3.0][((r >> 40) % 3) as usize]
+        }
+
+        fn vec(&mut self, n: usize) -> Vec<f32> {
+            (0..n).map(|_| self.value()).collect()
+        }
+    }
+
+    // The original `MlxGru::forward`, kept verbatim as the parity
+    // reference for the trimmed version.
+    fn gru_forward_reference(this: &MlxGru, x: &[f32], t_len: usize) -> Vec<f32> {
+        let h = this.hidden;
+        let mut proj = ops::linear(x, &this.wx, Some(&this.b), t_len, this.in_dim, 3 * h);
+        let mut hidden = vec![0.0f32; h];
+        let mut out = vec![0.0f32; t_len * h];
+        let mut h_proj = vec![0.0f32; t_len * 3 * h];
+        for t in 0..t_len {
+            let row = t * 3 * h;
+            // hidden @ Wh: the hidden state is nonzero from frame 1 on,
+            // so the recurrent projection affects every gate.
+            for g in 0..3 * h {
+                let w_row = &this.wh[g * h..(g + 1) * h];
+                h_proj[row + g] = hidden
+                    .iter()
+                    .zip(w_row.iter())
+                    .map(|(a, b)| a * b)
+                    .sum::<f32>();
+            }
+            let (r_slice, z_slice, n_slice) = (
+                proj[row..row + h].to_vec(),
+                proj[row + h..row + 2 * h].to_vec(),
+                proj[row + 2 * h..row + 3 * h].to_vec(),
+            );
+            let mut r_row = r_slice;
+            let mut z_row = z_slice;
+            let n_row = n_slice;
+            for d in 0..h {
+                r_row[d] = 1.0 / (1.0 + (-(r_row[d] + h_proj[row + d])).exp());
+                z_row[d] = 1.0 / (1.0 + (-(z_row[d] + h_proj[row + h + d])).exp());
+            }
+            for d in 0..h {
+                proj[row + 2 * h + d] =
+                    (n_row[d] + r_row[d] * (h_proj[row + 2 * h + d] + this.bhn[d])).tanh();
+                hidden[d] = (1.0 - z_row[d]) * proj[row + 2 * h + d] + z_row[d] * hidden[d];
+            }
+            out[t * h..(t + 1) * h].copy_from_slice(&hidden);
+        }
+        out
+    }
+
+    #[test]
+    fn gru_forward_matches_original_over_many_steps_bitwise() {
+        let mut rng = Rng(0x7f4a_7c15_9e37_79b9);
+        for &(hidden, in_dim, steps) in
+            &[(4usize, 3usize, 1usize), (5, 7, 2), (8, 8, 13), (16, 5, 40)]
+        {
+            let gru = MlxGru {
+                wx: rng.vec(3 * hidden * in_dim),
+                wh: rng.vec(3 * hidden * hidden),
+                b: rng.vec(3 * hidden),
+                bhn: rng.vec(hidden),
+                hidden,
+                in_dim,
+            };
+            let x = rng.vec(steps * in_dim);
+            let want = gru_forward_reference(&gru, &x, steps);
+            let got = gru.forward(&x, steps);
+            assert_eq!(got.len(), want.len());
+            for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                assert_eq!(
+                    g.to_bits(),
+                    w.to_bits(),
+                    "hidden={hidden} in={in_dim} steps={steps} element {i}: got {g} want {w}"
+                );
+            }
+        }
+    }
 }

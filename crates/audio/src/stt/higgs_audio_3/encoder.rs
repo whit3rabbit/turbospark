@@ -18,6 +18,7 @@
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::mel::{mel_spectrogram, MelScale, MelSpectrogramOptions};
+use crate::nn::LayerNorm;
 use crate::ops;
 use crate::stft::StftOptions;
 use crate::{Result, SpeechError};
@@ -103,33 +104,12 @@ fn load_conv(
     Ok((weight, bias))
 }
 
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-    epsilon: f32,
-}
-
-impl LayerNorm {
-    fn load(files: &[SafetensorsFile], base: &str, width: usize) -> Result<Self> {
-        Ok(Self {
-            weight: load_vector(files, &format!("{base}.weight"), width)?,
-            bias: load_vector(files, &format!("{base}.bias"), width)?,
-            width,
-            epsilon: LAYER_NORM_EPS,
-        })
-    }
-
-    fn apply(&self, values: &mut [f32], rows: usize) {
-        ops::layernorm(
-            values,
-            rows,
-            self.width,
-            &self.weight,
-            Some(&self.bias),
-            self.epsilon,
-        );
-    }
+fn load_layer_norm(files: &[SafetensorsFile], base: &str, width: usize) -> Result<LayerNorm> {
+    Ok(LayerNorm::new(
+        load_vector(files, &format!("{base}.weight"), width)?,
+        Some(load_vector(files, &format!("{base}.bias"), width)?),
+        LAYER_NORM_EPS,
+    ))
 }
 
 struct AudioAttention {
@@ -261,13 +241,13 @@ impl EncoderLayer {
         let base = format!("audio_tower.layers.{index}");
         Ok(Self {
             attention: AudioAttention::load(files, &format!("{base}.self_attn"), d_model, heads)?,
-            attn_norm: LayerNorm::load(files, &format!("{base}.self_attn_layer_norm"), d_model)?,
+            attn_norm: load_layer_norm(files, &format!("{base}.self_attn_layer_norm"), d_model)?,
             fc1_weight: load_vector(files, &format!("{base}.fc1.weight"), ffn * d_model)?,
             fc1_bias: load_vector(files, &format!("{base}.fc1.bias"), ffn)?,
             fc2_weight: load_vector(files, &format!("{base}.fc2.weight"), d_model * ffn)?,
             fc2_bias: load_vector(files, &format!("{base}.fc2.bias"), d_model)?,
             ffn,
-            final_norm: LayerNorm::load(files, &format!("{base}.final_layer_norm"), d_model)?,
+            final_norm: load_layer_norm(files, &format!("{base}.final_layer_norm"), d_model)?,
             dim: d_model,
         })
     }
@@ -351,7 +331,7 @@ impl HiggsAudioEncoder {
             layers: (0..layers)
                 .map(|index| EncoderLayer::load(files, index, d_model, heads, ffn))
                 .collect::<Result<Vec<_>>>()?,
-            final_norm: LayerNorm::load(files, "audio_tower.layer_norm", d_model)?,
+            final_norm: load_layer_norm(files, "audio_tower.layer_norm", d_model)?,
             d_model,
             mel_bins,
             max_positions,

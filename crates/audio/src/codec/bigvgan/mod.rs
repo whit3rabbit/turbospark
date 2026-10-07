@@ -266,7 +266,12 @@ impl AmpBlock {
             let mut a2 = c1;
             self.activations[i * 2 + 1].forward(&mut a2, c1_frames);
             let c2 = self.convs2[i].forward(&a2);
-            h = h.iter().zip(c2.iter()).map(|(a, b)| a + b).collect();
+            // In-place residual add; truncating to `c2` keeps the old
+            // zip-collect length if the conv ever changed it.
+            h.truncate(c2.len());
+            for (a, b) in h.iter_mut().zip(&c2) {
+                *a += b;
+            }
         }
         h
     }
