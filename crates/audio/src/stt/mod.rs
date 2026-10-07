@@ -4,11 +4,13 @@
 //! own model-family identity and pinned checkpoint profiles.
 
 pub mod canary;
+pub mod cohere_asr;
 pub mod fireredasr2;
 pub mod fun_asr_nano;
 pub mod glmasr;
 pub mod granite_speech;
 pub mod granite_speech5_ctc;
+pub mod granite_speech_nar;
 pub mod higgs_audio_3;
 pub mod lasr_ctc;
 pub mod mega_asr;
@@ -21,6 +23,7 @@ pub mod phonon;
 pub mod qwen3_asr;
 pub mod qwen3_forced_aligner;
 pub mod sensevoice;
+pub mod vibevoice_asr;
 pub mod wav2vec;
 pub mod whisper;
 
@@ -31,6 +34,9 @@ pub use fireredasr2::{
 pub use glmasr::{GlmAsr, GlmAsrProfile, GLM_ASR_NANO_2512};
 pub use granite_speech::{GraniteSpeech, GraniteSpeechProfile, GRANITE_4_0_1B_SPEECH};
 pub use granite_speech5_ctc::{GraniteSpeech5Ctc, GraniteSpeech5Profile, GRANITE_SPEECH5_TURBOCTC};
+pub use granite_speech_nar::{
+    GraniteSpeechNar, GraniteSpeechNarProfile, GRANITE_SPEECH_4_1_2B_NAR,
+};
 pub use higgs_audio_3::{HiggsAudioV3Profile, HiggsAudioV3Stt, HIGGS_AUDIO_V3_STT};
 pub use lasr_ctc::{LasrCtc, MEDASR_MLX_FP32};
 pub use mega_asr::{MegaAsr, MegaAsrProfile, MEGA_ASR_8BIT};
@@ -50,5 +56,6 @@ pub use qwen3_forced_aligner::{
     Qwen3ForcedAlignerProfile, QWEN3_FORCED_ALIGNER_06B_8BIT,
 };
 pub use sensevoice::{SenseVoiceOutput, SenseVoiceProfile, SenseVoiceSmall, SENSEVOICE_SMALL};
+pub use vibevoice_asr::{VibeVoiceAsr, VibeVoiceAsrProfile, VIBEVOICE_ASR_STREAMING_1_5B};
 pub use wav2vec::{Wav2Vec, Wav2VecConfig, Wav2VecProfile, WAV2VEC2_BASE_960H};
 pub use whisper::{WhisperConfig, WhisperModel, WhisperSpecialTokens, WhisperWeights};

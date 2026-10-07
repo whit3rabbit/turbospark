@@ -1022,17 +1022,15 @@ mod tests {
         let x: Vec<f32> = (0..HIDDEN).map(|i| (i as f32 - 3.0) * 0.31).collect();
         let mut cache_new = super::AttentionCache::new(2);
         let mut cache_old = super::AttentionCache::new(2);
-        let (cos, sin) = crate::ops::rope_tables_range(
-            0,
-            1,
-            layer.attention.rotary_dim,
-            layer.attention.theta,
-        );
+        let (cos, sin) =
+            crate::ops::rope_tables_range(0, 1, layer.attention.rotary_dim, layer.attention.theta);
         let new = layer.step(&x, &mut cache_new, &cos, &sin);
 
         let mut normalized = x.to_vec();
         layer.input_norm.apply(&mut normalized, 1);
-        let attention = layer.attention.step(&normalized, &mut cache_old, &cos, &sin);
+        let attention = layer
+            .attention
+            .step(&normalized, &mut cache_old, &cos, &sin);
         let mut residual = x.to_vec();
         for (value, add) in residual.iter_mut().zip(attention) {
             *value += add;
