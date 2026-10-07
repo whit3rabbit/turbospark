@@ -84,6 +84,14 @@ struct ServerLoadedModelsView: View {
                             .background(
                                 TurboSparkTheme.accentColor.opacity(0.15),
                                 in: Capsule())
+                    } else if row.isAudioModel {
+                        Text("audio", bundle: .module)
+                            .themedFont(.micro, weight: .medium)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Color.purple.opacity(0.15),
+                                in: Capsule())
                     }
                 }
                 Text(detailLine(row))
@@ -142,6 +150,9 @@ struct ServerLoadedModelsView: View {
     /// through the same row would read as a measurement of zero -- worse,
     /// the slot count would read as a plausible 16 arrived at by ignorance.
     private func detailLine(_ row: ServerModelRow) -> String {
+        if row.isAudioModel {
+            return "audio model"
+        }
         guard row.maxContext > 0 else { return "attached" }
         var parts = ["\(row.maxContext.formatted()) ctx"]
         if row.expertCacheSlots > 0 {

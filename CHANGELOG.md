@@ -14,6 +14,40 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `crates/audio`: consolidated and shared core neural network ops and layers
+  (`nn.rs`: `Conv1d`, `ConvTranspose1d`, `Linear`, `LayerNorm`, `RMSNorm`,
+  `Embedding`), shared vocoder and codec blocks (`conv.rs`, `dac.rs`,
+  `wnconv.rs`), and vectorized DSP primitives with window caching for FFT,
+  STFT, iSTFT, mel filterbanks, and resampling; optimized hot decoder paths
+  for FireRedASR 2, Granite Speech LLM, Qwen3-ASR, SenseVoice SANM, and Wav2Vec.
+- `swift/TurboSparkApp`: added audio model awareness to the Server pane,
+  including `ServerModelRow` audio badges, live model count aggregates across
+  text, image, and audio models, and dynamic audio model ejection and
+  attachment via `AppModel+ServerAttachment`.
+- `crates/server`, `crates/ffi`, `swift/TurboSparkApp`: prompt-to-PNG image
+  endpoint (`POST /v1/images/generations`) backed by `ImageBridge`, event
+  polling, and serial image generation jobs.
+- `swift/TurboSparkApp`: added API workspace destination with mode selector
+  supporting Text serving, Image serving, and TypeSafe OpenKind playground
+  with model controls, question builders, and latency benchmarks.
+- `crates/gpu`: added batched attention Metal kernels for Llama prefill
+  (`batch_attention_partial.metal`, `batch_attention_combine.metal`), dynamic
+  tiling, row isolation, and scratch layout allocation.
+- `crates/gpu`: added Metal pipeline caching, precompiled shader libraries,
+  and opt-in kernel warmup (`TURBOSPARK_METAL_KERNEL_WARMUP=1`).
+- `swift/TurboSparkApp`: native WebKit browser automation pane with tab engine,
+  element locator resolution, DOM snapshot walker, native dialog policy, and
+  bookmark import.
+- `swift/TurboSparkApp`: sandboxed JavaScript REPL tool with isolated
+  JavaScriptCore worker, deny-by-default capability security, persistent worker
+  evaluation context, and top-level await execution.
+- `crates/workflows`: workflow execution engine, step validation, and execution
+  facade.
+- `swift/TurboSparkApp`: chat runtime quality improvements, including validated
+  streamed tool-call dispatch, mid-turn presentation labels, chat quality
+  settings, stream recovery, and provenance metadata tracking.
+- `crates/server`: added server idle policy, idle connection sweeper, and
+  dynamic multi-model registry detachment.
 - `swift/TurboSpark`: added native Swift speech-to-text bindings (`Speech.swift`)
   wrapping the C ABI: `TurboSparkSTTModel`, `TurboSparkSTTStream`, `STTOptions`,
   `STTAppendProgress`, `STTSegment`, and `STTTranscription`.

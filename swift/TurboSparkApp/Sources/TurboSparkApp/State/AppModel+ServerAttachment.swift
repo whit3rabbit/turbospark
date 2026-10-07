@@ -160,12 +160,35 @@ extension AppModel {
             releaseServerAttachment(id: id)
         }
         do {
-            try server.detach(modelId: id)
+            if serverInfo?.audioModels.contains(id) == true {
+                try server.detachAudioModel(id: id)
+            } else {
+                try server.detach(modelId: id)
+            }
+            refreshServerInfo()
             showToast("Stopped serving \(id)", style: .info)
         } catch {
             let msg = "Could not stop serving \(id): \(error.localizedDescription)"
             self.error = msg
             showToast(msg, style: .error)
+        }
+    }
+
+    /// Attaches an audio model (speech-to-text, text-to-speech, or music) to the running server.
+    public func attachAudioModelToServer(path: String, task: String = "") {
+        guard let server, !serverBusy else { return }
+        serverBusy = true
+        Task {
+            defer { serverBusy = false }
+            do {
+                let id = try server.attachAudioModel(path, task: task)
+                refreshServerInfo()
+                showToast("Serving \(id)", style: .success)
+            } catch {
+                let msg = "Could not serve audio model \(path): \(error.localizedDescription)"
+                self.error = msg
+                showToast(msg, style: .error)
+            }
         }
     }
 

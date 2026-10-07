@@ -199,4 +199,32 @@ final class ToolAndServerDetailTests: XCTestCase {
         // An ordinary whole number still renders as an integer.
         XCTAssertEqual(AppJSONValue.number(42).foundationValue as? Int, 42)
     }
+
+    // MARK: - ServerModelRow audio model tests
+
+    func testServerModelRowAudioModelIdentification() {
+        let textRow = ServerModelRow(
+            id: "gemma4.gturbo",
+            displayName: "gemma4",
+            maxContext: 8192,
+            expertCacheSlots: 0,
+            isChatSession: true,
+            isAudioModel: false,
+            requestsServed: 12,
+            steeringStatus: nil
+        )
+        XCTAssertFalse(textRow.isAudioModel)
+
+        let audioRow = ServerModelRow(
+            id: "whisper-base",
+            displayName: "whisper-base",
+            maxContext: 0,
+            expertCacheSlots: 0,
+            isChatSession: false,
+            isAudioModel: true,
+            requestsServed: 3,
+            steeringStatus: nil
+        )
+        XCTAssertTrue(audioRow.isAudioModel)
+    }
 }

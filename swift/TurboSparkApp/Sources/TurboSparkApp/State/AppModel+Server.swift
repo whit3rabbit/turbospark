@@ -103,6 +103,7 @@ public struct ServerModelRow: Identifiable, Equatable {
     /// showing: detaching it here does NOT unload it, because the chat still
     /// holds its own session.
     public let isChatSession: Bool
+    public let isAudioModel: Bool
     public let requestsServed: Int
     /// The session's resolved steering state, or `nil` when this app did not
     /// open the model and therefore has no session report to read.
@@ -115,6 +116,26 @@ public struct ServerModelRow: Identifiable, Equatable {
     /// is what lets an operator tell two served models apart when one is
     /// edited and the other is not.
     public let steeringStatus: ServerModelSteeringStatus?
+
+    public init(
+        id: String,
+        displayName: String,
+        maxContext: UInt32,
+        expertCacheSlots: Int,
+        isChatSession: Bool,
+        isAudioModel: Bool = false,
+        requestsServed: Int,
+        steeringStatus: ServerModelSteeringStatus?
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.maxContext = maxContext
+        self.expertCacheSlots = expertCacheSlots
+        self.isChatSession = isChatSession
+        self.isAudioModel = isAudioModel
+        self.requestsServed = requestsServed
+        self.steeringStatus = steeringStatus
+    }
 }
 
 extension AppModel {
@@ -333,7 +354,7 @@ extension AppModel {
         let served = Dictionary(
             grouping: serverMetrics.records.compactMap(\.servedModel), by: { $0 }
         ).mapValues(\.count)
-        return (serverInfo?.models ?? []).map { id in
+        var rows = (serverInfo?.models ?? []).map { id in
             let attached = serverAttachedSessions[id]
             return ServerModelRow(
                 id: id,
@@ -345,11 +366,24 @@ extension AppModel {
                 maxContext: attached.map { UInt32($0.info.maxContext) } ?? 0,
                 expertCacheSlots: attached?.info.expertCacheSlots ?? 0,
                 isChatSession: attached != nil && attached === session,
+                isAudioModel: false,
                 requestsServed: served[id] ?? 0,
                 steeringStatus: attached.map { session in
                     ServerModelSteeringStatus(info: session.info.steering)
                 })
         }
+        for audioId in serverInfo?.audioModels ?? [] {
+            rows.append(ServerModelRow(
+                id: audioId,
+                displayName: installed.first { $0.alias == audioId || Self.servedModelID(for: $0) == audioId }?.alias ?? audioId,
+                maxContext: 0,
+                expertCacheSlots: 0,
+                isChatSession: false,
+                isAudioModel: true,
+                requestsServed: served[audioId] ?? 0,
+                steeringStatus: nil))
+        }
+        return rows
     }
 
     /// Installed models that are NOT already being served, which is what the
