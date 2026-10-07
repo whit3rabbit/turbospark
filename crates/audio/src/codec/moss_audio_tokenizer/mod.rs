@@ -20,6 +20,7 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{wn_fold_in_place, WnFold};
 use crate::codec::wnconv::load_f32_shaped;
 use crate::ops;
 use crate::{Result, SpeechError};
@@ -306,26 +307,9 @@ impl MossPointwise {
         }
         let (out_dim, in_dim, kernel) = (v_desc.shape[0], v_desc.shape[1], v_desc.shape[2]);
         let g = load_f32_shaped(file, &g_name, &[out_dim, 1, 1])?;
-        let v = load_f32_shaped(file, &v_name, &[out_dim, in_dim, kernel])?;
+        let mut weight = load_f32_shaped(file, &v_name, &[out_dim, in_dim, kernel])?;
         let bias = load_f32_shaped(file, &format!("{prefix}.bias"), &[out_dim])?;
-        let mut weight = vec![0.0f32; v.len()];
-        for oc in 0..out_dim {
-            let mut acc = 0.0f32;
-            for i in 0..in_dim {
-                for k in 0..kernel {
-                    let value = v[oc * in_dim * kernel + i * kernel + k];
-                    acc += value * value;
-                }
-            }
-            let norm = acc.sqrt();
-            let gain = g[oc];
-            for i in 0..in_dim {
-                for k in 0..kernel {
-                    weight[oc * in_dim * kernel + i * kernel + k] =
-                        gain * v[oc * in_dim * kernel + i * kernel + k] / norm;
-                }
-            }
-        }
+        wn_fold_in_place(&mut weight, &g, in_dim * kernel, WnFold::Div);
         if kernel == 1 {
             // Already a pointwise map.
         } else {
@@ -408,25 +392,13 @@ impl MossAttention {
         let dim = self.dim;
         // qkv rows [seq, 3 * dim].
         let qkv = ops::linear(x, &self.in_proj, None, seq, dim, 3 * dim);
-        let mut qh = vec![0.0f32; self.heads * seq * self.head_dim];
-        let mut kh = qh.clone();
-        let mut vh = qh.clone();
-        for h in 0..self.heads {
-            for t in 0..seq {
-                for d in 0..self.head_dim {
-                    qh[(h * seq + t) * self.head_dim + d] =
-                        qkv[t * 3 * dim + h * self.head_dim + d];
-                    kh[(h * seq + t) * self.head_dim + d] =
-                        qkv[t * 3 * dim + dim + h * self.head_dim + d];
-                    vh[(h * seq + t) * self.head_dim + d] =
-                        qkv[t * 3 * dim + 2 * dim + h * self.head_dim + d];
-                }
-            }
-        }
+        let mut qh = ops::split_heads_strided(&qkv, 3 * dim, 0, seq, self.heads, self.head_dim);
+        let mut kh = ops::split_heads_strided(&qkv, 3 * dim, dim, seq, self.heads, self.head_dim);
+        let vh = ops::split_heads_strided(&qkv, 3 * dim, 2 * dim, seq, self.heads, self.head_dim);
         if self.use_rope {
             let (cos, sin) = ops::rope_tables(seq, self.head_dim, self.max_period);
-            rope_interleaved_seq(&mut qh, self.heads, seq, self.head_dim, &cos, &sin);
-            rope_interleaved_seq(&mut kh, self.heads, seq, self.head_dim, &cos, &sin);
+            ops::rope_interleaved(&mut qh, self.heads, seq, self.head_dim, &cos, &sin);
+            ops::rope_interleaved(&mut kh, self.heads, seq, self.head_dim, &cos, &sin);
         }
         // Additive mask: 0 or f32::MIN; rows are queries.
         let mut mask = vec![0.0f32; seq * seq];
@@ -447,30 +419,18 @@ impl MossAttention {
             }
         }
         let scale = (self.head_dim as f32).powf(-0.5);
-        let mut out = vec![0.0f32; qh.len()];
-        for h in 0..self.heads {
-            let plane = h * seq * self.head_dim;
-            let o = ops::sdpa(
-                &qh[plane..plane + seq * self.head_dim],
-                &kh[plane..plane + seq * self.head_dim],
-                &vh[plane..plane + seq * self.head_dim],
-                if has_mask { Some(&mask) } else { None },
-                seq,
-                seq,
-                self.head_dim,
-                self.head_dim,
-                scale,
-            );
-            out[plane..plane + o.len()].copy_from_slice(&o);
-        }
-        let mut merged = vec![0.0f32; seq * dim];
-        for h in 0..self.heads {
-            for t in 0..seq {
-                let src = (h * seq + t) * self.head_dim;
-                merged[t * dim + h * self.head_dim..t * dim + (h + 1) * self.head_dim]
-                    .copy_from_slice(&out[src..src + self.head_dim]);
-            }
-        }
+        let out = ops::mha(
+            &qh,
+            &kh,
+            &vh,
+            if has_mask { Some(&mask) } else { None },
+            self.heads,
+            seq,
+            seq,
+            self.head_dim,
+            scale,
+        );
+        let mut merged = ops::merge_heads(&out, seq, self.heads, self.head_dim);
         // Zero invalid query rows before the output projection.
         for t in input_len..seq {
             merged[t * dim..(t + 1) * dim].fill(0.0);
@@ -1227,34 +1187,6 @@ impl MossAudioTokenizer {
                 }
             }
             (out, len * patch)
-        }
-    }
-}
-
-/// GPT-J-style interleaved rope over full sequences: pairs are
-/// `(x[2i], x[2i+1])` and the cos/sin tables are `[seq, dim / 2]`
-/// (the `ops::rope_*` helpers are decode-step sized).
-fn rope_interleaved_seq(
-    x: &mut [f32],
-    heads: usize,
-    seq: usize,
-    dim: usize,
-    cos: &[f32],
-    sin: &[f32],
-) {
-    let half = dim / 2;
-    assert!(cos.len() >= seq * half);
-    for h in 0..heads {
-        for t in 0..seq {
-            let base = (h * seq + t) * dim;
-            for d in 0..half {
-                let a = x[base + 2 * d];
-                let b = x[base + 2 * d + 1];
-                let c = cos[t * half + d];
-                let s = sin[t * half + d];
-                x[base + 2 * d] = a * c - b * s;
-                x[base + 2 * d + 1] = b * c + a * s;
-            }
         }
     }
 }

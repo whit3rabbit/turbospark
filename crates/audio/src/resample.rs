@@ -14,12 +14,16 @@
 //!   reduction, cutoff, kernel width, and numeric modes, so results line up
 //!   with torchaudio's default path for the same options.
 //!
-//! Two documented deviations from upstream: the per-parameter kernel cache
-//! (a mutex-guarded global) is replaced by recomputation per call, and the
+//! Two documented deviations from upstream: the kernel cache is a bounded,
+//! mutex-guarded table of immutable kernels keyed by the exact build
+//! parameters (small kernels only; large ones are rebuilt per call), and the
 //! soxr output-length policies do not apply. Neither changes the sinc-Hann
-//! or linear results themselves.
+//! or linear results themselves: a cached kernel is the same bits as a
+//! rebuilt one.
 
+use crate::dsp::TableCache;
 use crate::error::AudioError;
+use std::sync::Arc;
 
 /// Upper bound on one resampler output allocation (16 GiB of f32). `vec!`
 /// aborts the process on allocation failure instead of returning an error,
@@ -167,7 +171,14 @@ pub fn resample_mono_sinc_hann(
         });
     }
 
-    let kernel = build_kernel(orig_freq, new_freq, base_freq, width, options);
+    let kernel = sinc_kernel(
+        orig_freq,
+        new_freq,
+        base_freq,
+        width,
+        options,
+        kernel_samples,
+    );
 
     // Output index (b, p) in block b, phase p samples the input around
     // (b * new_freq + p) * orig_freq / new_freq; kernel tap j reads input
@@ -207,22 +218,22 @@ pub fn resample_mono_sinc_hann(
             let in_first = block_start as isize + start as isize - width as isize;
             let in_last = block_start + end - width; // exclusive when in range
 
-            let acc = if in_first >= 0 && in_last <= len {
-                let window = &input[in_first as usize..in_last];
-                sum_taps(
-                    &kernel[phase * kernel_size + start..phase * kernel_size + end],
-                    window,
-                )
+            let taps = &kernel[phase * kernel_size + start..phase * kernel_size + end];
+            let in_range = in_first >= 0 && in_last <= len;
+            let window = if in_range {
+                &input[in_first as usize..in_last]
             } else {
-                sum_taps_zero_padded(
-                    &kernel[phase * kernel_size + start..phase * kernel_size + end],
-                    input,
-                    in_first,
-                )
+                &[]
             };
-            *out_sample = match options.accumulation {
-                Accumulation::Float32 => acc.0,
-                Accumulation::Float64 => acc.1 as f32,
+            *out_sample = match (options.accumulation, in_range) {
+                (Accumulation::Float32, true) => sum_taps::<false>(taps, window),
+                (Accumulation::Float64, true) => sum_taps::<true>(taps, window),
+                (Accumulation::Float32, false) => {
+                    sum_taps_zero_padded::<false>(taps, input, in_first)
+                }
+                (Accumulation::Float64, false) => {
+                    sum_taps_zero_padded::<true>(taps, input, in_first)
+                }
             };
         }
     }
@@ -230,35 +241,84 @@ pub fn resample_mono_sinc_hann(
     Ok(out)
 }
 
-/// Sums `kernel[j] * window[j]` over aligned slices. Returns both
-/// accumulations so the caller picks per its precision mode; the unused one
-/// is a short sum the optimizer folds away.
-fn sum_taps(kernel: &[f32], window: &[f32]) -> (f32, f64) {
-    let mut acc32 = 0.0f32;
-    let mut acc64 = 0.0f64;
-    for (&k, &s) in kernel.iter().zip(window) {
-        acc32 += k * s;
-        acc64 += f64::from(k) * f64::from(s);
+/// Sums `kernel[j] * window[j]` over aligned slices in the requested
+/// accumulator: f64 products accumulated in f64 and rounded once when `WIDE`,
+/// otherwise f32 throughout. Each mode used to run alongside the other and
+/// discard it; the two never interacted, so running one is the same bits.
+fn sum_taps<const WIDE: bool>(kernel: &[f32], window: &[f32]) -> f32 {
+    if WIDE {
+        let mut acc = 0.0f64;
+        for (&k, &s) in kernel.iter().zip(window) {
+            acc += f64::from(k) * f64::from(s);
+        }
+        acc as f32
+    } else {
+        let mut acc = 0.0f32;
+        for (&k, &s) in kernel.iter().zip(window) {
+            acc += k * s;
+        }
+        acc
     }
-    (acc32, acc64)
 }
 
 /// Same sum with the window conceptually extended by zeros on both sides.
 /// `first` may be negative; `kernel.len()` taps are consumed from `first`.
-fn sum_taps_zero_padded(kernel: &[f32], input: &[f32], first: isize) -> (f32, f64) {
-    let mut acc32 = 0.0f32;
-    let mut acc64 = 0.0f64;
+fn sum_taps_zero_padded<const WIDE: bool>(kernel: &[f32], input: &[f32], first: isize) -> f32 {
     let len = input.len() as isize;
-    for (j, &k) in kernel.iter().enumerate() {
-        let idx = first + j as isize;
-        if idx < 0 || idx >= len {
-            continue;
+    if WIDE {
+        let mut acc = 0.0f64;
+        for (j, &k) in kernel.iter().enumerate() {
+            let idx = first + j as isize;
+            if idx < 0 || idx >= len {
+                continue;
+            }
+            acc += f64::from(k) * f64::from(input[idx as usize]);
         }
-        let s = input[idx as usize];
-        acc32 += k * s;
-        acc64 += f64::from(k) * f64::from(s);
+        acc as f32
+    } else {
+        let mut acc = 0.0f32;
+        for (j, &k) in kernel.iter().enumerate() {
+            let idx = first + j as isize;
+            if idx < 0 || idx >= len {
+                continue;
+            }
+            acc += k * input[idx as usize];
+        }
+        acc
     }
-    (acc32, acc64)
+}
+
+/// Kernels above this many samples are rebuilt per call rather than cached.
+const MAX_CACHED_KERNEL_SAMPLES: usize = 1 << 20;
+
+/// The polyphase kernel for one reduced rate pair and option set, shared
+/// across calls. `base_freq` and `width` are functions of the other key
+/// fields, so the key is the exact set of inputs `build_kernel` reads.
+fn sinc_kernel(
+    orig_freq: usize,
+    new_freq: usize,
+    base_freq: f64,
+    width: usize,
+    options: &SincHannOptions,
+    kernel_samples: usize,
+) -> Arc<Vec<f32>> {
+    type Key = (usize, usize, u64, usize, bool);
+    static KERNELS: TableCache<Key, Vec<f32>> = TableCache::new(8);
+    let key: Key = (
+        orig_freq,
+        new_freq,
+        options.rolloff.to_bits(),
+        options.lowpass_filter_width,
+        options.computation == KernelComputation::Float64,
+    );
+    let built: Result<Arc<Vec<f32>>, std::convert::Infallible> =
+        KERNELS.get_or_build(key, kernel_samples <= MAX_CACHED_KERNEL_SAMPLES, || {
+            Ok(build_kernel(orig_freq, new_freq, base_freq, width, options))
+        });
+    match built {
+        Ok(kernel) => kernel,
+        Err(never) => match never {},
+    }
 }
 
 fn build_kernel(
@@ -516,5 +576,227 @@ mod kernel_budget_regression {
             resample_mono_sinc_hann(&[1.0], 48000, 16000, &options),
             Err(AudioError::BufferTooLarge { .. })
         ));
+    }
+}
+
+/// Bitwise parity of the cached-kernel, single-accumulator resampler against
+/// the previous per-call kernel with both accumulators, retained in `old`
+/// (arithmetic verbatim; the unchanged size-overflow guards are elided, and
+/// the kernel builder itself is shared).
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+    use crate::dsp::TestRng;
+
+    mod old {
+        use super::super::*;
+
+        pub(super) fn resample_mono_sinc_hann(
+            input: &[f32],
+            source_rate: u32,
+            target_rate: u32,
+            options: &SincHannOptions,
+        ) -> Result<Vec<f32>, AudioError> {
+            check_rates(source_rate, target_rate)?;
+            if !(0.0 < options.rolloff && options.rolloff <= 1.0) {
+                return Err(AudioError::InvalidParameter {
+                    name: "rolloff".to_string(),
+                    value: options.rolloff.to_string(),
+                    why: "must be in (0, 1]".to_string(),
+                });
+            }
+            if options.lowpass_filter_width == 0 {
+                return Err(AudioError::InvalidParameter {
+                    name: "lowpass_filter_width".to_string(),
+                    value: "0".to_string(),
+                    why: "must be positive".to_string(),
+                });
+            }
+            if input.is_empty() || source_rate == target_rate {
+                return Ok(input.to_vec());
+            }
+            let g = gcd(source_rate, target_rate);
+            let orig_freq = (source_rate / g) as usize;
+            let new_freq = (target_rate / g) as usize;
+            let base_freq = (orig_freq.min(new_freq) as f64) * options.rolloff;
+            let zero_taps = (options.lowpass_filter_width as f64) * orig_freq as f64 / base_freq;
+            let width = zero_taps.ceil() as usize;
+            let kernel_size = 2 * width + orig_freq;
+            let kernel = build_kernel(orig_freq, new_freq, base_freq, width, options);
+            let len = input.len();
+            let blocks = len.div_ceil(orig_freq);
+            let out_count = (len * new_freq).div_ceil(orig_freq);
+            let mut out = vec![0.0f32; blocks * new_freq];
+            for (block, out_row) in out.chunks_mut(new_freq).enumerate() {
+                let block_start = block * orig_freq;
+                for (phase, out_sample) in out_row.iter_mut().enumerate() {
+                    let center_tap =
+                        width as f64 + phase as f64 * orig_freq as f64 / new_freq as f64;
+                    let half = zero_taps + 1.0;
+                    let start = ((center_tap - half).floor().max(0.0) as usize).min(kernel_size);
+                    let end = ((center_tap + half).ceil() as usize).min(kernel_size);
+                    let in_first = block_start as isize + start as isize - width as isize;
+                    let in_last = block_start + end - width;
+                    let acc = if in_first >= 0 && in_last <= len {
+                        let window = &input[in_first as usize..in_last];
+                        sum_taps(
+                            &kernel[phase * kernel_size + start..phase * kernel_size + end],
+                            window,
+                        )
+                    } else {
+                        sum_taps_zero_padded(
+                            &kernel[phase * kernel_size + start..phase * kernel_size + end],
+                            input,
+                            in_first,
+                        )
+                    };
+                    *out_sample = match options.accumulation {
+                        Accumulation::Float32 => acc.0,
+                        Accumulation::Float64 => acc.1 as f32,
+                    };
+                }
+            }
+            out.truncate(out_count);
+            Ok(out)
+        }
+
+        fn sum_taps(kernel: &[f32], window: &[f32]) -> (f32, f64) {
+            let mut acc32 = 0.0f32;
+            let mut acc64 = 0.0f64;
+            for (&k, &s) in kernel.iter().zip(window) {
+                acc32 += k * s;
+                acc64 += f64::from(k) * f64::from(s);
+            }
+            (acc32, acc64)
+        }
+
+        fn sum_taps_zero_padded(kernel: &[f32], input: &[f32], first: isize) -> (f32, f64) {
+            let mut acc32 = 0.0f32;
+            let mut acc64 = 0.0f64;
+            let len = input.len() as isize;
+            for (j, &k) in kernel.iter().enumerate() {
+                let idx = first + j as isize;
+                if idx < 0 || idx >= len {
+                    continue;
+                }
+                let s = input[idx as usize];
+                acc32 += k * s;
+                acc64 += f64::from(k) * f64::from(s);
+            }
+            (acc32, acc64)
+        }
+    }
+
+    #[test]
+    fn sinc_hann_matches_old_bitwise_across_rates_and_modes() {
+        let mut rng = TestRng(0x5245_5341_4D50_4C45);
+        let rate_pairs = [
+            (44_100u32, 16_000u32),
+            (16_000, 44_100),
+            (48_000, 16_000),
+            (22_050, 16_000),
+            (8_000, 16_000),
+            (24_000, 16_000),
+            (16_000, 24_000),
+            (16_000, 16_000),
+        ];
+        let tunings = [(0.99f64, 6usize), (0.9, 10), (1.0, 3)];
+        for (src, dst) in rate_pairs {
+            for (rolloff, lowpass_filter_width) in tunings {
+                for computation in [KernelComputation::Float32, KernelComputation::Float64] {
+                    for accumulation in [Accumulation::Float32, Accumulation::Float64] {
+                        let options = SincHannOptions {
+                            rolloff,
+                            lowpass_filter_width,
+                            computation,
+                            accumulation,
+                        };
+                        // Lengths below, around, and above the kernel width
+                        // so the zero-padded edge path and the in-range path
+                        // both run.
+                        for len in [1usize, 7, 100, 1_234] {
+                            let input = rng.vec(len);
+                            // Twice: the second call is a kernel cache hit.
+                            for pass in 0..2 {
+                                let got =
+                                    resample_mono_sinc_hann(&input, src, dst, &options).unwrap();
+                                let want = old::resample_mono_sinc_hann(&input, src, dst, &options)
+                                    .unwrap();
+                                assert_eq!(got.len(), want.len());
+                                for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                                    assert_eq!(
+                                        g.to_bits(),
+                                        w.to_bits(),
+                                        "{src}->{dst} {options:?} len {len} pass {pass} [{i}]"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_options_and_oversized_kernels_refuse_as_before() {
+        let input = [0.5f32; 16];
+        let bad = [
+            SincHannOptions {
+                rolloff: 0.0,
+                ..SincHannOptions::default()
+            },
+            SincHannOptions {
+                rolloff: 1.5,
+                ..SincHannOptions::default()
+            },
+            SincHannOptions {
+                lowpass_filter_width: 0,
+                ..SincHannOptions::default()
+            },
+        ];
+        for options in bad {
+            assert_eq!(
+                resample_mono_sinc_hann(&input, 44_100, 16_000, &options)
+                    .unwrap_err()
+                    .to_string(),
+                old::resample_mono_sinc_hann(&input, 44_100, 16_000, &options)
+                    .unwrap_err()
+                    .to_string()
+            );
+        }
+        // Coprime rates past the kernel budget error before any caching.
+        assert!(
+            resample_mono_sinc_hann(&input, 99_991, 99_989, &SincHannOptions::default()).is_err()
+        );
+    }
+
+    #[test]
+    fn cached_kernel_equals_a_fresh_build_and_keys_do_not_collide() {
+        let base = SincHannOptions::default();
+        let f64_kernel = SincHannOptions {
+            computation: KernelComputation::Float64,
+            ..base
+        };
+        let narrow = SincHannOptions {
+            rolloff: 0.9,
+            ..base
+        };
+        for options in [base, f64_kernel, narrow] {
+            let (orig, new) = (441usize, 160usize);
+            let base_freq = (orig.min(new) as f64) * options.rolloff;
+            let width =
+                ((options.lowpass_filter_width as f64) * orig as f64 / base_freq).ceil() as usize;
+            let fresh = build_kernel(orig, new, base_freq, width, &options);
+            let samples = fresh.len();
+            for _ in 0..2 {
+                let cached = sinc_kernel(orig, new, base_freq, width, &options, samples);
+                assert_eq!(cached.len(), fresh.len());
+                assert!(cached
+                    .iter()
+                    .zip(&fresh)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()));
+            }
+        }
     }
 }

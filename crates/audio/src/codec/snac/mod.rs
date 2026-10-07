@@ -29,6 +29,8 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{wn_fold_in_place, WnFold};
+use crate::codec::dac::{self, load_alpha_mid, EncoderBlock, ResidualUnit};
 use crate::codec::vq::CodebookIndex;
 use crate::codec::wnconv::{load_f32_shaped, snake1d, WnConv1d, WnConvTranspose1d};
 use crate::{Result, SpeechError};
@@ -158,44 +160,6 @@ impl SnacConfig {
     }
 }
 
-/// One ResidualUnit: snake, dilated depthwise-capable conv, snake, 1x1
-/// conv, plus a symmetric residual crop-add.
-struct ResidualUnit {
-    snake1: Vec<f32>,
-    conv1: WnConv1d,
-    snake2: Vec<f32>,
-    conv2: WnConv1d,
-}
-
-impl ResidualUnit {
-    fn forward(&self, x: &[f32], ch: usize) -> Vec<f32> {
-        let seq = x.len() / ch;
-        let mut h = x.to_vec();
-        snake1d(&mut h, &self.snake1, ch, seq);
-        let h = self.conv1.forward(&h);
-        let seq2 = h.len() / ch;
-        let mut h = h;
-        snake1d(&mut h, &self.snake2, ch, seq2);
-        let h = self.conv2.forward(&h);
-        // Reference crops the residual symmetrically by half the length
-        // difference before the add; equal lengths are the norm.
-        let out_seq = h.len() / ch;
-        let pad = seq.saturating_sub(out_seq) / 2;
-        let mut out = vec![0.0f32; ch * out_seq];
-        for c in 0..ch {
-            for t in 0..out_seq {
-                let residual = if t + pad < seq {
-                    x[c * seq + t + pad]
-                } else {
-                    0.0
-                };
-                out[c * out_seq + t] = residual + h[c * out_seq + t];
-            }
-        }
-        out
-    }
-}
-
 fn load_residual_unit(
     file: &SafetensorsFile,
     prefix: &str,
@@ -205,7 +169,8 @@ fn load_residual_unit(
 ) -> Result<ResidualUnit> {
     let pad = ((7 - 1) * dilation) / 2;
     Ok(ResidualUnit {
-        snake1: load_alpha(file, &format!("{prefix}.block.layers.0.alpha"), dim)?,
+        ch: dim,
+        snake1: load_alpha_mid(file, &format!("{prefix}.block.layers.0.alpha"), dim)?,
         conv1: WnConv1d::load(
             file,
             &format!("{prefix}.block.layers.1"),
@@ -217,7 +182,7 @@ fn load_residual_unit(
             dilation,
             groups,
         )?,
-        snake2: load_alpha(file, &format!("{prefix}.block.layers.2.alpha"), dim)?,
+        snake2: load_alpha_mid(file, &format!("{prefix}.block.layers.2.alpha"), dim)?,
         conv2: WnConv1d::load(
             file,
             &format!("{prefix}.block.layers.3"),
@@ -232,28 +197,6 @@ fn load_residual_unit(
     })
 }
 
-/// Snake1d per-channel alpha, stored `[1, C, 1]`.
-fn load_alpha(file: &SafetensorsFile, name: &str, channels: usize) -> Result<Vec<f32>> {
-    load_f32_shaped(file, name, &[1, channels, 1])
-}
-
-struct EncoderBlock {
-    units: [ResidualUnit; 3],
-    snake: Vec<f32>,
-    down: WnConv1d,
-}
-
-impl EncoderBlock {
-    fn forward(&self, x: &[f32], ch: usize) -> Vec<f32> {
-        let mut h = self.units[0].forward(x, ch);
-        h = self.units[1].forward(&h, ch);
-        h = self.units[2].forward(&h, ch);
-        let seq = h.len() / ch;
-        snake1d(&mut h, &self.snake, ch, seq);
-        self.down.forward(&h)
-    }
-}
-
 struct Encoder {
     first: WnConv1d,
     blocks: Vec<EncoderBlock>,
@@ -263,10 +206,8 @@ struct Encoder {
 impl Encoder {
     fn forward(&self, samples: &[f32]) -> Vec<f32> {
         let mut h = self.first.forward(samples);
-        let mut ch = self.first.out_ch;
         for block in &self.blocks {
-            h = block.forward(&h, ch);
-            ch = block.down.out_ch;
+            h = block.forward(&h);
         }
         self.last.forward(&h)
     }
@@ -304,26 +245,18 @@ impl NoiseBlock {
 }
 
 struct DecoderBlock {
-    snake: Vec<f32>,
-    up: WnConvTranspose1d,
+    block: dac::DecoderBlock,
     noise: Option<NoiseBlock>,
-    units: [ResidualUnit; 3],
-    in_ch: usize,
 }
 
 impl DecoderBlock {
     fn forward(&self, x: &[f32], noise: &mut dyn FnMut() -> f32) -> Vec<f32> {
-        let seq = x.len() / self.in_ch;
-        let mut h = x.to_vec();
-        snake1d(&mut h, &self.snake, self.in_ch, seq);
-        let mut h = self.up.forward(&h);
-        if let Some(nb) = &self.noise {
-            nb.forward(&mut h, noise);
-        }
-        let ch = self.up.out_ch;
-        h = self.units[0].forward(&h, ch);
-        h = self.units[1].forward(&h, ch);
-        self.units[2].forward(&h, ch)
+        self.block.forward_with(x, |mut h, _| {
+            if let Some(nb) = &self.noise {
+                nb.forward(&mut h, noise);
+            }
+            h
+        })
     }
 }
 
@@ -590,7 +523,7 @@ impl Snac {
                 )
             };
             let units = [unit(0, 1)?, unit(1, 3)?, unit(2, 9)?];
-            let snake = load_alpha(file, &format!("{base}.block.layers.3.alpha"), in_dim)?;
+            let snake = load_alpha_mid(file, &format!("{base}.block.layers.3.alpha"), in_dim)?;
             let pad = stride.div_ceil(2);
             let down = WnConv1d::load(
                 file,
@@ -603,7 +536,12 @@ impl Snac {
                 1,
                 1,
             )?;
-            blocks.push(EncoderBlock { units, snake, down });
+            blocks.push(EncoderBlock {
+                units,
+                snake,
+                down,
+                ch: in_dim,
+            });
         }
         let groups = if config.depthwise {
             config.latent_dim
@@ -674,7 +612,7 @@ impl Snac {
             let in_dim = config.decoder_dim >> i;
             let out_dim = config.decoder_dim >> (i + 1);
             let base = format!("decoder.model.layers.{}", next_layer + i);
-            let snake = load_alpha(file, &format!("{base}.block.layers.0.alpha"), in_dim)?;
+            let snake = load_alpha_mid(file, &format!("{base}.block.layers.0.alpha"), in_dim)?;
             let pad = stride.div_ceil(2);
             let up = WnConvTranspose1d::load(
                 file,
@@ -689,20 +627,11 @@ impl Snac {
             let noise = if config.noise {
                 let nb_prefix = format!("{base}.block.layers.{cursor}.linear");
                 let dim = out_dim;
-                let v = load_f32_shaped(file, &format!("{nb_prefix}.weight_v"), &[dim, 1, dim])?;
+                let mut weight =
+                    load_f32_shaped(file, &format!("{nb_prefix}.weight_v"), &[dim, 1, dim])?;
                 let g = load_f32_shaped(file, &format!("{nb_prefix}.weight_g"), &[dim, 1, 1])?;
                 // Weight-norm folded for the kernel-1 linear map.
-                let mut weight = vec![0.0f32; dim * dim];
-                for (oc, &gv) in g.iter().enumerate() {
-                    let mut acc = 0.0f32;
-                    for ic in 0..dim {
-                        acc += v[oc * dim + ic] * v[oc * dim + ic];
-                    }
-                    let norm = acc.sqrt();
-                    for ic in 0..dim {
-                        weight[oc * dim + ic] = gv * v[oc * dim + ic] / norm;
-                    }
-                }
+                wn_fold_in_place(&mut weight, &g, dim, WnFold::Div);
                 cursor += 1;
                 Some(NoiseBlock { weight, dim })
             } else {
@@ -720,16 +649,13 @@ impl Snac {
             };
             let units = [unit(0, 1)?, unit(1, 3)?, unit(2, 9)?];
             blocks.push(DecoderBlock {
-                snake,
-                up,
+                block: dac::DecoderBlock { snake, up, units },
                 noise,
-                units,
-                in_ch: in_dim,
             });
         }
         let final_index = next_layer + config.decoder_rates.len();
         let out_dim = config.decoder_dim >> config.decoder_rates.len();
-        let out_snake = load_alpha(
+        let out_snake = load_alpha_mid(
             file,
             &format!("decoder.model.layers.{final_index}.alpha"),
             out_dim,

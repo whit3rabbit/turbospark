@@ -226,3 +226,206 @@ fn real_checkpoint_gate() {
     assert!(audio.iter().all(|v| v.is_finite()));
     assert!(audio.iter().all(|v| v.abs() <= 1.0 + 1e-4));
 }
+
+// ---------------------------------------------------------------------
+// Bitwise parity of the flat-output attention (shared rope tables, one
+// reused score row) against the original (kept verbatim below).
+// ---------------------------------------------------------------------
+
+use super::TransformerLayer;
+use crate::ops;
+
+/// MLX `nn.RoPE(traditional=True)`: interleaved pairs rotated with
+/// per-pair frequencies `base^(-2i / dim)` at absolute positions
+/// `offset..offset + seq`. `x` is `[heads, seq, dim]`.
+fn apply_traditional_rope_reference(
+    x: &mut [f32],
+    heads: usize,
+    seq: usize,
+    dim: usize,
+    offset: usize,
+    base: f32,
+) {
+    let half = dim / 2;
+    for head in 0..heads {
+        for t in 0..seq {
+            let position = (offset + t) as f32;
+            let ro = (head * seq + t) * dim;
+            for d in 0..half {
+                let freq = base.powf(-2.0 * d as f32 / dim as f32);
+                let angle = position * freq;
+                let (c, s) = (angle.cos(), angle.sin());
+                let a = x[ro + 2 * d];
+                let b = x[ro + 2 * d + 1];
+                x[ro + 2 * d] = a * c - b * s;
+                x[ro + 2 * d + 1] = b * c + a * s;
+            }
+        }
+    }
+}
+
+fn attention_reference(
+    layer: &TransformerLayer,
+    x: &[f32],
+    frames: usize,
+    pos_offset: usize,
+) -> Vec<Vec<f32>> {
+    let this = layer;
+    let d = this.d_model;
+    let h = this.heads;
+    let hd = this.head_dim;
+    // Packed qkv over frames: rows [t][3d].
+    let mut qkv = vec![0.0f32; frames * 3 * d];
+    for t in 0..frames {
+        for o in 0..3 * d {
+            let wr = &this.in_proj_w[o * d..(o + 1) * d];
+            let mut acc = 0.0f32;
+            for c in 0..d {
+                acc += x[c * frames + t] * wr[c];
+            }
+            qkv[t * 3 * d + o] = acc;
+        }
+    }
+    // Split into per-head q/k/v [head, frame, hd].
+    let mut q = vec![0.0f32; h * frames * hd];
+    let mut k = vec![0.0f32; h * frames * hd];
+    let mut v = vec![0.0f32; h * frames * hd];
+    for t in 0..frames {
+        for head in 0..h {
+            for dd in 0..hd {
+                let o = (head * hd) + dd;
+                q[(head * frames + t) * hd + dd] = qkv[t * 3 * d + o];
+                k[(head * frames + t) * hd + dd] = qkv[t * 3 * d + d + o];
+                v[(head * frames + t) * hd + dd] = qkv[t * 3 * d + 2 * d + o];
+            }
+        }
+    }
+    // Traditional (interleaved) RoPE at the absolute positions:
+    // pair (x[2i], x[2i+1]) rotated by position * base^(-2i/hd)
+    // (the nn.RoPE(traditional=True) contract).
+    apply_traditional_rope_reference(&mut q, h, frames, hd, pos_offset, this.rope_base);
+    apply_traditional_rope_reference(&mut k, h, frames, hd, pos_offset, this.rope_base);
+    // Causal attention with the context bound.
+    let scale = 1.0 / (hd as f32).sqrt();
+    let mut out = vec![0.0f32; h * frames * hd];
+    for head in 0..h {
+        for t in 0..frames {
+            let mut scores = vec![0.0f32; t + 1];
+            for s in 0..=t {
+                let delta = pos_offset + t - (pos_offset + s);
+                let allowed = delta < this.context;
+                if !allowed {
+                    scores[s] = f32::NEG_INFINITY;
+                    continue;
+                }
+                let mut acc = 0.0f32;
+                for dd in 0..hd {
+                    acc += q[(head * frames + t) * hd + dd] * k[(head * frames + s) * hd + dd];
+                }
+                scores[s] = acc * scale;
+            }
+            ops::softmax_row(&mut scores);
+            for dd in 0..hd {
+                let mut acc = 0.0f32;
+                for s in 0..=t {
+                    acc += scores[s] * v[(head * frames + s) * hd + dd];
+                }
+                out[(head * frames + t) * hd + dd] = acc;
+            }
+        }
+    }
+    // Concat heads and apply out_proj per frame.
+    let mut concat = vec![0.0f32; frames * d];
+    for t in 0..frames {
+        for head in 0..h {
+            for dd in 0..hd {
+                concat[t * d + head * hd + dd] = out[(head * frames + t) * hd + dd];
+            }
+        }
+    }
+    let mut outs = Vec::with_capacity(frames);
+    for t in 0..frames {
+        let mut o = vec![0.0f32; d];
+        for (oi, ow) in o.iter_mut().enumerate() {
+            let wr = &this.out_proj_w[oi * d..(oi + 1) * d];
+            let mut acc = 0.0f32;
+            for c in 0..d {
+                acc += concat[t * d + c] * wr[c];
+            }
+            *ow = acc;
+        }
+        outs.push(o);
+    }
+    outs
+}
+
+/// Deterministic xorshift stream with ~1 in 6 exact zeros; avoids a
+/// dev-dependency.
+struct Rng(u64);
+
+impl Rng {
+    fn value(&mut self) -> f32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        let r = self.0;
+        if r % 6 == 0 {
+            return 0.0;
+        }
+        (((r >> 8) % 20001) as f32 / 10000.0 - 1.0) * [0.05f32, 0.5, 1.0][((r >> 40) % 3) as usize]
+    }
+
+    fn vec(&mut self, n: usize) -> Vec<f32> {
+        (0..n).map(|_| self.value()).collect()
+    }
+}
+
+fn parity_layer(rng: &mut Rng, d: usize, heads: usize, context: usize) -> TransformerLayer {
+    TransformerLayer {
+        in_proj_w: rng.vec(3 * d * d),
+        out_proj_w: rng.vec(d * d),
+        norm1_w: Vec::new(),
+        norm1_b: Vec::new(),
+        norm2_w: Vec::new(),
+        norm2_b: Vec::new(),
+        linear1_w: Vec::new(),
+        linear2_w: Vec::new(),
+        layer_scale_1: Vec::new(),
+        layer_scale_2: Vec::new(),
+        d_model: d,
+        heads,
+        head_dim: d / heads,
+        context,
+        rope_base: 10000.0,
+    }
+}
+
+#[test]
+fn attention_matches_original_bitwise() {
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    // (d_model, heads, frames, context, pos_offset): covers a context
+    // shorter than the sequence, a context longer than it, one frame,
+    // and a nonzero streaming offset.
+    for &(d, heads, frames, context, offset) in &[
+        (16usize, 2usize, 1usize, 8usize, 0usize),
+        (16, 2, 9, 4, 0),
+        (32, 4, 13, 100, 0),
+        (32, 4, 13, 5, 7),
+        (24, 3, 31, 6, 1000),
+    ] {
+        let layer = parity_layer(&mut rng, d, heads, context);
+        let x = rng.vec(d * frames);
+        let want = attention_reference(&layer, &x, frames, offset);
+        let got = layer.attention(&x, frames, offset);
+        assert_eq!(got.len(), frames * d);
+        for (t, row) in want.iter().enumerate() {
+            for (c, w) in row.iter().enumerate() {
+                assert_eq!(
+                    got[t * d + c].to_bits(),
+                    w.to_bits(),
+                    "d={d} heads={heads} frames={frames} ctx={context} off={offset} t={t} c={c}"
+                );
+            }
+        }
+    }
+}

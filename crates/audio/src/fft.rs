@@ -16,7 +16,9 @@
 //! against direct DFT evaluation pin both halves to that convention, for
 //! radix-2 and Bluestein sizes alike.
 
+use crate::dsp::TableCache;
 use crate::error::AudioError;
+use std::sync::Arc;
 
 /// A complex sample stored as two f32s.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -151,6 +153,13 @@ impl ComplexFft {
     /// Unnormalized transform in place (forward, or inverse with
     /// conjugated twiddles) -- the same contract as the radix-2 kernel.
     fn run(&self, buf: &mut [ComplexF32], inverse: bool) {
+        self.run_with(buf, inverse, &mut Vec::new());
+    }
+
+    /// [`Self::run`] with a caller-owned convolution buffer, which only the
+    /// Bluestein path touches. Reusing it across frames drops one length-L
+    /// allocation per transform; the arithmetic is unchanged.
+    fn run_with(&self, buf: &mut [ComplexF32], inverse: bool, conv: &mut Vec<ComplexF32>) {
         match self {
             Self::Radix2 {
                 bitrev,
@@ -180,19 +189,21 @@ impl ComplexFft {
                     }
                 }
                 // A[j] = x[j] * chirp[j], zero-padded to L.
-                let mut a = vec![ComplexF32::default(); *l];
+                let a = conv;
+                a.clear();
+                a.resize(*l, ComplexF32::default());
                 for (j, &x) in buf.iter().enumerate() {
                     a[j] = x.mul(chirp[j]);
                 }
-                complex_fft_staged(&mut a, l_bitrev, Staged::Forward(l_stages_fwd));
+                complex_fft_staged(a, l_bitrev, Staged::Forward(l_stages_fwd));
                 for (fa, fb) in a.iter_mut().zip(b_spectrum) {
                     *fa = fa.mul(*fb);
                 }
-                complex_fft_staged(&mut a, l_bitrev, Staged::Inverse(l_stages_inv));
+                complex_fft_staged(a, l_bitrev, Staged::Inverse(l_stages_inv));
                 let scale = 1.0f32 / *l as f32;
                 for k in 0..*n {
-                    let conv = a[k].scale(scale);
-                    buf[k] = conv.mul(chirp[k]);
+                    let scaled = a[k].scale(scale);
+                    buf[k] = scaled.mul(chirp[k]);
                 }
                 if inverse {
                     for v in buf.iter_mut() {
@@ -295,8 +306,34 @@ impl RealFftPlan {
         })
     }
 
+    /// Returns a shared plan for `size`, building it on first use.
+    ///
+    /// A Bluestein plan (whisper's 400-point frames) costs a length-1024
+    /// transform plus its tables, so frontends that run once per utterance
+    /// would otherwise rebuild it every call. Plans are immutable, so a
+    /// cached plan transforms bit-identically to a fresh one. Very large
+    /// plans are built per call rather than pinned in the cache.
+    pub fn cached(size: usize) -> Result<Arc<Self>, AudioError> {
+        static PLANS: TableCache<usize, RealFftPlan> = TableCache::new(16);
+        PLANS.get_or_build(size, size <= MAX_CACHED_PLAN_SIZE, || Self::new(size))
+    }
+
     /// Forward transform of `n` real samples into `n/2 + 1` complex bins.
     pub fn forward(&self, input: &[f32]) -> Result<Vec<ComplexF32>, AudioError> {
+        let mut out = Vec::new();
+        self.forward_into(input, &mut out, &mut RealFftScratch::default())?;
+        Ok(out)
+    }
+
+    /// [`Self::forward`] into a caller-owned bin buffer (cleared and resized
+    /// to `n/2 + 1`) with caller-owned scratch, so a frame loop allocates
+    /// nothing after the first frame. Same arithmetic as `forward`.
+    pub fn forward_into(
+        &self,
+        input: &[f32],
+        out: &mut Vec<ComplexF32>,
+        scratch: &mut RealFftScratch,
+    ) -> Result<(), AudioError> {
         if input.len() != self.size {
             return Err(AudioError::ShapeMismatch {
                 what: "real FFT input length",
@@ -305,16 +342,22 @@ impl RealFftPlan {
             });
         }
         if self.size == 1 {
-            return Ok(vec![ComplexF32::new(input[0], 0.0)]);
+            out.clear();
+            out.push(ComplexF32::new(input[0], 0.0));
+            return Ok(());
         }
         // Pack x[2k] + i x[2k+1] and transform at half size.
-        let mut z: Vec<ComplexF32> = (0..self.half)
-            .map(|k| ComplexF32::new(input[2 * k], input[2 * k + 1]))
-            .collect();
-        self.half_fft.as_ref().unwrap().run(&mut z, false);
+        let z = &mut scratch.z;
+        z.clear();
+        z.extend((0..self.half).map(|k| ComplexF32::new(input[2 * k], input[2 * k + 1])));
+        self.half_fft
+            .as_ref()
+            .unwrap()
+            .run_with(z, false, &mut scratch.conv);
 
         let m = self.half;
-        let mut out = vec![ComplexF32::default(); m + 1];
+        out.clear();
+        out.resize(m + 1, ComplexF32::default());
         // k = 0 packs DC and Nyquist into one real pair.
         let z0 = z[0];
         out[0] = ComplexF32::new(z0.re + z0.im, 0.0);
@@ -327,12 +370,25 @@ impl RealFftPlan {
             // X[k] = c - i d
             out[k] = ComplexF32::new(c.re + d.im, c.im - d.re);
         }
-        Ok(out)
+        Ok(())
     }
 
     /// Inverse transform of `n/2 + 1` conjugate-symmetric bins back to `n`
     /// real samples, normalized so forward-then-inverse is the identity.
     pub fn inverse(&self, spectrum: &[ComplexF32]) -> Result<Vec<f32>, AudioError> {
+        let mut out = Vec::new();
+        self.inverse_into(spectrum, &mut out, &mut RealFftScratch::default())?;
+        Ok(out)
+    }
+
+    /// [`Self::inverse`] into a caller-owned sample buffer with caller-owned
+    /// scratch. Same arithmetic as `inverse`.
+    pub fn inverse_into(
+        &self,
+        spectrum: &[ComplexF32],
+        out: &mut Vec<f32>,
+        scratch: &mut RealFftScratch,
+    ) -> Result<(), AudioError> {
         if spectrum.len() != self.half + 1 {
             return Err(AudioError::ShapeMismatch {
                 what: "real FFT spectrum length",
@@ -341,10 +397,13 @@ impl RealFftPlan {
             });
         }
         if self.size == 1 {
-            return Ok(vec![spectrum[0].re]);
+            out.clear();
+            out.push(spectrum[0].re);
+            return Ok(());
         }
         let m = self.half;
-        let mut z: Vec<ComplexF32> = Vec::with_capacity(m);
+        let z = &mut scratch.z;
+        z.clear();
         for k in 0..m {
             let other = if k == 0 { spectrum[m] } else { spectrum[m - k] };
             // Inverting the forward split: Z[k] = 0.5 * S + 0.5 * i *
@@ -356,16 +415,32 @@ impl RealFftPlan {
             let d = spectrum[k].sub(other.conj()).scale(0.5);
             z.push(s.add(d.mul(ComplexF32::new(t.im, t.re))));
         }
-        self.half_fft.as_ref().unwrap().run(&mut z, true);
+        self.half_fft
+            .as_ref()
+            .unwrap()
+            .run_with(z, true, &mut scratch.conv);
         let scale = 1.0f32 / m as f32;
-        let mut out = Vec::with_capacity(self.size);
-        for zk in &z {
+        out.clear();
+        for zk in z.iter() {
             out.push(zk.re * scale);
             out.push(zk.im * scale);
         }
-        Ok(out)
+        Ok(())
     }
 }
+
+/// Reusable work buffers for [`RealFftPlan::forward_into`] and
+/// [`RealFftPlan::inverse_into`]. Contents are meaningless between calls;
+/// any scratch works with any plan.
+#[derive(Debug, Default, Clone)]
+pub struct RealFftScratch {
+    z: Vec<ComplexF32>,
+    conv: Vec<ComplexF32>,
+}
+
+/// Largest real-FFT size kept in the process-wide plan cache (the Bluestein
+/// plan for 8192 holds a few hundred KiB); larger plans are rebuilt per call.
+const MAX_CACHED_PLAN_SIZE: usize = 1 << 13;
 
 /// Per-stage contiguous twiddle tables for a power-of-two length: stage
 /// with half = len/2 needs `twiddle[j * (n / len)]` for j in 0..half, plus
@@ -745,5 +820,204 @@ mod complex_plan_tests {
             assert!((back[i].re - input[i].re).abs() < 1e-4, "roundtrip re[{i}]");
             assert!((back[i].im - input[i].im).abs() < 1e-4, "roundtrip im[{i}]");
         }
+    }
+}
+
+/// Bitwise parity of the buffer-reusing `*_into` paths and the plan cache
+/// against the previous allocate-per-call implementations, retained verbatim
+/// in `old` below. Every downstream golden fixture was recorded against that
+/// arithmetic, so equality must hold in `to_bits()`, not within a tolerance.
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+    use crate::dsp::TestRng;
+
+    mod old {
+        use super::super::*;
+
+        /// The pre-scratch `ComplexFft::run`.
+        pub(super) fn run(fft: &ComplexFft, buf: &mut [ComplexF32], inverse: bool) {
+            match fft {
+                ComplexFft::Radix2 {
+                    bitrev,
+                    stage_twiddles,
+                    stage_twiddles_inv,
+                } => {
+                    let staged = if inverse {
+                        Staged::Inverse(stage_twiddles_inv)
+                    } else {
+                        Staged::Forward(stage_twiddles)
+                    };
+                    complex_fft_staged(buf, bitrev, staged);
+                }
+                ComplexFft::Bluestein {
+                    n,
+                    chirp,
+                    l,
+                    l_bitrev,
+                    b_spectrum,
+                    l_stages_fwd,
+                    l_stages_inv,
+                } => {
+                    if inverse {
+                        for v in buf.iter_mut() {
+                            *v = v.conj();
+                        }
+                    }
+                    let mut a = vec![ComplexF32::default(); *l];
+                    for (j, &x) in buf.iter().enumerate() {
+                        a[j] = x.mul(chirp[j]);
+                    }
+                    complex_fft_staged(&mut a, l_bitrev, Staged::Forward(l_stages_fwd));
+                    for (fa, fb) in a.iter_mut().zip(b_spectrum) {
+                        *fa = fa.mul(*fb);
+                    }
+                    complex_fft_staged(&mut a, l_bitrev, Staged::Inverse(l_stages_inv));
+                    let scale = 1.0f32 / *l as f32;
+                    for k in 0..*n {
+                        let conv = a[k].scale(scale);
+                        buf[k] = conv.mul(chirp[k]);
+                    }
+                    if inverse {
+                        for v in buf.iter_mut() {
+                            *v = v.conj();
+                        }
+                    }
+                }
+            }
+        }
+
+        /// The pre-scratch `RealFftPlan::forward`.
+        pub(super) fn forward(plan: &RealFftPlan, input: &[f32]) -> Vec<ComplexF32> {
+            if plan.size == 1 {
+                return vec![ComplexF32::new(input[0], 0.0)];
+            }
+            let mut z: Vec<ComplexF32> = (0..plan.half)
+                .map(|k| ComplexF32::new(input[2 * k], input[2 * k + 1]))
+                .collect();
+            run(plan.half_fft.as_ref().unwrap(), &mut z, false);
+            let m = plan.half;
+            let mut out = vec![ComplexF32::default(); m + 1];
+            let z0 = z[0];
+            out[0] = ComplexF32::new(z0.re + z0.im, 0.0);
+            out[m] = ComplexF32::new(z0.re - z0.im, 0.0);
+            for k in 1..m {
+                let zk = z[k];
+                let zmk = z[m - k].conj();
+                let c = zk.add(zmk).scale(0.5);
+                let d = zk.sub(zmk).scale(0.5).mul(plan.split[k]);
+                out[k] = ComplexF32::new(c.re + d.im, c.im - d.re);
+            }
+            out
+        }
+
+        /// The pre-scratch `RealFftPlan::inverse`.
+        pub(super) fn inverse(plan: &RealFftPlan, spectrum: &[ComplexF32]) -> Vec<f32> {
+            if plan.size == 1 {
+                return vec![spectrum[0].re];
+            }
+            let m = plan.half;
+            let mut z: Vec<ComplexF32> = Vec::with_capacity(m);
+            for k in 0..m {
+                let other = if k == 0 { spectrum[m] } else { spectrum[m - k] };
+                let t = plan.split[k];
+                let s = spectrum[k].add(other.conj()).scale(0.5);
+                let d = spectrum[k].sub(other.conj()).scale(0.5);
+                z.push(s.add(d.mul(ComplexF32::new(t.im, t.re))));
+            }
+            run(plan.half_fft.as_ref().unwrap(), &mut z, true);
+            let scale = 1.0f32 / m as f32;
+            let mut out = Vec::with_capacity(plan.size);
+            for zk in &z {
+                out.push(zk.re * scale);
+                out.push(zk.im * scale);
+            }
+            out
+        }
+    }
+
+    fn assert_complex_bits(what: &str, got: &[ComplexF32], want: &[ComplexF32]) {
+        assert_eq!(got.len(), want.len(), "{what}: length");
+        for (i, (g, w)) in got.iter().zip(want).enumerate() {
+            assert_eq!(g.re.to_bits(), w.re.to_bits(), "{what}[{i}].re {g:?} {w:?}");
+            assert_eq!(g.im.to_bits(), w.im.to_bits(), "{what}[{i}].im {g:?} {w:?}");
+        }
+    }
+
+    /// Radix-2, Bluestein, and degenerate sizes, in an order that makes the
+    /// shared scratch shrink and grow between plans.
+    const SIZES: [usize; 12] = [1, 2, 6, 8, 12, 64, 100, 400, 1024, 400, 6, 640];
+
+    #[test]
+    fn forward_into_matches_old_forward_bitwise() {
+        let mut rng = TestRng(0x9E37_79B9_7F4A_7C15);
+        let mut out = Vec::new();
+        let mut scratch = RealFftScratch::default();
+        for &size in &SIZES {
+            let plan = RealFftPlan::new(size).unwrap();
+            for _ in 0..3 {
+                let input = rng.vec(size);
+                plan.forward_into(&input, &mut out, &mut scratch).unwrap();
+                assert_complex_bits(
+                    &format!("forward_into size {size}"),
+                    &out,
+                    &old::forward(&plan, &input),
+                );
+                assert_complex_bits(
+                    &format!("forward size {size}"),
+                    &plan.forward(&input).unwrap(),
+                    &old::forward(&plan, &input),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn inverse_into_matches_old_inverse_bitwise() {
+        let mut rng = TestRng(0xD1B5_4A32_D192_ED03);
+        let mut out = Vec::new();
+        let mut scratch = RealFftScratch::default();
+        for &size in &SIZES {
+            let plan = RealFftPlan::new(size).unwrap();
+            for _ in 0..3 {
+                // Arbitrary (not necessarily conjugate-symmetric) bins: the
+                // arithmetic must agree on whatever it is handed.
+                let spectrum: Vec<ComplexF32> = (0..size / 2 + 1)
+                    .map(|_| ComplexF32::new(rng.value(), rng.value()))
+                    .collect();
+                plan.inverse_into(&spectrum, &mut out, &mut scratch)
+                    .unwrap();
+                let want = old::inverse(&plan, &spectrum);
+                assert_eq!(out.len(), want.len());
+                for (i, (g, w)) in out.iter().zip(&want).enumerate() {
+                    assert_eq!(g.to_bits(), w.to_bits(), "inverse_into size {size}[{i}]");
+                }
+                let wrapped = plan.inverse(&spectrum).unwrap();
+                for (g, w) in wrapped.iter().zip(&want) {
+                    assert_eq!(g.to_bits(), w.to_bits(), "inverse size {size}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cached_plan_transforms_like_a_fresh_one() {
+        let mut rng = TestRng(0x2545_F491_4F6C_DD1D);
+        for size in [400usize, 512, 6] {
+            let cached = RealFftPlan::cached(size).unwrap();
+            // Not asserting pointer identity: the bounded cache may be
+            // cleared by concurrently running tests between two calls.
+            let fresh = RealFftPlan::new(size).unwrap();
+            let input = rng.vec(size);
+            assert_complex_bits(
+                &format!("cached size {size}"),
+                &cached.forward(&input).unwrap(),
+                &fresh.forward(&input).unwrap(),
+            );
+        }
+        // Errors are returned, not cached.
+        assert!(RealFftPlan::cached(7).is_err());
+        assert!(RealFftPlan::cached(7).is_err());
+        assert!(RealFftPlan::cached(0).is_err());
     }
 }

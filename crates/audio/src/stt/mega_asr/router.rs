@@ -17,10 +17,10 @@ use std::collections::BTreeMap;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
-use crate::mel::MelFilterbank;
+use crate::nn::{LayerNorm, Linear};
 use crate::ops;
 use crate::stft::StftOptions;
-use crate::whisper::{whisper_mel_filterbank, WHISPER_HOP, WHISPER_N_FFT};
+use crate::whisper::{whisper_mel_projector, WHISPER_HOP, WHISPER_N_FFT};
 use crate::{Result, SpeechError};
 
 use super::config::RouterSettings;
@@ -56,50 +56,21 @@ pub struct RouteDecision {
     pub use_lora: bool,
 }
 
-struct Linear {
+/// A Conv1d weight in the shared kernel's `[out, in, kernel]` layout. It is
+/// not a [`Linear`]: `weight` holds `kernel` times more values than
+/// `input * output`, which `Linear::new` rejects.
+struct ConvKernel {
     weight: Vec<f32>,
     bias: Vec<f32>,
     input: usize,
     output: usize,
 }
 
-impl Linear {
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        ops::linear(
-            x,
-            &self.weight,
-            Some(&self.bias),
-            rows,
-            self.input,
-            self.output,
-        )
-    }
-}
-
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-}
-
-impl LayerNorm {
-    fn apply(&self, values: &mut [f32], rows: usize) {
-        ops::layernorm(
-            values,
-            rows,
-            self.width,
-            &self.weight,
-            Some(&self.bias),
-            LAYER_NORM_EPS,
-        );
-    }
-}
-
 /// Two strided convolutions with inference-mode BatchNorm and GELU, exactly
 /// `ConvFrontend` from the reference.
 struct ConvFrontend {
-    conv1: Linear,
-    conv2: Linear,
+    conv1: ConvKernel,
+    conv2: ConvKernel,
     bn1: BatchNorm,
     bn2: BatchNorm,
 }
@@ -224,12 +195,12 @@ fn linear(
     input: usize,
     output: usize,
 ) -> Result<Linear> {
-    Ok(Linear {
-        weight: tensor(map, weight, &[output, input])?.to_vec(),
-        bias: tensor(map, bias, &[output])?.to_vec(),
+    Ok(Linear::new(
+        tensor(map, weight, &[output, input])?.to_vec(),
+        Some(tensor(map, bias, &[output])?.to_vec()),
         input,
         output,
-    })
+    ))
 }
 
 fn layer_norm(
@@ -237,11 +208,11 @@ fn layer_norm(
     prefix: &str,
     width: usize,
 ) -> Result<LayerNorm> {
-    Ok(LayerNorm {
-        weight: tensor(map, &format!("{prefix}.weight"), &[width])?.to_vec(),
-        bias: tensor(map, &format!("{prefix}.bias"), &[width])?.to_vec(),
-        width,
-    })
+    Ok(LayerNorm::new(
+        tensor(map, &format!("{prefix}.weight"), &[width])?.to_vec(),
+        Some(tensor(map, &format!("{prefix}.bias"), &[width])?.to_vec()),
+        LAYER_NORM_EPS,
+    ))
 }
 
 /// Converts an MLX Conv1d weight `[out, kernel, in]` to the shared kernel's
@@ -398,24 +369,9 @@ impl AudioQualityRouter {
             layers.push(EncoderLayer {
                 norm1: layer_norm(map, &format!("{prefix}.norm1"), d_model)?,
                 attention: Attention {
-                    q_proj: Linear {
-                        weight: split(0),
-                        bias: split_bias(0),
-                        input: d_model,
-                        output: d_model,
-                    },
-                    k_proj: Linear {
-                        weight: split(1),
-                        bias: split_bias(1),
-                        input: d_model,
-                        output: d_model,
-                    },
-                    v_proj: Linear {
-                        weight: split(2),
-                        bias: split_bias(2),
-                        input: d_model,
-                        output: d_model,
-                    },
+                    q_proj: Linear::new(split(0), Some(split_bias(0)), d_model, d_model),
+                    k_proj: Linear::new(split(1), Some(split_bias(1)), d_model, d_model),
+                    v_proj: Linear::new(split(2), Some(split_bias(2)), d_model, d_model),
                     out_proj: linear(
                         map,
                         &format!("{prefix}.self_attn.out_proj.weight"),
@@ -445,7 +401,7 @@ impl AudioQualityRouter {
         }
 
         let frontend = ConvFrontend {
-            conv1: Linear {
+            conv1: ConvKernel {
                 weight: conv_weight(
                     tensor(
                         map,
@@ -468,7 +424,7 @@ impl AudioQualityRouter {
                 running_var: tensor(map, "frontend.conv.1.running_var", &[frontend_hidden_dim])?
                     .to_vec(),
             },
-            conv2: Linear {
+            conv2: ConvKernel {
                 weight: conv_weight(
                     tensor(
                         map,
@@ -546,23 +502,7 @@ impl AudioQualityRouter {
     /// `(x + 4) / 4` normalization. Unlike the whisper frontend there is no
     /// peak-relative clamp and the final centered frame is kept.
     pub fn logmel(&self, samples: &[f32]) -> Result<(Vec<f32>, usize)> {
-        let options = StftOptions {
-            fft_size: WHISPER_N_FFT,
-            hop: WHISPER_HOP,
-            window: crate::dsp::hann_window(WHISPER_N_FFT),
-            center: true,
-        };
-        let filterbank: MelFilterbank = whisper_mel_filterbank(self.n_mels)?;
-        let spectra = crate::stft::stft(samples, &options)?;
-        let mut out = Vec::with_capacity(spectra.len() * self.n_mels);
-        for spectrum in &spectra {
-            let power: Vec<f32> = spectrum.iter().map(|c| c.re * c.re + c.im * c.im).collect();
-            let projected = filterbank.project(&power)?;
-            for value in projected {
-                out.push((value.max(LOG_MEL_FLOOR).log10() + LOG_MEL_OFFSET) / LOG_MEL_OFFSET);
-            }
-        }
-        Ok((out, spectra.len()))
+        router_logmel(self.n_mels, samples)
     }
 
     /// Full router evaluation with every stage tensor, mirroring
@@ -703,5 +643,95 @@ fn bad_shape(name: &str, shape: &[usize]) -> SpeechError {
     SpeechError::Tensor {
         name: name.to_owned(),
         why: format!("unexpected router tensor shape {shape:?}"),
+    }
+}
+
+/// The router's log-mel frontend over `n_mels` Slaney bands; see
+/// [`AudioQualityRouter::logmel`].
+fn router_logmel(n_mels: usize, samples: &[f32]) -> Result<(Vec<f32>, usize)> {
+    let options = StftOptions {
+        fft_size: WHISPER_N_FFT,
+        hop: WHISPER_HOP,
+        window: crate::dsp::hann_window(WHISPER_N_FFT),
+        center: true,
+    };
+    let projector = whisper_mel_projector(n_mels)?;
+    let mut out = Vec::new();
+    let mut power: Vec<f32> = Vec::new();
+    let mut projected: Vec<f32> = Vec::new();
+    let frames = crate::stft::stft_each(
+        samples,
+        &options,
+        crate::stft::StftPaddingMode::Reflect,
+        crate::stft::StftWindowPlacement::Left,
+        |spectrum| {
+            power.clear();
+            power.extend(spectrum.iter().map(|c| c.re * c.re + c.im * c.im));
+            projector.project_into(&power, &mut projected)?;
+            for &value in &projected {
+                out.push((value.max(LOG_MEL_FLOOR).log10() + LOG_MEL_OFFSET) / LOG_MEL_OFFSET);
+            }
+            Ok(())
+        },
+    )?;
+    Ok((out, frames))
+}
+
+/// Bitwise parity of the streaming, cached router frontend against the
+/// previous per-call filterbank and fully materialized STFT, kept verbatim.
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+    use crate::dsp::TestRng;
+    use crate::mel::MelFilterbank;
+    use crate::whisper::whisper_mel_filterbank;
+
+    fn old_logmel(n_mels: usize, samples: &[f32]) -> Result<(Vec<f32>, usize)> {
+        let options = StftOptions {
+            fft_size: WHISPER_N_FFT,
+            hop: WHISPER_HOP,
+            window: crate::dsp::hann_window(WHISPER_N_FFT),
+            center: true,
+        };
+        let filterbank: MelFilterbank = whisper_mel_filterbank(n_mels)?;
+        let spectra = crate::stft::stft(samples, &options)?;
+        let mut out = Vec::with_capacity(spectra.len() * n_mels);
+        for spectrum in &spectra {
+            let power: Vec<f32> = spectrum.iter().map(|c| c.re * c.re + c.im * c.im).collect();
+            let projected = filterbank.project(&power)?;
+            for value in projected {
+                out.push((value.max(LOG_MEL_FLOOR).log10() + LOG_MEL_OFFSET) / LOG_MEL_OFFSET);
+            }
+        }
+        Ok((out, spectra.len()))
+    }
+
+    #[test]
+    fn router_logmel_matches_old_bitwise() {
+        let mut rng = TestRng(0x524F_5554_4552_0001);
+        for len in [3_200usize, 16_000, 33_333] {
+            let samples = rng.vec(len);
+            let got = router_logmel(80, &samples).unwrap();
+            let want = old_logmel(80, &samples).unwrap();
+            assert_eq!(got.1, want.1);
+            assert_eq!(got.0.len(), want.0.len());
+            for (i, (g, w)) in got.0.iter().zip(&want.0).enumerate() {
+                assert_eq!(g.to_bits(), w.to_bits(), "len {len} value {i}");
+            }
+        }
+        let silent = vec![0.0f32; 4_000];
+        assert_eq!(
+            router_logmel(80, &silent).unwrap(),
+            old_logmel(80, &silent).unwrap()
+        );
+        // Unsupported band counts and too-short input refuse as before.
+        assert_eq!(
+            router_logmel(64, &silent).unwrap_err().to_string(),
+            old_logmel(64, &silent).unwrap_err().to_string()
+        );
+        assert_eq!(
+            router_logmel(80, &[0.0; 10]).unwrap_err().to_string(),
+            old_logmel(80, &[0.0; 10]).unwrap_err().to_string()
+        );
     }
 }

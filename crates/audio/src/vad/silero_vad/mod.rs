@@ -342,33 +342,9 @@ impl Branch {
             *v = v.max(0.0);
         }
         let seq = x.len() / 128;
-        // LSTM over the (usually length 1) remaining time axis, gate
-        // order i, f, g, o.
         let mut h = hidden.to_vec();
         let mut c = cell.to_vec();
-        let mut last_hidden_out = vec![0.0f32; 128 * seq];
-        for s in 0..seq {
-            let x_t = &x[s * 128..(s + 1) * 128];
-            let gates = lstm_gates(
-                x_t,
-                &h,
-                &self.lstm_ih,
-                &self.lstm_hh,
-                &self.lstm_ih_bias,
-                &self.lstm_hh_bias,
-            );
-            let mut new_h = vec![0.0f32; 128];
-            for d in 0..128 {
-                let i = gates[d];
-                let f = gates[128 + d];
-                let g = gates[256 + d].tanh();
-                let o = gates[384 + d];
-                c[d] = f * c[d] + i * g;
-                new_h[d] = o * c[d].tanh();
-            }
-            h = new_h.clone();
-            last_hidden_out[s * 128..(s + 1) * 128].copy_from_slice(&new_h);
-        }
+        let mut last_hidden_out = self.lstm_steps(&x, seq, &mut h, &mut c);
         // relu(hidden_seq) -> final 1x1 conv -> sigmoid -> time mean.
         for v in last_hidden_out.iter_mut() {
             *v = v.max(0.0);
@@ -387,11 +363,44 @@ impl Branch {
         );
         let mut sum = 0.0f32;
         for v in out.iter_mut() {
-            *v = 1.0 / (1.0 + (-*v).exp());
+            *v = ops::sigmoid(*v);
             sum += *v;
         }
         let prob = sum / out.len() as f32;
         Ok((prob, h, c))
+    }
+}
+
+impl Branch {
+    /// LSTM over the (usually length 1) time axis of `x [seq, 128]`, gate
+    /// order i, f, g, o. Advances `h` and `c` in place and returns the
+    /// per-step hidden outputs `[seq, 128]`.
+    fn lstm_steps(&self, x: &[f32], seq: usize, h: &mut [f32], c: &mut [f32]) -> Vec<f32> {
+        let mut out = vec![0.0f32; 128 * seq];
+        for s in 0..seq {
+            let x_t = &x[s * 128..(s + 1) * 128];
+            let gates = lstm_gates(
+                x_t,
+                h,
+                &self.lstm_ih,
+                &self.lstm_hh,
+                &self.lstm_ih_bias,
+                &self.lstm_hh_bias,
+            );
+            // `gates` already holds every use of the old `h`, so the new
+            // hidden values go straight into this step's output row.
+            let row = &mut out[s * 128..(s + 1) * 128];
+            for d in 0..128 {
+                let i = gates[d];
+                let f = gates[128 + d];
+                let g = gates[256 + d].tanh();
+                let o = gates[384 + d];
+                c[d] = f * c[d] + i * g;
+                row[d] = o * c[d].tanh();
+            }
+            h.copy_from_slice(row);
+        }
+        out
     }
 }
 
@@ -417,9 +426,9 @@ fn lstm_gates(
         *gate = acc;
     }
     for d in 0..dim {
-        gates[d] = 1.0 / (1.0 + (-gates[d]).exp());
-        gates[dim + d] = 1.0 / (1.0 + (-gates[dim + d]).exp());
-        gates[3 * dim + d] = 1.0 / (1.0 + (-gates[3 * dim + d]).exp());
+        gates[d] = ops::sigmoid(gates[d]);
+        gates[dim + d] = ops::sigmoid(gates[dim + d]);
+        gates[3 * dim + d] = ops::sigmoid(gates[3 * dim + d]);
         // g gate stays linear.
     }
     gates
@@ -508,7 +517,9 @@ impl SileroVad {
         let (prob, h, c) = branch.forward(&window, &state.hidden, &state.cell)?;
         state.hidden = h;
         state.cell = c;
-        state.context = chunk[chunk.len() - branch.context_size..].to_vec();
+        state
+            .context
+            .copy_from_slice(&chunk[chunk.len() - branch.context_size..]);
         Ok(prob)
     }
 
@@ -768,5 +779,147 @@ mod tests {
             vec![(0, 16352), (18976, 35328)],
             "padded segments: {ts:?}"
         );
+    }
+
+    /// Deterministic xorshift stream with ~1 in 6 exact zeros; avoids a
+    /// dev-dependency.
+    struct Rng(u64);
+
+    impl Rng {
+        fn vec(&mut self, n: usize, scale: f32) -> Vec<f32> {
+            (0..n)
+                .map(|_| {
+                    self.0 ^= self.0 << 13;
+                    self.0 ^= self.0 >> 7;
+                    self.0 ^= self.0 << 17;
+                    let r = self.0;
+                    if r % 6 == 0 {
+                        0.0
+                    } else {
+                        (((r >> 8) % 20001) as f32 / 10000.0 - 1.0) * scale
+                    }
+                })
+                .collect()
+        }
+    }
+
+    fn random_branch(rng: &mut Rng) -> Branch {
+        let mut b = Branch::config_16k_defaults_for_test();
+        b.stft_conv = rng.vec(b.cutoff * 2 * b.filter_length, 0.1);
+        b.conv1_w = rng.vec(128 * b.cutoff * 3, 0.05);
+        b.conv1_b = rng.vec(128, 0.1);
+        b.conv2_w = rng.vec(64 * 128 * 3, 0.05);
+        b.conv2_b = rng.vec(64, 0.1);
+        b.conv3_w = rng.vec(64 * 64 * 3, 0.05);
+        b.conv3_b = rng.vec(64, 0.1);
+        b.conv4_w = rng.vec(128 * 64 * 3, 0.05);
+        b.conv4_b = rng.vec(128, 0.1);
+        b.lstm_ih = rng.vec(4 * 128 * 128, 0.1);
+        b.lstm_hh = rng.vec(4 * 128 * 128, 0.1);
+        b.lstm_ih_bias = rng.vec(4 * 128, 0.1);
+        b.lstm_hh_bias = rng.vec(4 * 128, 0.1);
+        b.final_conv_w = rng.vec(128, 0.1);
+        b.final_conv_b = rng.vec(1, 0.1);
+        b
+    }
+
+    fn assert_bits(what: &str, got: &[f32], want: &[f32]) {
+        assert_eq!(got.len(), want.len(), "{what}: length");
+        for (i, (g, w)) in got.iter().zip(want).enumerate() {
+            assert_eq!(
+                g.to_bits(),
+                w.to_bits(),
+                "{what}: element {i}: got {g} want {w}"
+            );
+        }
+    }
+
+    /// The original LSTM step loop (fresh `new_h` per step, `h` rebuilt
+    /// by clone), kept verbatim as the parity reference.
+    fn lstm_steps_reference(
+        b: &Branch,
+        x: &[f32],
+        seq: usize,
+        hidden: &[f32],
+        cell: &[f32],
+    ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        let mut h = hidden.to_vec();
+        let mut c = cell.to_vec();
+        let mut last_hidden_out = vec![0.0f32; 128 * seq];
+        for s in 0..seq {
+            let x_t = &x[s * 128..(s + 1) * 128];
+            let gates = lstm_gates(
+                x_t,
+                &h,
+                &b.lstm_ih,
+                &b.lstm_hh,
+                &b.lstm_ih_bias,
+                &b.lstm_hh_bias,
+            );
+            let mut new_h = vec![0.0f32; 128];
+            for d in 0..128 {
+                let i = gates[d];
+                let f = gates[128 + d];
+                let g = gates[256 + d].tanh();
+                let o = gates[384 + d];
+                c[d] = f * c[d] + i * g;
+                new_h[d] = o * c[d].tanh();
+            }
+            h = new_h.clone();
+            last_hidden_out[s * 128..(s + 1) * 128].copy_from_slice(&new_h);
+        }
+        (last_hidden_out, h, c)
+    }
+
+    #[test]
+    fn lstm_steps_matches_original_over_many_steps_bitwise() {
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let b = random_branch(&mut rng);
+        for &seq in &[1usize, 2, 7] {
+            let x = rng.vec(128 * seq, 1.0);
+            let hidden = rng.vec(128, 0.5);
+            let cell = rng.vec(128, 0.5);
+            let (want_out, want_h, want_c) = lstm_steps_reference(&b, &x, seq, &hidden, &cell);
+            let (mut h, mut c) = (hidden.clone(), cell.clone());
+            let got_out = b.lstm_steps(&x, seq, &mut h, &mut c);
+            assert_bits("out", &got_out, &want_out);
+            assert_bits("h", &h, &want_h);
+            assert_bits("c", &c, &want_c);
+        }
+    }
+
+    /// Streams several chunks through `feed` and through the original
+    /// bookkeeping (new context/hidden/cell vectors each step) and
+    /// compares every probability and the carried state bit for bit.
+    #[test]
+    fn feed_streaming_state_matches_original_bookkeeping_bitwise() {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let model = SileroVad {
+            vad_16k: random_branch(&mut rng),
+            vad_8k: Branch::config_8k_defaults_for_test(),
+            timing: VadTiming::default(),
+        };
+        let branch = &model.vad_16k;
+        let mut state = model.initial_state(16_000).unwrap();
+        let (mut ref_h, mut ref_c, mut ref_ctx) = (
+            state.hidden.clone(),
+            state.cell.clone(),
+            state.context.clone(),
+        );
+        for step in 0..5 {
+            let chunk = rng.vec(branch.chunk_size, 0.5);
+            let prob = model.feed(&chunk, &mut state).unwrap();
+            let mut window = Vec::with_capacity(branch.context_size + chunk.len());
+            window.extend_from_slice(&ref_ctx);
+            window.extend_from_slice(&chunk);
+            let (ref_prob, h, c) = branch.forward(&window, &ref_h, &ref_c).unwrap();
+            ref_h = h;
+            ref_c = c;
+            ref_ctx = chunk[chunk.len() - branch.context_size..].to_vec();
+            assert_eq!(prob.to_bits(), ref_prob.to_bits(), "step {step} prob");
+            assert_bits("hidden", &state.hidden, &ref_h);
+            assert_bits("cell", &state.cell, &ref_c);
+            assert_bits("context", &state.context, &ref_ctx);
+        }
     }
 }

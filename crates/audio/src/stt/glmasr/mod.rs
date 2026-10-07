@@ -12,8 +12,9 @@ use turbospark_tokenizer::Tokenizer as AudioTokenizer;
 
 use crate::models::stt::qwen3_asr::{
     config::TextConfig,
-    decoder::{Decoder, Linear},
+    decoder::{greedy_generate, load_linear, Decoder, Linear},
 };
+use crate::nn::{bad_config, load_tensor, LayerNorm};
 use crate::quant::QuantScheme;
 use crate::{ops, Result, SpeechError};
 
@@ -29,6 +30,9 @@ const AUDIO_LAYERS: usize = 32;
 const MERGE_FACTOR: usize = 4;
 const MAX_AUDIO_FRAMES: usize = 1500;
 const DEFAULT_MAX_TOKENS: usize = 128;
+/// Every GLM-ASR audio-encoder LayerNorm uses this epsilon; the shared
+/// `nn::LayerNorm` stores it instead of hardcoding it in `apply`.
+const LAYER_NORM_EPS: f32 = 1e-5;
 const QUANT_BITS: u32 = 4;
 const QUANT_GROUP: usize = 64;
 const MAX_AUDIO_SECONDS: usize = 30;
@@ -54,13 +58,6 @@ struct Config {
     quant_bits: u32,
     quant_group: usize,
     text: TextConfig,
-}
-
-fn bad_config(field: &str, why: impl Into<String>) -> SpeechError {
-    SpeechError::BadConfig {
-        field: field.to_owned(),
-        why: why.into(),
-    }
 }
 
 fn positive(value: &Value, field: &str) -> Result<usize> {
@@ -384,20 +381,17 @@ impl GlmAsr {
             embeddings[dst..dst + hidden_size].copy_from_slice(&features[src..src + hidden_size]);
         }
         let prompt_rows = embeddings.len() / hidden_size;
-        let (mut last_hidden, mut cache) = self.decoder.prefill(&embeddings, prompt_rows);
-        let mut generated = Vec::new();
-        for _ in 0..max_tokens {
-            let next = argmax(&self.decoder.logits(&last_hidden));
-            if self.stop_ids.contains(&(next as u32)) {
-                break;
-            }
-            let token = i32::try_from(next).map_err(|_| SpeechError::Input {
-                why: "GLM-ASR generated token id exceeds signed 32-bit range".into(),
-            })?;
-            generated.push(next as u32);
-            let embedding = self.decoder.embed(&[token])?;
-            last_hidden = self.decoder.step(&embedding, &mut cache);
-        }
+        let (last_hidden, cache) = self.decoder.prefill(&embeddings, prompt_rows);
+        let logits = self.decoder.logits(&last_hidden);
+        let generated = greedy_generate(
+            &self.decoder,
+            &logits,
+            cache,
+            max_tokens,
+            |next| self.stop_ids.contains(&next),
+            "GLM-ASR",
+            |_, _| {},
+        )?;
         self.tokenizer
             .decode(&generated, true)
             .map(|text| text.trim().to_owned())
@@ -471,7 +465,7 @@ fn log_mel(samples: &[f32]) -> Result<(Vec<f32>, usize)> {
             why: "audio is too short for the GLM-ASR frontend".into(),
         });
     }
-    let filterbank = turbospark_audio::mel::mel_filterbank(
+    let projector = turbospark_audio::mel::mel_projector_cached(
         MEL_BINS,
         FFT_SIZE,
         SAMPLE_RATE as u32,
@@ -487,17 +481,17 @@ fn log_mel(samples: &[f32]) -> Result<(Vec<f32>, usize)> {
     let retained = spectra.len() - 1;
     let mut mel = Vec::with_capacity(retained * MEL_BINS);
     let mut peak = f32::NEG_INFINITY;
+    let mut power: Vec<f32> = Vec::new();
+    let mut projected: Vec<f32> = Vec::new();
     for spectrum in spectra.iter().take(retained) {
-        let power: Vec<f32> = spectrum
-            .iter()
-            .map(|bin| bin.re * bin.re + bin.im * bin.im)
-            .collect();
-        let projected = filterbank
-            .project(&power)
+        power.clear();
+        power.extend(spectrum.iter().map(|bin| bin.re * bin.re + bin.im * bin.im));
+        projector
+            .project_into(&power, &mut projected)
             .map_err(|error| SpeechError::Input {
                 why: format!("GLM-ASR mel projection failed: {error}"),
             })?;
-        for value in projected {
+        for &value in &projected {
             peak = peak.max(value.max(1e-10).log10());
             mel.push(value);
         }
@@ -512,34 +506,6 @@ fn log_mel(samples: &[f32]) -> Result<(Vec<f32>, usize)> {
         *value = (value.max(1e-10).log10().max(clamp_at) + 4.0) / 4.0;
     }
     Ok((mel, retained))
-}
-
-fn argmax(values: &[f32]) -> usize {
-    values
-        .iter()
-        .enumerate()
-        .fold((0usize, f32::NEG_INFINITY), |best, (index, &value)| {
-            if value > best.1 {
-                (index, value)
-            } else {
-                best
-            }
-        })
-        .0
-}
-
-fn load_tensor(file: &SafetensorsFile, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
-    let descriptor = file.descriptor(name).ok_or_else(|| SpeechError::Tensor {
-        name: name.to_owned(),
-        why: "tensor is missing".into(),
-    })?;
-    if descriptor.shape != shape {
-        return Err(SpeechError::Tensor {
-            name: name.to_owned(),
-            why: format!("expected shape {shape:?}, got {:?}", descriptor.shape),
-        });
-    }
-    Ok(file.load_as_f32(name)?)
 }
 
 struct Conv1d {
@@ -617,33 +583,6 @@ impl Conv1d {
     }
 }
 
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-}
-
-impl LayerNorm {
-    fn load(file: &SafetensorsFile, prefix: &str, width: usize) -> Result<Self> {
-        Ok(Self {
-            weight: load_tensor(file, &format!("{prefix}.weight"), &[width])?,
-            bias: load_tensor(file, &format!("{prefix}.bias"), &[width])?,
-            width,
-        })
-    }
-
-    fn apply(&self, values: &mut [f32], rows: usize) {
-        ops::layernorm(
-            values,
-            rows,
-            self.width,
-            &self.weight,
-            Some(&self.bias),
-            1e-5,
-        );
-    }
-}
-
 struct WhisperAttention {
     q_proj: Linear,
     k_proj: Linear,
@@ -657,7 +596,7 @@ struct WhisperAttention {
 impl WhisperAttention {
     fn load(file: &SafetensorsFile, prefix: &str) -> Result<Self> {
         Ok(Self {
-            q_proj: Linear::load(
+            q_proj: load_linear(
                 file,
                 &format!("{prefix}.q_proj"),
                 AUDIO_HIDDEN,
@@ -667,7 +606,7 @@ impl WhisperAttention {
                     group_size: QUANT_GROUP,
                 },
             )?,
-            k_proj: Linear::load(
+            k_proj: load_linear(
                 file,
                 &format!("{prefix}.k_proj"),
                 AUDIO_HIDDEN,
@@ -677,7 +616,7 @@ impl WhisperAttention {
                     group_size: QUANT_GROUP,
                 },
             )?,
-            v_proj: Linear::load(
+            v_proj: load_linear(
                 file,
                 &format!("{prefix}.v_proj"),
                 AUDIO_HIDDEN,
@@ -687,7 +626,7 @@ impl WhisperAttention {
                     group_size: QUANT_GROUP,
                 },
             )?,
-            out_proj: Linear::load(
+            out_proj: load_linear(
                 file,
                 &format!("{prefix}.out_proj"),
                 AUDIO_HIDDEN,
@@ -707,9 +646,9 @@ impl WhisperAttention {
         let q = self.q_proj.forward(input, rows);
         let k = self.k_proj.forward(input, rows);
         let v = self.v_proj.forward(input, rows);
-        let mut q = transpose_heads(&q, rows, self.heads, self.head_dim);
-        let mut k = transpose_heads(&k, rows, self.heads, self.head_dim);
-        let v = transpose_heads(&v, rows, self.heads, self.head_dim);
+        let mut q = ops::split_heads(&q, rows, self.heads, self.head_dim);
+        let mut k = ops::split_heads(&k, rows, self.heads, self.head_dim);
+        let v = ops::split_heads(&v, rows, self.heads, self.head_dim);
         apply_rope_traditional(&mut q, self.heads, rows, self.head_dim, self.rotary_dim);
         apply_rope_traditional(&mut k, self.heads, rows, self.head_dim, self.rotary_dim);
 
@@ -762,22 +701,28 @@ impl WhisperLayer {
                 file,
                 &format!("{prefix}.self_attn_layer_norm"),
                 AUDIO_HIDDEN,
+                LAYER_NORM_EPS,
             )?,
-            fc1: Linear::load(
+            fc1: load_linear(
                 file,
                 &format!("{prefix}.fc1"),
                 AUDIO_HIDDEN,
                 AUDIO_FFN,
                 scheme,
             )?,
-            fc2: Linear::load(
+            fc2: load_linear(
                 file,
                 &format!("{prefix}.fc2"),
                 AUDIO_FFN,
                 AUDIO_HIDDEN,
                 scheme,
             )?,
-            final_norm: LayerNorm::load(file, &format!("{prefix}.final_layer_norm"), AUDIO_HIDDEN)?,
+            final_norm: LayerNorm::load(
+                file,
+                &format!("{prefix}.final_layer_norm"),
+                AUDIO_HIDDEN,
+                LAYER_NORM_EPS,
+            )?,
         })
     }
 
@@ -889,15 +834,20 @@ impl AudioEncoder {
         let scheme = config.quant_scheme();
         Ok(Self {
             whisper: WhisperEncoder::load(file)?,
-            layer_norm: LayerNorm::load(file, "audio_encoder.layer_norm", AUDIO_HIDDEN)?,
-            adapting_in: Linear::load(
+            layer_norm: LayerNorm::load(
+                file,
+                "audio_encoder.layer_norm",
+                AUDIO_HIDDEN,
+                LAYER_NORM_EPS,
+            )?,
+            adapting_in: load_linear(
                 file,
                 "audio_encoder.adapting.fc1",
                 AUDIO_HIDDEN * config.merge_factor,
                 config.text.hidden_size * 2,
                 scheme,
             )?,
-            adapting_out: Linear::load(
+            adapting_out: load_linear(
                 file,
                 "audio_encoder.adapting.fc2",
                 config.text.hidden_size * 2,
@@ -908,40 +858,106 @@ impl AudioEncoder {
     }
 }
 
-fn transpose_heads(input: &[f32], rows: usize, heads: usize, dim: usize) -> Vec<f32> {
-    let mut output = vec![0.0; input.len()];
-    for row in 0..rows {
-        for head in 0..heads {
-            let src = (row * heads + head) * dim;
-            let dst = (head * rows + row) * dim;
-            output[dst..dst + dim].copy_from_slice(&input[src..src + dim]);
-        }
-    }
-    output
-}
-
 fn apply_rope_traditional(
     values: &mut [f32],
     heads: usize,
     rows: usize,
-    dim: usize,
+    _dim: usize,
     rotary: usize,
 ) {
-    let pairs = rotary / 2;
     let (cos, sin) = ops::rope_tables(rows, rotary, 10_000.0);
-    for head in 0..heads {
-        for row in 0..rows {
-            let base = (head * rows + row) * dim;
-            for pair in 0..pairs {
-                let left = pair * 2;
-                let right = left + 1;
-                let a = values[base + left];
-                let b = values[base + right];
-                let table = row * pairs + pair;
-                values[base + left] = a * cos[table] - b * sin[table];
-                values[base + right] = a * sin[table] + b * cos[table];
+    ops::rope_interleaved(values, heads, rows, rotary, &cos, &sin);
+}
+
+/// Bitwise parity of the cached-projector `log_mel` against the previous
+/// per-call filterbank with dense projection, kept verbatim.
+#[cfg(test)]
+mod frontend_parity_tests {
+    use super::*;
+    use crate::dsp::TestRng;
+
+    fn old_log_mel(samples: &[f32]) -> Result<(Vec<f32>, usize)> {
+        let window: Vec<f32> = (0..FFT_SIZE)
+            .map(|index| {
+                0.5 - 0.5
+                    * (2.0 * std::f32::consts::PI * index as f32 / (FFT_SIZE - 1) as f32).cos()
+            })
+            .collect();
+        let spectra = turbospark_audio::stft::stft(
+            samples,
+            &turbospark_audio::stft::StftOptions {
+                fft_size: FFT_SIZE,
+                hop: HOP_LENGTH,
+                window,
+                center: true,
+            },
+        )
+        .map_err(|error| SpeechError::Input {
+            why: format!("GLM-ASR STFT failed: {error}"),
+        })?;
+        if spectra.len() < 2 {
+            return Err(SpeechError::Input {
+                why: "audio is too short for the GLM-ASR frontend".into(),
+            });
+        }
+        let filterbank = turbospark_audio::mel::mel_filterbank(
+            MEL_BINS,
+            FFT_SIZE,
+            SAMPLE_RATE as u32,
+            0.0,
+            Some(SAMPLE_RATE as f32 / 2.0),
+            turbospark_audio::mel::MelScale::Slaney,
+        )
+        .map_err(|error| SpeechError::Input {
+            why: format!("GLM-ASR mel filterbank failed: {error}"),
+        })?;
+        let retained = spectra.len() - 1;
+        let mut mel = Vec::with_capacity(retained * MEL_BINS);
+        let mut peak = f32::NEG_INFINITY;
+        for spectrum in spectra.iter().take(retained) {
+            let power: Vec<f32> = spectrum
+                .iter()
+                .map(|bin| bin.re * bin.re + bin.im * bin.im)
+                .collect();
+            let projected = filterbank
+                .project(&power)
+                .map_err(|error| SpeechError::Input {
+                    why: format!("GLM-ASR mel projection failed: {error}"),
+                })?;
+            for value in projected {
+                peak = peak.max(value.max(1e-10).log10());
+                mel.push(value);
             }
         }
+        if !peak.is_finite() {
+            return Err(SpeechError::Input {
+                why: "GLM-ASR frontend produced no finite mel energy".into(),
+            });
+        }
+        let clamp_at = peak - 8.0;
+        for value in &mut mel {
+            *value = (value.max(1e-10).log10().max(clamp_at) + 4.0) / 4.0;
+        }
+        Ok((mel, retained))
+    }
+
+    #[test]
+    fn log_mel_matches_old_bitwise() {
+        let mut rng = TestRng(0x474C_4D41_5352_0001);
+        for len in [1_600usize, 16_000, 24_321] {
+            let samples = rng.vec(len);
+            let got = log_mel(&samples).unwrap();
+            let want = old_log_mel(&samples).unwrap();
+            assert_eq!(got.1, want.1);
+            assert_eq!(got.0.len(), want.0.len());
+            for (i, (g, w)) in got.0.iter().zip(&want.0).enumerate() {
+                assert_eq!(g.to_bits(), w.to_bits(), "len {len} value {i}");
+            }
+        }
+        assert_eq!(
+            log_mel(&[0.0; 8]).unwrap_err().to_string(),
+            old_log_mel(&[0.0; 8]).unwrap_err().to_string()
+        );
     }
 }
 

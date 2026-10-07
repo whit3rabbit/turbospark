@@ -15,7 +15,11 @@
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
-use crate::{ops, Result, SpeechError};
+use crate::codec::conv::{
+    load_bias, permute_okc_to_cok, permute_okc_to_ock, wn_fold_in_place, BiasMode, Conv1d,
+    ConvTranspose1d, WnFold,
+};
+use crate::{Result, SpeechError};
 
 /// Loads a tensor and requires its safetensors shape to be `want`.
 pub(crate) fn load_f32_shaped(
@@ -52,24 +56,11 @@ pub fn snake1d(x: &mut [f32], alpha: &[f32], channels: usize, frames: usize) {
     }
 }
 
-/// Weight-normalized Conv1d. `forward` maps `[in_ch, seq]` to
-/// `[out_ch, out_seq]`.
-#[derive(Debug, Clone)]
-pub struct WnConv1d {
-    pub in_ch: usize,
-    pub out_ch: usize,
-    pub kernel: usize,
-    pub stride: usize,
-    pub padding: usize,
-    pub dilation: usize,
-    pub groups: usize,
-    /// PyTorch layout `[out_ch, in_ch / groups, kernel]`, weight norm
-    /// already folded.
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
+/// Weight-normalized Conv1d: the shared [`Conv1d`] with the fold already
+/// applied. `forward` maps `[in_ch, seq]` to `[out_ch, out_seq]`.
+pub type WnConv1d = Conv1d;
 
-impl WnConv1d {
+impl Conv1d {
     /// Loads `{prefix}.weight_g`, `{prefix}.weight_v`, and the optional
     /// `{prefix}.bias` from an MLX-converted checkpoint (stored layout
     /// `[out, K, in/groups]`, `weight_g` `[out, 1, 1]`).
@@ -86,34 +77,16 @@ impl WnConv1d {
         groups: usize,
     ) -> Result<Self> {
         let in_g = in_ch / groups;
-        let v = load_f32_shaped(file, &format!("{prefix}.weight_v"), &[out_ch, kernel, in_g])?;
+        let mut v = load_f32_shaped(file, &format!("{prefix}.weight_v"), &[out_ch, kernel, in_g])?;
         let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[out_ch, 1, 1])?;
-        let bias = if file.contains_tensor(&format!("{prefix}.bias")) {
-            Some(load_f32_shaped(file, &format!("{prefix}.bias"), &[out_ch])?)
-        } else {
-            None
-        };
+        let bias = load_bias(file, &format!("{prefix}.bias"), out_ch, BiasMode::Optional)?;
         // normalize_weight sums over all axes except the output channel
-        // in the stored (out, K, in) order: K outer, in inner.
-        let mut weight = vec![0.0f32; out_ch * in_g * kernel];
-        for (oc, &gv) in g.iter().enumerate() {
-            let mut acc = 0.0f32;
-            let base = oc * kernel * in_g;
-            for kk in 0..kernel {
-                for ii in 0..in_g {
-                    acc += v[base + kk * in_g + ii] * v[base + kk * in_g + ii];
-                }
-            }
-            let norm = acc.sqrt();
-            for kk in 0..kernel {
-                for ii in 0..in_g {
-                    // PyTorch layout [out, in, K] from stored [out, K, in].
-                    weight[oc * in_g * kernel + ii * kernel + kk] =
-                        gv * v[base + kk * in_g + ii] / norm;
-                }
-            }
-        }
-        Ok(WnConv1d {
+        // in the stored (out, K, in) order: K outer, in inner, which is
+        // the contiguous row order, so the fold runs before the permute.
+        wn_fold_in_place(&mut v, &g, kernel * in_g, WnFold::Div);
+        // PyTorch layout [out, in, K] from stored [out, K, in].
+        let weight = permute_okc_to_ock(&v, out_ch, kernel, in_g);
+        Ok(Conv1d {
             in_ch,
             out_ch,
             kernel,
@@ -125,41 +98,14 @@ impl WnConv1d {
             bias,
         })
     }
-
-    pub fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            self.padding,
-            self.dilation,
-            self.groups,
-        )
-    }
 }
 
-/// Weight-normalized ConvTranspose1d. `forward` maps `[in_ch, seq]` to
+/// Weight-normalized ConvTranspose1d: the shared [`ConvTranspose1d`]
+/// with the fold already applied. `forward` maps `[in_ch, seq]` to
 /// `[out_ch, out_seq]`.
-#[derive(Debug, Clone)]
-pub struct WnConvTranspose1d {
-    pub in_ch: usize,
-    pub out_ch: usize,
-    pub kernel: usize,
-    pub stride: usize,
-    pub padding: usize,
-    pub output_padding: usize,
-    pub groups: usize,
-    /// PyTorch layout `[in_ch, out_ch / groups, kernel]`, weight norm
-    /// already folded.
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
+pub type WnConvTranspose1d = ConvTranspose1d;
 
-impl WnConvTranspose1d {
+impl ConvTranspose1d {
     /// Loads `{prefix}.weight_g`, `{prefix}.weight_v`, and
     /// `{prefix}.bias` from an MLX-converted checkpoint (stored layout
     /// `[in, K, out/groups]`, `weight_g` `[in, 1, 1]`).
@@ -181,33 +127,14 @@ impl WnConvTranspose1d {
         padding: usize,
     ) -> Result<Self> {
         let out_g = out_ch;
-        let v = load_f32_shaped(file, &format!("{prefix}.weight_v"), &[in_ch, kernel, out_g])?;
+        let mut v = load_f32_shaped(file, &format!("{prefix}.weight_v"), &[in_ch, kernel, out_g])?;
         let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[in_ch, 1, 1])?;
-        let bias = if file.contains_tensor(&format!("{prefix}.bias")) {
-            Some(load_f32_shaped(file, &format!("{prefix}.bias"), &[out_ch])?)
-        } else {
-            None
-        };
+        let bias = load_bias(file, &format!("{prefix}.bias"), out_ch, BiasMode::Optional)?;
         // Stored (in, K, out): normalize over axes (K, out), K outer.
-        let mut weight = vec![0.0f32; in_ch * out_g * kernel];
-        for (ic, &gv) in g.iter().enumerate() {
-            let mut acc = 0.0f32;
-            let base = ic * kernel * out_g;
-            for kk in 0..kernel {
-                for oo in 0..out_g {
-                    acc += v[base + kk * out_g + oo] * v[base + kk * out_g + oo];
-                }
-            }
-            let norm = acc.sqrt();
-            for kk in 0..kernel {
-                for oo in 0..out_g {
-                    // PyTorch layout [in, out, K] from stored [in, K, out].
-                    weight[ic * out_g * kernel + oo * kernel + kk] =
-                        gv * v[base + kk * out_g + oo] / norm;
-                }
-            }
-        }
-        Ok(WnConvTranspose1d {
+        wn_fold_in_place(&mut v, &g, kernel * out_g, WnFold::Div);
+        // PyTorch layout [in, out, K] from stored [in, K, out].
+        let weight = permute_okc_to_ock(&v, in_ch, kernel, out_g);
+        Ok(ConvTranspose1d {
             in_ch,
             out_ch,
             kernel,
@@ -218,21 +145,6 @@ impl WnConvTranspose1d {
             weight,
             bias,
         })
-    }
-
-    pub fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv_transpose1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            self.padding,
-            self.output_padding,
-            self.groups,
-        )
     }
 
     /// Descript DAC variant (`descript/nn/layers.py`): the checkpoint
@@ -252,32 +164,13 @@ impl WnConvTranspose1d {
         let in_g = in_ch;
         let v = load_f32_shaped(file, &format!("{prefix}.weight_v"), &[out_ch, kernel, in_g])?;
         let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[1, 1, in_g])?;
-        let bias = if file.contains_tensor(&format!("{prefix}.bias")) {
-            Some(load_f32_shaped(file, &format!("{prefix}.bias"), &[out_ch])?)
-        } else {
-            None
-        };
+        let bias = load_bias(file, &format!("{prefix}.bias"), out_ch, BiasMode::Optional)?;
         // normalize_weight(v, except_dim=2) sums over axes (out, K) in
-        // row-major order for each in-channel.
-        let mut weight = vec![0.0f32; in_g * out_ch * kernel];
-        for (ic, &gv) in g.iter().enumerate() {
-            let mut acc = 0.0f32;
-            for oo in 0..out_ch {
-                for kk in 0..kernel {
-                    acc += v[oo * kernel * in_g + kk * in_g + ic]
-                        * v[oo * kernel * in_g + kk * in_g + ic];
-                }
-            }
-            let norm = acc.sqrt();
-            for oo in 0..out_ch {
-                for kk in 0..kernel {
-                    // PyTorch layout [in, out, K] from stored [out, K, in].
-                    weight[ic * out_ch * kernel + oo * kernel + kk] =
-                        gv * v[oo * kernel * in_g + kk * in_g + ic] / norm;
-                }
-            }
-        }
-        Ok(WnConvTranspose1d {
+        // row-major order for each in-channel; after the permute to
+        // [in, out, K] that is exactly the contiguous row order.
+        let mut weight = permute_okc_to_cok(&v, out_ch, kernel, in_g);
+        wn_fold_in_place(&mut weight, &g, out_ch * kernel, WnFold::Div);
+        Ok(ConvTranspose1d {
             in_ch,
             out_ch,
             kernel,

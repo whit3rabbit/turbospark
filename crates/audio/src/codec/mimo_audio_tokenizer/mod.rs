@@ -21,10 +21,13 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{
+    load_bias, load_mlx_conv_weight, load_mlx_convt_weight, BiasMode, Conv1d, ConvTranspose1d,
+};
 use crate::codec::wnconv::load_f32_shaped;
 use crate::fft::{ComplexF32, ComplexFftPlan};
 use crate::ops;
-use crate::{dsp, mel, stft, Result, SpeechError};
+use crate::{dsp, stft, Result, SpeechError};
 
 /// Pinned mlx-audio commit this port was transcribed from.
 pub const REFERENCE_COMMIT: &str = "e1b19b9054bf163f5d812221a54fcc346f1890e9";
@@ -347,138 +350,59 @@ impl MimoLinear {
 }
 
 /// Conv1d loaded from the MLX layout `[out, K, in]`.
-#[derive(Debug, Clone)]
-struct MimoConv1d {
+#[allow(clippy::too_many_arguments)]
+fn load_mimo_conv(
+    file: &SafetensorsFile,
+    prefix: &str,
     in_ch: usize,
     out_ch: usize,
     kernel: usize,
     stride: usize,
     padding: usize,
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-impl MimoConv1d {
-    #[allow(clippy::too_many_arguments)]
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        in_ch: usize,
-        out_ch: usize,
-        kernel: usize,
-        stride: usize,
-        padding: usize,
-        with_bias: bool,
-    ) -> Result<Self> {
-        let stored = load_f32_shaped(file, &format!("{prefix}.weight"), &[out_ch, kernel, in_ch])?;
-        let mut weight = vec![0.0f32; stored.len()];
-        for oc in 0..out_ch {
-            for kk in 0..kernel {
-                for ic in 0..in_ch {
-                    weight[oc * in_ch * kernel + ic * kernel + kk] =
-                        stored[oc * kernel * in_ch + kk * in_ch + ic];
-                }
-            }
-        }
-        let bias_name = format!("{prefix}.bias");
-        let bias = if file.contains_tensor(&bias_name) {
-            Some(load_f32_shaped(file, &bias_name, &[out_ch])?)
-        } else {
-            if with_bias {
-                return Err(SpeechError::Tensor {
-                    name: bias_name,
-                    why: "required by the reference layer".to_string(),
-                });
-            }
-            None
-        };
-        Ok(MimoConv1d {
-            in_ch,
-            out_ch,
-            kernel,
-            stride,
-            padding,
-            weight,
-            bias,
-        })
-    }
-
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            self.padding,
-            1,
-            1,
-        )
-    }
+    with_bias: bool,
+) -> Result<Conv1d> {
+    let weight = load_mlx_conv_weight(file, &format!("{prefix}.weight"), out_ch, kernel, in_ch)?;
+    let bias = load_bias(
+        file,
+        &format!("{prefix}.bias"),
+        out_ch,
+        BiasMode::required(with_bias),
+    )?;
+    Ok(Conv1d {
+        in_ch,
+        out_ch,
+        kernel,
+        stride,
+        padding,
+        dilation: 1,
+        groups: 1,
+        weight,
+        bias,
+    })
 }
 
 /// ConvTranspose1d loaded from the MLX layout `[out, K, in]`.
-#[derive(Debug, Clone)]
-struct MimoConvTr {
+fn load_mimo_convtr(
+    file: &SafetensorsFile,
+    prefix: &str,
     in_ch: usize,
     out_ch: usize,
     kernel: usize,
     stride: usize,
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-impl MimoConvTr {
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        in_ch: usize,
-        out_ch: usize,
-        kernel: usize,
-        stride: usize,
-    ) -> Result<Self> {
-        let stored = load_f32_shaped(file, &format!("{prefix}.weight"), &[out_ch, kernel, in_ch])?;
-        let mut weight = vec![0.0f32; stored.len()];
-        for ic in 0..in_ch {
-            for kk in 0..kernel {
-                for oc in 0..out_ch {
-                    weight[ic * out_ch * kernel + oc * kernel + kk] =
-                        stored[oc * kernel * in_ch + kk * in_ch + ic];
-                }
-            }
-        }
-        let bias_name = format!("{prefix}.bias");
-        let bias = if file.contains_tensor(&bias_name) {
-            Some(load_f32_shaped(file, &bias_name, &[out_ch])?)
-        } else {
-            None
-        };
-        Ok(MimoConvTr {
-            in_ch,
-            out_ch,
-            kernel,
-            stride,
-            weight,
-            bias,
-        })
-    }
-
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv_transpose1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            0,
-            0,
-            1,
-        )
-    }
+) -> Result<ConvTranspose1d> {
+    let weight = load_mlx_convt_weight(file, &format!("{prefix}.weight"), out_ch, kernel, in_ch)?;
+    let bias = load_bias(file, &format!("{prefix}.bias"), out_ch, BiasMode::Optional)?;
+    Ok(ConvTranspose1d {
+        in_ch,
+        out_ch,
+        kernel,
+        stride,
+        padding: 0,
+        output_padding: 0,
+        groups: 1,
+        weight,
+        bias,
+    })
 }
 
 /// RoPE split-half attention with optional causal and band masks;
@@ -524,27 +448,15 @@ impl MimoAttention {
     }
 
     fn forward(&self, x: &[f32], seq: usize) -> Vec<f32> {
-        let dim = self.heads * self.head_dim;
         let q = self.q_proj.forward(x, seq);
         let k = self.k_proj.forward(x, seq);
         let v = self.v_proj.forward(x, seq);
-        let mut qh = vec![0.0f32; self.heads * seq * self.head_dim];
-        let mut kh = vec![0.0f32; qh.len()];
-        let mut vh = vec![0.0f32; qh.len()];
-        for h in 0..self.heads {
-            for t in 0..seq {
-                let src = t * dim + h * self.head_dim;
-                qh[(h * seq + t) * self.head_dim..(h * seq + t + 1) * self.head_dim]
-                    .copy_from_slice(&q[src..src + self.head_dim]);
-                kh[(h * seq + t) * self.head_dim..(h * seq + t + 1) * self.head_dim]
-                    .copy_from_slice(&k[src..src + self.head_dim]);
-                vh[(h * seq + t) * self.head_dim..(h * seq + t + 1) * self.head_dim]
-                    .copy_from_slice(&v[src..src + self.head_dim]);
-            }
-        }
+        let mut qh = ops::split_heads(&q, seq, self.heads, self.head_dim);
+        let mut kh = ops::split_heads(&k, seq, self.heads, self.head_dim);
+        let vh = ops::split_heads(&v, seq, self.heads, self.head_dim);
         let (cos, sin) = ops::rope_tables(seq, self.head_dim, self.theta);
-        rope_neox_seq(&mut qh, self.heads, seq, self.head_dim, &cos, &sin);
-        rope_neox_seq(&mut kh, self.heads, seq, self.head_dim, &cos, &sin);
+        ops::rope_neox(&mut qh, self.heads, seq, self.head_dim, &cos, &sin);
+        ops::rope_neox(&mut kh, self.heads, seq, self.head_dim, &cos, &sin);
 
         // Additive mask: rows are queries, columns are keys.
         let mut mask = vec![0.0f32; seq * seq];
@@ -569,31 +481,19 @@ impl MimoAttention {
         let has_mask = self.causal || self.window.0 >= 0 || self.window.1 >= 0;
 
         let scale = (self.head_dim as f32).powf(-0.5);
-        let mut out = vec![0.0f32; qh.len()];
-        for h in 0..self.heads {
-            let plane = h * seq * self.head_dim;
-            let o = ops::sdpa(
-                &qh[plane..plane + seq * self.head_dim],
-                &kh[plane..plane + seq * self.head_dim],
-                &vh[plane..plane + seq * self.head_dim],
-                if has_mask { Some(&mask) } else { None },
-                seq,
-                seq,
-                self.head_dim,
-                self.head_dim,
-                scale,
-            );
-            out[plane..plane + o.len()].copy_from_slice(&o);
-        }
+        let out = ops::mha(
+            &qh,
+            &kh,
+            &vh,
+            if has_mask { Some(&mask) } else { None },
+            self.heads,
+            seq,
+            seq,
+            self.head_dim,
+            scale,
+        );
         // Back to row-major and project.
-        let mut merged = vec![0.0f32; seq * dim];
-        for h in 0..self.heads {
-            for t in 0..seq {
-                let src = (h * seq + t) * self.head_dim;
-                merged[t * dim + h * self.head_dim..t * dim + (h + 1) * self.head_dim]
-                    .copy_from_slice(&out[src..src + self.head_dim]);
-            }
-        }
+        let merged = ops::merge_heads(&out, seq, self.heads, self.head_dim);
         self.out_proj.forward(&merged, seq)
     }
 }
@@ -773,7 +673,7 @@ impl MimoRvq {
 /// affine over every (channel, frame) element, then a per-channel tail
 /// trim of `max(0, kernel - stride)` frames.
 struct CausalConvTr {
-    conv: MimoConvTr,
+    conv: ConvTranspose1d,
     gn_weight: Vec<f32>,
     gn_bias: Vec<f32>,
     trim: usize,
@@ -790,7 +690,7 @@ impl CausalConvTr {
         stride: usize,
     ) -> Result<Self> {
         Ok(CausalConvTr {
-            conv: MimoConvTr::load(
+            conv: load_mimo_convtr(
                 file,
                 &format!("{prefix}.conv"),
                 in_ch,
@@ -963,11 +863,11 @@ fn istft_head(
 /// Loaded MiMo audio tokenizer, batch-of-one.
 pub struct MiMoAudioTokenizer {
     pub config: MimoConfig,
-    encoder_conv1: MimoConv1d,
-    encoder_conv2: MimoConv1d,
+    encoder_conv1: Conv1d,
+    encoder_conv2: Conv1d,
     encoder_layers: Vec<MimoLayer>,
     encoder_layer_norm: MimoNorm,
-    down_sample: Option<(MimoConv1d, MimoNorm)>,
+    down_sample: Option<(Conv1d, MimoNorm)>,
     rvq: MimoRvq,
     dconv1: Option<CausalConvTr>,
     decoder_layers: Vec<MimoLayer>,
@@ -1003,7 +903,7 @@ impl MiMoAudioTokenizer {
     /// Loads from a parsed config and a safetensors file.
     pub fn load(config: MimoConfig, file: &SafetensorsFile) -> Result<Self> {
         let dim = config.d_model;
-        let encoder_conv1 = MimoConv1d::load(
+        let encoder_conv1 = load_mimo_conv(
             file,
             "encoder.conv1",
             config.n_mels,
@@ -1013,7 +913,7 @@ impl MiMoAudioTokenizer {
             1,
             true,
         )?;
-        let encoder_conv2 = MimoConv1d::load(
+        let encoder_conv2 = load_mimo_conv(
             file,
             "encoder.conv2",
             dim,
@@ -1040,7 +940,7 @@ impl MiMoAudioTokenizer {
         let encoder_layer_norm = MimoNorm::load(file, "encoder.layer_norm", dim, config.ln_type)?;
         let down_sample = if config.avg_pooler != 1 {
             Some((
-                MimoConv1d::load(
+                load_mimo_conv(
                     file,
                     "encoder.down_sample_layer.layers.0",
                     dim,
@@ -1150,23 +1050,21 @@ impl MiMoAudioTokenizer {
             stft::StftPaddingMode::Reflect,
             stft::StftWindowPlacement::Left,
         )?;
-        let filterbank = mel::mel_filterbank(
+        let projector = crate::mel::mel_projector_cached(
             self.config.n_mels,
             self.config.nfft,
             self.config.sampling_rate,
             self.config.fmin,
             self.config.fmax,
-            mel::MelScale::Htk,
+            crate::mel::MelScale::Htk,
         )?;
         let mut out = Vec::with_capacity(spectra.len());
+        let mut mags: Vec<f32> = Vec::new();
         for frame in &spectra {
-            let mut row = vec![0.0f32; self.config.n_mels];
-            for (b, c) in frame.iter().enumerate() {
-                let mag = (c.re * c.re + c.im * c.im).sqrt();
-                for (m, slot) in row.iter_mut().enumerate() {
-                    *slot += mag * filterbank.weights[m * filterbank.num_bins + b];
-                }
-            }
+            mags.clear();
+            mags.extend(frame.iter().map(|c| (c.re * c.re + c.im * c.im).sqrt()));
+            let mut row = Vec::with_capacity(self.config.n_mels);
+            projector.project_into(&mags, &mut row)?;
             for v in &mut row {
                 *v = v.max(1e-7).ln();
             }
@@ -1320,27 +1218,6 @@ impl MiMoAudioTokenizer {
         let mel_rows = to_rows(&mel_cm, mel_frames, c.n_mels);
         self.vocoder
             .forward(&mel_rows, mel_frames, &self.vocoder.plan, &self.window)
-    }
-}
-
-/// NeoX-style rope over full sequences: halves `(x[d], x[d + half])`
-/// with per-position tables `[seq, dim / 2]` (the `ops::rope_*`
-/// helpers are decode-step sized).
-fn rope_neox_seq(x: &mut [f32], heads: usize, seq: usize, dim: usize, cos: &[f32], sin: &[f32]) {
-    let half = dim / 2;
-    assert!(cos.len() >= seq * half);
-    for h in 0..heads {
-        for t in 0..seq {
-            let base = (h * seq + t) * dim;
-            for d in 0..half {
-                let a = x[base + d];
-                let b = x[base + half + d];
-                let c = cos[t * half + d];
-                let s = sin[t * half + d];
-                x[base + d] = a * c - b * s;
-                x[base + half + d] = b * c + a * s;
-            }
-        }
     }
 }
 

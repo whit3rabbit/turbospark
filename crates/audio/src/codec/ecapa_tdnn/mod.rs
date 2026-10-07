@@ -13,6 +13,7 @@
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::load_mlx_conv_weight;
 use crate::codec::wnconv::load_f32_shaped;
 use crate::ops;
 use crate::{Result, SpeechError};
@@ -172,16 +173,7 @@ fn load_conv_weight(
     in_ch: usize,
     kernel: usize,
 ) -> Result<Vec<f32>> {
-    let v = load_f32_shaped(file, &format!("{prefix}.weight"), &[out_ch, kernel, in_ch])?;
-    let mut weight = vec![0.0f32; out_ch * in_ch * kernel];
-    for o in 0..out_ch {
-        for k in 0..kernel {
-            for i in 0..in_ch {
-                weight[o * in_ch * kernel + i * kernel + k] = v[o * kernel * in_ch + k * in_ch + i];
-            }
-        }
-    }
-    Ok(weight)
+    load_mlx_conv_weight(file, &format!("{prefix}.weight"), out_ch, kernel, in_ch)
 }
 
 struct Res2NetBlock {

@@ -15,6 +15,7 @@
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::{LayerNorm, Linear};
 use crate::ops;
 use crate::{Result, SpeechError};
 
@@ -49,62 +50,25 @@ fn load_linear(
     input: usize,
     output: usize,
 ) -> Result<Linear> {
-    Ok(Linear {
-        weight: load_vector(files, &format!("{base}.weight"), input * output)?,
-        bias: load_vector(files, &format!("{base}.bias"), output)?,
+    Ok(Linear::new(
+        load_vector(files, &format!("{base}.weight"), input * output)?,
+        Some(load_vector(files, &format!("{base}.bias"), output)?),
         input,
         output,
-    })
+    ))
 }
 
-#[derive(Debug, Clone)]
-struct Linear {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    input: usize,
-    output: usize,
-}
-
-impl Linear {
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        ops::linear(
-            x,
-            &self.weight,
-            Some(&self.bias),
-            rows,
-            self.input,
-            self.output,
-        )
-    }
-}
-
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
+fn load_layer_norm(
+    files: &[SafetensorsFile],
+    base: &str,
     width: usize,
     epsilon: f32,
-}
-
-impl LayerNorm {
-    fn load(files: &[SafetensorsFile], base: &str, width: usize, epsilon: f32) -> Result<Self> {
-        Ok(Self {
-            weight: load_vector(files, &format!("{base}.weight"), width)?,
-            bias: load_vector(files, &format!("{base}.bias"), width)?,
-            width,
-            epsilon,
-        })
-    }
-
-    fn apply(&self, values: &mut [f32], rows: usize) {
-        ops::layernorm(
-            values,
-            rows,
-            self.width,
-            &self.weight,
-            Some(&self.bias),
-            self.epsilon,
-        );
-    }
+) -> Result<LayerNorm> {
+    Ok(LayerNorm::new(
+        load_vector(files, &format!("{base}.weight"), width)?,
+        Some(load_vector(files, &format!("{base}.bias"), width)?),
+        epsilon,
+    ))
 }
 
 /// Dense projection plus residual LayerNorm (`QFormerSelfOutput` /
@@ -125,7 +89,7 @@ impl DenseResidualNorm {
     ) -> Result<Self> {
         Ok(Self {
             dense: load_linear(files, dense_base, input, output)?,
-            norm: LayerNorm::load(files, norm_base, output, epsilon)?,
+            norm: load_layer_norm(files, norm_base, output, epsilon)?,
         })
     }
 
@@ -314,7 +278,7 @@ impl EncoderProjector {
     ) -> Result<Self> {
         Ok(Self {
             query: load_vector(files, "projector.query", num_queries * config.hidden_size)?,
-            query_norm: LayerNorm::load(
+            query_norm: load_layer_norm(
                 files,
                 "projector.qformer.layernorm",
                 config.hidden_size,
@@ -363,7 +327,8 @@ impl EncoderProjector {
 
 #[cfg(test)]
 mod tests {
-    use super::{DenseResidualNorm, Linear, QFormerAttention};
+    use super::{DenseResidualNorm, QFormerAttention};
+    use crate::nn::{LayerNorm, Linear};
 
     /// A one-head 2-dim attention with identity q/k/v projections and an
     /// identity output dense: hidden rows [1, 0] and [0, 1] attend
@@ -374,22 +339,19 @@ mod tests {
     /// the cross path reads the encoder window, not the hidden states.
     #[test]
     fn cross_attention_attends_over_the_window_then_applies_dense_norm() {
-        let linear = |input: usize, output: usize| Linear {
-            weight: (0..output * input)
-                .map(|i| (i % (input + 1) == 0) as i32 as f32)
-                .collect(),
-            bias: vec![0.0; output],
-            input,
-            output,
+        let linear = |input: usize, output: usize| {
+            Linear::new(
+                (0..output * input)
+                    .map(|i| (i % (input + 1) == 0) as i32 as f32)
+                    .collect(),
+                Some(vec![0.0; output]),
+                input,
+                output,
+            )
         };
         let norm = DenseResidualNorm {
             dense: linear(2, 2),
-            norm: super::LayerNorm {
-                weight: vec![1.0, 1.0],
-                bias: vec![0.0, 0.0],
-                width: 2,
-                epsilon: 1e-12,
-            },
+            norm: LayerNorm::new(vec![1.0, 1.0], Some(vec![0.0, 0.0]), 1e-12),
         };
         let attention = QFormerAttention {
             query: linear(2, 2),

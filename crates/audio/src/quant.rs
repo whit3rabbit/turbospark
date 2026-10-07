@@ -141,33 +141,63 @@ pub fn load_quantized(
         });
     }
     let mut out = vec![0.0f32; output_len];
+    dequantize_rows(
+        &mut out,
+        raw,
+        words_per_row,
+        scheme,
+        groups,
+        &scales,
+        &biases,
+    );
+    Ok((out, bias))
+}
+
+/// Dequantizes every row of `raw` into `out` (`out_dim * in_dim` values).
+///
+/// Per group the scale and bias are read once and the bit stream is walked
+/// with a running offset, rather than recomputing `v / group_size` and the
+/// byte/shift split from `v` for every value. Each value still evaluates
+/// `q * scale + bias` in f32 from the same bits.
+fn dequantize_rows(
+    out: &mut [f32],
+    raw: &[u8],
+    words_per_row: usize,
+    scheme: QuantScheme,
+    groups: usize,
+    scales: &[f32],
+    biases: &[f32],
+) {
+    let bits = scheme.bits as usize;
     let mask: u32 = if scheme.bits >= 32 {
         u32::MAX
     } else {
         (1u32 << scheme.bits) - 1
     };
-    let value_at = |row: usize, v: usize, words: &[u8]| -> f32 {
-        let bit = v * scheme.bits as usize;
-        let offset = row * words_per_row * 4 + bit / 8;
-        let shift = bit % 8;
-        // At most six bits can remain above this byte. A second byte is
-        // needed only when the value crosses the byte boundary.
-        let packed = words[offset] as u32
-            | if shift + scheme.bits as usize > 8 {
-                (words[offset + 1] as u32) << 8
-            } else {
-                0
-            };
-        let q = ((packed >> shift) & mask) as f32;
-        let g = v / scheme.group_size;
-        q * scales[row * groups + g] + biases[row * groups + g]
-    };
-    for r in 0..out_dim {
-        for v in 0..in_dim {
-            out[r * in_dim + v] = value_at(r, v, raw);
+    let in_dim = groups * scheme.group_size;
+    for (row, out_row) in out.chunks_exact_mut(in_dim).enumerate() {
+        let row_base = row * words_per_row * 4;
+        let mut bit = 0usize;
+        for (g, group_out) in out_row.chunks_exact_mut(scheme.group_size).enumerate() {
+            let scale = scales[row * groups + g];
+            let bias = biases[row * groups + g];
+            for slot in group_out {
+                let offset = row_base + bit / 8;
+                let shift = bit % 8;
+                // At most six bits can remain above this byte. A second byte
+                // is needed only when the value crosses the byte boundary.
+                let packed = raw[offset] as u32
+                    | if shift + bits > 8 {
+                        (raw[offset + 1] as u32) << 8
+                    } else {
+                        0
+                    };
+                let q = ((packed >> shift) & mask) as f32;
+                *slot = q * scale + bias;
+                bit += bits;
+            }
         }
     }
-    Ok((out, bias))
 }
 
 /// Reads a `config.json` style JSON object from `path`.
@@ -469,5 +499,100 @@ mod packing_regression {
         )
         .is_err());
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+/// Bitwise parity of the per-group dequantizer against the per-value closure
+/// it replaced, retained verbatim.
+#[cfg(test)]
+mod dequant_parity_tests {
+    use super::*;
+    use crate::dsp::TestRng;
+
+    #[allow(clippy::too_many_arguments)]
+    fn old_dequant(
+        raw: &[u8],
+        out_dim: usize,
+        in_dim: usize,
+        words_per_row: usize,
+        scheme: QuantScheme,
+        groups: usize,
+        scales: &[f32],
+        biases: &[f32],
+    ) -> Vec<f32> {
+        let mut out = vec![0.0f32; out_dim * in_dim];
+        let mask: u32 = if scheme.bits >= 32 {
+            u32::MAX
+        } else {
+            (1u32 << scheme.bits) - 1
+        };
+        let value_at = |row: usize, v: usize, words: &[u8]| -> f32 {
+            let bit = v * scheme.bits as usize;
+            let offset = row * words_per_row * 4 + bit / 8;
+            let shift = bit % 8;
+            let packed = words[offset] as u32
+                | if shift + scheme.bits as usize > 8 {
+                    (words[offset + 1] as u32) << 8
+                } else {
+                    0
+                };
+            let q = ((packed >> shift) & mask) as f32;
+            let g = v / scheme.group_size;
+            q * scales[row * groups + g] + biases[row * groups + g]
+        };
+        for r in 0..out_dim {
+            for v in 0..in_dim {
+                out[r * in_dim + v] = value_at(r, v, raw);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn dequantize_rows_matches_old_closure_bitwise() {
+        let mut rng = TestRng(0x5155_414E_5400_0001);
+        // Group sizes include ones that do not divide a word, so values and
+        // groups straddle byte and word boundaries at 3, 5 and 6 bits.
+        for bits in [2u32, 3, 4, 5, 6, 8] {
+            for (group_size, groups) in [(1usize, 9usize), (5, 7), (8, 4), (32, 3), (64, 2)] {
+                for out_dim in [1usize, 3] {
+                    let scheme = QuantScheme { bits, group_size };
+                    let in_dim = groups * group_size;
+                    let words_per_row = (in_dim * bits as usize).div_ceil(32);
+                    let raw: Vec<u8> = (0..out_dim * words_per_row * 4)
+                        .map(|_| (rng.next() >> 11) as u8)
+                        .collect();
+                    let scales = rng.vec(out_dim * groups);
+                    let biases = rng.vec(out_dim * groups);
+                    let want = old_dequant(
+                        &raw,
+                        out_dim,
+                        in_dim,
+                        words_per_row,
+                        scheme,
+                        groups,
+                        &scales,
+                        &biases,
+                    );
+                    let mut got = vec![0.0f32; out_dim * in_dim];
+                    dequantize_rows(
+                        &mut got,
+                        &raw,
+                        words_per_row,
+                        scheme,
+                        groups,
+                        &scales,
+                        &biases,
+                    );
+                    for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                        assert_eq!(
+                            g.to_bits(),
+                            w.to_bits(),
+                            "bits {bits} group {group_size}x{groups} rows {out_dim} [{i}]"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

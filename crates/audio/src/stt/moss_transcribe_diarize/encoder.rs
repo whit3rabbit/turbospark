@@ -13,24 +13,18 @@
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::{tensor_error, LayerNorm};
 use crate::ops;
 use crate::quant::{is_quantized, QuantScheme};
-use crate::stt::qwen3_asr::decoder::Linear;
+use crate::stt::qwen3_asr::decoder::{load_linear, Linear};
 use crate::{Result, SpeechError};
 
-/// Placeholder scheme for [`Linear::load`]; the plain loader below only ever
+/// Placeholder scheme for [`load_linear`]; the plain loader below only ever
 /// hits the unquantized path where the scheme is unused.
 const UNUSED_SCHEME: QuantScheme = QuantScheme {
     bits: 4,
     group_size: 64,
 };
-
-fn tensor_error(name: &str, why: impl Into<String>) -> SpeechError {
-    SpeechError::Tensor {
-        name: name.to_owned(),
-        why: why.into(),
-    }
-}
 
 /// Loads one unquantized linear in the HF `[out, in]` layout. A `.scales`
 /// tensor beside the weight means the checkpoint quantized the encoder,
@@ -44,7 +38,7 @@ fn plain_linear(file: &SafetensorsFile, base: &str, input: usize, output: usize)
             ),
         });
     }
-    Linear::load(file, base, input, output, UNUSED_SCHEME)
+    load_linear(file, base, input, output, UNUSED_SCHEME)
 }
 
 /// Loads one plain (F32/F16/BF16) tensor and checks its shape.
@@ -169,45 +163,17 @@ impl Conv1d {
     }
 }
 
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
+fn load_layer_norm(
+    file: &SafetensorsFile,
+    prefix: &str,
     width: usize,
     epsilon: f32,
-}
-
-impl LayerNorm {
-    fn load(file: &SafetensorsFile, prefix: &str, width: usize, epsilon: f32) -> Result<Self> {
-        Ok(Self {
-            weight: plain_tensor(file, &format!("{prefix}.weight"), &[width])?,
-            bias: plain_tensor(file, &format!("{prefix}.bias"), &[width])?,
-            width,
-            epsilon,
-        })
-    }
-
-    fn apply(&self, values: &mut [f32], rows: usize) {
-        ops::layernorm(
-            values,
-            rows,
-            self.width,
-            &self.weight,
-            Some(&self.bias),
-            self.epsilon,
-        );
-    }
-}
-
-fn transpose_heads(input: &[f32], rows: usize, heads: usize, dim: usize) -> Vec<f32> {
-    let mut output = vec![0.0; input.len()];
-    for row in 0..rows {
-        for head in 0..heads {
-            let source = (row * heads + head) * dim;
-            let target = (head * rows + row) * dim;
-            output[target..target + dim].copy_from_slice(&input[source..source + dim]);
-        }
-    }
-    output
+) -> Result<LayerNorm> {
+    Ok(LayerNorm::new(
+        plain_tensor(file, &format!("{prefix}.weight"), &[width])?,
+        Some(plain_tensor(file, &format!("{prefix}.bias"), &[width])?),
+        epsilon,
+    ))
 }
 
 struct WhisperAttention {
@@ -237,9 +203,9 @@ impl WhisperAttention {
         let q = self.q_proj.forward(input, rows);
         let k = self.k_proj.forward(input, rows);
         let v = self.v_proj.forward(input, rows);
-        let q = transpose_heads(&q, rows, self.heads, self.head_dim);
-        let k = transpose_heads(&k, rows, self.heads, self.head_dim);
-        let v = transpose_heads(&v, rows, self.heads, self.head_dim);
+        let q = ops::split_heads(&q, rows, self.heads, self.head_dim);
+        let k = ops::split_heads(&k, rows, self.heads, self.head_dim);
+        let v = ops::split_heads(&v, rows, self.heads, self.head_dim);
         let mut attended = vec![0.0; rows * self.heads * self.head_dim];
         let scale = 1.0 / (self.head_dim as f32).sqrt();
         for head in 0..self.heads {
@@ -292,7 +258,7 @@ impl WhisperEncoderLayer {
                 embed_dim,
                 heads,
             )?,
-            attention_norm: LayerNorm::load(
+            attention_norm: load_layer_norm(
                 file,
                 &format!("{prefix}.self_attn_layer_norm"),
                 embed_dim,
@@ -300,7 +266,7 @@ impl WhisperEncoderLayer {
             )?,
             fc1: plain_linear(file, &format!("{prefix}.fc1"), embed_dim, ffn_dim)?,
             fc2: plain_linear(file, &format!("{prefix}.fc2"), ffn_dim, embed_dim)?,
-            final_norm: LayerNorm::load(
+            final_norm: load_layer_norm(
                 file,
                 &format!("{prefix}.final_layer_norm"),
                 embed_dim,
@@ -372,7 +338,7 @@ impl MossWhisperEncoder {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
-        let layer_norm = LayerNorm::load(file, &format!("{prefix}.layer_norm"), embed_dim, 1e-5)?;
+        let layer_norm = load_layer_norm(file, &format!("{prefix}.layer_norm"), embed_dim, 1e-5)?;
         Ok(Self {
             conv1,
             conv2,
@@ -435,7 +401,7 @@ mod tests {
     fn head_transpose_round_trips_known_values() {
         let x = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         assert_eq!(
-            transpose_heads(&x, 2, 2, 2),
+            ops::split_heads(&x, 2, 2, 2),
             vec![1.0, 2.0, 5.0, 6.0, 3.0, 4.0, 7.0, 8.0]
         );
     }

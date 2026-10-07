@@ -3,17 +3,11 @@
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::models::stt::nemotron_asr::NemotronAsrConfig;
+use crate::nn::{tensor_error, LayerNorm, Linear};
 use crate::ops;
 use crate::{Result, SpeechError};
 
 const LN_EPS: f32 = 1e-5;
-
-fn tensor_error(name: &str, why: impl Into<String>) -> SpeechError {
-    SpeechError::Tensor {
-        name: name.to_string(),
-        why: why.into(),
-    }
-}
 
 fn load_tensor(file: &SafetensorsFile, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
     let desc = file
@@ -106,7 +100,7 @@ fn load_linear(file: &SafetensorsFile, prefix: &str, out: usize, input: usize) -
     } else {
         None
     };
-    Ok(Linear { weight, bias })
+    Ok(Linear::new(weight, bias, input, out))
 }
 
 fn load_bias_free_linear(
@@ -136,10 +130,11 @@ fn require_absent(file: &SafetensorsFile, name: &str) -> Result<()> {
 }
 
 fn load_norm(file: &SafetensorsFile, prefix: &str, width: usize) -> Result<LayerNorm> {
-    Ok(LayerNorm {
-        weight: load_tensor(file, &format!("{prefix}.weight"), &[width])?,
-        bias: load_tensor(file, &format!("{prefix}.bias"), &[width])?,
-    })
+    Ok(LayerNorm::new(
+        load_tensor(file, &format!("{prefix}.weight"), &[width])?,
+        Some(load_tensor(file, &format!("{prefix}.bias"), &[width])?),
+        LN_EPS,
+    ))
 }
 
 struct Conv2d {
@@ -149,16 +144,6 @@ struct Conv2d {
     out_channels: usize,
     kernel: usize,
     groups: usize,
-}
-
-struct Linear {
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
 }
 
 struct Subsampling {
@@ -295,14 +280,7 @@ impl Subsampling {
                 flat[target..target + freq].copy_from_slice(&x[source..source + freq]);
             }
         }
-        let encoded = ops::linear(
-            &flat,
-            &self.output.weight,
-            self.output.bias.as_deref(),
-            time,
-            self.channels * freq,
-            self.output.weight.len() / (self.channels * freq),
-        );
+        let encoded = self.output.forward(&flat, time);
         Ok((encoded, time))
     }
 }
@@ -353,10 +331,10 @@ impl RelPosAttention {
     ) -> Vec<f32> {
         let head_dim = hidden / heads;
         let pos_len = 2 * time - 1;
-        let q = ops::linear(input, &self.q.weight, None, time, hidden, hidden);
-        let k = ops::linear(input, &self.k.weight, None, time, hidden, hidden);
-        let v = ops::linear(input, &self.v.weight, None, time, hidden, hidden);
-        let p = ops::linear(position, &self.pos.weight, None, pos_len, hidden, hidden);
+        let q = self.q.forward(input, time);
+        let k = self.k.forward(input, time);
+        let v = self.v.forward(input, time);
+        let p = self.pos.forward(position, pos_len);
         let k_heads = split_heads(&k, time, heads, head_dim);
         let v_heads = split_heads(&v, time, heads, head_dim);
         let p_heads = split_heads(&p, pos_len, heads, head_dim);
@@ -404,7 +382,7 @@ impl RelPosAttention {
             }
         }
         let merged = merge_heads(&attended, time, heads, head_dim);
-        ops::linear(&merged, &self.out.weight, None, time, hidden, hidden)
+        self.out.forward(&merged, time)
     }
 }
 
@@ -501,14 +479,7 @@ impl ConformerConvolution {
             channels,
         );
         let mut norm_input = transpose_channels_time(&depthwise, time, channels);
-        ops::layernorm(
-            &mut norm_input,
-            time,
-            channels,
-            &self.norm.weight,
-            Some(&self.norm.bias),
-            LN_EPS,
-        );
+        self.norm.apply(&mut norm_input, time);
         silu(&mut norm_input);
         depthwise = transpose_time_channels(&norm_input, time, channels);
         let pointwise = ops::conv1d(
@@ -568,14 +539,14 @@ impl ConformerLayer {
     ) -> Vec<f32> {
         let mut residual = input.to_vec();
         let mut normalized = input.to_vec();
-        apply_norm(&mut normalized, time, self.hidden, &self.norm_ff1);
+        self.norm_ff1.apply(&mut normalized, time);
         let ff1 = self
             .ff1
             .forward(&normalized, time, self.hidden, self.hidden * self.expansion);
         add_scaled(&mut residual, &ff1, 0.5);
 
         normalized.clone_from(&residual);
-        apply_norm(&mut normalized, time, self.hidden, &self.norm_attn);
+        self.norm_attn.apply(&mut normalized, time);
         let attention = self.attention.forward(
             &normalized,
             position,
@@ -587,17 +558,17 @@ impl ConformerLayer {
         add_scaled(&mut residual, &attention, 1.0);
 
         normalized.clone_from(&residual);
-        apply_norm(&mut normalized, time, self.hidden, &self.norm_conv);
+        self.norm_conv.apply(&mut normalized, time);
         let convolution = self.convolution.forward(&normalized, time);
         add_scaled(&mut residual, &convolution, 1.0);
 
         normalized.clone_from(&residual);
-        apply_norm(&mut normalized, time, self.hidden, &self.norm_ff2);
+        self.norm_ff2.apply(&mut normalized, time);
         let ff2 = self
             .ff2
             .forward(&normalized, time, self.hidden, self.hidden * self.expansion);
         add_scaled(&mut residual, &ff2, 0.5);
-        apply_norm(&mut residual, time, self.hidden, &self.norm_out);
+        self.norm_out.apply(&mut residual, time);
         residual
     }
 }
@@ -728,17 +699,21 @@ mod tests {
         let heads = 2;
         let head_dim = 2;
         let pos_len = 2 * time - 1;
-        let identity = || Linear {
-            weight: (0..hidden * hidden)
-                .map(|index| {
-                    if index / hidden == index % hidden {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                })
-                .collect(),
-            bias: None,
+        let identity = || {
+            Linear::new(
+                (0..hidden * hidden)
+                    .map(|index| {
+                        if index / hidden == index % hidden {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect(),
+                None,
+                hidden,
+                hidden,
+            )
         };
         let attention = RelPosAttention {
             q: identity(),
@@ -866,10 +841,6 @@ fn transpose_channels_time(input: &[f32], time: usize, channels: usize) -> Vec<f
         }
     }
     output
-}
-
-fn apply_norm(values: &mut [f32], rows: usize, width: usize, norm: &LayerNorm) {
-    ops::layernorm(values, rows, width, &norm.weight, Some(&norm.bias), LN_EPS);
 }
 
 fn add_scaled(target: &mut [f32], values: &[f32], scale: f32) {

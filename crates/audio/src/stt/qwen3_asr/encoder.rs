@@ -7,6 +7,7 @@
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::models::stt::qwen3_asr::config::AudioEncoderConfig;
+use crate::nn::{LayerNorm, Linear};
 use crate::ops;
 use crate::{Result, SpeechError};
 
@@ -45,74 +46,30 @@ fn load_tensor(file: &SafetensorsFile, name: &str, shape: &[usize]) -> Result<Ve
     file.load_as_f32(&name).map_err(Into::into)
 }
 
-#[derive(Clone)]
-struct Linear {
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
+// The checkpoint's tensor-name remapping and error text stay local, so the
+// shared layer types are built here from this family's own `load_tensor`.
+fn load_linear(
+    file: &SafetensorsFile,
+    prefix: &str,
     input: usize,
     output: usize,
+    has_bias: bool,
+) -> Result<Linear> {
+    let weight = load_tensor(file, &format!("{prefix}.weight"), &[output, input])?;
+    let bias = if has_bias {
+        Some(load_tensor(file, &format!("{prefix}.bias"), &[output])?)
+    } else {
+        None
+    };
+    Ok(Linear::new(weight, bias, input, output))
 }
 
-impl Linear {
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        input: usize,
-        output: usize,
-        has_bias: bool,
-    ) -> Result<Self> {
-        let weight = load_tensor(file, &format!("{prefix}.weight"), &[output, input])?;
-        let bias = if has_bias {
-            Some(load_tensor(file, &format!("{prefix}.bias"), &[output])?)
-        } else {
-            None
-        };
-        Ok(Self {
-            weight,
-            bias,
-            input,
-            output,
-        })
-    }
-
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        ops::linear(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            rows,
-            self.input,
-            self.output,
-        )
-    }
-}
-
-#[derive(Clone)]
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-}
-
-impl LayerNorm {
-    fn load(file: &SafetensorsFile, prefix: &str, width: usize) -> Result<Self> {
-        Ok(Self {
-            weight: load_tensor(file, &format!("{prefix}.weight"), &[width])?,
-            bias: load_tensor(file, &format!("{prefix}.bias"), &[width])?,
-            width,
-        })
-    }
-
-    fn apply(&self, values: &mut [f32], rows: usize) {
-        ops::layernorm(
-            values,
-            rows,
-            self.width,
-            &self.weight,
-            Some(&self.bias),
-            LAYER_NORM_EPS,
-        );
-    }
+fn load_layer_norm(file: &SafetensorsFile, prefix: &str, width: usize) -> Result<LayerNorm> {
+    Ok(LayerNorm::new(
+        load_tensor(file, &format!("{prefix}.weight"), &[width])?,
+        Some(load_tensor(file, &format!("{prefix}.bias"), &[width])?),
+        LAYER_NORM_EPS,
+    ))
 }
 
 struct Conv2d {
@@ -216,30 +173,30 @@ impl AudioLayer {
         let hidden = config.d_model;
         let attention = format!("{prefix}.self_attn");
         Ok(Self {
-            q_proj: Linear::load(file, &format!("{attention}.q_proj"), hidden, hidden, true)?,
-            k_proj: Linear::load(file, &format!("{attention}.k_proj"), hidden, hidden, true)?,
-            v_proj: Linear::load(file, &format!("{attention}.v_proj"), hidden, hidden, true)?,
-            out_proj: Linear::load(file, &format!("{attention}.out_proj"), hidden, hidden, true)?,
-            attention_norm: LayerNorm::load(
+            q_proj: load_linear(file, &format!("{attention}.q_proj"), hidden, hidden, true)?,
+            k_proj: load_linear(file, &format!("{attention}.k_proj"), hidden, hidden, true)?,
+            v_proj: load_linear(file, &format!("{attention}.v_proj"), hidden, hidden, true)?,
+            out_proj: load_linear(file, &format!("{attention}.out_proj"), hidden, hidden, true)?,
+            attention_norm: load_layer_norm(
                 file,
                 &format!("{prefix}.self_attn_layer_norm"),
                 hidden,
             )?,
-            fc1: Linear::load(
+            fc1: load_linear(
                 file,
                 &format!("{prefix}.fc1"),
                 hidden,
                 config.encoder_ffn_dim,
                 true,
             )?,
-            fc2: Linear::load(
+            fc2: load_linear(
                 file,
                 &format!("{prefix}.fc2"),
                 config.encoder_ffn_dim,
                 hidden,
                 true,
             )?,
-            final_norm: LayerNorm::load(file, &format!("{prefix}.final_layer_norm"), hidden)?,
+            final_norm: load_layer_norm(file, &format!("{prefix}.final_layer_norm"), hidden)?,
             hidden,
             heads: config.encoder_attention_heads,
             head_dim: hidden / config.encoder_attention_heads,
@@ -325,7 +282,7 @@ impl AudioEncoder {
             Conv2d::load(file, "audio_tower.conv2d3", width, width)?,
         ];
         let frequency = conv_output_length(conv_output_length(conv_output_length(MEL_BINS)));
-        let conv_out = Linear::load(
+        let conv_out = load_linear(
             file,
             "audio_tower.conv_out",
             width * frequency,
@@ -339,15 +296,15 @@ impl AudioEncoder {
             convs,
             conv_out,
             layers,
-            post_norm: LayerNorm::load(file, "audio_tower.ln_post", config.d_model)?,
-            proj1: Linear::load(
+            post_norm: load_layer_norm(file, "audio_tower.ln_post", config.d_model)?,
+            proj1: load_linear(
                 file,
                 "audio_tower.proj1",
                 config.d_model,
                 config.d_model,
                 true,
             )?,
-            proj2: Linear::load(
+            proj2: load_linear(
                 file,
                 "audio_tower.proj2",
                 config.d_model,
@@ -356,6 +313,58 @@ impl AudioEncoder {
             )?,
             config: config.clone(),
         })
+    }
+
+    /// Conv stack and time-major reshape of one chunk: the `[width, channels *
+    /// frequency]` rows fed to `conv_out`, and `width`.
+    fn conv_stage(
+        &self,
+        features: &AudioFeatures,
+        index: usize,
+        chunk_size: usize,
+        valid_input_frames: usize,
+        max_chunk_len: usize,
+        frequency: usize,
+    ) -> Result<(Vec<f32>, usize)> {
+        let start_frame = index * chunk_size;
+        let mut chunk = vec![0.0f32; MEL_BINS * max_chunk_len];
+        for mel in 0..MEL_BINS {
+            let source = mel * features.frames + start_frame;
+            let target = mel * max_chunk_len;
+            chunk[target..target + valid_input_frames]
+                .copy_from_slice(&features.values[source..source + valid_input_frames]);
+        }
+
+        let mut values = chunk;
+        let mut height = MEL_BINS;
+        let mut width = max_chunk_len;
+        for conv in &self.convs {
+            let (mut output, out_height, out_width) = conv.forward(&values, height, width);
+            ops::gelu_erf(&mut output);
+            values = output;
+            height = out_height;
+            width = out_width;
+        }
+        if height != frequency {
+            return Err(SpeechError::Tensor {
+                name: "audio_tower.conv2d".into(),
+                why: format!("frequency width {height} != expected {frequency}"),
+            });
+        }
+
+        let mut rows = vec![0.0f32; width * self.config.downsample_hidden_size * frequency];
+        for time in 0..width {
+            for channel in 0..self.config.downsample_hidden_size {
+                for mel in 0..frequency {
+                    let source = (channel * frequency + mel) * width + time;
+                    let target = time * (self.config.downsample_hidden_size * frequency)
+                        + channel * frequency
+                        + mel;
+                    rows[target] = values[source];
+                }
+            }
+        }
+        Ok((rows, width))
     }
 
     pub fn forward(&self, features: &AudioFeatures) -> Result<Vec<f32>> {
@@ -388,64 +397,50 @@ impl AudioEncoder {
             1.0
         };
 
-        for (index, &valid_input_frames) in chunk_lengths.iter().enumerate() {
-            let start_frame = index * chunk_size;
-            let mut chunk = vec![0.0f32; MEL_BINS * max_chunk_len];
-            for mel in 0..MEL_BINS {
-                let source = mel * features.frames + start_frame;
-                let target = mel * max_chunk_len;
-                chunk[target..target + valid_input_frames]
-                    .copy_from_slice(&features.values[source..source + valid_input_frames]);
-            }
-
-            let mut values = chunk;
-            let mut height = MEL_BINS;
-            let mut width = max_chunk_len;
-            for conv in &self.convs {
-                let (mut output, out_height, out_width) = conv.forward(&values, height, width);
-                ops::gelu_erf(&mut output);
-                values = output;
-                height = out_height;
-                width = out_width;
-            }
-            if height != frequency {
-                return Err(SpeechError::Tensor {
-                    name: "audio_tower.conv2d".into(),
-                    why: format!("frequency width {height} != expected {frequency}"),
-                });
-            }
-
-            let mut rows = vec![0.0f32; width * self.config.downsample_hidden_size * frequency];
-            for time in 0..width {
-                for channel in 0..self.config.downsample_hidden_size {
-                    for mel in 0..frequency {
-                        let source = (channel * frequency + mel) * width + time;
-                        let target = time * (self.config.downsample_hidden_size * frequency)
-                            + channel * frequency
-                            + mel;
-                        rows[target] = values[source];
+        // The conv stack dominates this stage and `ops::conv2d` is single
+        // threaded, so chunks (independent of each other) run on separate
+        // threads in batches of one per core. Each chunk is computed by the
+        // same code and consumed in chunk order below, so the values and the
+        // order in which errors surface are unchanged. The linear that
+        // follows threads itself, so it stays on this thread.
+        let batch = ops::thread_count().max(1);
+        for batch_start in (0..chunks).step_by(batch) {
+            let batch_len = batch.min(chunks - batch_start);
+            let staged = ops::par_map(batch_len, |offset| {
+                self.conv_stage(
+                    features,
+                    batch_start + offset,
+                    chunk_size,
+                    chunk_lengths[batch_start + offset],
+                    max_chunk_len,
+                    frequency,
+                )
+            });
+            for (offset, staged) in staged.into_iter().enumerate() {
+                let valid_input_frames = chunk_lengths[batch_start + offset];
+                let (rows, width) = staged?;
+                let mut projected = self.conv_out.forward(&rows, width);
+                for (row, embedding) in projected.chunks_exact_mut(self.config.d_model).enumerate()
+                {
+                    for (dim, value) in embedding.iter_mut().enumerate() {
+                        *value =
+                            *value * embedding_scale + positions[row * self.config.d_model + dim];
                     }
                 }
-            }
-            let mut projected = self.conv_out.forward(&rows, width);
-            for (row, embedding) in projected.chunks_exact_mut(self.config.d_model).enumerate() {
-                for (dim, value) in embedding.iter_mut().enumerate() {
-                    *value = *value * embedding_scale + positions[row * self.config.d_model + dim];
-                }
-            }
 
-            let valid_output_frames = subsampled_length(valid_input_frames);
-            if valid_output_frames > width {
-                return Err(SpeechError::Tensor {
-                    name: "audio_tower.conv2d".into(),
-                    why: format!(
-                        "subsampled length {valid_output_frames} exceeds padded width {width}"
-                    ),
-                });
+                let valid_output_frames = subsampled_length(valid_input_frames);
+                if valid_output_frames > width {
+                    return Err(SpeechError::Tensor {
+                        name: "audio_tower.conv2d".into(),
+                        why: format!(
+                            "subsampled length {valid_output_frames} exceeds padded width {width}"
+                        ),
+                    });
+                }
+                hidden_states
+                    .extend_from_slice(&projected[..valid_output_frames * self.config.d_model]);
+                valid_lengths.push(valid_output_frames);
             }
-            hidden_states
-                .extend_from_slice(&projected[..valid_output_frames * self.config.d_model]);
-            valid_lengths.push(valid_output_frames);
         }
 
         let rows = valid_lengths.iter().sum::<usize>();
@@ -503,6 +498,228 @@ fn sinusoidal_positions(rows: usize, width: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::{conv_output_length, sinusoidal_positions, subsampled_length};
+    use super::{
+        AudioEncoder, AudioEncoderConfig, AudioFeatures, AudioLayer, Conv2d, LayerNorm, Linear,
+        Result, SpeechError, CONV_KERNEL, LAYER_NORM_EPS, MEL_BINS,
+    };
+    use crate::ops;
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn vec(&mut self, n: usize, scale: f32) -> Vec<f32> {
+            (0..n)
+                .map(|_| {
+                    self.0 ^= self.0 << 13;
+                    self.0 ^= self.0 >> 7;
+                    self.0 ^= self.0 << 17;
+                    ((self.0 >> 8) % 20001) as f32 / 10000.0 * scale - scale
+                })
+                .collect()
+        }
+
+        fn linear(&mut self, input: usize, output: usize) -> Linear {
+            Linear::new(
+                self.vec(input * output, 1.2 / (input as f32).sqrt()),
+                Some(self.vec(output, 0.2)),
+                input,
+                output,
+            )
+        }
+
+        fn norm(&mut self, width: usize) -> LayerNorm {
+            let weight = self.vec(width, 0.3).iter().map(|w| w + 1.0).collect();
+            LayerNorm::new(weight, Some(self.vec(width, 0.1)), LAYER_NORM_EPS)
+        }
+
+        fn conv(&mut self, input: usize, output: usize) -> Conv2d {
+            Conv2d {
+                weight: self.vec(output * input * CONV_KERNEL * CONV_KERNEL, 0.3),
+                bias: self.vec(output, 0.1),
+                input_channels: input,
+                output_channels: output,
+            }
+        }
+    }
+
+    /// Tiny geometry with the real structure: 8-frame chunks (n_window 4)
+    /// and a short last chunk.
+    fn encoder(rng: &mut Rng) -> AudioEncoder {
+        let (width, d_model, heads, ffn) = (3usize, 8usize, 2usize, 16usize);
+        let config = AudioEncoderConfig {
+            num_mel_bins: MEL_BINS,
+            encoder_layers: 2,
+            encoder_attention_heads: heads,
+            encoder_ffn_dim: ffn,
+            d_model,
+            max_source_positions: 64,
+            n_window: 4,
+            output_dim: 6,
+            n_window_infer: 16,
+            downsample_hidden_size: width,
+            scale_embedding: true,
+        };
+        let frequency = conv_output_length(conv_output_length(conv_output_length(MEL_BINS)));
+        AudioEncoder {
+            convs: [
+                rng.conv(1, width),
+                rng.conv(width, width),
+                rng.conv(width, width),
+            ],
+            conv_out: Linear::new(
+                rng.vec(width * frequency * d_model, 0.2),
+                None,
+                width * frequency,
+                d_model,
+            ),
+            layers: (0..2)
+                .map(|_| AudioLayer {
+                    q_proj: rng.linear(d_model, d_model),
+                    k_proj: rng.linear(d_model, d_model),
+                    v_proj: rng.linear(d_model, d_model),
+                    out_proj: rng.linear(d_model, d_model),
+                    attention_norm: rng.norm(d_model),
+                    fc1: rng.linear(d_model, ffn),
+                    fc2: rng.linear(ffn, d_model),
+                    final_norm: rng.norm(d_model),
+                    hidden: d_model,
+                    heads,
+                    head_dim: d_model / heads,
+                })
+                .collect(),
+            post_norm: rng.norm(d_model),
+            proj1: rng.linear(d_model, d_model),
+            proj2: rng.linear(d_model, 6),
+            config,
+        }
+    }
+
+    /// The previous serial chunk loop, kept verbatim.
+    fn reference_forward(self_: &AudioEncoder, features: &AudioFeatures) -> Result<Vec<f32>> {
+        if features.frames == 0 || features.values.len() != MEL_BINS * features.frames {
+            return Err(SpeechError::Input {
+                why: "Qwen3 audio features must have shape [128, frames]".into(),
+            });
+        }
+        let chunk_size = 2 * self_.config.n_window;
+        let chunks = features.frames.div_ceil(chunk_size);
+        let chunk_lengths = (0..chunks)
+            .map(|index| (features.frames - index * chunk_size).min(chunk_size))
+            .collect::<Vec<_>>();
+        let max_chunk_len = *chunk_lengths.iter().max().unwrap_or(&0);
+        let max_conv_frames =
+            conv_output_length(conv_output_length(conv_output_length(max_chunk_len)));
+        if max_conv_frames > self_.config.max_source_positions {
+            return Err(SpeechError::Input {
+                why: "Qwen3 audio chunk exceeds positional embedding capacity".into(),
+            });
+        }
+
+        let frequency = conv_output_length(conv_output_length(conv_output_length(MEL_BINS)));
+        let mut hidden_states = Vec::new();
+        let mut valid_lengths = Vec::with_capacity(chunks);
+        let positions = sinusoidal_positions(max_conv_frames, self_.config.d_model);
+        let embedding_scale = if self_.config.scale_embedding {
+            (self_.config.d_model as f32).sqrt()
+        } else {
+            1.0
+        };
+
+        for (index, &valid_input_frames) in chunk_lengths.iter().enumerate() {
+            let start_frame = index * chunk_size;
+            let mut chunk = vec![0.0f32; MEL_BINS * max_chunk_len];
+            for mel in 0..MEL_BINS {
+                let source = mel * features.frames + start_frame;
+                let target = mel * max_chunk_len;
+                chunk[target..target + valid_input_frames]
+                    .copy_from_slice(&features.values[source..source + valid_input_frames]);
+            }
+
+            let mut values = chunk;
+            let mut height = MEL_BINS;
+            let mut width = max_chunk_len;
+            for conv in &self_.convs {
+                let (mut output, out_height, out_width) = conv.forward(&values, height, width);
+                ops::gelu_erf(&mut output);
+                values = output;
+                height = out_height;
+                width = out_width;
+            }
+            if height != frequency {
+                return Err(SpeechError::Tensor {
+                    name: "audio_tower.conv2d".into(),
+                    why: format!("frequency width {height} != expected {frequency}"),
+                });
+            }
+
+            let mut rows = vec![0.0f32; width * self_.config.downsample_hidden_size * frequency];
+            for time in 0..width {
+                for channel in 0..self_.config.downsample_hidden_size {
+                    for mel in 0..frequency {
+                        let source = (channel * frequency + mel) * width + time;
+                        let target = time * (self_.config.downsample_hidden_size * frequency)
+                            + channel * frequency
+                            + mel;
+                        rows[target] = values[source];
+                    }
+                }
+            }
+            let mut projected = self_.conv_out.forward(&rows, width);
+            for (row, embedding) in projected.chunks_exact_mut(self_.config.d_model).enumerate() {
+                for (dim, value) in embedding.iter_mut().enumerate() {
+                    *value = *value * embedding_scale + positions[row * self_.config.d_model + dim];
+                }
+            }
+
+            let valid_output_frames = subsampled_length(valid_input_frames);
+            if valid_output_frames > width {
+                return Err(SpeechError::Tensor {
+                    name: "audio_tower.conv2d".into(),
+                    why: format!(
+                        "subsampled length {valid_output_frames} exceeds padded width {width}"
+                    ),
+                });
+            }
+            hidden_states
+                .extend_from_slice(&projected[..valid_output_frames * self_.config.d_model]);
+            valid_lengths.push(valid_output_frames);
+        }
+
+        let rows = valid_lengths.iter().sum::<usize>();
+        let max_valid = *valid_lengths.iter().max().unwrap_or(&0);
+        let attention_window = max_valid * (self_.config.n_window_infer / chunk_size);
+        if rows == 0 || attention_window == 0 {
+            return Err(SpeechError::Input {
+                why: "Qwen3 audio encoder produced no valid frames".into(),
+            });
+        }
+        for layer in &self_.layers {
+            hidden_states = layer.forward(&hidden_states, rows, attention_window);
+        }
+        self_.post_norm.apply(&mut hidden_states, rows);
+        let mut output = self_.proj1.forward(&hidden_states, rows);
+        ops::gelu_erf(&mut output);
+        Ok(self_.proj2.forward(&output, rows))
+    }
+
+    #[test]
+    fn parallel_chunk_stage_matches_the_serial_loop_bitwise() {
+        // 38 chunks (the last one short) span several per-core batches.
+        for (seed, frames) in [(5u64, 301usize), (9, 8), (13, 61)] {
+            let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+            let encoder = encoder(&mut rng);
+            let features = AudioFeatures {
+                values: rng.vec(MEL_BINS * frames, 2.0),
+                frames,
+            };
+            let want = reference_forward(&encoder, &features).unwrap();
+            let got = encoder.forward(&features).unwrap();
+            assert_eq!(got.len(), want.len());
+            for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                assert_eq!(g.to_bits(), w.to_bits(), "frames {frames} element {i}");
+            }
+        }
+    }
 
     #[test]
     fn chunk_output_lengths_match_qwen3_reference_formula() {

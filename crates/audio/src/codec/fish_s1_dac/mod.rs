@@ -21,6 +21,8 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{load_bias, wn_fold_in_place, BiasMode, Conv1d, ConvTranspose1d, WnFold};
+use crate::codec::dac::{add_cropped_residual, load_alpha_mid};
 use crate::codec::wnconv::{load_f32_shaped, snake1d};
 use crate::ops;
 use crate::{Result, SpeechError};
@@ -236,98 +238,50 @@ impl FishS1DacConfig {
 
 /// Weight-norm causal conv1d: torch-layout weight `(out, in, K)`,
 /// `weight_g (out, 1, 1)` normalized over `(in, K)`, left pad
-/// `kernel_eff - stride` plus the reference's right `extra` pad.
-#[derive(Debug, Clone)]
-struct FishWnConv1d {
+/// `kernel_eff - stride` plus the reference's right `extra` pad. The
+/// padding itself lives in [`FishCausalConv`], so the conv runs at
+/// padding 0.
+#[allow(clippy::too_many_arguments)]
+fn load_fish_wn_conv(
+    file: &SafetensorsFile,
+    prefix: &str,
     in_ch: usize,
     out_ch: usize,
     kernel: usize,
     stride: usize,
     dilation: usize,
     groups: usize,
-    /// Folded weight, PyTorch layout `[out, in/groups, K]`.
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-impl FishWnConv1d {
-    #[allow(clippy::too_many_arguments)]
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        in_ch: usize,
-        out_ch: usize,
-        kernel: usize,
-        stride: usize,
-        dilation: usize,
-        groups: usize,
-        with_bias: bool,
-    ) -> Result<Self> {
-        let in_g = in_ch / groups;
-        let v = load_f32_shaped(file, &format!("{prefix}.weight_v"), &[out_ch, in_g, kernel])?;
-        let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[out_ch, 1, 1])?;
-        let bias = if file.contains_tensor(&format!("{prefix}.bias")) {
-            Some(load_f32_shaped(file, &format!("{prefix}.bias"), &[out_ch])?)
-        } else {
-            if with_bias {
-                return Err(SpeechError::Tensor {
-                    name: format!("{prefix}.bias"),
-                    why: "required by the reference layer".to_string(),
-                });
-            }
-            None
-        };
-        // normalize except dim 0: per out channel over (in, K).
-        let mut weight = vec![0.0f32; v.len()];
-        for (oc, &gain) in g.iter().enumerate() {
-            let mut acc = 0.0f32;
-            for i in 0..in_g {
-                for k in 0..kernel {
-                    let value = v[oc * in_g * kernel + i * kernel + k];
-                    acc += value * value;
-                }
-            }
-            let norm = acc.sqrt();
-            for i in 0..in_g {
-                for k in 0..kernel {
-                    weight[oc * in_g * kernel + i * kernel + k] =
-                        gain * v[oc * in_g * kernel + i * kernel + k] / norm;
-                }
-            }
-        }
-        Ok(FishWnConv1d {
-            in_ch,
-            out_ch,
-            kernel,
-            stride,
-            dilation,
-            groups,
-            weight,
-            bias,
-        })
-    }
-
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            0,
-            self.dilation,
-            self.groups,
-        )
-    }
+    with_bias: bool,
+) -> Result<Conv1d> {
+    let in_g = in_ch / groups;
+    let mut v = load_f32_shaped(file, &format!("{prefix}.weight_v"), &[out_ch, in_g, kernel])?;
+    let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[out_ch, 1, 1])?;
+    let bias = load_bias(
+        file,
+        &format!("{prefix}.bias"),
+        out_ch,
+        BiasMode::required(with_bias),
+    )?;
+    // normalize except dim 0: per out channel over (in, K).
+    wn_fold_in_place(&mut v, &g, in_g * kernel, WnFold::Div);
+    Ok(Conv1d {
+        in_ch,
+        out_ch,
+        kernel,
+        stride,
+        padding: 0,
+        dilation,
+        groups,
+        weight: v,
+        bias,
+    })
 }
 
 /// Causal padding wrapper (`CausalConvNet` / `CausalWNConv1d`): left
 /// pad `kernel_eff - stride`, right pad to a stride multiple.
 #[derive(Debug, Clone)]
 struct FishCausalConv {
-    conv: FishWnConv1d,
+    conv: Conv1d,
     pad: usize,
 }
 
@@ -346,12 +300,12 @@ impl FishCausalConv {
     ) -> Result<Self> {
         let kernel_eff = (kernel - 1) * dilation + 1;
         let conv = if wn {
-            FishWnConv1d::load(
+            load_fish_wn_conv(
                 file, prefix, in_ch, out_ch, kernel, stride, dilation, groups, true,
             )?
         } else {
             // Plain torch-layout weight under `{prefix}.conv`.
-            FishWnConv1d::load_plain(
+            load_fish_plain_conv(
                 file,
                 &format!("{prefix}.conv"),
                 in_ch,
@@ -382,55 +336,39 @@ impl FishCausalConv {
     }
 }
 
-impl FishWnConv1d {
-    /// Plain (non-weight-normed) torch-layout conv under `{prefix}`,
-    /// stored `(out, in, K)` + bias.
-    #[allow(clippy::too_many_arguments)]
-    fn load_plain(
-        file: &SafetensorsFile,
-        prefix: &str,
-        in_ch: usize,
-        out_ch: usize,
-        kernel: usize,
-        stride: usize,
-        dilation: usize,
-        groups: usize,
-        with_bias: bool,
-    ) -> Result<Self> {
-        let in_g = in_ch / groups;
-        let stored = load_f32_shaped(file, &format!("{prefix}.weight"), &[out_ch, in_g, kernel])?;
-        let mut weight = vec![0.0f32; stored.len()];
-        for oc in 0..out_ch {
-            for i in 0..in_g {
-                for k in 0..kernel {
-                    weight[oc * in_g * kernel + i * kernel + k] =
-                        stored[oc * in_g * kernel + i * kernel + k];
-                }
-            }
-        }
-        let bias_name = format!("{prefix}.bias");
-        let bias = if file.contains_tensor(&bias_name) {
-            Some(load_f32_shaped(file, &bias_name, &[out_ch])?)
-        } else {
-            if with_bias {
-                return Err(SpeechError::Tensor {
-                    name: bias_name,
-                    why: "required by the reference layer".to_string(),
-                });
-            }
-            None
-        };
-        Ok(FishWnConv1d {
-            in_ch,
-            out_ch,
-            kernel,
-            stride,
-            dilation,
-            groups,
-            weight,
-            bias,
-        })
-    }
+/// Plain (non-weight-normed) torch-layout conv under `{prefix}`,
+/// stored `(out, in, K)` + bias, which is already the kernel layout.
+#[allow(clippy::too_many_arguments)]
+fn load_fish_plain_conv(
+    file: &SafetensorsFile,
+    prefix: &str,
+    in_ch: usize,
+    out_ch: usize,
+    kernel: usize,
+    stride: usize,
+    dilation: usize,
+    groups: usize,
+    with_bias: bool,
+) -> Result<Conv1d> {
+    let in_g = in_ch / groups;
+    let weight = load_f32_shaped(file, &format!("{prefix}.weight"), &[out_ch, in_g, kernel])?;
+    let bias = load_bias(
+        file,
+        &format!("{prefix}.bias"),
+        out_ch,
+        BiasMode::required(with_bias),
+    )?;
+    Ok(Conv1d {
+        in_ch,
+        out_ch,
+        kernel,
+        stride,
+        padding: 0,
+        dilation,
+        groups,
+        weight,
+        bias,
+    })
 }
 
 /// Weight-norm causal transposed conv: stored `(in, out, K)` with
@@ -438,12 +376,7 @@ impl FishWnConv1d {
 /// then trim `(K - stride)` from the right.
 #[derive(Debug, Clone)]
 struct FishCausalConvTr {
-    in_ch: usize,
-    out_ch: usize,
-    kernel: usize,
-    stride: usize,
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
+    conv: ConvTranspose1d,
 }
 
 impl FishCausalConvTr {
@@ -461,74 +394,53 @@ impl FishCausalConvTr {
         wn: bool,
     ) -> Result<Self> {
         let (weight, bias) = if wn {
-            let v = load_f32_shaped(
+            let mut v = load_f32_shaped(
                 file,
                 &format!("{prefix}.weight_v"),
                 &[in_ch, out_ch, kernel],
             )?;
             let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[in_ch, 1, 1])?;
             let bias = load_f32_shaped(file, &format!("{prefix}.bias"), &[out_ch])?;
-            let mut weight = vec![0.0f32; v.len()];
-            for (ic, &gain) in g.iter().enumerate() {
-                let mut acc = 0.0f32;
-                for o in 0..out_ch {
-                    for k in 0..kernel {
-                        let value = v[ic * out_ch * kernel + o * kernel + k];
-                        acc += value * value;
-                    }
-                }
-                let norm = acc.sqrt();
-                for o in 0..out_ch {
-                    for k in 0..kernel {
-                        weight[ic * out_ch * kernel + o * kernel + k] =
-                            gain * v[ic * out_ch * kernel + o * kernel + k] / norm;
-                    }
-                }
-            }
-            (weight, Some(bias))
+            wn_fold_in_place(&mut v, &g, out_ch * kernel, WnFold::Div);
+            (v, Some(bias))
         } else {
             let stored = load_f32_shaped(
                 file,
                 &format!("{prefix}.conv.weight"),
                 &[in_ch, out_ch, kernel],
             )?;
-            let bias_name = format!("{prefix}.conv.bias");
-            let bias = if file.contains_tensor(&bias_name) {
-                Some(load_f32_shaped(file, &bias_name, &[out_ch])?)
-            } else {
-                None
-            };
+            let bias = load_bias(
+                file,
+                &format!("{prefix}.conv.bias"),
+                out_ch,
+                BiasMode::Optional,
+            )?;
             (stored, bias)
         };
         Ok(FishCausalConvTr {
-            in_ch,
-            out_ch,
-            kernel,
-            stride,
-            weight,
-            bias,
+            conv: ConvTranspose1d {
+                in_ch,
+                out_ch,
+                kernel,
+                stride,
+                padding: 0,
+                output_padding: 0,
+                groups: 1,
+                weight,
+                bias,
+            },
         })
     }
 
     /// Channel-major in -> channel-major out, right-trimmed.
     fn forward(&self, x: &[f32]) -> Vec<f32> {
-        let y = ops::conv_transpose1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            0,
-            0,
-            1,
-        );
-        let out_seq = y.len() / self.out_ch;
-        let trim_right = self.kernel - self.stride;
+        let y = self.conv.forward(x);
+        let out_ch = self.conv.out_ch;
+        let out_seq = y.len() / out_ch;
+        let trim_right = self.conv.kernel - self.conv.stride;
         let keep = out_seq - trim_right;
-        let mut trimmed = vec![0.0f32; keep * self.out_ch];
-        for c in 0..self.out_ch {
+        let mut trimmed = vec![0.0f32; keep * out_ch];
+        for c in 0..out_ch {
             trimmed[c * keep..(c + 1) * keep].copy_from_slice(&y[c * out_seq..c * out_seq + keep]);
         }
         trimmed
@@ -537,8 +449,7 @@ impl FishCausalConvTr {
 
 /// Fish Snake1d: alpha stored `(1, C, 1)`.
 fn load_fish_alpha(file: &SafetensorsFile, prefix: &str, channels: usize) -> Result<Vec<f32>> {
-    let stored = load_f32_shaped(file, &format!("{prefix}.alpha"), &[1, channels, 1])?;
-    Ok(stored)
+    load_alpha_mid(file, &format!("{prefix}.alpha"), channels)
 }
 
 /// `ConvNeXtBlock`: causal depthwise conv, LayerNorm (eps 1e-6),
@@ -722,68 +633,35 @@ impl FishBlock {
         self.attention_norm.apply(&mut normed, seq, dim);
         let qkv = ops::linear(&normed, &self.wqkv, None, seq, dim, 3 * dim);
         let kv_size = self.n_local * self.head_dim;
-        let mut qh = vec![0.0f32; self.n_head * seq * self.head_dim];
-        let mut kh = vec![0.0f32; self.n_local * seq * self.head_dim];
-        let mut vh = kh.clone();
-        for t in 0..seq {
-            for h in 0..self.n_head {
-                for d in 0..self.head_dim {
-                    qh[(h * seq + t) * self.head_dim + d] =
-                        qkv[t * 3 * dim + h * self.head_dim + d];
-                }
-            }
-            for h in 0..self.n_local {
-                for d in 0..self.head_dim {
-                    kh[(h * seq + t) * self.head_dim + d] =
-                        qkv[t * 3 * dim + kv_size + h * self.head_dim + d];
-                    vh[(h * seq + t) * self.head_dim + d] =
-                        qkv[t * 3 * dim + 2 * kv_size + h * self.head_dim + d];
-                }
-            }
-        }
+        let mut qh = ops::split_heads_strided(&qkv, 3 * dim, 0, seq, self.n_head, self.head_dim);
+        let mut kh =
+            ops::split_heads_strided(&qkv, 3 * dim, kv_size, seq, self.n_local, self.head_dim);
+        let vh =
+            ops::split_heads_strided(&qkv, 3 * dim, 2 * kv_size, seq, self.n_local, self.head_dim);
         // Interleaved pairs (x[2i], x[2i+1]) per apply_rotary_emb's
         // (..., dim/2, 2) reshape.
-        let half = self.head_dim / 2;
-        for plane in [&mut qh, &mut kh] {
-            for h in 0..plane.len() / (seq * self.head_dim) {
-                for t in 0..seq {
-                    let base = (h * seq + t) * self.head_dim;
-                    for d in 0..half {
-                        let a = plane[base + 2 * d];
-                        let b = plane[base + 2 * d + 1];
-                        let c = rope_cos[t * half + d];
-                        let s = rope_sin[t * half + d];
-                        plane[base + 2 * d] = a * c - b * s;
-                        plane[base + 2 * d + 1] = b * c + a * s;
-                    }
-                }
-            }
-        }
+        ops::rope_interleaved(&mut qh, self.n_head, seq, self.head_dim, rope_cos, rope_sin);
+        ops::rope_interleaved(
+            &mut kh,
+            self.n_local,
+            seq,
+            self.head_dim,
+            rope_cos,
+            rope_sin,
+        );
         let scale = (self.head_dim as f32).powf(-0.5);
-        let mut out = vec![0.0f32; qh.len()];
-        for h in 0..self.n_head {
-            let plane = h * seq * self.head_dim;
-            let o = ops::sdpa(
-                &qh[plane..plane + seq * self.head_dim],
-                &kh[plane..plane + seq * self.head_dim],
-                &vh[plane..plane + seq * self.head_dim],
-                Some(mask),
-                seq,
-                seq,
-                self.head_dim,
-                self.head_dim,
-                scale,
-            );
-            out[plane..plane + o.len()].copy_from_slice(&o);
-        }
-        let mut merged = vec![0.0f32; seq * dim];
-        for h in 0..self.n_head {
-            for t in 0..seq {
-                let src = (h * seq + t) * self.head_dim;
-                merged[t * dim + h * self.head_dim..t * dim + (h + 1) * self.head_dim]
-                    .copy_from_slice(&out[src..src + self.head_dim]);
-            }
-        }
+        let out = ops::mha(
+            &qh,
+            &kh,
+            &vh,
+            Some(mask),
+            self.n_head,
+            seq,
+            seq,
+            self.head_dim,
+            scale,
+        );
+        let merged = ops::merge_heads(&out, seq, self.n_head, self.head_dim);
         let attn = ops::linear(&merged, &self.wo, None, seq, dim, dim);
         for (x_chunk, a_chunk) in x.chunks_exact_mut(dim).zip(attn.chunks_exact(dim)) {
             for (d, v) in x_chunk.iter_mut().enumerate() {
@@ -955,23 +833,13 @@ impl FishVq {
             &[input_dim, 1, 1],
         )?;
         let b_out = load_f32_shaped(file, &format!("{prefix}.out_proj.bias"), &[input_dim])?;
-        let fold = |v: &[f32], g: &[f32]| -> Vec<f32> {
-            let out_ch = g.len();
-            let mut w = vec![0.0f32; v.len()];
-            for (oc, &gain) in g.iter().enumerate() {
-                let mut acc = 0.0f32;
-                for i in 0..v.len() / out_ch {
-                    acc += v[oc * (v.len() / out_ch) + i] * v[oc * (v.len() / out_ch) + i];
-                }
-                let norm = acc.sqrt();
-                for i in 0..v.len() / out_ch {
-                    w[oc * (v.len() / out_ch) + i] = gain * v[oc * (v.len() / out_ch) + i] / norm;
-                }
-            }
-            w
+        let fold = |mut v: Vec<f32>, g: &[f32]| -> Vec<f32> {
+            let per = v.len() / g.len();
+            wn_fold_in_place(&mut v, g, per, WnFold::Div);
+            v
         };
-        let in_w = fold(&v_in, &g_in);
-        let out_w = fold(&v_out, &g_out);
+        let in_w = fold(v_in, &g_in);
+        let out_w = fold(v_out, &g_out);
         let codebook = load_f32_shaped(file, &format!("{prefix}.codebook.weight"), &[size, dim])?;
         let mut codebook_norm = vec![0.0f32; size];
         for (r, norm) in codebook_norm.iter_mut().enumerate() {
@@ -1240,7 +1108,7 @@ impl FishDownsampleRvq {
         }
         for (conv, block) in &self.upsample {
             z = conv.forward(&z);
-            seq = z.len() / conv.out_ch;
+            seq = z.len() / conv.conv.out_ch;
             block.forward(&mut z, seq);
         }
         Ok((z, seq))
@@ -1323,29 +1191,14 @@ impl FishResidualUnit {
         snake1d(&mut y, &self.alpha2, self.channels, seq2);
         let y = self.conv2.forward(&y, seq2);
         let out_seq = y.len() / self.channels;
-        // causal: crop the residual's tail; symmetric otherwise.
-        let pad = seq.saturating_sub(out_seq);
-        let mut out = vec![0.0f32; out_seq * self.channels];
-        for c in 0..self.channels {
-            for t in 0..out_seq {
-                let r = if self.causal {
-                    if t < seq {
-                        x[c * seq + t]
-                    } else {
-                        0.0
-                    }
-                } else {
-                    let start = pad / 2;
-                    if t + start < seq {
-                        x[c * seq + t + start]
-                    } else {
-                        0.0
-                    }
-                };
-                out[c * out_seq + t] = r + y[c * out_seq + t];
-            }
-        }
-        out
+        // causal: crop the residual's tail (no start offset); symmetric
+        // otherwise.
+        let pad = if self.causal {
+            0
+        } else {
+            seq.saturating_sub(out_seq) / 2
+        };
+        add_cropped_residual(x, seq, y, self.channels, pad)
     }
 }
 
@@ -1701,7 +1554,7 @@ impl FishS1Dac {
             let mut h2 = h.clone();
             snake1d(&mut h2, &block.alpha, block.in_ch, seq_in);
             let h3 = block.conv_tr.forward(&h2);
-            let out_ch = block.conv_tr.out_ch;
+            let out_ch = block.conv_tr.conv.out_ch;
             let mut h3 = h3;
             for ru in &block.res_units {
                 let s = h3.len() / out_ch;

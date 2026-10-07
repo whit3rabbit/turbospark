@@ -16,8 +16,9 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
-use crate::codec::wnconv::{load_f32_shaped, WnConv1d};
-use crate::ops;
+use crate::codec::conv::{permute_okc_to_cok, wn_fold_in_place, ConvTranspose1d, WnFold};
+use crate::codec::dac::{load_alpha, DecoderBlock, EncoderBlock, ResidualUnit};
+use crate::codec::wnconv::{load_f32_shaped, snake1d, WnConv1d};
 use crate::{Result, SpeechError};
 
 /// Pinned mlx-audio commit this port was transcribed from.
@@ -77,218 +78,76 @@ impl DacvaeConfig {
     }
 }
 
-/// Snake1d alpha, stored `[1, 1, C]` in the dacvae layout.
-fn load_alpha(file: &SafetensorsFile, name: &str, channels: usize) -> Result<Vec<f32>> {
-    load_f32_shaped(file, name, &[1, 1, channels])
-}
-
-fn snake(x: &mut [f32], alpha: &[f32], channels: usize, frames: usize) {
-    for c in 0..channels {
-        let a = alpha[c];
-        let recip = 1.0 / (a + 1e-9);
-        for f in 0..frames {
-            let v = &mut x[c * frames + f];
-            *v += recip * (a * *v).sin().powi(2);
-        }
-    }
-}
-
 /// ConvTranspose1d with the descript-style out-first stored weight and
 /// static symmetric padding `(stride + 1) // 2` (pad_mode "none", no
-/// unpad). Weight norm is folded at load.
-struct DacvaeConvT {
-    in_ch: usize,
-    out_ch: usize,
-    kernel: usize,
+/// unpad). Weight norm is folded at load; the bias is required.
+fn load_dacvae_convt(
+    file: &SafetensorsFile,
+    prefix: &str,
     stride: usize,
-    padding: usize,
-    /// PyTorch layout `[in, out, K]`, weight norm folded.
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-impl DacvaeConvT {
-    fn load(file: &SafetensorsFile, prefix: &str, stride: usize) -> Result<Self> {
-        let v_name = format!("{prefix}.weight_v");
-        let desc = file
-            .descriptor(&v_name)
-            .ok_or_else(|| SpeechError::Tensor {
-                name: v_name.clone(),
-                why: "missing convtr weight".to_string(),
-            })?;
-        if desc.shape.len() != 3 {
-            return Err(SpeechError::Tensor {
-                name: v_name.clone(),
-                why: format!("expected 3-D weight, got {:?}", desc.shape),
-            });
-        }
-        let (out_ch, kernel, in_ch) = (desc.shape[0], desc.shape[1], desc.shape[2]);
-        let v = load_f32_shaped(file, &v_name, &[out_ch, kernel, in_ch])?;
-        let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[1, 1, in_ch])?;
-        let bias = load_f32_shaped(file, &format!("{prefix}.bias"), &[out_ch])?;
-        // normalize_weight(v, except_dim=2): per-in-channel norm over
-        // (out, K) in row-major order.
-        let mut weight = vec![0.0f32; in_ch * out_ch * kernel];
-        for (ic, &gv) in g.iter().enumerate() {
-            let mut acc = 0.0f32;
-            for o in 0..out_ch {
-                for k in 0..kernel {
-                    acc += v[o * kernel * in_ch + k * in_ch + ic]
-                        * v[o * kernel * in_ch + k * in_ch + ic];
-                }
-            }
-            let norm = acc.sqrt();
-            for o in 0..out_ch {
-                for k in 0..kernel {
-                    weight[ic * out_ch * kernel + o * kernel + k] =
-                        gv * v[o * kernel * in_ch + k * in_ch + ic] / norm;
-                }
-            }
-        }
-        Ok(DacvaeConvT {
-            in_ch,
-            out_ch,
-            kernel,
-            stride,
-            padding: (stride + 1) / 2,
-            weight,
-            bias: Some(bias),
-        })
+) -> Result<ConvTranspose1d> {
+    let v_name = format!("{prefix}.weight_v");
+    let desc = file
+        .descriptor(&v_name)
+        .ok_or_else(|| SpeechError::Tensor {
+            name: v_name.clone(),
+            why: "missing convtr weight".to_string(),
+        })?;
+    if desc.shape.len() != 3 {
+        return Err(SpeechError::Tensor {
+            name: v_name.clone(),
+            why: format!("expected 3-D weight, got {:?}", desc.shape),
+        });
     }
-
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        ops::conv_transpose1d(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            self.padding,
-            0,
-            1,
-        )
-    }
+    let (out_ch, kernel, in_ch) = (desc.shape[0], desc.shape[1], desc.shape[2]);
+    let v = load_f32_shaped(file, &v_name, &[out_ch, kernel, in_ch])?;
+    let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[1, 1, in_ch])?;
+    let bias = load_f32_shaped(file, &format!("{prefix}.bias"), &[out_ch])?;
+    // normalize_weight(v, except_dim=2): per-in-channel norm over
+    // (out, K) in row-major order, which is the contiguous row order
+    // once the weight is in the PyTorch [in, out, K] layout.
+    let mut weight = permute_okc_to_cok(&v, out_ch, kernel, in_ch);
+    wn_fold_in_place(&mut weight, &g, out_ch * kernel, WnFold::Div);
+    Ok(ConvTranspose1d {
+        in_ch,
+        out_ch,
+        kernel,
+        stride,
+        padding: (stride + 1) / 2,
+        output_padding: 0,
+        groups: 1,
+        weight,
+        bias: Some(bias),
+    })
 }
 
 /// Static-padding conv (pad_mode "none"): MLX symmetric padding
 /// `(K - stride) * dilation // 2`.
-struct DacvaeConv {
-    conv: WnConv1d,
-}
-
-impl DacvaeConv {
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        in_ch: usize,
-        out_ch: usize,
-        kernel: usize,
-        stride: usize,
-        dilation: usize,
-    ) -> Result<Self> {
-        let padding = (kernel - stride) * dilation / 2;
-        Ok(DacvaeConv {
-            conv: WnConv1d::load(
-                file, prefix, in_ch, out_ch, kernel, stride, padding, dilation, 1,
-            )?,
-        })
-    }
-
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        self.conv.forward(x)
-    }
-}
-
-/// ResidualUnit (main path): Snake, dilated conv, Snake, 1x1 conv,
-/// symmetric crop-add (true_skip=false variant).
-struct DacvaeRu {
-    alpha1: Vec<f32>,
-    conv1: DacvaeConv,
-    alpha2: Vec<f32>,
-    conv2: WnConv1d,
-    ch: usize,
-}
-
-impl DacvaeRu {
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        let seq = x.len() / self.ch;
-        let mut y = x.to_vec();
-        snake(&mut y, &self.alpha1, self.ch, seq);
-        let y = self.conv1.forward(&y);
-        let seq2 = y.len() / self.ch;
-        let mut y = y;
-        snake(&mut y, &self.alpha2, self.ch, seq2);
-        let y = self.conv2.forward(&y);
-        // pad = (x_len - y_len) / 2, crop the residual symmetrically.
-        let out_seq = y.len() / self.ch;
-        let pad = seq.saturating_sub(out_seq) / 2;
-        let mut out = vec![0.0f32; self.ch * out_seq];
-        for c in 0..self.ch {
-            for t in 0..out_seq {
-                let r = if t + pad < seq {
-                    x[c * seq + t + pad]
-                } else {
-                    0.0
-                };
-                out[c * out_seq + t] = r + y[c * out_seq + t];
-            }
-        }
-        out
-    }
-}
-
-struct DacvaeEncoderBlock {
-    res: [DacvaeRu; 3],
-    alpha: Vec<f32>,
-    down: DacvaeConv,
-    ch_in: usize,
-}
-
-impl DacvaeEncoderBlock {
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        let h = self.res[0].forward(x);
-        let h = self.res[1].forward(&h);
-        let h = self.res[2].forward(&h);
-        let seq = h.len() / self.ch_in;
-        let mut h = h;
-        snake(&mut h, &self.alpha, self.ch_in, seq);
-        self.down.forward(&h)
-    }
+fn load_dacvae_conv(
+    file: &SafetensorsFile,
+    prefix: &str,
+    in_ch: usize,
+    out_ch: usize,
+    kernel: usize,
+    stride: usize,
+    dilation: usize,
+) -> Result<WnConv1d> {
+    let padding = (kernel - stride) * dilation / 2;
+    WnConv1d::load(
+        file, prefix, in_ch, out_ch, kernel, stride, padding, dilation, 1,
+    )
 }
 
 struct DacvaeEncoder {
-    conv_in: DacvaeConv,
-    blocks: Vec<DacvaeEncoderBlock>,
+    conv_in: WnConv1d,
+    blocks: Vec<EncoderBlock>,
     alpha_out: Vec<f32>,
     conv_out: WnConv1d,
 }
 
-struct DacvaeDecoderBlock {
-    alpha: Vec<f32>,
-    up: DacvaeConvT,
-    res: [DacvaeRu; 3],
-}
-
-impl DacvaeDecoderBlock {
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        let seq = x.len() / self.up.in_ch;
-        let mut h = x.to_vec();
-        snake(&mut h, &self.alpha, self.up.in_ch, seq);
-        let mut h = self.up.forward(&h);
-        let ch = self.up.out_ch;
-        h = self.res[0].forward(&h);
-        let h = self.res[1].forward(&h);
-        let h = self.res[2].forward(&h);
-        let _ = ch;
-        h
-    }
-}
-
 struct DacvaeDecoder {
-    conv_in: DacvaeConv,
-    blocks: Vec<DacvaeDecoderBlock>,
+    conv_in: WnConv1d,
+    blocks: Vec<DecoderBlock>,
     alpha_out: Vec<f32>,
     conv_out: WnConv1d,
 }
@@ -359,17 +218,17 @@ impl Dacvae {
 
     fn load_encoder(config: &DacvaeConfig, file: &SafetensorsFile) -> Result<DacvaeEncoder> {
         let d = config.encoder_dim;
-        let conv_in = DacvaeConv::load(file, "encoder.conv_in", 1, d, 7, 1, 1)?;
+        let conv_in = load_dacvae_conv(file, "encoder.conv_in", 1, d, 7, 1, 1)?;
         let mut blocks = Vec::new();
         let mut ch = d;
         for (i, &stride) in config.encoder_rates.iter().enumerate() {
             ch *= 2;
             let half = ch / 2;
             let base = format!("encoder.blocks.{i}");
-            let ru = |name: &str, dilation: usize| -> Result<DacvaeRu> {
-                Ok(DacvaeRu {
-                    alpha1: load_alpha(file, &format!("{base}.{name}.act1.alpha"), half)?,
-                    conv1: DacvaeConv::load(
+            let ru = |name: &str, dilation: usize| -> Result<ResidualUnit> {
+                Ok(ResidualUnit {
+                    snake1: load_alpha(file, &format!("{base}.{name}.act1.alpha"), half)?,
+                    conv1: load_dacvae_conv(
                         file,
                         &format!("{base}.{name}.conv1"),
                         half,
@@ -378,7 +237,7 @@ impl Dacvae {
                         1,
                         dilation,
                     )?,
-                    alpha2: load_alpha(file, &format!("{base}.{name}.act2.alpha"), half)?,
+                    snake2: load_alpha(file, &format!("{base}.{name}.act2.alpha"), half)?,
                     conv2: WnConv1d::load(
                         file,
                         &format!("{base}.{name}.conv2"),
@@ -393,9 +252,9 @@ impl Dacvae {
                     ch: half,
                 })
             };
-            let res = [ru("res1", 1)?, ru("res2", 3)?, ru("res3", 9)?];
+            let units = [ru("res1", 1)?, ru("res2", 3)?, ru("res3", 9)?];
             let alpha = load_alpha(file, &format!("{base}.snake.alpha"), half)?;
-            let down = DacvaeConv::load(
+            let down = load_dacvae_conv(
                 file,
                 &format!("{base}.conv"),
                 half,
@@ -404,11 +263,11 @@ impl Dacvae {
                 stride,
                 1,
             )?;
-            blocks.push(DacvaeEncoderBlock {
-                res,
-                alpha,
+            blocks.push(EncoderBlock {
+                units,
+                snake: alpha,
                 down,
-                ch_in: half,
+                ch: half,
             });
         }
         let alpha_out = load_alpha(file, "encoder.snake_out.alpha", ch)?;
@@ -433,18 +292,18 @@ impl Dacvae {
 
     fn load_decoder(config: &DacvaeConfig, file: &SafetensorsFile) -> Result<DacvaeDecoder> {
         let d = config.decoder_dim;
-        let conv_in = DacvaeConv::load(file, "decoder.conv_in", config.latent_dim, d, 7, 1, 1)?;
+        let conv_in = load_dacvae_conv(file, "decoder.conv_in", config.latent_dim, d, 7, 1, 1)?;
         let mut blocks = Vec::new();
         for (i, &stride) in config.decoder_rates.iter().enumerate() {
             let in_dim = d >> i;
             let out_dim = d >> (i + 1);
             let base = format!("decoder.blocks.{i}");
             let alpha = load_alpha(file, &format!("{base}.block_0.alpha"), in_dim)?;
-            let up = DacvaeConvT::load(file, &format!("{base}.block_1"), stride)?;
-            let ru = |name: &str, dilation: usize| -> Result<DacvaeRu> {
-                Ok(DacvaeRu {
-                    alpha1: load_alpha(file, &format!("{base}.{name}.act1.alpha"), out_dim)?,
-                    conv1: DacvaeConv::load(
+            let up = load_dacvae_convt(file, &format!("{base}.block_1"), stride)?;
+            let ru = |name: &str, dilation: usize| -> Result<ResidualUnit> {
+                Ok(ResidualUnit {
+                    snake1: load_alpha(file, &format!("{base}.{name}.act1.alpha"), out_dim)?,
+                    conv1: load_dacvae_conv(
                         file,
                         &format!("{base}.{name}.conv1"),
                         out_dim,
@@ -453,7 +312,7 @@ impl Dacvae {
                         1,
                         dilation,
                     )?,
-                    alpha2: load_alpha(file, &format!("{base}.{name}.act2.alpha"), out_dim)?,
+                    snake2: load_alpha(file, &format!("{base}.{name}.act2.alpha"), out_dim)?,
                     conv2: WnConv1d::load(
                         file,
                         &format!("{base}.{name}.conv2"),
@@ -470,8 +329,12 @@ impl Dacvae {
             };
             // Main path blocks 4 (d1), 5 (d3), 8 (d9); the watermark
             // blocks 2/3/6/7/10/11 are unused by the batch contract.
-            let res = [ru("block_4", 1)?, ru("block_5", 3)?, ru("block_8", 9)?];
-            blocks.push(DacvaeDecoderBlock { alpha, up, res });
+            let units = [ru("block_4", 1)?, ru("block_5", 3)?, ru("block_8", 9)?];
+            blocks.push(DecoderBlock {
+                snake: alpha,
+                up,
+                units,
+            });
         }
         let final_dim = d >> config.decoder_rates.len();
         let alpha_out = load_alpha(file, "decoder.snake_out.alpha", final_dim)?;
@@ -507,7 +370,7 @@ impl Dacvae {
         }
         let ch = self.encoder.conv_out.in_ch;
         let frames = h.len() / ch;
-        snake(&mut h, &self.encoder.alpha_out, ch, frames);
+        snake1d(&mut h, &self.encoder.alpha_out, ch, frames);
         let z = self.encoder.conv_out.forward(&h);
         // in_proj then the mean half (first codebook_dim channels).
         let proj = self.in_proj.forward(&z);
@@ -533,7 +396,7 @@ impl Dacvae {
         }
         let ch = self.decoder.conv_out.in_ch;
         let frames = h.len() / ch;
-        snake(&mut h, &self.decoder.alpha_out, ch, frames);
+        snake1d(&mut h, &self.decoder.alpha_out, ch, frames);
         let mut out = self.decoder.conv_out.forward(&h);
         for v in &mut out {
             *v = v.tanh();

@@ -10,9 +10,16 @@ use serde_json::Value;
 use turbospark_model_io::safetensors::SafetensorsFile;
 use turbospark_tokenizer::Tokenizer as AudioTokenizer;
 
-use crate::models::stt::qwen3_asr::{config::TextConfig, decoder::Decoder};
+use crate::models::stt::qwen3_asr::{
+    config::TextConfig,
+    decoder::{greedy_generate, Decoder},
+};
+use crate::nn::{bad_config, LayerNorm, Linear};
 use crate::quant::QuantScheme;
 use crate::stt::sensevoice::frontend::{compute_fbank, FrontendConfig};
+use crate::stt::sensevoice::sanm::{
+    add_sinusoidal_positions, FsmnLayout, SanmConfig, SanmEncoderLayer,
+};
 use crate::{ops, Result, SpeechError};
 
 /// Immutable Hugging Face checkpoint profile.
@@ -28,6 +35,10 @@ pub const FUN_ASR_NANO_2512: FunAsrNanoProfile = FunAsrNanoProfile {
     repository: "mlx-community/Fun-ASR-Nano-2512",
     revision: "a7bc96fceaafce39ed6748e0c0fa9a9508b67f86",
 };
+
+/// Every Fun-ASR-Nano LayerNorm uses this epsilon; the shared
+/// `nn::LayerNorm` stores it instead of hardcoding it in `apply`.
+const LAYER_NORM_EPS: f32 = 1e-5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Config {
@@ -53,13 +64,6 @@ struct Config {
     default_max_tokens: usize,
 }
 
-fn bad_config(field: &str, why: impl Into<String>) -> SpeechError {
-    SpeechError::BadConfig {
-        field: field.to_owned(),
-        why: why.into(),
-    }
-}
-
 fn positive(value: &Value, field: &str) -> Result<usize> {
     value
         .get(field)
@@ -69,7 +73,30 @@ fn positive(value: &Value, field: &str) -> Result<usize> {
         .ok_or_else(|| bad_config(field, "must be a positive integer"))
 }
 
+fn validate_sanm(width: usize, heads: usize, kernel: usize, left_padding: usize) -> Result<()> {
+    if width % heads != 0 || left_padding > kernel - 1 {
+        return Err(bad_config(
+            "audio_encoder_conf",
+            "invalid SANM attention geometry",
+        ));
+    }
+    Ok(())
+}
+
 impl Config {
+    fn sanm(&self) -> SanmConfig {
+        SanmConfig {
+            output_size: self.output_size,
+            linear_units: self.linear_units,
+            attention_heads: self.attention_heads,
+            fsmn_kernel: self.fsmn_kernel,
+            sanm_shift: self.sanm_shift,
+            layer_norm_eps: LAYER_NORM_EPS,
+            fsmn_layout: FsmnLayout::ChannelsKernelOne,
+            validate: validate_sanm,
+        }
+    }
+
     fn from_json(root: &Value) -> Result<Self> {
         if root.get("model_type").and_then(Value::as_str) != Some("fun_asr_nano") {
             return Err(bad_config("model_type", "expected fun_asr_nano"));
@@ -370,25 +397,21 @@ impl FunAsrNano {
                 .copy_from_slice(&adapted[source..source + self.decoder.hidden_size]);
         }
         let rows = embeddings.len() / self.decoder.hidden_size;
-        let (mut last_hidden, mut cache) = self.decoder.prefill(&embeddings, rows);
+        let (last_hidden, cache) = self.decoder.prefill(&embeddings, rows);
         let stop_ids = [
             self.tokenizer.token_to_id("<|im_end|>").unwrap(),
             self.tokenizer.token_to_id("<|endoftext|>").unwrap(),
         ];
-        let mut generated = Vec::new();
-        for _ in 0..max_tokens {
-            let logits = self.decoder.logits(&last_hidden);
-            let next = argmax(&logits);
-            if stop_ids.contains(&(next as u32)) {
-                break;
-            }
-            let token_id = i32::try_from(next).map_err(|_| SpeechError::Input {
-                why: "Qwen3 generated token id exceeds signed 32-bit range".into(),
-            })?;
-            generated.push(next as u32);
-            let next_embedding = self.decoder.embed(&[token_id])?;
-            last_hidden = self.decoder.step(&next_embedding, &mut cache);
-        }
+        let logits = self.decoder.logits(&last_hidden);
+        let generated = greedy_generate(
+            &self.decoder,
+            &logits,
+            cache,
+            max_tokens,
+            |next| stop_ids.contains(&next),
+            "Qwen3",
+            |_, _| {},
+        )?;
         self.tokenizer
             .decode(&generated, false)
             .map(|text| text.trim().to_owned())
@@ -450,232 +473,11 @@ fn add(left: &[f32], right: &[f32]) -> Vec<f32> {
     left.iter().zip(right).map(|(&a, &b)| a + b).collect()
 }
 
-fn argmax(values: &[f32]) -> usize {
-    values
-        .iter()
-        .enumerate()
-        .fold((0usize, f32::NEG_INFINITY), |best, (index, &value)| {
-            if value > best.1 {
-                (index, value)
-            } else {
-                best
-            }
-        })
-        .0
-}
-
-fn load_tensor(file: &SafetensorsFile, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
-    let descriptor = file.descriptor(name).ok_or_else(|| SpeechError::Tensor {
-        name: name.to_owned(),
-        why: "tensor is missing".into(),
-    })?;
-    if descriptor.shape != shape {
-        return Err(SpeechError::Tensor {
-            name: name.to_owned(),
-            why: format!("expected shape {shape:?}, got {:?}", descriptor.shape),
-        });
-    }
-    Ok(file.load_as_f32(name)?)
-}
-
-struct Linear {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    input: usize,
-    output: usize,
-}
-
-impl Linear {
-    fn load(file: &SafetensorsFile, prefix: &str, input: usize, output: usize) -> Result<Self> {
-        Ok(Self {
-            weight: load_tensor(file, &format!("{prefix}.weight"), &[output, input])?,
-            bias: load_tensor(file, &format!("{prefix}.bias"), &[output])?,
-            input,
-            output,
-        })
-    }
-
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        ops::linear(
-            x,
-            &self.weight,
-            Some(&self.bias),
-            rows,
-            self.input,
-            self.output,
-        )
-    }
-}
-
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-}
-
-impl LayerNorm {
-    fn load(file: &SafetensorsFile, prefix: &str, width: usize) -> Result<Self> {
-        Ok(Self {
-            weight: load_tensor(file, &format!("{prefix}.weight"), &[width])?,
-            bias: load_tensor(file, &format!("{prefix}.bias"), &[width])?,
-            width,
-        })
-    }
-
-    fn apply(&self, values: &mut [f32], rows: usize) {
-        ops::layernorm(
-            values,
-            rows,
-            self.width,
-            &self.weight,
-            Some(&self.bias),
-            1e-5,
-        );
-    }
-}
-
-struct SanmAttention {
-    qkv: Linear,
-    output: Linear,
-    fsmn_weight: Vec<f32>,
-    width: usize,
-    heads: usize,
-    kernel: usize,
-    left_padding: usize,
-}
-
-impl SanmAttention {
-    fn load(file: &SafetensorsFile, prefix: &str, input: usize, config: &Config) -> Result<Self> {
-        let width = config.output_size;
-        let kernel = config.fsmn_kernel;
-        let left_padding = (kernel - 1) / 2 + config.sanm_shift;
-        if width % config.attention_heads != 0 || left_padding > kernel - 1 {
-            return Err(bad_config(
-                "audio_encoder_conf",
-                "invalid SANM attention geometry",
-            ));
-        }
-        Ok(Self {
-            qkv: Linear::load(file, &format!("{prefix}.linear_q_k_v"), input, 3 * width)?,
-            output: Linear::load(file, &format!("{prefix}.linear_out"), width, width)?,
-            fsmn_weight: load_tensor(
-                file,
-                &format!("{prefix}.fsmn_block.weight"),
-                &[width, kernel, 1],
-            )?,
-            width,
-            heads: config.attention_heads,
-            kernel,
-            left_padding,
-        })
-    }
-
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        let width = self.width;
-        let head_width = width / self.heads;
-        let qkv = self.qkv.forward(x, rows);
-        let mut attended = vec![0.0f32; rows * width];
-        let mut scores = vec![0.0f32; rows];
-        let scale = (head_width as f32).sqrt().recip();
-        for time in 0..rows {
-            for head in 0..self.heads {
-                for source in 0..rows {
-                    let mut dot = 0.0f32;
-                    for dim in 0..head_width {
-                        let col = head * head_width + dim;
-                        dot += qkv[time * 3 * width + col] * qkv[source * 3 * width + width + col];
-                    }
-                    scores[source] = dot * scale;
-                }
-                ops::softmax_row(&mut scores);
-                for dim in 0..head_width {
-                    let col = head * head_width + dim;
-                    let mut sum = 0.0f32;
-                    for source in 0..rows {
-                        sum += scores[source] * qkv[source * 3 * width + 2 * width + col];
-                    }
-                    attended[time * width + col] = sum;
-                }
-            }
-        }
-        let mut output = self.output.forward(&attended, rows);
-        for time in 0..rows {
-            for channel in 0..width {
-                let mut memory = 0.0f32;
-                for kernel_index in 0..self.kernel {
-                    let source = time as isize + kernel_index as isize - self.left_padding as isize;
-                    if source >= 0 && source < rows as isize {
-                        let value = qkv[source as usize * 3 * width + 2 * width + channel];
-                        memory += value * self.fsmn_weight[channel * self.kernel + kernel_index];
-                    }
-                }
-                let value = qkv[time * 3 * width + 2 * width + channel];
-                output[time * width + channel] += memory + value;
-            }
-        }
-        output
-    }
-}
-
-struct EncoderLayer {
-    norm1: LayerNorm,
-    norm2: LayerNorm,
-    attention: SanmAttention,
-    ff1: Linear,
-    ff2: Linear,
-    input: usize,
-    output: usize,
-}
-
-impl EncoderLayer {
-    fn load(file: &SafetensorsFile, prefix: &str, input: usize, config: &Config) -> Result<Self> {
-        let output = config.output_size;
-        let attention_prefix = format!("{prefix}.self_attn");
-        Ok(Self {
-            norm1: LayerNorm::load(file, &format!("{prefix}.norm1"), input)?,
-            norm2: LayerNorm::load(file, &format!("{prefix}.norm2"), output)?,
-            attention: SanmAttention::load(file, &attention_prefix, input, config)?,
-            ff1: Linear::load(
-                file,
-                &format!("{prefix}.feed_forward.w_1"),
-                output,
-                config.linear_units,
-            )?,
-            ff2: Linear::load(
-                file,
-                &format!("{prefix}.feed_forward.w_2"),
-                config.linear_units,
-                output,
-            )?,
-            input,
-            output,
-        })
-    }
-
-    fn forward(&self, input: &[f32], rows: usize) -> Vec<f32> {
-        let mut normalized = input.to_vec();
-        self.norm1.apply(&mut normalized, rows);
-        let attended = self.attention.forward(&normalized, rows);
-        let mut hidden = if self.input == self.output {
-            add(input, &attended)
-        } else {
-            attended
-        };
-        let residual = hidden.clone();
-        self.norm2.apply(&mut hidden, rows);
-        let mut feedforward = self.ff1.forward(&hidden, rows);
-        for value in &mut feedforward {
-            *value = value.max(0.0);
-        }
-        add(&residual, &self.ff2.forward(&feedforward, rows))
-    }
-}
-
 struct AudioEncoder {
-    first: EncoderLayer,
-    layers: Vec<EncoderLayer>,
+    first: SanmEncoderLayer,
+    layers: Vec<SanmEncoderLayer>,
     after_norm: LayerNorm,
-    tp_layers: Vec<EncoderLayer>,
+    tp_layers: Vec<SanmEncoderLayer>,
     tp_norm: LayerNorm,
     config: Config,
 }
@@ -683,33 +485,43 @@ struct AudioEncoder {
 impl AudioEncoder {
     fn load(file: &SafetensorsFile, config: &Config) -> Result<Self> {
         let prefix = "audio_encoder";
-        let first = EncoderLayer::load(
+        let sanm = config.sanm();
+        let first = SanmEncoderLayer::load(
             file,
             &format!("{prefix}.encoders0.0"),
             config.input_size,
-            config,
+            &sanm,
         )?;
         let mut layers = Vec::with_capacity(config.num_blocks - 1);
         for index in 0..config.num_blocks - 1 {
-            layers.push(EncoderLayer::load(
+            layers.push(SanmEncoderLayer::load(
                 file,
                 &format!("{prefix}.encoders.{index}"),
                 config.output_size,
-                config,
+                &sanm,
             )?);
         }
-        let after_norm =
-            LayerNorm::load(file, &format!("{prefix}.after_norm"), config.output_size)?;
+        let after_norm = LayerNorm::load(
+            file,
+            &format!("{prefix}.after_norm"),
+            config.output_size,
+            LAYER_NORM_EPS,
+        )?;
         let mut tp_layers = Vec::with_capacity(config.tp_blocks);
         for index in 0..config.tp_blocks {
-            tp_layers.push(EncoderLayer::load(
+            tp_layers.push(SanmEncoderLayer::load(
                 file,
                 &format!("{prefix}.tp_encoders.{index}"),
                 config.output_size,
-                config,
+                &sanm,
             )?);
         }
-        let tp_norm = LayerNorm::load(file, &format!("{prefix}.tp_norm"), config.output_size)?;
+        let tp_norm = LayerNorm::load(
+            file,
+            &format!("{prefix}.tp_norm"),
+            config.output_size,
+            LAYER_NORM_EPS,
+        )?;
         Ok(Self {
             first,
             layers,
@@ -728,7 +540,7 @@ impl AudioEncoder {
             });
         }
         let mut hidden = features.to_vec();
-        add_sinusoidal_position(
+        add_sinusoidal_positions(
             &mut hidden,
             rows,
             self.config.input_size,
@@ -744,22 +556,6 @@ impl AudioEncoder {
         }
         self.tp_norm.apply(&mut hidden, rows);
         Ok(hidden)
-    }
-}
-
-fn add_sinusoidal_position(values: &mut [f32], rows: usize, width: usize, scale_width: usize) {
-    let half = width / 2;
-    let log_timescale_increment = 10_000.0f32.ln() / (half - 1) as f32;
-    let scale = (scale_width as f32).sqrt();
-    for row in 0..rows {
-        for dim in 0..half {
-            let inverse_timescale = (-(dim as f32) * log_timescale_increment).exp();
-            let scaled_time = (row + 1) as f32 * inverse_timescale;
-            let sin_index = row * width + dim;
-            let cos_index = row * width + half + dim;
-            values[sin_index] = values[sin_index] * scale + scaled_time.sin();
-            values[cos_index] = values[cos_index] * scale + scaled_time.cos();
-        }
     }
 }
 
@@ -781,10 +577,10 @@ impl SelfAttention {
             ));
         }
         Ok(Self {
-            query: Linear::load(file, &format!("{prefix}.linear_q"), width, width)?,
-            key: Linear::load(file, &format!("{prefix}.linear_k"), width, width)?,
-            value: Linear::load(file, &format!("{prefix}.linear_v"), width, width)?,
-            output: Linear::load(file, &format!("{prefix}.linear_out"), width, width)?,
+            query: Linear::load(file, &format!("{prefix}.linear_q"), width, width, true)?,
+            key: Linear::load(file, &format!("{prefix}.linear_k"), width, width, true)?,
+            value: Linear::load(file, &format!("{prefix}.linear_v"), width, width, true)?,
+            output: Linear::load(file, &format!("{prefix}.linear_out"), width, width, true)?,
             width,
             heads,
         })
@@ -838,20 +634,22 @@ impl AdaptorLayer {
         let attention_prefix = format!("{prefix}.self_attn");
         let hidden_units = width / 4;
         Ok(Self {
-            norm1: LayerNorm::load(file, &format!("{prefix}.norm1"), width)?,
+            norm1: LayerNorm::load(file, &format!("{prefix}.norm1"), width, LAYER_NORM_EPS)?,
             attention: SelfAttention::load(file, &attention_prefix, width, heads)?,
-            norm2: LayerNorm::load(file, &format!("{prefix}.norm2"), width)?,
+            norm2: LayerNorm::load(file, &format!("{prefix}.norm2"), width, LAYER_NORM_EPS)?,
             ff1: Linear::load(
                 file,
                 &format!("{prefix}.feed_forward.w_1"),
                 width,
                 hidden_units,
+                true,
             )?,
             ff2: Linear::load(
                 file,
                 &format!("{prefix}.feed_forward.w_2"),
                 hidden_units,
                 width,
+                true,
             )?,
             width,
         })
@@ -902,12 +700,14 @@ impl AudioAdaptor {
                 &format!("{root}.linear1"),
                 encoder_dim * k,
                 config.adaptor_ffn_dim,
+                true,
             )?,
             linear2: Linear::load(
                 file,
                 &format!("{root}.linear2"),
                 config.adaptor_ffn_dim,
                 llm_dim,
+                true,
             )?,
             blocks,
             downsample_rate: k,

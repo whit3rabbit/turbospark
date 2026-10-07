@@ -13,8 +13,10 @@
 //! [`log_mel_spectrogram`] and stay with the whisper frontend, which owns
 //! those exact numerics.
 
+use crate::dsp::TableCache;
 use crate::error::AudioError;
 use crate::stft::StftOptions;
+use std::sync::Arc;
 
 /// The frequency-to-mel warping a filterbank is built in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -53,6 +55,168 @@ impl MelFilterbank {
             })
             .collect())
     }
+}
+
+/// A filterbank plus the nonzero span of each triangular row, so a frame
+/// projection touches a few dozen bins per band instead of all of them.
+///
+/// [`MelFilterbank::project`] is the dense reference. [`Self::project_into`]
+/// returns the same bits for every input, including the sign of a zero
+/// result and non-finite spectra (see its comments for why skipping the
+/// exactly-zero weights is only safe under those two conditions).
+#[derive(Debug, Clone)]
+pub struct MelProjector {
+    bank: Arc<MelFilterbank>,
+    /// Per band: `[first, end)` covering every weight whose bits are not
+    /// +0.0. `(0, 0)` for an all-zero row.
+    spans: Vec<(usize, usize)>,
+}
+
+impl MelProjector {
+    pub fn new(bank: Arc<MelFilterbank>) -> Self {
+        let spans = (0..bank.num_mels)
+            .map(|m| {
+                let row = &bank.weights[m * bank.num_bins..(m + 1) * bank.num_bins];
+                // Bits, not `!= 0.0`: -0.0 and NaN weights stay in the span.
+                let first = row.iter().position(|w| w.to_bits() != 0);
+                match first {
+                    None => (0, 0),
+                    Some(first) => {
+                        let last = row.iter().rposition(|w| w.to_bits() != 0).unwrap_or(first);
+                        (first, last + 1)
+                    }
+                }
+            })
+            .collect();
+        Self { bank, spans }
+    }
+
+    pub fn filterbank(&self) -> &MelFilterbank {
+        &self.bank
+    }
+
+    /// Projects one spectrum into `out` (cleared, then `num_mels` values),
+    /// bit-identical to [`MelFilterbank::project`].
+    ///
+    /// The dense projection folds `w * s` over every bin from the neutral
+    /// element of `Iterator::sum`. A bin outside a row's span has weight
+    /// +0.0, so for finite `s` its term is exactly +-0.0 and can change the
+    /// accumulator only through the sign of a zero. That sign is rebuilt from
+    /// two facts about the spectrum, found once per frame: the first and
+    /// last bins whose sign bit is clear (a +0.0 term turns a -0.0
+    /// accumulator into +0.0; a -0.0 term never changes anything but a
+    /// -0.0 start). A non-finite bin makes `0.0 * s` NaN in the dense sum,
+    /// so such a frame takes the dense path.
+    pub fn project_into(&self, spectrum: &[f32], out: &mut Vec<f32>) -> Result<(), AudioError> {
+        let bank = &*self.bank;
+        if spectrum.len() != bank.num_bins {
+            return Err(AudioError::ShapeMismatch {
+                what: "spectrum length vs filterbank bins",
+                expected: bank.num_bins,
+                actual: spectrum.len(),
+            });
+        }
+        let n = bank.num_bins;
+        out.clear();
+        let mut first_nonneg = n;
+        let mut last_nonneg: Option<usize> = None;
+        let mut finite = true;
+        for (i, &s) in spectrum.iter().enumerate() {
+            if !s.is_finite() {
+                finite = false;
+                break;
+            }
+            if s.is_sign_positive() {
+                if last_nonneg.is_none() {
+                    first_nonneg = i;
+                }
+                last_nonneg = Some(i);
+            }
+        }
+        if !finite {
+            out.extend((0..bank.num_mels).map(|m| {
+                let row = &bank.weights[m * n..(m + 1) * n];
+                row.iter().zip(spectrum).map(|(&w, &s)| w * s).sum::<f32>()
+            }));
+            return Ok(());
+        }
+        // The neutral element `Iterator::sum` starts from (-0.0 on current
+        // toolchains, +0.0 on older ones): read it from the same impl rather
+        // than assuming it.
+        let init: f32 = std::iter::empty::<f32>().sum();
+        let init_is_neg_zero = init.to_bits() == (-0.0f32).to_bits();
+        for (m, &(first, end)) in self.spans.iter().enumerate() {
+            let row = &bank.weights[m * n..(m + 1) * n];
+            let mut acc = init;
+            // Leading zero terms: a -0.0 start survives only if every one
+            // of them is -0.0, i.e. no non-negative bin before the span.
+            if init_is_neg_zero && first > first_nonneg {
+                acc = 0.0;
+            }
+            for i in first..end {
+                acc += row[i] * spectrum[i];
+            }
+            // Trailing zero terms: same rule for a -0.0 accumulator.
+            if acc.to_bits() == (-0.0f32).to_bits() && last_nonneg.is_some_and(|l| l >= end) {
+                acc = 0.0;
+            }
+            out.push(acc);
+        }
+        Ok(())
+    }
+}
+
+/// Filterbanks above this many weights are built per call, not cached.
+const MAX_CACHED_FILTERBANK_WEIGHTS: usize = 1 << 20;
+
+/// Returns a shared [`MelProjector`] for the exact filterbank parameters,
+/// building it on first use.
+///
+/// Building the bank costs a per-cell f32 division across `num_mels x
+/// num_bins` cells, and frontends used to redo it on every utterance. The
+/// bank is a pure function of its parameters, so a cached one is the same
+/// bits as a fresh [`mel_filterbank`]. Invalid parameters return the same
+/// error as `mel_filterbank` and are never cached.
+pub fn mel_projector_cached(
+    num_mels: usize,
+    fft_size: usize,
+    sample_rate: u32,
+    fmin: f32,
+    fmax: Option<f32>,
+    scale: MelScale,
+) -> Result<Arc<MelProjector>, AudioError> {
+    type Key = (usize, usize, u32, u32, Option<u32>, bool);
+    static BANKS: TableCache<Key, MelProjector> = TableCache::new(16);
+    let key: Key = (
+        num_mels,
+        fft_size,
+        sample_rate,
+        fmin.to_bits(),
+        fmax.map(f32::to_bits),
+        scale == MelScale::Htk,
+    );
+    // The size bound is checked from the parameters, not the built bank, so
+    // an oversized request never enters the map.
+    let cacheable = num_mels
+        .checked_mul(fft_size / 2 + 1)
+        .is_some_and(|n| n <= MAX_CACHED_FILTERBANK_WEIGHTS);
+    BANKS.get_or_build(key, cacheable, || {
+        let bank = mel_filterbank(num_mels, fft_size, sample_rate, fmin, fmax, scale)?;
+        Ok(MelProjector::new(Arc::new(bank)))
+    })
+}
+
+/// [`mel_filterbank`] through the shared cache; see [`mel_projector_cached`].
+pub fn mel_filterbank_cached(
+    num_mels: usize,
+    fft_size: usize,
+    sample_rate: u32,
+    fmin: f32,
+    fmax: Option<f32>,
+    scale: MelScale,
+) -> Result<Arc<MelFilterbank>, AudioError> {
+    let projector = mel_projector_cached(num_mels, fft_size, sample_rate, fmin, fmax, scale)?;
+    Ok(Arc::clone(&projector.bank))
 }
 
 /// Builds a mel filterbank.
@@ -207,7 +371,7 @@ pub fn mel_spectrogram(
             why: "must be positive".to_string(),
         });
     }
-    let filterbank = mel_filterbank(
+    let projector = mel_projector_cached(
         options.num_mels,
         options.stft.fft_size,
         options.sample_rate,
@@ -215,18 +379,27 @@ pub fn mel_spectrogram(
         options.fmax,
         options.scale,
     )?;
-    let spectra = crate::stft::stft(samples, &options.stft)?;
-    let mut out = Vec::with_capacity(spectra.len());
-    for spectrum in spectra {
-        let power: Vec<f32> = spectrum
-            .iter()
-            .map(|c| {
+    // Stream frames through reusable power/mel buffers rather than holding
+    // the whole complex spectrogram.
+    let mut power: Vec<f32> = Vec::new();
+    let mut out = Vec::new();
+    crate::stft::stft_each(
+        samples,
+        &options.stft,
+        crate::stft::StftPaddingMode::Reflect,
+        crate::stft::StftWindowPlacement::Left,
+        |spectrum| {
+            power.clear();
+            power.extend(spectrum.iter().map(|c| {
                 let mag = c.re.hypot(c.im);
                 mag.powf(options.power)
-            })
-            .collect();
-        out.push(filterbank.project(&power)?);
-    }
+            }));
+            let mut row = Vec::with_capacity(options.num_mels);
+            projector.project_into(&power, &mut row)?;
+            out.push(row);
+            Ok(())
+        },
+    )?;
     Ok(out)
 }
 
@@ -468,5 +641,351 @@ mod allocation_regression {
             mel_filterbank(80, usize::MAX, 16000, 0.0, None, MelScale::Slaney),
             Err(AudioError::BufferTooLarge { .. })
         ));
+    }
+}
+
+/// Bitwise parity of the cached/streaming mel paths and the span-limited
+/// projection against the previous implementations, retained verbatim in
+/// `old`. The projection cases target the sign of zero and non-finite bins,
+/// the only places skipping +0.0-weight terms could differ.
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+    use crate::dsp::TestRng;
+
+    mod old {
+        use super::super::*;
+
+        /// The dense `MelFilterbank::project` body.
+        pub(super) fn project(bank: &MelFilterbank, spectrum: &[f32]) -> Vec<f32> {
+            (0..bank.num_mels)
+                .map(|m| {
+                    let row = &bank.weights[m * bank.num_bins..(m + 1) * bank.num_bins];
+                    row.iter().zip(spectrum).map(|(&w, &s)| w * s).sum()
+                })
+                .collect()
+        }
+
+        /// `mel_spectrogram` before streaming and caching.
+        pub(super) fn mel_spectrogram(
+            samples: &[f32],
+            options: &MelSpectrogramOptions,
+        ) -> Result<Vec<Vec<f32>>, AudioError> {
+            if !options.power.is_finite() || options.power <= 0.0 {
+                return Err(AudioError::InvalidParameter {
+                    name: "power".to_string(),
+                    value: options.power.to_string(),
+                    why: "must be positive".to_string(),
+                });
+            }
+            let filterbank = mel_filterbank(
+                options.num_mels,
+                options.stft.fft_size,
+                options.sample_rate,
+                options.fmin,
+                options.fmax,
+                options.scale,
+            )?;
+            let spectra = crate::stft::stft(samples, &options.stft)?;
+            let mut out = Vec::with_capacity(spectra.len());
+            for spectrum in spectra {
+                let power: Vec<f32> = spectrum
+                    .iter()
+                    .map(|c| {
+                        let mag = c.re.hypot(c.im);
+                        mag.powf(options.power)
+                    })
+                    .collect();
+                out.push(filterbank.project(&power)?);
+            }
+            Ok(out)
+        }
+    }
+
+    fn assert_bits(what: &str, got: &[f32], want: &[f32]) {
+        assert_eq!(got.len(), want.len(), "{what}: length");
+        for (i, (g, w)) in got.iter().zip(want).enumerate() {
+            assert_eq!(g.to_bits(), w.to_bits(), "{what}[{i}]: {g:?} vs {w:?}");
+        }
+    }
+
+    fn bank(
+        num_mels: usize,
+        fft: usize,
+        rate: u32,
+        fmax: Option<f32>,
+        scale: MelScale,
+    ) -> Arc<MelFilterbank> {
+        Arc::new(mel_filterbank(num_mels, fft, rate, 0.0, fmax, scale).unwrap())
+    }
+
+    /// Spectrum values that expose zero-sign handling: both zeros, values
+    /// whose product with a small weight underflows to -0.0, and ordinary
+    /// magnitudes of both signs.
+    fn tricky_spectrum(rng: &mut TestRng, n: usize, mode: u64) -> Vec<f32> {
+        const POOL: [f32; 9] = [0.0, -0.0, 1.0, -1.0, 2.5, -3.5, 1e-30, -1e-30, 1e30];
+        (0..n)
+            .map(|_| match mode {
+                0 => POOL[(rng.next() % 9) as usize],
+                // All negative or negative zero: every zero term is -0.0.
+                1 => -(POOL[(rng.next() % 9) as usize].abs()),
+                // Nonnegative power-like.
+                2 => rng.value().abs(),
+                // Mostly -0.0 with a rare +0.0 or value.
+                3 => {
+                    if rng.next() % 40 == 0 {
+                        POOL[(rng.next() % 9) as usize]
+                    } else {
+                        -0.0
+                    }
+                }
+                _ => 0.0,
+            })
+            .collect()
+    }
+
+    fn check_banks() -> Vec<Arc<MelFilterbank>> {
+        let mut banks = vec![
+            bank(80, 400, 16_000, Some(8_000.0), MelScale::Slaney),
+            bank(128, 400, 16_000, Some(8_000.0), MelScale::Slaney),
+            bank(8, 16, 8_000, None, MelScale::Htk),
+            bank(40, 512, 22_050, None, MelScale::Slaney),
+            // More bands than bins: duplicated edges, empty rows.
+            bank(30, 16, 16_000, None, MelScale::Htk),
+            bank(1, 2, 16_000, None, MelScale::Slaney),
+        ];
+        // Hand-built rows: all-zero, single weight at each end, -0.0 and NaN
+        // weights, a row spanning everything, a zero gap inside a row.
+        let n = 12;
+        let mut weights = vec![0.0f32; 8 * n];
+        weights[n] = 0.5;
+        weights[2 * n + n - 1] = 0.25;
+        weights[3 * n + 4] = -0.0;
+        weights[4 * n + 5] = f32::NAN;
+        for w in &mut weights[5 * n..6 * n] {
+            *w = 0.125;
+        }
+        weights[6 * n + 2] = 1.0;
+        weights[6 * n + 9] = 2.0;
+        weights[7 * n + 6] = 1e-30;
+        banks.push(Arc::new(MelFilterbank {
+            num_mels: 8,
+            num_bins: n,
+            weights,
+        }));
+        banks
+    }
+
+    #[test]
+    fn span_projection_matches_dense_including_zero_sign() {
+        let mut rng = TestRng(0xABCD_0123_4567_89EF);
+        for (b, bank) in check_banks().into_iter().enumerate() {
+            let projector = MelProjector::new(Arc::clone(&bank));
+            let mut out = vec![7.0f32; 3];
+            for trial in 0..400u64 {
+                let spectrum = tricky_spectrum(&mut rng, bank.num_bins, trial % 5);
+                projector.project_into(&spectrum, &mut out).unwrap();
+                let want = old::project(&bank, &spectrum);
+                assert_bits(&format!("bank {b} trial {trial}"), &out, &want);
+                assert_bits(
+                    &format!("bank {b} trial {trial} (project)"),
+                    &bank.project(&spectrum).unwrap(),
+                    &want,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn span_projection_matches_dense_on_non_finite_spectra() {
+        let mut rng = TestRng(0x5555_AAAA_1357_9BDF);
+        for (b, bank) in check_banks().into_iter().enumerate() {
+            let projector = MelProjector::new(Arc::clone(&bank));
+            let mut out = Vec::new();
+            for trial in 0..120usize {
+                let mut spectrum = tricky_spectrum(&mut rng, bank.num_bins, 2);
+                let at = trial % bank.num_bins;
+                spectrum[at] = [f32::INFINITY, f32::NEG_INFINITY, f32::NAN][trial % 3];
+                projector.project_into(&spectrum, &mut out).unwrap();
+                let want = old::project(&bank, &spectrum);
+                // NaN payloads and signs compared as bits as well.
+                assert_bits(&format!("bank {b} nonfinite {trial}"), &out, &want);
+            }
+        }
+    }
+
+    #[test]
+    fn span_projection_matches_dense_on_realistic_power_spectra() {
+        let mut rng = TestRng(0x7777_1111_3333_5555);
+        let bank = bank(80, 400, 16_000, Some(8_000.0), MelScale::Slaney);
+        let projector = MelProjector::new(Arc::clone(&bank));
+        let mut out = Vec::new();
+        for trial in 0..200 {
+            let spectrum: Vec<f32> = (0..bank.num_bins)
+                .map(|_| {
+                    let v = rng.value();
+                    v * v
+                })
+                .collect();
+            projector.project_into(&spectrum, &mut out).unwrap();
+            assert_bits(
+                &format!("power {trial}"),
+                &out,
+                &old::project(&bank, &spectrum),
+            );
+        }
+        // Wrong length is refused with the dense path's error.
+        let short = vec![0.0f32; bank.num_bins - 1];
+        let want = bank.project(&short).unwrap_err().to_string();
+        assert_eq!(
+            projector
+                .project_into(&short, &mut out)
+                .unwrap_err()
+                .to_string(),
+            want
+        );
+    }
+
+    #[test]
+    fn cached_filterbank_is_bit_identical_and_errors_pass_through() {
+        let cases: [(usize, usize, u32, f32, Option<f32>, MelScale); 5] = [
+            (80, 400, 16_000, 0.0, Some(8_000.0), MelScale::Slaney),
+            (128, 400, 16_000, 0.0, None, MelScale::Slaney),
+            (8, 16, 8_000, 0.0, None, MelScale::Htk),
+            (40, 512, 22_050, 100.0, Some(7_000.0), MelScale::Slaney),
+            (40, 512, 22_050, 100.0, Some(7_000.0), MelScale::Htk),
+        ];
+        for (num_mels, fft, rate, fmin, fmax, scale) in cases {
+            let fresh = mel_filterbank(num_mels, fft, rate, fmin, fmax, scale).unwrap();
+            // Twice: the second call is a cache hit.
+            for _ in 0..2 {
+                let cached = mel_filterbank_cached(num_mels, fft, rate, fmin, fmax, scale).unwrap();
+                assert_eq!(
+                    (cached.num_mels, cached.num_bins),
+                    (fresh.num_mels, fresh.num_bins)
+                );
+                assert_bits("cached weights", &cached.weights, &fresh.weights);
+            }
+        }
+        // Parameters that differ only in scale or fmax must not collide.
+        let slaney = mel_filterbank_cached(8, 16, 8_000, 0.0, None, MelScale::Slaney).unwrap();
+        let htk = mel_filterbank_cached(8, 16, 8_000, 0.0, None, MelScale::Htk).unwrap();
+        assert_ne!(slaney.weights, htk.weights);
+        let explicit =
+            mel_filterbank_cached(8, 16, 8_000, 0.0, Some(3_000.0), MelScale::Htk).unwrap();
+        assert_ne!(explicit.weights, htk.weights);
+        // Invalid parameters return the uncached error every time.
+        for _ in 0..2 {
+            let want = mel_filterbank(0, 512, 16_000, 0.0, None, MelScale::Slaney).unwrap_err();
+            let got =
+                mel_filterbank_cached(0, 512, 16_000, 0.0, None, MelScale::Slaney).unwrap_err();
+            assert_eq!(got.to_string(), want.to_string());
+            let want =
+                mel_filterbank(80, 512, 16_000, 9_000.0, None, MelScale::Slaney).unwrap_err();
+            let got = mel_filterbank_cached(80, 512, 16_000, 9_000.0, None, MelScale::Slaney)
+                .unwrap_err();
+            assert_eq!(got.to_string(), want.to_string());
+        }
+        assert!(
+            mel_filterbank_cached(usize::MAX, 400, 16_000, 0.0, None, MelScale::Slaney).is_err()
+        );
+    }
+
+    #[test]
+    fn mel_spectrogram_matches_old_bitwise() {
+        let mut rng = TestRng(0x3141_5926_5358_9793);
+        let default = MelSpectrogramOptions::default();
+        let variants = [
+            default.clone(),
+            MelSpectrogramOptions {
+                stft: StftOptions {
+                    fft_size: 400,
+                    hop: 160,
+                    window: crate::dsp::hann_window(400),
+                    center: true,
+                },
+                num_mels: 80,
+                fmax: Some(8_000.0),
+                ..default.clone()
+            },
+            MelSpectrogramOptions {
+                stft: StftOptions {
+                    fft_size: 64,
+                    hop: 16,
+                    window: crate::dsp::hann_window(48),
+                    center: false,
+                },
+                num_mels: 12,
+                sample_rate: 8_000,
+                fmax: None,
+                scale: MelScale::Htk,
+                power: 1.0,
+                ..default.clone()
+            },
+            MelSpectrogramOptions {
+                stft: StftOptions {
+                    fft_size: 128,
+                    hop: 32,
+                    window: crate::dsp::hann_window(128),
+                    center: true,
+                },
+                num_mels: 20,
+                sample_rate: 16_000,
+                fmax: Some(6_000.0),
+                power: 1.7,
+                ..default.clone()
+            },
+        ];
+        for (v, options) in variants.iter().enumerate() {
+            for len in [2_000usize, 5_000] {
+                let samples = rng.vec(len);
+                let got = mel_spectrogram(&samples, options).unwrap();
+                let want = old::mel_spectrogram(&samples, options).unwrap();
+                assert_eq!(got.len(), want.len());
+                for (f, (g, w)) in got.iter().zip(&want).enumerate() {
+                    assert_bits(&format!("variant {v} len {len} frame {f}"), g, w);
+                }
+            }
+            // Silence exercises the all-+0.0 power path.
+            let silent = vec![0.0f32; 1_000];
+            let got = mel_spectrogram(&silent, options).unwrap();
+            let want = old::mel_spectrogram(&silent, options).unwrap();
+            for (g, w) in got.iter().zip(&want) {
+                assert_bits(&format!("variant {v} silence"), g, w);
+            }
+        }
+        // Error precedence is unchanged: power, then filterbank, then STFT.
+        let bad_power = MelSpectrogramOptions {
+            power: 0.0,
+            ..default.clone()
+        };
+        assert_eq!(
+            mel_spectrogram(&[0.0; 10], &bad_power)
+                .unwrap_err()
+                .to_string(),
+            old::mel_spectrogram(&[0.0; 10], &bad_power)
+                .unwrap_err()
+                .to_string()
+        );
+        let bad_bank = MelSpectrogramOptions {
+            num_mels: 0,
+            ..default.clone()
+        };
+        assert_eq!(
+            mel_spectrogram(&[0.0; 10], &bad_bank)
+                .unwrap_err()
+                .to_string(),
+            old::mel_spectrogram(&[0.0; 10], &bad_bank)
+                .unwrap_err()
+                .to_string()
+        );
+        assert_eq!(
+            mel_spectrogram(&[0.0; 10], &default)
+                .unwrap_err()
+                .to_string(),
+            old::mel_spectrogram(&[0.0; 10], &default)
+                .unwrap_err()
+                .to_string()
+        );
     }
 }

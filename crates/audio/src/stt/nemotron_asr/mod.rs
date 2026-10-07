@@ -14,10 +14,11 @@ use turbospark_audio::nemo_mel::{
 use turbospark_audio::stft::{StftOptions, StftPaddingMode};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::symmetric_hann;
 use crate::{Result, SpeechError};
 
 mod encoder;
-mod rnnt;
+pub(crate) mod rnnt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NemotronAsrProfile {
@@ -422,7 +423,7 @@ pub struct NemotronAsr {
     encoder: encoder::NemotronEncoder,
     prompt: PromptKernel,
     predictor: rnnt::NemotronPredictor,
-    joint: rnnt::NemotronJoint,
+    joint: rnnt::Joint,
 }
 
 impl NemotronAsr {
@@ -452,7 +453,7 @@ impl NemotronAsr {
             config.decoder_layers,
             config.vocabulary.len(),
         )?;
-        let joint = rnnt::NemotronJoint::load(
+        let joint = rnnt::Joint::load(
             &file,
             config.encoder_hidden,
             config.decoder_hidden,
@@ -536,41 +537,21 @@ impl NemotronAsr {
 
     fn greedy_decode(&self, features: &[f32], frames: usize) -> Result<String> {
         let cfg = &self.config;
-        let blank_id = cfg.vocabulary.len();
-        let mut last_token = blank_id;
-        let mut hidden = vec![vec![0.0; cfg.decoder_hidden]; cfg.decoder_layers];
-        let mut cell = vec![vec![0.0; cfg.decoder_hidden]; cfg.decoder_layers];
+        let tokens = rnnt::greedy_tokens(
+            &self.predictor,
+            &self.joint,
+            features,
+            frames,
+            cfg.encoder_hidden,
+            cfg.vocabulary.len(),
+            cfg.max_symbols,
+        )?;
         let mut pieces = Vec::new();
-        let mut frame = 0;
-        let mut symbols = 0;
-        while frame < frames {
-            let start = frame * cfg.encoder_hidden;
-            let encoder_frame = &features[start..start + cfg.encoder_hidden];
-            let (prediction, proposed_hidden, proposed_cell) = self.predictor.step(
-                (last_token != blank_id).then_some(last_token),
-                &hidden,
-                &cell,
-            )?;
-            let logits = self.joint.logits(encoder_frame, &prediction);
-            let token = argmax(&logits);
-            if token == blank_id {
-                frame += 1;
-                symbols = 0;
-                continue;
-            }
-
-            last_token = token;
-            hidden = proposed_hidden;
-            cell = proposed_cell;
+        for token in tokens {
             if let Some(piece) = cfg.vocabulary.get(token) {
                 if !is_special_piece(piece) {
                     pieces.push(piece.replace('▁', " "));
                 }
-            }
-            symbols += 1;
-            if symbols >= cfg.max_symbols {
-                frame += 1;
-                symbols = 0;
             }
         }
         Ok(pieces.concat().trim().to_string())
@@ -660,18 +641,6 @@ fn load_f32_tensor(file: &SafetensorsFile, name: &str, shape: &[usize]) -> Resul
     }
     file.load_as_f32(name)
         .map_err(|error| bad(name, format!("load failed: {error}")))
-}
-
-fn symmetric_hann(size: usize) -> Vec<f32> {
-    if size <= 1 {
-        return vec![1.0; size];
-    }
-    (0..size)
-        .map(|index| {
-            (0.5 * (1.0 - (2.0 * std::f64::consts::PI * index as f64 / (size - 1) as f64).cos()))
-                as f32
-        })
-        .collect()
 }
 
 fn argmax(values: &[f32]) -> usize {

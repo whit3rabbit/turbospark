@@ -15,8 +15,17 @@ use std::path::Path;
 use serde_json::Value;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::{bad_config, load_tensor, LayerNorm, Linear};
 use crate::ops;
 use crate::{Result, SpeechError};
+
+pub(super) mod backbone;
+pub(crate) mod ctc;
+
+use backbone::{
+    add, channels_first_to_rows, decode_ctc, parse_vocab, positive, positive_array, Attention,
+    PositionalConv,
+};
 
 /// Immutable Hugging Face checkpoint profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,38 +56,6 @@ pub struct Wav2VecConfig {
     pub conv_bias: bool,
     pub num_conv_pos_embeddings: usize,
     pub num_conv_pos_embedding_groups: usize,
-}
-
-fn bad_config(field: &str, why: impl Into<String>) -> SpeechError {
-    SpeechError::BadConfig {
-        field: field.to_owned(),
-        why: why.into(),
-    }
-}
-
-fn positive(value: &Value, field: &str) -> Result<usize> {
-    value
-        .get(field)
-        .and_then(Value::as_u64)
-        .and_then(|number| usize::try_from(number).ok())
-        .filter(|&number| number > 0)
-        .ok_or_else(|| bad_config(field, "must be a positive integer"))
-}
-
-fn positive_array(value: &Value, field: &str) -> Result<Vec<usize>> {
-    let values = value
-        .get(field)
-        .and_then(Value::as_array)
-        .ok_or_else(|| bad_config(field, "must be an integer array"))?;
-    values
-        .iter()
-        .map(|item| {
-            item.as_u64()
-                .and_then(|number| usize::try_from(number).ok())
-                .filter(|&number| number > 0)
-                .ok_or_else(|| bad_config(field, "contains a non-positive integer"))
-        })
-        .collect()
 }
 
 impl Wav2VecConfig {
@@ -156,91 +133,6 @@ impl Wav2VecConfig {
         }
         Ok(config)
     }
-}
-
-#[derive(Clone)]
-struct Linear {
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-    input: usize,
-    output: usize,
-}
-
-impl Linear {
-    fn load(
-        file: &SafetensorsFile,
-        name: &str,
-        input: usize,
-        output: usize,
-        has_bias: bool,
-    ) -> Result<Self> {
-        let weight = load_tensor(file, &format!("{name}.weight"), &[output, input])?;
-        let bias = if has_bias {
-            Some(load_tensor(file, &format!("{name}.bias"), &[output])?)
-        } else {
-            None
-        };
-        Ok(Self {
-            weight,
-            bias,
-            input,
-            output,
-        })
-    }
-
-    fn forward(&self, x: &[f32], rows: usize) -> Vec<f32> {
-        ops::linear(
-            x,
-            &self.weight,
-            self.bias.as_deref(),
-            rows,
-            self.input,
-            self.output,
-        )
-    }
-}
-
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-    epsilon: f32,
-}
-
-impl LayerNorm {
-    fn load(file: &SafetensorsFile, name: &str, width: usize, epsilon: f32) -> Result<Self> {
-        Ok(Self {
-            weight: load_tensor(file, &format!("{name}.weight"), &[width])?,
-            bias: load_tensor(file, &format!("{name}.bias"), &[width])?,
-            width,
-            epsilon,
-        })
-    }
-
-    fn apply(&self, x: &mut [f32], rows: usize) {
-        ops::layernorm(
-            x,
-            rows,
-            self.width,
-            &self.weight,
-            Some(&self.bias),
-            self.epsilon,
-        );
-    }
-}
-
-fn load_tensor(file: &SafetensorsFile, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
-    let descriptor = file.descriptor(name).ok_or_else(|| SpeechError::Tensor {
-        name: name.to_owned(),
-        why: "tensor is missing".into(),
-    })?;
-    if descriptor.shape != shape {
-        return Err(SpeechError::Tensor {
-            name: name.to_owned(),
-            why: format!("expected shape {shape:?}, got {:?}", descriptor.shape),
-        });
-    }
-    Ok(file.load_as_f32(name)?)
 }
 
 /// First feature convolution: conv, then per-channel group normalization over
@@ -396,26 +288,6 @@ impl PlainConv {
     }
 }
 
-fn channels_first_to_rows(x: &[f32], channels: usize, steps: usize) -> Vec<f32> {
-    let mut rows = vec![0.0f32; x.len()];
-    for channel in 0..channels {
-        for step in 0..steps {
-            rows[step * channels + channel] = x[channel * steps + step];
-        }
-    }
-    rows
-}
-
-fn rows_to_channels_first(x: &[f32], steps: usize, channels: usize) -> Vec<f32> {
-    let mut output = vec![0.0f32; x.len()];
-    for step in 0..steps {
-        for channel in 0..channels {
-            output[channel * steps + step] = x[step * channels + channel];
-        }
-    }
-    output
-}
-
 struct FeatureEncoder {
     group_norm_conv: GroupNormConv,
     plain_convs: Vec<PlainConv>,
@@ -455,170 +327,6 @@ impl FeatureEncoder {
     }
 }
 
-struct PositionalConv {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-    width: usize,
-    kernel: usize,
-    groups: usize,
-}
-
-impl PositionalConv {
-    fn load(file: &SafetensorsFile, config: &Wav2VecConfig) -> Result<Self> {
-        let width = config.hidden_size;
-        let kernel = config.num_conv_pos_embeddings;
-        let groups = config.num_conv_pos_embedding_groups;
-        let base = "wav2vec2.encoder.pos_conv_embed.conv";
-        let weight_g = load_tensor_alias(
-            file,
-            &[
-                &format!("{base}.weight_g"),
-                &format!("{base}.parametrizations.weight.original0"),
-            ],
-        )?;
-        let weight_v = load_tensor_alias(
-            file,
-            &[
-                &format!("{base}.weight_v"),
-                &format!("{base}.parametrizations.weight.original1"),
-            ],
-        )?;
-        let in_per_group = width / groups;
-        let gain_count = weight_g.len();
-        if weight_v.len() != width * in_per_group * kernel
-            || !(gain_count == 1
-                || gain_count == kernel
-                || gain_count == width
-                || gain_count == width * kernel)
-        {
-            return Err(SpeechError::Tensor {
-                name: base.to_owned(),
-                why: format!(
-                    "unsupported positional convolution weights: g={}, v={}, expected v={} and broadcast g",
-                    weight_g.len(),
-                    weight_v.len(),
-                    width * in_per_group * kernel
-                ),
-            });
-        }
-
-        let mut norm = vec![0.0f32; kernel];
-        for out in 0..width {
-            for input in 0..in_per_group {
-                for (position, norm_slot) in norm.iter_mut().enumerate() {
-                    let source = (out * in_per_group + input) * kernel + position;
-                    *norm_slot += weight_v[source] * weight_v[source];
-                }
-            }
-        }
-        for value in &mut norm {
-            *value = value.sqrt().max(1e-12);
-        }
-
-        let mut weight = vec![0.0f32; weight_v.len()];
-        for out in 0..width {
-            for input in 0..in_per_group {
-                for position in 0..kernel {
-                    let source = (out * in_per_group + input) * kernel + position;
-                    let gain = match weight_g.len() {
-                        1 => weight_g[0],
-                        n if n == kernel => weight_g[position],
-                        n if n == width => weight_g[out],
-                        _ => weight_g[out * kernel + position],
-                    };
-                    weight[source] = gain * weight_v[source] / norm[position];
-                }
-            }
-        }
-        Ok(Self {
-            weight,
-            bias: load_tensor(file, &format!("{base}.bias"), &[width])?,
-            width,
-            kernel,
-            groups,
-        })
-    }
-
-    fn forward(&self, x: &[f32], steps: usize) -> Vec<f32> {
-        let channels_first = rows_to_channels_first(x, steps, self.width);
-        let convolved = ops::conv1d(
-            &channels_first,
-            &self.weight,
-            Some(&self.bias),
-            self.width,
-            self.width,
-            self.kernel,
-            1,
-            self.kernel / 2,
-            1,
-            self.groups,
-        );
-        let padded_steps = steps + usize::from(self.kernel % 2 == 0);
-        let mut rows = channels_first_to_rows(&convolved, self.width, padded_steps);
-        rows.truncate(steps * self.width);
-        ops::gelu_erf(&mut rows);
-        rows
-    }
-}
-
-struct Attention {
-    query: Linear,
-    key: Linear,
-    value: Linear,
-    output: Linear,
-    width: usize,
-    heads: usize,
-    head_dim: usize,
-}
-
-impl Attention {
-    fn load(file: &SafetensorsFile, prefix: &str, config: &Wav2VecConfig) -> Result<Self> {
-        let width = config.hidden_size;
-        Ok(Self {
-            query: Linear::load(file, &format!("{prefix}.q_proj"), width, width, true)?,
-            key: Linear::load(file, &format!("{prefix}.k_proj"), width, width, true)?,
-            value: Linear::load(file, &format!("{prefix}.v_proj"), width, width, true)?,
-            output: Linear::load(file, &format!("{prefix}.out_proj"), width, width, true)?,
-            width,
-            heads: config.num_attention_heads,
-            head_dim: width / config.num_attention_heads,
-        })
-    }
-
-    fn forward(&self, x: &[f32], steps: usize) -> Vec<f32> {
-        let query = self.query.forward(x, steps);
-        let key = self.key.forward(x, steps);
-        let value = self.value.forward(x, steps);
-        let mut attended = vec![0.0f32; steps * self.width];
-        let scale = 1.0 / (self.head_dim as f32).sqrt();
-        let mut scores = vec![0.0f32; steps];
-        for head in 0..self.heads {
-            for query_step in 0..steps {
-                let q_offset = query_step * self.width + head * self.head_dim;
-                for (key_step, score_slot) in scores.iter_mut().enumerate() {
-                    let k_offset = key_step * self.width + head * self.head_dim;
-                    let mut score = 0.0f32;
-                    for dim in 0..self.head_dim {
-                        score += query[q_offset + dim] * key[k_offset + dim];
-                    }
-                    *score_slot = score * scale;
-                }
-                ops::softmax_row(&mut scores);
-                let out_offset = query_step * self.width + head * self.head_dim;
-                for dim in 0..self.head_dim {
-                    let mut sum = 0.0f32;
-                    for key_step in 0..steps {
-                        sum += scores[key_step]
-                            * value[key_step * self.width + head * self.head_dim + dim];
-                    }
-                    attended[out_offset + dim] = sum;
-                }
-            }
-        }
-        self.output.forward(&attended, steps)
-    }
-}
-
 /// Classic post-norm encoder layer: attention on the un-normalized input,
 /// residual, layer norm, feed forward on the normalized input, residual,
 /// final layer norm.
@@ -634,7 +342,12 @@ impl EncoderLayer {
     fn load(file: &SafetensorsFile, index: usize, config: &Wav2VecConfig) -> Result<Self> {
         let prefix = format!("wav2vec2.encoder.layers.{index}");
         Ok(Self {
-            attention: Attention::load(file, &format!("{prefix}.attention"), config)?,
+            attention: Attention::load(
+                file,
+                &format!("{prefix}.attention"),
+                config.hidden_size,
+                config.num_attention_heads,
+            )?,
             attention_norm: LayerNorm::load(
                 file,
                 &format!("{prefix}.layer_norm"),
@@ -677,11 +390,6 @@ impl EncoderLayer {
     }
 }
 
-fn add(left: &[f32], right: &[f32]) -> Vec<f32> {
-    debug_assert_eq!(left.len(), right.len());
-    left.iter().zip(right).map(|(&a, &b)| a + b).collect()
-}
-
 struct Wav2Vec2 {
     feature_encoder: FeatureEncoder,
     feature_projection_norm: LayerNorm,
@@ -716,7 +424,12 @@ impl Wav2Vec2 {
                 config.hidden_size,
                 true,
             )?,
-            positional_conv: PositionalConv::load(file, config)?,
+            positional_conv: PositionalConv::load(
+                file,
+                config.hidden_size,
+                config.num_conv_pos_embeddings,
+                config.num_conv_pos_embedding_groups,
+            )?,
             encoder_norm: LayerNorm::load(
                 file,
                 "wav2vec2.encoder.layer_norm",
@@ -744,69 +457,6 @@ impl Wav2Vec2 {
         debug_assert_eq!(feature_width, *self.config.conv_dim.last().unwrap());
         Ok(hidden)
     }
-}
-
-fn load_tensor_alias(file: &SafetensorsFile, names: &[&str]) -> Result<Vec<f32>> {
-    let name = names
-        .iter()
-        .find(|name| file.contains_tensor(name))
-        .ok_or_else(|| SpeechError::Tensor {
-            name: names.join(" or "),
-            why: "tensor is missing".into(),
-        })?;
-    Ok(file.load_as_f32(name)?)
-}
-
-fn parse_vocab(json: &str, vocab_size: usize) -> Result<Vec<String>> {
-    let value: Value =
-        serde_json::from_str(json).map_err(|error| bad_config("vocab.json", error.to_string()))?;
-    let entries = value
-        .as_object()
-        .ok_or_else(|| bad_config("vocab.json", "must be a token-to-id object"))?;
-    let mut vocab = vec![None; vocab_size];
-    for (token, id) in entries {
-        let id = id
-            .as_u64()
-            .and_then(|id| usize::try_from(id).ok())
-            .filter(|&id| id < vocab_size)
-            .ok_or_else(|| bad_config("vocab.json", "token id is outside vocab_size"))?;
-        if vocab[id].replace(token.clone()).is_some() {
-            return Err(bad_config("vocab.json", "contains duplicate token ids"));
-        }
-    }
-    vocab
-        .into_iter()
-        .enumerate()
-        .map(|(id, token)| {
-            token.ok_or_else(|| bad_config("vocab.json", format!("missing token id {id}")))
-        })
-        .collect()
-}
-
-fn decode_ctc(logits: &[f32], steps: usize, vocab_size: usize, vocab: &[String]) -> Result<String> {
-    if logits.len() != steps * vocab_size || vocab.len() != vocab_size {
-        return Err(SpeechError::Tensor {
-            name: "lm_head.logits".into(),
-            why: "logit or vocabulary dimensions do not match the configured CTC head".into(),
-        });
-    }
-    let mut pieces = Vec::new();
-    let mut previous = None;
-    for row in logits.chunks_exact(vocab_size) {
-        let mut token = 0;
-        let mut best = f32::NEG_INFINITY;
-        for (index, &score) in row.iter().enumerate() {
-            if score > best {
-                token = index;
-                best = score;
-            }
-        }
-        if token != previous.unwrap_or(usize::MAX) && token != 0 {
-            pieces.push(vocab[token].as_str());
-        }
-        previous = Some(token);
-    }
-    Ok(pieces.join("").replace('|', " ").trim().to_owned())
 }
 
 /// Loaded Wav2Vec2 base model with its own CTC head.
@@ -841,7 +491,7 @@ impl Wav2Vec {
                 why: format!("cannot read vocab.json: {error}"),
             }
         })?;
-        let vocab = parse_vocab(&vocab_json, config.vocab_size)?;
+        let vocab = parse_vocab(&vocab_json, config.vocab_size, false)?;
         Ok(Self {
             config,
             wav2vec2,
@@ -1012,9 +662,9 @@ mod tests {
 
     #[test]
     fn parses_a_flat_token_to_id_vocab() {
-        let vocab = parse_vocab(r#"{"<pad>": 0, "|": 1, "E": 2}"#, 3).unwrap();
+        let vocab = parse_vocab(r#"{"<pad>": 0, "|": 1, "E": 2}"#, 3, false).unwrap();
         assert_eq!(vocab, ["<pad>", "|", "E"]);
-        assert!(parse_vocab(r#"{"<pad>": 0}"#, 2).is_err());
+        assert!(parse_vocab(r#"{"<pad>": 0}"#, 2, false).is_err());
     }
 
     #[test]

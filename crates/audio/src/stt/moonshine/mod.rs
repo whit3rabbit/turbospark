@@ -514,7 +514,10 @@ impl Moonshine {
         let pos = cache.self_kv[0]
             .as_ref()
             .map_or(0, |(k, _)| k.len() / (kv_heads * head_dim));
-        let (cos, sin) = ops::rope_tables(pos + 1, rotary, self.config.rope_theta);
+        // Only row `pos` is read, and `rope_tables_range` evaluates the same
+        // expression as that row of `rope_tables(pos + 1, ..)`, so build just
+        // it (table offset 0 below) instead of every row from zero.
+        let (cos, sin) = ops::rope_tables_range(pos, 1, rotary, self.config.rope_theta);
         let mut x = ops::embedding(&self.embed, d, &[token as i32]);
         for (i, layer) in self.dec_layers.iter().enumerate() {
             // Self attention over the single new token, keys/values
@@ -534,7 +537,7 @@ impl Moonshine {
                     rotary,
                 },
                 &layer.self_attn,
-                Some((&cos, &sin, pos)),
+                Some((&cos, &sin, 0)),
                 Some(&mut cache.self_kv[i]),
             )?;
             for (r, a) in x.iter_mut().zip(&attn) {
@@ -929,6 +932,36 @@ impl Tokenizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The decode step now builds a one-row rope table at `pos` instead of
+    /// `rope_tables(pos + 1)` indexed at `pos`; the rotated rows must match
+    /// bitwise.
+    #[test]
+    fn single_position_rope_table_matches_full_table_row_bitwise() {
+        let (heads, head_dim, rotary, theta) = (3usize, 12usize, 8usize, 10_000.0f32);
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            ((state >> 8) % 20001) as f32 / 5000.0 - 2.0
+        };
+        for pos in [0usize, 1, 2, 17, 255, 447] {
+            let x: Vec<f32> = (0..heads * head_dim).map(|_| next()).collect();
+            let (cos, sin) = ops::rope_tables(pos + 1, rotary, theta);
+            let mut want = x.clone();
+            rope_heads(&mut want, heads, 1, head_dim, rotary, &cos, &sin, pos);
+            let (cos, sin) = ops::rope_tables_range(pos, 1, rotary, theta);
+            let mut got = x;
+            rope_heads(&mut got, heads, 1, head_dim, rotary, &cos, &sin, 0);
+            assert!(
+                got.iter()
+                    .zip(&want)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "pos {pos}"
+            );
+        }
+    }
 
     fn test_tokenizer() -> Tokenizer {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

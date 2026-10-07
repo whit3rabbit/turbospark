@@ -8,21 +8,9 @@
 //! uses reflect padding with no normalization. Inference stays in speech.
 
 use crate::error::AudioError;
-use crate::mel::{mel_filterbank, MelScale};
-use crate::stft::{stft_with_modes, StftOptions, StftPaddingMode, StftWindowPlacement};
-
-fn symmetric_hann_window(size: usize) -> Vec<f32> {
-    match size {
-        0 => Vec::new(),
-        1 => vec![1.0],
-        _ => (0..size)
-            .map(|i| {
-                (0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (size - 1) as f64).cos()))
-                    as f32
-            })
-            .collect(),
-    }
-}
+use crate::mel::{mel_projector_cached, MelScale};
+use crate::nn::symmetric_hann;
+use crate::stft::{stft_each, StftOptions, StftPaddingMode, StftWindowPlacement};
 
 /// Statistics used by the NeMo frontend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +49,7 @@ impl Default for NemoMelOptions {
             stft: StftOptions {
                 fft_size: 512,
                 hop: 160,
-                window: symmetric_hann_window(400),
+                window: symmetric_hann(400),
                 center: true,
             },
             sample_rate: 16_000,
@@ -173,33 +161,45 @@ pub fn nemo_log_mel_spectrogram_with_padding(
         }
     }
 
-    let spectra = stft_with_modes(
-        &waveform,
-        &options.stft,
-        padding_mode,
-        StftWindowPlacement::Center,
-    )?;
-    let filters = mel_filterbank(
+    // Stream frames through reusable buffers instead of materializing every
+    // complex spectrum. The filterbank result is checked only after the STFT
+    // so an STFT error still takes precedence over a filterbank error, as
+    // when the STFT ran to completion first.
+    let projector = mel_projector_cached(
         options.num_mels,
         options.stft.fft_size,
         options.sample_rate,
         0.0,
         None,
         MelScale::Slaney,
+    );
+    let mut features: Vec<Vec<f32>> = Vec::new();
+    let mut power: Vec<f32> = Vec::new();
+    stft_each(
+        &waveform,
+        &options.stft,
+        padding_mode,
+        StftWindowPlacement::Center,
+        |spectrum| {
+            let Ok(projector) = &projector else {
+                return Ok(());
+            };
+            power.clear();
+            power.extend(
+                spectrum
+                    .iter()
+                    .map(|value| value.re * value.re + value.im * value.im),
+            );
+            let mut row = Vec::with_capacity(options.num_mels);
+            projector.project_into(&power, &mut row)?;
+            for value in &mut row {
+                *value = (*value + options.log_zero_guard_value).ln();
+            }
+            features.push(row);
+            Ok(())
+        },
     )?;
-
-    let mut features = Vec::with_capacity(spectra.len());
-    for spectrum in spectra {
-        let power: Vec<f32> = spectrum
-            .iter()
-            .map(|value| value.re * value.re + value.im * value.im)
-            .collect();
-        let mut row = filters.project(&power)?;
-        for value in &mut row {
-            *value = (*value + options.log_zero_guard_value).ln();
-        }
-        features.push(row);
-    }
+    projector?;
 
     if features.is_empty() {
         return Ok(features);
@@ -289,7 +289,7 @@ mod tests {
             stft: StftOptions {
                 fft_size: 256,
                 hop: 80,
-                window: symmetric_hann_window(200),
+                window: symmetric_hann(200),
                 center: true,
             },
             sample_rate: 16_000,
@@ -407,5 +407,148 @@ mod tests {
                 assert!((actual - expected).abs() < 2e-3, "{actual} != {expected}");
             }
         }
+    }
+}
+
+/// Bitwise parity of the streaming, cached frontend against the previous
+/// feature extraction, retained verbatim in `old`. Everything after the log
+/// (normalization, valid-frame zeroing) is untouched, so comparing the
+/// unnormalized features isolates the changed span.
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+    use crate::dsp::TestRng;
+    use crate::mel::mel_filterbank;
+    use crate::stft::stft_with_modes;
+
+    mod old {
+        use super::super::*;
+        use super::{mel_filterbank, stft_with_modes};
+
+        pub(super) fn features(
+            samples: &[f32],
+            options: &NemoMelOptions,
+            padding_mode: StftPaddingMode,
+        ) -> Result<Vec<Vec<f32>>, AudioError> {
+            let padded_len = samples.len().max(options.pad_to);
+            let mut waveform = vec![options.pad_value; padded_len];
+            waveform[..samples.len()].copy_from_slice(samples);
+            if options.preemphasis > 0.0 {
+                for i in (1..waveform.len()).rev() {
+                    waveform[i] -= options.preemphasis * waveform[i - 1];
+                }
+            }
+            let spectra = stft_with_modes(
+                &waveform,
+                &options.stft,
+                padding_mode,
+                StftWindowPlacement::Center,
+            )?;
+            let filters = mel_filterbank(
+                options.num_mels,
+                options.stft.fft_size,
+                options.sample_rate,
+                0.0,
+                None,
+                MelScale::Slaney,
+            )?;
+            let mut features = Vec::with_capacity(spectra.len());
+            for spectrum in spectra {
+                let power: Vec<f32> = spectrum
+                    .iter()
+                    .map(|value| value.re * value.re + value.im * value.im)
+                    .collect();
+                let mut row = filters.project(&power)?;
+                for value in &mut row {
+                    *value = (*value + options.log_zero_guard_value).ln();
+                }
+                features.push(row);
+            }
+            Ok(features)
+        }
+    }
+
+    #[test]
+    fn unnormalized_features_match_old_bitwise() {
+        let mut rng = TestRng(0x4E45_4D4F_4D45_4C31);
+        let configs = [
+            NemoMelOptions {
+                normalize: NemoMelNormalization::None,
+                ..NemoMelOptions::default()
+            },
+            NemoMelOptions {
+                stft: StftOptions {
+                    fft_size: 256,
+                    hop: 80,
+                    window: symmetric_hann(200),
+                    center: true,
+                },
+                num_mels: 8,
+                normalize: NemoMelNormalization::None,
+                pad_to: 4_000,
+                ..NemoMelOptions::default()
+            },
+            NemoMelOptions {
+                stft: StftOptions {
+                    fft_size: 512,
+                    hop: 160,
+                    window: symmetric_hann(400),
+                    center: true,
+                },
+                num_mels: 128,
+                normalize: NemoMelNormalization::None,
+                preemphasis: 0.0,
+                ..NemoMelOptions::default()
+            },
+        ];
+        for (c, options) in configs.iter().enumerate() {
+            for len in [1_000usize, 6_000, 16_000] {
+                let samples = rng.vec(len);
+                for padding in [StftPaddingMode::Constant, StftPaddingMode::Reflect] {
+                    let got =
+                        nemo_log_mel_spectrogram_with_padding(&samples, options, padding).unwrap();
+                    let want = old::features(&samples, options, padding).unwrap();
+                    assert_eq!(got.len(), want.len());
+                    for (f, (g, w)) in got.iter().zip(&want).enumerate() {
+                        assert_eq!(g.len(), w.len());
+                        for (b, (a, c2)) in g.iter().zip(w).enumerate() {
+                            assert_eq!(
+                                a.to_bits(),
+                                c2.to_bits(),
+                                "config {c} len {len} {padding:?} [{f}][{b}]"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stft_error_still_precedes_filterbank_error() {
+        // Both the STFT (reflect-pad needs 129 samples at fft 256) and the
+        // filterbank (num_mels overflow) fail; the old order surfaced the
+        // STFT error first.
+        let options = NemoMelOptions {
+            stft: StftOptions {
+                fft_size: 256,
+                hop: 80,
+                window: symmetric_hann(200),
+                center: true,
+            },
+            num_mels: usize::MAX,
+            normalize: NemoMelNormalization::None,
+            ..NemoMelOptions::default()
+        };
+        let samples = vec![0.1f32; 50];
+        let want = old::features(&samples, &options, StftPaddingMode::Reflect)
+            .unwrap_err()
+            .to_string();
+        let got =
+            nemo_log_mel_spectrogram_with_padding(&samples, &options, StftPaddingMode::Reflect)
+                .unwrap_err()
+                .to_string();
+        assert_eq!(got, want);
+        assert!(want.contains("reflect-pad"), "{want}");
     }
 }

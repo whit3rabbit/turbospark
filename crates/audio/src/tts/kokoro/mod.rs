@@ -35,6 +35,7 @@ use turbospark_audio::fft::ComplexF32;
 use turbospark_audio::stft::{istft, stft, StftOptions};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{wn_fold_in_place, WnFold};
 use crate::ops;
 use crate::{Result, SpeechError};
 
@@ -70,25 +71,16 @@ struct WnConv1d {
 /// `v [out, in, kernel]` (the checkpoint's PyTorch order) scaled per
 /// output channel by `g / (L2(v channel) + 1e-7)`; the layout is
 /// already the kernel's, so the weight is a scaled copy.
-#[allow(
-    clippy::needless_range_loop,
-    reason = "the loop indexes mirror the packed tensor geometry"
-)]
-fn weight_norm_oki(v: &[f32], g: &[f32], out: usize, in_ch: usize, kernel: usize) -> Vec<f32> {
-    let mut weight = Vec::with_capacity(v.len());
-    let per = in_ch * kernel;
-    for o in 0..out {
-        let norm = v[o * per..(o + 1) * per]
-            .iter()
-            .map(|x| x * x)
-            .sum::<f32>()
-            .sqrt();
-        let scale = g[o] / (norm + 1e-7);
-        for i in o * per..(o + 1) * per {
-            weight.push(v[i] * scale);
-        }
-    }
-    weight
+fn weight_norm_oki(
+    mut v: Vec<f32>,
+    g: &[f32],
+    out: usize,
+    in_ch: usize,
+    kernel: usize,
+) -> Vec<f32> {
+    // `g[..out]` keeps the old out-of-range panic on a short gain tensor.
+    wn_fold_in_place(&mut v, &g[..out], in_ch * kernel, WnFold::ScaleAdd(1e-7));
+    v
 }
 
 fn tensor_shape(file: &SafetensorsFile, name: &str) -> Result<(usize, usize, usize)> {
@@ -119,7 +111,7 @@ fn load_wn_conv(
         .load_as_f32(&format!("{base}.bias"))
         .unwrap_or_default();
     let (out, in_ch, kernel) = tensor_shape(file, &format!("{base}.weight_v"))?;
-    let weight = weight_norm_oki(&v, &g, out, in_ch, kernel);
+    let weight = weight_norm_oki(v, &g, out, in_ch, kernel);
     Ok(WnConv1d {
         weight,
         bias,
@@ -222,18 +214,11 @@ fn load_wn_conv_transpose(
         .load_as_f32(&format!("{base}.bias"))
         .unwrap_or_default();
     let (d0, d1, d2) = tensor_shape(file, &format!("{base}.weight_v"))?;
-    let mut weight = v.clone();
+    let mut weight = v;
     if d1 == 1 && d2 > 1 {
         // Depthwise pool: [out_ch, 1, kernel].
         let (ch, kernel) = (d0, d2);
-        for c in 0..ch {
-            let slice = &v[c * kernel..(c + 1) * kernel];
-            let norm = slice.iter().map(|x| x * x).sum::<f32>().sqrt();
-            let scale = g[c] / (norm + 1e-7);
-            for (k, &x) in slice.iter().enumerate() {
-                weight[c * kernel + k] = x * scale;
-            }
-        }
+        wn_fold_in_place(&mut weight, &g[..ch], kernel, WnFold::ScaleAdd(1e-7));
         return Ok(WnConvTranspose1d {
             weight,
             bias,
@@ -247,14 +232,12 @@ fn load_wn_conv_transpose(
     }
     // [in, out, kernel], normalized per input channel.
     let (in_ch, out_ch, kernel) = (d0, d1, d2);
-    for i in 0..in_ch {
-        let slice = &v[i * out_ch * kernel..(i + 1) * out_ch * kernel];
-        let norm = slice.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let scale = g[i] / (norm + 1e-7);
-        for (j, &x) in slice.iter().enumerate() {
-            weight[i * out_ch * kernel + j] = x * scale;
-        }
-    }
+    wn_fold_in_place(
+        &mut weight,
+        &g[..in_ch],
+        out_ch * kernel,
+        WnFold::ScaleAdd(1e-7),
+    );
     Ok(WnConvTranspose1d {
         weight,
         bias,
@@ -273,10 +256,6 @@ fn load_wn_conv_transpose(
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
-fn sigmoid(v: f32) -> f32 {
-    1.0 / (1.0 + (-v).exp())
 }
 
 /// LayerNorm across channels at each timestep of a channel-major
@@ -443,12 +422,13 @@ impl Lstm {
             let p_row = &proj[t * 4 * h..(t + 1) * 4 * h];
             let mut new_h = vec![0.0f32; h];
             for d in 0..h {
-                let i = sigmoid(p_row[d] + dot(&hidden, &w_h[d * h..(d + 1) * h]));
-                let f = sigmoid(p_row[h + d] + dot(&hidden, &w_h[(h + d) * h..(h + d + 1) * h]));
+                let i = ops::sigmoid(p_row[d] + dot(&hidden, &w_h[d * h..(d + 1) * h]));
+                let f =
+                    ops::sigmoid(p_row[h + d] + dot(&hidden, &w_h[(h + d) * h..(h + d + 1) * h]));
                 let g = (p_row[2 * h + d]
                     + dot(&hidden, &w_h[(2 * h + d) * h..(2 * h + d + 1) * h]))
                 .tanh();
-                let o = sigmoid(
+                let o = ops::sigmoid(
                     p_row[3 * h + d] + dot(&hidden, &w_h[(3 * h + d) * h..(3 * h + d + 1) * h]),
                 );
                 cell[d] = f * cell[d] + i * g;
@@ -717,20 +697,11 @@ impl AdaInResBlock1 {
         for i in 0..3 {
             let mut xt = base.clone();
             self.adain1[i].forward(&mut xt, seq, s);
-            for ch in 0..c {
-                let a1 = self.alpha1[i][ch];
-                for v in &mut xt[ch * seq..(ch + 1) * seq] {
-                    *v += (a1 * *v).sin().powi(2) / a1;
-                }
-            }
+            // `[..c]` keeps the old tolerance for a longer alpha tensor.
+            ops::snake(&mut xt, &self.alpha1[i][..c], c, seq);
             xt = self.convs1[i].forward(&xt, seq);
             self.adain2[i].forward(&mut xt, seq, s);
-            for ch in 0..c {
-                let a2 = self.alpha2[i][ch];
-                for v in &mut xt[ch * seq..(ch + 1) * seq] {
-                    *v += (a2 * *v).sin().powi(2) / a2;
-                }
-            }
+            ops::snake(&mut xt, &self.alpha2[i][..c], c, seq);
             xt = self.convs2[i].forward(&xt, seq);
             for (a, b) in xt.iter_mut().zip(&base) {
                 *a += b;
@@ -1240,7 +1211,7 @@ impl ProsodyPredictor {
         let mut out = Vec::with_capacity(seq);
         for t in 0..seq {
             let row = &logits[t * classes..(t + 1) * classes];
-            let sum: f32 = row.iter().map(|v| sigmoid(*v)).sum::<f32>() / speed;
+            let sum: f32 = row.iter().map(|v| ops::sigmoid(*v)).sum::<f32>() / speed;
             let v = if sum.is_nan() {
                 1.0
             } else if sum.is_infinite() {

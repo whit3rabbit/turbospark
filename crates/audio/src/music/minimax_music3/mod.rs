@@ -49,6 +49,7 @@ use std::path::Path;
 use tokenizers::Tokenizer;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::codec::conv::{wn_fold_in_place, WnFold};
 use crate::quant::QuantScheme;
 use crate::Result;
 use crate::SpeechError;
@@ -1610,7 +1611,7 @@ fn load_official_tensors(dir: &Path) -> Result<HashMap<String, Tensor>> {
 }
 
 /// Collapse PyTorch `weight_g` / `weight_v` pairs into a fused weight.
-fn fuse_weight_norm_pairs(state: HashMap<String, Tensor>) -> HashMap<String, Tensor> {
+fn fuse_weight_norm_pairs(mut state: HashMap<String, Tensor>) -> HashMap<String, Tensor> {
     let mut out = HashMap::new();
     let mut keys: Vec<String> = state.keys().cloned().collect();
     keys.sort();
@@ -1621,18 +1622,13 @@ fn fuse_weight_norm_pairs(state: HashMap<String, Tensor>) -> HashMap<String, Ten
             if let Some(g) = state.get(&g_key) {
                 let v = &state[&key];
                 let per = v.data.len() / v.shape[0];
-                let mut fused = Vec::with_capacity(v.data.len());
-                for o in 0..v.shape[0] {
-                    let norm = v.data[o * per..(o + 1) * per]
-                        .iter()
-                        .map(|x| x * x)
-                        .sum::<f32>()
-                        .sqrt();
-                    let norm = norm.max(1e-12);
-                    for value in &v.data[o * per..(o + 1) * per] {
-                        fused.push(g.data[o] * value / norm);
-                    }
-                }
+                let mut fused = v.data.clone();
+                wn_fold_in_place(
+                    &mut fused,
+                    &g.data[..v.shape[0]],
+                    per,
+                    WnFold::DivMax(1e-12),
+                );
                 out.insert(
                     format!("{prefix}.weight"),
                     Tensor {
@@ -1655,15 +1651,12 @@ fn fuse_weight_norm_pairs(state: HashMap<String, Tensor>) -> HashMap<String, Ten
         {
             continue;
         }
-        let tensor = state.get(&key).unwrap();
-        out.insert(
-            key,
-            Tensor {
-                data: tensor.data.clone(),
-                shape: tensor.shape.clone(),
-                dtype: tensor.dtype,
-            },
-        );
+        // Move the tensor out instead of cloning it. Nothing later reads
+        // a passed-through key: pair lookups only touch `weight_g` (which
+        // sorts before its `weight_v`) and `weight_v` of fused pairs, and
+        // those are never removed.
+        let tensor = state.remove(&key).unwrap();
+        out.insert(key, tensor);
     }
     out
 }
