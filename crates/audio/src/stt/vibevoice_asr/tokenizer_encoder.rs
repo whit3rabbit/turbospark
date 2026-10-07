@@ -96,6 +96,7 @@ pub(crate) struct SConv1d {
 }
 
 impl SConv1d {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn load(
         files: &[SafetensorsFile],
         name: &str,
@@ -269,6 +270,7 @@ pub(crate) struct TokenizerEncoder {
 impl TokenizerEncoder {
     /// Loads one side (`model.acoustic_tokenizer.encoder` or
     /// `model.semantic_tokenizer.encoder`) from the raw checkpoint keys.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn load(
         files: &[SafetensorsFile],
         prefix: &str,

@@ -919,7 +919,7 @@ mod tests {
 
     #[test]
     fn pinned_config_parses_and_refuses_unverified_knobs() {
-        let mut root = serde_json::json!({
+        let root = serde_json::json!({
             "model_type": "vibevoice",
             "architectures": ["VibeVoiceForASRStreamingTraining"],
             "use_semantic_feature": true,

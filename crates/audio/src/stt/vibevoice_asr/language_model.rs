@@ -18,6 +18,23 @@ use crate::{Result, SpeechError};
 
 use super::tokenizer_encoder::{load_linear_sharded, load_rms_norm_sharded, load_sharded};
 
+/// Per-layer cached rotated keys and values, one vector per KV head.
+struct LayerCache {
+    keys: Vec<Vec<f32>>,
+    values: Vec<Vec<f32>>,
+    len: usize,
+}
+
+impl LayerCache {
+    fn new(key_value_heads: usize) -> Self {
+        Self {
+            keys: vec![Vec::new(); key_value_heads],
+            values: vec![Vec::new(); key_value_heads],
+            len: 0,
+        }
+    }
+}
+
 struct Qwen2Attention {
     q_proj: Linear,
     k_proj: Linear,
@@ -75,12 +92,7 @@ impl Qwen2Attention {
 
     /// Causal attention over `[rows, hidden]` with an optional cache to
     /// append the rotated keys and values to.
-    fn forward(
-        &self,
-        x: &[f32],
-        rows: usize,
-        cache: Option<(&mut Vec<Vec<f32>>, &mut Vec<Vec<f32>>, &mut usize)>,
-    ) -> Vec<f32> {
+    fn forward(&self, x: &[f32], rows: usize, cache: Option<&mut LayerCache>) -> Vec<f32> {
         let query_width = self.query_heads * self.head_dim;
         let query = self.q_proj.forward(x, rows);
         let key = self.k_proj.forward(x, rows);
@@ -105,14 +117,14 @@ impl Qwen2Attention {
             &cos,
             &sin,
         );
-        if let Some((cache_keys, cache_values, cache_len)) = cache {
+        if let Some(cache) = cache {
             for head in 0..self.key_value_heads {
                 let start = head * rows * self.head_dim;
                 let end = start + rows * self.head_dim;
-                cache_keys[head].extend_from_slice(&key_heads[start..end]);
-                cache_values[head].extend_from_slice(&value_heads[start..end]);
+                cache.keys[head].extend_from_slice(&key_heads[start..end]);
+                cache.values[head].extend_from_slice(&value_heads[start..end]);
             }
-            *cache_len = rows;
+            cache.len = rows;
         }
 
         // Grouped heads share one KV head; index it directly instead of
@@ -150,15 +162,7 @@ impl Qwen2Attention {
 
     /// One decode step; `cos`/`sin` are the single-position RoPE rows the
     /// caller builds once per token.
-    fn step(
-        &self,
-        x: &[f32],
-        cache_keys: &mut Vec<Vec<f32>>,
-        cache_values: &mut Vec<Vec<f32>>,
-        cache_len: &mut usize,
-        cos: &[f32],
-        sin: &[f32],
-    ) -> Vec<f32> {
+    fn step(&self, x: &[f32], cache: &mut LayerCache, cos: &[f32], sin: &[f32]) -> Vec<f32> {
         let query_width = self.query_heads * self.head_dim;
         let mut query = self.q_proj.forward(x, 1);
         let mut key = self.k_proj.forward(x, 1);
@@ -167,10 +171,10 @@ impl Qwen2Attention {
         ops::rope_neox(&mut key, self.key_value_heads, 1, self.head_dim, cos, sin);
         for head in 0..self.key_value_heads {
             let start = head * self.head_dim;
-            cache_keys[head].extend_from_slice(&key[start..start + self.head_dim]);
-            cache_values[head].extend_from_slice(&value[start..start + self.head_dim]);
+            cache.keys[head].extend_from_slice(&key[start..start + self.head_dim]);
+            cache.values[head].extend_from_slice(&value[start..start + self.head_dim]);
         }
-        *cache_len += 1;
+        cache.len += 1;
         debug_assert_eq!(self.query_heads % self.key_value_heads, 0);
         let group = self.query_heads / self.key_value_heads;
         let mut attended = vec![0.0f32; query_width];
@@ -179,11 +183,11 @@ impl Qwen2Attention {
             let start = head * self.head_dim;
             let output = ops::sdpa(
                 &query[start..start + self.head_dim],
-                &cache_keys[kv_head],
-                &cache_values[kv_head],
+                &cache.keys[kv_head],
+                &cache.values[kv_head],
                 None,
                 1,
-                *cache_len,
+                cache.len,
                 self.head_dim,
                 self.head_dim,
                 self.scale,
@@ -252,15 +256,11 @@ struct DecoderLayer {
 }
 
 impl DecoderLayer {
-    fn forward(&self, x: &[f32], rows: usize) -> (Vec<f32>, Vec<Vec<f32>>, Vec<Vec<f32>>, usize) {
+    fn forward(&self, x: &[f32], rows: usize) -> (Vec<f32>, LayerCache) {
         let mut normed = x.to_vec();
         self.input_norm.apply(&mut normed, rows);
-        let mut keys = vec![Vec::new(); self.key_value_heads];
-        let mut values = vec![Vec::new(); self.key_value_heads];
-        let mut len = 0;
-        let attention =
-            self.attention
-                .forward(&normed, rows, Some((&mut keys, &mut values, &mut len)));
+        let mut cache = LayerCache::new(self.key_value_heads);
+        let attention = self.attention.forward(&normed, rows, Some(&mut cache));
         let mut residual = x.to_vec();
         for (value, add) in residual.iter_mut().zip(attention) {
             *value += add;
@@ -271,21 +271,13 @@ impl DecoderLayer {
         for (value, add) in residual.iter_mut().zip(mlp) {
             *value += add;
         }
-        (residual, keys, values, len)
+        (residual, cache)
     }
 
-    fn step(
-        &self,
-        x: &[f32],
-        keys: &mut Vec<Vec<f32>>,
-        values: &mut Vec<Vec<f32>>,
-        len: &mut usize,
-        cos: &[f32],
-        sin: &[f32],
-    ) -> Vec<f32> {
+    fn step(&self, x: &[f32], cache: &mut LayerCache, cos: &[f32], sin: &[f32]) -> Vec<f32> {
         let mut normed = x.to_vec();
         self.input_norm.apply(&mut normed, 1);
-        let attention = self.attention.step(&normed, keys, values, len, cos, sin);
+        let attention = self.attention.step(&normed, cache, cos, sin);
         let mut residual = x.to_vec();
         for (value, add) in residual.iter_mut().zip(attention) {
             *value += add;
@@ -302,9 +294,7 @@ impl DecoderLayer {
 
 /// Cached decode state shared by the greedy loop.
 pub(crate) struct DecodeCache {
-    keys: Vec<Vec<Vec<f32>>>,
-    values: Vec<Vec<Vec<f32>>>,
-    lens: Vec<usize>,
+    layers: Vec<LayerCache>,
     theta: f32,
     head_dim: usize,
 }
@@ -393,25 +383,19 @@ impl Qwen2 {
     /// Evaluates the prompt and returns the final post-norm row plus the
     /// populated cache for the greedy loop.
     pub(crate) fn prefill(&self, input: &[f32], rows: usize) -> (Vec<f32>, DecodeCache) {
-        let mut keys = Vec::with_capacity(self.layers.len());
-        let mut values = Vec::with_capacity(self.layers.len());
-        let mut lens = Vec::with_capacity(self.layers.len());
+        let mut caches = Vec::with_capacity(self.layers.len());
         let mut hidden = input.to_vec();
         for layer in &self.layers {
-            let (out, layer_keys, layer_values, len) = layer.forward(&hidden, rows);
+            let (out, cache) = layer.forward(&hidden, rows);
             hidden = out;
-            keys.push(layer_keys);
-            values.push(layer_values);
-            lens.push(len);
+            caches.push(cache);
         }
         self.final_norm.apply(&mut hidden, rows);
         let last = hidden[(rows - 1) * self.hidden..].to_vec();
         (
             last,
             DecodeCache {
-                keys,
-                values,
-                lens,
+                layers: caches,
                 theta: self.theta,
                 head_dim: self.hidden / self.layers[0].attention.query_heads,
             },
@@ -420,17 +404,11 @@ impl Qwen2 {
 
     /// One decode step against the cache; returns the post-norm row.
     pub(crate) fn step(&self, input: &[f32], cache: &mut DecodeCache) -> Vec<f32> {
-        let (cos, sin) = ops::rope_tables_range(cache.lens[0], 1, cache.head_dim, cache.theta);
+        let (cos, sin) =
+            ops::rope_tables_range(cache.layers[0].len, 1, cache.head_dim, cache.theta);
         let mut hidden = input.to_vec();
-        for (index, layer) in self.layers.iter().enumerate() {
-            hidden = layer.step(
-                &hidden,
-                &mut cache.keys[index],
-                &mut cache.values[index],
-                &mut cache.lens[index],
-                &cos,
-                &sin,
-            );
+        for (layer, layer_cache) in self.layers.iter().zip(&mut cache.layers) {
+            hidden = layer.step(&hidden, layer_cache, &cos, &sin);
         }
         self.final_norm.apply(&mut hidden, 1);
         hidden
@@ -465,7 +443,7 @@ mod tests {
     fn full_forward(decoder: &Qwen2, input: &[f32], rows: usize) -> Vec<f32> {
         let mut hidden = input.to_vec();
         for layer in &decoder.layers {
-            let (out, _, _, _) = layer.forward(&hidden, rows);
+            let (out, _) = layer.forward(&hidden, rows);
             hidden = out;
         }
         decoder.final_norm.apply(&mut hidden, rows);
@@ -530,7 +508,7 @@ mod tests {
             for (cached, full_row) in stepped.iter().zip(&reference[row * hidden..]) {
                 assert_eq!(cached.to_bits(), full_row.to_bits());
             }
-            assert_eq!(cache.lens[0], row + 1);
+            assert_eq!(cache.layers[0].len, row + 1);
         }
     }
 }

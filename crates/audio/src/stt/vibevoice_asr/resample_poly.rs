@@ -145,10 +145,10 @@ pub fn resample_poly_edge(input: &[f32], up: usize, down: usize, fir: &[f64]) ->
     for m in 0..total {
         let base = m * down;
         let mut acc = 0.0f64;
-        for k in 0..full_len {
+        for (k, &tap) in h_full.iter().enumerate() {
             let Some(q) = base.checked_sub(k) else { break };
             if q % up == 0 && q < stuffed_len {
-                acc += h_full[k] * stuffed[q];
+                acc += tap * stuffed[q];
             }
         }
         if m >= offset + n_pre_remove {
@@ -251,7 +251,7 @@ mod tests {
     fn constant_signal_stays_constant_under_3_2() {
         let input = vec![0.5f32; 97];
         let out = resample_poly_edge(&input, 3, 2, &mlx_audio_polyphase_fir(3, 2));
-        assert_eq!(out.len(), (97 * 3 + 1) / 2);
+        assert_eq!(out.len(), (97usize * 3).div_ceil(2));
         for value in &out {
             assert!((value - 0.5).abs() < 1.0e-5, "got {value}");
         }
@@ -276,10 +276,12 @@ mod tests {
         // secondary tone) repeat every 4 ms, now at 24 kHz: 48 samples.
         let mut peaks = Vec::new();
         for i in 1..out.len() - 1 {
-            if out[i] > 0.3 && out[i] >= out[i - 1] && out[i] >= out[i + 1] {
-                if peaks.last().map_or(true, |&last| i - last > 48) {
-                    peaks.push(i);
-                }
+            if out[i] > 0.3
+                && out[i - 1] <= out[i]
+                && out[i] >= out[i + 1]
+                && peaks.last().is_none_or(|&last| i - last > 48)
+            {
+                peaks.push(i);
             }
         }
         assert!(peaks.len() >= 4, "too few dominant peaks: {peaks:?}");
