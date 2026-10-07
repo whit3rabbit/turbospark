@@ -1,12 +1,14 @@
 # turbospark-server
 
-High-performance local HTTP inference server (`turbospark-server`) built on Axum. Implements OpenAI `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, and `/v1/embeddings`; Anthropic `/v1/messages` and `/v1/messages/count_tokens`; Ollama-compatible `/api/{tags,version,show,chat,generate,embeddings,embed}`; `/v1/models`; and `/health` liveness probes.
+High-performance local HTTP inference server (`turbospark-server` / `turbospark serve`) built on Axum. Implements OpenAI `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, and `/v1/images/generations`; Anthropic `/v1/messages` and `/v1/messages/count_tokens`; Ollama-compatible `/api/{tags,version,show,chat,generate,embeddings,embed}`; audio endpoints (`/v1/audio/{transcriptions,speech,generate,jobs,models}`); `/v1/models`; `/v1/metrics`; and `/health` liveness probes.
 
 Supports both non-streaming JSON responses and Server-Sent Events (SSE) / NDJSON streaming formats. Uses zero-allocation translations between Anthropic and OpenAI protocols.
 
+OpenAPI 3.1.0 specifications are in `docs/openapi/turbospark.openapi.yaml` and `docs/openapi/audio.openapi.yaml`.
+
 ## Purpose & Role
 
-`turbospark-server` exposes local Apple Silicon inference to third-party tools, IDE extensions (Continue, Cursor, Copilot), and agent frameworks (Claude Code, OpenCode, Hermes) through standardized OpenAI and Anthropic HTTP APIs.
+`turbospark-server` exposes local Apple Silicon inference to third-party tools, IDE extensions (Continue, Cursor, Copilot), agent frameworks (Claude Code, OpenCode, Hermes), and multimodal clients through standardized HTTP and WebSocket APIs.
 
 ## Binary Execution
 

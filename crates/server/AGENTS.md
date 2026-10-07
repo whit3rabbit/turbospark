@@ -8,7 +8,7 @@ OpenAI, Anthropic, Ollama-compatible, and scripted server surfaces.
 - [Tool calling](../../docs/TOOL_CALLING.md)
 - [Streaming](../../docs/STREAMING.md)
 - [CLI reference](../../docs/CLI.md)
-- [Audio API](../../docs/AUDIO_API.md) and its OpenAPI file
+- [Audio API](../../docs/AUDIO_API.md) and [OpenAPI specifications](../../docs/openapi/README.md)
 
 ## Rules
 

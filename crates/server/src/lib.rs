@@ -132,6 +132,39 @@ pub(crate) const DEGRADATION_HEADER: &str = "x-anyllm-degradation";
 /// images.
 const MAX_REQUEST_BODY_BYTES: usize = 25 * 1024 * 1024;
 
+/// All paths registered on a full server (including audio routes).
+/// Used by contract tests to keep OpenAPI specs in step with the router.
+pub const SERVER_ROUTE_PATHS: &[&str] = &[
+    "/health",
+    "/v1/chat/completions",
+    "/v1/completions",
+    "/v1/responses",
+    "/v1/images/generations",
+    "/v1/images/edits",
+    "/v1/messages",
+    "/v1/messages/count_tokens",
+    "/v1/models",
+    "/v1/models/{model}",
+    "/v1/embeddings",
+    "/api/tags",
+    "/api/version",
+    "/api/show",
+    "/api/chat",
+    "/api/generate",
+    "/api/embeddings",
+    "/api/embed",
+    "/v1/audio/transcriptions",
+    "/v1/audio/translations",
+    "/v1/audio/transcriptions/realtime",
+    "/v1/audio/speech",
+    "/v1/audio/generate",
+    "/v1/audio/jobs/{id}",
+    "/v1/audio/jobs/{id}/result",
+    "/v1/audio/models",
+    "/v1/audio/models/{id}",
+    "/v1/metrics",
+];
+
 pub use audio::{
     AudioError, AudioModelInfo, AudioProvider, AudioTask, GenerateRequest, GeneratedAudio,
     SpeechRequest, SpeechStream, TranscribeRequest, TranscribedSegment, Transcription,

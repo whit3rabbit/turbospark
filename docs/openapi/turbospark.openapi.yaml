@@ -1,0 +1,1115 @@
+openapi: 3.1.0
+info:
+  title: TurboSpark Server API
+  version: 0.2.0
+  description: |
+    Local inference HTTP server (turbospark-server / turbospark serve).
+
+    Provides standardized endpoints for Apple Silicon inference:
+    - OpenAI-compatible chat completions, prompt completions, responses, embeddings, and image generation
+    - Anthropic-compatible messages and token counting
+    - Ollama-compatible chat, generate, tags, version, show, and embeddings
+    - Audio capabilities: speech-to-text (Whisper, Qwen3-ASR), text-to-speech (Kokoro), music generation (MiniMax Music 0.3), and realtime WebSocket transcription
+    - System health probes and Prometheus metrics
+
+    Supported transport features:
+    - SSE streaming for OpenAI and Anthropic routes
+    - NDJSON streaming for Ollama and audio transcription streams
+    - API key authentication via x-api-key or Authorization: Bearer
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default local server
+security:
+  - bearer: []
+  - apiKey: []
+paths:
+  /health:
+    get:
+      summary: Server liveness and readiness probe
+      description: |
+        Lock-free health check. Never requires authentication. Returns 200 with
+        status ok and state ready (when at least one model is loaded) or empty.
+      security: []
+      responses:
+        '200':
+          description: Health check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /v1/chat/completions:
+    post:
+      summary: Create chat completion
+      description: |
+        OpenAI-compatible chat completion endpoint. Supports text generation,
+        reasoning channels, structured tool calling, and multimodal image input.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: |
+            Successful completion. Returns JSON when stream=false, or an SSE stream
+            of ChatCompletionChunk objects when stream=true.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+            text/event-stream:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+
+  /v1/completions:
+    post:
+      summary: Raw prompt completion
+      description: |
+        OpenAI legacy raw-prompt completion. Encodes the prompt directly without
+        applying a chat template.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletionRequest'
+      responses:
+        '200':
+          description: Completion response or SSE stream
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompletionResponse'
+            text/event-stream:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /v1/responses:
+    post:
+      summary: OpenAI Responses API
+      description: Item-shaped request and response endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResponsesRequest'
+      responses:
+        '200':
+          description: Response or SSE stream of ResponsesStreamEvent
+          content:
+            application/json:
+              schema:
+                type: object
+            text/event-stream:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /v1/messages:
+    post:
+      summary: Anthropic messages completion
+      description: |
+        Anthropic-compatible messages endpoint. Automatically translated to/from
+        the core generation engine.
+      parameters:
+        - name: anthropic-version
+          in: header
+          schema:
+            type: string
+          description: Anthropic API version tag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnthropicMessageRequest'
+      responses:
+        '200':
+          description: Message response or SSE stream
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnthropicMessageResponse'
+            text/event-stream:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /v1/messages/count_tokens:
+    post:
+      summary: Anthropic token count probe
+      description: Counts prompt tokens without running generation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnthropicMessageRequest'
+      responses:
+        '200':
+          description: Input token count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  input_tokens:
+                    type: integer
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /v1/models:
+    get:
+      summary: List available models
+      description: Lists all attached LLM, VLM, Image, and Audio models.
+      responses:
+        '200':
+          description: List of models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object:
+                    type: string
+                    example: list
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Model'
+
+  /v1/models/{model}:
+    get:
+      summary: Retrieve model details
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Model details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+        '404': { $ref: '#/components/responses/Error' }
+
+  /v1/embeddings:
+    post:
+      summary: Create embeddings
+      description: |
+        Generates vector embeddings for input text strings. Supported encoding
+        formats include float and base64.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbeddingRequest'
+      responses:
+        '200':
+          description: Embedding vectors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /v1/images/generations:
+    post:
+      summary: Generate image from prompt
+      description: |
+        Prompt-to-PNG generation using attached diffusion models (e.g. Z-Image,
+        Qwen-Image). Produces base64-encoded PNG data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageGenerateRequest'
+      responses:
+        '200':
+          description: Generated images
+          headers:
+            x-turbospark-seed:
+              schema:
+                type: integer
+              description: First resolved generation seed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '503': { $ref: '#/components/responses/Error' }
+
+  /v1/images/edits:
+    post:
+      summary: Image edits (unsupported)
+      description: Not supported; use /v1/images/generations.
+      responses:
+        '501': { $ref: '#/components/responses/Error' }
+
+  /api/tags:
+    get:
+      summary: Ollama model list
+      description: Lists installed models in Ollama format.
+      responses:
+        '200':
+          description: Ollama model tags
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      type: object
+
+  /api/version:
+    get:
+      summary: Ollama version probe
+      description: Returns server version.
+      responses:
+        '200':
+          description: Server version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+
+  /api/show:
+    post:
+      summary: Ollama show model details
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        '200':
+          description: Model metadata
+          content:
+            application/json:
+              schema:
+                type: object
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/chat:
+    post:
+      summary: Ollama chat completion
+      description: NDJSON-streamed chat completion in Ollama format.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OllamaChatRequest'
+      responses:
+        '200':
+          description: NDJSON stream or JSON object
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/generate:
+    post:
+      summary: Ollama raw generate
+      description: NDJSON-streamed prompt generation in Ollama format.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OllamaGenerateRequest'
+      responses:
+        '200':
+          description: NDJSON stream or JSON object
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/embeddings:
+    post:
+      summary: Ollama legacy embeddings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, prompt]
+              properties:
+                model: { type: string }
+                prompt: { type: string }
+      responses:
+        '200':
+          description: Embedding vector
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  embedding:
+                    type: array
+                    items: { type: number }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/embed:
+    post:
+      summary: Ollama batch embeddings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, input]
+              properties:
+                model: { type: string }
+                input:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items: { type: string }
+      responses:
+        '200':
+          description: Batch embeddings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  embeddings:
+                    type: array
+                    items:
+                      type: array
+                      items: { type: number }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /v1/audio/transcriptions:
+    post:
+      summary: Transcribe audio to text
+      description: |
+        Send multipart/form-data or raw audio/wav body. Supported models include
+        Whisper and Qwen3-ASR.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TranscriptionForm'
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+      parameters:
+        - name: model
+          in: query
+          schema: { type: string }
+          description: Required for raw binary bodies
+        - name: language
+          in: query
+          schema: { type: string }
+        - name: response_format
+          in: query
+          schema: { $ref: '#/components/schemas/TranscriptionFormat' }
+        - name: stream
+          in: query
+          schema: { type: boolean }
+        - name: async
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Transcription result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Transcription'
+                  - $ref: '#/components/schemas/VerboseTranscription'
+            text/plain: { schema: { type: string } }
+            text/vtt: { schema: { type: string } }
+            application/x-ndjson: { schema: { type: string } }
+        '202':
+          description: Accepted as asynchronous job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /v1/audio/translations:
+    post:
+      summary: Audio translation (unsupported)
+      description: Not supported; returns 501.
+      responses:
+        '501': { $ref: '#/components/responses/Error' }
+
+  /v1/audio/transcriptions/realtime:
+    get:
+      summary: Utterance-level realtime transcription (WebSocket)
+      description: |
+        WebSocket upgrade endpoint for realtime 16 kHz mono PCM transcription.
+        Send binary audio chunks followed by {"type":"commit"}.
+      parameters:
+        - name: model
+          in: query
+          required: true
+          schema: { type: string }
+        - name: encoding
+          in: query
+          schema:
+            type: string
+            enum: [s16le, f32le]
+            default: s16le
+        - name: language
+          in: query
+          schema: { type: string }
+      responses:
+        '101': { description: Switching Protocols }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+
+  /v1/audio/speech:
+    post:
+      summary: Synthesize speech from text
+      description: |
+        Text-to-speech synthesis using Kokoro-82M. Generates 24 kHz mono WAV or PCM.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SpeechRequest' }
+      responses:
+        '200':
+          description: Audio stream
+          headers:
+            x-audio-sample-rate:
+              schema: { type: integer }
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+            audio/pcm:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /v1/audio/generate:
+    post:
+      summary: Generate music from prompt
+      description: |
+        Music generation using MiniMax Music 0.3 on Apple Silicon GPU.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AudioGenerateRequest' }
+      responses:
+        '200':
+          description: 44.1 kHz stereo 16-bit WAV
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+        '202':
+          description: Accepted as asynchronous job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /v1/audio/jobs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Query audio job status
+      responses:
+        '200':
+          description: Audio job status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Cancel or delete audio job
+      responses:
+        '200':
+          description: Job cancelled or deleted
+          content:
+            application/json:
+              schema: { type: object }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /v1/audio/jobs/{id}/result:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Retrieve audio job result
+      responses:
+        '200':
+          description: Job result payload
+          content:
+            application/json: { schema: { type: object } }
+            text/plain: { schema: { type: string } }
+            text/vtt: { schema: { type: string } }
+            audio/wav: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+
+  /v1/audio/models:
+    get:
+      summary: List attached audio models
+      responses:
+        '200':
+          description: Attached audio models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, example: list }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AudioModel' }
+    post:
+      summary: Attach audio model by catalog alias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model_id]
+              properties:
+                model_id: { type: string }
+      responses:
+        '201':
+          description: Model attached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AudioModel' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /v1/audio/models/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      summary: Unload audio model
+      responses:
+        '200':
+          description: Model unloaded
+          content:
+            application/json:
+              schema: { type: object }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: Model has active jobs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/metrics:
+    get:
+      summary: Prometheus metrics endpoint
+      description: Prometheus text exposition format metrics for server and audio workers.
+      responses:
+        '200':
+          description: Metrics exposition text
+          content:
+            text/plain:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+    apiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Busy:
+      description: Queue full or model busy
+      headers:
+        retry-after:
+          schema:
+            type: integer
+          description: Seconds to wait before retry
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message: { type: string }
+            type: { type: string }
+            param: { type: [string, 'null'] }
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        state:
+          type: string
+          enum: [ready, empty]
+
+    Model:
+      type: object
+      properties:
+        id: { type: string }
+        display_name: { type: string }
+        object: { type: string, example: model }
+        created: { type: integer }
+        owned_by: { type: string }
+        context_window: { type: integer }
+        capabilities:
+          type: array
+          items: { type: string }
+
+    ChatCompletionRequest:
+      type: object
+      required: [messages]
+      properties:
+        model: { type: string }
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        max_tokens: { type: integer }
+        temperature: { type: number }
+        top_p: { type: number }
+        stream: { type: boolean, default: false }
+        stop:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+        tools:
+          type: array
+          items:
+            type: object
+        tool_choice:
+          oneOf:
+            - type: string
+            - type: object
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+        name: { type: string }
+        tool_call_id: { type: string }
+
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, example: chat.completion }
+        created: { type: integer }
+        model: { type: string }
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              message: { $ref: '#/components/schemas/ChatMessage' }
+              finish_reason: { type: string }
+        usage:
+          type: object
+          properties:
+            prompt_tokens: { type: integer }
+            completion_tokens: { type: integer }
+            total_tokens: { type: integer }
+
+    CompletionRequest:
+      type: object
+      required: [prompt]
+      properties:
+        model: { type: string }
+        prompt:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+        max_tokens: { type: integer }
+        temperature: { type: number }
+        stream: { type: boolean, default: false }
+
+    CompletionResponse:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, example: text_completion }
+        created: { type: integer }
+        model: { type: string }
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              text: { type: string }
+              index: { type: integer }
+              finish_reason: { type: string }
+
+    ResponsesRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model: { type: string }
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: object }
+        stream: { type: boolean, default: false }
+
+    AnthropicMessageRequest:
+      type: object
+      required: [messages]
+      properties:
+        model: { type: string }
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [user, assistant] }
+              content:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items: { type: object }
+        max_tokens: { type: integer }
+        system: { type: string }
+        stream: { type: boolean, default: false }
+        temperature: { type: number }
+        tools:
+          type: array
+          items: { type: object }
+
+    AnthropicMessageResponse:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, example: message }
+        role: { type: string, example: assistant }
+        content:
+          type: array
+          items:
+            type: object
+        model: { type: string }
+        stop_reason: { type: string }
+        usage:
+          type: object
+          properties:
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }
+
+    EmbeddingRequest:
+      type: object
+      required: [input]
+      properties:
+        model: { type: string }
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+        encoding_format:
+          type: string
+          enum: [float, base64]
+          default: float
+        dimensions: { type: integer }
+
+    EmbeddingResponse:
+      type: object
+      properties:
+        object: { type: string, example: list }
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              object: { type: string, example: embedding }
+              index: { type: integer }
+              embedding:
+                oneOf:
+                  - type: array
+                    items: { type: number }
+                  - type: string
+        model: { type: string }
+        usage:
+          type: object
+          properties:
+            prompt_tokens: { type: integer }
+            total_tokens: { type: integer }
+
+    ImageGenerateRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model: { type: string }
+        prompt: { type: string }
+        n:
+          type: integer
+          minimum: 1
+          maximum: 4
+          default: 1
+        size:
+          type: string
+          default: 1024x1024
+          description: WIDTHxHEIGHT with dimensions between 512 and 1024
+        seed: { type: integer }
+        response_format:
+          type: string
+          enum: [b64_json]
+          default: b64_json
+        output_format:
+          type: string
+          enum: [png]
+          default: png
+
+    ImageResponse:
+      type: object
+      properties:
+        created: { type: integer }
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              b64_json: { type: string }
+
+    OllamaChatRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string }
+        messages:
+          type: array
+          items: { type: object }
+        stream: { type: boolean, default: true }
+        options: { type: object }
+
+    OllamaGenerateRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model: { type: string }
+        prompt: { type: string }
+        stream: { type: boolean, default: true }
+        options: { type: object }
+
+    TranscriptionFormat:
+      type: string
+      enum: [json, verbose_json, text, srt, vtt]
+      default: json
+
+    TranscriptionForm:
+      type: object
+      required: [file, model]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: WAV audio file up to 128 MiB and 30 minutes
+        model: { type: string }
+        language: { type: string }
+        response_format: { $ref: '#/components/schemas/TranscriptionFormat' }
+        stream: { type: boolean, default: false }
+        async: { type: boolean, default: false }
+        prompt: { type: string }
+        temperature: { type: number }
+
+    Transcription:
+      type: object
+      properties:
+        text: { type: string }
+
+    VerboseTranscription:
+      type: object
+      properties:
+        task: { type: string, example: transcribe }
+        language: { type: [string, 'null'] }
+        duration: { type: number }
+        text: { type: string }
+        segments:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              start: { type: number }
+              end: { type: number }
+              text: { type: string }
+
+    SpeechRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model: { type: string }
+        input: { type: string, maxLength: 4096 }
+        voice: { type: string, default: af_heart }
+        speed: { type: number, minimum: 0.5, maximum: 2.0, default: 1.0 }
+        response_format:
+          type: string
+          enum: [wav, pcm]
+          default: wav
+        stream: { type: boolean, default: false }
+
+    AudioGenerateRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model: { type: string }
+        prompt: { type: string }
+        lyrics: { type: string, default: '[instrumental]' }
+        audio_length: { type: number, exclusiveMinimum: 0, maximum: 360 }
+        num_inference_steps: { type: integer, minimum: 1, maximum: 30 }
+        seed: { type: integer, minimum: 0 }
+        response_format: { type: string, example: wav }
+        async: { type: boolean, default: false }
+
+    JobAccepted:
+      type: object
+      properties:
+        job_id: { type: string }
+        id: { type: string }
+        object: { type: string, example: audio.job }
+        status: { type: string, example: running }
+        poll_url: { type: string }
+
+    Job:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, example: audio.job }
+        kind: { type: string, enum: [transcription, generation] }
+        model: { type: string }
+        status: { type: string, enum: [running, succeeded, failed, cancelled] }
+        created: { type: integer }
+        result_url: { type: string }
+        error:
+          type: object
+          properties:
+            status: { type: integer }
+            message: { type: string }
+
+    AudioModel:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, example: model }
+        owned_by: { type: string }
+        task: { type: string, enum: [speech_to_text, text_to_speech, music_generation] }
+        capabilities:
+          type: array
+          items: { type: string }

@@ -33,6 +33,7 @@ cargo run --release -p turbospark-server --bin turbospark-server -- \
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/health` | Liveness and readiness probe, never behind auth |
 | POST | `/v1/chat/completions` | OpenAI chat completions (text, tools, reasoning, images) |
 | POST | `/v1/completions` | OpenAI legacy raw-prompt completion, no chat template |
 | POST | `/v1/responses` | OpenAI Responses API (item-shaped input/output) |
@@ -40,17 +41,36 @@ cargo run --release -p turbospark-server --bin turbospark-server -- \
 | POST | `/v1/messages/count_tokens` | Anthropic count-only, no generation |
 | GET | `/v1/models` | OpenAI-shaped model list |
 | GET | `/v1/models/:model` | OpenAI-shaped model detail |
-| POST | `/api/chat` | Ollama chat (NDJSON) |
-| POST | `/api/generate` | Ollama generate (NDJSON) |
-| POST | `/api/show` | Ollama model details |
+| POST | `/v1/embeddings` | OpenAI-compatible text embeddings |
+| POST | `/v1/images/generations` | Prompt-to-PNG diffusion generation |
+| POST | `/v1/images/edits` | Image edits (unsupported; returns 501) |
 | GET | `/api/tags` | Ollama model list |
 | GET | `/api/version` | Ollama version probe (reports this server's version) |
-| GET | `/health` | Liveness probe, never behind auth |
+| POST | `/api/show` | Ollama model details |
+| POST | `/api/chat` | Ollama chat (NDJSON) |
+| POST | `/api/generate` | Ollama generate (NDJSON) |
+| POST | `/api/embeddings` | Ollama legacy single embedding |
+| POST | `/api/embed` | Ollama batch embeddings |
+| POST | `/v1/audio/transcriptions` | Speech-to-text (Whisper, Qwen3-ASR) |
+| POST | `/v1/audio/translations` | Translation (unsupported; returns 501) |
+| GET | `/v1/audio/transcriptions/realtime` | WebSocket realtime 16 kHz audio streaming |
+| POST | `/v1/audio/speech` | Text-to-speech synthesis (Kokoro) |
+| POST | `/v1/audio/generate` | Music generation (MiniMax Music 0.3) |
+| GET | `/v1/audio/jobs/:id` | Status of async transcription/generation job |
+| DELETE | `/v1/audio/jobs/:id` | Cancel or delete audio job |
+| GET | `/v1/audio/jobs/:id/result` | Result payload of async audio job |
+| GET | `/v1/audio/models` | List loaded audio models |
+| POST | `/v1/audio/models` | Dynamically attach installed audio model |
+| DELETE | `/v1/audio/models/:id` | Unload audio model |
+| GET | `/v1/metrics` | Prometheus metrics text exposition |
 
 Every generation endpoint supports `stream`. OpenAI- and Anthropic-shaped
 routes stream SSE with a 15 s keep-alive comment; Ollama routes stream NDJSON.
 `stream` defaults to false everywhere except the Ollama routes, where it
 defaults to true.
+
+Machine-readable OpenAPI 3.1.0 specifications are available in the repository at
+`docs/openapi/turbospark.openapi.yaml` (full server) and `docs/openapi/audio.openapi.yaml` (audio).
 
 Claude Code may send `HEAD /api/hello` to warm a connection before discovery.
 That probe is best-effort and this server intentionally returns 404 for it;
@@ -549,6 +569,101 @@ reports `model: null` and `state: "empty"`.
 ```sh
 curl -s localhost:8080/health
 ```
+
+## POST /v1/embeddings
+
+OpenAI-compatible text embeddings endpoint backed by an attached encoder model.
+Limits: Up to 2048 input strings and 1 MiB total text per request.
+
+### Request fields read
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `input` | string or array of strings | Yes | Single string or batch of strings |
+| `model` | string | No | Model ID or alias |
+| `encoding_format` | string | No | `float` (default) or `base64` |
+| `dimensions` | integer | No | Truncate vector to first N dimensions |
+
+### Ollama embedding compatibility
+
+- `POST /api/embeddings`: Accepts `{"model": "...", "prompt": "..."}`, returns `{"embedding": [...]}`.
+- `POST /api/embed`: Accepts `{"model": "...", "input": "..." | [...] }`, returns `{"embeddings": [[...]]}`.
+
+## POST /v1/images/generations
+
+Prompt-to-PNG generation using attached diffusion models (e.g. Z-Image).
+The response returns `data[].b64_json` PNG data.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `model` | string | Yes | Attached image model alias |
+| `prompt` | string | Yes | Image description |
+| `n` | integer | No | Number of images (1-4, default 1, run serially) |
+| `size` | string | No | `WIDTHxHEIGHT` between 512 and 1024, step 16 (default `1024x1024`) |
+| `seed` | integer | No | Generation seed (also reported in `x-turbospark-seed` header) |
+| `response_format` | string | No | `b64_json` only |
+| `output_format` | string | No | `png` only |
+
+`POST /v1/images/edits` is unsupported and returns 501.
+
+## Audio endpoints
+
+Audio routes are active when the server is started with at least one audio flag
+(`--stt-model`, `--tts-model`, `--music-model`) or when an audio model is attached.
+
+### POST /v1/audio/transcriptions
+
+Transcribe speech from a WAV audio file. Accepts `multipart/form-data` with `file`
+and `model`, or raw `audio/wav` with options in query parameters.
+
+- Limits: WAV only (PCM 8/16/24/32-bit or float32), up to 128 MiB and 30 minutes.
+- `response_format`: `json` (default), `verbose_json`, `text`, `srt`, `vtt`.
+- `stream=true`: Returns NDJSON segment stream.
+- `async=true`: Enqueues an async job and returns 202 with `job_id`.
+
+`POST /v1/audio/translations` is unsupported and returns 501.
+
+### GET /v1/audio/transcriptions/realtime (WebSocket)
+
+Upgrades to a WebSocket connection for utterance-level realtime transcription.
+Send binary frames of 16 kHz mono PCM (`s16le`), then send text frame
+`{"type":"commit"}` to transcribe buffered audio since last commit.
+
+### POST /v1/audio/speech
+
+Synthesizes speech using Kokoro-82M (English, voice `af_heart`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `model` | string | Attached TTS model |
+| `input` | string | Text to speak (max 4096 chars; alias `text`) |
+| `voice` | string | Default `af_heart` |
+| `speed` | number | Speed multiplier between 0.5 and 2.0 (default 1.0) |
+| `response_format` | string | `wav` (default) or `pcm` |
+| `stream` | boolean | Chunked PCM delivery (requires `response_format: pcm`) |
+
+### POST /v1/audio/generate
+
+Music generation with MiniMax Music 0.3. Full generation requests take
+significant GPU time; `async=true` is recommended. Output is 44.1 kHz stereo
+16-bit WAV.
+
+### Audio jobs
+
+- `GET /v1/audio/jobs/{id}`: Poll status of an async job (`running`, `succeeded`, `failed`, `cancelled`).
+- `GET /v1/audio/jobs/{id}/result`: Retrieve finished result payload.
+- `DELETE /v1/audio/jobs/{id}`: Cancel a queued job or delete finished result.
+
+### Audio model management
+
+- `GET /v1/audio/models`: Lists attached audio models and tasks.
+- `POST /v1/audio/models`: Attach an installed audio model by catalog alias (`{"model_id": "alias"}`).
+- `DELETE /v1/audio/models/{id}`: Detach model (returns 409 if jobs are running).
+
+## GET /v1/metrics
+
+Prometheus text exposition format. Exposes latency, request counters, error
+rates, in-flight work, and queue state for server workers.
 
 ## Cross-cutting semantics
 

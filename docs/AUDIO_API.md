@@ -2,9 +2,10 @@
 
 `turbospark serve` can serve speech-to-text, text-to-speech, and music
 generation next to chat. It is the standalone server only: the Swift app's
-embedded server registers no audio routes. The machine-readable contract is
-[openapi/audio.openapi.yaml](openapi/audio.openapi.yaml), and a test keeps it
-in step with the router.
+embedded server registers no audio routes. Machine-readable contracts are
+available at [openapi/turbospark.openapi.yaml](openapi/turbospark.openapi.yaml)
+(full server) and [openapi/audio.openapi.yaml](openapi/audio.openapi.yaml)
+(audio routes), and tests keep them in step with the router.
 
 ## Start it
 
