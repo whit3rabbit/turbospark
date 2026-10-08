@@ -19,6 +19,47 @@ import Foundation
 // assumed camelCase, and `SurfaceTests` failed on `downloadBytes`. That is
 // the Swift test target doing the one job no Rust test can.
 
+/// Where a catalog row's weights come from.
+public struct CatalogSource: Decodable, Sendable, Equatable {
+    /// `mlx` or `gguf`.
+    public let kind: String
+    /// `owner/name` on Hugging Face.
+    public let repo: String
+    /// A commit sha, never a floating ref.
+    public let revision: String
+    /// The `.gguf` filename. Nil for an `mlx` row.
+    public let file: String?
+}
+
+/// A separate repository supplying a multi-token-prediction head.
+public struct CatalogMtpSource: Decodable, Sendable, Equatable {
+    public let repo: String
+    public let revision: String
+}
+
+/// What one catalog artifact measured on one chip. These are observations
+/// from a dated session, not guarantees; show `measuredOn` beside any figure.
+public struct CatalogMeasurement: Decodable, Sendable, Equatable {
+    public let chip: String
+    /// Every footprint is a footprint at ONE context window.
+    public let context: UInt32
+    public let expertCacheSlots: UInt32
+    public let peakFootprintMib: UInt64
+    public let decodeTokSMin: Double
+    public let decodeTokSMax: Double
+    public let measuredOn: String
+    public let source: String
+
+    enum CodingKeys: String, CodingKey {
+        case chip, context, source
+        case expertCacheSlots = "expert_cache_slots"
+        case peakFootprintMib = "peak_footprint_mib"
+        case decodeTokSMin = "decode_tok_s_min"
+        case decodeTokSMax = "decode_tok_s_max"
+        case measuredOn = "measured_on"
+    }
+}
+
 /// A row of the curated model table.
 public struct CatalogEntry: Decodable, Sendable, Identifiable, Equatable {
     public var id: String { alias }
@@ -26,21 +67,60 @@ public struct CatalogEntry: Decodable, Sendable, Identifiable, Equatable {
     public let alias: String
     public let name: String
     public let family: String
+    /// `model` for an installable trunk, `vision-tower` for a sidecar with no
+    /// text half. A tower cannot be opened as a session on its own, so a
+    /// picker should not offer it as a chat model. Rows from an older engine
+    /// that omit the key are trunk models.
+    public let kind: String
+    /// Whether a combined install of this row includes the vision tower.
+    public let includeVision: Bool
+    /// Where the weights come from.
+    public let source: CatalogSource?
     /// Bytes read off the network during an install.
     public let downloadBytes: UInt64
     /// Approximate bytes on disk afterwards.
     public let installBytes: UInt64
     public let status: String
+    /// Test names that assert something about this exact artifact.
+    public let gates: [String]
+    /// One entry per chip this artifact was taken through an oracle on.
+    /// Empty means nobody has measured it, not that it is slow.
+    public let measured: [CatalogMeasurement]
+    /// Separate repository the MTP head is pulled from, when the weights'
+    /// own conversion carries none.
+    public let mtp: CatalogMtpSource?
     public let notes: String?
     /// Whether this row is already installed, so a list needs one call
     /// rather than two and a join. Added by the binding, not by the
     /// catalog file.
     public let installed: Bool
 
+    /// True for a vision-tower sidecar row.
+    public var isVisionTower: Bool { kind == "vision-tower" }
+
     enum CodingKeys: String, CodingKey {
-        case alias, name, family, status, notes, installed
+        case alias, name, family, kind, source, status, gates, measured, mtp, notes, installed
+        case includeVision = "include_vision"
         case downloadBytes = "download_bytes"
         case installBytes = "install_bytes"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        alias = try c.decode(String.self, forKey: .alias)
+        name = try c.decode(String.self, forKey: .name)
+        family = try c.decode(String.self, forKey: .family)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "model"
+        includeVision = try c.decodeIfPresent(Bool.self, forKey: .includeVision) ?? false
+        source = try c.decodeIfPresent(CatalogSource.self, forKey: .source)
+        downloadBytes = try c.decode(UInt64.self, forKey: .downloadBytes)
+        installBytes = try c.decode(UInt64.self, forKey: .installBytes)
+        status = try c.decode(String.self, forKey: .status)
+        gates = try c.decodeIfPresent([String].self, forKey: .gates) ?? []
+        measured = try c.decodeIfPresent([CatalogMeasurement].self, forKey: .measured) ?? []
+        mtp = try c.decodeIfPresent(CatalogMtpSource.self, forKey: .mtp)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        installed = try c.decode(Bool.self, forKey: .installed)
     }
 }
 
@@ -61,6 +141,14 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
     public let installBytes: UInt64
     /// `YYYY-MM-DD`. Whole days only.
     public let installedOn: String
+    /// The catalog status at install time, or `unlisted` for a `--repo` pull.
+    /// Recorded then rather than looked up later, so it can differ from the
+    /// row's current status. Nil on rows written before the field existed.
+    public let status: String?
+    /// `vision-tower` for a sidecar install, nil for an ordinary trunk model.
+    public let kind: String?
+    /// The GGUF quantization label chosen for a variant install, if any.
+    public let variant: String?
 
     public init(
         alias: String,
@@ -70,7 +158,10 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
         family: String,
         modality: String = "text",
         installBytes: UInt64 = 0,
-        installedOn: String = ""
+        installedOn: String = "",
+        status: String? = nil,
+        kind: String? = nil,
+        variant: String? = nil
     ) {
         self.alias = alias
         self.repo = repo
@@ -80,10 +171,13 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
         self.modality = modality
         self.installBytes = installBytes
         self.installedOn = installedOn
+        self.status = status
+        self.kind = kind
+        self.variant = variant
     }
 
     enum CodingKeys: String, CodingKey {
-        case alias, repo, revision, path, family, modality
+        case alias, repo, revision, path, family, modality, status, kind, variant
         case installBytes = "install_bytes"
         case installedOn = "installed_on"
     }
@@ -98,6 +192,9 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
         self.modality = try values.decodeIfPresent(String.self, forKey: .modality) ?? "text"
         self.installBytes = try values.decode(UInt64.self, forKey: .installBytes)
         self.installedOn = try values.decode(String.self, forKey: .installedOn)
+        self.status = try values.decodeIfPresent(String.self, forKey: .status)
+        self.kind = try values.decodeIfPresent(String.self, forKey: .kind)
+        self.variant = try values.decodeIfPresent(String.self, forKey: .variant)
     }
 }
 
@@ -117,7 +214,10 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
     /// Original Diffusers-style source retained for the MLX runtime adapter.
     /// Older packed installs do not carry this field and use the Hub cache.
     public let sourcePath: String?
-    public var family: String { ImageModelFamily.family(for: modelID) }
+    /// Resolved by the engine (`catalog::image_family_for_model_id`). Falls
+    /// back to the Swift mirror only for a row from an older engine that does
+    /// not send it.
+    public let family: String
 
     public init(
         alias: String,
@@ -128,7 +228,8 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         height: UInt32,
         schedulerSteps: UInt32,
         quantization: String = "unknown",
-        sourcePath: String? = nil
+        sourcePath: String? = nil,
+        family: String? = nil
     ) {
         self.alias = alias
         self.modelID = modelID
@@ -139,10 +240,11 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         self.schedulerSteps = schedulerSteps
         self.quantization = quantization
         self.sourcePath = sourcePath
+        self.family = family ?? ImageModelFamily.family(for: modelID)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case alias, modelID, revision, path, width, height, schedulerSteps, quantization, sourcePath
+        case alias, modelID, revision, path, width, height, schedulerSteps, quantization, sourcePath, family
     }
 
     public init(from decoder: Decoder) throws {
@@ -156,6 +258,8 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         self.schedulerSteps = try values.decode(UInt32.self, forKey: .schedulerSteps)
         self.quantization = try values.decodeIfPresent(String.self, forKey: .quantization) ?? "unknown"
         self.sourcePath = try values.decodeIfPresent(String.self, forKey: .sourcePath)
+        self.family = try values.decodeIfPresent(String.self, forKey: .family)
+            ?? ImageModelFamily.family(for: self.modelID)
     }
 }
 

@@ -53,6 +53,11 @@ public struct ServerOptions: Encodable, Sendable {
     public var ttsModels: [String]
     /// Music models to attach at startup.
     public var musicModels: [String]
+    /// Detach a model after it has served no request for this many seconds,
+    /// releasing its weights. Nil or 0 keeps every attached model resident
+    /// until `detach` or `stop`, which is the default. A model with a request
+    /// in flight is never detached. See `TurboSparkServer.setIdleUnload`.
+    public var idleUnloadSeconds: UInt64?
 
     /// The server's own `on` | `off` spelling, matching the CLI flag. Anything
     /// else is refused by the engine rather than silently defaulted.
@@ -73,7 +78,8 @@ public struct ServerOptions: Encodable, Sendable {
         defaultReasoning: GenerateOptions.Reasoning? = nil,
         sttModels: [String] = [],
         ttsModels: [String] = [],
-        musicModels: [String] = []
+        musicModels: [String] = [],
+        idleUnloadSeconds: UInt64? = nil
     ) {
         self.host = host
         self.captureText = captureText
@@ -87,6 +93,7 @@ public struct ServerOptions: Encodable, Sendable {
         self.sttModels = sttModels
         self.ttsModels = ttsModels
         self.musicModels = musicModels
+        self.idleUnloadSeconds = idleUnloadSeconds
     }
 }
 
@@ -340,6 +347,7 @@ public final class TurboSparkServer: @unchecked Sendable {
     /// exists, and can be shown and copied, before the user has decided what
     /// to load.
     public static func start(options: ServerOptions = ServerOptions()) throws -> TurboSparkServer {
+        try TurboSparkRuntime.verifyABIOnce()
         let optionsJSON = try JSONEncoder().encode(options)
         let json = String(decoding: optionsJSON, as: UTF8.self)
         var out: OpaquePointer?
@@ -407,9 +415,20 @@ public final class TurboSparkServer: @unchecked Sendable {
         defer { lock.unlock() }
         guard !stopped,
               let json = try? takeString({ ts_server_poll_image_events_json(handle.raw, max, $0) }),
-              let events = try? decode([ServerImageEvent].self, from: json)
+              let rows = try? decode([LossyImageEvent].self, from: json)
         else { return [] }
-        return events
+        // An undecodable row (a kind this binding predates) is skipped alone;
+        // decoding the array strictly would drop a cancel in the same batch.
+        return rows.compactMap(\.event)
+    }
+
+    /// Internal rather than private so the skip behavior is testable without
+    /// a bound socket.
+    struct LossyImageEvent: Decodable {
+        let event: ServerImageEvent?
+        init(from decoder: Decoder) throws {
+            event = try? ServerImageEvent(from: decoder)
+        }
     }
 
     public func completeImageRequest(id: UInt64, png: Data?, error: String? = nil) throws {
@@ -470,6 +489,18 @@ public final class TurboSparkServer: @unchecked Sendable {
         }
     }
 
+    /// Changes the idle-unload window on a running server. `nil` or 0 turns
+    /// it off. The next sweep (every 30 s) applies it to every attached model,
+    /// including ones attached later, and a detach it performs arrives as a
+    /// `.modelDetached` event like an explicit one.
+    public func setIdleUnload(after seconds: TimeInterval?) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        let whole = seconds.map { UInt64(max(0, $0.rounded(.up))) } ?? 0
+        try check(ts_server_set_idle_unload(handle.raw, whole))
+    }
+
     /// Takes up to `max` buffered events. Each is returned exactly once, so
     /// a caller polling on a timer appends what it gets.
     ///
@@ -523,7 +554,8 @@ public final class TurboSparkServer: @unchecked Sendable {
         ts_server_stop(handle.raw)
     }
 
-    /// `{ port, modelId, authEnabled }`, read fresh on every call.
+    /// The bound address, attached model ids (text, image and audio), whether a key
+    /// is required, uptime and transport counters (`ServerInfo`), read fresh on every call.
     ///
     /// **The lock is held ACROSS the C call, not just across the `stopped`
     /// check.** `ts_server_stop` frees the handle, so releasing the lock

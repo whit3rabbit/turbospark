@@ -56,6 +56,9 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     /// session or `TurboSparkSession.init` throws, so what was asked for
     /// and what this session runs at are always the same value.
     public let kvBits: String
+    /// Whether this session continues each turn from the previous turn's KV
+    /// (the `prefixReuse` open option's resolved value, default true).
+    public let prefixReuse: Bool
 
     /// The reasoning levels this checkpoint accepts. **BUILD A PICKER FROM
     /// THIS AND FROM NOTHING ELSE.**

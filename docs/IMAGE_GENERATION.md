@@ -351,8 +351,11 @@ the autoregressive text runner or treat a working vision tower as a working
 diffusion model.
 
 Deferred: image editing, image-to-image, negative-prompt controls, LoRA,
-batch generation, agent tool invocation, HTTP image endpoints, PISA,
-approximate timestep reuse, and concurrent heavyweight text/image execution.
+batch generation, agent tool invocation, PISA, approximate timestep reuse, and
+concurrent heavyweight text/image execution. (`POST /v1/images/generations` is
+no longer on this list: it exists, in `crates/server/src/images.rs`, and the
+embedded server bridges it to the app's image session. Edits are refused there
+by name.)
 
 ## What this engine already provides
 

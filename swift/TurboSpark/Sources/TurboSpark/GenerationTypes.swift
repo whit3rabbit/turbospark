@@ -17,6 +17,15 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
         /// The caller pressed Stop. The partial turn in `content` is valid
         /// and the conversation can continue from it.
         case cancelled
+        /// A reason this binding does not know, from a newer engine. Decoded
+        /// instead of thrown so one new stop reason cannot discard the
+        /// finished turn's content and timings.
+        case unknown
+
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = StopReason(rawValue: raw) ?? .unknown
+        }
     }
 
     /// Number of tokens in the prompt prefix.
@@ -61,6 +70,11 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
     /// Decoded with a default so a binding built against an older engine
     /// still decodes the rest of the struct.
     public let peakMemoryPressure: String
+    /// Every tool call the model invoked this turn, in emission order. The
+    /// same rows arrive on the stream as `.toolCall` events. Empty unless the
+    /// engine parsed a call, and decoded with a default so a binding built
+    /// against an older engine still decodes the rest of the struct.
+    public let toolCalls: [GenerationToolCall]
 
     private enum CodingKeys: String, CodingKey {
         case promptTokens
@@ -73,6 +87,7 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
         case content
         case reasoning
         case peakMemoryPressure
+        case toolCalls
     }
 
     public init(from decoder: Decoder) throws {
@@ -88,6 +103,7 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
         reasoning = try c.decodeIfPresent(String.self, forKey: .reasoning) ?? ""
         peakMemoryPressure =
             try c.decodeIfPresent(String.self, forKey: .peakMemoryPressure) ?? "normal"
+        toolCalls = try c.decodeIfPresent([GenerationToolCall].self, forKey: .toolCalls) ?? []
     }
 }
 
@@ -149,6 +165,43 @@ public struct GenerationToolCall: Sendable, Equatable {
         } else {
             self.argumentsJSON = ""
         }
+    }
+}
+
+extension GenerationToolCall: Codable {
+    private enum CodingKeys: String, CodingKey { case id, name, arguments }
+
+    /// Builds a call to replay in history, for example the one a turn just
+    /// returned (`ChatMessage.assistant(_:toolCalls:)`).
+    public init(id: String, name: String, argumentsJSON: String) {
+        self.id = id
+        self.name = name
+        self.argumentsJSON = argumentsJSON
+    }
+
+    /// Decodes one `toolCalls` row: `{"id","name","arguments"}`. `arguments`
+    /// is kept as raw JSON text whatever shape the parser recovered (an
+    /// object, or text that was already a JSON string).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        name = try c.decode(String.self, forKey: .name)
+        if let text = try? c.decode(String.self, forKey: .arguments) {
+            argumentsJSON = text
+        } else if c.contains(.arguments), !(try c.decodeNil(forKey: .arguments)) {
+            argumentsJSON = try c.decode(JSONValue.self, forKey: .arguments).jsonString
+        } else {
+            argumentsJSON = ""
+        }
+    }
+
+    /// Encodes `arguments` as the JSON text it is. The engine accepts text
+    /// here and parses it back into the object the template renders.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(argumentsJSON, forKey: .arguments)
     }
 }
 

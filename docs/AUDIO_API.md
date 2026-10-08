@@ -1,8 +1,10 @@
 # Audio API (CLI server)
 
 `turbospark serve` can serve speech-to-text, text-to-speech, and music
-generation next to chat. It is the standalone server only: the Swift app's
-embedded server registers no audio routes. Machine-readable contracts are
+generation next to chat. The Swift app's embedded server (`ts_server_start`)
+serves the same audio routes for models attached with
+`ts_server_attach_audio_model` or `ServerOptions.sttModels`/`ttsModels`/
+`musicModels` (macOS only); the standalone server takes them as flags. Machine-readable contracts are
 available at [openapi/turbospark.openapi.yaml](openapi/turbospark.openapi.yaml)
 (full server) and [openapi/audio.openapi.yaml](openapi/audio.openapi.yaml)
 (audio routes), and tests keep them in step with the router.

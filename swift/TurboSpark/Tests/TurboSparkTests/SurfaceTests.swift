@@ -527,7 +527,8 @@ final class SurfaceTests: XCTestCase {
                 "thinkStartId": 151648,
                 "thinkEndId": 151649
             },
-            "kvBits": "off"
+            "kvBits": "off",
+            "prefixReuse": true
         }
         """
         let info = try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
@@ -574,7 +575,8 @@ final class SurfaceTests: XCTestCase {
                 "bosId": null, "eosId": null, "padId": null, "endOfTurnId": null,
                 "stopTokenIds": [], "thinkStartId": null, "thinkEndId": null
             },
-            "kvBits": "off"
+            "kvBits": "off",
+            "prefixReuse": true
         }
         """
         let info = try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
@@ -1162,7 +1164,8 @@ final class SurfaceTests: XCTestCase {
                 "bosId": null, "eosId": null, "padId": null, "endOfTurnId": null,
                 "stopTokenIds": [], "thinkStartId": null, "thinkEndId": null
             },
-            "kvBits": "off"
+            "kvBits": "off",
+            "prefixReuse": true
         }
         """
         return try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))

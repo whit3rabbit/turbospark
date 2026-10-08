@@ -8,7 +8,7 @@ Keychain key.
 
 ## Image request
 
-Attach one installed Z-Image or Qwen-Image MLX model in the Image tab, then
+Attach one installed Z-Image MLX model in the Image tab (the app attaches only the Z-Image models it can generate with; see `AppModel.supportsMLXImageModel`), then
 send `POST /v1/images/generations` to the TurboSpark address:
 
 ```sh

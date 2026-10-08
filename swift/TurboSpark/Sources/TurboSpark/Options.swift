@@ -203,6 +203,13 @@ public struct OpenOptions: Encodable, Sendable {
     public var visionSidecar: String?
     /// TurboQuant KV-cache quantization. `nil` means `.off`.
     public var kvBits: KvBits?
+    /// Continue each turn from the previous turn's KV wherever the new render
+    /// shares a prefix with the old one. `nil` means on, which is what every
+    /// release did. Set `false` for a session you will attach to the
+    /// in-process HTTP server (`turbospark-server` itself defaults reuse off,
+    /// because one engine's cache is shared by every client of that server),
+    /// or when measuring a cold prefill.
+    public var prefixReuse: Bool?
 
     /// Creates options for opening a model session.
     public init(
@@ -222,7 +229,8 @@ public struct OpenOptions: Encodable, Sendable {
         steeringTarget: Double? = nil,
         steeringGate: Double? = nil,
         visionSidecar: String? = nil,
-        kvBits: KvBits? = nil
+        kvBits: KvBits? = nil,
+        prefixReuse: Bool? = nil
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
@@ -241,6 +249,7 @@ public struct OpenOptions: Encodable, Sendable {
         self.steeringGate = steeringGate
         self.visionSidecar = visionSidecar
         self.kvBits = kvBits
+        self.prefixReuse = prefixReuse
     }
 }
 
@@ -294,6 +303,14 @@ public struct GenerateOptions: Encodable, Sendable {
     public var topP: Double = 0.95
     /// Multiplicative repetition penalty.
     public var repetitionPenalty: Double = 1.0
+    /// Min-p truncation: a candidate survives only if its score is at least
+    /// this fraction of the top candidate's. In `[0, 1)`; 0 disables it.
+    public var minP: Double = 0.0
+    /// Flat subtraction applied once per distinct generated token, in
+    /// `[-2, 2]`. Counts the generated suffix only, never the prompt.
+    public var presencePenalty: Double = 0.0
+    /// Subtraction scaled by how often a token was generated, in `[-2, 2]`.
+    public var frequencyPenalty: Double = 0.0
     /// Deterministic RNG seed.
     public var seed: UInt64?
     /// Custom stop sequence strings.
@@ -302,6 +319,17 @@ public struct GenerateOptions: Encodable, Sendable {
     public var stopTokens: [UInt32] = []
     /// Reasoning effort level.
     public var reasoning: Reasoning = .off
+    /// Functions the model may call this turn. Empty (the default) renders
+    /// and decodes exactly as before.
+    ///
+    /// Offering tools renders through the checkpoint's own chat template, so
+    /// a checkpoint that ships none refuses the turn by name. Calls are parsed
+    /// only in the checkpoint's native markup (`info.toolCalling.native`) and
+    /// only for a function offered here; the parsed calls arrive as
+    /// `.toolCall` events and in `GenerationResult.toolCalls`, with
+    /// `stopReason == .toolCalls`. The definitions count toward the prompt,
+    /// and `estimateTokens`/`fitWindow` do not see them: leave extra room.
+    public var tools: [ToolSpec] = []
 
     /// Creates default generation options.
     public init() {}

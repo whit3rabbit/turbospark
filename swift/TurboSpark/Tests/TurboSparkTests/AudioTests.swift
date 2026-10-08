@@ -63,7 +63,11 @@ final class AudioTests: XCTestCase {
         do {
             _ = try await session.execute(request) { _ in session.cancel() }
             XCTFail("cancelled job succeeded")
-        } catch { XCTAssertTrue(String(describing: error).contains("cancel")) }
+        } catch {
+            XCTAssertTrue(String(describing: error).contains("cancel"))
+            XCTAssertEqual((error as? TurboSparkError)?.code, .cancelled,
+                           "a caller-cancelled job is cancelled, not a generation failure")
+        }
         let recovery = try await session.execute(request)
         XCTAssertFalse(try XCTUnwrap(recovery.pcm).samples.isEmpty)
     }

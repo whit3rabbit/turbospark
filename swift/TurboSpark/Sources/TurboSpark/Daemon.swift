@@ -13,19 +13,24 @@ public struct TurboSparkDaemonStatus: Decodable, Sendable, Equatable {
     public let endpoint: String?
     /// Path to the server daemon log file (`~/.turbospark/logs/server.log`).
     public let logPath: String?
+    /// The `--model` the daemon was started with, as passed (an alias or a
+    /// path, not resolved). Nil when none was given, or from an older engine.
+    public let model: String?
 
     public init(
         running: Bool,
         pid: Int32? = nil,
         port: UInt16? = nil,
         endpoint: String? = nil,
-        logPath: String? = nil
+        logPath: String? = nil,
+        model: String? = nil
     ) {
         self.running = running
         self.pid = pid
         self.port = port
         self.endpoint = endpoint
         self.logPath = logPath
+        self.model = model
     }
 }
 

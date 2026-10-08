@@ -73,6 +73,7 @@ public final class TurboSparkSession: @unchecked Sendable {
     /// and keep the session. Runs off the calling thread, so it is safe to
     /// `await` this from a SwiftUI view.
     public init(modelPath: String, options: OpenOptions = OpenOptions()) async throws {
+        try TurboSparkRuntime.verifyABIOnce()
         let modelPath = NSString(string: modelPath).expandingTildeInPath
         let queue = DispatchQueue(label: "com.turbospark.session", qos: .userInitiated)
         let optionsJSON = try Self.encode(options)
@@ -235,18 +236,30 @@ public final class TurboSparkSession: @unchecked Sendable {
 
     /// Evaluates exact prompt token count for `messages` using this session's
     /// chat template and tokenizer, without running generation.
+    ///
+    /// Pass the `tools` a turn will offer (`GenerateOptions.tools`) to count
+    /// their definitions too: the checkpoint's template renders them into the
+    /// prompt and they can run to thousands of tokens. Empty (the default)
+    /// is exactly the count this call always returned.
     public func countTokens(
         _ messages: [ChatMessage],
-        reasoning: GenerateOptions.Reasoning = .off
+        reasoning: GenerateOptions.Reasoning = .off,
+        tools: [ToolSpec] = []
     ) async throws -> Int {
         let messagesJSON = try Self.encode(messages)
         let reasoningStr = reasoning.rawValue
+        let toolsJSON = tools.isEmpty ? nil : try Self.encode(tools)
         return try await withCheckedThrowingContinuation { cont in
             queue.async { [handle] in
                 var count: UInt32 = 0
                 let status = messagesJSON.withCString { m in
                     reasoningStr.withCString { r in
-                        ts_session_count_tokens(handle.raw, m, r, &count)
+                        if let toolsJSON {
+                            return toolsJSON.withCString { t in
+                                ts_session_count_tokens_with_tools(handle.raw, m, r, t, &count)
+                            }
+                        }
+                        return ts_session_count_tokens(handle.raw, m, r, &count)
                     }
                 }
                 guard status == 0 else {
@@ -354,18 +367,28 @@ public final class TurboSparkSession: @unchecked Sendable {
     public func fitWindow(
         _ messages: [ChatMessage],
         maxTokens: UInt32? = nil,
-        reasoning: GenerateOptions.Reasoning = .off
+        reasoning: GenerateOptions.Reasoning = .off,
+        tools: [ToolSpec] = []
     ) async throws -> WindowFitOutcome {
         let messagesJSON = try Self.encode(messages)
         let reasoningStr = reasoning.rawValue
         let limit = maxTokens ?? info.maxContext
+        // With `tools`, every candidate prompt is measured with the offered
+        // definitions rendered in, so the turns kept are the turns that fit
+        // beside them. Empty is exactly the fit this call always did.
+        let toolsJSON = tools.isEmpty ? nil : try Self.encode(tools)
         return try await withCheckedThrowingContinuation { cont in
             queue.async { [handle] in
                 do {
                     let json = try takeString { out in
                         messagesJSON.withCString { m in
                             reasoningStr.withCString { r in
-                                ts_session_fit_window_json(handle.raw, m, r, limit, out)
+                                if let toolsJSON {
+                                    return toolsJSON.withCString { t in
+                                        ts_session_fit_window_with_tools_json(handle.raw, m, r, t, limit, out)
+                                    }
+                                }
+                                return ts_session_fit_window_json(handle.raw, m, r, limit, out)
                             }
                         }
                     }

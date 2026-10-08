@@ -39,12 +39,28 @@ public struct ChatMessage: Codable, Sendable, Equatable {
     /// Gate on `SessionInfo.vision.active` before offering a way to fill
     /// this: an install can carry a tower and still refuse every image.
     public var images: [ChatImage]
+    /// Tool calls an `assistant` message made. Pass back what a turn returned
+    /// (`GenerationResult.toolCalls`) when replaying it, so the next render
+    /// shows the model its own call. Empty on every other message.
+    public var toolCalls: [GenerationToolCall]
+    /// On a `tool` message: the id of the call it answers. Keep the ids the
+    /// engine returned: the Gemma template resolves a tool turn's function
+    /// name by matching them and renders "unknown" otherwise.
+    public var toolCallId: String?
+    /// On a `tool` message: the name of the function that ran.
+    public var name: String?
 
     /// Creates a new chat message with the given role and content.
-    public init(role: Role, content: String, images: [ChatImage] = []) {
+    public init(
+        role: Role, content: String, images: [ChatImage] = [],
+        toolCalls: [GenerationToolCall] = [], toolCallId: String? = nil, name: String? = nil
+    ) {
         self.role = role
         self.content = content
         self.images = images
+        self.toolCalls = toolCalls
+        self.toolCallId = toolCallId
+        self.name = name
     }
 
     /// Convenience factory for a system message.
@@ -62,19 +78,21 @@ public struct ChatMessage: Codable, Sendable, Equatable {
         ChatMessage(role: .user, content: content)
     }
 
-    /// Convenience factory for an assistant message.
-    public static func assistant(_ content: String) -> ChatMessage {
-        ChatMessage(role: .assistant, content: content)
+    /// Convenience factory for an assistant message. Pass `toolCalls` to replay
+    /// a turn that called tools (its `content` may be empty).
+    public static func assistant(_ content: String, toolCalls: [GenerationToolCall] = []) -> ChatMessage {
+        ChatMessage(role: .assistant, content: content, toolCalls: toolCalls)
     }
 
-    /// Convenience factory for a tool message.
-    public static func tool(_ content: String) -> ChatMessage {
-        ChatMessage(role: .tool, content: content)
+    /// Convenience factory for a tool message. Give `toolCallId` (and `name`)
+    /// when it answers a call, so the template can pair them.
+    public static func tool(_ content: String, toolCallId: String? = nil, name: String? = nil) -> ChatMessage {
+        ChatMessage(role: .tool, content: content, toolCallId: toolCallId, name: name)
     }
 
     // MARK: - Wire shape
 
-    private enum CodingKeys: String, CodingKey { case role, content }
+    private enum CodingKeys: String, CodingKey { case role, content, toolCalls, toolCallId, name }
 
     private enum PartKind: String, Codable { case text, image }
 
@@ -99,6 +117,11 @@ public struct ChatMessage: Codable, Sendable, Equatable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(role, forKey: .role)
+        // Omitted when empty, so a message without tools is byte for byte what
+        // this binding sent before tools existed.
+        if !toolCalls.isEmpty { try container.encode(toolCalls, forKey: .toolCalls) }
+        try container.encodeIfPresent(toolCallId, forKey: .toolCallId)
+        try container.encodeIfPresent(name, forKey: .name)
         guard !images.isEmpty else {
             // The pre-vision shape, byte for byte.
             try container.encode(content, forKey: .content)
@@ -121,6 +144,9 @@ public struct ChatMessage: Codable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         role = try container.decode(Role.self, forKey: .role)
+        toolCalls = try container.decodeIfPresent([GenerationToolCall].self, forKey: .toolCalls) ?? []
+        toolCallId = try container.decodeIfPresent(String.self, forKey: .toolCallId)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
         if let text = try? container.decode(String.self, forKey: .content) {
             content = text
             images = []

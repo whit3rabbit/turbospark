@@ -19,8 +19,10 @@ reusable bring-up process for image families lives in
   the diffusers `QwenImage21Pipeline` stack (see its `UPSTREAM.md` for the
   source files it follows). No public Swift or Python MLX implementation of
   this model existed; LM Studio and Radiant Canvas ship proprietary engines.
-- App integration: `QwenImageGenerationSession` behind the same
-  `ImageGenerationSession` protocol as the Z-Image adapter, family dispatch
+- App integration (**history**: `QwenImageGenerationSession` was removed from
+  the app in commit `34ee607f`, and the app currently generates with the
+  Z-Image models only, `AppModel.supportsMLXImageModel`): it sat behind the
+  same `ImageGenerationSession` protocol as the Z-Image adapter, with family dispatch
   in `AppModel+ImageGeneration`, the "Qwen-Image 2.1" family row in the
   model menus, and the 32 GiB memory tier for the download recommendation.
   The retained MLX source tree loads directly; no snapshot staging or

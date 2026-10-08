@@ -17,6 +17,12 @@ public struct TurboSparkError: LocalizedError, CustomStringConvertible {
         /// the operation did not happen; this is a library bug rather than
         /// anything the caller did.
         case panic = 6
+        /// The caller's own cancel request ended the operation (an install, an
+        /// audio job). Not a failure: do not present it as one.
+        case cancelled = 7
+        /// The resource is in use by another operation (the native audio
+        /// device or session). Retrying once that finishes can succeed.
+        case busy = 8
         case unknown = -1
     }
 

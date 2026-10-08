@@ -35,6 +35,18 @@ everybody else. `swift/TurboSparkApp/Package.swift` shows the shape:
 )
 ```
 
+**Header and archive can come from different builds, and the package now says
+so.** Both are gitignored copies staged by `make swift-lib`, so a stale one of
+either is easy to end up with. The header carries `TS_ABI_VERSION`, the
+library reports its own through `ts_abi_version()`, and the package compares
+the two once per process before the first session or server opens, throwing a
+`TurboSparkError` whose message names both numbers and the fix. Read them
+yourself with `TurboSparkRuntime.headerABIVersion`, `.libraryABIVersion`, and
+`TurboSparkRuntime.buildInfo()` (ABI revision, crate version, and whether it is
+an unoptimized build whose timings must not be quoted). The revision is bumped
+when a wire shape or an option's meaning changes in a way an older header
+could misread; a purely additive export does not need one.
+
 This is a SwiftPM limitation rather than a defect here. A package published
 for outside consumption should ship an `.xcframework` binary target, which
 resolves paths for its consumers properly; a two-package repository does not
@@ -291,11 +303,19 @@ options.temperature = 0.2
 options.topK = 64
 options.topP = 0.95
 options.repetitionPenalty = 1.0
+options.minP = 0.0                // [0, 1); 0 disables min-p truncation
+options.presencePenalty = 0.0     // [-2, 2], once per distinct generated token
+options.frequencyPenalty = 0.0    // [-2, 2], scaled by generated count
 options.seed = 20260721           // nil for nondeterministic
 options.stop = ["\n\n---"]
 options.stopTokens = [151643, 151645] // numerical stop token IDs
 options.reasoning = .off
 ```
+
+`minP`, `presencePenalty` and `frequencyPenalty` default to 0, which is the
+identity for each. The two penalties count the GENERATED suffix only, never
+the prompt, and an out-of-range value is refused by name before decoding
+starts rather than clamped.
 
 The defaults are the CLI's, so sending nothing gives what
 `turbospark-check` gives with no flags. `maxNewTokens` is clamped rather than
@@ -325,6 +345,13 @@ cannot tell from the API surface which prefill shape ran; both produce
 byte-identical tokens. Skipped when the turn carries an image, since the
 vision-capable family's chunked driver refuses an open image prompt by name
 rather than composing the two on an unreachable path.
+
+**`GenerationResult` degrades instead of failing on a newer engine.** An
+unrecognised `stopReason` decodes as `.unknown` and keeps the turn's content
+and timings; an unrecognised `FitVerdict` decodes as `.unknown` and one
+`ServerImageEvent` kind this binding predates is skipped without dropping the
+events beside it. `GenerationResult.toolCalls` carries the parsed calls of the
+turn (see "Not supported" for why it is empty today).
 
 ### Cancelling
 
@@ -422,6 +449,61 @@ not a label. And there is no answer at all before a session exists, because
 the set is read off the template at open: gate the control on having one
 rather than guessing from the model's family.
 
+### Tool calling
+
+Offer functions with `GenerateOptions.tools`, and the model can call them:
+
+```swift
+var options = GenerateOptions()
+options.temperature = 0
+options.tools = [
+    try ToolSpec(name: "get_weather", description: "Current weather for a city",
+                 parametersJSON: #"{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}"#)
+]
+var history = [ChatMessage.user("Weather in Oslo?")]
+
+for try await event in session.generate(history, options: options) {
+    switch event {
+    case .toolCall(let call): print(call.name, call.argumentsJSON)   // streamed as parsed
+    case .finished(let result):
+        guard result.stopReason == .toolCalls else { break }
+        // Run the tools, then answer them and generate again:
+        history.append(.assistant(result.content, toolCalls: result.toolCalls))
+        for call in result.toolCalls {
+            history.append(.tool(try run(call), toolCallId: call.id, name: call.name))
+        }
+    default: break
+    }
+}
+```
+
+What the engine does and does not do:
+
+- **Parsing** is the checkpoint's NATIVE markup only (`info.toolCalling.native`)
+  and only for a function offered in `tools`. A call to anything else is plain
+  text, so a model that invents a function does not get it reported.
+- **`stopReason` is `.toolCalls` for any turn that produced a parsed call,**
+  whichever token closed it. ChatML and DeepSeek end such a turn in
+  `endOfTurn`; `crates/server` applies the same rule, and a host's tool loop
+  keys on this one value. `.cancelled` stays authoritative: a Stop press never
+  reads as "run the tool".
+- **Ids are `toolu_<n>` in emission order.** Keep them: the Gemma template
+  resolves a tool turn's function name by matching `toolCallId` against the
+  preceding assistant message's calls, and renders "unknown" otherwise.
+- **Rendering** goes through the checkpoint's own `chat_template.jinja`, the
+  only renderer that can express tools, so a checkpoint that ships none
+  refuses the turn by name. A misspelled offer (an empty or repeated name, a
+  `parameters` that is not a JSON object) is refused before any decoding.
+- **Tool definitions count toward the prompt**, and `countTokens` and
+  `fitWindow` do not see them. Leave extra room when budgeting.
+- **The binding runs nothing.** Executing a tool, and the loop around it, is
+  the host's job. `TurboSparkApp` still uses its own parser and guardrails
+  (`Tools/Core/*`, `Tools/Guardrails/*`) because they also cover checkpoints
+  whose markup is not native, and moving the app's agent loop onto this
+  surface is a behaviour change that needs the real-model gates in
+  `.claude/docs/model-gates.md`. This surface is covered end to end on a
+  scripted model (`crates/ffi/tests/c_surface.rs`), not on a real checkpoint.
+
 ### Estimating tokens
 
 ```swift
@@ -488,6 +570,26 @@ print("BOS: \(String(describing: special.bosId)), EOS: \(String(describing: spec
 
 Exposes direct access to the model's tokenizer for token visualizers, token chip
 highlighters, token-level editing, and span calculations in chat interfaces.
+
+### Counting tokens before a model is loaded
+
+`TurboSparkSession` maps gigabytes and compiles pipelines at open. A context
+meter or a prompt-budget preview that runs before any model is loaded should
+not pay that, and `TurboSparkTokenizer` reads only the tokenizer files:
+
+```swift
+let tokenizer = try TurboSparkTokenizer(modelPath: "~/models/gemma4.gturbo")  // or an alias
+let n = try tokenizer.count("Draft user input...")
+let ids = try tokenizer.tokenize("Hello, world!")
+let text = try tokenizer.detokenize(ids)
+tokenizer.close()   // also on deinit; use after close throws instead of crashing
+```
+
+Calls are synchronous and cheap, and safe from any thread. It does text-level
+work only: rendering a conversation (`renderPrompt`) and fitting a window
+(`fitWindow`) need the family, dialect and reasoning table the engine resolves
+at open, so they stay on the session rather than growing a second, partial
+copy here.
 
 ### Conversation window fitting & context budgeting
 
@@ -584,6 +686,41 @@ try TurboSparkDaemon.stop()
 let cmd = TurboSparkAgent.launchCommand(for: "claude", host: "127.0.0.1", port: 8080)
 print("Run in terminal: \(cmd)")
 ```
+
+### Asking the engine what a family or install can do
+
+The app used to keep its own copy of two engine rules: which families dispatch
+steering, and whether an install would accept `kvBits`. A copy is right until
+the next family lands, and the engine refuses by name at open when they
+disagree. Ask instead:
+
+```swift
+TurboSparkCapabilities.family("gemma4").steeringSupported            // false for an unknown family
+TurboSparkCapabilities.kvQuantSupported(                              // manifest.json "arch" facts
+    fullHeadDim: 128, layerMask: [1, 0, 1, 1], numLayers: 4)
+```
+
+Both are pure, work before any model is open, and answer "no" for anything
+they cannot read. `family` never throws.
+
+### Seeing what the engine writes to stderr
+
+The engine reports some decisions only by `eprintln!` (a vision
+auto-resolution, a speculation fallback, an oversize-image clamp), from crates
+shared with the command-line tools, so they cannot take a host-specific
+callback. They land on file descriptor 2 of your process:
+
+```swift
+try StderrCapture.shared.start { line in log.append(line) }   // one call per complete line
+// ...
+StderrCapture.shared.stop()                                    // restores the original stderr
+```
+
+It tees: each chunk still reaches the original stderr, so a terminal or Xcode
+console keeps working. It is process-wide and one at a time (a second `start`
+throws), the handler runs on a private queue and must not block it, and lines
+carry no level or source because the engine emits none. This is a Swift-side
+tool on purpose: capturing fd 2 from Rust would have needed a new dependency.
 
 ### Telemetry
 
@@ -726,6 +863,15 @@ to that server, including ones attached later, and cannot be changed without
 restarting it. A host that applies its own repair to a reply it read itself
 covers only that path: every HTTP client of this server bypasses it. See
 `docs/FORGE_GUARDRAILS.md` section 0b.
+
+**Idle unload.** `ServerOptions.idleUnloadSeconds` (or
+`server.setIdleUnload(after:)` on a running server) detaches a model that has
+served no request for that long, releasing its weights. Nil or 0 keeps every
+model resident, which is the default and the only behaviour before 2026-10.
+The sweep runs every 30 seconds, never detaches a model with a request in
+flight, and its detach arrives as an ordinary `.modelDetached` event. A model
+that was detached this way is gone from `info().models`; a host that wants it
+back attaches a session again.
 
 **Default system prompt and reasoning effort.** `ServerOptions.defaultSystem`
 supplies a deployment-wide system message for requests that carry no system or
@@ -911,13 +1057,25 @@ do {
     let session = try await TurboSparkSession(modelPath: path)
 } catch let error as TurboSparkError {
     error.code      // .invalidArgument .open .generate .json .unsupportedPlatform .panic
+                    // .cancelled .busy
     error.message   // a sentence, from the library
 }
 ```
 
+`.cancelled` is the caller's own cancel request ending an install or an audio
+job. It is not a failure and should not be shown as one. (A cancelled TEXT turn
+is not an error at all: it returns normally with `stopReason == .cancelled` and
+the partial text.) `.busy` means the resource is in use by another operation,
+today the native audio device or session; unlike `.open`, retrying once that
+job finishes can succeed. Before 2026-10 a cancelled install or audio job came back as `.generate` and
+a busy audio open as `.open`.
+
 `.panic` means a panic was caught at the boundary. The process is intact and
 the operation did not happen; it is a library bug rather than anything the
 caller did, and it is worth reporting with the message attached.
+
+A failed header/archive match (see the top of this file) surfaces as code
+`.unknown` with a message naming both ABI revisions.
 
 `.unsupportedPlatform` is what `ts_session_open` returns off macOS. The engine
 is macOS-only, so the catalog, probe and install calls work everywhere and
@@ -1004,6 +1162,8 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_session_info_json(s, out)` | resolved window, slots, family, dialect, speculation, specialTokens |
 | `ts_session_phases_json(s, out)` | decode phase breakdown |
 | `ts_peak_footprint_bytes()` | process-wide, 0 if unavailable |
+| `ts_abi_version()` | the library's ABI revision; compare with the header's `TS_ABI_VERSION` |
+| `ts_build_info_json(out)` | ABI revision, crate version, whether debug assertions are on |
 | `ts_system_info_json(out)` | hardware RAM, chip, power, thermal status |
 | `ts_session_count_tokens(s, messages, reasoning, out_count)` | evaluates exact prompt token count |
 | `ts_session_render_prompt(s, messages, reasoning, out_prompt)` | formats conversation into raw prompt text |
@@ -1011,11 +1171,15 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_session_detokenize_json(s, tokens_json, skip_special, out)` | decodes token IDs into text string |
 | `ts_session_count_text_tokens(s, text, add_special, out_count)` | evaluates raw text token count |
 | `ts_session_fit_window_json(s, messages, reasoning, max_tokens, out)` | fits conversation into token budget |
-| `ts_generate(s, messages, options, cb, ud, out)` | blocks for the turn |
+| `ts_tokenizer_open(dir, out)` / `ts_tokenizer_close(t)` | a tokenizer with no engine behind it |
+| `ts_tokenizer_count_text_tokens(t, text, add_special, out_count)` | token count with no session |
+| `ts_tokenizer_tokenize_json(t, text, add_special, out)` / `ts_tokenizer_detokenize_json(t, tokens_json, skip_special, out)` | text to ids and back with no session |
+| `ts_generate(s, messages, options, cb, ud, out)` | blocks for the turn; `options.tools` offers functions, `toolCalls` reports the calls |
 | `ts_server_start(s, options_json, out)` | start server; `s` may be NULL, `options_json` configures port, api_key, embedding, hf_endpoint, defaults |
 | `ts_server_attach_session(server, s, out_model_id)` | attach loaded session |
 | `ts_server_attach_embedding_model(server, model_path, out)` | attach embedding model for /v1/embeddings |
 | `ts_server_detach_model(server, model_id)` | detach model from server |
+| `ts_server_set_idle_unload(server, seconds)` | detach a model after it has been idle this long; 0 turns it off |
 | `ts_server_stop(server)` | stop server and drop all listeners |
 | `ts_server_info_json(server, out)` | host, port, active model IDs, auth, uptime |
 | `ts_server_poll_events_json(server, max, out)` | drain server event ring buffer |
@@ -1024,11 +1188,13 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_image_catalog_json(out)` | curated image sources, every platform |
 | `ts_image_installed_json(out)` | installed image rows under the image namespace, every platform |
 | `ts_model_delete(alias)` | delete installed model directory and forget row |
-| `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL |
+| `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL; each row also carries `evidence` (`discovered` / `caveat` / `runs` / `verified`) and `suspicious` |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
 | `ts_context_ladder_json(model_path, options_json, out)` | memory cost per context rung for installed model |
 | `ts_repo_variants_json(repo, out)` | list all GGUF variants published by repository |
 | `ts_control_vector_info_json(path, out)` | a `.gguf` control vector's shape: no model, no session, no network |
+| `ts_kv_quant_supported(full_head_dim, layer_mask, len, num_layers)` | whether `kvBits` would be accepted for an install with these arch facts; 1 or 0, never fails |
+| `ts_family_capabilities_json(family, out)` | `{family, known, steeringSupported}` from the persisted family spelling |
 | `ts_install_bytes_json(alias, out)` | cost before committing |
 | `ts_install(alias, cb, ud, out)` | blocks for minutes; later calls reuse verified ranges for pinned revisions |
 | `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |
@@ -1048,10 +1214,11 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_hf_endpoint_get(out)` | read resolved HF endpoint / mirror URL |
 | `ts_hf_endpoint_set(endpoint)` | set or clear $HF_ENDPOINT mirror override |
 | `ts_model_resolve_path(alias_or_path, out)` | resolve alias or path to canonical install directory |
-| `ts_daemon_status_json(out)` | read background daemon status (running, pid, port, endpoint, logPath) |
+| `ts_daemon_status_json(out)` | read background daemon status (running, pid, port, endpoint, logPath, model) |
 | `ts_daemon_stop()` | stop background daemon if running |
 | `ts_daemon_start(args_json)` | start background server daemon with optional arguments |
 | `ts_daemon_restart(args_json)` | restart background server daemon with optional arguments |
+| `ts_audio_*`, `ts_heavy_work_*` | the native audio surface (catalog, install, adopt, delete, delete_legacy, sessions and jobs); see "Audio" below and the header's audio block |
 
 ### A complete C example
 
@@ -1128,7 +1295,10 @@ int main(void) {
   "steeringLayers": "20:45",
   "steeringTarget": 0.0,
   "steeringGate": 0.0,
-  "kvBits": "3.5"
+  "visionSidecar": null,
+  "expertResidency": "auto",
+  "kvBits": "3.5",
+  "prefixReuse": true
 }
 ```
 
@@ -1158,6 +1328,22 @@ no floor.
 `steeringLayers` accepts `"START:END"` (0-based inclusive layer range).
 `steeringTarget` and `steeringGate` accept finite numbers.
 
+`expertResidency` accepts `"auto"`, `"streamed"`, `"mapped"`, `null` or absence
+(auto). Auto maps the routed experts only when the minimum streamed cache
+cannot fit the measured headroom; the mode the session actually opened with is
+`sessionInfo.expertResidency`. A misspelling is refused before the install is
+opened. `expertCacheSlots` as a number must be one of 8, 16, 24, 32, 48, 64,
+96, 128 (`foundation::runtime_config::ALLOWED_CACHE_SLOTS`); `"auto"` climbs
+through 8/16/24/32 only.
+
+`prefixReuse` (default `true`, which is what every release did) continues each
+turn from the previous turn's KV wherever the new render shares a prefix. Open
+a session you will attach to the in-process server with `false` if you do not
+want one conversation's cached prefix shared with every HTTP client of that
+server: `turbospark-server` itself defaults reuse off for exactly that reason,
+and an in-process server over a default session does not. The resolved value is
+`sessionInfo.prefixReuse`.
+
 `kvBits` accepts `"off"`, `"2"`, `"3"`, `"3.5"`, `"4"`, `null` or absence.
 Null and absence mean `"off"`, which is what every release before this key
 existed produced byte for byte. `"3.5"` splits into K3/V4, mlx-vlm's own
@@ -1180,7 +1366,10 @@ convention for its one fractional width. An unsupported family or
     "thinkStartId": 151648,
     "thinkEndId": 151649
   },
-  "kvBits": "3.5 (K3/V4)"
+  "kvBits": "3.5 (K3/V4)",
+  "expertResidency": "streamed",
+  "prefixReuse": true,
+  "vision": { "active": true, "maxPixels": 1003520 }
 }
 ```
 
@@ -1193,13 +1382,15 @@ it on.
 
 ```json
 { "maxNewTokens": 512, "temperature": 0.2, "topK": 64, "topP": 0.95,
-  "repetitionPenalty": 1.0, "seed": null, "stop": [], "stopTokens": [], "reasoning": "off" }
+  "repetitionPenalty": 1.0, "minP": 0.0, "presencePenalty": 0.0, "frequencyPenalty": 0.0,
+  "seed": null, "stop": [], "stopTokens": [], "tools": [], "reasoning": "off" }
 ```
 
 ```json
-{ "promptTokens": 21, "newTokens": 120, "prefillSeconds": 0.41,
-  "decodeSeconds": 2.87, "stopReason": "maxTokens", "tokensPerSecond": 41.8,
-  "content": "...", "reasoning": "" }
+{ "promptTokens": 21, "newTokens": 120, "reusedPrefixTokens": 0,
+  "prefillSeconds": 0.41, "decodeSeconds": 2.87, "stopReason": "maxTokens",
+  "toolCalls": [], "tokensPerSecond": 41.8, "content": "...", "reasoning": "",
+  "peakMemoryPressure": "normal" }
 ```
 
 `tokensPerSecond` is `null` when no decoding happened, so nothing can plot a
@@ -1222,67 +1413,112 @@ rate that was never measured. `stopReason` is one of `endOfTurn`,
 
 ---
 
-## Audio binding plan
+## Audio
 
 Audio family and checkpoint status lives in
-[`crates/audio/MODELS.md`](../crates/audio/MODELS.md). Rust model support,
-runtime integration, C ABI support, and Swift support are separate gates.
-The portable speech models do not yet imply a usable Swift audio API.
+[`crates/audio/MODELS.md`](../crates/audio/MODELS.md), and the per-family
+capability table in
+[`docs/AUDIO_WORKSPACE_CAPABILITIES.md`](AUDIO_WORKSPACE_CAPABILITIES.md). Rust
+model support, runtime integration, C ABI support and Swift support are
+separate gates, and a family being implemented in Rust does not make it
+reachable from Swift.
 
-### Current Whisper C ABI
+### What is reachable from Swift
 
-The current working tree contains an in-progress Whisper STT surface in the
-[canonical header](../crates/ffi/include/turbospark.h), backed by
-[`crates/runtime`](../crates/runtime/AGENTS.md). There is no Swift speech
-wrapper or TTS C ABI yet.
+The native path is `ts_audio_*` in the header, wrapped by `Audio.swift`
+(`AudioCatalog`, `AudioSession`, `AudioJob`). The runtime opens a session for
+exactly three tasks:
 
-`ts_stt_open` opens a resident model. Each stream accepts at most two seconds
-of base64 f32 little-endian, 16 kHz mono PCM per append. Append reports the
-buffered sample count and duration. `ts_stt_stream_finish` synchronously
-decodes the accumulated audio and returns segments with timestamps and
-`languageDetected`. This is buffered transcription; append does not return
-partial transcripts. Off macOS, these symbols return `TS_ERR_UNSUPPORTED`.
+| Task (`AudioTask`) | Family reached today | Notes |
+|---|---|---|
+| `.speechToText` | Whisper | Catalog install (`whisper-base`) or a chosen folder. Qwen3-ASR also opens, from the app's Advanced page, behind an explicit portable or experimental-Metal opt-in and a local folder. |
+| `.textToSpeech` | Kokoro | Portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. |
+| `.music` | MiniMax Music 3 | Catalog install covers `minimax-music3-4bit`. |
 
-Serialize calls on each handle. Streams retain the model's runner, and model
-close refuses while any of its streams remain open. Close every stream before
-closing its model. Cancel discards buffered PCM and finishes the stream. It
-cannot interrupt an active finish call or run concurrently with it.
+`AudioTask` has ten cases because the catalog and capability rows describe
+families the engine has code for but no session entry point yet (VAD,
+diarization, alignment, enhancement, separation, codec, language ID). Opening
+one is refused at `ts_audio_session_open` as an unknown task. **Use
+`AudioTask.isRunnable` (and `AudioTask.runnable`) before offering a control**:
+the app's Clean Up page and the unrunnable Advanced operations are hidden for
+exactly this reason, and `crates/ffi/tests/audio_surface.rs` pins the accepted
+names so the Swift predicate cannot drift from the runtime.
 
-### Planned Swift surface
+```swift
+let profiles = try AudioCatalog.profiles()               // pinned, installable rows
+let report = try AudioCatalog.installed()                // see below
+let record = try AudioCatalog.install(profile.identity)  // blocking: call off the main actor
 
-Keep future wrappers in the existing TurboSpark package. The planned layout is
-`swift/TurboSpark/Sources/TurboSpark/Speech/`, with matching tests under
-`swift/TurboSpark/Tests/TurboSparkTests/Speech/`. These paths describe future
-implementation; this plan adds no wrapper, public type, or ABI.
+let session = try AudioSession(modelPath: record.path, task: .music)  // verifies bytes: off main
+var request = AudioRequest(task: .music)
+request.caption = "piano"; request.lyrics = "[instrumental]"
 
-- Provide typed PCM metadata, task options, and results. Read family
-  capabilities and checkpoint identity from shared Rust/catalog metadata so
-  Swift does not maintain a second model registry.
-- Run blocking model open and inference off the main thread. Serialize native
-  handle access and retain the model for each stream's lifetime. Close handles
-  only after queued work completes.
-- Reuse the status and JSON helpers above. Read `ts_last_error` immediately on
-  the thread that received a failure. Copy Rust-owned results before freeing
-  them, and release every result allocation even when decoding fails.
-- Give cancellation the semantics the native operation supports. Concurrent
-  interruption requires its own native contract and tests before Swift exposes
-  it. The current STT cancel operation only clears buffered audio.
-- Keep microphone capture, playback, AVFoundation conversion, permissions,
-  and SwiftUI state in the Swift host. The binding accepts or returns PCM with
-  explicit sample rate and channel metadata; each task declares its required
-  format.
+let result = try await session.execute(request) { progress in ... }   // whole result at the end
+
+// Live output, to start playback before the job finishes:
+for try await event in session.stream(request) {
+    switch event {
+    case .progress(let p): ...
+    case .pcm(let chunk): ...        // at most 32,000 samples, interleaved
+    case .finished(let result): ...
+    }
+}
+```
+
+`execute` deliberately has no PCM parameter. A second closure parameter would
+capture an existing caller's trailing closure (Swift 5 mode binds it to the
+last closure parameter), turning a progress callback into a PCM one without a
+compile error; `executeStreaming(_:pcm:progress:onPCM:)` and `stream(_:pcm:)`
+are the live-output entry points. The full audio is still returned in the
+result.
+
+### Installs: installed, adopt, delete
+
+`AudioCatalog.installed()` returns four lists. `installed` are receipt-backed
+and usable. `needsAdoption` are installs the receipt store does not know yet
+but whose identity matches a pinned profile: a model pulled by the CLI
+(`pull-audio` of a music model) writes no receipt, so without adoption it is
+invisible. `AudioCatalog.adopt(_:)` verifies it and makes it usable.
+`incompatible` are installs that exist on disk but cannot be used, with the
+engine's reason; `otherAudio` is audio the pinned profiles do not describe.
+Removal is `AudioCatalog.delete(_:)` for a receipt-backed install and
+`AudioCatalog.deleteLegacy(_:)` for an unadopted one (including a damaged one;
+it refuses a receipt-backed install). Close any resident `AudioSession` on the
+model first. The app exposes adopt, delete (with a confirmation) and a list of
+installs that need attention in the audio model picker.
+
+### Wire conventions that differ from the rest of the ABI
+
+The audio block of the header is snake_case, not camelCase, because those
+structs are the runtime's own serde types passed through unchanged. The header
+documents the callback `kind` values (1 is progress JSON, 2 is borrowed PCM),
+the append and run lifecycle, and the cancellation calls. The legacy
+`ts_stt_*` path (`TurboSparkSTTModel`, `TurboSparkSTTStream`) is a separate,
+older surface: it takes no heavy-work permit, falls back to Whisper for a
+non-Qwen `model_type`, and cannot cancel an in-flight finish. Prefer
+`AudioSession`.
+
+### Known limits
+
+- **Opening a managed model hashes every byte** with no progress and no cancel
+  (`ts_audio_session_open`), including after each idle unload. Call it off the
+  main thread and expect it to take a while on a multi-gigabyte model.
+- **Music progress is indeterminate.** The runtime reports `completed: 0` with
+  no total; the generator has determinate counters that are not wired through
+  yet.
+- **Whisper emits no per-window progress**, which is why the app still chops
+  long recordings into windows and reconciles the boundaries itself.
+- **Seed.** A nil music seed resolves to 0 in the engine, not a random one.
+- **Platform.** Off macOS the audio symbols return `TS_ERR_UNSUPPORTED`.
 
 ### Binding qualification
 
 Reuse `make swift-lib` to stage the static library and canonical header, then
-run `make swift-test`. Future wrappers need tests for error propagation,
-result ownership, stream/model lifetimes, serialized access, and their actual
-cancellation behavior. Keep checkpoint-dependent tests opt-in and identify
-the pinned model they exercise.
-
-The current Rust STT integration test uses `TS_STT_TEST_MODEL` and optional
-`TS_STT_TEST_WAV`. It checks the ABI path and deterministic results. Swift
-binding validation, transcript quality, accelerated execution, and app
+run `make swift-test`. Checkpoint-dependent tests are opt-in and name the
+pinned model they exercise; `AudioTests` uses the committed
+`crates/audio/testdata/minimax_music3/converted_plain` fixture, which is what
+exercises native ownership, PCM copying and cancellation end to end. Swift
+binding validation, transcript quality, accelerated execution and app
 packaging each require separate evidence.
 
 ---
@@ -1326,6 +1562,7 @@ something the others structurally cannot.
 | Rust, no model | `cargo test -p turbospark-ffi` | ownership, error propagation, the panic guard, cancellation from a second thread |
 | ABI, no model | `make swift-test` | **the hand-written header disagreeing with Rust** |
 | whole stack | `make swift-test-real` | streaming, cancel, telemetry against a real Metal forward pass |
+| app | `make swift-test-app` | the app's own logic over the package (adopt/delete decisions, attachment transcoding, localization parity) |
 
 **The bottom row's coverage is a property of the install you point it at**,
 which is easy to miss because the other two rows are not. Speculation resolves
@@ -1357,6 +1594,24 @@ phases:   23 calls at 25.4 ms, expert hit rate 0.74, peak 3743 MiB
 The peak is at 32 auto-resolved slots. At the pinned 16 that every published
 figure uses it is around 2,180 MiB.
 
+**Which archive is staged decides what links.** `make swift-lib` stages a plain
+archive for the package tests; `make swift-lib-app` (which `swift-test-app` and
+`swift-app-build` depend on) localizes `_rust_eh_personality` for the app, and
+a plain `swift test` in `swift/TurboSpark` against THAT archive fails to link
+with `Undefined symbols ... _rust_eh_personality`. Run `make swift-lib` again
+before package tests after an app build. A stale archive under a newer header
+is now reported by name rather than as a missing JSON key
+(`TurboSparkRuntime.verifyABI()`; see the top of this file), but the
+`RuntimeABITests` that pin it can only fail once the two have been staged
+from different builds.
+
+**Scripted-session tests count PROMPT tokens too.** `ScriptedLogitProducer`
+is called once per prompt token during prefill as well as once per generated
+token, so a scripted reply needs `prompt_len - 1` filler steps in front of it
+(`scripted_reply_after_tool_prompt` in `crates/ffi/tests/c_surface.rs`). The
+symptom of forgetting is a reply that starts a few tokens late, or
+`ScriptedLogitProducer exhausted its scripted steps`.
+
 **One caveat about the middle row that is worth knowing before trusting a
 red or a green from it.** SwiftPM does not treat `libturbospark_ffi.a` as a
 build input -- the `-L` path is an unsafe linker flag, which it passes
@@ -1372,13 +1627,21 @@ its symptom is a mutation check whose result never moves.
 
 Stated so the omissions are decisions on the record rather than gaps.
 
-- **Tool calling.** `crates/server` has it on both endpoints;
-  `StructuredAssistantDecoder` is constructed here with an empty tool
-  allowlist, so a Harmony `commentary` body arrives as reasoning. Wiring it
-  means a way to *run* a tool, which a binding cannot supply on its own.
-- **Multiple concurrent sessions per process.** One runner per process is the
-  engine's shape: it takes `&mut self` to decode, so calls serialize. Two
-  sessions in one process is untested and each pins gigabytes.
+- **Running a tool, or tool calls on a checkpoint whose markup is not
+  native.** Offering tools and parsing native calls IS supported now (see
+  "Tool calling"); executing a tool is the host's job, and
+  `info.toolCalling.native == false` checkpoints need the host's own repair
+  layer (the app's guardrails), which the server also has and this surface does
+  not.
+- **Logprobs, grammar-constrained or structured output, perplexity, and KV
+  save/restore.** These do not exist in the Rust runtime (the server only warns
+  on `response_format`), so they are not binding gaps.
+- **A throughput guarantee for multiple concurrent sessions.** Each session
+  has its own runner, which takes `&mut self` to decode, so one session
+  serializes its own calls. `TurboSparkApp` does open a second session per
+  model it attaches to the in-process server, so two sessions in one process
+  work; what is not promised is that they run in parallel at full speed, and
+  each pins gigabytes of weights and KV.
 - **iOS.** The Metal kernels and the expert streamer's `pread` path have
   never been run there.
 - **Intel Macs.** See above.
@@ -1392,6 +1655,50 @@ mirrored the CLI's single-shot `open_session` rather than its multi-turn
 `chat.rs`, so `TurboSparkApp` -- a multi-chat app built on exactly one
 long-lived session per loaded model -- re-prefilled its whole transcript
 every message with the 11.6x prefill win sitting unreachable one file away.
+
+### Deliberately not exposed, with the reason
+
+Found by an audit of the Rust crates against this surface, and left out on
+purpose. Each would need new evidence or an explicit decision to change.
+
+- **`pull --force`, installing past a probe refusal.** The CLI's flag installs a
+  model the probe says would not run here. The FFI refuses that by design; a
+  host that wants to attempt it should say so explicitly in its own UI and
+  call the CLI.
+- **Hub search and trending** (`catalog::HubClient`). Nothing in the CLI uses
+  it yet, its result types are not serializable, and it needs a detected
+  machine profile; projecting it over the ABI without a live network to check
+  against would be guesswork.
+- **Image fit/admission** (`image::admit_image_budget`). It models the native
+  image pipeline, which the app does not run. The app's memory tiers
+  (`recommendedImageModelAliases`) are measured envelopes for the vendored MLX
+  Z-Image path, and quoting one path's budget for the other's footprint passes
+  off a different measurement as the app's own.
+- **Negative prompt, guidance and step count for Z-Image Turbo.** Its contract
+  is nine steps at guidance 0 (`docs/ZIMAGE_TURBO.md`), and the native
+  engine's request validation rejects anything else (`crates/image/src/
+  runtime.rs`). A negative prompt acts through classifier-free guidance, which
+  is off at guidance 0, so a control for it on the Turbo models the app ships
+  would not do anything. The families that do run guidance (4, in
+  `docs/IMAGE_GENERATION.md`) are where it could matter, and the app does not
+  generate with them.
+- **Cancellable or cached audio open verification.** `ts_audio_session_open`
+  hashes every byte of a managed model. Caching the result would weaken an
+  integrity check, and the cancel flag it could take is only consulted between
+  files, not inside a large file's hash.
+- **VAD, diarization, Moonshine, enhancement and separation** have Rust model
+  code but no `Engine` variant in `runtime::native_audio`, so there is no
+  session to open (`AudioTask.isRunnable` reports it). They also need catalog
+  pins (revisions and hashes) that cannot be invented.
+- **Determinate music progress.** `Music3Runner::generate_text_with_progress`
+  has the counters, but it does not take the cancellation handle that
+  `generate_text_cancellable` does, so wiring it needs a combined method in
+  `runtime/src/music3.rs` and a call-site change in `native_audio.rs`.
+- **TypeSafe/OpenKind** stays a separate process with no link to this FFI.
+- **Native image ABI (`ts_image_*`).** Kept for C hosts and the tests; the app
+  generates through its vendored MLX pipeline. Its request validation accepts
+  only steps 9 and guidance 0 (`crates/image/src/runtime.rs`), so it exposes
+  five fields on purpose.
 
 ---
 

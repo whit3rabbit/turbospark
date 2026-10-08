@@ -17,6 +17,13 @@ public struct ModelRecommendation: Codable, Sendable, Identifiable, Equatable {
         case refused
         /// Sizing or memory footprint could not be determined.
         case unknown
+
+        /// A verdict from a newer engine decodes as `.unknown` rather than
+        /// failing the whole recommendation array.
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = FitVerdict(rawValue: raw) ?? .unknown
+        }
     }
 
     /// Model alias identifier in the catalog.
@@ -54,6 +61,17 @@ public struct ModelRecommendation: Codable, Sendable, Identifiable, Equatable {
     /// chip. Carries the chip so a host can label it rather than pass it off
     /// as this machine's answer. Deliberately not part of the ranking.
     public let throughput: ThroughputBand?
+    /// How much is known about this row: `discovered` (only probed), `caveat`
+    /// or `runs` (run on a machine here), or `verified` (a frozen gate or
+    /// oracle row exists). Nil from an older engine.
+    public let evidence: String?
+    /// True when the artifact is far smaller than its own name claims, which
+    /// usually means a mislabelled or truncated upload. Nil from an older
+    /// engine.
+    public let suspicious: Bool?
+
+    /// `suspicious`, with an absent value read as not suspicious.
+    public var isSuspicious: Bool { suspicious ?? false }
 }
 
 /// System hardware and power telemetry readings.

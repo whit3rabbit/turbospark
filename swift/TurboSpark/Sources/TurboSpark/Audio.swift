@@ -6,6 +6,27 @@ public enum AudioTask: String, Codable, Sendable, CaseIterable {
     case enhancement, separation, alignment, diarization, speechDetection = "speech_detection"
     case codec, languageIdentification = "language_identification"
 }
+extension AudioTask {
+    /// Whether the native runtime can open a session for this task.
+    ///
+    /// `ts_audio_session_open` deserializes the runtime's own task enum
+    /// (`crates/runtime/src/native_audio.rs`), which has exactly these three
+    /// variants. The other cases exist in Swift for catalog and capability
+    /// rows that describe model families the engine has code for but no
+    /// session entry point yet; opening one is refused by name. A host should
+    /// not offer a control for a task that is not runnable.
+    public var isRunnable: Bool {
+        switch self {
+        case .speechToText, .textToSpeech, .music: return true
+        case .enhancement, .separation, .alignment, .diarization, .speechDetection,
+            .codec, .languageIdentification:
+            return false
+        }
+    }
+
+    /// The tasks `isRunnable` allows, in declaration order.
+    public static var runnable: [AudioTask] { allCases.filter(\.isRunnable) }
+}
 public struct AudioProfileIdentity: Codable, Sendable, Hashable {
     public let task: AudioTask
     public let alias: String
@@ -123,6 +144,14 @@ public enum AudioCatalog {
         let status = json.withCString { ts_audio_delete($0) }
         if status != 0 { throw TurboSparkError.fromLastError(status) }
     }
+    /// Removes an install that has no receipt (one `installed()` lists under
+    /// `needsAdoption`), including a damaged one. A receipt-backed install is
+    /// refused: use `delete`. Close any resident session on it first.
+    public static func deleteLegacy(_ identity: AudioProfileIdentity) throws {
+        let json = try audioEncode(identity)
+        let status = json.withCString { ts_audio_delete_legacy($0) }
+        if status != 0 { throw TurboSparkError.fromLastError(status) }
+    }
     public static func adopt(_ identity: AudioProfileIdentity) throws -> AudioInstalledRecord {
         let json = try audioEncode(identity)
         return try audioDecode(AudioInstalledRecord.self, takeString { out in json.withCString { ts_audio_adopt($0, out) } })
@@ -226,8 +255,27 @@ private struct AudioWireResult: Decodable {
 private final class AudioCallbackBox {
     var samples: [Float] = []
     let progress: @Sendable (AudioProgress) -> Void
-    init(progress: @escaping @Sendable (AudioProgress) -> Void) { self.progress = progress }
+    let onPCM: (@Sendable ([Float]) -> Void)?
+    init(progress: @escaping @Sendable (AudioProgress) -> Void, onPCM: (@Sendable ([Float]) -> Void)? = nil) {
+        self.progress = progress; self.onPCM = onPCM
+    }
+    /// One native kind-2 chunk (at most 32,000 samples): retained for the final
+    /// result and handed to the live handler in arrival order.
+    func receive(_ chunk: UnsafeBufferPointer<Float>) {
+        samples.append(contentsOf: chunk)
+        onPCM?(Array(chunk))
+    }
 }
+#if DEBUG
+/// Test seam for the chunk path, which otherwise needs a real audio model.
+func audioDeliverChunksForTesting(
+    _ chunks: [[Float]], onPCM: (@Sendable ([Float]) -> Void)?
+) -> [Float] {
+    let box = AudioCallbackBox(progress: { _ in }, onPCM: onPCM)
+    for chunk in chunks { chunk.withUnsafeBufferPointer { box.receive($0) } }
+    return box.samples
+}
+#endif
 public struct AudioJobStatus: Codable, Sendable, Equatable {
     public let state: String
     public let cancellationRequested: Bool
@@ -245,6 +293,44 @@ public final class AudioJob: @unchecked Sendable {
     }
     func close() { lock.lock(); defer { lock.unlock() }; if let handle { _ = ts_audio_job_close(handle); self.handle = nil } }
 }
+/// A stop request for one `AudioSession` open.
+///
+/// Opening a managed model first SHA-256 verifies every byte of its files,
+/// which on a multi-gigabyte model takes a while and used to be neither
+/// stoppable nor observable. Create a token, pass it to
+/// `AudioSession.init(modelPath:task:...openToken:onProgress:)`, and call
+/// `cancel()` from any thread (it never blocks) to stop the open.
+///
+/// Honoured within about 1 MiB of hashing during verification, and once more
+/// just before the engine loads. The load itself is not interruptible. The
+/// open then throws a `TurboSparkError` whose code is `.cancelled`; a stop
+/// never reports success, and a hash mismatch is still refused as before.
+public final class AudioOpenToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var raw: OpaquePointer?
+    public init() throws {
+        var out: OpaquePointer?
+        let status = ts_audio_open_token_new(&out)
+        guard status == 0, let out else { throw TurboSparkError.fromLastError(status) }
+        raw = out
+    }
+    deinit {
+        lock.lock(); defer { lock.unlock() }
+        if let raw { _ = ts_audio_open_token_free(raw) }
+    }
+    /// Asks the open this token was passed to to stop. Idempotent.
+    public func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        if let raw { _ = ts_audio_open_token_cancel(raw) }
+    }
+    /// Runs `body` with the native token, holding the lock so `deinit` cannot
+    /// free it underneath. Cancellation does not take this lock for the
+    /// duration of the call (see `cancel`), so it works while an open runs.
+    fileprivate func withRaw<T>(_ body: (OpaquePointer?) throws -> T) rethrows -> T {
+        lock.lock(); let handle = raw; lock.unlock()
+        return try withExtendedLifetime(self) { try body(handle) }
+    }
+}
 /// A serial facade over a dedicated native worker. Cancellation never waits for the operation lock.
 public final class AudioSession: @unchecked Sendable {
     private let operation = NSLock()
@@ -252,12 +338,37 @@ public final class AudioSession: @unchecked Sendable {
     private var handle: OpaquePointer?
     private var job: AudioJob?
     private var stopping = false
-    public init(modelPath: String, task: AudioTask, allowPortable: Bool = false, allowExperimentalMetal: Bool = false, expectedFamily: String? = nil) throws {
+    public convenience init(modelPath: String, task: AudioTask, allowPortable: Bool = false, allowExperimentalMetal: Bool = false, expectedFamily: String? = nil) throws {
+        try self.init(modelPath: modelPath, task: task, allowPortable: allowPortable, allowExperimentalMetal: allowExperimentalMetal, expectedFamily: expectedFamily, openToken: nil, onProgress: nil)
+    }
+    /// Opens with a stop request and progress.
+    ///
+    /// `onProgress` receives `AudioProgress(stage: "verifying", completed:, total:)`
+    /// in BYTES while a managed model's files are verified (about every 16 MiB),
+    /// on the opening thread. Block the main actor on nothing in it. A folder
+    /// you chose yourself is not verified, so it reports nothing. See
+    /// `AudioOpenToken` for what a stop does and does not interrupt.
+    public init(modelPath: String, task: AudioTask, allowPortable: Bool = false, allowExperimentalMetal: Bool = false, expectedFamily: String? = nil, openToken: AudioOpenToken?, onProgress: (@Sendable (AudioProgress) -> Void)?) throws {
         struct Options: Encodable { let task: AudioTask; let allowPortable: Bool; let allowExperimentalMetal: Bool; let expectedFamily: String? }
         let json = try audioEncode(Options(task: task, allowPortable: allowPortable, allowExperimentalMetal: allowExperimentalMetal, expectedFamily: expectedFamily))
         let path = NSString(string: modelPath).expandingTildeInPath
         var native: OpaquePointer?
-        let status = path.withCString { path in json.withCString { ts_audio_session_open(path, $0, &native) } }
+        let status: Int32
+        if openToken == nil && onProgress == nil {
+            status = path.withCString { path in json.withCString { ts_audio_session_open(path, $0, &native) } }
+        } else {
+            let box = AudioCallbackBox(progress: onProgress ?? { _ in })
+            let context = Unmanaged.passUnretained(box).toOpaque()
+            let call: (OpaquePointer?) -> Int32 = { token in
+                path.withCString { path in
+                    json.withCString { options in
+                        ts_audio_session_open_cancellable(path, options, token, audioProgressTrampoline, context, &native)
+                    }
+                }
+            }
+            if let openToken { status = openToken.withRaw(call) } else { status = call(nil) }
+            withExtendedLifetime(box) {}
+        }
         guard status == 0, let native else { throw TurboSparkError.fromLastError(status) }
         handle = native
     }
@@ -269,13 +380,50 @@ public final class AudioSession: @unchecked Sendable {
         operation.lock(); defer { operation.unlock() }
         if let handle { _ = ts_audio_session_close(handle); self.handle = nil }
     }
+    /// Runs one job and returns the whole result.
+    ///
+    /// Deliberately has no PCM handler: a second closure parameter here would
+    /// capture an existing caller's trailing closure (Swift 5 mode binds it to
+    /// the LAST closure parameter), silently turning a progress callback into
+    /// a PCM one. Use `executeStreaming` for live output.
     public func execute(_ request: AudioRequest, pcm: [Float] = [], progress: @escaping @Sendable (AudioProgress) -> Void = { _ in }) async throws -> AudioResult {
+        try await executeStreaming(request, pcm: pcm, progress: progress, onPCM: nil)
+    }
+    /// Like `execute`, but `onPCM` receives each output chunk (at most 32,000
+    /// samples, interleaved in the result's `format`) as the engine produces
+    /// it, on the worker thread and before this call returns, so a host can
+    /// start playback early. The full audio is still returned in the result.
+    /// The handler must not block on the main actor.
+    public func executeStreaming(_ request: AudioRequest, pcm: [Float] = [], progress: @escaping @Sendable (AudioProgress) -> Void = { _ in }, onPCM: (@Sendable ([Float]) -> Void)?) async throws -> AudioResult {
         let cancellation = AudioCancellationSlot()
         return try await withTaskCancellationHandler {
-            try await Task.detached { [self] in try executeBlocking(request, pcm: pcm, progress: progress, cancellation: cancellation) }.value
+            try await Task.detached { [self] in try executeBlocking(request, pcm: pcm, progress: progress, onPCM: onPCM, cancellation: cancellation) }.value
         } onCancel: { cancellation.cancel() }
     }
-    private func executeBlocking(_ request: AudioRequest, pcm: [Float], progress: @escaping @Sendable (AudioProgress) -> Void, cancellation: AudioCancellationSlot) throws -> AudioResult {
+    /// One event of `stream(_:pcm:)`.
+    public enum StreamEvent: Sendable {
+        case progress(AudioProgress)
+        case pcm([Float])
+        case finished(AudioResult)
+    }
+    /// `execute` as an `AsyncThrowingStream`: progress and PCM chunks as they
+    /// arrive, then `.finished`. Cancelling the consuming task cancels the job.
+    public func stream(_ request: AudioRequest, pcm: [Float] = []) -> AsyncThrowingStream<StreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let result = try await self.executeStreaming(
+                        request, pcm: pcm,
+                        progress: { continuation.yield(.progress($0)) },
+                        onPCM: { continuation.yield(.pcm($0)) })
+                    continuation.yield(.finished(result))
+                    continuation.finish()
+                } catch { continuation.finish(throwing: error) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+    private func executeBlocking(_ request: AudioRequest, pcm: [Float], progress: @escaping @Sendable (AudioProgress) -> Void, onPCM: (@Sendable ([Float]) -> Void)?, cancellation: AudioCancellationSlot) throws -> AudioResult {
         operation.lock(); defer { operation.unlock() }
         control.lock(); let closed = stopping; control.unlock()
         guard !closed, let handle else { throw TurboSparkError(code: .invalidArgument, message: "Audio session is closed") }
@@ -294,20 +442,25 @@ public final class AudioSession: @unchecked Sendable {
             let status = pcm.withUnsafeBufferPointer { ts_audio_job_append(raw, $0.baseAddress!.advanced(by: start), count) }
             if status != 0 { throw TurboSparkError.fromLastError(status) }
         }
-        let box = AudioCallbackBox(progress: progress)
+        let box = AudioCallbackBox(progress: progress, onPCM: onPCM)
         let context = Unmanaged.passUnretained(box).toOpaque()
         let result = try takeString { out in
-            ts_audio_job_run(raw, { userdata, kind, json, length, samples, count in
-                guard let userdata else { return }
-                let box = Unmanaged<AudioCallbackBox>.fromOpaque(userdata).takeUnretainedValue()
-                if kind == 1, let json, let update = try? audioDecode(AudioProgress.self, String(decoding: UnsafeBufferPointer(start: UnsafeRawPointer(json).assumingMemoryBound(to: UInt8.self), count: length), as: UTF8.self)) { box.progress(update) }
-                if kind == 2, let samples { box.samples.append(contentsOf: UnsafeBufferPointer(start: samples, count: count)) }
-            }, context, out)
+            ts_audio_job_run(raw, audioProgressTrampoline, context, out)
         }
         let wire = try audioDecode(AudioWireResult.self, result)
         guard wire.sampleCount == box.samples.count else { throw TurboSparkError(code: .invalidArgument, message: "Native audio output count mismatch") }
         return AudioResult(transcript: wire.transcript, pcm: wire.pcmFormat.map { AudioPCM(format: $0, samples: box.samples) }, seed: wire.seed)
     }
+}
+/// The one C callback for audio jobs and cancellable opens: kind 1 is
+/// progress JSON, kind 2 is borrowed PCM (copied before this returns).
+private let audioProgressTrampoline: @convention(c) (
+    UnsafeMutableRawPointer?, Int32, UnsafePointer<CChar>?, Int, UnsafePointer<Float>?, Int
+) -> Void = { userdata, kind, json, length, samples, count in
+    guard let userdata else { return }
+    let box = Unmanaged<AudioCallbackBox>.fromOpaque(userdata).takeUnretainedValue()
+    if kind == 1, let json, let update = try? audioDecode(AudioProgress.self, String(decoding: UnsafeBufferPointer(start: UnsafeRawPointer(json).assumingMemoryBound(to: UInt8.self), count: length), as: UTF8.self)) { box.progress(update) }
+    if kind == 2, let samples { box.receive(UnsafeBufferPointer(start: samples, count: count)) }
 }
 private final class AudioCancellationSlot: @unchecked Sendable {
     private let lock = NSLock()
