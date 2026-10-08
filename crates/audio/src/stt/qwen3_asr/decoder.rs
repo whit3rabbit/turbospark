@@ -707,9 +707,24 @@ pub(crate) fn is_chat_stop(stop_ids: &[u32], token: u32) -> bool {
 /// the new logits; `observe(logits, next)` sees every one of those
 /// post-step logits (not the first). The step after the final emitted token
 /// still runs its logits so observers see the decision that follows the
-/// last token, as the per-family loops always did. `overflow_label` names
-/// the family in the signed 32-bit overflow error.
-pub(crate) fn greedy_generate<D: TokenDecoder>(
+/// Computes the log-probability of a selected token under the given logits
+/// via `logits[token] - logsumexp(logits)`.
+pub fn compute_selected_logprob(logits: &[f32], token: u32) -> f32 {
+    let token_idx = token as usize;
+    if token_idx >= logits.len() {
+        return f32::NEG_INFINITY;
+    }
+    let max = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    if max.is_infinite() {
+        return f32::NEG_INFINITY;
+    }
+    let sum_exp: f32 = logits.iter().map(|&x| (x - max).exp()).sum();
+    let lse = max + sum_exp.ln();
+    logits[token_idx] - lse
+}
+
+/// The single shared greedy-decode loop with token log probabilities.
+pub(crate) fn greedy_generate_with_logprobs<D: TokenDecoder>(
     decoder: &D,
     first_logits: &[f32],
     mut cache: DecodeCache,
@@ -717,14 +732,20 @@ pub(crate) fn greedy_generate<D: TokenDecoder>(
     is_stop: impl Fn(u32) -> bool,
     overflow_label: &str,
     mut observe: impl FnMut(&[f32], u32),
-) -> Result<Vec<u32>> {
+) -> Result<(Vec<u32>, Vec<f32>)> {
     let mut generated: Vec<u32> = Vec::new();
-    let mut next = crate::nn::argmax(first_logits) as u32;
+    let mut logprobs: Vec<f32> = Vec::new();
+    let mut current_logits: std::borrow::Cow<'_, [f32]> = std::borrow::Cow::Borrowed(first_logits);
+
+    let mut next = crate::nn::argmax(&current_logits) as u32;
     for _ in 0..max_tokens {
         if is_stop(next) {
             break;
         }
+        let lp = compute_selected_logprob(&current_logits, next);
+        logprobs.push(lp);
         generated.push(next);
+
         let token_id = i32::try_from(next).map_err(|_| SpeechError::Input {
             why: format!("{overflow_label} generated token id exceeds signed 32-bit range"),
         })?;
@@ -732,14 +753,45 @@ pub(crate) fn greedy_generate<D: TokenDecoder>(
         let step_logits = decoder.logits(&hidden);
         next = crate::nn::argmax(&step_logits) as u32;
         observe(&step_logits, next);
+        current_logits = std::borrow::Cow::Owned(step_logits);
     }
-    Ok(generated)
+    Ok((generated, logprobs))
+}
+
+/// The single shared greedy-decode loop. Callers pass the first logits and
+/// the cache from [`Decoder::prefill`]. Each emitted
+/// token is embedded and stepped, then the next decision is the argmax of
+/// the new logits; `observe(logits, next)` sees every one of those
+/// post-step logits (not the first). The step after the final emitted token
+/// still runs its logits so observers see the decision that follows the
+/// last token, as the per-family loops always did. `overflow_label` names
+/// the family in the signed 32-bit overflow error.
+pub(crate) fn greedy_generate<D: TokenDecoder>(
+    decoder: &D,
+    first_logits: &[f32],
+    cache: DecodeCache,
+    max_tokens: usize,
+    is_stop: impl Fn(u32) -> bool,
+    overflow_label: &str,
+    observe: impl FnMut(&[f32], u32),
+) -> Result<Vec<u32>> {
+    greedy_generate_with_logprobs(
+        decoder,
+        first_logits,
+        cache,
+        max_tokens,
+        is_stop,
+        overflow_label,
+        observe,
+    )
+    .map(|(tokens, _)| tokens)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        greedy_generate, is_chat_stop, Decoder, DecoderLayer, Linear, Mlp, RmsNorm, TextAttention,
+        compute_selected_logprob, greedy_generate, is_chat_stop, Decoder, DecoderLayer, Linear,
+        Mlp, RmsNorm, TextAttention,
     };
     use crate::ops;
 
@@ -1085,6 +1137,19 @@ mod tests {
             *value += add;
         }
         assert_eq!(bits(&new), bits(&residual));
+    }
+
+    #[test]
+    fn compute_selected_logprob_matches_analytical_values() {
+        let logits = [0.0, 0.0];
+        let lp0 = compute_selected_logprob(&logits, 0);
+        let lp1 = compute_selected_logprob(&logits, 1);
+        let expected = -2.0f32.ln();
+        assert!((lp0 - expected).abs() < 1e-6);
+        assert!((lp1 - expected).abs() < 1e-6);
+
+        let out_of_bounds = compute_selected_logprob(&logits, 5);
+        assert_eq!(out_of_bounds, f32::NEG_INFINITY);
     }
 }
 

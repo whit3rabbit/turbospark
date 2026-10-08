@@ -40,6 +40,19 @@ pub const QWEN3_ASR_06B_8BIT: Qwen3AsrProfile = Qwen3AsrProfile {
     revision: "89e96d92ba34aca20b3e29fb10cc284097d1219f",
 };
 
+/// Detailed transcription result containing the recognized text, language,
+/// per-token log probabilities, and token budget statistics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Qwen3AsrTranscription {
+    pub text: String,
+    pub language: String,
+    pub token_logprobs: Vec<f32>,
+    pub avg_logprob: Option<f32>,
+    pub min_logprob: Option<f32>,
+    pub prompt_tokens: usize,
+    pub generation_tokens: usize,
+}
+
 /// Loaded Qwen3-ASR model. The decoder prefills once and then extends
 /// per-layer self-attention caches during greedy generation.
 pub struct Qwen3Asr {
@@ -108,6 +121,28 @@ impl Qwen3Asr {
         language: Option<&str>,
         max_tokens: usize,
     ) -> Result<String> {
+        self.transcribe_with_details(samples, language, max_tokens)
+            .map(|result| result.text)
+    }
+
+    /// Transcribes one mono 16 kHz clip with detailed token log probabilities,
+    /// language detection, and token budget metadata.
+    pub fn transcribe_with_details(
+        &self,
+        samples: &[f32],
+        language: Option<&str>,
+        max_tokens: usize,
+    ) -> Result<Qwen3AsrTranscription> {
+        if samples.is_empty() {
+            return Err(SpeechError::Input {
+                why: "Audio input must contain at least one sample".into(),
+            });
+        }
+        if samples.iter().any(|sample| !sample.is_finite()) {
+            return Err(SpeechError::Input {
+                why: "Audio input must contain only finite samples".into(),
+            });
+        }
         if max_tokens == 0 {
             return Err(SpeechError::Input {
                 why: "Qwen3-ASR max_tokens must be positive".into(),
@@ -167,7 +202,7 @@ impl Qwen3Asr {
         let prefill_ms = started.elapsed().as_secs_f64() * 1_000.0;
         let started = Instant::now();
         let logits = self.decoder.logits(&last_hidden);
-        let generated = decoder::greedy_generate(
+        let (generated, token_logprobs) = decoder::greedy_generate_with_logprobs(
             &self.decoder,
             &logits,
             cache,
@@ -192,15 +227,54 @@ impl Qwen3Asr {
                 .map_err(|error| SpeechError::Input {
                     why: format!("Qwen3 output detokenization failed: {error}"),
                 })?;
-        let text = if language.is_none() {
-            decoded
-                .find("<asr_text>")
-                .map(|separator| decoded[separator + "<asr_text>".len()..].to_owned())
-                .unwrap_or(decoded)
+        let (detected_lang, text) = if let Some(lang) = language {
+            (lang.to_owned(), decoded.trim().to_owned())
         } else {
-            decoded
+            extract_language(&decoded)
         };
-        Ok(text.trim().to_owned())
+        let (avg_logprob, min_logprob) = logprob_summary(&token_logprobs);
+        Ok(Qwen3AsrTranscription {
+            text,
+            language: detected_lang,
+            token_logprobs,
+            avg_logprob,
+            min_logprob,
+            prompt_tokens: rows,
+            generation_tokens: generated.len(),
+        })
+    }
+}
+
+/// Extracts the detected language and transcript text from Qwen3-ASR's output.
+/// If `<asr_text>` is present, it looks for a preceding line starting with `language `.
+/// If the language is `"None"` (such as during silence), it returns an empty string `""`
+/// and the transcript text. If no `<asr_text>` delimiter is present, defaults to `"English"`.
+pub fn extract_language(text: &str) -> (String, String) {
+    let stripped = text.trim();
+    if let Some((metadata, transcript)) = stripped.split_once("<asr_text>") {
+        for line in metadata.lines() {
+            let line = line.trim();
+            if line.to_ascii_lowercase().starts_with("language ") {
+                let lang = line["language ".len()..].trim();
+                if lang.eq_ignore_ascii_case("none") {
+                    return (String::new(), transcript.trim().to_owned());
+                }
+                return (lang.to_owned(), transcript.trim().to_owned());
+            }
+        }
+    }
+    ("English".to_owned(), text.trim().to_owned())
+}
+
+/// Computes average and minimum log probability across a sequence of token log probabilities.
+pub fn logprob_summary(token_logprobs: &[f32]) -> (Option<f32>, Option<f32>) {
+    if token_logprobs.is_empty() {
+        (None, None)
+    } else {
+        let sum: f32 = token_logprobs.iter().sum();
+        let avg = sum / token_logprobs.len() as f32;
+        let min = token_logprobs.iter().copied().fold(f32::INFINITY, f32::min);
+        (Some(avg), Some(min))
     }
 }
 
@@ -411,5 +485,56 @@ mod tests {
             .unwrap();
         eprintln!("one-token Qwen3-ASR output: {text:?}");
         assert!(!text.is_empty(), "checkpoint stopped before emitting text");
+    }
+
+    #[test]
+    fn extract_language_parses_named_languages() {
+        let (lang, text) = super::extract_language("language English<asr_text>Hello world");
+        assert_eq!(lang, "English");
+        assert_eq!(text, "Hello world");
+
+        let (lang, text) = super::extract_language("language Chinese<asr_text>Ni hao");
+        assert_eq!(lang, "Chinese");
+        assert_eq!(text, "Ni hao");
+    }
+
+    #[test]
+    fn extract_language_tolerates_case_whitespace_and_none() {
+        let variants = [
+            " language None<asr_text> ",
+            "\nlanguage None<asr_text>",
+            "Language None<asr_text>",
+            "language None\n<asr_text>",
+        ];
+        for variant in variants {
+            let (lang, text) = super::extract_language(variant);
+            assert_eq!(lang, "", "failed on variant {variant:?}");
+            assert_eq!(text, "", "failed on variant {variant:?}");
+        }
+
+        let none_with_text = "language None<asr_text>Some background noise";
+        let (lang, text) = super::extract_language(none_with_text);
+        assert_eq!(lang, "");
+        assert_eq!(text, "Some background noise");
+    }
+
+    #[test]
+    fn extract_language_falls_back_to_english_without_tag() {
+        let (lang, text) = super::extract_language("Plain text transcript");
+        assert_eq!(lang, "English");
+        assert_eq!(text, "Plain text transcript");
+    }
+
+    #[test]
+    fn logprob_summary_computes_avg_and_min() {
+        let logprobs = [-0.25f32, -0.75f32];
+        let (avg, min) = super::logprob_summary(&logprobs);
+        assert_eq!(avg, Some(-0.5));
+        assert_eq!(min, Some(-0.75));
+
+        let empty: [f32; 0] = [];
+        let (avg, min) = super::logprob_summary(&empty);
+        assert_eq!(avg, None);
+        assert_eq!(min, None);
     }
 }
