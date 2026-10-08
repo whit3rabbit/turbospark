@@ -550,6 +550,19 @@ attention) so it cannot rot silently; only the timings are advisory.
   WHY, and `crates/repack/tests/mtp_install_fidelity_network.rs` is the one
   that cleared the weights (see AGENTS.md Gotcha 57).
 
+## Swift suites
+
+`make swift-test` runs only `swift/TurboSpark` (the binding package and the
+header check). The app and vendored image packages have separate targets that
+are not prerequisites of it, because `swift-lib` and `swift-lib-app` stage the
+same archive with different symbol visibility:
+
+- `make swift-test-app`: `swift/TurboSparkApp` tests (permission gates, vault
+  crypto, stream recovery, tool registry).
+- `make swift-test-qwenimage`: `swift/TurboSparkApp/Vendor/QwenImage` tests.
+
+Run `swift-test-app` after, not interleaved with, `swift-test`.
+
 ## Benchmarks
 
 Throughput and memory measurement, including the memory oracle and the

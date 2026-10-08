@@ -28,6 +28,8 @@ Short seams. Verify each one before release.
 ```sh
 make swift-lib
 make swift-test
+make swift-test-app
+make swift-test-qwenimage
 make swift-test-real MODEL=/path/to/model
 make swift-app
 make app-bundle
@@ -79,6 +81,11 @@ staging files changed.
 make swift-lib
 make swift-test
 ```
+
+`make swift-test` covers only `swift/TurboSpark`. Run `make swift-test-app`
+(TurboSparkApp; relinks the staged archive with localized symbols, so run it
+after, not interleaved with, `make swift-test`) and
+`make swift-test-qwenimage` (Vendor/QwenImage) for app or vendor changes.
 
 Use the real-install and app-bundle gates from the linked verification pages
 for runtime or release changes.

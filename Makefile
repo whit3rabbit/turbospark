@@ -1,4 +1,4 @@
-.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-lib-app compile-strings swift-test swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist clean-tmp install uninstall
+.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-lib-app compile-strings swift-test swift-test-app swift-test-qwenimage swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist clean-tmp install uninstall
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -101,6 +101,18 @@ swift-test-real: swift-lib
 	  TURBOSPARK_TEST_MODEL_NO_SPECULATION=$(BLOCKED) \
 	  TURBOSPARK_TEST_IMAGE=$(IMAGE) \
 	  TURBOSPARK_TEST_IMAGE_MODEL=$(IMAGE_MODEL) swift test
+
+# The app package and the vendored QwenImage package have their own test
+# suites that `swift-test` (binding package only) never runs. They are separate
+# targets, not prerequisites of swift-test: swift-lib and swift-lib-app write
+# the SAME staged archive with different symbol visibility, so chaining them
+# would relink one over the other, and the app suite is far slower to build.
+# Run them explicitly when touching app sources or Vendor/QwenImage.
+swift-test-app: swift-lib-app compile-strings
+	cd swift/TurboSparkApp && swift test -Xbuild-tools-swiftc -suppress-warnings
+
+swift-test-qwenimage:
+	cd swift/TurboSparkApp/Vendor/QwenImage && swift test
 
 swift-app-build: swift-lib-app compile-strings
 	cd swift/TurboSparkApp && swift build -Xbuild-tools-swiftc -suppress-warnings
