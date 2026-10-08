@@ -22,6 +22,54 @@ unsafe fn output<T: serde::Serialize>(value: &T, out: *mut *mut c_char) -> AbiRe
     strings::emit(&serde_json::to_string(value).map_err(invalid)?, out).map_err(invalid)
 }
 
+/// A cancel request for one `ts_audio_session_open_cancellable` call. Portable
+/// and tiny (one flag), so a host can create it before the open starts and
+/// press Stop from any thread while the open is running.
+pub struct TsAudioOpenToken {
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+impl TsAudioOpenToken {
+    pub(crate) fn flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        std::sync::Arc::clone(&self.cancelled)
+    }
+}
+#[no_mangle]
+pub unsafe extern "C" fn ts_audio_open_token_new(out: *mut *mut TsAudioOpenToken) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err(invalid("out must not be null"));
+        }
+        *out = Box::into_raw(Box::new(TsAudioOpenToken {
+            cancelled: Default::default(),
+        }));
+        Ok(())
+    })
+}
+/// Asks the open this token was passed to to stop. Safe from any thread and
+/// never blocks; a no-op on NULL or on a token whose open already finished.
+#[no_mangle]
+pub unsafe extern "C" fn ts_audio_open_token_cancel(token: *const TsAudioOpenToken) -> c_int {
+    guard_result(|| {
+        if let Some(token) = token.as_ref() {
+            token
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        Ok(())
+    })
+}
+/// Frees a token. NULL is a no-op. Do not free it while an open using it is
+/// still running.
+#[no_mangle]
+pub unsafe extern "C" fn ts_audio_open_token_free(token: *mut TsAudioOpenToken) -> c_int {
+    guard_result(|| {
+        if !token.is_null() {
+            drop(Box::from_raw(token));
+        }
+        Ok(())
+    })
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_catalog_json(out: *mut *mut c_char) -> c_int {
     guard_result(|| {
@@ -71,6 +119,22 @@ pub unsafe extern "C" fn ts_audio_delete(identity_json: *const c_char) -> c_int 
         AudioCatalog::embedded()
             .map_err(invalid)?
             .delete(
+                &catalog::Store::default_store().map_err(invalid)?,
+                &identity(identity_json)?,
+            )
+            .map_err(invalid)
+    })
+}
+/// Removes an owned install that has no receipt (one `ts_audio_installed_json`
+/// reports under `needsAdoption`), even when its payload could not pass
+/// adoption. A receipt-backed install is refused here and goes through
+/// `ts_audio_delete`; neither path ever promotes damaged bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ts_audio_delete_legacy(identity_json: *const c_char) -> c_int {
+    guard_result(|| {
+        AudioCatalog::embedded()
+            .map_err(invalid)?
+            .delete_legacy(
                 &catalog::Store::default_store().map_err(invalid)?,
                 &identity(identity_json)?,
             )
@@ -184,24 +248,95 @@ mod native {
         options: *const c_char,
         out: *mut *mut TsAudioSession,
     ) -> c_int {
-        guard_result(|| {
+        guard_result(|| open_session(path, options, None, None, std::ptr::null_mut(), out))
+    }
+
+    /// [`ts_audio_session_open`] that can be stopped and can report progress.
+    ///
+    /// `token` may be NULL (never cancelled). `callback` may be NULL; when
+    /// given it receives kind 1 progress JSON
+    /// `{"stage":"verifying","completed":bytes,"total":bytes}` while a managed
+    /// model's files are hashed. Cancellation is honoured within one hash chunk
+    /// (1 MiB) during that verification, and once more just before the engine
+    /// loads; the load itself is not interruptible. A cancelled open returns
+    /// `TS_ERR_CANCELLED` and leaves `*out` NULL.
+    #[no_mangle]
+    pub unsafe extern "C" fn ts_audio_session_open_cancellable(
+        path: *const c_char,
+        options: *const c_char,
+        token: *const TsAudioOpenToken,
+        callback: TsAudioCallback,
+        userdata: *mut c_void,
+        out: *mut *mut TsAudioSession,
+    ) -> c_int {
+        guard_result(|| open_session(path, options, token.as_ref(), callback, userdata, out))
+    }
+
+    unsafe fn open_session(
+        path: *const c_char,
+        options: *const c_char,
+        token: Option<&TsAudioOpenToken>,
+        callback: TsAudioCallback,
+        userdata: *mut c_void,
+        out: *mut *mut TsAudioSession,
+    ) -> AbiResult<()> {
+        {
             if out.is_null() {
                 return Err(invalid("out must not be null"));
             }
             *out = std::ptr::null_mut();
+            let flag = token.map(|t| t.flag());
+            let cancelled = || {
+                flag.as_ref()
+                    .map(|f| f.load(Ordering::Acquire))
+                    .unwrap_or(false)
+            };
+            let cancelled_error = || (abi::TS_ERR_CANCELLED, catalog::VERIFY_CANCELLED.to_string());
             let options: OpenOptions =
                 serde_json::from_str(strings::required(options, "options").map_err(invalid)?)
                     .map_err(invalid)?;
             let path = strings::required(path, "path").map_err(invalid)?;
             let store = catalog::Store::default_store().map_err(invalid)?;
             let model_path = std::path::Path::new(path);
+            if cancelled() {
+                return Err(cancelled_error());
+            }
             if model_path.starts_with(store.audio_models_dir()) {
                 let catalog = AudioCatalog::embedded().map_err(invalid)?;
                 let profile = catalog
                     .entries()
                     .find(|profile| store.audio_install_path(&profile.identity.alias) == model_path)
                     .ok_or_else(|| invalid("managed audio model is not in the pinned catalog"))?;
-                catalog.verify(&store, &profile.identity).map_err(invalid)?;
+                let mut report = |_asset: &str, completed: u64, total: u64| {
+                    if let Some(cb) = callback {
+                        let json = format!(
+                            r#"{{"stage":"verifying","completed":{completed},"total":{total}}}"#
+                        );
+                        cb(
+                            userdata,
+                            1,
+                            json.as_ptr().cast(),
+                            json.len(),
+                            std::ptr::null(),
+                            0,
+                        );
+                    }
+                };
+                catalog
+                    .verify_observed(&store, &profile.identity, &cancelled, &mut report)
+                    .map_err(|e| {
+                        if e == catalog::VERIFY_CANCELLED {
+                            cancelled_error()
+                        } else {
+                            invalid(e)
+                        }
+                    })?;
+            }
+            // The last point a stop is honoured: past here the engine load is
+            // not interruptible, so a request that arrived during the final
+            // chunk should not still cost a full load.
+            if cancelled() {
+                return Err(cancelled_error());
             }
             let session = AudioSession::open_with_options(
                 path.into(),
@@ -209,7 +344,7 @@ mod native {
                 options.allow_portable,
                 options.allow_experimental_metal,
             )
-            .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+            .map_err(|e| abi::audio_error(e, false, abi::TS_ERR_OPEN))?;
             if let Some(expected) = options.expected_family.as_deref() {
                 if session.family() != expected {
                     return Err(invalid(format!(
@@ -222,7 +357,7 @@ mod native {
                 session: Arc::new(session),
             }));
             Ok(())
-        })
+        }
     }
     /// Refuses close while jobs reference the session. Close the job after run returns.
     #[no_mangle]
@@ -365,7 +500,11 @@ mod native {
                 },
                 Ordering::Release,
             );
-            output(&result.map_err(|e| (abi::TS_ERR_GENERATE, e))?, out)
+            let cancelled = job.cancel.is_cancelled();
+            output(
+                &result.map_err(|e| abi::audio_error(e, cancelled, abi::TS_ERR_GENERATE))?,
+                out,
+            )
         })
     }
     /// Independent of the job's operation mutex and worker. Safe during `run`.
@@ -430,6 +569,7 @@ mod unsupported {
  #[no_mangle] pub unsafe extern "C" fn $name($($arg:$ty),*)->c_int {guard_result(||{let _=($($arg),*);$(if !$out.is_null(){*$out=std::ptr::null_mut();})?Err((abi::TS_ERR_UNSUPPORTED,"native audio inference requires macOS".into()))})}
  };}
     refused!(ts_audio_session_open(path:*const c_char,options:*const c_char,out:*mut *mut TsAudioSession),out);
+    refused!(ts_audio_session_open_cancellable(path:*const c_char,options:*const c_char,token:*const super::TsAudioOpenToken,callback:TsAudioCallback,userdata:*mut c_void,out:*mut *mut TsAudioSession),out);
     refused!(ts_audio_session_close(handle:*mut TsAudioSession));
     refused!(ts_audio_session_cancel(handle:*const TsAudioSession));
     refused!(ts_audio_job_open(handle:*const TsAudioSession,request:*const c_char,out:*mut *mut TsAudioJob),out);

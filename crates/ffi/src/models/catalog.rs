@@ -18,6 +18,9 @@ struct ImageInstalledRow {
     quantization: String,
     #[serde(rename = "sourcePath")]
     source_path: Option<PathBuf>,
+    /// `catalog::image_family_for_model_id`, so a host does not restate the
+    /// model-id-to-family routing (it drifts silently when a family is added).
+    family: String,
 }
 
 #[derive(Serialize)]
@@ -147,6 +150,7 @@ fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
             };
             Some(ImageInstalledRow {
                 alias: alias.to_string(),
+                family: catalog::image_family_for_model_id(&model_id).to_string(),
                 model_id,
                 revision,
                 path,
@@ -233,6 +237,7 @@ mod tests {
             scheduler_steps: 9,
             quantization: "test".to_string(),
             source_path: None,
+            family: "z-image".to_string(),
         }
     }
 

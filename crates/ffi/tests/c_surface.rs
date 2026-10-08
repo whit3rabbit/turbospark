@@ -32,13 +32,16 @@ use turbospark_ffi::{
     ts_recommend_json, ts_recommend_progress_json, ts_repo_variants_json,
     ts_server_attach_audio_model, ts_server_attach_embedding_model, ts_server_attach_session,
     ts_server_detach_audio_model, ts_server_detach_model, ts_server_info_json,
-    ts_server_poll_events_json, ts_server_start, ts_server_stop, ts_session_cancel,
-    ts_session_count_text_tokens, ts_session_count_tokens, ts_session_detokenize_json,
-    ts_session_fit_window_json, ts_session_info_json, ts_session_open, ts_session_render_prompt,
-    ts_session_tokenize_json, ts_string_free, ts_stt_close, ts_stt_open, ts_stt_stream_append,
-    ts_stt_stream_cancel, ts_stt_stream_close, ts_stt_stream_finish, ts_stt_stream_open,
-    ts_system_info_json, Server, Session, TsImageSession, TsSttModel, TsSttStream,
-    TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL, TS_EVENT_REASONING, TS_EVENT_TOOL,
+    ts_server_poll_events_json, ts_server_set_idle_unload, ts_server_start, ts_server_stop,
+    ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
+    ts_session_count_tokens_with_tools, ts_session_detokenize_json, ts_session_fit_window_json,
+    ts_session_fit_window_with_tools_json, ts_session_info_json, ts_session_open,
+    ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_stt_close, ts_stt_open,
+    ts_stt_stream_append, ts_stt_stream_cancel, ts_stt_stream_close, ts_stt_stream_finish,
+    ts_stt_stream_open, ts_system_info_json, ts_tokenizer_close, ts_tokenizer_count_text_tokens,
+    ts_tokenizer_detokenize_json, ts_tokenizer_open, ts_tokenizer_tokenize_json, Server, Session,
+    TsImageSession, TsSttModel, TsSttStream, TS_EVENT_CONTENT, TS_EVENT_FINISH, TS_EVENT_PREFILL,
+    TS_EVENT_REASONING, TS_EVENT_TOOL,
 };
 
 fn fixture() -> MfTokenizer {
@@ -779,6 +782,40 @@ fn recommend_json_accepts_every_allowed_slot_count() {
         if code == abi::TS_OK {
             let _ = unsafe { take(out) };
         }
+    }
+}
+
+/// Every ranked row says how much is known about it and whether it looks
+/// mislabelled. Asserts the SHAPE of a real ranking, so it runs only where the
+/// ranking can (a machine that reports physical memory).
+#[test]
+fn recommendation_rows_carry_evidence_and_suspicion() {
+    let mut out: *mut c_char = ptr::null_mut();
+    let opts = c("{}");
+    let code = unsafe { ts_recommend_json(4096, opts.as_ptr(), &mut out) };
+    if code != abi::TS_OK {
+        // The only legitimate reason to have nothing to inspect.
+        assert!(
+            last_error().contains("physical memory"),
+            "recommend failed for another reason: {}",
+            last_error()
+        );
+        return;
+    }
+    let rows: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
+    let rows = rows.as_array().unwrap();
+    eprintln!("recommendation_rows: inspected {} rows", rows.len());
+    assert!(
+        !rows.is_empty(),
+        "the embedded catalog always ranks something"
+    );
+    for row in rows {
+        let evidence = row["evidence"].as_str().expect("evidence is a string");
+        assert!(
+            ["discovered", "caveat", "runs", "verified"].contains(&evidence),
+            "unexpected evidence {evidence:?}"
+        );
+        assert!(row["suspicious"].is_boolean(), "{row}");
     }
 }
 
@@ -1542,6 +1579,21 @@ async fn detaching_removes_a_model_from_routing() {
     unsafe { ts_server_stop(server) };
 }
 
+/// The idle-unload policy is reachable from the C surface: as a start option,
+/// and as a setter on a running server. The sweep itself is covered in
+/// `server_idle`; this proves the ABI reaches it and refuses a null handle.
+#[test]
+fn idle_unload_is_settable_at_start_and_while_running() {
+    let server = unsafe { start_server(ptr::null(), r#"{"idleUnloadSeconds":120}"#) };
+    assert_eq!(unsafe { ts_server_set_idle_unload(server, 60) }, abi::TS_OK);
+    assert_eq!(unsafe { ts_server_set_idle_unload(server, 0) }, abi::TS_OK);
+    assert_eq!(
+        unsafe { ts_server_set_idle_unload(ptr::null(), 60) },
+        abi::TS_ERR_INVALID_ARGUMENT
+    );
+    unsafe { ts_server_stop(server) };
+}
+
 /// **THE EVENTS ARE WHAT A HOST'S CONSOLE AND GRAPHS ARE BUILT ON.** Asserted
 /// as a SEQUENCE rather than a set: a console renders them in order, and the
 /// generation counters arriving before the request was routed would be
@@ -2196,4 +2248,345 @@ fn base64_encode_for_test(bytes: &[u8]) -> String {
         });
     }
     out
+}
+
+/// The tokenizer handle needs no engine: it opens from the tokenizer files
+/// alone, and must agree with the library's own encoder token for token.
+#[test]
+fn a_tokenizer_opens_without_a_session_and_agrees_with_the_encoder() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../tokenizer/tests/fixtures/ChatMLTokenizer");
+    let dir_c = c(dir.to_str().unwrap());
+    let mut tok = ptr::null_mut();
+    assert_eq!(
+        unsafe { ts_tokenizer_open(dir_c.as_ptr(), &mut tok) },
+        abi::TS_OK,
+        "{}",
+        last_error()
+    );
+    assert!(!tok.is_null());
+
+    let reference = fixture();
+    let text = "Hello, world! This is a tokenizer test.";
+    let text_c = c(text);
+    let expected = reference.encode(text, false);
+
+    let mut count = 0u32;
+    assert_eq!(
+        unsafe { ts_tokenizer_count_text_tokens(tok, text_c.as_ptr(), false, &mut count) },
+        abi::TS_OK
+    );
+    assert_eq!(count as usize, expected.len());
+    assert!(count > 0);
+
+    let mut out: *mut c_char = ptr::null_mut();
+    assert_eq!(
+        unsafe { ts_tokenizer_tokenize_json(tok, text_c.as_ptr(), false, &mut out) },
+        abi::TS_OK
+    );
+    let ids: Vec<i32> = serde_json::from_str(&unsafe { take(out) }).unwrap();
+    assert_eq!(ids, expected);
+
+    let ids_c = c(&serde_json::to_string(&ids).unwrap());
+    let mut back: *mut c_char = ptr::null_mut();
+    assert_eq!(
+        unsafe { ts_tokenizer_detokenize_json(tok, ids_c.as_ptr(), false, &mut back) },
+        abi::TS_OK
+    );
+    assert_eq!(unsafe { take(back) }, reference.decode(&ids, false));
+
+    unsafe { ts_tokenizer_close(tok) };
+    unsafe { ts_tokenizer_close(ptr::null_mut()) };
+}
+
+#[test]
+fn tokenizer_open_and_use_refuse_bad_arguments_by_name() {
+    let mut tok = ptr::null_mut();
+    let missing = c("/definitely/not/a/model/dir");
+    assert_eq!(
+        unsafe { ts_tokenizer_open(missing.as_ptr(), &mut tok) },
+        abi::TS_ERR_OPEN
+    );
+    assert!(tok.is_null(), "a failed open must leave the handle null");
+    assert!(last_error().contains("not a directory"), "{}", last_error());
+
+    let mut count = 0u32;
+    let text = c("x");
+    assert_eq!(
+        unsafe { ts_tokenizer_count_text_tokens(ptr::null(), text.as_ptr(), false, &mut count) },
+        abi::TS_ERR_INVALID_ARGUMENT
+    );
+}
+
+/// The scripted producer is called once per PROMPT token as well as once per
+/// generated one, so a scripted reply needs `prompt_len - 1` filler steps in
+/// front of it. The prompt length is measured with the tokenizer's own tool
+/// render, which is the render `ts_generate` performs.
+fn scripted_reply_after_tool_prompt(
+    tok: &MfTokenizer,
+    user: &str,
+    tool_name: &str,
+    reply: &str,
+) -> Vec<Vec<LogitValue>> {
+    let vocab = tok.vocab_size;
+    let tools = [tokenizer::FunctionDefinition {
+        name: tool_name.to_string(),
+        description: String::new(),
+        parameters: tokenizer::JsonValue::Null,
+    }];
+    let prompt_len = tok
+        .encode_generic_tool_chat(
+            &[tokenizer::Message::new(tokenizer::Role::User, user)],
+            &tools,
+            tokenizer::ReasoningEffort::Off,
+        )
+        .unwrap()
+        .len();
+    let mut steps: Vec<_> = (0..prompt_len - 1).map(|_| one_hot(vocab, 0)).collect();
+    steps.extend(
+        tok.encode(reply, false)
+            .into_iter()
+            .map(|id| one_hot(vocab, id as usize)),
+    );
+    steps.push(one_hot(vocab, tok.eos_id as usize));
+    steps
+}
+
+/// **THE WHOLE TOOL PATH, END TO END, ON A SCRIPTED MODEL.** The model "says"
+/// a call to the one function that was offered, in the checkpoint's native
+/// markup; the turn must report it as a parsed call, stop with `toolCalls`,
+/// and stream it as an event. Temperature 0 so the scripted ids are what the
+/// sampler picks.
+#[test]
+fn an_offered_tool_is_called_parsed_and_reported() {
+    let tok = fixture();
+    let vocab = tok.vocab_size;
+    let markup = "<tool_call>\n<function=get_weather>\n<parameter=city>\nOslo\n</parameter>\n</function>\n</tool_call>";
+    let steps = scripted_reply_after_tool_prompt(&tok, "Weather in Oslo?", "get_weather", markup);
+    let session = session_for_testing(tok, steps, vocab, 4096);
+
+    let sink = Sink {
+        events: Mutex::new(Vec::new()),
+    };
+    let messages = c(r#"[{"role":"user","content":"Weather in Oslo?"}]"#);
+    let options = c(r#"{
+        "maxNewTokens": 200, "temperature": 0.0, "topK": 0, "topP": 1.0,
+        "tools": [{"name":"get_weather"}]
+    }"#);
+    let mut result: *mut c_char = ptr::null_mut();
+    let code = unsafe {
+        ts_generate(
+            &session,
+            messages.as_ptr(),
+            options.as_ptr(),
+            Some(collect),
+            &sink as *const Sink as *mut c_void,
+            &mut result,
+        )
+    };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let result: serde_json::Value = serde_json::from_str(&unsafe { take(result) }).unwrap();
+
+    let calls = result["toolCalls"].as_array().expect("toolCalls array");
+    assert_eq!(calls.len(), 1, "{result}");
+    assert_eq!(calls[0]["name"], "get_weather");
+    assert_eq!(calls[0]["id"], "toolu_0", "ids follow the server's scheme");
+    assert_eq!(calls[0]["arguments"]["city"], "Oslo", "{result}");
+    assert_eq!(result["stopReason"], "toolCalls", "{result}");
+
+    let events = sink.events.lock().unwrap();
+    let tool_events: Vec<_> = events.iter().filter(|(k, _)| *k == TS_EVENT_TOOL).collect();
+    assert_eq!(tool_events.len(), 1, "one streamed tool event");
+    let streamed: serde_json::Value = serde_json::from_str(&tool_events[0].1).unwrap();
+    assert_eq!(streamed["name"], "get_weather");
+}
+
+/// A call to a function that was NOT offered is not a tool call: the offer is
+/// an allowlist, so a model that invents a function does not get it executed.
+#[test]
+fn a_call_to_a_function_that_was_not_offered_is_not_reported() {
+    let tok = fixture();
+    let vocab = tok.vocab_size;
+    let markup = "<tool_call>\n<function=delete_everything>\n</function>\n</tool_call>";
+    let steps = scripted_reply_after_tool_prompt(&tok, "hi", "get_weather", markup);
+    let session = session_for_testing(tok, steps, vocab, 4096);
+
+    let sink = Sink {
+        events: Mutex::new(Vec::new()),
+    };
+    let messages = c(r#"[{"role":"user","content":"hi"}]"#);
+    let options = c(r#"{
+        "maxNewTokens": 200, "temperature": 0.0, "topK": 0, "topP": 1.0,
+        "tools": [{"name":"get_weather"}]
+    }"#);
+    let mut result: *mut c_char = ptr::null_mut();
+    let code = unsafe {
+        ts_generate(
+            &session,
+            messages.as_ptr(),
+            options.as_ptr(),
+            Some(collect),
+            &sink as *const Sink as *mut c_void,
+            &mut result,
+        )
+    };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let result: serde_json::Value = serde_json::from_str(&unsafe { take(result) }).unwrap();
+    assert_eq!(result["toolCalls"].as_array().unwrap().len(), 0, "{result}");
+}
+
+#[test]
+fn a_malformed_tool_offer_fails_the_turn_by_name_before_any_decoding() {
+    let session = endless_session(fixture(), "h", 8);
+    let messages = c(r#"[{"role":"user","content":"hi"}]"#);
+    let options = c(r#"{"tools":[{"name":"f"},{"name":"f"}]}"#);
+    let mut result: *mut c_char = ptr::null_mut();
+    let code = unsafe {
+        ts_generate(
+            &session,
+            messages.as_ptr(),
+            options.as_ptr(),
+            None,
+            ptr::null_mut(),
+            &mut result,
+        )
+    };
+    assert_ne!(code, abi::TS_OK);
+    assert!(last_error().contains("more than once"), "{}", last_error());
+}
+
+const WEATHER_TOOLS: &str = r#"[{"name":"get_weather","description":"Current weather for a city",
+    "parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]"#;
+
+fn count_with(session: &Session, messages: &str, tools: Option<&str>) -> u32 {
+    let messages = c(messages);
+    let tools_c = tools.map(c);
+    let mut count: u32 = 0;
+    let code = unsafe {
+        ts_session_count_tokens_with_tools(
+            session,
+            messages.as_ptr(),
+            ptr::null(),
+            tools_c.as_ref().map_or(ptr::null(), |t| t.as_ptr()),
+            &mut count,
+        )
+    };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    count
+}
+
+/// Offered tools are part of the prompt, so they must be part of the count.
+#[test]
+fn offered_tools_are_counted_in_the_prompt_budget() {
+    let session = endless_session(fixture(), "h", 10);
+    let messages = r#"[{"role":"user","content":"Weather in Oslo?"}]"#;
+    let plain = count_with(&session, messages, None);
+    // No tools is exactly the established count.
+    let mut established: u32 = 0;
+    let m = c(messages);
+    assert_eq!(
+        unsafe { ts_session_count_tokens(&session, m.as_ptr(), ptr::null(), &mut established) },
+        abi::TS_OK
+    );
+    assert_eq!(plain, established);
+    assert_eq!(
+        count_with(&session, messages, Some("[]")),
+        established,
+        "[] is no tools"
+    );
+    assert_eq!(
+        count_with(&session, messages, Some("")),
+        established,
+        "empty is no tools"
+    );
+
+    let with = count_with(&session, messages, Some(WEATHER_TOOLS));
+    assert!(
+        with > plain + 20,
+        "definitions must cost tokens: {with} vs {plain}"
+    );
+}
+
+#[test]
+fn a_bad_tool_list_is_refused_by_the_counting_calls_too() {
+    let session = endless_session(fixture(), "h", 10);
+    let messages = c(r#"[{"role":"user","content":"hi"}]"#);
+    let mut count: u32 = 0;
+    let dup = c(r#"[{"name":"f"},{"name":"f"}]"#);
+    let code = unsafe {
+        ts_session_count_tokens_with_tools(
+            &session,
+            messages.as_ptr(),
+            ptr::null(),
+            dup.as_ptr(),
+            &mut count,
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(last_error().contains("more than once"), "{}", last_error());
+    let junk = c("{not json");
+    let code = unsafe {
+        ts_session_count_tokens_with_tools(
+            &session,
+            messages.as_ptr(),
+            ptr::null(),
+            junk.as_ptr(),
+            &mut count,
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_JSON);
+}
+
+/// With the definitions rendered in, the same budget keeps fewer turns: the
+/// whole point of measuring with them.
+#[test]
+fn fitting_with_tools_keeps_less_than_fitting_without() {
+    let session = endless_session(fixture(), "h", 10);
+    let turns: Vec<String> = (0..12)
+        .flat_map(|i| {
+            [
+                format!(r#"{{"role":"user","content":"question number {i} about the weather"}}"#),
+                format!(
+                    r#"{{"role":"assistant","content":"answer number {i} about the weather"}}"#
+                ),
+            ]
+        })
+        .collect();
+    let messages_json = format!("[{}]", turns.join(","));
+    let messages = c(&messages_json);
+
+    let plain_count = count_with(&session, &messages_json, None);
+    // A budget the plain conversation just fits in.
+    let budget = plain_count + 5;
+
+    let fit = |tools: Option<&str>| -> serde_json::Value {
+        let tools_c = tools.map(c);
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe {
+            ts_session_fit_window_with_tools_json(
+                &session,
+                messages.as_ptr(),
+                ptr::null(),
+                tools_c.as_ref().map_or(ptr::null(), |t| t.as_ptr()),
+                budget,
+                &mut out,
+            )
+        };
+        assert_eq!(code, abi::TS_OK, "{}", last_error());
+        serde_json::from_str(&unsafe { take(out) }).unwrap()
+    };
+
+    let without = fit(None);
+    let with = fit(Some(WEATHER_TOOLS));
+    assert_eq!(
+        without["removedTurnCount"], 0,
+        "the plain conversation fits: {without}"
+    );
+    assert!(
+        with["removedTurnCount"].as_u64().unwrap() > 0,
+        "the tool definitions take room, so older turns must go: {with}"
+    );
+    assert!(
+        with["retained"].as_array().unwrap().len() < without["retained"].as_array().unwrap().len()
+    );
 }

@@ -1,9 +1,14 @@
 //! Message decoding, chat template rendering, tokenization, and context window fitting.
 
-use tokenizer::{ContentPart, Message, MfTokenizer, ReasoningEffort, ReasoningSupport, Role};
+use std::collections::HashSet;
+
+use tokenizer::{
+    ContentPart, FunctionDefinition, HistoricalToolCall, JsonValue, Message, MfTokenizer,
+    ReasoningEffort, ReasoningSupport, Role,
+};
 
 use crate::session::Session;
-use crate::wire::{WireMessage, WirePart};
+use crate::wire::{WireMessage, WirePart, WireToolCall, WireToolSpec};
 
 fn role_of(name: &str) -> Result<Role, String> {
     match name {
@@ -29,8 +34,22 @@ fn decode_messages(messages: &[WireMessage]) -> Result<Vec<Message>, String> {
         .iter()
         .map(|m| {
             let role = role_of(&m.role)?;
-            match m.parts() {
-                None => Ok(Message::new(role, m.text())),
+            let mut message = match m.parts() {
+                None => {
+                    let text = m.text();
+                    // An assistant turn that is ONLY a tool call has no text
+                    // at all. `None` rather than an empty string, because the
+                    // templates branch on presence and an empty block would
+                    // render where the server's own path renders nothing.
+                    if text.is_empty() && !m.tool_calls.is_empty() {
+                        Message {
+                            content: None,
+                            ..Message::new(role, String::new())
+                        }
+                    } else {
+                        Message::new(role, text)
+                    }
+                }
                 Some(parts) => {
                     let mapped: Vec<ContentPart> = parts
                         .iter()
@@ -39,11 +58,92 @@ fn decode_messages(messages: &[WireMessage]) -> Result<Vec<Message>, String> {
                             WirePart::Image { .. } => ContentPart::Image,
                         })
                         .collect();
-                    Ok(Message::with_parts(role, mapped))
+                    Message::with_parts(role, mapped)
                 }
-            }
+            };
+            message.tool_calls = m.tool_calls.iter().map(historical_call).collect();
+            message.tool_call_id = m.tool_call_id.clone();
+            message.name = m.name.clone();
+            Ok(message)
         })
         .collect()
+}
+
+/// A replayed tool call, its arguments as the template wants them.
+///
+/// An object (or any JSON value) is carried as that value. A string is
+/// treated as the JSON text OpenAI carries arguments in and parsed back out;
+/// one that will not parse is passed through as the string it is, because the
+/// Gemma template renders `arguments` as a mapping OR as a bare string, so it
+/// still renders -- the same rule the server applies.
+fn historical_call(call: &WireToolCall) -> HistoricalToolCall {
+    let arguments = match &call.arguments {
+        serde_json::Value::String(text) => {
+            JsonValue::parse(text).unwrap_or_else(|_| JsonValue::String(text.clone()))
+        }
+        serde_json::Value::Null => JsonValue::Object(Default::default()),
+        other => JsonValue::parse(&other.to_string())
+            .unwrap_or_else(|_| JsonValue::String(other.to_string())),
+    };
+    HistoricalToolCall {
+        id: call.id.clone(),
+        name: call.name.clone(),
+        arguments,
+    }
+}
+
+/// The functions offered for one turn: the definitions the template renders
+/// and the names the reply decoder will accept a call to.
+#[derive(Debug)]
+pub(crate) struct ToolOffer {
+    pub(crate) definitions: Vec<FunctionDefinition>,
+    pub(crate) names: HashSet<String>,
+}
+
+impl ToolOffer {
+    pub(crate) fn none() -> Self {
+        Self {
+            definitions: Vec::new(),
+            names: HashSet::new(),
+        }
+    }
+}
+
+/// Validates and converts the offered tools. Refused by name before any
+/// engine work: an empty or repeated name would make a parsed call ambiguous,
+/// and a `parameters` that is not a JSON object is not a schema.
+pub(crate) fn tool_offer(specs: &[WireToolSpec]) -> Result<ToolOffer, String> {
+    let mut offer = ToolOffer::none();
+    for spec in specs {
+        if spec.name.trim().is_empty() {
+            return Err("tools: a tool needs a non-empty name".to_string());
+        }
+        if !offer.names.insert(spec.name.clone()) {
+            return Err(format!("tools: {:?} is offered more than once", spec.name));
+        }
+        let parameters = match &spec.parameters {
+            None | Some(serde_json::Value::Null) => JsonValue::Null,
+            Some(value @ serde_json::Value::Object(_)) => JsonValue::parse(&value.to_string())
+                .map_err(|_| {
+                    format!(
+                        "tools: {:?} has parameters that are not valid JSON",
+                        spec.name
+                    )
+                })?,
+            Some(_) => {
+                return Err(format!(
+                    "tools: {:?} parameters must be a JSON Schema object",
+                    spec.name
+                ))
+            }
+        };
+        offer.definitions.push(FunctionDefinition {
+            name: spec.name.clone(),
+            description: spec.description.clone().unwrap_or_default(),
+            parameters,
+        });
+    }
+    Ok(offer)
 }
 
 /// Every image part in the conversation, in order, with its SHAPE checked.
@@ -72,6 +172,7 @@ pub(crate) fn render(
     tokenizer: &MfTokenizer,
     messages: &[WireMessage],
     reasoning: ReasoningEffort,
+    tools: &[FunctionDefinition],
 ) -> Result<(Vec<i32>, Option<String>), String> {
     let mut note = None;
     if reasoning != ReasoningEffort::Off {
@@ -100,6 +201,16 @@ pub(crate) fn render(
         }
     }
     let decoded = decode_messages(messages)?;
+    if !tools.is_empty() {
+        // With tools, the checkpoint's own `chat_template.jinja` is the only
+        // renderer that can express them -- the path `crates/server` takes.
+        // It tokenizes the rendered text itself (no BOS prefix, same reason
+        // as below).
+        let ids = tokenizer
+            .encode_generic_tool_chat(&decoded, tools, reasoning)
+            .map_err(|e| format!("chat template (with tools): {e}"))?;
+        return Ok((ids, note));
+    }
     let rendered = tokenizer
         .apply_chat_template_with_reasoning(&decoded, reasoning)
         .map_err(|e| format!("chat template: {e}"))?;
@@ -114,10 +225,11 @@ pub(crate) fn count_tokens(
     session: &Session,
     messages: &[WireMessage],
     reasoning_str: &str,
+    tools: &[FunctionDefinition],
 ) -> Result<u32, String> {
     let reasoning = ReasoningEffort::parse(reasoning_str)
         .ok_or_else(|| format!("unknown reasoning level {:?}", reasoning_str))?;
-    let (prompt_ids, _note) = render(&session.tokenizer, messages, reasoning)?;
+    let (prompt_ids, _note) = render(&session.tokenizer, messages, reasoning, tools)?;
     Ok(prompt_ids.len() as u32)
 }
 
@@ -141,6 +253,7 @@ pub(crate) fn fit_window(
     messages: &[WireMessage],
     reasoning_str: &str,
     max_tokens: u32,
+    tools: &[FunctionDefinition],
 ) -> Result<crate::wire::WindowFitOutcome, String> {
     let reasoning = ReasoningEffort::parse(reasoning_str)
         .ok_or_else(|| format!("unknown reasoning level {:?}", reasoning_str))?;
@@ -157,7 +270,9 @@ pub(crate) fn fit_window(
         .unwrap_or(false);
 
     let measure = |slice: &[WireMessage]| -> u64 {
-        match render(&session.tokenizer, slice, reasoning) {
+        // The offered tools are part of every slice's prompt, so a budget that
+        // ignored them would keep turns the real prompt has no room for.
+        match render(&session.tokenizer, slice, reasoning, tools) {
             Ok((ids, _)) => ids.len() as u64,
             Err(_) => u64::MAX,
         }

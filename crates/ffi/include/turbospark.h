@@ -42,6 +42,20 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/*
+ * The ABI revision this header describes. The library reports its own through
+ * ts_abi_version(); a host compares the two once at startup. The archive and
+ * this header are staged by separate copies of the same script and are both
+ * gitignored, so a stale one of either is easy to produce and otherwise only
+ * shows up as a wrong JSON key at runtime.
+ *
+ * Bumped whenever a wire shape, an option key, or a function's meaning
+ * changes in a way a host built against the previous header could
+ * misinterpret. A purely additive export does not need one (a host that does
+ * not know about it cannot be misled by it).
+ */
+#define TS_ABI_VERSION 2
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -117,7 +131,8 @@ int32_t ts_stt_stream_close(TsSttStream *stream);
 /* The install could not be opened: missing directory, unreadable manifest,
  * unsupported architecture, or a context window that does not fit memory. */
 #define TS_ERR_OPEN 2
-/* Generation or installation failed. The session remains usable. */
+/* Generation or installation failed. The session remains usable. A
+ * cancelled install or audio job is TS_ERR_CANCELLED instead. */
 #define TS_ERR_GENERATE 3
 /* A JSON argument did not parse, or a result could not be built. */
 #define TS_ERR_JSON 4
@@ -126,6 +141,15 @@ int32_t ts_stt_stream_close(TsSttStream *stream);
 /* A panic was caught at the boundary. The process is intact and the
  * operation did not happen. This is a bug in the library, not in the call. */
 #define TS_ERR_PANIC 6
+/* The caller's own cancel request ended the operation: an install whose cancel
+ * flag fired, an audio job that was cancelled. Not a failure, so a host should
+ * not present it as one. A text turn that is cancelled does NOT use this: it
+ * returns TS_OK with stopReason "cancelled" and the partial text. */
+#define TS_ERR_CANCELLED 7
+/* The resource needed is in use by another operation (the native audio device
+ * or session is running a job). Retrying once that job finishes can succeed,
+ * unlike TS_ERR_OPEN. */
+#define TS_ERR_BUSY 8
 
 /* ---- streaming event kinds ---- */
 
@@ -140,9 +164,9 @@ int32_t ts_stt_stream_close(TsSttStream *stream);
 #define TS_EVENT_REASONING 2
 /* One parsed tool call, as a JSON object `{"id","name","arguments"}` in
  * `text` and the call's zero-based index within the turn in `a`. Fires only
- * when the caller offered the tool by name, which no ts_generate option
- * does yet: the kind is wired so hosts and the pipeline do not need a
- * second pass when the binding grows a way to offer tools. */
+ * for a function the caller offered by name in ts_generate's `tools` option.
+ * `arguments` is an OBJECT (not a string of JSON text), and `id` is
+ * "toolu_<n>" in emission order. */
 #define TS_EVENT_TOOL 3
 /* Terminal event, fired ONCE per successful ts_generate just before it
  * returns, after every other event of the turn. `text` is the stop reason
@@ -228,7 +252,16 @@ void ts_string_free(char *s);
  *
  * `options_json` may be NULL or "{}". Recognised keys, all optional:
  *   maxContext        number | "auto" | null   (default auto)
- *   expertCacheSlots  number | "auto" | null   (default auto; 8/16/24/32)
+ *   expertCacheSlots  number | "auto" | null   (default auto). A number must be
+ *                       one of 8, 16, 24, 32, 48, 64, 96, 128 (the set is
+ *                       foundation::runtime_config::ALLOWED_CACHE_SLOTS);
+ *                       "auto" climbs through 8/16/24/32 only.
+ *   expertResidency   "auto" | "streamed" | "mapped" | null (default auto)
+ *                       "auto" maps the routed experts only when the minimum
+ *                       streamed cache cannot fit the measured headroom. The
+ *                       mode the session ACTUALLY opened with is reported as
+ *                       sessionInfo.expertResidency. A misspelling is refused
+ *                       before the install is opened.
  *   powerProfile      "performance" | "balanced" | "efficiency" | null
  *                       null ASKS THE OS, so Low Power Mode selects
  *                       efficiency. Name one explicitly when measuring.
@@ -277,6 +310,14 @@ void ts_string_free(char *s);
  *                       KV-cache quantization. "3.5" splits into K3/V4. An
  *                       unsupported family or head_dim REFUSES this call by
  *                       name rather than silently opening at FP16.
+ *   prefixReuse       bool | null (default true). Continue each turn from the
+ *                       previous turn's KV wherever the new render shares a
+ *                       prefix with the old one. false prefills every turn in
+ *                       full; use it for a session attached to the in-process
+ *                       server (turbospark-server defaults reuse off because
+ *                       one engine's cache is shared by every client), or to
+ *                       measure a cold prefill. Reported back as
+ *                       sessionInfo.prefixReuse.
  *
  * Opening is expensive: it maps gigabytes and compiles Metal pipelines.
  * Open once and keep the handle.
@@ -330,6 +371,37 @@ void ts_session_cancel(const TsSession *s);
  */
 int32_t ts_session_release_vision(const TsSession *s);
 
+/* ---- tokenizer without a session ---- */
+
+/*
+ * A tokenizer opened on its own. ts_session_open maps gigabytes and compiles
+ * pipelines; this reads only the tokenizer files, so a context meter or a
+ * prompt-budget preview can count tokens before any model is loaded.
+ *
+ * Text-level calls only. Rendering a conversation (ts_session_render_prompt)
+ * and fitting a window (ts_session_fit_window_json) need the family and
+ * dialect the engine resolves at open, and stay on the session.
+ */
+typedef struct TsTokenizer TsTokenizer;
+
+/* Opens the tokenizer of a .gturbo directory or installed alias (an existing
+ * directory wins over an alias, as in ts_session_open). */
+int32_t ts_tokenizer_open(const char *model_dir, TsTokenizer **out);
+/* Closes a tokenizer. NULL is a no-op. */
+void ts_tokenizer_close(TsTokenizer *tokenizer);
+/* The token count of a raw string. */
+int32_t ts_tokenizer_count_text_tokens(const TsTokenizer *tokenizer,
+                                       const char *text, bool add_special,
+                                       uint32_t *out_count);
+/* A raw string as a JSON array of token ids. Free with ts_string_free. */
+int32_t ts_tokenizer_tokenize_json(const TsTokenizer *tokenizer,
+                                   const char *text, bool add_special,
+                                   char **out);
+/* A JSON array of token ids back to text. Free with ts_string_free. */
+int32_t ts_tokenizer_detokenize_json(const TsTokenizer *tokenizer,
+                                     const char *tokens_json,
+                                     bool skip_special, char **out);
+
 /* ---- native image generation ---- */
 
 /* Opens a verified image install. This is a separate handle from TsSession:
@@ -339,7 +411,12 @@ int32_t ts_image_session_open(const char *model_dir, TsImageSession **out);
 /* Closes an image session. Do not call while ts_image_generate is running. */
 void ts_image_session_close(TsImageSession *s);
 
-/* Requests cancellation without blocking behind image work. */
+/* Requests cancellation without blocking behind image work.
+ *
+ * UNLIKE ts_session_cancel, a cancel that arrives BEFORE ts_image_generate
+ * starts is lost: each generate installs a fresh cancellation token, so only
+ * a cancel issued while one is running stops it. A host that wants "cancel
+ * the next one" has to track that itself. */
 void ts_image_session_cancel(const TsImageSession *s);
 
 /* Generates one PNG. options_json is `{ "prompt", "seed", "width",
@@ -439,7 +516,15 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  * null; when a tower IS present it is set on both the active and the
  * refused branches, so a host can say WHICH tower failed to serve an image.
  * vision.sidecarPath is the attached directory, present only when source is
- * "sidecar".
+ * "sidecar". vision.maxPixels is the RESOLVED pixel ceiling an image is
+ * preprocessed against: the checkpoint's own declared maximum, or a smaller
+ * value this session's loadGuard tier and committed memory could afford. It
+ * is null exactly when vision.active is false.
+ *
+ * expertResidency is the residency mode the session opened with ("streamed"
+ * or "mapped"), and expertCacheSlots the RESOLVED slot count: read both
+ * before quoting any throughput or footprint, because one install differs by
+ * 44.2 against 51.2 tok/s across slot counts.
  *
  * A NON-NULL BLOCK IS A STATEMENT ABOUT THE SESSION, NOT THE NEXT TURN.
  * Acceptance is argmax(target) == proposal, exact only at temperature 0, so
@@ -476,6 +561,23 @@ int32_t ts_session_phases_json(const TsSession *s, char **out);
 uint64_t ts_peak_footprint_bytes(void);
 
 /*
+ * The ABI revision of the LIBRARY, to compare against TS_ABI_VERSION above.
+ * Equal means the staged header and archive came from the same build of this
+ * contract. Cannot fail.
+ */
+uint32_t ts_abi_version(void);
+
+/*
+ * Build information for a diagnostics pane or a bug report, as JSON:
+ *
+ *   { "abiVersion": 2, "version": "0.2.0", "debugAssertions": false }
+ *
+ * `version` is the turbospark-ffi crate version. `debugAssertions` is true in
+ * an unoptimized build, whose timings must not be quoted as performance.
+ */
+int32_t ts_build_info_json(char **out);
+
+/*
  * Hardware and power telemetry for this machine, as JSON:
  *   { "physicalMemoryBytes", "recommendedWorkingSetBytes", "chip",
  *     "lowPowerMode", "thermalLevel", "memoryPressure" }
@@ -500,6 +602,22 @@ int32_t ts_system_info_json(char **out);
  */
 int32_t ts_session_count_tokens(const TsSession *s, const char *messages_json,
                                 const char *reasoning, uint32_t *out_count);
+
+/*
+ * ts_session_count_tokens with the functions a turn will OFFER counted in.
+ * `tools_json` is the array ts_generate's `tools` option takes
+ * ([{"name","description","parameters"}]); NULL, "" or "[]" is no tools, and
+ * the same validation applies (an empty or repeated name, or `parameters` that
+ * is not an object, is refused). The definitions are rendered into the prompt
+ * by the checkpoint's own template and can run to thousands of tokens, which a
+ * count that ignored them would miss. A checkpoint with no chat template
+ * refuses a non-empty list by name, as ts_generate does.
+ */
+int32_t ts_session_count_tokens_with_tools(const TsSession *s,
+                                           const char *messages_json,
+                                           const char *reasoning,
+                                           const char *tools_json,
+                                           uint32_t *out_count);
 
 /*
  * Formats a conversation transcript into raw prompt text using the session's
@@ -563,6 +681,18 @@ int32_t ts_session_fit_window_json(const TsSession *s, const char *messages_json
                                    char **out);
 
 /*
+ * ts_session_fit_window_json measuring every candidate prompt WITH the offered
+ * functions rendered in (see ts_session_count_tokens_with_tools), so the turns
+ * kept are the turns that fit beside the tool definitions. `tools_json` as
+ * there; NULL or "[]" behaves exactly like ts_session_fit_window_json.
+ */
+int32_t ts_session_fit_window_with_tools_json(const TsSession *s,
+                                              const char *messages_json,
+                                              const char *reasoning,
+                                              const char *tools_json,
+                                              uint32_t max_tokens, char **out);
+
+/*
  * Generates one assistant turn. Blocks for the whole turn.
  *
  * `messages_json` is [{"role":"user","content":"..."}], rendered through the
@@ -594,7 +724,31 @@ int32_t ts_session_fit_window_json(const TsSession *s, const char *messages_json
  * `options_json` may be NULL or "{}". Recognised keys, with the defaults the
  * CLI uses:
  *   maxNewTokens 512, temperature 0.2, topK 64, topP 0.95,
- *   repetitionPenalty 1.0, seed null, stop [], stopTokens [], reasoning "off"
+ *   repetitionPenalty 1.0, minP 0.0, presencePenalty 0.0,
+ *   frequencyPenalty 0.0, seed null, stop [], stopTokens [], reasoning "off"
+ *
+ * `tools` is an array of functions the model may call this turn:
+ *   [{"name": "get_weather", "description": "...", "parameters": {JSON Schema}}]
+ * Absent or empty renders and decodes exactly as before. Offering tools
+ * renders through the checkpoint's own chat_template.jinja (the only renderer
+ * that can express them), so a checkpoint that ships none refuses the turn by
+ * name, and the definitions COUNT TOWARD THE PROMPT: ts_session_count_tokens
+ * and ts_session_fit_window_json do not see them, so budget extra room.
+ * Calls are parsed only in the checkpoint's NATIVE markup
+ * (sessionInfo.toolCalling.native) and only for a function offered here; a
+ * call to anything else is plain text. An empty or repeated name, or a
+ * `parameters` that is not a JSON object, is refused before any decoding.
+ *
+ * To answer a call, append the assistant turn and the tool's result and
+ * generate again. An assistant message carries "toolCalls": [{"id","name",
+ * "arguments"}] (arguments an object, or a string of JSON text) and a tool
+ * message carries "role": "tool", "toolCallId" (the call's id) and "name".
+ * Keep the ids the engine returned: the Gemma template resolves a tool
+ * turn's function name by matching them and renders "unknown" otherwise.
+ *
+ * `minP` is a truncation threshold in [0, 1); 0 disables it. `presencePenalty`
+ * and `frequencyPenalty` are OpenAI-style and must lie in [-2, 2]. A value
+ * outside its range is refused by name before any decoding starts.
  *
  * `reasoning` is "off"|"low"|"medium"|"high"|"xhigh". THE ACCEPTED SET IS
  * THE CHECKPOINT'S: a level its template rejects comes back as an error
@@ -603,18 +757,29 @@ int32_t ts_session_fit_window_json(const TsSession *s, const char *messages_json
  * `cb` may be NULL, in which case nothing streams and the whole turn arrives
  * in `*result_json`:
  *
- *   { "promptTokens", "newTokens", "prefillSeconds", "decodeSeconds",
- *     "stopReason", "tokensPerSecond", "content", "reasoning",
- *     "peakMemoryPressure" }
+ *   { "promptTokens", "newTokens", "reusedPrefixTokens", "prefillSeconds",
+ *     "decodeSeconds", "stopReason", "toolCalls", "tokensPerSecond",
+ *     "content", "reasoning", "peakMemoryPressure" }
  *
  * stopReason is endOfTurn | toolCalls | eos | stopString | maxTokens |
+ * cancelled. tokensPerSecond is null when no decoding happened, so a caller
+ * cannot plot a rate that was never measured.
+ *
+ * reusedPrefixTokens counts how many promptTokens continued from the previous
+ * turn's KV instead of being re-prefilled; 0 on a first turn or a diverged
+ * render, never an error.
+ *
+ * toolCalls is an array of {"id","name","arguments"} rows, in emission order,
+ * and is empty unless `tools` was offered and the model called one. A turn
+ * that produced a parsed call reports stopReason "toolCalls" whichever token
+ * closed it (ChatML and DeepSeek end such a turn in "endOfTurn"), so a host's
+ * tool loop can key on that one value. "cancelled" is the exception: a Stop
+ * press is never reported as a request to run a tool.
+ *
  * peakMemoryPressure is "normal" | "warn" | "critical", the worst seen while
  * this turn decoded -- and "normal" when nothing was watching, which is the
  * default (the in-loop probe follows the power profile). Read
  * ts_system_info_json for the machine's current state.
- *
- * cancelled. tokensPerSecond is null when no decoding happened, so a caller
- * cannot plot a rate that was never measured.
  */
 int32_t ts_generate(const TsSession *s, const char *messages_json,
                     const char *options_json, TsEventCallback cb,
@@ -654,6 +819,26 @@ int32_t ts_generate(const TsSession *s, const char *messages_json,
  *             any client opt its own traffic out of the repair this
  *             deployment chose. Applies to every model attached to this
  *             server, including ones attached later.
+ *   embeddingModel
+ *           string | null. An embedding model (.safetensors directory or
+ *             alias) to attach at startup, enabling /v1/embeddings.
+ *   hfEndpoint
+ *           string | null. A Hugging Face mirror endpoint (for example
+ *             https://hf-mirror.com) used by installs from this process.
+ *   defaultSystem
+ *           string | null. System prompt for requests that carry no system
+ *             or developer message of their own (`turbospark-server --system`).
+ *   defaultReasoning
+ *           "off" | "low" | "medium" | "high" | "xhigh" | null. Reasoning
+ *             effort when a request omits reasoning_effort.
+ *   sttModels, ttsModels, musicModels
+ *           [string]. Audio models (install directory or catalog alias) to
+ *             attach at startup, as ts_server_attach_audio_model would. An
+ *             entry that fails to attach fails the start.
+ *   idleUnloadSeconds
+ *           number | null. Detach a model after it has served no request for
+ *             this many seconds, releasing its weights. null or 0 keeps every
+ *             model resident (the default). See ts_server_set_idle_unload.
  *
  * UNAUTHENTICATED DOES NOT MEAN PRIVATE TO THIS PROCESS. This comment used to
  * say the socket was "reachable only by the process embedding it", which is
@@ -728,6 +913,17 @@ int32_t ts_server_attach_embedding_model(const TsServer *server,
 int32_t ts_server_detach_model(const TsServer *server, const char *model_id);
 
 /*
+ * Sets how long an attached model may sit unused before the server detaches
+ * it and releases its weights. `seconds` of 0 turns the sweep off, which is
+ * the default. Takes effect on the next 30 s sweep and applies to models
+ * attached later too; a model with a request in flight is never detached.
+ * The same value can be given up front as ts_server_start's
+ * "idleUnloadSeconds" option. A detach by this sweep surfaces as a
+ * modelDetached event, exactly like an explicit one.
+ */
+int32_t ts_server_set_idle_unload(const TsServer *server, uint64_t seconds);
+
+/*
  * Signals the server to stop, blocks until its background thread has
  * actually exited, and frees the handle. NULL is a no-op.
  *
@@ -756,6 +952,11 @@ void ts_server_stop(TsServer *server);
  * ("" when none), kept for a reader written when a server could serve only
  * one; on a two-model server it is half the truth, so show "models".
  *
+ * "imageModels" and "audioModels" are the attached image and audio model ids,
+ * in the same canonical form as "models". "authEnabled" is whether an apiKey
+ * is required. "traffic" carries the transport counters (and, when the server
+ * was started with captureText, bounded body previews).
+ *
  * "uptimeSeconds" is from a monotonic clock and is unaffected by the wall
  * clock moving under a long-running host.
  */
@@ -772,10 +973,18 @@ int32_t ts_server_info_json(const TsServer *server, char **out);
  *   requestStarted  { id, atMs, method, path }
  *   requestRouted   { id, requested, served, stream }
  *   generated       { id, model, promptTokens, newTokens, prefillSeconds,
- *                     decodeSeconds, stopReason }
- *   requestFinished { id, status, durationMs }
+ *                     decodeSeconds, stopReason, reusedPrefixTokens,
+ *                     sessionSlotEvicted }
+ *   requestFinished { id, status, durationMs, error? }
  *   modelAttached   { atMs, model }
  *   modelDetached   { atMs, model }
+ *
+ * "reusedPrefixTokens" is how many leading prompt tokens the turn continued
+ * from the previous request's KV instead of prefilling; 0 when prefix reuse
+ * did not apply. "sessionSlotEvicted" is whether serving the turn evicted a
+ * different conversation's still-usable state from the session pool. "error"
+ * on requestFinished is present only for a request that failed, and carries
+ * the engine's message.
  *
  * "id" ties the events of one request together. "requested" and "served"
  * differ whenever the single-model fallback fired, which is the common case
@@ -1008,6 +1217,29 @@ int32_t ts_repo_variants_json(const char *repo, char **out);
 int32_t ts_control_vector_info_json(const char *path, char **out);
 
 /*
+ * Whether kvBits would be accepted for an install with these architecture
+ * facts, by the same rule ts_session_open applies. `layer_mask` is the
+ * manifest's arch.fullAttentionLayerMask (one byte per layer: 1 full
+ * attention, 0 sliding window) and `num_layers` its arch.numLayers;
+ * `full_head_dim` is arch.fullHeadDim. Returns 1 or 0 and never fails: an
+ * unreadable fact is a "no", which is the safe direction. Lets a host decide
+ * whether to offer a KV-quantization control without keeping a second copy
+ * of the rule.
+ */
+int32_t ts_kv_quant_supported(int64_t full_head_dim, const uint8_t *layer_mask,
+                              size_t layer_mask_len, size_t num_layers);
+
+/*
+ * What a model family can do, as JSON, from the spelling installed.json and
+ * manifest.json carry (ModelFamily::as_str, e.g. "gemma4", "gptOss"):
+ *   { "family": "gemma4", "known": true, "steeringSupported": true }
+ * A family this build does not recognise is "known": false with every
+ * capability false, not an error. steeringSupported is false off macOS, where
+ * no decode flow exists.
+ */
+int32_t ts_family_capabilities_json(const char *family, char **out);
+
+/*
  * What installing `alias` will cost, as {"downloadBytes","installBytes"}.
  * Call before ts_install to show a determinate bar and a space warning.
  */
@@ -1189,6 +1421,52 @@ int ts_heavy_work_try_acquire(TsHeavyWorkPermit **out);
 int ts_heavy_work_release(TsHeavyWorkPermit *permit);
 typedef struct TsAudioSession TsAudioSession;
 typedef struct TsAudioJob TsAudioJob;
+/*
+ * ---- native audio (speech-to-text, text-to-speech, music) ----
+ *
+ * WIRE SHAPES ARE snake_case here, unlike the camelCase used everywhere above:
+ * these structs are the runtime's own serde types (`runtime::native_audio`,
+ * `catalog::audio_catalog`) passed through unchanged. A Swift decoder uses
+ * convertFromSnakeCase for this block only.
+ *
+ * LIFECYCLE. ts_audio_session_open() loads a model for ONE task; a session
+ * runs one job at a time. A job is: ts_audio_job_open(request_json), zero or
+ * more ts_audio_job_append() of input PCM, then exactly one ts_audio_job_run()
+ * (a second run is refused), then ts_audio_job_close(). Input is 16 kHz mono
+ * f32; one append carries at most 32,000 samples and the whole job at most 30
+ * minutes. Appends after run has started are refused.
+ *
+ * Tasks the runtime can open are "speech_to_text", "text_to_speech" and
+ * "music". Any other task name (the catalog describes more families than the
+ * runtime has session entry points for) is refused at open as an unknown
+ * variant. Request keys: task, language, text, voice, speed, caption, lyrics,
+ * duration_seconds, steps, seed; an unrecognised key is refused.
+ *
+ * CALLBACK. TsAudioCallback is invoked synchronously on the thread calling
+ * ts_audio_job_run, and `kind` says what the other arguments hold:
+ *   1  progress. `json` (UTF-8, NOT NUL-terminated, `json_len` bytes) is
+ *      {"stage": string, "completed": number, "total": number | null}. A
+ *      null total means the stage cannot say how much remains.
+ *   2  PCM. `pcm` points at `count` output samples (at most 32,000 per call,
+ *      interleaved in the result's pcm_format). BORROWED: copy before the
+ *      callback returns.
+ * The full audio is also reported at the end; the callback is how a host
+ * starts playback early.
+ *
+ * ts_audio_job_run's result is {"transcript": {...} | null, "pcm_format":
+ * {"sample_rate", "channels"} | null, "sample_count": number, "seed": number
+ * | null}. A cancelled or failed run returns non-zero with the reason in
+ * ts_last_error.
+ *
+ * CANCELLATION. ts_audio_job_cancel and ts_audio_session_cancel never block
+ * and are safe from any thread, including during run. ts_audio_job_status_json
+ * reports {"state": "created" | "running" | "succeeded" | "cancelled" |
+ * "failed", "cancellation_requested": bool}.
+ *
+ * OPEN COST. ts_audio_session_open of a managed model hashes its files to
+ * verify them before loading, with no progress and no cancel. Call it off the
+ * main thread.
+ */
 typedef void (*TsAudioCallback)(void *userdata, int kind, const char *json,
                                size_t json_len, const float *pcm, size_t count);
 int ts_audio_catalog_json(char **out);
@@ -1196,11 +1474,35 @@ int ts_audio_capabilities_json(char **out);
 int ts_audio_installed_json(char **out);
 int ts_audio_resolve(const char *identity_json, char **out);
 int ts_audio_delete(const char *identity_json);
+/* Removes an owned install with NO receipt (listed under needsAdoption by
+ * ts_audio_installed_json), including one whose payload is damaged. A
+ * receipt-backed install is refused: use ts_audio_delete. */
+int ts_audio_delete_legacy(const char *identity_json);
 int ts_audio_adopt(const char *identity_json, char **out);
 int ts_audio_install(const char *identity_json, TsInstallCallback cb, void *userdata, char **out);
 /* options: task, allow_portable (false), allow_experimental_metal (false),
    optional expected_family. A mismatch refuses the loaded model. */
 int ts_audio_session_open(const char *path, const char *options_json, TsAudioSession **out);
+/* A cancel request for one ts_audio_session_open_cancellable call. Create it
+ * before the open, press Stop from any thread with _cancel (never blocks, a
+ * no-op on NULL), and free it with _free once the open has returned. */
+typedef struct TsAudioOpenToken TsAudioOpenToken;
+int ts_audio_open_token_new(TsAudioOpenToken **out);
+int ts_audio_open_token_cancel(const TsAudioOpenToken *token);
+int ts_audio_open_token_free(TsAudioOpenToken *token);
+/* ts_audio_session_open that can be stopped and can report progress. `token`
+ * and `cb` may be NULL. A managed model's files are SHA-256 verified before
+ * the engine loads; `cb` receives kind 1 JSON
+ * {"stage":"verifying","completed":bytes,"total":bytes} (throttled to about
+ * every 16 MiB). A stop is honoured within one 1 MiB hash chunk during that
+ * verification and once more just before the load; the engine load itself is
+ * not interruptible. A stopped open returns TS_ERR_CANCELLED with *out NULL.
+ * The integrity check is the same as ts_audio_session_open's: a stop never
+ * reports success, and a mismatch is still refused. */
+int ts_audio_session_open_cancellable(const char *path, const char *options_json,
+                                      const TsAudioOpenToken *token,
+                                      TsAudioCallback cb, void *userdata,
+                                      TsAudioSession **out);
 int ts_audio_session_close(TsAudioSession *session);
 int ts_audio_session_cancel(const TsAudioSession *session);
 int ts_audio_job_open(const TsAudioSession *session, const char *request_json, TsAudioJob **out);

@@ -172,7 +172,7 @@ pub unsafe extern "C" fn ts_image_install(
             },
             on_bytes,
         )
-        .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        .map_err(abi::install_error)?;
         strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
@@ -355,6 +355,44 @@ pub unsafe extern "C" fn ts_control_vector_info_json(
     })
 }
 
+/// Whether `--kv-bits` would be accepted for an install with these arch facts,
+/// answered by the same rule `ts_session_open` applies. `layer_mask` is the
+/// manifest's `fullAttentionLayerMask` (one byte per layer: 1 full attention,
+/// 0 sliding window), `num_layers` its `numLayers`. Returns 1 or 0, never an
+/// error: an unreadable fact is a "no", the safe direction.
+#[no_mangle]
+pub unsafe extern "C" fn ts_kv_quant_supported(
+    full_head_dim: i64,
+    layer_mask: *const u8,
+    layer_mask_len: usize,
+    num_layers: usize,
+) -> c_int {
+    abi::guard_value(0, || {
+        if layer_mask.is_null() || layer_mask_len == 0 || num_layers == 0 {
+            return 0;
+        }
+        let mask = std::slice::from_raw_parts(layer_mask, layer_mask_len);
+        models::kv_quant_supported(full_head_dim, mask, num_layers) as c_int
+    })
+}
+
+/// What a model family can do, as JSON, from its persisted
+/// `ModelFamily::as_str` spelling: `{"family","known","steeringSupported"}`.
+/// A family this build does not recognise is `known: false` with every
+/// capability false rather than an error.
+#[no_mangle]
+pub unsafe extern "C" fn ts_family_capabilities_json(
+    family: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let family =
+            strings::required(family, "family").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        strings::emit(&models::family_capabilities_json(family), out)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// The `(downloadBytes, installBytes)` an install of `alias` will cost, as
 /// JSON, so a GUI can warn about space and show a determinate bar before the
 /// walk starts.
@@ -449,7 +487,7 @@ pub unsafe extern "C" fn ts_install(
             },
             on_bytes,
         )
-        .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        .map_err(abi::install_error)?;
         strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
@@ -520,7 +558,7 @@ pub unsafe extern "C" fn ts_install_repo(
             },
             on_bytes,
         )
-        .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+        .map_err(abi::install_error)?;
         strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }

@@ -13,6 +13,7 @@ mod stt;
 #[cfg(not(target_os = "macos"))]
 #[path = "stt_unsupported.rs"]
 mod stt;
+mod tokenizer;
 
 pub use core::*;
 pub use daemon::*;
@@ -23,6 +24,7 @@ pub use models::*;
 pub use server::*;
 pub use session::*;
 pub use stt::*;
+pub use tokenizer::*;
 
 mod audio;
 pub use audio::*;

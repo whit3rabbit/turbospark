@@ -76,26 +76,67 @@ pub unsafe extern "C" fn ts_session_count_tokens(
     reasoning: *const c_char,
     out_count: *mut u32,
 ) -> c_int {
-    guard_result(|| {
-        if out_count.is_null() {
-            return Err((
-                abi::TS_ERR_INVALID_ARGUMENT,
-                "out_count must not be null".into(),
-            ));
+    guard_result(|| count_tokens_impl(ptr, messages_json, reasoning, std::ptr::null(), out_count))
+}
+
+/// [`ts_session_count_tokens`] with the functions a turn will OFFER counted
+/// in. `tools_json` is the same array `ts_generate`'s `tools` option takes
+/// (`[{"name","description","parameters"}]`); NULL or `[]` is no tools. The
+/// definitions are rendered into the prompt by the checkpoint's template and
+/// can run to thousands of tokens, which a count that ignored them would miss.
+#[no_mangle]
+pub unsafe extern "C" fn ts_session_count_tokens_with_tools(
+    ptr: *const TsSession,
+    messages_json: *const c_char,
+    reasoning: *const c_char,
+    tools_json: *const c_char,
+    out_count: *mut u32,
+) -> c_int {
+    guard_result(|| count_tokens_impl(ptr, messages_json, reasoning, tools_json, out_count))
+}
+
+/// The offered tools from an optional JSON array, validated exactly as
+/// `ts_generate` validates `options.tools`.
+unsafe fn tools_from_json(
+    tools_json: *const c_char,
+) -> Result<crate::generate::ToolOffer, (c_int, String)> {
+    let raw = strings::optional(tools_json, "toolsJson")
+        .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    let specs: Vec<wire::WireToolSpec> = match raw.map(str::trim).filter(|r| !r.is_empty()) {
+        None => Vec::new(),
+        Some(text) => {
+            serde_json::from_str(text).map_err(|e| (abi::TS_ERR_JSON, format!("toolsJson: {e}")))?
         }
-        let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let raw = strings::required(messages_json, "messagesJson")
-            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let messages: Vec<wire::WireMessage> = serde_json::from_str(raw)
-            .map_err(|e| (abi::TS_ERR_JSON, format!("messagesJson: {e}")))?;
-        let reasoning_str = strings::optional(reasoning, "reasoning")
-            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?
-            .unwrap_or("off");
-        let count = generate::count_tokens(session, &messages, reasoning_str)
-            .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
-        *out_count = count;
-        Ok(())
-    })
+    };
+    crate::generate::tool_offer(&specs).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+}
+
+unsafe fn count_tokens_impl(
+    ptr: *const TsSession,
+    messages_json: *const c_char,
+    reasoning: *const c_char,
+    tools_json: *const c_char,
+    out_count: *mut u32,
+) -> Result<(), (c_int, String)> {
+    if out_count.is_null() {
+        return Err((
+            abi::TS_ERR_INVALID_ARGUMENT,
+            "out_count must not be null".into(),
+        ));
+    }
+    let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    let raw = strings::required(messages_json, "messagesJson")
+        .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    let messages: Vec<wire::WireMessage> =
+        serde_json::from_str(raw).map_err(|e| (abi::TS_ERR_JSON, format!("messagesJson: {e}")))?;
+    let reasoning_str = strings::optional(reasoning, "reasoning")
+        .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?
+        .unwrap_or("off");
+    let offer = tools_from_json(tools_json)?;
+    let count = generate::count_tokens(session, &messages, reasoning_str, &offer.definitions)
+        .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+    *out_count = count;
+    Ok(())
 }
 
 /// Evaluates the token count of a raw text string using the session tokenizer.
@@ -191,18 +232,57 @@ pub unsafe extern "C" fn ts_session_fit_window_json(
     out: *mut *mut c_char,
 ) -> c_int {
     guard_result(|| {
-        let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let raw = strings::required(messages_json, "messagesJson")
-            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let messages: Vec<wire::WireMessage> = serde_json::from_str(raw)
-            .map_err(|e| (abi::TS_ERR_JSON, format!("messagesJson: {e}")))?;
-        let reasoning_str = strings::optional(reasoning, "reasoning")
-            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?
-            .unwrap_or("off");
-        let outcome = generate::fit_window(session, &messages, reasoning_str, max_tokens)
-            .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
-        let json =
-            serde_json::to_string(&outcome).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
-        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+        fit_window_impl(
+            ptr,
+            messages_json,
+            reasoning,
+            std::ptr::null(),
+            max_tokens,
+            out,
+        )
     })
+}
+
+/// [`ts_session_fit_window_json`] measuring every candidate prompt WITH the
+/// offered functions rendered in (see [`ts_session_count_tokens_with_tools`]),
+/// so the turns kept are the turns that fit beside the tool definitions.
+#[no_mangle]
+pub unsafe extern "C" fn ts_session_fit_window_with_tools_json(
+    ptr: *const TsSession,
+    messages_json: *const c_char,
+    reasoning: *const c_char,
+    tools_json: *const c_char,
+    max_tokens: u32,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| fit_window_impl(ptr, messages_json, reasoning, tools_json, max_tokens, out))
+}
+
+unsafe fn fit_window_impl(
+    ptr: *const TsSession,
+    messages_json: *const c_char,
+    reasoning: *const c_char,
+    tools_json: *const c_char,
+    max_tokens: u32,
+    out: *mut *mut c_char,
+) -> Result<(), (c_int, String)> {
+    let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    let raw = strings::required(messages_json, "messagesJson")
+        .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    let messages: Vec<wire::WireMessage> =
+        serde_json::from_str(raw).map_err(|e| (abi::TS_ERR_JSON, format!("messagesJson: {e}")))?;
+    let reasoning_str = strings::optional(reasoning, "reasoning")
+        .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?
+        .unwrap_or("off");
+    let offer = tools_from_json(tools_json)?;
+    let outcome = generate::fit_window(
+        session,
+        &messages,
+        reasoning_str,
+        max_tokens,
+        &offer.definitions,
+    )
+    .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+    let json = serde_json::to_string(&outcome).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+    strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
 }

@@ -14,6 +14,10 @@ use std::cell::RefCell;
 use std::os::raw::{c_char, c_int};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+/// The ABI revision this crate implements. MUST equal `TS_ABI_VERSION` in
+/// `include/turbospark.h`; `abi_version_matches_the_header` enforces it.
+pub const ABI_VERSION: u32 = 2;
+
 /// Success.
 pub const TS_OK: c_int = 0;
 /// A null pointer, a non-UTF-8 string, or a value outside its allowed set.
@@ -31,6 +35,16 @@ pub const TS_ERR_UNSUPPORTED: c_int = 5;
 /// operation did not happen, and this is a BUG in this crate rather than
 /// anything a caller did.
 pub const TS_ERR_PANIC: c_int = 6;
+/// The caller's own cancel request ended the operation (an install whose
+/// cancel flag fired, an audio job that was cancelled). Not a failure: nothing
+/// is wrong, and a host should not show it as an error. Partial output of a
+/// text turn is reported through `stopReason: "cancelled"` instead, and a
+/// cancelled image or audio run that still has a result keeps returning it.
+pub const TS_ERR_CANCELLED: c_int = 7;
+/// The resource needed is in use by another operation (a native audio session
+/// or the audio device is already running a job). Retrying after that job
+/// finishes can succeed, unlike `TS_ERR_OPEN`.
+pub const TS_ERR_BUSY: c_int = 8;
 
 thread_local! {
     /// The last error message, per thread.
@@ -164,5 +178,73 @@ pub unsafe fn parse_json_or_default<T: Default + serde::de::DeserializeOwned>(
     match crate::strings::optional(ptr, name).map_err(|e| (TS_ERR_INVALID_ARGUMENT, e))? {
         None => Ok(T::default()),
         Some(text) => serde_json::from_str(text).map_err(|e| (TS_ERR_JSON, format!("{name}: {e}"))),
+    }
+}
+
+/// Picks the code for a failed install: `TS_ERR_CANCELLED` when the install's
+/// own cancel flag ended it (recognised by `catalog::INSTALL_CANCELLED`, which
+/// exists for exactly this), otherwise `TS_ERR_GENERATE`.
+pub fn install_error(message: String) -> (c_int, String) {
+    if message.contains(catalog::INSTALL_CANCELLED) {
+        (TS_ERR_CANCELLED, message)
+    } else {
+        (TS_ERR_GENERATE, message)
+    }
+}
+
+/// Picks the code for a failed audio operation: `TS_ERR_BUSY` when the engine
+/// refused because another job holds the session or device, `TS_ERR_CANCELLED`
+/// when the caller cancelled, otherwise `default`.
+pub fn audio_error(message: String, cancelled: bool, default: c_int) -> (c_int, String) {
+    if cancelled {
+        (TS_ERR_CANCELLED, message)
+    } else if message.contains("is busy") {
+        (TS_ERR_BUSY, message)
+    } else {
+        (default, message)
+    }
+}
+
+#[cfg(test)]
+mod classify_tests {
+    use super::*;
+
+    #[test]
+    fn an_install_cancel_is_cancelled_and_anything_else_is_generate() {
+        assert_eq!(
+            install_error(catalog::INSTALL_CANCELLED.to_string()).0,
+            TS_ERR_CANCELLED
+        );
+        // Wrapped by a caller's context, still recognised.
+        assert_eq!(
+            install_error(format!("pulling x: {}", catalog::INSTALL_CANCELLED)).0,
+            TS_ERR_CANCELLED
+        );
+        assert_eq!(install_error("disk full".into()).0, TS_ERR_GENERATE);
+    }
+
+    #[test]
+    fn audio_errors_prefer_cancel_then_busy_then_the_default() {
+        assert_eq!(
+            audio_error("x".into(), true, TS_ERR_OPEN).0,
+            TS_ERR_CANCELLED
+        );
+        assert_eq!(
+            audio_error("audio device is busy; retry".into(), false, TS_ERR_OPEN).0,
+            TS_ERR_BUSY
+        );
+        assert_eq!(
+            audio_error("audio session is busy".into(), false, TS_ERR_GENERATE).0,
+            TS_ERR_BUSY
+        );
+        assert_eq!(
+            audio_error("bad model".into(), false, TS_ERR_OPEN).0,
+            TS_ERR_OPEN
+        );
+        // A cancel that also mentions busy is still a cancel.
+        assert_eq!(
+            audio_error("busy".into(), true, TS_ERR_OPEN).0,
+            TS_ERR_CANCELLED
+        );
     }
 }

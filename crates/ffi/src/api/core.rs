@@ -36,6 +36,29 @@ pub unsafe extern "C" fn ts_peak_footprint_bytes() -> u64 {
     telemetry::peak_footprint_bytes()
 }
 
+/// The ABI revision of this library. See `TS_ABI_VERSION` in the header.
+#[no_mangle]
+pub unsafe extern "C" fn ts_abi_version() -> u32 {
+    // Cannot fail, but guarded like every other entry point: the invariant is
+    // "nothing unwinds across `extern \"C\"`", not "nothing here can panic".
+    abi::guard_value(0, || abi::ABI_VERSION)
+}
+
+/// Build information as JSON: ABI revision, crate version, and whether debug
+/// assertions are on.
+#[no_mangle]
+pub unsafe extern "C" fn ts_build_info_json(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        let json = serde_json::json!({
+            "abiVersion": abi::ABI_VERSION,
+            "version": env!("CARGO_PKG_VERSION"),
+            "debugAssertions": cfg!(debug_assertions),
+        })
+        .to_string();
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// Hardware and power telemetry for this machine, as JSON.
 #[no_mangle]
 pub unsafe extern "C" fn ts_system_info_json(out: *mut *mut c_char) -> c_int {
@@ -43,4 +66,44 @@ pub unsafe extern "C" fn ts_system_info_json(out: *mut *mut c_char) -> c_int {
         let json = telemetry::system_info_json().map_err(|e| (abi::TS_ERR_JSON, e))?;
         strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The header is the copy Swift compiles against, and nothing else ties
+    /// it to the library, so the two numbers are compared here.
+    #[test]
+    fn abi_version_matches_the_header() {
+        let header = include_str!("../../include/turbospark.h");
+        let declared: u32 = header
+            .lines()
+            .find_map(|l| l.strip_prefix("#define TS_ABI_VERSION "))
+            .expect("header must define TS_ABI_VERSION")
+            .trim()
+            .parse()
+            .expect("TS_ABI_VERSION must be an integer literal");
+        assert_eq!(declared, abi::ABI_VERSION);
+        assert_eq!(unsafe { ts_abi_version() }, abi::ABI_VERSION);
+    }
+
+    #[test]
+    fn build_info_reports_the_abi_version_and_crate_version() {
+        let mut out: *mut c_char = std::ptr::null_mut();
+        assert_eq!(unsafe { ts_build_info_json(&mut out) }, abi::TS_OK);
+        let text = unsafe { std::ffi::CStr::from_ptr(out) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        unsafe { ts_string_free(out) };
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["abiVersion"], abi::ABI_VERSION);
+        assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+        assert!(v["debugAssertions"].is_boolean());
+        assert_eq!(
+            unsafe { ts_build_info_json(std::ptr::null_mut()) },
+            abi::TS_ERR_INVALID_ARGUMENT
+        );
+    }
 }

@@ -39,6 +39,7 @@ crates/ffi/
 |   |   \-- tests.rs        # unit tests: speculation, wire compatibility, image parts
 |   +-- models/             # catalog, probe, install (portable)
 |   |   +-- mod.rs          # re-exports; module doc on catalog/store/probe rows
+|   |   +-- capabilities.rs # family steering predicate and the kv-quant eligibility rule, answered once in Rust
 |   |   +-- catalog.rs      # catalog_json, installed_json, delete, install_bytes
 |   |   +-- control_vector.rs # control_vector_info_json
 |   |   +-- fit.rs          # context_ladder_json, recommend_json
@@ -56,7 +57,8 @@ crates/ffi/
 |   +-- vision.rs           # Image data URL decoding & vision token prep
 |   \-- api/                # C ABI entry points (extern "C")
 |       +-- mod.rs          # re-exports every domain module
-|       +-- core.rs         # errors, strings, system telemetry
+|       +-- core.rs         # errors, strings, system telemetry, ts_abi_version and ts_build_info_json
+|       +-- tokenizer.rs    # TsTokenizer: count/tokenize/detokenize with no session
 |       +-- daemon.rs       # managed background daemon inspection and control
 |       +-- embedding.rs    # standalone embedding encode + cosine similarity
 |       +-- session.rs      # session lifecycle and introspection

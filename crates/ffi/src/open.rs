@@ -406,7 +406,8 @@ pub(crate) fn open_with_failure(
     // erroring (`crates/runtime/CLAUDE.md` Gotcha 30), so this cannot turn a
     // working session into a failing one, only a slower-than-necessary one
     // into a faster one.
-    runner.set_prefix_reuse(true);
+    let prefix_reuse = options.prefix_reuse.unwrap_or(true);
+    runner.set_prefix_reuse(prefix_reuse);
 
     // Vision memory sidecar (Part A4): attach BEFORE any image is ever
     // processed and before `vision_info` below reads `has_vision_tower` /
@@ -566,6 +567,7 @@ pub(crate) fn open_with_failure(
             plan.kv_bytes,
         ),
         kv_bits: kv_quant.label(),
+        prefix_reuse,
         special_tokens: crate::wire::SpecialTokensInfo {
             bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
             eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),

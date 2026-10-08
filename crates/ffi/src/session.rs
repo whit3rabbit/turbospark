@@ -130,15 +130,24 @@ impl SessionCore {
         &self,
         o: &crate::wire::GenerateOptions,
     ) -> Result<ShapingConfig, String> {
-        ShapingConfig::new(
-            o.temperature,
-            o.top_k,
-            Some(o.top_p),
-            o.repetition_penalty,
-            o.seed,
-        )
-        .map_err(|e| e.to_string())
+        shaping_config(o)
     }
+}
+
+/// Builds the sampling config from per-call options. A free function so the
+/// option-to-config mapping is testable without opening a model.
+pub(crate) fn shaping_config(o: &crate::wire::GenerateOptions) -> Result<ShapingConfig, String> {
+    ShapingConfig::new(
+        o.temperature,
+        o.top_k,
+        Some(o.top_p),
+        o.repetition_penalty,
+        o.seed,
+    )
+    .and_then(|c| c.with_min_p(o.min_p))
+    .and_then(|c| c.with_presence_penalty(o.presence_penalty))
+    .and_then(|c| c.with_frequency_penalty(o.frequency_penalty))
+    .map_err(|e| e.to_string())
 }
 
 /// The opaque handle `TsSession *` points at. See the module doc for why
@@ -174,4 +183,43 @@ impl Deref for Session {
 pub(crate) unsafe fn borrow<'a>(ptr: *const Session) -> Result<&'a Session, String> {
     ptr.as_ref()
         .ok_or_else(|| "session must not be null".to_string())
+}
+
+#[cfg(test)]
+mod shaping_tests {
+    use super::shaping_config;
+    use crate::wire::GenerateOptions;
+
+    fn opts(json: &str) -> GenerateOptions {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn defaults_leave_the_new_knobs_disabled() {
+        let c = shaping_config(&GenerateOptions::default()).unwrap();
+        assert_eq!(c.min_p(), None);
+        assert_eq!(c.presence_penalty(), 0.0);
+        assert_eq!(c.frequency_penalty(), 0.0);
+    }
+
+    #[test]
+    fn camel_case_keys_reach_the_config() {
+        let c = shaping_config(&opts(
+            r#"{"minP":0.05,"presencePenalty":0.5,"frequencyPenalty":-0.25}"#,
+        ))
+        .unwrap();
+        assert_eq!(c.min_p(), Some(0.05));
+        assert_eq!(c.presence_penalty(), 0.5);
+        assert_eq!(c.frequency_penalty(), -0.25);
+    }
+
+    #[test]
+    fn out_of_range_values_are_refused_by_name() {
+        let e = shaping_config(&opts(r#"{"minP":1.0}"#)).unwrap_err();
+        assert!(e.contains("min_p"), "{e}");
+        let e = shaping_config(&opts(r#"{"presencePenalty":3.0}"#)).unwrap_err();
+        assert!(e.contains("presence_penalty"), "{e}");
+        let e = shaping_config(&opts(r#"{"frequencyPenalty":-2.5}"#)).unwrap_err();
+        assert!(e.contains("frequency_penalty"), "{e}");
+    }
 }

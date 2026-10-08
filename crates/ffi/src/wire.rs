@@ -217,6 +217,16 @@ pub struct OpenOptions {
     /// by name rather than silently opening at FP16 -- see
     /// `docs/TRUBOQUANT.md`.
     pub kv_bits: Option<String>,
+    /// Continue each turn from the previous turn's KV wherever the new render
+    /// shares a prefix with the old one. Absent or `true` is what every
+    /// release did (a GUI session is multi-turn by construction). `false`
+    /// prefills every turn in full.
+    ///
+    /// Set it `false` for a session you will attach to the in-process HTTP
+    /// server: reuse is keyed on the render's prefix, and `turbospark-server`
+    /// itself defaults it off because one engine's cache is shared by every
+    /// client of that server.
+    pub prefix_reuse: Option<bool>,
 }
 
 /// What a session resolved about directional steering, once, at open.
@@ -299,15 +309,43 @@ pub struct GenerateOptions {
     pub top_k: u32,
     pub top_p: f64,
     pub repetition_penalty: f64,
+    /// Min-p truncation threshold in `[0, 1)`; `0.0` disables it.
+    pub min_p: f64,
+    /// OpenAI-style flat penalty per distinct generated token, `[-2, 2]`.
+    pub presence_penalty: f64,
+    /// OpenAI-style penalty scaled by generated-token count, `[-2, 2]`.
+    pub frequency_penalty: f64,
     pub seed: Option<u64>,
     pub stop: Vec<String>,
     pub stop_tokens: Vec<u32>,
+    /// Functions the model may call this turn. Empty (the default) renders and
+    /// decodes exactly as before: no tool definitions in the prompt, and no
+    /// tool-call parsing of the reply.
+    ///
+    /// Offering tools renders through the checkpoint's own `chat_template.jinja`
+    /// (the only renderer that can express them), so a checkpoint that ships
+    /// none refuses the turn by name. Parsing only recognises a call to a
+    /// function offered here, in the checkpoint's native markup
+    /// (`sessionInfo.toolCalling.native`).
+    pub tools: Vec<WireToolSpec>,
     /// `off` | `low` | `medium` | `high` | `xhigh`. The ACCEPTED SET IS THE
     /// CHECKPOINT'S, not this crate's: a level the template rejects comes
     /// back as an error naming the level, because a per-family allowlist
     /// here would be a second, staler copy of a set the checkpoint already
     /// states.
     pub reasoning: String,
+}
+
+/// One function offered to the model.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WireToolSpec {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// JSON Schema of the arguments. Absent renders as no schema.
+    #[serde(default)]
+    pub parameters: Option<serde_json::Value>,
 }
 
 impl Default for GenerateOptions {
@@ -318,9 +356,13 @@ impl Default for GenerateOptions {
             top_k: 64,
             top_p: 0.95,
             repetition_penalty: 1.0,
+            min_p: 0.0,
+            presence_penalty: 0.0,
+            frequency_penalty: 0.0,
             seed: None,
             stop: Vec::new(),
             stop_tokens: Vec::new(),
+            tools: Vec::new(),
             reasoning: "off".to_string(),
         }
     }
@@ -438,12 +480,51 @@ impl Default for WireContent {
     }
 }
 
+/// A tool call the model made on an earlier assistant turn, replayed so the
+/// next render shows the model its own call and the result that answered it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WireToolCall {
+    /// Matches the `toolCallId` of the `tool` message that answers it. The
+    /// Gemma template resolves a tool turn's function name by this id and
+    /// renders `unknown` when it cannot, so keep the ids `generate` returned.
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    /// An object, or a string of JSON text (both are accepted; a string that
+    /// does not parse is passed to the template as the string it is).
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+}
+
 /// One chat message, in the shape `--messages-file` accepts.
+///
+/// The tool fields are camelCase on the wire like everything else in this
+/// ABI; the snake_case spellings are accepted too, because that is the OpenAI
+/// shape `--messages-file` files already carry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireMessage {
     pub role: String,
     #[serde(default)]
     pub content: WireContent,
+    /// Tool calls an `assistant` message made. Empty on every other message.
+    #[serde(
+        default,
+        rename = "toolCalls",
+        alias = "tool_calls",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub tool_calls: Vec<WireToolCall>,
+    /// On a `tool` message: the id of the call it answers.
+    #[serde(
+        default,
+        rename = "toolCallId",
+        alias = "tool_call_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tool_call_id: Option<String>,
+    /// On a `tool` message: the name of the function that ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 impl WireMessage {
@@ -610,6 +691,9 @@ pub struct SessionInfo {
     /// a named width either opens or the call fails, so what a caller asked
     /// for and what this session runs at are always the same value.
     pub kv_bits: String,
+    /// Whether this session continues turns from the previous turn's KV. The
+    /// `prefixReuse` open option's resolved value (default `true`).
+    pub prefix_reuse: bool,
 }
 
 /// Arguments to `ts_server_start`. `{}` is valid and means "an OS-assigned
@@ -665,6 +749,11 @@ pub struct ServerOptions {
     /// Optional music generation models to attach at startup.
     #[serde(default)]
     pub music_models: Vec<String>,
+    /// Detach an attached model after it has served no request for this many
+    /// seconds, releasing its weights. Absent or 0 keeps every model resident
+    /// until `ts_server_detach_model` or `ts_server_stop` (the default).
+    /// `ts_server_set_idle_unload` changes it on a running server.
+    pub idle_unload_seconds: Option<u64>,
 }
 
 /// What `ts_server_info_json` returns.

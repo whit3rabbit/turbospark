@@ -31,6 +31,7 @@ struct ImageInstalledRow {
     quantization: String,
     #[serde(rename = "sourcePath")]
     source_path: Option<PathBuf>,
+    family: String,
 }
 
 pub(crate) fn catalog_json() -> Result<String, String> {
@@ -121,6 +122,7 @@ pub(crate) fn install(
         .unwrap_or(report.output_root);
     serde_json::to_string(&ImageInstalledRow {
         alias: entry.alias,
+        family: catalog::image_family_for_model_id(&entry.model_id).to_string(),
         model_id: entry.model_id,
         revision: entry.revision,
         path,

@@ -209,3 +209,19 @@ fn a_kv_bits_misspelling_is_an_error_rather_than_a_silent_off() {
     assert!(kv_bits(&Some("5".to_string())).is_err());
     assert!(kv_bits(&Some("2.5".to_string())).is_err());
 }
+
+#[test]
+fn prefix_reuse_is_off_only_when_asked_and_defaults_to_on() {
+    let absent: OpenOptions = serde_json::from_str("{}").unwrap();
+    assert_eq!(
+        absent.prefix_reuse, None,
+        "absent means the historical default"
+    );
+    let off: OpenOptions = serde_json::from_str(r#"{"prefixReuse":false}"#).unwrap();
+    assert_eq!(off.prefix_reuse, Some(false));
+    let on: OpenOptions = serde_json::from_str(r#"{"prefixReuse":true}"#).unwrap();
+    assert_eq!(on.prefix_reuse, Some(true));
+    // The resolution rule open.rs applies.
+    assert!(absent.prefix_reuse.unwrap_or(true));
+    assert!(!off.prefix_reuse.unwrap_or(true));
+}

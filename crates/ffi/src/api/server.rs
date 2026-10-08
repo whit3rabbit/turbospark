@@ -101,6 +101,11 @@ pub unsafe extern "C" fn ts_server_start(
             default_reasoning,
         )
         .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+        if let Some(seconds) = options.idle_unload_seconds {
+            server
+                .set_idle_policy(crate::server_idle::IdlePolicy::from_seconds(seconds))
+                .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        }
         if let Some(endpoint) = &options.hf_endpoint {
             if !endpoint.trim().is_empty() {
                 catalog::set_hf_endpoint_override(Some(endpoint.trim().to_string()));
@@ -218,6 +223,21 @@ pub unsafe extern "C" fn ts_server_detach_model(
                 format!("no model with id '{id}' is attached to this server"),
             ))
         }
+    })
+}
+
+/// Sets how long an attached model may sit unused before the server detaches
+/// it and releases its weights. `seconds` of 0 turns the sweep off, which is
+/// the default. Takes effect on the next 30 s sweep, applies to every model
+/// including ones attached later, and never detaches a model with a request
+/// in flight.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_set_idle_unload(server: *const TsServer, seconds: u64) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(server).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        server
+            .set_idle_policy(crate::server_idle::IdlePolicy::from_seconds(seconds))
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
 

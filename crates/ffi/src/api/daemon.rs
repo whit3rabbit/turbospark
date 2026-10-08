@@ -118,9 +118,25 @@ fn acquire_daemon_lock() -> Result<(), String> {
     Ok(())
 }
 
+/// The `--model` argument the daemon was started with, from the `args` array
+/// of its `server.meta`, exactly as passed (an alias or a path, not resolved).
+/// `None` when it was started without one (the scripted-tokenizer mode). The
+/// same field `turbospark` itself reads, so a host and the CLI agree on which
+/// model the daemon is serving.
+fn model_from_meta(meta: &serde_json::Value) -> Option<String> {
+    let args = meta.get("args")?.as_array()?;
+    let mut iter = args.iter().filter_map(|a| a.as_str());
+    while let Some(arg) = iter.next() {
+        if arg == "--model" {
+            return iter.next().map(str::to_string);
+        }
+    }
+    None
+}
+
 /// Inspects whether a background turbospark server daemon is running.
 /// Writes a JSON object to `*out` (free with `ts_string_free`):
-///   `{"running": true, "pid": 1234, "port": 8080, "endpoint": "http://127.0.0.1:8080/v1", "logPath": "..."}`
+///   `{"running": true, "pid": 1234, "port": 8080, "endpoint": "http://127.0.0.1:8080/v1", "logPath": "...", "model": "gemma4" | null}`
 /// or `{"running": false}`.
 #[no_mangle]
 pub unsafe extern "C" fn ts_daemon_status_json(out: *mut *mut c_char) -> c_int {
@@ -144,12 +160,17 @@ pub unsafe extern "C" fn ts_daemon_status_json(out: *mut *mut c_char) -> c_int {
             };
             let endpoint = format!("http://127.0.0.1:{port}/v1");
             let log_path = log_file().to_string_lossy().into_owned();
+            let model = fs::read_to_string(meta_file())
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .and_then(|meta| model_from_meta(&meta));
             serde_json::json!({
                 "running": true,
                 "pid": pid,
                 "port": port,
                 "endpoint": endpoint,
                 "logPath": log_path,
+                "model": model,
             })
         } else {
             serde_json::json!({
@@ -469,5 +490,26 @@ mod api_key_redaction_tests {
         let (redacted, key) = extract_api_key(&args(&["--api-key", "--port", "--port", "9001"]));
         assert_eq!(key.as_deref(), Some("--port"));
         assert_eq!(redacted, args(&["--port", "9001"]));
+    }
+}
+
+#[cfg(test)]
+mod model_meta_tests {
+    use super::model_from_meta;
+    use serde_json::json;
+
+    #[test]
+    fn reads_the_value_after_the_first_model_flag() {
+        let meta =
+            json!({"port": 8080, "args": ["--port", "8080", "--model", "gemma4", "--model", "x"]});
+        assert_eq!(model_from_meta(&meta).as_deref(), Some("gemma4"));
+    }
+
+    #[test]
+    fn a_daemon_without_a_model_reports_none() {
+        assert_eq!(model_from_meta(&json!({"args": ["--port", "1"]})), None);
+        assert_eq!(model_from_meta(&json!({"port": 1})), None);
+        // A trailing flag with no value is not a model.
+        assert_eq!(model_from_meta(&json!({"args": ["--model"]})), None);
     }
 }

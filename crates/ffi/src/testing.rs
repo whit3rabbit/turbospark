@@ -112,6 +112,7 @@ pub fn session_for_testing_named(
             // this reads exactly what a real session with `kvBits` absent
             // would: `off`.
             kv_bits: "off".to_string(),
+            prefix_reuse: true,
             special_tokens: wire::SpecialTokensInfo {
                 bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
                 eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),

@@ -14,6 +14,20 @@ pub(crate) struct IdlePolicy {
     pub(crate) ttl: Duration,
 }
 
+impl IdlePolicy {
+    /// `0` disables the sweep; any other value is the idle TTL in seconds.
+    pub(crate) fn from_seconds(seconds: u64) -> Self {
+        if seconds == 0 {
+            Self::default()
+        } else {
+            Self {
+                enabled: true,
+                ttl: Duration::from_secs(seconds),
+            }
+        }
+    }
+}
+
 impl Default for IdlePolicy {
     fn default() -> Self {
         Self {
@@ -82,6 +96,15 @@ impl IdleSweep {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn from_seconds_zero_disables_and_nonzero_enables() {
+        assert_eq!(IdlePolicy::from_seconds(0), IdlePolicy::default());
+        assert!(!IdlePolicy::from_seconds(0).enabled);
+        let p = IdlePolicy::from_seconds(90);
+        assert!(p.enabled);
+        assert_eq!(p.ttl, std::time::Duration::from_secs(90));
+    }
+
     use super::super::server_registry::{EventRing, LiveRegistry};
     use super::{IdlePolicy, IdleSweep};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

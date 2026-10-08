@@ -12,6 +12,7 @@
 //! needs the verdict and the arithmetic behind it rather than the whole
 //! config.
 
+mod capabilities;
 mod catalog;
 mod control_vector;
 mod fit;
@@ -20,6 +21,7 @@ mod install;
 pub(crate) use install::ActiveInstall;
 mod probe;
 
+pub(crate) use capabilities::{family_capabilities_json, kv_quant_supported};
 pub(crate) use catalog::{
     catalog_json, delete, delete_image, image_installed_json, install_bytes, installed_json,
 };

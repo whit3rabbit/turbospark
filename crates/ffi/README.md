@@ -11,7 +11,7 @@ Downstream Swift code links this crate's `staticlib` directly; nothing in this w
 ## Safety
 
 - Contains `unsafe` code throughout: this is the FFI boundary, where raw pointers and foreign memory cross into Rust.
-- **Panic Boundary Guarding**: Rust panics cannot safely unwind across an `extern "C"` boundary. Every entry point in `api/` wraps its implementation body in `abi::guard`, `abi::guard_result`, or `abi::guard_value`. Any panic or error is caught and converted into a thread-local error message and an integer status code (`TS_STATUS_OK`, `TS_STATUS_ERROR`).
+- **Panic Boundary Guarding**: Rust panics cannot safely unwind across an `extern "C"` boundary. Every entry point in `api/` wraps its implementation body in `abi::guard`, `abi::guard_result`, or `abi::guard_value`. Any panic or error is caught and converted into a thread-local error message and an integer status code (`TS_OK` and the `TS_ERR_*` codes: invalid argument, open, generate, json, unsupported, panic, cancelled, busy).
 
 ## Key Modules
 
@@ -63,4 +63,4 @@ make swift-test-real MODEL=~/models/gemma4.gturbo
 
 1. **Staticlib vs Rlib Verification**: `tests/c_surface.rs` reaches function bodies through the Rust `rlib`, so it can pass even if the C header signature drifts. The authoritative check for ABI drift is `make swift-test`, which compiles Swift code directly against `include/turbospark.h` and links the static archive.
 2. **String Allocation & Ownership**: All strings returned across the FFI by pointer (`char **`) are allocated on the Rust heap using `CString`. Callers MUST free them by passing the pointer to `ts_string_free` to prevent memory leaks in host processes.
-3. **Thread-Safe Cancellation**: Calling `ts_cancel` sets an atomic cancellation token on the session. It can be invoked safely from any thread or asynchronous task while `ts_generate` is actively decoding tokens on another thread.
+3. **Thread-Safe Cancellation**: Calling `ts_session_cancel` sets an atomic cancellation token on the session. It can be invoked safely from any thread or asynchronous task while `ts_generate` is actively decoding tokens on another thread.

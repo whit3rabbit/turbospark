@@ -27,11 +27,11 @@ pub const TS_EVENT_TOOL: i32 = 3;
 pub const TS_EVENT_FINISH: i32 = 4;
 
 pub(crate) use prompt::{
-    count_text_tokens, count_tokens, detokenize, fit_window, render_prompt, tokenize,
+    count_text_tokens, count_tokens, detokenize, fit_window, render_prompt, tokenize, tool_offer,
+    ToolOffer,
 };
 pub(crate) use vision::{release_vision, SCRIPTED_HAS_NO_TOWER};
 
-use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
 use runtime::{
@@ -53,6 +53,22 @@ fn stop_reason_name(reason: StopReason) -> &'static str {
         StopReason::StopString => "stopString",
         StopReason::MaxTokens => "maxTokens",
         StopReason::Cancelled => "cancelled",
+    }
+}
+
+/// The stop reason a host sees: `toolCalls` for any turn that produced a
+/// parsed call, whichever token closed it.
+///
+/// This is the rule `crates/server` applies (`finish_reason_for`). ChatML,
+/// DeepSeek and every guardrails-rescued call end the turn in `EndOfTurn` with
+/// the call sitting beside the text, so the raw reason alone cannot say that a
+/// tool needs running, and a host's tool loop keys on this value. `cancelled`
+/// stays authoritative: a Stop press must never read as "run the tool".
+pub(crate) fn reported_stop_reason(reason: StopReason, has_calls: bool) -> &'static str {
+    if has_calls && !matches!(reason, StopReason::Cancelled) {
+        "toolCalls"
+    } else {
+        stop_reason_name(reason)
     }
 }
 
@@ -140,7 +156,11 @@ pub(crate) fn generate(
 ) -> Result<GenerateResult, String> {
     let reasoning = ReasoningEffort::parse(&options.reasoning)
         .ok_or_else(|| format!("unknown reasoning level {:?}", options.reasoning))?;
-    let (rendered_ids, _note) = render(&session.tokenizer, messages, reasoning)?;
+    // Validated before the render and the lock, like a misspelled reasoning
+    // level: a bad tool list should cost a message, not an engine turn.
+    let offer = tool_offer(&options.tools)?;
+    let (rendered_ids, _note) =
+        render(&session.tokenizer, messages, reasoning, &offer.definitions)?;
     // Shape-checked before the lock, decoded inside it (see `attach_images`).
     let image_parts = collect_image_parts(messages)?;
     // Depends on `options` alone, so it is checked before the lock and before
@@ -188,19 +208,26 @@ pub(crate) fn generate(
     let mut content = String::new();
     let mut reasoning_text = String::new();
     let mut tool_calls: Vec<serde_json::Value> = Vec::new();
-    let tools = HashSet::new();
+    // Ids are `toolu_<n>` in emission order, the scheme `crates/server`
+    // uses, so a replayed call and the `tool` message answering it can be
+    // matched by id (the Gemma template resolves a tool turn's function name
+    // that way). Only reached when tools were offered.
+    let mut next_call_id = 0usize;
     let mut split = TurnSplitter::new(
         &session.tokenizer,
-        &tools,
+        &offer.names,
         reasoning,
-        String::new,
+        move || {
+            next_call_id += 1;
+            format!("toolu_{}", next_call_id - 1)
+        },
         &prompt_ids,
     );
 
     let mut emit_turn = |turn: TurnEvent| match turn {
         TurnEvent::Prefill { done, total } => emit(TS_EVENT_PREFILL, "", done as u32, total as u32),
-        // Fires only when the caller offered the tool by name, which no
-        // `GenerateOptions` field does yet; see `TS_EVENT_TOOL`.
+        // Fires only when the caller offered the tool by name
+        // (`GenerateOptions.tools`); see `TS_EVENT_TOOL`.
         TurnEvent::ToolCall(call) => {
             let value = tool_call_json(&call);
             let text = value.to_string();
@@ -342,7 +369,7 @@ pub(crate) fn generate(
     // `ts_last_error`.
     emit(
         TS_EVENT_FINISH,
-        stop_reason_name(result.reason),
+        reported_stop_reason(result.reason, !tool_calls.is_empty()),
         result.new_tokens as u32,
         result.prompt_tokens as u32,
     );
@@ -353,7 +380,7 @@ pub(crate) fn generate(
         reused_prefix_tokens: result.reused_prefix_tokens,
         prefill_seconds: result.prefill_seconds,
         decode_seconds: result.decode_seconds,
-        stop_reason: stop_reason_name(result.reason).to_string(),
+        stop_reason: reported_stop_reason(result.reason, !tool_calls.is_empty()).to_string(),
         // Null rather than zero when nothing was decoded, so a caller cannot
         // plot a rate that was never measured.
         tokens_per_second: (result.decode_seconds > 0.0 && result.new_tokens > 0)

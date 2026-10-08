@@ -182,3 +182,182 @@ fn a_tool_call_row_carries_id_name_and_an_object_of_arguments() {
         })
     );
 }
+
+// ------------------------------------------------------------------- tools
+
+use crate::wire::WireToolSpec;
+use tokenizer::{MfTokenizer, ReasoningEffort};
+
+fn chatml() -> MfTokenizer {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../tokenizer/tests/fixtures/ChatMLTokenizer");
+    MfTokenizer::load_from_dir(&dir).expect("fixture tokenizer loads")
+}
+
+fn weather_spec() -> WireToolSpec {
+    serde_json::from_value(serde_json::json!({
+        "name": "get_weather",
+        "description": "Current weather for a city",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"]
+        }
+    }))
+    .unwrap()
+}
+
+#[test]
+fn an_offer_with_no_tools_is_empty_and_changes_nothing() {
+    let offer = tool_offer(&[]).unwrap();
+    assert!(offer.definitions.is_empty());
+    assert!(offer.names.is_empty());
+}
+
+#[test]
+fn a_valid_offer_carries_name_description_and_schema() {
+    let offer = tool_offer(&[weather_spec()]).unwrap();
+    assert_eq!(offer.definitions.len(), 1);
+    assert_eq!(offer.definitions[0].name, "get_weather");
+    assert_eq!(
+        offer.definitions[0].description,
+        "Current weather for a city"
+    );
+    assert!(offer.names.contains("get_weather"));
+    assert!(offer.definitions[0].parameters.as_object().is_some());
+}
+
+#[test]
+fn a_bad_offer_is_refused_by_name() {
+    let mut blank = weather_spec();
+    blank.name = "  ".into();
+    assert!(tool_offer(&[blank]).unwrap_err().contains("non-empty name"));
+
+    let twice = tool_offer(&[weather_spec(), weather_spec()]).unwrap_err();
+    assert!(
+        twice.contains("get_weather") && twice.contains("more than once"),
+        "{twice}"
+    );
+
+    let mut scalar = weather_spec();
+    scalar.parameters = Some(serde_json::json!("not a schema"));
+    let e = tool_offer(&[scalar]).unwrap_err();
+    assert!(e.contains("JSON Schema object"), "{e}");
+}
+
+/// The no-tools render must be exactly the render this crate always did: a
+/// host that never offers a tool must not see its prompts move.
+#[test]
+fn rendering_without_tools_is_byte_identical_to_the_plain_template_path() {
+    let tok = chatml();
+    let messages = parse(r#"[{"role":"user","content":"Hello there"}]"#);
+    let (ids, _) = render(&tok, &messages, ReasoningEffort::Off, &[]).unwrap();
+    let plain = tok
+        .apply_chat_template_with_reasoning(
+            &[tokenizer::Message::new(
+                tokenizer::Role::User,
+                "Hello there",
+            )],
+            ReasoningEffort::Off,
+        )
+        .unwrap();
+    assert_eq!(ids, tok.encode(&plain, false));
+}
+
+#[test]
+fn offering_a_tool_puts_its_definition_in_the_prompt() {
+    let tok = chatml();
+    let messages = parse(r#"[{"role":"user","content":"Weather in Oslo?"}]"#);
+    let offer = tool_offer(&[weather_spec()]).unwrap();
+    let (with, _) = render(&tok, &messages, ReasoningEffort::Off, &offer.definitions).unwrap();
+    let (without, _) = render(&tok, &messages, ReasoningEffort::Off, &[]).unwrap();
+    let text = tok.decode(&with, false);
+    assert!(text.contains("get_weather"), "{text}");
+    assert!(text.contains("Current weather for a city"), "{text}");
+    assert!(text.contains("city"), "{text}");
+    assert_ne!(with, without);
+    assert!(with.len() > without.len());
+}
+
+/// A call the model made earlier, and the result that answered it, must reach
+/// the template: otherwise the model is re-asked a question it already
+/// answered, with no memory of having called anything.
+#[test]
+fn a_replayed_tool_call_and_its_result_reach_the_rendered_prompt() {
+    let tok = chatml();
+    let messages = parse(
+        r#"[{"role":"user","content":"Weather in Oslo?"},
+            {"role":"assistant","content":"","toolCalls":[
+                {"id":"toolu_0","name":"get_weather","arguments":{"city":"Oslo"}}]},
+            {"role":"tool","toolCallId":"toolu_0","name":"get_weather","content":"RESULT-12C"}]"#,
+    );
+    let offer = tool_offer(&[weather_spec()]).unwrap();
+    let (ids, _) = render(&tok, &messages, ReasoningEffort::Off, &offer.definitions).unwrap();
+    let text = tok.decode(&ids, false);
+    assert!(text.contains("Oslo"), "the call's arguments: {text}");
+    assert!(text.contains("RESULT-12C"), "the tool result: {text}");
+}
+
+#[test]
+fn snake_case_tool_fields_and_string_arguments_are_accepted() {
+    let messages = parse(
+        r#"[{"role":"assistant","content":"","tool_calls":[
+                {"id":"a","name":"f","arguments":"{\"x\":1}"}]},
+            {"role":"tool","tool_call_id":"a","content":"ok"}]"#,
+    );
+    assert_eq!(messages[0].tool_calls.len(), 1);
+    assert_eq!(messages[1].tool_call_id.as_deref(), Some("a"));
+    // And the serialized form (what `fitWindow` hands back) is camelCase, and
+    // omits the fields on a message that has none.
+    let out = serde_json::to_value(&messages[1]).unwrap();
+    assert_eq!(out["toolCallId"], "a");
+    let plain = serde_json::to_value(&parse(r#"[{"role":"user","content":"hi"}]"#)[0]).unwrap();
+    assert!(
+        plain.get("toolCalls").is_none() && plain.get("toolCallId").is_none(),
+        "{plain}"
+    );
+}
+
+#[test]
+fn a_parsed_call_reports_tool_calls_whatever_closed_the_turn() {
+    use runtime::StopReason as R;
+    for raw in [
+        R::EndOfTurn,
+        R::Eos,
+        R::StopString,
+        R::MaxTokens,
+        R::ToolCalls,
+    ] {
+        assert_eq!(reported_stop_reason(raw, true), "toolCalls", "{raw:?}");
+    }
+    // Without a call the raw reason is reported unchanged.
+    assert_eq!(reported_stop_reason(R::EndOfTurn, false), "endOfTurn");
+    assert_eq!(reported_stop_reason(R::Eos, false), "eos");
+    assert_eq!(reported_stop_reason(R::MaxTokens, false), "maxTokens");
+    // A Stop press is never "run the tool", even if a call had been parsed.
+    assert_eq!(reported_stop_reason(R::Cancelled, true), "cancelled");
+}
+
+/// The exact shape `ChatMessage` in the Swift package encodes: camelCase keys
+/// and `arguments` as the JSON TEXT of the object. Pinned here because no test
+/// can drive the two sides together without a model, and a spelling drift
+/// would silently replay no calls at all.
+#[test]
+fn the_swift_encoded_tool_message_shape_renders_the_call_and_result() {
+    let tok = chatml();
+    let messages = parse(
+        r#"[{"role":"user","content":"Weather in Oslo?"},
+            {"role":"assistant","content":"","toolCalls":[
+                {"id":"toolu_0","name":"get_weather","arguments":"{\"city\":\"Oslo\"}"}]},
+            {"role":"tool","content":"RESULT-9C","toolCallId":"toolu_0","name":"get_weather"}]"#,
+    );
+    assert_eq!(
+        messages[1].tool_calls[0].arguments,
+        serde_json::json!("{\"city\":\"Oslo\"}")
+    );
+    let offer = tool_offer(&[weather_spec()]).unwrap();
+    let (ids, _) = render(&tok, &messages, ReasoningEffort::Off, &offer.definitions).unwrap();
+    let text = tok.decode(&ids, false);
+    assert!(text.contains("Oslo"), "{text}");
+    assert!(text.contains("RESULT-9C"), "{text}");
+}

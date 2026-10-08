@@ -195,6 +195,15 @@ fn expert_stride_of(dir: &std::path::Path, arch: &model_io::ArchConfig) -> Optio
 /// what makes a recommendation trustworthy; a hub ranking under `relaxed`
 /// while its sessions open under `strict` promises a fit the loader then
 /// refuses, in the one place the user cannot see the two disagree.
+fn evidence_name(evidence: catalog::Evidence) -> &'static str {
+    match evidence {
+        catalog::Evidence::Discovered => "discovered",
+        catalog::Evidence::Caveat => "caveat",
+        catalog::Evidence::Runs => "runs",
+        catalog::Evidence::Verified => "verified",
+    }
+}
+
 pub(crate) fn recommend_json_with_progress<F>(
     context: Option<u32>,
     slots: model_io::ExpertCacheSlots,
@@ -261,6 +270,15 @@ where
                 "slotCacheSlots": r.fit.slots,
                 "largestContext": r.fit.largest_context,
                 "notes": r.notes,
+                // How much is known about this row: `discovered` was only
+                // probed, `caveat`/`runs` were run here, `verified` has a
+                // frozen gate or oracle row. Ranking already sorts by it; a
+                // host showing the list should say which it is.
+                "evidence": evidence_name(r.evidence),
+                // The artifact is far smaller than its own name claims (a
+                // mislabelled or truncated upload). Ranked last among equals;
+                // worth a warning badge.
+                "suspicious": r.suspicious,
                 // Chip-matched, unchanged: a caller reading these two got
                 // this machine's own measurement and still does.
                 "toksPerSecondMin": r.measured.as_ref().map(|m| m.decode_tok_s_min),
