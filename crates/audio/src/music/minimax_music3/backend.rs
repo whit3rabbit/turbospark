@@ -75,6 +75,33 @@ pub trait DeviceWeight {
         shape: ConvShape,
         dtype: DType,
     ) -> Result<Vec<f32>>;
+    /// Groups are explicit because Kokoro includes depthwise transpose pools.
+    fn convolution_grouped(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        shape: ConvShape,
+        groups: usize,
+        dtype: DType,
+    ) -> Result<Vec<f32>> {
+        if groups != 1 {
+            return Err(SpeechError::Unsupported {
+                why: "backend does not implement grouped audio convolution".into(),
+            });
+        }
+        self.convolution(input, bias, shape, dtype)
+    }
+    /// Recurrent weights are [4 * hidden, hidden], with i/f/g/o gate order.
+    fn lstm_recurrence(
+        &self,
+        _projection: &[f32],
+        _hidden: usize,
+        _backward: bool,
+    ) -> Result<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "backend does not implement audio LSTM recurrence".into(),
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -87,6 +114,13 @@ pub struct RopeShape {
     pub theta: f32,
 }
 
+/// Arithmetic layout before materializing channel-major normalization input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NormalizationLayout {
+    Rows,
+    Columns,
+}
+
 pub trait ComputeBackend {
     fn load_weight(&self, data: WeightData<'_>) -> Result<Rc<dyn DeviceWeight>>;
     fn attention(
@@ -97,6 +131,47 @@ pub trait ComputeBackend {
         shape: AttentionShape,
         dtype: DType,
     ) -> Result<Vec<f32>>;
+    fn normalize(
+        &self,
+        _x: &[f32],
+        _rows: usize,
+        _cols: usize,
+        _eps: f32,
+        _layout: NormalizationLayout,
+    ) -> Result<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "backend does not implement audio normalization layout".into(),
+        })
+    }
+    fn sine(&self, _x: &[f32]) -> Result<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "backend does not implement precise audio sine".into(),
+        })
+    }
+    fn tanh(&self, _x: &[f32]) -> Result<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "backend does not implement precise audio tanh".into(),
+        })
+    }
+    /// Kokoro uses the compiled erf activation rather than an erf approximation.
+    fn gelu_erf(&self, _x: &[f32]) -> Result<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "backend does not implement audio erf-GELU".into(),
+        })
+    }
+    /// Normalize checkpoint [channel,input,kernel] weights in sanitized reduction order.
+    fn weight_norm(
+        &self,
+        _x: &[f32],
+        _g: &[f32],
+        _rows: usize,
+        _input: usize,
+        _kernel: usize,
+    ) -> Result<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "backend does not implement audio weight normalization".into(),
+        })
+    }
     fn rms_norm(
         &self,
         x: &[f32],
@@ -150,6 +225,18 @@ pub trait ComputeBackend {
         let mut out = x.to_vec();
         super::vocoder::snake(&mut out, alpha, channels, frames, dtype);
         Ok(out)
+    }
+    /// Inclusive scan along rows of a row-major [rows, columns] F32 tensor.
+    fn cumulative_sum(&self, _x: &[f32], _rows: usize, _columns: usize) -> Result<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "backend does not implement strided audio scan".into(),
+        })
+    }
+    /// Centered, reflect-padded periodic-window STFT, channel-major magnitude then phase.
+    fn stft_magnitude_phase(&self, _x: &[f32], _window: &[f32], _hop: usize) -> Result<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "backend does not implement audio STFT".into(),
+        })
     }
     fn trace(&self, _stage: &str, _data: &[f32], _dtype: DType, _shape: &[usize]) {}
 }

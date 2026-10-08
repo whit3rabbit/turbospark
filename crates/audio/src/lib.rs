@@ -50,6 +50,7 @@ pub mod waveform;
 pub mod whisper;
 
 // Shared neural ops & quantization
+pub mod backend;
 pub mod nn;
 pub mod ops;
 pub mod quant;

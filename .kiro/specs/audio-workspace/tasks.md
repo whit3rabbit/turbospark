@@ -25,7 +25,7 @@
     narrowly required catalog frontend provenance_
   - _Requirements: 3.2, 3.4, 4.1, 5.2_
   - _Design: 1, 3_
-- [ ] 2.2 Implement Kokoro Metal session through shared audio operators
+- [x] 2.2 Implement Kokoro Metal session through shared audio operators
   - Keep portable numerical reference, implement real Metal execution of heavy
     operations, validate tensor parity and seeded synthesis, and expose runtime
     session/result/control contracts for the ABI.
@@ -95,6 +95,15 @@
 - Task 2.1 debug: opening quotes must reserve an attached forward word group;
   adjacency alone cannot determine quote ownership. Keep terminal fallback for
   unpaired quotes and test grouping separately from canonical G2P parity.
+- Task 2.2 debug: pinned MLX 0.31.2 F32 normalization, attention, GELU and weight
+  folding each affect F0 enough to cross STFT phase cuts. Match reference
+  arithmetic; a normalization-only repair still fails the frozen waveform gate.
+- Task 2.2 debug: shape-dependent GEMM/GEMV dispatch, reduction layout and
+  precise Metal compilation are part of the pinned F32 contract. The combined
+  private repair passed all six checkpoint gates. Shared repair passed fresh
+  independent review and all six physical tests with unchanged waveform gates.
+  Full audio/runtime/GPU, Rust 1.82 Linux and control mutations passed; broad
+  geometry, performance, peak-memory, ABI/app and feature gates remain separate.
 
 ## Approved expansion tasks
 

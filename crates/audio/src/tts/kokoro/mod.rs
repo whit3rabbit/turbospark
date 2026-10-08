@@ -11,9 +11,8 @@
 //!
 //! Determinism note: the reference's SineGen injects random initial
 //! phase (harmonics only) and additive noise at inference, so final
-//! waveforms are stochastic by construction; this port uses a fixed-seed
-//! LCG. Verification pins every deterministic stage (durations, F0/N,
-//! alignment, decoder features) and treats the waveform statistically.
+//! waveforms are stochastic by construction. Requests reset the pinned MLX
+//! key sequence, keeping draw shapes and order across frontend segments.
 //!
 //! Weight layouts: every `weight_v` in the checkpoint is PyTorch order
 //! (`[out, in, kernel]` for convs, `[in, out, kernel]` for the
@@ -21,6 +20,7 @@
 //! pool); the reference's sanitize transposes at load time, so this
 //! port reads the PyTorch order directly.
 
+mod execution;
 pub mod frontend;
 mod synth;
 pub use frontend::{
@@ -35,9 +35,12 @@ use turbospark_audio::fft::ComplexF32;
 use turbospark_audio::stft::{istft, stft, StftOptions};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::backend::{ComputeBackend, ConvShape};
 use crate::codec::conv::{wn_fold_in_place, WnFold};
 use crate::ops;
 use crate::{Result, SpeechError};
+use execution::Execution;
+use std::rc::Rc;
 
 const SAMPLE_RATE: f32 = 24_000.0;
 const ISTFT_N_FFT: usize = 20;
@@ -98,6 +101,7 @@ fn tensor_shape(file: &SafetensorsFile, name: &str) -> Result<(usize, usize, usi
 }
 
 fn load_wn_conv(
+    exec: &Execution,
     file: &SafetensorsFile,
     base: &str,
     stride: usize,
@@ -111,7 +115,7 @@ fn load_wn_conv(
         .load_as_f32(&format!("{base}.bias"))
         .unwrap_or_default();
     let (out, in_ch, kernel) = tensor_shape(file, &format!("{base}.weight_v"))?;
-    let weight = weight_norm_oki(v, &g, out, in_ch, kernel);
+    let weight = exec.weight_norm(v, &g[..out], out, in_ch, kernel)?;
     Ok(WnConv1d {
         weight,
         bias,
@@ -127,22 +131,25 @@ fn load_wn_conv(
 
 impl WnConv1d {
     /// Channel-major `[in, seq]` -> `[out, seq']`.
-    fn forward(&self, x: &[f32], _seq: usize) -> Vec<f32> {
+    fn forward(&self, x: &[f32], _seq: usize, exec: &Execution) -> Result<Vec<f32>> {
         let bias = if self.bias.is_empty() {
             None
         } else {
             Some(&self.bias[..])
         };
-        ops::conv1d(
+        exec.convolution(
             x,
             &self.weight,
             bias,
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            self.padding,
-            self.dilation,
+            ConvShape {
+                input_channels: self.in_ch * self.groups,
+                output_channels: self.out_ch,
+                kernel: self.kernel,
+                stride: self.stride,
+                padding: self.padding,
+                dilation: self.dilation,
+                transpose: false,
+            },
             self.groups,
         )
     }
@@ -165,17 +172,20 @@ struct WnConvTranspose1d {
 }
 
 impl WnConvTranspose1d {
-    fn forward(&self, x: &[f32], _seq: usize) -> Vec<f32> {
-        ops::conv_transpose1d(
+    fn forward(&self, x: &[f32], _seq: usize, exec: &Execution) -> Result<Vec<f32>> {
+        exec.convolution(
             x,
             &self.weight,
             Some(&self.bias),
-            self.in_ch,
-            self.out_ch,
-            self.kernel,
-            self.stride,
-            self.padding,
-            0,
+            ConvShape {
+                input_channels: self.in_ch,
+                output_channels: self.out_ch,
+                kernel: self.kernel,
+                stride: self.stride,
+                padding: self.padding,
+                dilation: 1,
+                transpose: true,
+            },
             self.groups,
         )
     }
@@ -203,6 +213,7 @@ fn load_plain_conv(file: &SafetensorsFile, base: &str) -> Result<WnConv1d> {
 }
 
 fn load_wn_conv_transpose(
+    exec: &Execution,
     file: &SafetensorsFile,
     base: &str,
     stride: usize,
@@ -218,7 +229,7 @@ fn load_wn_conv_transpose(
     if d1 == 1 && d2 > 1 {
         // Depthwise pool: [out_ch, 1, kernel].
         let (ch, kernel) = (d0, d2);
-        wn_fold_in_place(&mut weight, &g[..ch], kernel, WnFold::ScaleAdd(1e-7));
+        weight = exec.weight_norm(weight, &g[..ch], ch, 1, kernel)?;
         return Ok(WnConvTranspose1d {
             weight,
             bias,
@@ -232,12 +243,7 @@ fn load_wn_conv_transpose(
     }
     // [in, out, kernel], normalized per input channel.
     let (in_ch, out_ch, kernel) = (d0, d1, d2);
-    wn_fold_in_place(
-        &mut weight,
-        &g[..in_ch],
-        out_ch * kernel,
-        WnFold::ScaleAdd(1e-7),
-    );
+    weight = exec.weight_norm(weight, &g[..in_ch], in_ch, out_ch, kernel)?;
     Ok(WnConvTranspose1d {
         weight,
         bias,
@@ -312,26 +318,22 @@ fn interpolate_linear(input: &[f32], channels: usize, size: usize) -> Vec<f32> {
     out
 }
 
-/// Deterministic-seed LCG for the vocoder's stochastic terms.
-struct Lcg(u64);
-
-impl Lcg {
-    fn uniform(&mut self) -> f32 {
-        (self.next() % 1_000_000) as f32 / 1_000_000.0
+/// MLX 0.31.2 unkeyed draws split once per tensor, across all request segments.
+struct Rng(crate::music::minimax_music3::rng::KeySequence);
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Self(crate::music::minimax_music3::rng::KeySequence::new(seed))
     }
-
-    fn normal(&mut self) -> f32 {
-        let u1 = self.uniform() + 1e-7;
-        let u2 = self.uniform();
-        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
+    fn uniform(&mut self, count: usize) -> Vec<f32> {
+        crate::music::minimax_music3::rng::uniform01(self.0.next(), count)
     }
-
-    fn next(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        self.0 >> 11
+    fn normal(&mut self, count: usize, exec: &Execution) -> Result<Vec<f32>> {
+        let uniforms: Vec<f32> = self
+            .uniform(count)
+            .into_iter()
+            .map(|u| (2.0 - f32::EPSILON / 2.0) * u + (-1.0 + f32::EPSILON / 2.0))
+            .collect();
+        exec.normal(&uniforms)
     }
 }
 
@@ -342,6 +344,7 @@ impl Lcg {
 /// Bidirectional LSTM over `[seq, in_dim]`, gate order i, f, g, o with
 /// tanh on g. Returns `[seq, 2 * hidden]`.
 struct Lstm {
+    name: String,
     wx_f: Vec<f32>,
     wh_f: Vec<f32>,
     b_f: Vec<f32>,
@@ -385,6 +388,7 @@ impl Lstm {
         let b_f = b_ih_f.iter().zip(&b_hh_f).map(|(a, b)| a + b).collect();
         let b_b = b_ih_b.iter().zip(&b_hh_b).map(|(a, b)| a + b).collect();
         Ok(Lstm {
+            name: base.into(),
             wx_f,
             wh_f,
             b_f,
@@ -403,16 +407,22 @@ impl Lstm {
         w_h: &[f32],
         b: &[f32],
         backward: bool,
-    ) -> Vec<f32> {
+        exec: &Execution,
+    ) -> Result<Vec<f32>> {
         let seq = x.len() / self.in_dim;
         let h = self.hidden;
-        let mut proj = vec![0.0f32; seq * 4 * h];
-        for (t, p_row) in proj.chunks_mut(4 * h).enumerate() {
-            let x_row = &x[t * self.in_dim..(t + 1) * self.in_dim];
-            for (g, p) in p_row.iter_mut().enumerate() {
-                let w_row = &w_x[g * self.in_dim..(g + 1) * self.in_dim];
-                *p = b[g] + dot(x_row, w_row);
-            }
+        let proj = exec.linear(x, w_x, Some(b), seq, self.in_dim, 4 * h)?;
+        exec.trace(
+            &format!(
+                "{}.projection.{}",
+                self.name,
+                if backward { "backward" } else { "forward" }
+            ),
+            &proj,
+            &[seq, 4 * h],
+        );
+        if let Some(output) = exec.recurrence(&proj, w_h, h, backward)? {
+            return Ok(output);
         }
         let mut hidden = vec![0.0f32; h];
         let mut cell = vec![0.0f32; h];
@@ -437,20 +447,26 @@ impl Lstm {
             hidden = new_h;
             out[t * h..(t + 1) * h].copy_from_slice(&hidden);
         }
-        out
+        Ok(out)
     }
 
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
+    fn forward(&self, x: &[f32], exec: &Execution) -> Result<Vec<f32>> {
         let seq = x.len() / self.in_dim;
-        let f = self.dir_forward(x, &self.wx_f, &self.wh_f, &self.b_f, false);
-        let b = self.dir_forward(x, &self.wx_b, &self.wh_b, &self.b_b, true);
+        exec.trace(&format!("{}.lstm_in", self.name), x, &[seq, self.in_dim]);
+        let f = self.dir_forward(x, &self.wx_f, &self.wh_f, &self.b_f, false, exec)?;
+        let b = self.dir_forward(x, &self.wx_b, &self.wh_b, &self.b_b, true, exec)?;
         let mut out = vec![0.0f32; seq * 2 * self.hidden];
         for t in 0..seq {
             let dst = &mut out[t * 2 * self.hidden..(t + 1) * 2 * self.hidden];
             dst[..self.hidden].copy_from_slice(&f[t * self.hidden..(t + 1) * self.hidden]);
             dst[self.hidden..].copy_from_slice(&b[t * self.hidden..(t + 1) * self.hidden]);
         }
-        out
+        exec.trace(
+            &format!("{}.lstm_out", self.name),
+            &out,
+            &[seq, 2 * self.hidden],
+        );
+        Ok(out)
     }
 }
 
@@ -475,9 +491,20 @@ impl AdaLayerNorm {
         })
     }
 
-    fn forward(&self, x: &mut [f32], seq: usize, s: &[f32]) {
+    fn forward(&self, x: &mut [f32], seq: usize, s: &[f32], exec: &Execution) -> Result<()> {
         let c = self.channels;
-        let gb = ops::linear(s, &self.fc_w, Some(&self.fc_b), 1, s.len(), 2 * c);
+        let gb = exec.linear(s, &self.fc_w, Some(&self.fc_b), 1, s.len(), 2 * c)?;
+        if let Some(mut normalized) =
+            exec.normalize(x, seq, c, crate::backend::NormalizationLayout::Rows)?
+        {
+            for row in normalized.chunks_mut(c) {
+                for (i, a) in row.iter_mut().enumerate() {
+                    *a = (1.0 + gb[i]) * *a + gb[c + i];
+                }
+            }
+            x.copy_from_slice(&normalized);
+            return Ok(());
+        }
         for row in x.chunks_mut(c).take(seq) {
             let mean = row.iter().sum::<f32>() / c as f32;
             let var = row.iter().map(|a| (a - mean) * (a - mean)).sum::<f32>() / c as f32;
@@ -486,6 +513,7 @@ impl AdaLayerNorm {
                 *a = (1.0 + gb[i]) * ((*a - mean) * inv) + gb[c + i];
             }
         }
+        Ok(())
     }
 }
 
@@ -506,9 +534,20 @@ impl AdaIn1d {
         })
     }
 
-    fn forward(&self, x: &mut [f32], seq: usize, s: &[f32]) {
+    fn forward(&self, x: &mut [f32], seq: usize, s: &[f32], exec: &Execution) -> Result<()> {
         let c = self.channels;
-        let gb = ops::linear(s, &self.fc_w, Some(&self.fc_b), 1, s.len(), 2 * c);
+        let gb = exec.linear(s, &self.fc_w, Some(&self.fc_b), 1, s.len(), 2 * c)?;
+        if let Some(mut normalized) =
+            exec.normalize(x, c, seq, crate::backend::NormalizationLayout::Columns)?
+        {
+            for (ch, row) in normalized.chunks_mut(seq).enumerate() {
+                for a in row {
+                    *a = (1.0 + gb[ch]) * *a + gb[c + ch];
+                }
+            }
+            x.copy_from_slice(&normalized);
+            return Ok(());
+        }
         for ch in 0..c {
             let row = &mut x[ch * seq..(ch + 1) * seq];
             let mean = row.iter().sum::<f32>() / seq as f32;
@@ -518,6 +557,7 @@ impl AdaIn1d {
                 *a = (1.0 + gb[ch]) * ((*a - mean) * inv) + gb[c + ch];
             }
         }
+        Ok(())
     }
 }
 
@@ -534,6 +574,7 @@ struct AdainResBlk1d {
 
 impl AdainResBlk1d {
     fn load(
+        exec: &Execution,
         file: &SafetensorsFile,
         base: &str,
         dim_in: usize,
@@ -542,18 +583,32 @@ impl AdainResBlk1d {
         upsample: bool,
     ) -> Result<Self> {
         let conv1x1 = if dim_in != dim_out {
-            Some(load_wn_conv(file, &format!("{base}.conv1x1"), 1, 0, 1, 1)?)
+            Some(load_wn_conv(
+                exec,
+                file,
+                &format!("{base}.conv1x1"),
+                1,
+                0,
+                1,
+                1,
+            )?)
         } else {
             None
         };
         let pool = if upsample {
-            Some(load_wn_conv_transpose(file, &format!("{base}.pool"), 2, 0)?)
+            Some(load_wn_conv_transpose(
+                exec,
+                file,
+                &format!("{base}.pool"),
+                2,
+                0,
+            )?)
         } else {
             None
         };
         Ok(AdainResBlk1d {
-            conv1: load_wn_conv(file, &format!("{base}.conv1"), 1, 1, 1, 1)?,
-            conv2: load_wn_conv(file, &format!("{base}.conv2"), 1, 1, 1, 1)?,
+            conv1: load_wn_conv(exec, file, &format!("{base}.conv1"), 1, 1, 1, 1)?,
+            conv2: load_wn_conv(exec, file, &format!("{base}.conv2"), 1, 1, 1, 1)?,
             conv1x1,
             norm1: AdaIn1d::load(file, &format!("{base}.norm1"), dim_in)?,
             norm2: AdaIn1d::load(file, &format!("{base}.norm2"), dim_out)?,
@@ -562,7 +617,7 @@ impl AdainResBlk1d {
         })
     }
 
-    fn forward(&self, x: &[f32], seq: usize, s: &[f32]) -> Vec<f32> {
+    fn forward(&self, x: &[f32], seq: usize, s: &[f32], exec: &Execution) -> Result<Vec<f32>> {
         let out_seq = if self.pool.is_some() { seq * 2 } else { seq };
         // shortcut: nearest x2 upsample, then the 1x1 conv when the
         // channel count changes.
@@ -580,11 +635,11 @@ impl AdainResBlk1d {
             sc = x.to_vec();
         }
         if let Some(c1x1) = &self.conv1x1 {
-            sc = c1x1.forward(&sc, out_seq);
+            sc = c1x1.forward(&sc, out_seq, exec)?;
         }
         // residual
         let mut r = x.to_vec();
-        self.norm1.forward(&mut r, seq, s);
+        self.norm1.forward(&mut r, seq, s, exec)?;
         for v in r.iter_mut() {
             *v = leaky_relu(*v, 0.2);
         }
@@ -592,7 +647,7 @@ impl AdainResBlk1d {
             // Depthwise transpose conv k=3 s=2 unpadded gives 2T + 2
             // frames; the reference trims ONE FRAME off the left of
             // every channel (torch padding=1, output_padding=1).
-            let up = pool.forward(&r, seq);
+            let up = pool.forward(&r, seq, exec)?;
             let up_seq = (seq - 1) * pool.stride + pool.kernel;
             let mut trimmed = vec![0.0f32; self.dim_in * (up_seq - 1)];
             for c in 0..self.dim_in {
@@ -601,17 +656,22 @@ impl AdainResBlk1d {
             }
             r = trimmed;
         }
-        r = self.conv1.forward(&r, out_seq);
-        self.norm2.forward(&mut r, out_seq, s);
+        r = self.conv1.forward(&r, out_seq, exec)?;
+        self.norm2.forward(&mut r, out_seq, s, exec)?;
         for v in r.iter_mut() {
             *v = leaky_relu(*v, 0.2);
         }
-        r = self.conv2.forward(&r, out_seq);
+        r = self.conv2.forward(&r, out_seq, exec)?;
         let inv_sqrt2 = 1.0 / 2.0f32.sqrt();
         for (a, b) in r.iter_mut().zip(&sc) {
-            *a = (*a + b) * inv_sqrt2;
+            // Eager F32 division and reciprocal multiplication round differently.
+            *a = if exec.using_device() {
+                (*a + b) / 2.0f32.sqrt()
+            } else {
+                (*a + b) * inv_sqrt2
+            };
         }
-        r
+        Ok(r)
     }
 }
 
@@ -632,6 +692,7 @@ impl AdaInResBlock1 {
         reason = "kernel geometry mirrors the checkpoint"
     )]
     fn load(
+        exec: &Execution,
         file: &SafetensorsFile,
         base: &str,
         channels: usize,
@@ -652,6 +713,7 @@ impl AdaInResBlock1 {
         )]
         for i in 0..3 {
             convs1.push(load_wn_conv(
+                exec,
                 file,
                 &format!("{base}.convs1.{i}"),
                 1,
@@ -660,6 +722,7 @@ impl AdaInResBlock1 {
                 1,
             )?);
             convs2.push(load_wn_conv(
+                exec,
                 file,
                 &format!("{base}.convs2.{i}"),
                 1,
@@ -691,24 +754,24 @@ impl AdaInResBlock1 {
         })
     }
 
-    fn forward(&self, x: &[f32], seq: usize, s: &[f32]) -> Vec<f32> {
+    fn forward(&self, x: &[f32], seq: usize, s: &[f32], exec: &Execution) -> Result<Vec<f32>> {
         let mut base = x.to_vec();
         let c = self.adain1[0].channels;
         for i in 0..3 {
             let mut xt = base.clone();
-            self.adain1[i].forward(&mut xt, seq, s);
+            self.adain1[i].forward(&mut xt, seq, s, exec)?;
             // `[..c]` keeps the old tolerance for a longer alpha tensor.
             ops::snake(&mut xt, &self.alpha1[i][..c], c, seq);
-            xt = self.convs1[i].forward(&xt, seq);
-            self.adain2[i].forward(&mut xt, seq, s);
+            xt = self.convs1[i].forward(&xt, seq, exec)?;
+            self.adain2[i].forward(&mut xt, seq, s, exec)?;
             ops::snake(&mut xt, &self.alpha2[i][..c], c, seq);
-            xt = self.convs2[i].forward(&xt, seq);
+            xt = self.convs2[i].forward(&xt, seq, exec)?;
             for (a, b) in xt.iter_mut().zip(&base) {
                 *a += b;
             }
             base = xt;
         }
-        base
+        Ok(base)
     }
 }
 
@@ -809,7 +872,7 @@ impl Albert {
     }
 
     /// Token ids -> sequence output `[seq, hidden]`.
-    fn forward(&self, ids: &[u32]) -> Result<Vec<f32>> {
+    fn forward(&self, ids: &[u32], exec: &Execution) -> Result<Vec<f32>> {
         let seq = ids.len();
         let e = self.embedding_size;
         if seq == 0
@@ -828,52 +891,50 @@ impl Albert {
                 why: "phoneme IDs must fit the embedding and position tables".to_string(),
             });
         }
-        let mut x = vec![0.0f32; seq * e];
-        for (t, &id) in ids.iter().enumerate() {
+        let mut x = exec.embedding(&self.word_emb, e, ids)?;
+        for t in 0..seq {
             for d in 0..e {
-                x[t * e + d] =
-                    self.word_emb[id as usize * e + d] + self.pos_emb[t * e + d] + self.type_emb[d];
+                x[t * e + d] = x[t * e + d] + self.pos_emb[t * e + d] + self.type_emb[d];
             }
         }
-        ops::layernorm(&mut x, seq, e, &self.emb_ln_w, Some(&self.emb_ln_b), 1e-12);
-        let mut x = ops::linear(
+        exec.layer_norm(&mut x, &self.emb_ln_w, &self.emb_ln_b, seq, e, 1e-12)?;
+        let mut x = exec.linear(
             &x,
             &self.mapping_w,
             Some(&self.mapping_b),
             seq,
             e,
             self.hidden,
-        );
+        )?;
         let head_dim = self.hidden / self.heads;
-        let scale = (head_dim as f32).sqrt().recip();
         let mut q_head = vec![0.0f32; seq * head_dim];
         let mut k_head = vec![0.0f32; seq * head_dim];
         let mut v_head = vec![0.0f32; seq * head_dim];
         for _li in 0..self.layers {
-            let q = ops::linear(
+            let q = exec.linear(
                 &x,
                 &self.q_w,
                 Some(&self.q_b),
                 seq,
                 self.hidden,
                 self.hidden,
-            );
-            let k = ops::linear(
+            )?;
+            let k = exec.linear(
                 &x,
                 &self.k_w,
                 Some(&self.k_b),
                 seq,
                 self.hidden,
                 self.hidden,
-            );
-            let v = ops::linear(
+            )?;
+            let v = exec.linear(
                 &x,
                 &self.v_w,
                 Some(&self.v_b),
                 seq,
                 self.hidden,
                 self.hidden,
-            );
+            )?;
             let mut attn = vec![0.0f32; seq * self.hidden];
             for h in 0..self.heads {
                 for t in 0..seq {
@@ -885,61 +946,59 @@ impl Albert {
                     v_head[t * head_dim..(t + 1) * head_dim]
                         .copy_from_slice(&v[base..base + head_dim]);
                 }
-                let o = ops::sdpa(
-                    &q_head, &k_head, &v_head, None, seq, seq, head_dim, head_dim, scale,
-                );
+                let o = exec.attention(&q_head, &k_head, &v_head, seq, head_dim)?;
                 for t in 0..seq {
                     let dst = t * self.hidden + h * head_dim;
                     attn[dst..dst + head_dim].copy_from_slice(&o[t * head_dim..(t + 1) * head_dim]);
                 }
             }
-            let mut attn = ops::linear(
+            let mut attn = exec.linear(
                 &attn,
                 &self.attn_dense_w,
                 Some(&self.attn_dense_b),
                 seq,
                 self.hidden,
                 self.hidden,
-            );
+            )?;
             for (a, r) in attn.iter_mut().zip(&x) {
                 *a += r;
             }
-            ops::layernorm(
+            exec.layer_norm(
                 &mut attn,
+                &self.attn_ln_w,
+                &self.attn_ln_b,
                 seq,
                 self.hidden,
-                &self.attn_ln_w,
-                Some(&self.attn_ln_b),
                 1e-12,
-            );
-            let mut ffn = ops::linear(
+            )?;
+            let mut ffn = exec.linear(
                 &attn,
                 &self.ffn_w,
                 Some(&self.ffn_b),
                 seq,
                 self.hidden,
                 self.intermediate,
-            );
-            ops::gelu_erf(&mut ffn);
-            let mut out = ops::linear(
+            )?;
+            exec.gelu(&mut ffn)?;
+            let mut out = exec.linear(
                 &ffn,
                 &self.ffn_out_w,
                 Some(&self.ffn_out_b),
                 seq,
                 self.intermediate,
                 self.hidden,
-            );
+            )?;
             for (o, a) in out.iter_mut().zip(&attn) {
                 *o += a;
             }
-            ops::layernorm(
+            exec.layer_norm(
                 &mut out,
+                &self.ffn_ln_w,
+                &self.ffn_ln_b,
                 seq,
                 self.hidden,
-                &self.ffn_ln_w,
-                Some(&self.ffn_ln_b),
                 1e-12,
-            );
+            )?;
             x = out;
         }
         Ok(x)
@@ -987,7 +1046,7 @@ impl DurationEncoder {
 
     /// `x` channel-major `[d_model, seq]`, style `[style_dim]` ->
     /// `[seq, d_model]`.
-    fn forward(&self, x: &[f32], seq: usize, s: &[f32]) -> Result<Vec<f32>> {
+    fn forward(&self, x: &[f32], seq: usize, s: &[f32], exec: &Execution) -> Result<Vec<f32>> {
         let d = self.d_model;
         let sty = self.style_dim;
         let mut feats = vec![0.0f32; seq * d];
@@ -1002,8 +1061,8 @@ impl DurationEncoder {
                 inp[t * (d + sty)..t * (d + sty) + d].copy_from_slice(&feats[t * d..(t + 1) * d]);
                 inp[t * (d + sty) + d..(t + 1) * (d + sty)].copy_from_slice(s);
             }
-            let mut out = self.lstms[i].forward(&inp);
-            self.adalns[i].forward(&mut out, seq, s);
+            let mut out = self.lstms[i].forward(&inp, exec)?;
+            self.adalns[i].forward(&mut out, seq, s, exec)?;
             feats = out;
         }
         // The reference's final concat re-appends the style features,
@@ -1029,6 +1088,7 @@ struct TextEncoder {
 
 impl TextEncoder {
     fn load(
+        exec: &Execution,
         file: &SafetensorsFile,
         base: &str,
         channels: usize,
@@ -1040,6 +1100,7 @@ impl TextEncoder {
         let mut lns = Vec::new();
         for i in 0..depth {
             convs.push(load_wn_conv(
+                exec,
                 file,
                 &format!("{base}.cnn.{i}.0"),
                 1,
@@ -1065,11 +1126,10 @@ impl TextEncoder {
         })
     }
 
-    fn forward(&self, ids: &[u32]) -> Result<Vec<f32>> {
+    fn forward(&self, ids: &[u32], exec: &Execution) -> Result<Vec<f32>> {
         let seq = ids.len();
         let c = self.channels;
-        let ids_i32: Vec<i32> = ids.iter().map(|&i| i as i32).collect();
-        let emb = ops::embedding(&self.embedding, c, &ids_i32);
+        let emb = exec.embedding(&self.embedding, c, ids)?;
         let mut xc = vec![0.0f32; seq * c];
         for (t, row) in emb.chunks(c).enumerate() {
             for (ch, &v) in row.iter().enumerate() {
@@ -1077,7 +1137,7 @@ impl TextEncoder {
             }
         }
         for i in 0..self.convs.len() {
-            let mut h = self.convs[i].forward(&xc, seq);
+            let mut h = self.convs[i].forward(&xc, seq, exec)?;
             // The reference LayerNorms run on channels-last tensors, so
             // they normalize across the 512 channels per timestep; on
             // the channel-major buffer that is a column-wise norm.
@@ -1093,7 +1153,7 @@ impl TextEncoder {
                 feats[t * c + ch] = xc[ch * seq + t];
             }
         }
-        let out = self.lstm.forward(&feats);
+        let out = self.lstm.forward(&feats, exec)?;
         let row_width = 2 * self.lstm.hidden;
         let mut outc = vec![0.0f32; seq * c];
         for (t, row) in out.chunks(row_width).enumerate() {
@@ -1122,6 +1182,7 @@ struct ProsodyPredictor {
 
 impl ProsodyPredictor {
     fn load(
+        exec: &Execution,
         file: &SafetensorsFile,
         base: &str,
         style_dim: usize,
@@ -1144,6 +1205,7 @@ impl ProsodyPredictor {
             shared: Lstm::load(file, &format!("{base}.shared"))?,
             f0_blocks: vec![
                 AdainResBlk1d::load(
+                    exec,
                     file,
                     &format!("{base}.F0.0"),
                     d_hid,
@@ -1152,6 +1214,7 @@ impl ProsodyPredictor {
                     false,
                 )?,
                 AdainResBlk1d::load(
+                    exec,
                     file,
                     &format!("{base}.F0.1"),
                     d_hid,
@@ -1160,6 +1223,7 @@ impl ProsodyPredictor {
                     true,
                 )?,
                 AdainResBlk1d::load(
+                    exec,
                     file,
                     &format!("{base}.F0.2"),
                     d_hid / 2,
@@ -1169,8 +1233,17 @@ impl ProsodyPredictor {
                 )?,
             ],
             n_blocks: vec![
-                AdainResBlk1d::load(file, &format!("{base}.N.0"), d_hid, d_hid, style_dim, false)?,
                 AdainResBlk1d::load(
+                    exec,
+                    file,
+                    &format!("{base}.N.0"),
+                    d_hid,
+                    d_hid,
+                    style_dim,
+                    false,
+                )?,
+                AdainResBlk1d::load(
+                    exec,
                     file,
                     &format!("{base}.N.1"),
                     d_hid,
@@ -1179,6 +1252,7 @@ impl ProsodyPredictor {
                     true,
                 )?,
                 AdainResBlk1d::load(
+                    exec,
                     file,
                     &format!("{base}.N.2"),
                     d_hid / 2,
@@ -1196,18 +1270,25 @@ impl ProsodyPredictor {
 
     /// Duration path: `d_en` channel-major `[d_hid, seq]` + style ->
     /// per-phoneme durations (sigmoid sum / speed, rounded, clipped).
-    fn durations(&self, d_en: &[f32], seq: usize, s: &[f32], speed: f32) -> Result<Vec<i32>> {
-        let d = self.text_encoder.forward(d_en, seq, s)?;
-        let lstm_out = self.lstm.forward(&d);
+    fn durations(
+        &self,
+        d_en: &[f32],
+        seq: usize,
+        s: &[f32],
+        speed: f32,
+        exec: &Execution,
+    ) -> Result<Vec<i32>> {
+        let d = self.text_encoder.forward(d_en, seq, s, exec)?;
+        let lstm_out = self.lstm.forward(&d, exec)?;
         let classes = self.duration_proj_w.len() / self.d_hid;
-        let logits = ops::linear(
+        let logits = exec.linear(
             &lstm_out,
             &self.duration_proj_w,
             Some(&self.duration_proj_b),
             seq,
             self.d_hid,
             classes,
-        );
+        )?;
         let mut out = Vec::with_capacity(seq);
         for t in 0..seq {
             let row = &logits[t * classes..(t + 1) * classes];
@@ -1219,7 +1300,7 @@ impl ProsodyPredictor {
             } else {
                 sum
             };
-            out.push(v.round().clamp(1.0, MAX_FRAMES_PER_PHONEME as f32) as i32);
+            out.push(round_duration(v));
         }
         Ok(out)
     }
@@ -1227,7 +1308,13 @@ impl ProsodyPredictor {
     /// F0/noise prediction from aligned features `en` channel-major
     /// `[d_hid, frames]` and style. Returns `(F0, N)`, each
     /// `[2 * frames]` (one upsample stage doubles the length).
-    fn f0_n_train(&self, en: &[f32], frames: usize, s: &[f32]) -> Result<(Vec<f32>, Vec<f32>)> {
+    fn f0_n_train(
+        &self,
+        en: &[f32],
+        frames: usize,
+        s: &[f32],
+        exec: &Execution,
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
         let d = self.d_hid;
         let sty = self.style_dim;
         let mut feats = vec![0.0f32; frames * (d + sty)];
@@ -1237,7 +1324,7 @@ impl ProsodyPredictor {
             }
             feats[t * (d + sty) + d..(t + 1) * (d + sty)].copy_from_slice(s);
         }
-        let shared_out = self.shared.forward(&feats); // [frames, d]
+        let shared_out = self.shared.forward(&feats, exec)?; // [frames, d]
         let branch = |blocks: &[AdainResBlk1d], proj: &WnConv1d| -> Result<Vec<f32>> {
             let mut cm = vec![0.0f32; frames * d];
             for t in 0..frames {
@@ -1248,9 +1335,9 @@ impl ProsodyPredictor {
             let mut cur = cm;
             for b in blocks.iter() {
                 let seq = cur.len() / b.dim_in;
-                cur = b.forward(&cur, seq, s);
+                cur = b.forward(&cur, seq, s, exec)?;
             }
-            Ok(proj.forward(&cur, frames))
+            proj.forward(&cur, frames, exec)
         };
         let f0 = branch(&self.f0_blocks, &self.f0_proj)?;
         let n = branch(&self.n_blocks, &self.n_proj)?;
@@ -1277,7 +1364,7 @@ impl HarmonicSource {
     }
 
     /// `f0_up` nearest-upsampled F0 `[n]` -> sine merge `[n]`.
-    fn forward(&self, f0_up: &[f32], rng: &mut Lcg) -> Vec<f32> {
+    fn forward(&self, f0_up: &[f32], rng: &mut Rng, exec: &Execution) -> Result<Vec<f32>> {
         let n = f0_up.len();
         let dim = HARMONICS + 1;
         // rad = (harmonic f0 / sr) % 1; frame 0 gets random initial
@@ -1295,8 +1382,9 @@ impl HarmonicSource {
             clippy::needless_range_loop,
             reason = "the harmonics are tensor lanes, not a collection"
         )]
+        let initial = rng.uniform(dim);
         for h in 1..dim {
-            rad[h] += rng.uniform();
+            rad[h] += initial[h];
         }
         // Down to frame rate (linear), cumsum, phase ramp, back up.
         // The reference's interpolate derives the size with float math:
@@ -1305,14 +1393,13 @@ impl HarmonicSource {
         // float ceil rather than integer division.
         let small = (((n as f64) * (1.0f64 / TOTAL_UPSAMPLE as f64)).ceil() as usize).max(1);
         let rad_small = interpolate_linear(&rad, dim, small);
+        exec.trace("source_rad_small", &rad_small, &[small, dim]);
         let mut phase = vec![0.0f32; small * dim];
-        for h in 0..dim {
-            let mut acc = 0.0f32;
-            for s in 0..small {
-                acc += rad_small[s * dim + h];
-                phase[s * dim + h] = acc * 2.0 * std::f32::consts::PI;
-            }
+        let cumulative = exec.cumulative_sum(&rad_small, small, dim)?;
+        for (phase, value) in phase.iter_mut().zip(&cumulative) {
+            *phase = *value * 2.0 * std::f32::consts::PI;
         }
+        exec.trace("source_cumsum", &cumulative, &[small, dim]);
         // The upsample leg targets ceil(small * 300) (38100 here); the
         // reference then truncates the sines to the f0 length. The
         // phase is scaled by the upsample factor BEFORE interpolation:
@@ -1325,34 +1412,39 @@ impl HarmonicSource {
         }
         let phase_up_full = interpolate_linear(&phase, dim, up_n);
         let phase_up = &phase_up_full[..(n * dim).min(phase_up_full.len())];
+        exec.trace("source_phase_up", phase_up, &[n, dim]);
         // uv gating, noise, harmonic merge.
         let mut merge_in = vec![0.0f32; n * dim];
+        let noise = rng.normal(n * dim, exec)?;
+        let sine = exec.sine(phase_up)?;
         for t in 0..n {
             let uv = (f0_up[t] > VOICED_THRESHOLD) as u8 as f32;
             let noise_amp = uv * NOISE_STD + (1.0 - uv) * SINE_AMP / 3.0;
             for h in 0..dim {
-                let wave = phase_up[t * dim + h].sin() * SINE_AMP;
-                merge_in[t * dim + h] = wave * uv + noise_amp * rng.normal();
+                let wave = sine[t * dim + h] * SINE_AMP;
+                merge_in[t * dim + h] = wave * uv + noise_amp * noise[t * dim + h];
             }
         }
-        let mut merge = vec![0.0f32; n];
-        for t in 0..n {
-            merge[t] =
-                (dot(&merge_in[t * dim..(t + 1) * dim], &self.l_linear_w) + self.l_linear_b).tanh();
-        }
-        merge
+        // The source's unused noise branch still advances the global stream.
+        rng.0.next();
+        let mut merge = exec.linear(
+            &merge_in,
+            &self.l_linear_w,
+            Some(&[self.l_linear_b]),
+            n,
+            dim,
+            1,
+        )?;
+        merge = exec.tanh(&merge)?;
+        Ok(merge)
     }
 }
 
-fn reflection_pad_left(x: &[f32], ch: usize, pad: usize) -> Vec<f32> {
+fn constant_pad_left(x: &[f32], ch: usize, pad: usize) -> Vec<f32> {
     let seq = x.len() / ch;
     let mut out = vec![0.0f32; ch * (seq + pad)];
     for c in 0..ch {
-        for t in 0..pad {
-            let src = (pad - t).min(seq - 1);
-            out[c * (seq + pad) + t] = x[c * seq + src];
-        }
-        out[c * (seq + pad) + pad..c * (seq + pad) + pad + seq]
+        out[c * (seq + pad) + pad..(c + 1) * (seq + pad)]
             .copy_from_slice(&x[c * seq..(c + 1) * seq]);
     }
     out
@@ -1386,6 +1478,53 @@ fn unwrap_phase(phase: &[f32], bins: usize, frames: usize) -> Vec<f32> {
     out
 }
 
+fn round_duration(value: f32) -> i32 {
+    value
+        .round_ties_even()
+        .clamp(1.0, MAX_FRAMES_PER_PHONEME as f32) as i32
+}
+
+fn noise_source_padding(stride: usize) -> usize {
+    (stride + 1) / 2
+}
+
+#[cfg(test)]
+mod vocoder_shape_regression {
+    use super::*;
+    #[test]
+    fn durations_round_to_even_like_pinned_mlx() {
+        assert_eq!([2.5, 3.5, 0.5, 101.0].map(round_duration), [2, 4, 1, 100]);
+    }
+    #[test]
+    fn noise_source_padding_matches_pinned_stride_and_frame_alignment() {
+        // The reference floors half the padded stride, including the real stride 6.
+        assert_eq!(noise_source_padding(6), 3);
+        assert_eq!(noise_source_padding(5), 3);
+        let signal: Vec<f32> = (0..21).map(|i| i as f32).collect();
+        let out = ops::conv1d(
+            &signal,
+            &[1.0; 12],
+            None,
+            1,
+            1,
+            12,
+            6,
+            noise_source_padding(6),
+            1,
+            1,
+        );
+        assert_eq!(out, vec![36.0, 102.0, 174.0]);
+    }
+    #[test]
+    fn generator_left_padding_matches_reference_constant_padding() {
+        // Pinned ReflectionPad1d calls mx.pad with its default constant mode.
+        assert_eq!(
+            constant_pad_left(&[1.0, 2.0, 3.0, 4.0], 2, 1),
+            vec![0.0, 1.0, 2.0, 0.0, 3.0, 4.0]
+        );
+    }
+}
+
 /// iSTFTNet generator.
 struct Generator {
     m_source: HarmonicSource,
@@ -1403,6 +1542,7 @@ struct Generator {
 
 impl Generator {
     fn load(
+        exec: &Execution,
         file: &SafetensorsFile,
         base: &str,
         style_dim: usize,
@@ -1441,6 +1581,7 @@ impl Generator {
         let mut ups = Vec::new();
         for (i, k) in upsample_kernel_sizes.iter().enumerate() {
             ups.push(load_wn_conv_transpose(
+                exec,
                 file,
                 &format!("{base}.ups.{i}"),
                 upsample_rates[i],
@@ -1459,6 +1600,7 @@ impl Generator {
                     resblock_dilation_sizes[j * 3 + 2],
                 ];
                 resblocks.push(AdaInResBlock1::load(
+                    exec,
                     file,
                     &format!("{base}.resblocks.{}", i * resblock_kernel_sizes.len() + j),
                     ch,
@@ -1476,7 +1618,7 @@ impl Generator {
             let (o, in_ch, kernel) = tensor_shape(file, &format!("{name}.weight"))?;
             let (conv_stride, conv_padding) = if i + 1 < upsample_rates.len() {
                 let stride_f0: usize = upsample_rates[i + 1..].iter().product();
-                (stride_f0, (stride_f0 + 1).div_ceil(2))
+                (stride_f0, noise_source_padding(stride_f0))
             } else {
                 (1, 0)
             };
@@ -1497,6 +1639,7 @@ impl Generator {
                 (11, [1usize, 3, 5])
             };
             noise_res.push(AdaInResBlock1::load(
+                exec,
                 file,
                 &format!("{base}.noise_res.{i}"),
                 ch,
@@ -1511,7 +1654,7 @@ impl Generator {
             resblocks,
             noise_convs,
             noise_res,
-            conv_post: load_wn_conv(file, &format!("{base}.conv_post"), 1, 3, 1, 1)?,
+            conv_post: load_wn_conv(exec, file, &format!("{base}.conv_post"), 1, 3, 1, 1)?,
             upsample_initial_channel,
         })
     }
@@ -1524,7 +1667,8 @@ impl Generator {
         seq: usize,
         s: &[f32],
         f0: &[f32],
-        rng: &mut Lcg,
+        rng: &mut Rng,
+        exec: &Execution,
     ) -> Result<Vec<f32>> {
         // Nearest-upsample F0 by TOTAL_UPSAMPLE.
         let mut f0_up = vec![0.0f32; f0.len() * TOTAL_UPSAMPLE];
@@ -1533,7 +1677,19 @@ impl Generator {
                 f0_up[t * TOTAL_UPSAMPLE + u] = v;
             }
         }
-        let har_source = self.m_source.forward(&f0_up, rng);
+        let har_source = self.m_source.forward(&f0_up, rng, exec)?;
+        exec.trace("harmonic_source", &har_source, &[har_source.len()]);
+        self.forward_with_source(x, seq, s, &har_source, exec)
+    }
+
+    fn forward_with_source(
+        &self,
+        x: &[f32],
+        seq: usize,
+        s: &[f32],
+        har_source: &[f32],
+        exec: &Execution,
+    ) -> Result<Vec<f32>> {
         // STFT of the source: periodic Hann, center reflect.
         let opts = StftOptions {
             fft_size: ISTFT_N_FFT,
@@ -1541,34 +1697,41 @@ impl Generator {
             window: turbospark_audio::hann_window(ISTFT_N_FFT),
             center: true,
         };
-        let spectra = stft(&har_source, &opts).map_err(|e| SpeechError::Audio(e.to_string()))?;
-        let frames_t = spectra.len();
-        let bins = spectra[0].len();
-        // har channel-major [2 * bins, frames_t]: magnitude then phase.
-        let mut har = vec![0.0f32; 2 * bins * frames_t];
-        for (t, frame) in spectra.iter().enumerate() {
-            for (b, z) in frame.iter().enumerate() {
-                har[b * frames_t + t] = (z.re * z.re + z.im * z.im).sqrt();
-                har[(bins + b) * frames_t + t] = z.im.atan2(z.re);
+        let frames_t = 1 + har_source.len() / ISTFT_HOP;
+        let bins = 1 + ISTFT_N_FFT / 2;
+        let har = if let Some(values) = exec.stft(har_source, &opts.window, ISTFT_HOP)? {
+            values
+        } else {
+            let spectra = stft(har_source, &opts).map_err(|e| SpeechError::Audio(e.to_string()))?;
+            let mut har = vec![0.0f32; 2 * bins * frames_t];
+            for (t, frame) in spectra.iter().enumerate() {
+                for (b, z) in frame.iter().enumerate() {
+                    har[b * frames_t + t] = (z.re * z.re + z.im * z.im).sqrt();
+                    har[(bins + b) * frames_t + t] = z.im.atan2(z.re);
+                }
             }
-        }
+            har
+        };
+        exec.trace("harmonic_spectrum", &har, &[2 * bins, frames_t]);
         let mut cur = x.to_vec();
         let mut cur_seq = seq;
         for i in 0..self.ups.len() {
             for v in cur.iter_mut() {
                 *v = leaky_relu(*v, 0.1);
             }
-            let x_source = self.noise_convs[i].forward(&har, frames_t);
+            let x_source = self.noise_convs[i].forward(&har, frames_t, exec)?;
+            exec.trace(&format!("noise_conv{i}"), &x_source, &[x_source.len()]);
             // The noise branch runs at the STFT frame rate, not the
             // decoder feature rate.
             let xs_seq = x_source.len() / self.noise_convs[i].out_ch;
-            let x_source = self.noise_res[i].forward(&x_source, xs_seq, s);
-            let up = self.ups[i].forward(&cur, cur_seq);
+            let x_source = self.noise_res[i].forward(&x_source, xs_seq, s, exec)?;
+            exec.trace(&format!("generator_noise{i}"), &x_source, &[x_source.len()]);
+            let up = self.ups[i].forward(&cur, cur_seq, exec)?;
             cur_seq =
                 (cur_seq - 1) * self.ups[i].stride + self.ups[i].kernel - 2 * self.ups[i].padding;
             let mut next = up;
             if i == self.ups.len() - 1 {
-                next = reflection_pad_left(&next, self.ups[i].out_ch, 1);
+                next = constant_pad_left(&next, self.ups[i].out_ch, 1);
                 cur_seq += 1;
             }
             for (a, b) in next.iter_mut().zip(&x_source) {
@@ -1576,7 +1739,7 @@ impl Generator {
             }
             let mut acc = vec![0.0f32; next.len()];
             for j in 0..3 {
-                let out = self.resblocks[i * 3 + j].forward(&next, cur_seq, s);
+                let out = self.resblocks[i * 3 + j].forward(&next, cur_seq, s, exec)?;
                 for (a, b) in acc.iter_mut().zip(&out) {
                     *a += b;
                 }
@@ -1589,7 +1752,8 @@ impl Generator {
         for v in cur.iter_mut() {
             *v = leaky_relu(*v, 0.01);
         }
-        let post = self.conv_post.forward(&cur, cur_seq);
+        let post = self.conv_post.forward(&cur, cur_seq, exec)?;
+        exec.trace("conv_post", &post, &[post.len()]);
         // spec = exp(first half), phase = sin(second half).
         let mut spec = vec![0.0f32; bins * cur_seq];
         let mut phase = vec![0.0f32; bins * cur_seq];
@@ -1637,6 +1801,7 @@ struct KokoroDecoder {
 
 impl KokoroDecoder {
     fn load(
+        exec: &Execution,
         file: &SafetensorsFile,
         base: &str,
         style_dim: usize,
@@ -1653,6 +1818,7 @@ impl KokoroDecoder {
         let mut decode = Vec::new();
         for (i, (din, dout)) in decode_dims.iter().enumerate() {
             decode.push(AdainResBlk1d::load(
+                exec,
                 file,
                 &format!("{base}.decode.{i}"),
                 *din,
@@ -1663,6 +1829,7 @@ impl KokoroDecoder {
         }
         Ok(KokoroDecoder {
             encode: AdainResBlk1d::load(
+                exec,
                 file,
                 &format!("{base}.encode"),
                 dim_in + 2,
@@ -1671,10 +1838,16 @@ impl KokoroDecoder {
                 false,
             )?,
             decode,
-            f0_conv: load_wn_conv(file, &format!("{base}.F0_conv"), 2, 1, 1, 1)?,
-            n_conv: load_wn_conv(file, &format!("{base}.N_conv"), 2, 1, 1, 1)?,
-            asr_res: load_wn_conv(file, &format!("{base}.asr_res.0"), 1, 0, 1, 1)?,
-            generator: Generator::load(file, &format!("{base}.generator"), style_dim, istftnet)?,
+            f0_conv: load_wn_conv(exec, file, &format!("{base}.F0_conv"), 2, 1, 1, 1)?,
+            n_conv: load_wn_conv(exec, file, &format!("{base}.N_conv"), 2, 1, 1, 1)?,
+            asr_res: load_wn_conv(exec, file, &format!("{base}.asr_res.0"), 1, 0, 1, 1)?,
+            generator: Generator::load(
+                exec,
+                file,
+                &format!("{base}.generator"),
+                style_dim,
+                istftnet,
+            )?,
         })
     }
 
@@ -1685,21 +1858,23 @@ impl KokoroDecoder {
         f0_curve: &[f32],
         n_curve: &[f32],
         s: &[f32],
-        rng: &mut Lcg,
+        rng: &mut Rng,
+        exec: &Execution,
     ) -> Result<Vec<f32>> {
-        let f0_c = self.f0_conv.forward(f0_curve, f0_curve.len());
-        let n_c = self.n_conv.forward(n_curve, n_curve.len());
+        let f0_c = self.f0_conv.forward(f0_curve, f0_curve.len(), exec)?;
+        let n_c = self.n_conv.forward(n_curve, n_curve.len(), exec)?;
         let cond_seq = f0_c.len();
         // concat [asr (512), F0 (1), N (1)] channel-major
         let mut x = vec![0.0f32; asr.len() + 2 * cond_seq];
         x[..asr.len()].copy_from_slice(asr);
         x[asr.len()..asr.len() + cond_seq].copy_from_slice(&f0_c);
         x[asr.len() + cond_seq..].copy_from_slice(&n_c);
-        x = self.encode.forward(&x, cond_seq, s);
-        let asr_res = self.asr_res.forward(asr, frames);
+        x = self.encode.forward(&x, cond_seq, s, exec)?;
+        exec.trace("decoder_encode", &x, &[1024, cond_seq]);
+        let asr_res = self.asr_res.forward(asr, frames, exec)?;
         let mut res = true;
         let mut cur_seq = cond_seq;
-        for block in &self.decode {
+        for (index, block) in self.decode.iter().enumerate() {
             if res {
                 let mut joined = vec![0.0f32; x.len() + asr_res.len() + 2 * cond_seq];
                 joined[..x.len()].copy_from_slice(&x);
@@ -1709,13 +1884,14 @@ impl KokoroDecoder {
                 joined[x.len() + asr_res.len() + cond_seq..].copy_from_slice(&n_c);
                 x = joined;
             }
-            x = block.forward(&x, cur_seq, s);
+            x = block.forward(&x, cur_seq, s, exec)?;
+            exec.trace(&format!("decoder_block{index}"), &x, &[x.len()]);
             if block.pool.is_some() {
                 res = false;
                 cur_seq *= 2;
             }
         }
-        self.generator.forward(&x, cur_seq, s, f0_curve, rng)
+        self.generator.forward(&x, cur_seq, s, f0_curve, rng, exec)
     }
 }
 
@@ -1725,6 +1901,8 @@ impl KokoroDecoder {
 
 /// The loaded Kokoro model.
 pub struct Kokoro {
+    execution: Execution,
+    device_weight_reserve: u64,
     bert: Albert,
     bert_encoder_w: Vec<f32>,
     bert_encoder_b: Vec<f32>,
@@ -1745,6 +1923,9 @@ impl Kokoro {
     /// Opens a model directory: `config.json` plus the weights
     /// (`kokoro-v1_0.safetensors` or `model.safetensors`).
     pub fn open(dir: &Path) -> Result<Self> {
+        Self::open_with_backend(dir, None)
+    }
+    pub fn open_with_backend(dir: &Path, backend: Option<Rc<dyn ComputeBackend>>) -> Result<Self> {
         let config: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("config.json")).map_err(
                 |e| SpeechError::BadConfig {
@@ -1765,6 +1946,16 @@ impl Kokoro {
             })?
             .to_string();
         let file = SafetensorsFile::open(&dir.join(&weights_name))?;
+        if backend.is_some() {
+            for name in file.tensor_names() {
+                if file.descriptor(name).is_some_and(|d| d.dtype != "F32") {
+                    return Err(SpeechError::Tensor {
+                        name: name.into(),
+                        why: "Kokoro Metal supports the verified F32 checkpoint layout only".into(),
+                    });
+                }
+            }
+        }
         let plbert = config
             .get("plbert")
             .cloned()
@@ -1794,27 +1985,55 @@ impl Kokoro {
                 }
             }
         }
+        let execution = Execution::new(backend.clone());
+        let exec = &execution;
         let bert = Albert::load(&file, &plbert)?;
         let plbert_hidden = bert.hidden;
         Ok(Kokoro {
+            device_weight_reserve: if backend.is_some() {
+                std::fs::metadata(dir.join(&weights_name))
+                    .map_err(|e| SpeechError::Audio(e.to_string()))?
+                    .len()
+            } else {
+                0
+            },
             bert,
             bert_encoder_w: file.load_as_f32("bert_encoder.weight")?,
             bert_encoder_b: file.load_as_f32("bert_encoder.bias")?,
-            predictor: ProsodyPredictor::load(&file, "predictor", style_dim, hidden_dim, n_layer)?,
-            text_encoder: TextEncoder::load(&file, "text_encoder", hidden_dim, kernel, n_layer)?,
-            decoder: KokoroDecoder::load(&file, "decoder", style_dim, hidden_dim, &istftnet)?,
+            predictor: ProsodyPredictor::load(
+                exec,
+                &file,
+                "predictor",
+                style_dim,
+                hidden_dim,
+                n_layer,
+            )?,
+            text_encoder: TextEncoder::load(
+                exec,
+                &file,
+                "text_encoder",
+                hidden_dim,
+                kernel,
+                n_layer,
+            )?,
+            decoder: KokoroDecoder::load(exec, &file, "decoder", style_dim, hidden_dim, &istftnet)?,
             hidden_dim,
             style_dim,
             n_layer,
             plbert_hidden,
             vocab,
             seed: 0,
+            execution,
         })
     }
 
     /// The phoneme vocabulary checked against THIS model's embedding tables
     /// and position table, so a segment the frontend emits can never index
     /// past either. `config` is the model's `config.json`.
+    pub fn using_device(&self) -> bool {
+        self.execution.using_device()
+    }
+
     pub fn phoneme_vocabulary(&self, config: &serde_json::Value) -> Result<PhonemeVocabulary> {
         PhonemeVocabulary::from_config(
             config,
@@ -1844,7 +2063,125 @@ impl Kokoro {
                     .to_string(),
             });
         }
-        let mut rng = Lcg(self.seed.wrapping_mul(2685821657736338717).wrapping_add(1));
+        let mut rng = Rng::new(self.seed);
+        self.generate_with_rng(phoneme_ids, ref_s, speed, &mut rng)
+    }
+
+    pub fn device_weight_reserve_bytes(&self) -> u64 {
+        self.device_weight_reserve
+    }
+
+    /// Conservative peak estimate from loaded tensor geometry and bounded duration.
+    /// Segments are serialized; callers reserve the largest segment, not their sum.
+    pub fn activation_reserve_bytes(&self, phonemes: usize, speed: f32) -> Result<u64> {
+        if phonemes == 0 || phonemes > self.bert.max_pos || !speed.is_finite() || speed <= 0.0 {
+            return Err(SpeechError::Input {
+                why: "invalid Kokoro activation estimate request".into(),
+            });
+        }
+        let classes = self.predictor.duration_proj_b.len();
+        let per_phone = (classes as f64 / speed as f64)
+            .ceil()
+            .min(MAX_FRAMES_PER_PHONEME as f64) as u64;
+        let frames = (phonemes as u64).saturating_mul(per_phone.max(1));
+        let prosody = frames.saturating_mul(2);
+        let samples = prosody.saturating_mul(TOTAL_UPSAMPLE as u64);
+        // SineGen's rad/phase/noise/merge tensors and their device transfers coexist.
+        let source = samples.saturating_mul((5 * (HARMONICS + 1) + 3) as u64);
+        let mut seq = prosody;
+        let mut vocoder = 0;
+        for up in &self.decoder.generator.ups {
+            seq = seq.saturating_mul(up.stride as u64).saturating_add(1);
+            vocoder = vocoder.max(seq.saturating_mul(up.out_ch as u64).saturating_mul(8));
+        }
+        let aligned = frames
+            .saturating_mul((self.hidden_dim + self.style_dim) as u64)
+            .saturating_mul(8);
+        let bert = (phonemes as u64)
+            .saturating_mul(self.bert.hidden as u64)
+            .saturating_mul(12)
+            .saturating_add(
+                (phonemes as u64)
+                    .pow(2)
+                    .saturating_mul(self.bert.heads as u64)
+                    .saturating_mul(4),
+            );
+        Ok(source
+            .saturating_add(vocoder)
+            .saturating_add(aligned)
+            .saturating_add(bert)
+            .saturating_mul(4)
+            .saturating_add(64 << 20))
+    }
+
+    /// Replays the numerical vocoder gate with independently produced stage inputs.
+    /// Features are channel-major [512, frames], style [style_dim], and F0 [frames].
+    /// An optional source bypasses SineGen so its error can be isolated from the vocoder.
+    #[doc(hidden)]
+    pub fn diagnostic_vocoder(
+        &self,
+        features: &[f32],
+        style: &[f32],
+        f0: &[f32],
+        seed: u64,
+        source: Option<&[f32]>,
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
+        if f0.is_empty()
+            || f0.len() > self.bert.max_pos * MAX_FRAMES_PER_PHONEME as usize * 2
+            || features.len() != self.decoder.generator.ups[0].in_ch * f0.len()
+            || style.len() != self.style_dim
+            || !features
+                .iter()
+                .chain(style)
+                .chain(f0)
+                .all(|v| v.is_finite())
+        {
+            return Err(SpeechError::Input {
+                why: "invalid Kokoro diagnostic vocoder tensors".into(),
+            });
+        }
+        let source = match source {
+            Some(values)
+                if values.len() == f0.len() * TOTAL_UPSAMPLE
+                    && values.iter().all(|v| v.is_finite()) =>
+            {
+                values.to_vec()
+            }
+            Some(_) => {
+                return Err(SpeechError::Input {
+                    why: "invalid Kokoro diagnostic source tensor".into(),
+                })
+            }
+            None => {
+                let up: Vec<f32> = f0
+                    .iter()
+                    .flat_map(|v| std::iter::repeat(*v).take(TOTAL_UPSAMPLE))
+                    .collect();
+                self.decoder.generator.m_source.forward(
+                    &up,
+                    &mut Rng::new(seed),
+                    &self.execution,
+                )?
+            }
+        };
+        let pcm = self.decoder.generator.forward_with_source(
+            features,
+            f0.len(),
+            style,
+            &source,
+            &self.execution,
+        )?;
+        Ok((source, pcm))
+    }
+
+    fn generate_with_rng(
+        &self,
+        phoneme_ids: &[u32],
+        ref_s: &[f32],
+        speed: f32,
+        rng: &mut Rng,
+    ) -> Result<Vec<f32>> {
+        let exec = &self.execution;
         let seq = phoneme_ids.len();
         if ref_s.len() != 2 * self.style_dim {
             return Err(SpeechError::Input {
@@ -1856,15 +2193,17 @@ impl Kokoro {
             });
         }
         // PLBert duration features.
-        let bert_out = self.bert.forward(phoneme_ids)?;
-        let d_en = ops::linear(
+        let bert_out = self.bert.forward(phoneme_ids, exec)?;
+        exec.trace("bert", &bert_out, &[seq, self.plbert_hidden]);
+        let d_en = exec.linear(
             &bert_out,
             &self.bert_encoder_w,
             Some(&self.bert_encoder_b),
             seq,
             self.plbert_hidden,
             self.hidden_dim,
-        );
+        )?;
+        exec.trace("duration_features", &d_en, &[seq, self.hidden_dim]);
         // transpose [seq, hidden] -> channel-major [hidden, seq]
         let mut d_en_c = vec![0.0f32; d_en.len()];
         for t in 0..seq {
@@ -1873,7 +2212,12 @@ impl Kokoro {
             }
         }
         let s = &ref_s[self.style_dim..];
-        let durations = self.predictor.durations(&d_en_c, seq, s, speed)?;
+        let durations = self.predictor.durations(&d_en_c, seq, s, speed, exec)?;
+        exec.trace(
+            "durations",
+            &durations.iter().map(|&v| v as f32).collect::<Vec<_>>(),
+            &[seq],
+        );
         // Alignment one-hot: rows = phonemes, cols = total frames.
         let frames: usize = durations.iter().map(|&d| d as usize).sum();
         let mut indices = Vec::with_capacity(frames);
@@ -1883,7 +2227,7 @@ impl Kokoro {
             }
         }
         // en = predictor-text-encoder features aligned to frames.
-        let d = self.predictor.text_encoder.forward(&d_en_c, seq, s)?;
+        let d = self.predictor.text_encoder.forward(&d_en_c, seq, s, exec)?;
         let d_channels = self.hidden_dim + self.style_dim;
         let mut en = vec![0.0f32; d_channels * frames];
         for (frame, &ph) in indices.iter().enumerate() {
@@ -1892,9 +2236,12 @@ impl Kokoro {
                 en[c * frames + frame] = v;
             }
         }
-        let (f0_pred, n_pred) = self.predictor.f0_n_train(&en, frames, s)?;
+        let (f0_pred, n_pred) = self.predictor.f0_n_train(&en, frames, s, exec)?;
+        exec.trace("f0", &f0_pred, &[f0_pred.len()]);
+        exec.trace("noise", &n_pred, &[n_pred.len()]);
         // Text encoder + alignment.
-        let t_en = self.text_encoder.forward(phoneme_ids)?;
+        let t_en = self.text_encoder.forward(phoneme_ids, exec)?;
+        exec.trace("text_encoder", &t_en, &[self.hidden_dim, seq]);
         let mut asr = vec![0.0f32; self.hidden_dim * frames];
         for (frame, &ph) in indices.iter().enumerate() {
             for c in 0..self.hidden_dim {
@@ -1908,7 +2255,8 @@ impl Kokoro {
             &f0_pred,
             &n_pred,
             &ref_s[..self.style_dim],
-            &mut rng,
+            rng,
+            exec,
         )
     }
 }
@@ -1933,9 +2281,54 @@ mod input_regression {
             mapping_b: vec![0.0; 2],
             ..Default::default()
         };
-        assert_eq!(bert.forward(&[0]).unwrap(), vec![-1.0, 1.0]);
+        assert_eq!(
+            bert.forward(&[0], &Execution::default()).unwrap(),
+            vec![-1.0, 1.0]
+        );
         for ids in [&[][..], &[2][..], &[0, 0][..]] {
-            assert!(bert.forward(ids).is_err());
+            assert!(bert.forward(ids, &Execution::default()).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod seeded_reference {
+    use super::*;
+    #[test]
+    fn kokoro_seed_stream_matches_pinned_mlx_0_31_2() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/kokoro_rng_mlx_0_31_2.json"
+        )))
+        .unwrap();
+        assert_eq!(fixture["mlx_version"], "0.31.2");
+        assert_eq!(
+            fixture["reference_revision"],
+            "e1b19b9054bf163f5d812221a54fcc346f1890e9"
+        );
+        for row in fixture["rng"].as_array().unwrap() {
+            let seed = row["seed"].as_u64().unwrap();
+            let mut rng = Rng::new(seed);
+            for (key, values) in [
+                ("phase", rng.uniform(9)),
+                ("noise", rng.normal(17 * 9, &Execution::default()).unwrap()),
+                ("unused", rng.normal(17, &Execution::default()).unwrap()),
+                ("next_phase", rng.uniform(9)),
+            ] {
+                let expected: Vec<f32> = row[key]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_f64().unwrap() as f32)
+                    .collect();
+                assert_eq!(values.len(), expected.len());
+                let error = values
+                    .iter()
+                    .zip(&expected)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0f32, f32::max);
+                assert!(error <= 5e-6, "seed {seed}, {key}, maximum {error}");
+            }
         }
     }
 }

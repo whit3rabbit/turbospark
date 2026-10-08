@@ -305,7 +305,7 @@ fn run_worker(engine: Engine, rx: Receiver<Message>) {
                 completed: 0,
                 total: None,
             }));
-            admit_memory(estimate_run_bytes(&request))?;
+            admit_memory(engine.estimate_run_bytes(&request)?)?;
             let outcome = engine.execute(&request, &samples, &cancel, &events);
             // Cancel discards unfinished output only after the backend actually stops.
             cancel.checkpoint()?;
@@ -339,9 +339,8 @@ fn validate_request(request: &AudioRequest, samples: &[f32]) -> Result<(), Strin
                     "speech needs 1 through 32768 text bytes and speed 0.5 through 2.0".into(),
                 );
             }
-            request
-                .voice
-                .parse::<audio::tts::kokoro::Voice>()
+            kokoro_request(request)?
+                .validate()
                 .map_err(|e| e.to_string())?;
         }
         AudioTask::Music => {
@@ -368,7 +367,8 @@ enum Engine {
     Whisper(Box<crate::WhisperRunner>),
     Qwen(Box<crate::Qwen3AsrRunner>),
     QwenMetal(std::cell::RefCell<Box<crate::qwen3_asr_metal::Qwen3AsrMetalEngine>>),
-    Kokoro(Box<audio::tts::kokoro::KokoroSynthesizer>),
+    Kokoro(Box<crate::KokoroRunner>),
+    KokoroPortable(Box<audio::tts::kokoro::KokoroSynthesizer>),
     Music(Box<crate::Music3Runner>),
 }
 // The observer owns an event sender, so it must be removed even if a backend panics.
@@ -383,7 +383,7 @@ impl Engine {
         match self {
             Self::Whisper(_) => "whisper",
             Self::Qwen(_) | Self::QwenMetal(_) => "qwen3_asr",
-            Self::Kokoro(_) => "kokoro",
+            Self::Kokoro(_) | Self::KokoroPortable(_) => "kokoro",
             Self::Music(_) => "minimax_music3",
         }
     }
@@ -415,16 +415,26 @@ impl Engine {
             }
             AudioTask::TextToSpeech if allow_portable => {
                 audio::tts::kokoro::KokoroSynthesizer::open(path)
-                    .map(|m| Self::Kokoro(Box::new(m)))
+                    .map(|m| Self::KokoroPortable(Box::new(m)))
                     .map_err(|e| e.to_string())
             }
-            AudioTask::TextToSpeech => Err(
-                "Kokoro Metal runtime is pending; portable execution requires explicit opt-in"
-                    .into(),
-            ),
+            AudioTask::TextToSpeech => crate::KokoroRunner::open(path)
+                .map(|m| Self::Kokoro(Box::new(m)))
+                .map_err(|e| e.to_string()),
             AudioTask::Music => crate::Music3Runner::open(path)
                 .map(|m| Self::Music(Box::new(m)))
                 .map_err(|e| e.to_string()),
+        }
+    }
+    fn estimate_run_bytes(&self, r: &AudioRequest) -> Result<u64, String> {
+        match self {
+            Self::Kokoro(model) => model
+                .estimate_run_bytes(&kokoro_request(r)?)
+                .map_err(|e| e.to_string()),
+            Self::KokoroPortable(model) => model
+                .activation_reserve_bytes(&kokoro_request(r)?)
+                .map_err(|e| e.to_string()),
+            _ => Ok(estimate_run_bytes(r)),
         }
     }
     fn execute(
@@ -526,28 +536,26 @@ impl Engine {
                 });
             }
             Self::Kokoro(model) => {
-                let mut request = audio::tts::kokoro::SynthesisRequest::new(r.text.clone());
-                request.speed = r.speed;
-                let mut error = None;
-                model
-                    .synthesize(&request, |pcm| {
-                        match emit_pcm(&pcm, cancel, events, &mut result.sample_count) {
-                            Ok(()) => true,
-                            Err(e) => {
-                                error = Some(e);
-                                false
-                            }
-                        }
-                    })
-                    .map_err(|e| e.to_string())?;
-                if let Some(e) = error {
-                    return Err(e);
-                }
-                result.pcm_format = Some(AudioPcmFormat {
-                    sample_rate: 24000,
-                    channels: 1,
-                    interleaved: true,
-                });
+                synthesize_kokoro(
+                    r,
+                    cancel,
+                    events,
+                    &mut result,
+                    |request, seed, checkpoint, emit| {
+                        model.synthesize_controlled(request, seed, checkpoint, emit)
+                    },
+                )?;
+            }
+            Self::KokoroPortable(model) => {
+                synthesize_kokoro(
+                    r,
+                    cancel,
+                    events,
+                    &mut result,
+                    |request, seed, checkpoint, emit| {
+                        model.synthesize_controlled(request, seed, checkpoint, emit)
+                    },
+                )?;
             }
             Self::Music(model) => {
                 let tx = events.clone();
@@ -584,6 +592,69 @@ impl Engine {
         }
         Ok(result)
     }
+}
+fn kokoro_request(r: &AudioRequest) -> Result<audio::tts::kokoro::SynthesisRequest, String> {
+    let mut request = audio::tts::kokoro::SynthesisRequest::new(r.text.clone());
+    request.speed = r.speed;
+    request.voice = r
+        .voice
+        .parse()
+        .map_err(|e: audio::SpeechError| e.to_string())?;
+    if let Some(language) = &r.language {
+        request.language = language.clone();
+    }
+    Ok(request)
+}
+
+type SegmentCheckpoint<'a> = &'a mut dyn FnMut(usize, usize) -> audio::Result<()>;
+type SegmentEmit<'a> = &'a mut dyn FnMut(Vec<f32>) -> bool;
+fn synthesize_kokoro(
+    r: &AudioRequest,
+    cancel: &AudioCancel,
+    events: &SyncSender<AudioEvent>,
+    result: &mut AudioResult,
+    synthesize: impl FnOnce(
+        &audio::tts::kokoro::SynthesisRequest,
+        u64,
+        SegmentCheckpoint<'_>,
+        SegmentEmit<'_>,
+    ) -> audio::Result<()>,
+) -> Result<(), String> {
+    let request = kokoro_request(r)?;
+    let seed = r.seed.unwrap_or(0);
+    let mut error = None;
+    let mut checkpoint = |index, total| {
+        cancel
+            .checkpoint()
+            .map_err(|why| audio::SpeechError::Input { why })?;
+        events
+            .send(AudioEvent::Progress(AudioProgress {
+                stage: "synthesis".into(),
+                completed: index,
+                total: Some(total),
+            }))
+            .map_err(|_| audio::SpeechError::Input {
+                why: "audio event receiver closed".into(),
+            })
+    };
+    let mut emit = |pcm: Vec<f32>| match emit_pcm(&pcm, cancel, events, &mut result.sample_count) {
+        Ok(()) => true,
+        Err(e) => {
+            error = Some(e);
+            false
+        }
+    };
+    synthesize(&request, seed, &mut checkpoint, &mut emit).map_err(|e| e.to_string())?;
+    if let Some(e) = error {
+        return Err(e);
+    }
+    result.pcm_format = Some(AudioPcmFormat {
+        sample_rate: 24000,
+        channels: 1,
+        interleaved: true,
+    });
+    result.seed = Some(seed);
+    Ok(())
 }
 fn emit_pcm(
     pcm: &[f32],
@@ -715,6 +786,21 @@ mod tests {
         request.speed = 1.0;
         request.voice = "missing".into();
         assert!(validate_request(&request, &[]).is_err());
+    }
+    #[test]
+    fn kokoro_request_retains_language_and_refuses_unsupported_locale() {
+        let mut request = AudioRequest {
+            task: AudioTask::TextToSpeech,
+            text: "Hello, world!".into(),
+            ..Default::default()
+        };
+        assert!(validate_request(&request, &[]).is_ok());
+        request.language = Some("en-US".into());
+        assert!(validate_request(&request, &[]).is_ok());
+        request.language = Some("fr-FR".into());
+        assert!(validate_request(&request, &[])
+            .unwrap_err()
+            .contains("en-US"));
     }
     #[test]
     fn output_buffers_are_bounded_and_backpressure_keeps_producer_alive() {

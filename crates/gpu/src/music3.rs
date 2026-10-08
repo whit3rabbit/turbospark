@@ -8,6 +8,11 @@ use std::rc::Rc;
 pub(crate) static SOURCE: &str = include_str!("shaders/music3.metal");
 // Native MLX arithmetic needs precise division; the FP32 diagnostic keeps its
 // established compiler policy. Both sources are bundled and cache separately.
+static KOKORO_SOURCE: &str = concat!(
+    "// turbospark: precise-math\n#define KOKORO_CONTRACTS\n",
+    include_str!("shaders/music3.metal"),
+    include_str!("shaders/kokoro.metal")
+);
 static NATIVE_SOURCE: &str = concat!(
     "// turbospark: precise-math\n",
     include_str!("shaders/music3.metal"),
@@ -480,7 +485,7 @@ impl Music3Device {
         eps: f32,
         dtype: Music3DType,
     ) -> Result<Vec<f32>, GpuError> {
-        self.norm(x, w, None, rows, cols, eps, dtype, false)
+        self.norm(x, w, None, rows, cols, eps, dtype, false, false)
     }
     #[allow(clippy::too_many_arguments)]
     pub fn layer_norm(
@@ -493,7 +498,245 @@ impl Music3Device {
         eps: f32,
         dtype: Music3DType,
     ) -> Result<Vec<f32>, GpuError> {
-        self.norm(x, w, bias, rows, cols, eps, dtype, true)
+        self.norm(x, w, bias, rows, cols, eps, dtype, true, false)
+    }
+    /// Kokoro materializes scores before scaling and row softmax.
+    pub fn kokoro_attention_f32(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        seq: usize,
+        dim: usize,
+    ) -> Result<Vec<f32>, GpuError> {
+        let count = product(&[seq, dim])?;
+        if seq == 0
+            || seq > 512
+            || dim == 0
+            || dim > 256
+            || q.len() != count
+            || k.len() != count
+            || v.len() != count
+        {
+            return Err(bad("Kokoro attention geometry mismatch"));
+        }
+        let threads = seq.div_ceil(4).div_ceil(32) * 32;
+        let p = bytes(&params(&[
+            1,
+            seq,
+            seq,
+            1,
+            1,
+            dim,
+            0,
+            0,
+            0,
+            threads,
+            0,
+            (dim as f32).sqrt().to_bits() as usize,
+        ])?);
+        autorelease_pool(|| {
+            let mut c = self.state.context.borrow_mut();
+            let constants = crate::rms_norm::unused_function_constants();
+            let qk = c.pipeline(KOKORO_SOURCE, "audio_bert_qk", &constants, b"")?;
+            let softmax = c.pipeline(KOKORO_SOURCE, "audio_bert_softmax", &constants, b"")?;
+            let pv = c.pipeline(KOKORO_SOURCE, "audio_bert_pv", &constants, b"")?;
+            let qb = c.new_buffer_with_data(q);
+            let kb = c.new_buffer_with_data(k);
+            let vb = c.new_buffer_with_data(v);
+            let output = c.new_output_buffer((count * 4) as u64);
+            let scores = c.new_output_buffer((product(&[seq, seq])? * 4) as u64);
+            let probabilities = c.new_output_buffer((product(&[seq, seq])? * 4) as u64);
+            let pass = c.begin_pass();
+            pass.encode_threadgroups(
+                &qk,
+                &[(&qb, 0, 0), (&kb, 1, 0), (&scores, 2, 0)],
+                &[(&p, 3)],
+                (seq.div_ceil(8) * seq.div_ceil(8)) as u64,
+                32,
+            );
+            pass.encode_threadgroups(
+                &softmax,
+                &[(&scores, 0, 0), (&probabilities, 1, 0)],
+                &[(&p, 2)],
+                seq as u64,
+                threads as u64,
+            );
+            pass.encode_threadgroups(
+                &pv,
+                &[(&probabilities, 0, 0), (&vb, 1, 0), (&output, 2, 0)],
+                &[(&p, 3)],
+                (seq.div_ceil(8) * dim.div_ceil(8)) as u64,
+                32,
+            );
+            pass.commit_and_wait_checked()?;
+            finite_output(&output, count)
+        })
+    }
+    /// Rows are stored contiguously; `columns` retains the pre-materialization mean layout.
+    pub fn kokoro_normalize_f32(
+        &self,
+        x: &[f32],
+        rows: usize,
+        cols: usize,
+        eps: f32,
+        columns: bool,
+    ) -> Result<Vec<f32>, GpuError> {
+        let count = product(&[rows, cols])?;
+        if rows == 0
+            || cols == 0
+            || x.len() != count
+            || !eps.is_finite()
+            || eps < 0.0
+            || x.iter().any(|v| !v.is_finite())
+        {
+            return Err(bad(
+                "Kokoro normalization requires finite matching geometry",
+            ));
+        }
+        let threads = if cols <= 512 {
+            32
+        } else if cols <= 1024 {
+            128
+        } else {
+            cols.div_ceil(4).div_ceil(32).min(32) * 32
+        };
+        let long = columns && rows < 32 && cols >= 1024;
+        let parts = if long && cols >= 32768 {
+            128
+        } else if columns && cols > 256 && rows < 32768 {
+            32
+        } else {
+            1
+        };
+        let mean_width = if long {
+            cols.div_ceil(parts).min(32)
+        } else {
+            32
+        };
+        let p = bytes(&params(&[
+            rows,
+            cols,
+            eps.to_bits() as usize,
+            columns as usize,
+            threads,
+            parts,
+            mean_width,
+            long as usize,
+        ])?);
+        autorelease_pool(|| {
+            let mut c = self.state.context.borrow_mut();
+            let constants = crate::rms_norm::unused_function_constants();
+            let mean = c.pipeline(KOKORO_SOURCE, "audio_normalization_mean", &constants, b"")?;
+            let normalize =
+                c.pipeline(KOKORO_SOURCE, "audio_normalization_output", &constants, b"")?;
+            let input = c.new_buffer_with_data(x);
+            let scratch = c.new_output_buffer((product(&[rows, parts])? * 4) as u64);
+            let out = c.new_output_buffer((count * 4) as u64);
+            let pass = c.begin_pass();
+            pass.encode_threadgroups(
+                &mean,
+                &[(&input, 0, 0), (&scratch, 1, 0)],
+                &[(&p, 2)],
+                (rows * parts) as u64,
+                if columns { 32 } else { threads } as u64,
+            );
+            pass.encode_threadgroups(
+                &normalize,
+                &[(&input, 0, 0), (&scratch, 1, 0), (&out, 2, 0)],
+                &[(&p, 3)],
+                rows as u64,
+                threads as u64,
+            );
+            pass.commit_and_wait_checked()?;
+            finite_output(&out, count)
+        })
+    }
+    pub fn kokoro_layer_norm_f32(
+        &self,
+        x: &[f32],
+        w: &[f32],
+        b: Option<&[f32]>,
+        rows: usize,
+        cols: usize,
+        eps: f32,
+    ) -> Result<Vec<f32>, GpuError> {
+        self.norm(x, w, b, rows, cols, eps, Music3DType::F32, true, true)
+    }
+    pub fn kokoro_unary_f32(&self, x: &[f32], sine: bool) -> Result<Vec<f32>, GpuError> {
+        if x.is_empty() || x.iter().any(|v| !v.is_finite()) {
+            return Err(bad("Kokoro unary requires finite nonempty values"));
+        }
+        self.kokoro_tensor(
+            "audio_source_unary",
+            x,
+            None,
+            &bytes(&params(&[x.len(), usize::from(!sine)])?),
+            x.len(),
+            x.len().div_ceil(128),
+            128,
+        )
+    }
+    pub fn kokoro_normal_from_uniform_f32(&self, x: &[f32]) -> Result<Vec<f32>, GpuError> {
+        if x.is_empty() || x.iter().any(|v| !v.is_finite() || *v <= -1.0 || *v >= 1.0) {
+            return Err(bad("Kokoro normal transform expects uniforms in (-1,1)"));
+        }
+        self.kokoro_tensor(
+            "audio_source_normal",
+            x,
+            None,
+            &bytes(&params(&[x.len()])?),
+            x.len(),
+            x.len().div_ceil(128),
+            128,
+        )
+    }
+    pub fn kokoro_gelu_f32(&self, x: &[f32]) -> Result<Vec<f32>, GpuError> {
+        if x.is_empty() || x.iter().any(|v| !v.is_finite()) {
+            return Err(bad("Kokoro GELU requires finite nonempty values"));
+        }
+        self.kokoro_tensor(
+            "audio_gelu",
+            x,
+            None,
+            &bytes(&params(&[x.len()])?),
+            x.len(),
+            x.len().div_ceil(128),
+            128,
+        )
+    }
+    /// Input and output retain checkpoint [channel, input, kernel] layout.
+    pub fn kokoro_weight_norm_f32(
+        &self,
+        x: &[f32],
+        g: &[f32],
+        rows: usize,
+        input: usize,
+        kernel: usize,
+    ) -> Result<Vec<f32>, GpuError> {
+        let width = product(&[input, kernel])?;
+        if rows == 0 || width == 0 || x.len() != product(&[rows, width])? || g.len() != rows {
+            return Err(bad("Kokoro weight normalization geometry mismatch"));
+        }
+        if x.iter().chain(g).any(|v| !v.is_finite()) {
+            return Err(bad("Kokoro normalization requires finite weights"));
+        }
+        let threads = if width <= 512 {
+            32
+        } else if width <= 1024 {
+            128
+        } else {
+            width.div_ceil(4).div_ceil(32).min(32) * 32
+        };
+        self.kokoro_tensor(
+            "audio_weight_norm",
+            x,
+            Some(g),
+            &bytes(&params(&[input, kernel, threads])?),
+            x.len(),
+            rows,
+            threads,
+        )
     }
     #[allow(clippy::too_many_arguments)]
     fn norm(
@@ -506,6 +749,7 @@ impl Music3Device {
         eps: f32,
         dtype: Music3DType,
         layer: bool,
+        kokoro: bool,
     ) -> Result<Vec<f32>, GpuError> {
         let count = product(&[rows, cols])?;
         if rows == 0
@@ -533,7 +777,7 @@ impl Music3Device {
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
             let pipeline = c.pipeline(
-                source(dtype),
+                if kokoro { KOKORO_SOURCE } else { source(dtype) },
                 "music3_norm",
                 &crate::rms_norm::unused_function_constants(),
                 b"",
@@ -601,6 +845,94 @@ impl Music3Device {
             x.len(),
             dtype,
         )
+    }
+    /// SineGen scans each physically contiguous harmonic with four reads per lane.
+    pub fn cumulative_sum_f32(
+        &self,
+        x: &[f32],
+        rows: usize,
+        columns: usize,
+    ) -> Result<Vec<f32>, GpuError> {
+        let count = product(&[rows, columns])?;
+        if count == 0 || x.len() != count || x.iter().any(|v| !v.is_finite()) {
+            return Err(bad("audio scan geometry or values"));
+        }
+        let threads = if rows <= 4096 {
+            rows.div_ceil(128) * 32
+        } else if rows <= 8192 {
+            (rows / 2).div_ceil(128) * 32
+        } else {
+            1024
+        };
+        self.kokoro_tensor(
+            "audio_cumsum",
+            x,
+            None,
+            &bytes(&params(&[rows, columns, threads])?),
+            count,
+            columns,
+            threads,
+        )
+    }
+    /// Only the pinned Kokoro FFT20/hop5 geometry is supported. Pairing adjacent
+    /// real frames preserves MLX's signed zeros before atan2, which affects phase.
+    pub fn stft20_magnitude_phase(
+        &self,
+        x: &[f32],
+        window: &[f32],
+        hop: usize,
+    ) -> Result<Vec<f32>, GpuError> {
+        if x.len() < 20
+            || window.len() != 20
+            || hop != 5
+            || x.iter().chain(window).any(|v| !v.is_finite())
+        {
+            return Err(bad("audio STFT requires FFT20, hop5 and finite values"));
+        }
+        let frames = 1 + x.len() / hop;
+        let count = product(&[frames, 22])?;
+        self.kokoro_tensor(
+            "audio_stft20",
+            x,
+            Some(window),
+            &bytes(&params(&[x.len(), frames, hop])?),
+            count,
+            frames.div_ceil(2),
+            32,
+        )
+    }
+    fn kokoro_tensor(
+        &self,
+        name: &'static str,
+        x: &[f32],
+        aux: Option<&[f32]>,
+        p: &[u8],
+        count: usize,
+        groups: usize,
+        threads: usize,
+    ) -> Result<Vec<f32>, GpuError> {
+        autorelease_pool(|| {
+            let mut context = self.state.context.borrow_mut();
+            let pipeline = context.pipeline(
+                KOKORO_SOURCE,
+                name,
+                &crate::rms_norm::unused_function_constants(),
+                b"",
+            )?;
+            let input = context.new_buffer_with_data(x);
+            let auxiliary = context.new_buffer_with_data(aux.unwrap_or(&[0.0]));
+            let output = context.new_output_buffer((count * 4) as u64);
+            let pass = context.begin_pass();
+            pass.encode_threadgroups(
+                &pipeline,
+                &[(&input, 0, 0), (&auxiliary, 1, 0), (&output, 2, 0)],
+                &[(p, 3)],
+                groups as u64,
+                threads as u64,
+            );
+            pass.commit_and_wait_checked()?;
+            finite_output(&output, count)
+        })
     }
     /// DiT computes tables in FP32 using inverse positive powers before
     /// casting them at the separate partial-rotary multiplication boundary.
@@ -722,6 +1054,41 @@ impl Music3Weight {
         output_dim: usize,
         dtype: Music3DType,
     ) -> Result<Vec<f32>, GpuError> {
+        self.linear_impl(input, bias, rows, input_dim, output_dim, dtype, false)
+    }
+    /// Kokoro's F32 checkpoint uses full float tiles, without operand narrowing.
+    pub fn linear_f32(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+    ) -> Result<Vec<f32>, GpuError> {
+        if self.encoding != Music3Encoding::F32 {
+            return Err(bad("Kokoro Metal requires verified F32 weights"));
+        }
+        self.linear_impl(
+            input,
+            bias,
+            rows,
+            input_dim,
+            output_dim,
+            Music3DType::F32,
+            true,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn linear_impl(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        dtype: Music3DType,
+        kokoro: bool,
+    ) -> Result<Vec<f32>, GpuError> {
         let count = product(&[rows, output_dim])?;
         if self.shape != [output_dim, input_dim]
             || input.len() != product(&[rows, input_dim])?
@@ -784,6 +1151,21 @@ impl Music3Weight {
                 split -= 1;
             }
         }
+        if kokoro && rows > 1 {
+            // MLX 0.31.2 uses the larger threshold on Max/Ultra devices.
+            let threshold = if name.contains("Max") || name.contains("Ultra") {
+                2048
+            } else {
+                1024
+            };
+            if rows.div_ceil(16) * output_dim.div_ceil(16) <= threshold
+                && input_dim / 16 >= 8
+                && input_dim >= rows.max(output_dim)
+            {
+                let ratio = (input_dim / 16) / (rows.div_ceil(32) * output_dim.div_ceil(32));
+                split = ratio.max(1).next_power_of_two().clamp(2, 32);
+            }
+        }
         p.push(split as u32);
         p.push((rows >= limit) as u32);
         // MLX's wide vector kernel dequantizes in FP32. Its small-K quad
@@ -808,7 +1190,9 @@ impl Music3Weight {
             0
         };
         p.push(values_per_lane);
-        let mma = dtype != Music3DType::F32
+        let vector = kokoro && output_dim == 1;
+        let mma = !vector
+            && (kokoro || dtype != Music3DType::F32)
             && rows > 1
             && (self.encoding.parameters().0 < 3 || rows >= limit);
         // The affine wide branch of `music3_linear`, repacked sixteen pairs
@@ -821,17 +1205,24 @@ impl Music3Weight {
             && wide
             && group % 8 == 0
             && input_dim % group == 0;
+        p.push((kokoro) as u32);
         let p = bytes(&p);
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
             let pipeline = c.pipeline(
-                weight_source(dtype, self.scales_bf16),
+                if kokoro {
+                    KOKORO_SOURCE
+                } else {
+                    weight_source(dtype, self.scales_bf16)
+                },
                 if mma && rows <= 16 {
                     "music3_linear_tiled_16x64"
                 } else if mma {
                     "music3_linear_tiled_32x32"
                 } else if packed_wide {
                     "music3_linear_wide"
+                } else if vector {
+                    "audio_vector_linear"
                 } else {
                     "music3_linear"
                 },
@@ -948,10 +1339,65 @@ impl Music3Weight {
         transpose: bool,
         dtype: Music3DType,
     ) -> Result<Vec<f32>, GpuError> {
+        self.convolution_impl(
+            input, bias, ic, oc, kernel, stride, pad, dilation, transpose, dtype, 1, false,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn convolution_f32_grouped(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        ic: usize,
+        oc: usize,
+        kernel: usize,
+        stride: usize,
+        pad: usize,
+        dilation: usize,
+        transpose: bool,
+        groups: usize,
+    ) -> Result<Vec<f32>, GpuError> {
+        if self.encoding != Music3Encoding::F32 {
+            return Err(bad("Kokoro Metal requires verified F32 weights"));
+        }
+        self.convolution_impl(
+            input,
+            bias,
+            ic,
+            oc,
+            kernel,
+            stride,
+            pad,
+            dilation,
+            transpose,
+            Music3DType::F32,
+            groups,
+            true,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn convolution_impl(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        ic: usize,
+        oc: usize,
+        kernel: usize,
+        stride: usize,
+        pad: usize,
+        dilation: usize,
+        transpose: bool,
+        dtype: Music3DType,
+        groups: usize,
+        kokoro: bool,
+    ) -> Result<Vec<f32>, GpuError> {
+        if groups == 0 || ic % groups != 0 || oc % groups != 0 {
+            return Err(bad("audio convolution groups do not divide channels"));
+        }
         let expected = if transpose {
-            vec![ic, oc, kernel]
+            vec![ic, oc / groups, kernel]
         } else {
-            vec![oc, ic, kernel]
+            vec![oc, ic / groups, kernel]
         };
         if !matches!(
             self.encoding,
@@ -989,7 +1435,8 @@ impl Music3Weight {
         .filter(|&n| n > 0)
         .ok_or_else(|| bad("Music 3 convolution collapsed or overflowed"))?;
         let count = product(&[oc, outlen])?;
-        let mma = dtype != Music3DType::F32;
+        let mma = groups == 1 && (kokoro || dtype != Music3DType::F32);
+        let depth = kokoro && transpose && groups == ic && ic == oc;
         let p = bytes(&params(&[
             ic,
             oc,
@@ -1003,12 +1450,18 @@ impl Music3Weight {
             bias.is_some() as usize,
             dtype as usize,
             self.encoding.parameters().0 as usize,
+            groups,
+            (kokoro) as usize,
         ])?);
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
             let pipeline = c.pipeline(
-                source(dtype),
-                if mma {
+                if kokoro { KOKORO_SOURCE } else { source(dtype) },
+                if depth {
+                    "audio_depthwise_transpose"
+                } else if groups != 1 {
+                    "audio_conv_grouped"
+                } else if mma {
                     "music3_conv_tiled_32x32"
                 } else {
                     "music3_conv"
@@ -1024,12 +1477,55 @@ impl Music3Weight {
                 &pipeline,
                 &[(&self.bytes, 0, 0), (&x, 1, 0), (&b, 2, 0), (&out, 3, 0)],
                 &[(&p, 4)],
-                if mma {
+                if depth {
+                    (outlen.div_ceil(8) * oc) as u64
+                } else if mma {
                     (outlen.div_ceil(32) * oc.div_ceil(32)) as u64
                 } else {
                     count as u64
                 },
-                128,
+                if depth { 32 } else { 128 },
+            );
+            pass.commit_and_wait_checked()?;
+            finite_output(&out, count)
+        })
+    }
+    /// One threadgroup owns recurrence state; no host round-trip per timestep.
+    pub fn lstm_recurrence(
+        &self,
+        projection: &[f32],
+        hidden: usize,
+        backward: bool,
+    ) -> Result<Vec<f32>, GpuError> {
+        if hidden == 0
+            || hidden > 512
+            || self.encoding != Music3Encoding::F32
+            || self.shape != [4 * hidden, hidden]
+            || projection.is_empty()
+            || projection.len() % (4 * hidden) != 0
+        {
+            return Err(bad("audio LSTM geometry mismatch"));
+        }
+        let seq = projection.len() / (4 * hidden);
+        let count = product(&[seq, hidden])?;
+        let p = bytes(&params(&[seq, hidden, backward as usize])?);
+        autorelease_pool(|| {
+            let mut c = self.state.context.borrow_mut();
+            let pipeline = c.pipeline(
+                KOKORO_SOURCE,
+                "audio_lstm_recurrence",
+                &crate::rms_norm::unused_function_constants(),
+                b"",
+            )?;
+            let x = c.new_buffer_with_data(projection);
+            let out = c.new_output_buffer((count * 4) as u64);
+            let pass = c.begin_pass();
+            pass.encode_threadgroups(
+                &pipeline,
+                &[(&self.bytes, 0, 0), (&x, 1, 0), (&out, 2, 0)],
+                &[(&p, 3)],
+                1,
+                hidden.next_power_of_two().max(32) as u64,
             );
             pass.commit_and_wait_checked()?;
             finite_output(&out, count)

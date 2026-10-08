@@ -161,7 +161,11 @@ pub use turn_stream::{TurnEvent, TurnSplitter};
 pub use foundation::TokenId;
 
 #[cfg(target_os = "macos")]
+pub mod kokoro;
+#[cfg(target_os = "macos")]
 pub mod music3;
+#[cfg(target_os = "macos")]
+pub use kokoro::KokoroRunner;
 pub use music3::{DispatchStat, Music3Runner};
 
 /// Process-wide exclusion shared by text, image and audio hosts.

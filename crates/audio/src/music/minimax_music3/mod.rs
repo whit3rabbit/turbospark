@@ -37,7 +37,7 @@ mod output_stats;
 mod progress;
 mod prompt;
 mod qwen3;
-mod rng;
+pub(crate) mod rng;
 mod stage_timings;
 mod vocoder;
 mod weights;

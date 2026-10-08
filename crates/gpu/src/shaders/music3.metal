@@ -81,7 +81,12 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
  constant uint *p [[buffer(7)]], uint tid [[thread_index_in_threadgroup]],
  uint gid [[threadgroup_position_in_grid]]) {
     uint out=p[4], row=gid/out, o=gid%out, cols=p[1];
-    if(p[0]<3 && p[6]!=0 && p[7]==1 && cols>64 && cols<16*out) {
+#ifdef KOKORO_CONTRACTS
+    bool native_vector = p[6]!=0 || p[12];
+#else
+    bool native_vector = p[6]!=0;
+#endif
+    if(p[0]<3 && native_vector && p[7]==1 && cols>64 && cols<16*out) {
         // Native GEMV assigns four adjacent products to each lane before
         // the shuffle-down reduction. Strided products cross rounding ties.
         float result=0;
@@ -291,6 +296,10 @@ kernel void music3_conv_tiled(device const uchar *w [[buffer(0)]],device const f
     for(uint f0=0;f0<total_k;f0+=BK) {
         for(uint idx=tid;idx<TR*BK;idx+=128) {
             uint r=idx%TR,kc=idx/TR,t=t0+r,f=f0+kc,k=f/ic,i=f%ic;
+#ifdef KOKORO_CONTRACTS
+            // The implicit-convolution loader visits taps within each 16-channel chunk.
+            if(p[13] && !transpose && ic%16==0) { k=(f/16)%ksize;i=(f/(16*ksize))*16+f%16; }
+#endif
             if(transpose) k=ksize-1-k;
             int pos=int(t*stride+k*dilation)-int(pad);
             bool valid=t<outlen && f<total_k;
@@ -299,6 +308,9 @@ kernel void music3_conv_tiled(device const uchar *w [[buffer(0)]],device const f
         }
         for(uint idx=tid;idx<TO*BK;idx+=128) {
             uint oo=idx%TO,kc=idx/TO,o=o0+oo,ff=f0+kc,kk=ff/ic,ii=ff%ic;
+#ifdef KOKORO_CONTRACTS
+            if(p[13] && !transpose && ic%16==0) { kk=(ff/16)%ksize;ii=(ff/(16*ksize))*16+ff%16; }
+#endif
             if(transpose) kk=ksize-1-kk;
             ulong wi=transpose ? (ulong(ii)*oc+o)*ksize+kk : (ulong(o)*ic+ii)*ksize+kk;
             ws[kc*TO+oo]=o<oc && ff<total_k ? (p[11]==0 ? ((device const float*)w)[wi] : p[11]==1 ? float(((device const half*)w)[wi]) : as_type<float>(uint(((device const ushort*)w)[wi])<<16)) : 0;
@@ -570,6 +582,12 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
         simdgroup_float8x8 c[RM][RN];
         for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) c[i][j]=simdgroup_float8x8(0.0f);
         uint begin=part*(cols/parts),end=begin+cols/parts;
+#ifdef KOKORO_CONTRACTS
+        if(p[12] && parts>1) {
+            uint partition=(cols/16/parts)*16;
+            begin=part*partition;end=part+1==parts ? cols : begin+partition;
+        }
+#endif
         for(uint k0=begin;k0<end;k0+=BK) {
             for(uint idx=tid;idx<TR*BK;idx+=128) {
                 uint r=idx/BK,kc=idx%BK;

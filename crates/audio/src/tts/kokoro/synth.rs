@@ -6,7 +6,10 @@
 //! `kokoro-v1_0.safetensors` (or `model.safetensors`) and
 //! `voices/af_heart.safetensors` (or `af_heart.safetensors` beside the weights).
 
+use super::Rng;
+use crate::backend::ComputeBackend;
 use std::path::Path;
+use std::rc::Rc;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
@@ -48,6 +51,10 @@ pub struct KokoroSynthesizer {
 
 impl KokoroSynthesizer {
     pub fn open(dir: &Path) -> Result<Self> {
+        Self::open_with_backend(dir, None)
+    }
+
+    pub fn open_with_backend(dir: &Path, backend: Option<Rc<dyn ComputeBackend>>) -> Result<Self> {
         let config_path = dir.join("config.json");
         let config: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&config_path).map_err(|e| {
@@ -60,7 +67,7 @@ impl KokoroSynthesizer {
                 field: "config.json".to_string(),
                 why: e.to_string(),
             })?;
-        let model = Kokoro::open(dir)?;
+        let model = Kokoro::open_with_backend(dir, backend)?;
         let vocab = model.phoneme_vocabulary(&config)?;
         let voice_path = VOICE_FILES
             .iter()
@@ -87,9 +94,60 @@ impl KokoroSynthesizer {
         request: &SynthesisRequest,
         mut emit: impl FnMut(Vec<f32>) -> bool,
     ) -> Result<()> {
-        for segment in self.frontend.prepare(request, &self.vocab)? {
-            let style = self.voice.style_for(&segment);
-            let audio = self.model.generate(segment.ids(), style, request.speed)?;
+        self.synthesize_controlled(request, self.model.seed, |_, _| Ok(()), &mut emit)
+    }
+
+    /// Conservative peak activation reserve for this checked request.
+    pub fn activation_reserve_bytes(&self, request: &SynthesisRequest) -> Result<u64> {
+        let segments = self.frontend.prepare(request, &self.vocab)?;
+        let longest = segments
+            .iter()
+            .map(|s| s.ids().len())
+            .max()
+            .ok_or_else(|| SpeechError::Input {
+                why: "no Kokoro segments".into(),
+            })?;
+        self.model.activation_reserve_bytes(longest, request.speed)
+    }
+
+    pub fn device_weight_reserve_bytes(&self) -> u64 {
+        self.model.device_weight_reserve_bytes()
+    }
+
+    #[doc(hidden)]
+    pub fn diagnostic_vocoder(
+        &self,
+        features: &[f32],
+        style: &[f32],
+        f0: &[f32],
+        seed: u64,
+        source: Option<&[f32]>,
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
+        self.model
+            .diagnostic_vocoder(features, style, f0, seed, source)
+    }
+
+    pub fn using_device(&self) -> bool {
+        self.model.using_device()
+    }
+
+    /// Cancellation/progress checkpoint runs before every segment. The request's
+    /// RNG resets once and its stream spans segments, matching the MLX pipeline.
+    pub fn synthesize_controlled(
+        &self,
+        request: &SynthesisRequest,
+        seed: u64,
+        mut checkpoint: impl FnMut(usize, usize) -> Result<()>,
+        mut emit: impl FnMut(Vec<f32>) -> bool,
+    ) -> Result<()> {
+        let segments = self.frontend.prepare(request, &self.vocab)?;
+        let mut rng = Rng::new(seed);
+        for (index, segment) in segments.iter().enumerate() {
+            checkpoint(index, segments.len())?;
+            let style = self.voice.style_for(segment);
+            let audio =
+                self.model
+                    .generate_with_rng(segment.ids(), style, request.speed, &mut rng)?;
             if !emit(audio) {
                 break;
             }
