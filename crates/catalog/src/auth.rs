@@ -141,6 +141,16 @@ pub fn validate_hf_token(token: &str) -> HfTokenValidationStatus {
     };
 
     let whoami_url = format!("{}/api/whoami-v2", crate::hf::hf_endpoint());
+    // The token is a Hugging Face credential. Validating it against a mirror
+    // would hand it to whoever runs that mirror, so refuse instead.
+    if !repack::hf_token_allowed_for_url(&whoami_url) {
+        return HfTokenValidationStatus::Unavailable {
+            message: format!(
+                "the Hugging Face endpoint is set to a mirror ({}); the token is only sent to huggingface.co over https",
+                crate::hf::hf_endpoint()
+            ),
+        };
+    }
     let response = match client
         .get(&whoami_url)
         .bearer_auth(trimmed)

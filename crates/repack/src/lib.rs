@@ -104,8 +104,9 @@ pub use qwen36_config::{
 };
 pub use qwen3vl_config::parse_qwen3_vl_config;
 pub use ranged_download::{
-    fetch_gguf_header, fetch_safetensors_header, ByteProgressCallback, CancelFlag, DownloadError,
-    HttpRangeSource, MemoryRangeSource, RangeSource, GGUF_INITIAL_FETCH_BYTES,
+    fetch_gguf_header, fetch_safetensors_header, hf_token_allowed_for_url, ByteProgressCallback,
+    CancelFlag, DownloadError, HttpRangeSource, MemoryRangeSource, RangeSource,
+    GGUF_INITIAL_FETCH_BYTES,
 };
 pub use repack::{quantize_matrix_int4, quantize_matrix_int8, RepackError};
 pub use resident_reader::read_resident_entries;

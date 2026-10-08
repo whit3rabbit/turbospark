@@ -6,7 +6,7 @@
 mod chunks;
 mod http;
 
-pub use http::{ByteProgressCallback, CancelFlag, HttpRangeSource};
+pub use http::{hf_token_allowed_for_url, ByteProgressCallback, CancelFlag, HttpRangeSource};
 
 use crate::gguf_header::{
     parse_header as parse_gguf, GgufHeader, GgufHeaderError, DEFAULT_MAX_HEADER_BYTES as GGUF_CAP,

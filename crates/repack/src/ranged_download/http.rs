@@ -386,7 +386,11 @@ impl HttpRangeSource {
             reqwest::header::RANGE,
             format!("bytes={start}-{end_inclusive}"),
         );
-        if let Some(token) = &self.token {
+        if let Some(token) = self
+            .token
+            .as_ref()
+            .filter(|_| hf_token_allowed_for_url(&self.url))
+        {
             request = request.bearer_auth(token);
         }
         if let Some((_, _, Some(validator))) = &self.pinned_identity {
@@ -884,5 +888,60 @@ mod tests {
             secs.iter().sum::<u64>() < 150,
             "the ladder must stay bounded"
         );
+    }
+}
+
+/// Whether a Hugging Face token may be sent to `url`.
+///
+/// Only https URLs on `huggingface.co` or `hf.co` (or a subdomain of either)
+/// qualify. A configured mirror (`HF_ENDPOINT`, `--hf-endpoint`) or a
+/// redirect target must never receive the user's token: it is a credential for
+/// Hugging Face, not for whoever runs the mirror. The match is anchored on a
+/// dot so `huggingface.co.evil.test` and `evilhuggingface.co` do not pass, and
+/// a URL with userinfo (`https://huggingface.co@evil.test/`) is refused.
+pub fn hf_token_allowed_for_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    let host = if let Some(bracketed) = authority.strip_prefix('[') {
+        // An IPv6 literal is never an official host.
+        let _ = bracketed;
+        return false;
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    ["huggingface.co", "hf.co"]
+        .iter()
+        .any(|official| host == *official || host.ends_with(&format!(".{official}")))
+}
+
+#[cfg(test)]
+mod hf_token_host_tests {
+    use super::hf_token_allowed_for_url as allowed;
+
+    #[test]
+    fn official_hosts_over_https_are_allowed() {
+        assert!(allowed("https://huggingface.co/api/whoami-v2"));
+        assert!(allowed("https://cdn-lfs.huggingface.co/repos/x"));
+        assert!(allowed("https://hf.co/owner/name"));
+        assert!(allowed("https://HuggingFace.co:443/x"));
+        assert!(allowed("https://huggingface.co./x"));
+    }
+
+    #[test]
+    fn mirrors_lookalikes_and_plain_http_are_refused() {
+        assert!(!allowed("http://huggingface.co/x"));
+        assert!(!allowed("https://hf-mirror.com/x"));
+        assert!(!allowed("https://huggingface.co.evil.test/x"));
+        assert!(!allowed("https://evilhuggingface.co/x"));
+        assert!(!allowed("https://huggingface.co@evil.test/x"));
+        assert!(!allowed("https://[::1]/x"));
+        assert!(!allowed("https:///x"));
+        assert!(!allowed("huggingface.co/x"));
     }
 }

@@ -238,7 +238,11 @@ impl Client {
 
     fn send_response(&self, url: &str) -> Result<reqwest::blocking::Response, reqwest::Error> {
         let mut request = self.inner.get(url);
-        if let Some(token) = &self.token {
+        if let Some(token) = self
+            .token
+            .as_ref()
+            .filter(|_| repack::hf_token_allowed_for_url(url))
+        {
             request = request.bearer_auth(token);
         }
         request.send()
@@ -354,7 +358,11 @@ impl Client {
                 .expect("blocking HTTP source metadata client")
         });
         let mut request = head_client.head(url);
-        if let Some(token) = &self.token {
+        if let Some(token) = self
+            .token
+            .as_ref()
+            .filter(|_| repack::hf_token_allowed_for_url(url))
+        {
             request = request.bearer_auth(token);
         }
         let response = request.send().map_err(|error| {
@@ -644,7 +652,11 @@ impl Client {
     /// the size long before anybody notices the numbers moved.
     pub fn content_length(&self, url: &str) -> Result<Option<u64>, String> {
         let mut request = self.inner.head(url);
-        if let Some(token) = &self.token {
+        if let Some(token) = self
+            .token
+            .as_ref()
+            .filter(|_| repack::hf_token_allowed_for_url(url))
+        {
             request = request.bearer_auth(token);
         }
         let response = request.send().map_err(|e| format!("HEAD {url}: {e}"))?;
@@ -1134,5 +1146,44 @@ mod tests {
             base_model(serde_json::json!(["", "owner/real"])),
             Some("owner/real".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod token_host_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Serves one request and returns the raw request text the client sent.
+    fn capture_one_request() -> (String, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let url = format!("http://{}/x", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).expect("read request");
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn token_is_not_sent_to_a_non_official_host() {
+        let (url, server) = capture_one_request();
+        let client = Client::with_token(Some("hf_secret_token_value".to_string()));
+        let _ = client.content_length(&url);
+        let request = server.join().expect("server thread").to_ascii_lowercase();
+        assert!(
+            request.starts_with("head /x"),
+            "unexpected request: {request}"
+        );
+        assert!(
+            !request.contains("authorization"),
+            "token leaked to a non-official host: {request}"
+        );
+        assert!(!request.contains("hf_secret_token_value"));
     }
 }
