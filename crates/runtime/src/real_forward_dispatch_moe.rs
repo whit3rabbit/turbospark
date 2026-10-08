@@ -115,10 +115,17 @@ pub(crate) fn encode_moe_phase2_any(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
             use_silu,
         ),
-        RoutedBlobLayout::GgufQ2_0 => gpu::encode_moe_phase2_q2_0_top10(
-            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
-            use_silu,
-        ),
+        RoutedBlobLayout::GgufQ2_0 => {
+            if top_k != 10 {
+                return Err(gpu::GpuError::InvalidInput(format!(
+                    "Q2_0 routed phase 2 currently requires top_k=10, got {top_k}"
+                )));
+            }
+            gpu::encode_moe_phase2_q2_0_top10(
+                context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
+                use_silu,
+            )
+        }
         // MXFP4 masks compute at a FIXED dispatch width rather than sizing
         // the dispatch to top_k the way the Affine arm below does (`gpt-oss`
         // routes top-4 of 32 experts against the kernel's fixed 8 slots);

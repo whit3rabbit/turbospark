@@ -390,6 +390,27 @@ pub(crate) fn routed_layouts_from_layout(
         .collect()
 }
 
+/// Validates that the resolved routed layouts are compatible with the model's architecture
+/// (specifically top-k routed experts).
+///
+/// Q2_0 routed phase 2 down-reduction currently specializes to `top_k=10` (e.g. Qwen4Exp);
+/// any model configuring another top-k value (such as Mixtral with top_k=2 or Gemma with top_k=8)
+/// cannot execute this layout in this port and must be refused at open time.
+pub(crate) fn validate_routed_layouts_for_top_k(
+    layouts: &[RoutedLayerLayout],
+    top_k: i64,
+) -> Result<(), RealForwardError> {
+    for (layer, l) in layouts.iter().enumerate() {
+        if l.phase2 == RoutedBlobLayout::GgufQ2_0 && top_k != 10 {
+            return Err(RealForwardError::Unsupported(format!(
+                "layer {layer} down-projection carries Q2_0 routed layout, which requires \
+                 top_k=10 in this port (got top_k={top_k})"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Resolves the shader's `ExpertOffsets` for every layer, from expert 0 of
 /// each (the writer packs every expert of a layer identically).
 ///
@@ -727,5 +748,39 @@ mod tests {
         assert_eq!(offsets[0].gate_b, 0);
         assert_eq!(offsets[0].up_b, 0);
         assert_eq!(offsets[0].down_b, 0);
+    }
+
+    #[test]
+    fn q2_0_phase2_layout_requires_top_10() {
+        let q2_0_layout = vec![RoutedLayerLayout {
+            phase1: RoutedBlobLayout::GgufQ2_0,
+            phase2: RoutedBlobLayout::GgufQ2_0,
+        }];
+        assert!(validate_routed_layouts_for_top_k(&q2_0_layout, 10).is_ok());
+
+        for non_10 in [1, 2, 4, 6, 8, 12] {
+            let err = validate_routed_layouts_for_top_k(&q2_0_layout, non_10)
+                .expect_err("non-10 top_k must fail");
+            match err {
+                RealForwardError::Unsupported(msg) => {
+                    assert!(msg.contains("requires top_k=10"), "msg: {msg}");
+                    assert!(msg.contains(&format!("got top_k={non_10}")), "msg: {msg}");
+                }
+                other => panic!("expected Unsupported error, got {other:?}"),
+            }
+        }
+
+        // Other layouts (e.g. Q8_0, Q4_K, Affine) must accept non-10 top_k
+        let affine_layout = vec![RoutedLayerLayout {
+            phase1: RoutedBlobLayout::Affine,
+            phase2: RoutedBlobLayout::Affine,
+        }];
+        assert!(validate_routed_layouts_for_top_k(&affine_layout, 2).is_ok());
+
+        let q8_0_layout = vec![RoutedLayerLayout {
+            phase1: RoutedBlobLayout::GgufQ8_0,
+            phase2: RoutedBlobLayout::GgufQ8_0,
+        }];
+        assert!(validate_routed_layouts_for_top_k(&q8_0_layout, 2).is_ok());
     }
 }

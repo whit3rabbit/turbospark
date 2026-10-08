@@ -22,7 +22,12 @@ pub fn encode_moe_phase1_q2_0(
     top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
-    assert_eq!(d_dim as usize % turbospark_compute::Q2_0_BLOCK_ELEMS, 0);
+    if d_dim as usize % turbospark_compute::Q2_0_BLOCK_ELEMS != 0 {
+        return Err(GpuError::InvalidInput(format!(
+            "d_dim ({d_dim}) must be a multiple of {}",
+            turbospark_compute::Q2_0_BLOCK_ELEMS
+        )));
+    }
     encode_phase1(
         context,
         pass,
@@ -57,8 +62,17 @@ pub fn encode_moe_phase2_q2_0_top10(
     top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
-    assert_eq!(top_k, 10, "Q2_0 routed phase 2 currently requires top_k=10");
-    assert_eq!(f_dim as usize % turbospark_compute::Q2_0_BLOCK_ELEMS, 0);
+    if top_k != 10 {
+        return Err(GpuError::InvalidInput(format!(
+            "Q2_0 routed phase 2 currently requires top_k=10, got {top_k}"
+        )));
+    }
+    if f_dim as usize % turbospark_compute::Q2_0_BLOCK_ELEMS != 0 {
+        return Err(GpuError::InvalidInput(format!(
+            "f_dim ({f_dim}) must be a multiple of {}",
+            turbospark_compute::Q2_0_BLOCK_ELEMS
+        )));
+    }
     let pipeline = context.pipeline(
         super::SOURCE,
         "moe_phase2_down_reduce_k10_q2_0",

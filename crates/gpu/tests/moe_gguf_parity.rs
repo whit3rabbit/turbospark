@@ -703,6 +703,51 @@ fn q2_0_gate_up_and_down_reduce_all_ten_slots() {
     run_case(Q2_0_ALL, false, 10);
 }
 
+#[test]
+fn q2_0_phase2_rejects_non_top10() {
+    let mut context = turbospark_gpu::MetalContext::new().expect("metal context");
+    let pass = context.begin_pass();
+    let dummy_buf = context.new_output_buffer(256);
+    let offsets = turbospark_gpu::MoeExpertOffsets {
+        gate_w: 0,
+        gate_s: 0,
+        gate_b: 0,
+        up_w: 0,
+        up_s: 0,
+        up_b: 0,
+        down_w: 0,
+        down_s: 0,
+        down_b: 0,
+    };
+    let routed = RoutedBlobsBuffer::new(&mut context, false).expect("routed buf");
+
+    for bad_k in [1, 2, 4, 8] {
+        let err = turbospark_gpu::encode_moe_phase2_q2_0_top10(
+            &mut context,
+            &pass,
+            &routed,
+            &offsets,
+            (&dummy_buf, 0),
+            (&dummy_buf, 0),
+            (&dummy_buf, 0),
+            (&dummy_buf, 0),
+            256,
+            256,
+            bad_k,
+            false,
+        )
+        .expect_err("non-10 top_k must return Err(GpuError::InvalidInput)");
+
+        match err {
+            turbospark_gpu::GpuError::InvalidInput(msg) => {
+                assert!(msg.contains("requires top_k=10"), "msg: {msg}");
+                assert!(msg.contains(&format!("got {bad_k}")), "msg: {msg}");
+            }
+            other => panic!("expected InvalidInput error, got {other:?}"),
+        }
+    }
+}
+
 /// SiLU on an IQ pair. Gemma 4 is a GELU model so this is not the production
 /// combination, but the activation is a function constant threaded through
 /// the same `constants_key`, and a new kernel that failed to declare it would

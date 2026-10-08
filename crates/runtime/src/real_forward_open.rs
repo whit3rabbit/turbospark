@@ -6,7 +6,7 @@ use model_io::{ArchConfig, ExpertCacheSlots, KvQuant, ResidentBuffer};
 use crate::real_forward::{RealForwardRunner, MAX_PREFILL_CHUNK_TOKENS, PACKED_LAYOUT_MAX_BYTES};
 use crate::real_forward_layout::{
     moe_offsets_from_layout, readable_resident_dtype, routed_layouts_from_layout,
-    EXECUTABLE_GGUF_DTYPES, GGUF_BLOCK_DTYPES,
+    validate_routed_layouts_for_top_k, EXECUTABLE_GGUF_DTYPES, GGUF_BLOCK_DTYPES,
 };
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError, ROUTED_BANKS};
 
@@ -203,6 +203,7 @@ impl RealForwardRunner {
                         "packed expert layout has no routed layers".to_string(),
                     ));
                 }
+                validate_routed_layouts_for_top_k(&layouts, expecting.top_k_experts)?;
                 let mut blob_encoders: Vec<(&'static str, &'static str)> = Vec::new();
                 for layer in &layouts {
                     let encoder = layer.phase1.source_function();
