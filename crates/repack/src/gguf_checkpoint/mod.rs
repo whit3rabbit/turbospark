@@ -4,12 +4,14 @@ mod conventions;
 mod manifest;
 mod ngram;
 mod plan;
+mod resume;
 mod sizing;
 mod transcode;
 pub use sizing::{minimax_gguf_sizing, MiniMaxSizing};
 mod types;
 
 pub use manifest::gguf_manifest_quant;
+pub use resume::ResumeProvenance;
 pub use transcode::qwen4exp_tensor_is_transcoded;
 pub use types::{dtype_tag_for_ggml_type, GgufRepackError, GgufRepackOutput, FUSED_GATE_FIRST};
 
@@ -56,11 +58,28 @@ pub fn orchestrate_gguf_checkpoint(
 /// Streamed install write: the stride comes from the header alone, the
 /// resident set is read and written first, then one layer at a time, so a
 /// 27 GB checkpoint never has to be materialized locally.
+///
+/// This form carries no source identity, so it never adopts leftover expert
+/// layers; use [`write_gguf_install_streamed_resumable`] to resume.
 pub fn write_gguf_install_streamed(
     dir: &Path,
     header: &GgufHeader,
     source: &dyn RangeSource,
     model_id: &str,
+    progress: impl FnMut(&str),
+) -> Result<ArchConfig, GgufRepackError> {
+    write_gguf_install_streamed_resumable(dir, header, source, model_id, None, progress)
+}
+
+/// [`write_gguf_install_streamed`] with resume provenance. Leftover expert
+/// layers are adopted only when `provenance` is `Some` and equals the record
+/// stored by the walk that wrote them; otherwise they are deleted.
+pub fn write_gguf_install_streamed_resumable(
+    dir: &Path,
+    header: &GgufHeader,
+    source: &dyn RangeSource,
+    model_id: &str,
+    provenance: Option<&ResumeProvenance>,
     mut progress: impl FnMut(&str),
 ) -> Result<ArchConfig, GgufRepackError> {
     let arch = arch_from_gguf(header)?;
@@ -148,6 +167,18 @@ pub fn write_gguf_install_streamed(
     // position 0 IS checkpoint layer 1. The runtime maps back with the
     // same `num_dense_leading_layers` the manifest carries.
     let lead = arch.num_dense_leading_layers as usize;
+    // Size alone cannot tell two sources apart (a re-upload or another
+    // fine-tune at the same quant has identical shapes), so adoption also
+    // needs a matching provenance record. See `resume`.
+    let had_leftovers = dir.join("packed_experts").join("layer_00.bin").exists();
+    let may_adopt =
+        resume::prepare(dir, provenance).map_err(|e| GgufRepackError::ShapeMismatch {
+            tensor: "packed_experts".to_string(),
+            detail: format!("preparing resume state: {e}"),
+        })?;
+    if !may_adopt && had_leftovers {
+        progress("no matching resume record; any leftover expert layers were discarded");
+    }
     for (seq, layer) in plan.routed.keys().copied().enumerate() {
         if layer != seq + lead {
             return Err(GgufRepackError::ShapeMismatch {
@@ -164,7 +195,7 @@ pub fn write_gguf_install_streamed(
             .join("packed_experts")
             .join(format!("layer_{seq:02}.bin"));
         let on_disk = std::fs::metadata(&layer_path).map(|m| m.len()).ok();
-        if on_disk == Some(expected) {
+        if may_adopt && on_disk == Some(expected) {
             let (mut blobs, _) = plan::plan_one_layer_shape(header, &arch, &plan, layer)?;
             blobs.layer = seq;
             writer.adopt_layer(&blobs)?;
@@ -184,6 +215,7 @@ pub fn write_gguf_install_streamed(
     writer.finish_streaming(&arch, model_id, |w| {
         crate::resident_writer::write_resident_weights_bin_mixed(&resident, w)
     })?;
+    resume::finish(dir);
     progress("manifest written");
     Ok(arch)
 }

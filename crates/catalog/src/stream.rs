@@ -10,6 +10,14 @@ use repack::{
 use crate::hf::{Client, RepoRef};
 use crate::install::{InstallPlan, INSTALL_CANCELLED};
 
+/// Stage line emitted once when a weights walk begins. Download and pack are
+/// interleaved for the whole walk (each layer is fetched, converted and
+/// written in turn), so this names the combined phase for a UI instead of
+/// leaving it to guess from the prose. Deliberately free of the words a
+/// prose matcher keys on (pack, verify, download, ...), so an older client
+/// ignores it rather than misreading it.
+pub(crate) const PHASE_TRANSFER: &str = "[phase] transfer";
+
 /// The one place every `HttpRangeSource` of a walk is built, so the cancel
 /// flag is attached to each of them exactly once. `None` is the CLI's
 /// unstoppable shape, byte-for-byte as before.
@@ -77,6 +85,7 @@ pub(crate) fn stream_gguf(
         .file
         .as_deref()
         .ok_or_else(|| "a gguf install needs a filename".to_string())?;
+    progress(PHASE_TRANSFER);
     let cache = download_cache_for_install(dir, &plan.weights, download_cache_disabled());
     if download_cache_disabled() {
         progress(
@@ -108,9 +117,19 @@ pub(crate) fn stream_gguf(
         progress(&format!("MiniMax storage preflight: download {}, install allowance {}, resident {}, eight slots {}, FP16 KV at 8192 {} bytes", source.bytes, size.install_bytes(), size.resident_bytes, size.eight_slot_bytes, size.kv_8192_bytes));
     }
     let model_id = plan.weights.repo.clone();
-    let arch = repack::write_gguf_install_streamed(dir, header, &source, &model_id, |stage| {
-        progress(&format!("[repack] {stage}"))
-    })
+    // Resume identity: leftover expert layers are adopted only for the same
+    // repo, 40-hex commit and file. A floating branch yields `None`, so such
+    // an install restarts its layers rather than trusting size alone.
+    let provenance =
+        repack::ResumeProvenance::new(&plan.weights.repo, &plan.weights.revision, file);
+    let arch = repack::write_gguf_install_streamed_resumable(
+        dir,
+        header,
+        &source,
+        &model_id,
+        provenance.as_ref(),
+        |stage| progress(&format!("[repack] {stage}")),
+    )
     .map_err(|e| format!("streaming {file}: {e}"))?;
     record_trained_context(
         dir,
@@ -150,6 +169,7 @@ pub(crate) fn stream_mlx(
     byte_progress: Option<&ByteProgressCallback>,
     cancel: Option<&CancelFlag>,
 ) -> Result<ArchConfig, String> {
+    progress(PHASE_TRANSFER);
     let cache = download_cache_for_install(dir, &plan.weights, download_cache_disabled());
     check_cancelled(cancel)?;
     let config_text = String::from_utf8(client.get(&plan.weights.file_url("config.json"))?)
@@ -960,6 +980,20 @@ pub(crate) fn shard_names(plan: &InstallPlan, client: &Client) -> Result<Vec<Str
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_transfer_marker_avoids_every_prose_keyword_the_app_matches() {
+        // The Swift stage matcher keys on these substrings; an older app must
+        // treat the marker as unknown rather than as Packing or Verifying.
+        let lower = super::PHASE_TRANSFER.to_lowercase();
+        for word in [
+            "verif", "validat", "manifest", "pack", "convert", "writing", "download", "fetch",
+            "stream", "connect",
+        ] {
+            assert!(!lower.contains(word), "{word} would be matched");
+        }
+        assert!(super::PHASE_TRANSFER.starts_with("[phase] "));
+    }
+
     use std::collections::BTreeSet;
 
     use super::{

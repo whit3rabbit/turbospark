@@ -128,7 +128,13 @@ extension AppModel {
         else { return }
         let lower = stage.lowercased()
         let status: ModelDownload.Status
-        if lower.contains("verif") || lower.contains("validat")
+        // The Rust installers announce the byte transfer explicitly. Without
+        // this, the first "[repack] ..." line labeled the whole transfer
+        // "Packing". It has no end marker, so later repack lines still read
+        // as packing.
+        if lower == "[phase] transfer" {
+            status = .running
+        } else if lower.contains("verif") || lower.contains("validat")
             || lower.contains("manifest") || lower.contains("cleared the completed") {
             status = .verifying
         } else if lower.contains("pack") || lower.contains("repack")

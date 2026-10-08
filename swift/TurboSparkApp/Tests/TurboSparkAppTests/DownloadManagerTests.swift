@@ -73,6 +73,9 @@ final class DownloadManagerTests: XCTestCase {
         model.recordModelDownloadStage("packing transformer")
         XCTAssertEqual(model.modelDownloads.first?.status, .packing)
         XCTAssertFalse(model.canPauseModelDownload)
+        model.recordModelDownloadStage("[phase] transfer")
+        XCTAssertEqual(model.modelDownloads.first?.status, .running)
+        model.recordModelDownloadStage("packing transformer")
         model.recordModelDownloadStage("verifying image install")
         XCTAssertEqual(model.modelDownloads.first?.status, .verifying)
     }
