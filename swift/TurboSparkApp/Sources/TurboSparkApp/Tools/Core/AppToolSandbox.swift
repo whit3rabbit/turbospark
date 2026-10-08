@@ -67,7 +67,7 @@ public enum AppToolSandbox {
         // `/` always exists, so the walk terminates; the guard is belt and braces.
         guard path != "/", !path.isEmpty else { return std }
         let parent = resolvedForContainment(std.deletingLastPathComponent(), depth: depth)
-        return std
+        return parent.appendingPathComponent(std.lastPathComponent)
     }
 
     /// Validates whether a file path is permitted for write operations.
