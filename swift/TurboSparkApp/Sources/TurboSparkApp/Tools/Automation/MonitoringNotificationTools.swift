@@ -241,12 +241,11 @@ public enum MonitoringNotificationDefinitions {
 
     public static let config = OpenAITool.function(
         name: "Config",
-        description: "Query, inspect, or adjust local TurboSpark application and project configuration.",
+        description: "Query or inspect local TurboSpark application and project configuration (read-only).",
         parameters: .object(
             properties: [
-                "action": .string(description: "Action: 'get', 'set', 'list'."),
-                "key": .string(description: "Configuration key name."),
-                "value": .string(description: "Value to set if action is 'set'.")
+                "action": .string(description: "Action: 'get' or 'list'."),
+                "key": .string(description: "Configuration key name.")
             ],
             required: ["action"]
         )

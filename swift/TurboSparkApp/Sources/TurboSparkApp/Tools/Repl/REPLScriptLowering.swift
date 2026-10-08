@@ -171,7 +171,11 @@ enum REPLLoweredWrapperBuilder {
                     "globalThis.\(bindingName(statement)) = \(text(of: statement.tokenRange));")
             case .expression:
                 let statementText = text(of: statement.tokenRange)
-                guard !statementText.isEmpty else { continue }
+                // A bare `;` (an empty statement) has no value and must not
+                // become `return (;);`.
+                guard !statementText.isEmpty,
+                    !statementText.allSatisfy({ $0 == ";" || $0.isWhitespace })
+                else { continue }
                 if isFinal {
                     body.append("return (\(statementText));")
                 } else {
@@ -602,6 +606,13 @@ enum REPLBoundedScriptParser {
         var bracketDepth = 0
         var braceDepth = 0
         var braceIsFunction: [Bool] = []
+        // Parallel to braceIsFunction: whether each `{` opened an object-literal
+        // EXPRESSION (after `=`, `?`, `:`, `||`, ...) rather than a block. Only a
+        // block-closing `}` ends a statement; an expression `}` falls through to
+        // the normal continuation / ASI rule so `x = {a: 1}[k]` and
+        // `c ? {..} : {..}` are not cut in half.
+        var braceIsExpression: [Bool] = []
+        var lastClosedBraceWasExpression = false
         var functionDepth = 0
         var pendingFunctionBody = false
         var previousInStatement: REPLLexToken?
@@ -651,6 +662,11 @@ enum REPLBoundedScriptParser {
                         || (previousInStatement?.kind == .punctuator
                             && previousInStatement?.text == "=>")
                     braceIsFunction.append(isFunctionBody)
+                    braceIsExpression.append(
+                        !isFunctionBody && previousInStatement != nil
+                            && isOperandPosition(previousInStatement)
+                            && !(previousInStatement?.kind == .identifier
+                                && ["else", "do"].contains(previousInStatement?.text ?? "")))
                     if isFunctionBody { functionDepth += 1 }
                     braceDepth += 1
                     pendingFunctionBody = false
@@ -660,6 +676,7 @@ enum REPLBoundedScriptParser {
                     if let wasFunction = braceIsFunction.popLast(), wasFunction {
                         functionDepth -= 1
                     }
+                    lastClosedBraceWasExpression = braceIsExpression.popLast() ?? false
                 case "=>":
                     if index + 1 < tokens.count && tokens[index + 1].text == "{" {
                         pendingFunctionBody = true
@@ -674,8 +691,13 @@ enum REPLBoundedScriptParser {
                 let next = index + 1 < tokens.count ? tokens[index + 1] : nil
                 if token.kind == .punctuator && token.text == ";" {
                     flush(through: index)
-                } else if token.kind == .punctuator && token.text == "}" {
-                    if let next, next.kind == .identifier,
+                } else if token.kind == .punctuator && token.text == "}"
+                    && !lastClosedBraceWasExpression
+                {
+                    if let next, next.kind == .punctuator, next.text == ";" {
+                        // `const o = {...};` -- let the `;` close the whole
+                        // statement instead of orphaning it as its own.
+                    } else if let next, next.kind == .identifier,
                         ["else", "catch", "finally", "while"].contains(next.text)
                     {
                         // The statement continues (if/else, try/catch, do/while).
@@ -815,11 +837,27 @@ enum REPLBoundedScriptParser {
                 return statement(
                     .declaration(binding: second.text, hasInitializer: initializerStart != nil),
                     initializer: initializerStart.map { $0..<(upper + 1) })
-            case "function":
-                guard let second, second.kind == .identifier else {
+            case "function", "async":
+                // `function f`, `function* g`, `async function h`,
+                // `async function* i`: the name is the first identifier after
+                // `function` (and an optional `*`). Without this the async and
+                // generator forms were not persisted across calls.
+                var nameIndex = lower + 1
+                if first.text == "async" {
+                    guard let second, second.kind == .identifier, second.text == "function" else {
+                        return statement(.expression)
+                    }
+                    nameIndex = lower + 2
+                }
+                if nameIndex <= upper, tokens[nameIndex].kind == .punctuator,
+                    tokens[nameIndex].text == "*"
+                {
+                    nameIndex += 1
+                }
+                guard nameIndex <= upper, tokens[nameIndex].kind == .identifier else {
                     return statement(.expression)
                 }
-                return statement(.functionDeclaration(name: second.text))
+                return statement(.functionDeclaration(name: tokens[nameIndex].text))
             case "class":
                 guard let second, second.kind == .identifier else {
                     return statement(.expression)

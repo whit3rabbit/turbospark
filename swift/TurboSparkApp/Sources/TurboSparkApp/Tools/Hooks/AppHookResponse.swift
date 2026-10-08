@@ -169,7 +169,20 @@ public enum AppHookResponseParser {
             switch kv.value {
             case let s as String: acc[kv.key] = s
             case let n as NSNumber: acc[kv.key] = n.stringValue
-            default: acc[kv.key] = "\(kv.value)"
+            case is NSNull: acc[kv.key] = "null"
+            default:
+                // Containers must be JSON: the Objective-C description
+                // ("{ a = b; }") is not parseable by executors such as
+                // multiedit's `edits`.
+                if JSONSerialization.isValidJSONObject(kv.value),
+                    let data = try? JSONSerialization.data(
+                        withJSONObject: kv.value, options: [.sortedKeys, .withoutEscapingSlashes]),
+                    let text = String(data: data, encoding: .utf8)
+                {
+                    acc[kv.key] = text
+                } else {
+                    acc[kv.key] = "\(kv.value)"
+                }
             }
         }
     }

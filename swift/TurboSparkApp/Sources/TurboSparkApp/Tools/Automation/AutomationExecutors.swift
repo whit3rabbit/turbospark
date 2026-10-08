@@ -28,7 +28,7 @@ public enum SleepExecutor {
 public enum PushNotificationExecutor {
     public static var onNotificationPushed: (@Sendable (String, String) -> Void)?
 
-    public static func execute(arguments: [String: String]) throws -> String {
+    public static func execute(arguments: [String: String]) async throws -> String {
         guard let message = arguments["message"] ?? arguments["body"] ?? arguments["text"] else {
             throw NSError(
                 domain: "TurboSparkTool",
@@ -41,22 +41,33 @@ public enum PushNotificationExecutor {
 
         onNotificationPushed?(title, message)
 
-        if #available(macOS 10.14, *),
-           Bundle.main.bundleURL.pathExtension == "app",
+        // Report what actually happened. Without a granted authorization
+        // macOS silently drops the request, and the model used to be told the
+        // notification was posted when only the in-app toast had shown.
+        var delivery = "shown in-app only (system notifications are unavailable outside the app bundle)"
+        if Bundle.main.bundleURL.pathExtension == "app",
            Bundle.main.bundleIdentifier != nil {
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = message
-            content.sound = .default
-            let request = UNNotificationRequest(
-                identifier: UUID().uuidString,
-                content: content,
-                trigger: nil
-            )
-            UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+            let center = UNUserNotificationCenter.current()
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+            if granted {
+                let content = UNMutableNotificationContent()
+                content.title = title
+                content.body = message
+                content.sound = .default
+                let request = UNNotificationRequest(
+                    identifier: UUID().uuidString, content: content, trigger: nil)
+                do {
+                    try await center.add(request)
+                    delivery = "posted as a system notification"
+                } catch {
+                    delivery = "shown in-app only (system notification failed: \(error.localizedDescription))"
+                }
+            } else {
+                delivery = "shown in-app only (system notification permission was not granted)"
+            }
         }
 
-        return "Notification posted successfully: [\(title)] \(message) (Status: \(status))."
+        return "Notification \(delivery): [\(title)] \(message) (Status: \(status))."
     }
 }
 
@@ -74,21 +85,22 @@ public enum ConfigToolExecutor {
             }
             return getConfigValue(key: key, project: project)
         case "set":
-            guard !key.isEmpty, let value = arguments["value"] else {
-                throw NSError(
-                    domain: "TurboSparkTool",
-                    code: 61,
-                    userInfo: [NSLocalizedDescriptionKey: "Missing 'key' or 'value' for Config set action."]
-                )
-            }
-            return setConfigValue(key: key, value: value, project: project)
+            // Nothing is writable from here. Reporting success for a no-op
+            // would let the model (or user) believe e.g. guardrails were
+            // turned off when nothing changed.
+            throw NSError(
+                domain: "TurboSparkTool",
+                code: 62,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Config set is not supported and nothing was changed; the user changes settings in Settings."]
+            )
         case "list":
             return listConfig(project: project)
         default:
             throw NSError(
                 domain: "TurboSparkTool",
                 code: 61,
-                userInfo: [NSLocalizedDescriptionKey: "Unknown config action: '\(action)'. Valid: get, set, list."]
+                userInfo: [NSLocalizedDescriptionKey: "Unknown config action: '\(action)'. Valid: get, list."]
             )
         }
     }
@@ -122,10 +134,6 @@ public enum ConfigToolExecutor {
         default:
             return "\(key) = (Not explicitly configured or unknown)"
         }
-    }
-
-    private static func setConfigValue(key: String, value: String, project: AppProject?) -> String {
-        return "Configuration updated: '\(key)' = '\(value)'."
     }
 }
 

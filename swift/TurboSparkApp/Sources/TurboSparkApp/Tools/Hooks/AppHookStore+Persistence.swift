@@ -9,6 +9,10 @@ extension AppHookStore {
         storageDirectory.appendingPathComponent("trusted_hook_hashes.json")
     }
 
+    var disabledHashesFileURL: URL {
+        storageDirectory.appendingPathComponent("disabled_hook_hashes.json")
+    }
+
     var customHooksFileURL: URL {
         storageDirectory.appendingPathComponent("custom_hooks.json")
     }
@@ -35,6 +39,21 @@ extension AppHookStore {
         }
     }
 
+    func loadDisabledHashes() {
+        if let data = try? Data(contentsOf: disabledHashesFileURL),
+           let list = try? JSONDecoder().decode([String].self, from: data) {
+            disabledHashes = Set(list)
+        } else {
+            disabledHashes = []
+        }
+    }
+
+    func saveDisabledHashes() {
+        if let data = try? JSONEncoder().encode(Array(disabledHashes).sorted()) {
+            try? data.write(to: disabledHashesFileURL, options: .atomic)
+        }
+    }
+
     func loadOptionValues() {
         if let data = try? Data(contentsOf: optionsValuesFileURL),
            let dict = try? JSONDecoder().decode([String: [String: String]].self, from: data) {
@@ -46,7 +65,11 @@ extension AppHookStore {
 
     func saveOptionValues() {
         var publicValues = optionValues
-        for (sourceID, keys) in sensitiveOptionKeys {
+        var neverPlaintext = sensitiveOptionKeys
+        for (sourceID, keys) in keychainBackedOptionKeys {
+            neverPlaintext[sourceID, default: []].formUnion(keys)
+        }
+        for (sourceID, keys) in neverPlaintext {
             for key in keys {
                 publicValues[sourceID]?.removeValue(forKey: key)
             }
@@ -70,15 +93,21 @@ extension AppHookStore {
         var foundLegacyPlaintext = false
         for (sourceID, keys) in sensitiveOptionKeys {
             for key in keys {
+                // Already loaded from (or saved to) the Keychain: the
+                // in-memory value is not file plaintext, so do not rewrite
+                // the Keychain or treat it as a legacy leak.
+                if keychainBackedOptionKeys[sourceID]?.contains(key) == true { continue }
                 if let plaintext = optionValues[sourceID]?[key] {
                     optionSecretStore.save(
                         plaintext, sourceID: sourceID, key: key,
                         storageDirectory: storageDirectory)
+                    keychainBackedOptionKeys[sourceID, default: []].insert(key)
                     foundLegacyPlaintext = true
                 } else if let secret = optionSecretStore.load(
                     sourceID: sourceID, key: key, storageDirectory: storageDirectory)
                 {
                     optionValues[sourceID, default: [:]][key] = secret
+                    keychainBackedOptionKeys[sourceID, default: []].insert(key)
                 }
             }
         }

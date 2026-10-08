@@ -17,6 +17,25 @@ final class HookClaudeCodeContractTests: XCTestCase {
         XCTAssertTrue(engine.matchesCondition(hook: hook, toolName: "run_command", toolArguments: nil))
     }
 
+    /// A `Write|Edit|MultiEdit` guard must also fire for this app's other file
+    /// mutators, `Task` must gate subagents (not skills), and `Grep` must see
+    /// grep_search.
+    func testClaudeCodeMatchersCoverThisAppsMutatorSubagentAndSearchTools() {
+        let engine = AppHookExecutionEngine.shared
+        func fires(_ matcher: String, _ tool: String) -> Bool {
+            let hook = AppHookCommand(
+                name: "h", event: .preToolUse, type: .command, command: "true", matcher: matcher)
+            return engine.matchesCondition(hook: hook, toolName: tool, toolArguments: nil)
+        }
+        for tool in ["apply_patch", "multi_edit", "multiedit", "notebook_edit"] {
+            XCTAssertTrue(fires("Write|Edit|MultiEdit|NotebookEdit", tool), tool)
+        }
+        XCTAssertTrue(fires("Task", "agent"))
+        XCTAssertTrue(fires("Task", "subagent"))
+        XCTAssertFalse(fires("Task", "skill"))
+        XCTAssertTrue(fires("Grep", "grep_search"))
+    }
+
     /// Tests that app tool names like "run_command" match hooks configured with Claude Code matcher names like "Bash".
     func testAppToolNameMatchesClaudeCodeStyleMatcher() {
         let engine = AppHookExecutionEngine.shared

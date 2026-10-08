@@ -146,6 +146,88 @@ final class HookSystemTests: XCTestCase {
         XCTAssertEqual(attributes[.posixPermissions] as? NSNumber, NSNumber(value: 0o600))
     }
 
+    @MainActor
+    func testKeychainBackedValueNeverReachesPlaintextAfterGroupDisappears() throws {
+        let secrets = InMemoryHookOptionSecrets()
+        let sourceID = "security-test-\(UUID().uuidString)"
+        let optionsURL = AppStorageRoot.subdirectory("Hooks")
+            .appendingPathComponent("hook_options_values.json")
+        defer { try? FileManager.default.removeItem(at: optionsURL) }
+        _ = secrets.save("keychain-secret", sourceID: sourceID, key: "token", storageDirectory: optionsURL)
+
+        let store = AppHookStore(optionSecretStore: secrets)
+        store.sourceGroups = [
+            AppHookSourceGroup(
+                id: sourceID, title: "T", subtitle: "", sourceType: .plugin,
+                optionSpecs: [
+                    AppHookOptionSpec(
+                        key: "token", type: .string, title: "Token", description: "",
+                        isSensitive: true),
+                    AppHookOptionSpec(
+                        key: "region", type: .string, title: "Region", description: ""),
+                ])
+        ]
+        store.synchronizeSensitiveOptionValues()
+        XCTAssertEqual(store.optionValues[sourceID]?["token"], "keychain-secret")
+
+        // A second sync must not treat the Keychain-loaded value as legacy
+        // plaintext and write it back over the Keychain.
+        _ = secrets.save("rotated-elsewhere", sourceID: sourceID, key: "token", storageDirectory: optionsURL)
+        store.synchronizeSensitiveOptionValues()
+        XCTAssertEqual(secrets.values["\(sourceID).token"], "rotated-elsewhere")
+
+        // The plugin is disabled: discovery no longer reports the key as
+        // sensitive, but the value is still in memory. A save must not leak it.
+        store.sourceGroups = [
+            AppHookSourceGroup(
+                id: sourceID, title: "T", subtitle: "", sourceType: .plugin,
+                optionSpecs: [
+                    AppHookOptionSpec(
+                        key: "region", type: .string, title: "Region", description: "")
+                ])
+        ]
+        store.updateOptionValue(sourceID: sourceID, key: "region", value: "eu")
+        let data = try Data(contentsOf: store.optionsValuesFileURL)
+        let persisted = try JSONDecoder().decode([String: [String: String]].self, from: data)
+        XCTAssertNil(persisted[sourceID]?["token"])
+        XCTAssertEqual(persisted[sourceID]?["region"], "eu")
+    }
+
+    func testGhostSessionNeverFeedsToolContentToHooksAndGateHooksFailClosed() async throws {
+        let store = await AppHookStore.shared
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ghost-hook-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let toolName = "ghost_probe_tool"
+        let logger = AppHookCommand(
+            name: "Ghost logger", event: .postToolUse, type: .command,
+            command: "cat > '\(marker.path)'", matcher: toolName, sourceType: .custom)
+        let gate = AppHookCommand(
+            name: "Ghost gate", event: .preToolUse, type: .command,
+            command: "cat > '\(marker.path).pre'", matcher: toolName, sourceType: .custom)
+        await store.addCustomHook(logger)
+        await store.addCustomHook(gate)
+        let sessionID = UUID().uuidString
+        AppHookExecutionEngine.markGhostSession(sessionID, isGhost: true)
+        defer { AppHookExecutionEngine.markGhostSession(sessionID, isGhost: false) }
+
+        let post = await AppHookExecutionEngine.shared.dispatch(
+            event: .postToolUse, sessionID: sessionID, toolName: toolName,
+            toolArguments: ["secret": "value"], toolOutput: "private output")
+        XCTAssertTrue(post.isEmpty)
+        let pre = await AppHookExecutionEngine.shared.evaluatePreToolUse(
+            sessionID: sessionID, toolName: toolName, toolArguments: ["secret": "value"])
+        XCTAssertEqual(pre.behavior, .deny)
+        let other = await AppHookExecutionEngine.shared.evaluatePreToolUse(
+            sessionID: sessionID, toolName: "unrelated_tool", toolArguments: [:])
+        XCTAssertEqual(other.behavior, .allow)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path + ".pre"))
+
+        await store.deleteCustomHook(id: logger.id)
+        await store.deleteCustomHook(id: gate.id)
+    }
+
     func testExecutionEngineEvaluatesPreToolUseExitCode2AsBlocking() async {
         let store = await AppHookStore.shared
 

@@ -1,6 +1,13 @@
 import Foundation
 
 extension AppHookExecutionEngine {
+    /// The suffix of the `CLAUDE_PLUGIN_OPTION_*` / `TURBOSPARK_OPTION_*`
+    /// variables a plugin option is exported under. One definition, shared
+    /// with the options sheet so the name it shows is the name hooks receive.
+    static func optionEnvSuffix(for key: String) -> String {
+        key.uppercased().replacingOccurrences(of: "-", with: "_")
+    }
+
     func executeCommandHook(
         hook: AppHookCommand,
         event: AppHookEvent,
@@ -88,6 +95,23 @@ extension AppHookExecutionEngine {
         for (k, v) in options where !sensitiveKeys.contains(k) {
             commandText = commandText.replacingOccurrences(of: "${user_config.\(k)}", with: v)
         }
+        // A sensitive placeholder must not stay literal: every shell rejects
+        // `${user_config.KEY}` as a bad substitution, the hook exits 1 before
+        // its script starts, and a PreToolUse gate then fails open. Point it
+        // at the environment variable the value is already exported under, so
+        // the secret still stays out of argv.
+        for k in sensitiveKeys {
+            let normalized = k.uppercased().replacingOccurrences(of: "-", with: "_")
+            let isIdentifier = !normalized.isEmpty
+                && normalized.unicodeScalars.allSatisfy {
+                    ($0.value >= 48 && $0.value <= 57) || ($0.value >= 65 && $0.value <= 90) || $0.value == 95
+                }
+            commandText = Self.expandEnvPlaceholder(
+                "${user_config.\(k)}",
+                inCommand: commandText,
+                envName: isIdentifier ? "CLAUDE_PLUGIN_OPTION_\(normalized)" : nil,
+                shell: hook.shell)
+        }
         if commandText.contains("${CLAUDE_PROJECT_DIR}") {
             guard !cwd.isEmpty else {
                 return AppHookExecutionResult(
@@ -108,8 +132,14 @@ extension AppHookExecutionEngine {
             // arguments -- `cd ${CLAUDE_PROJECT_DIR} && git status` in
             // `/Users/me/My Projects/app` ran `cd /Users/me/My` -- and a path
             // carrying a `;` or a backtick executed whatever followed it.
-            commandText = commandText.replacingOccurrences(
-                of: "${CLAUDE_PROJECT_DIR}", with: Self.shellQuoted(cwd))
+            // Left to the shell as an env reference (CLAUDE_PROJECT_DIR is
+            // exported below) rather than spliced as a quoted literal: a hook
+            // that already quotes the placeholder, like "${CLAUDE_PLUGIN_ROOT}/x",
+            // would otherwise get nested quotes, fail with exit 127, and fail
+            // open on PreToolUse.
+            commandText = Self.expandEnvPlaceholder(
+                "${CLAUDE_PROJECT_DIR}", inCommand: commandText,
+                envName: "CLAUDE_PROJECT_DIR", shell: hook.shell)
         }
 
         // Plugin variables: the install root and the persistent data dir,
@@ -126,11 +156,12 @@ extension AppHookExecutionEngine {
             if let plugin = PluginManager.shared.findPlugin(named: pluginName, projectURL: projectURL) {
                 pluginRootPath = plugin.directoryURL.path
                 pluginDataPath = PluginManager.shared.dataDirectory(for: plugin).path
-                commandText = commandText
-                    .replacingOccurrences(
-                        of: "${CLAUDE_PLUGIN_ROOT}", with: Self.shellQuoted(pluginRootPath!))
-                    .replacingOccurrences(
-                        of: "${CLAUDE_PLUGIN_DATA}", with: Self.shellQuoted(pluginDataPath!))
+                commandText = Self.expandEnvPlaceholder(
+                    "${CLAUDE_PLUGIN_ROOT}", inCommand: commandText,
+                    envName: "CLAUDE_PLUGIN_ROOT", shell: hook.shell)
+                commandText = Self.expandEnvPlaceholder(
+                    "${CLAUDE_PLUGIN_DATA}", inCommand: commandText,
+                    envName: "CLAUDE_PLUGIN_DATA", shell: hook.shell)
             }
         }
 
@@ -181,7 +212,7 @@ extension AppHookExecutionEngine {
         // half a protection, since the substitution above put them in the
         // command string anyway.
         for (k, v) in options {
-            let normalized = k.uppercased().replacingOccurrences(of: "-", with: "_")
+            let normalized = Self.optionEnvSuffix(for: k)
             env["TURBOSPARK_OPTION_\(normalized)"] = v
             env["CLAUDE_PLUGIN_OPTION_\(normalized)"] = v
         }
@@ -270,6 +301,69 @@ extension AppHookExecutionEngine {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
+    /// Replaces each `placeholder` in `command` with a reference to the
+    /// environment variable `envName` that is safe in the quoting context the
+    /// placeholder appears in: unquoted gets a quoted expansion (no word
+    /// splitting, no re-parsing of `;` or backticks), double-quoted gets a
+    /// plain expansion, single-quoted briefly leaves the quotes. A nil
+    /// `envName` removes the placeholder (empty value).
+    static func expandEnvPlaceholder(
+        _ placeholder: String,
+        inCommand command: String,
+        envName: String?,
+        shell: AppHookShell
+    ) -> String {
+        guard command.contains(placeholder) else { return command }
+        enum Quote { case none, single, double }
+        var state = Quote.none
+        var out = ""
+        var index = command.startIndex
+        while index < command.endIndex {
+            if command[index...].hasPrefix(placeholder) {
+                if let envName {
+                    switch (shell, state) {
+                    case (.pwsh, .none): out += "$env:\(envName)"
+                    case (.pwsh, .double): out += "$($env:\(envName))"
+                    case (.pwsh, .single): out += "'+$env:\(envName)+'"
+                    case (_, .none): out += "\"${\(envName)}\""
+                    case (_, .double): out += "${\(envName)}"
+                    case (_, .single): out += "'\"${\(envName)}\"'"
+                    }
+                }
+                index = command.index(index, offsetBy: placeholder.count)
+                continue
+            }
+            let ch = command[index]
+            switch state {
+            case .none:
+                if ch == "'" { state = .single }
+                else if ch == "\"" { state = .double }
+                else if ch == "\\" {
+                    // Copy the escaped character verbatim so `\"` does not open a quote.
+                    out.append(ch)
+                    index = command.index(after: index)
+                    if index < command.endIndex { out.append(command[index]) }
+                    index = index < command.endIndex ? command.index(after: index) : index
+                    continue
+                }
+            case .single:
+                if ch == "'" { state = .none }
+            case .double:
+                if ch == "\"" { state = .none }
+                else if ch == "\\" {
+                    out.append(ch)
+                    index = command.index(after: index)
+                    if index < command.endIndex { out.append(command[index]) }
+                    index = index < command.endIndex ? command.index(after: index) : index
+                    continue
+                }
+            }
+            out.append(ch)
+            index = command.index(after: index)
+        }
+        return out
+    }
+
     func executeHttpHook(
         hook: AppHookCommand,
         event: AppHookEvent,
@@ -302,6 +396,11 @@ extension AppHookExecutionEngine {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Same limits as command hooks; URLSession's own default is 60 s, which
+        // blocked chat deletion (SessionEnd) and tool calls past the configured cap.
+        var httpTimeout = hook.timeoutSeconds > 0 ? hook.timeoutSeconds : 600.0
+        if event == .sessionEnd { httpTimeout = min(httpTimeout, 1.5) }
+        request.timeoutInterval = httpTimeout
 
         let cwd = (workingDirectory?.isEmpty == false) ? workingDirectory! : ""
         let payloadDict = AppHookStdinPayload.build(

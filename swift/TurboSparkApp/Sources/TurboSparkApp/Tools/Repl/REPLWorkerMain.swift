@@ -159,7 +159,7 @@ enum REPLWorkerMain {
                     continue
                 }
 
-                guard let lineText = String(data: Data(lineData), encoding: .utf8) else {
+                guard String(data: Data(lineData), encoding: .utf8) != nil else {
                     localFailure(id: -1, "request is not valid UTF-8")
                     continue
                 }
@@ -268,13 +268,23 @@ enum REPLWorkerMain {
             guard byteCount > 0 else { break }
             buffer.append(contentsOf: incoming[0..<byteCount])
 
+            // Codemode lines carry whole nested tool results, so they use the
+            // codemode wire bound rather than the REPL's smaller one. A line
+            // that never ends must not grow this buffer without limit.
+            if buffer.count > CodemodeWire.maximumLineBytes, !buffer.contains(0x0A) {
+                writeCrash("codemode request exceeds the "
+                    + "\(CodemodeWire.maximumLineBytes) byte transport limit")
+                buffer.removeAll(keepingCapacity: false)
+                continue
+            }
+
             while let newlineIndex = buffer.firstIndex(of: 0x0A) {
                 let lineData = buffer[buffer.startIndex..<newlineIndex]
                 buffer.removeSubrange(buffer.startIndex...newlineIndex)
                 guard !lineData.isEmpty else { continue }
-                if lineData.count > maximumTransportBytes {
+                if lineData.count > CodemodeWire.maximumLineBytes {
                     writeCrash("codemode request of \(lineData.count) bytes exceeds the "
-                        + "\(maximumTransportBytes) byte transport limit")
+                        + "\(CodemodeWire.maximumLineBytes) byte transport limit")
                     continue
                 }
                 guard let lineObject = try? decoder.decode(

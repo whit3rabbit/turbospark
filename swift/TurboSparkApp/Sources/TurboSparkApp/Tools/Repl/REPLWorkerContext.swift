@@ -6,6 +6,84 @@ struct REPLWorkerEvaluation: Sendable {
     var ranOnMainThread: Bool
 }
 
+/// One call's captured console events, images and exception text.
+///
+/// Lock-guarded because file-response callbacks run script code on the
+/// facade's response queue while the worker queue resets and reads this state
+/// between calls: an unguarded Array append against a read is a data race.
+/// Events are also bounded AS THEY ARRIVE (head plus a rolling tail and a
+/// dropped-character count), so a tight `console.log` loop cannot grow the
+/// worker until it runs out of memory before the final head-and-tail cap in
+/// `makeResult` gets to run.
+final class REPLCallCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private let cap: Int
+    private var head: [REPLTextOutputEvent] = []
+    private var headCharacters = 0
+    private var tail: [REPLTextOutputEvent] = []
+    private var tailCharacters = 0
+    private var droppedCharacters = 0
+    private var images: [REPLEmittedImage] = []
+    private var exception: String?
+
+    init(cap: Int) {
+        self.cap = max(cap, 0)
+    }
+
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        head = []; headCharacters = 0
+        tail = []; tailCharacters = 0
+        droppedCharacters = 0
+        images = []
+        exception = nil
+    }
+
+    func append(_ event: REPLTextOutputEvent) {
+        lock.lock(); defer { lock.unlock() }
+        let weight = event.text.count + 1
+        if headCharacters < cap {
+            head.append(event)
+            headCharacters += weight
+            return
+        }
+        tail.append(event)
+        tailCharacters += weight
+        // Keep at least the newest event so a single huge line still leaves
+        // a tail; the final compaction slices it to size.
+        while tailCharacters > cap, tail.count > 1 {
+            let removed = tail.removeFirst()
+            let removedWeight = removed.text.count + 1
+            tailCharacters -= removedWeight
+            droppedCharacters += removedWeight
+        }
+    }
+
+    func append(_ image: REPLEmittedImage) {
+        lock.lock(); defer { lock.unlock() }
+        images.append(image)
+    }
+
+    var capturedException: String? {
+        get { lock.lock(); defer { lock.unlock() }; return exception }
+        set { lock.lock(); defer { lock.unlock() }; exception = newValue }
+    }
+
+    /// The bounded event sequence, with a marker event where the dropped
+    /// middle was, and whether anything was dropped.
+    func snapshot() -> (events: [REPLTextOutputEvent], images: [REPLEmittedImage], dropped: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        var events = head
+        if droppedCharacters > 0 {
+            events.append(REPLTextOutputEvent(
+                level: .log,
+                text: "... [\(droppedCharacters) chars truncated] ..."))
+        }
+        events.append(contentsOf: tail)
+        return (events, images, droppedCharacters > 0)
+    }
+}
+
 /// Owns the persistent JavaScriptCore context inside one worker process.
 /// All context creation, facade installation, evaluation, and result rendering
 /// happen on the same private serial queue.
@@ -31,9 +109,11 @@ final class REPLWorkerContext: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.turbospark.repl.worker-context")
     private var context: JSContext?
     private var completionRenderer: JSValue?
-    private var outputEvents: [REPLTextOutputEvent] = []
-    private var emittedImages: [REPLEmittedImage] = []
-    private var capturedException: String?
+    private let capture: REPLCallCapture
+    private var capturedException: String? {
+        get { capture.capturedException }
+        set { capture.capturedException = newValue }
+    }
     private var hasCreatedSession = false
     private let outcomeBox = REPLSettlementBox()
     private let limits: REPLLimits
@@ -59,6 +139,7 @@ final class REPLWorkerContext: @unchecked Sendable {
         fileChannel: (any REPLFileRequestChannel)? = nil
     ) {
         self.limits = limits
+        self.capture = REPLCallCapture(cap: limits.maximumOutputCharacters)
         self.configuration = configuration
         self.fileChannel = fileChannel ?? REPLNoAccessFileChannel()
     }
@@ -96,9 +177,7 @@ final class REPLWorkerContext: @unchecked Sendable {
         settlementTimeout: TimeInterval
     ) -> REPLCallResult {
         let sessionCreated = !hasCreatedSession
-        outputEvents = []
-        emittedImages = []
-        capturedException = nil
+        capture.reset()
 
         guard let context = context ?? makeContext() else {
             hasCreatedSession = true
@@ -271,8 +350,9 @@ final class REPLWorkerContext: @unchecked Sendable {
         context.setObject(settled, forKeyedSubscript: "__turbosparkReplSettledBridge" as NSString)
         context.evaluateScript(Self.settleInstallationScript)
 
-        let facade = REPLHostFacade { [weak self] event in
-            self?.outputEvents.append(event)
+        let capture = self.capture
+        let facade = REPLHostFacade { event in
+            capture.append(event)
         }
         facade.installConsole(into: context)
         // The capability bridges install first and the surface seals once,
@@ -283,8 +363,8 @@ final class REPLWorkerContext: @unchecked Sendable {
             into: context,
             config: configuration,
             limits: limits
-        ) { [weak self] image in
-            self?.emittedImages.append(image)
+        ) { image in
+            capture.append(image)
         }
         facade.sealReplSurface(into: context)
         context.exception = nil
@@ -305,8 +385,9 @@ final class REPLWorkerContext: @unchecked Sendable {
         // The captured event sequence is the ordering contract (6.1); the
         // summaries below are derived from the compacted sequence so the
         // output cap bounds every text channel the result carries (6.3).
+        let captured = capture.snapshot()
         let compacted = Self.compactOutputEvents(
-            outputEvents,
+            captured.events,
             cap: limits.maximumOutputCharacters)
         let consoleText = compacted.events
             .filter { [.log, .info, .debug].contains($0.level) }
@@ -315,7 +396,15 @@ final class REPLWorkerContext: @unchecked Sendable {
         let capturedErrors = compacted.events
             .filter { [.warn, .error].contains($0.level) }
             .map(\.text)
-        let combinedErrorText = (capturedErrors + [errorText].compactMap { $0 })
+        // The completion and error text cross the same IPC and land in the
+        // model context, so they get the same head-and-tail bound.
+        let boundedCompletion = completionText.map {
+            Self.boundText($0, cap: limits.maximumOutputCharacters)
+        }
+        let boundedError = errorText.map {
+            Self.boundText($0, cap: limits.maximumOutputCharacters)
+        }
+        let combinedErrorText = (capturedErrors + [boundedError?.text].compactMap { $0 })
             .joined(separator: "\n")
 
         return REPLCallResult(
@@ -323,11 +412,28 @@ final class REPLWorkerContext: @unchecked Sendable {
             outputEvents: compacted.events,
             consoleText: consoleText,
             errorText: combinedErrorText.isEmpty ? nil : combinedErrorText,
-            completionText: completionText,
-            images: emittedImages,
-            truncated: compacted.truncated,
+            completionText: boundedCompletion?.text,
+            images: captured.images,
+            truncated: compacted.truncated || captured.dropped
+                || (boundedCompletion?.truncated ?? false) || (boundedError?.truncated ?? false),
             sessionCreated: sessionCreated,
             sessionReset: false)
+    }
+
+    /// Head-and-tail bound for one text value, same proportions as
+    /// `compactOutputEvents`: the head keeps two thirds of the cap, the tail
+    /// one quarter, and a marker names the characters removed.
+    static func boundText(_ text: String, cap: Int) -> (text: String, truncated: Bool) {
+        let boundedCap = max(cap, 0)
+        guard text.utf8.count > boundedCap, text.count > boundedCap else { return (text, false) }
+        let headCut = boundedCap * 2 / 3
+        let tailCut = boundedCap / 4
+        let removed = text.count - headCut - tailCut
+        return (
+            String(text.prefix(headCut))
+                + "\n... [\(removed) chars truncated] ...\n"
+                + String(text.suffix(tailCut)),
+            true)
     }
 
     /// Head-and-tail compaction of one call's captured console stream,

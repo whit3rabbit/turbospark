@@ -12,13 +12,17 @@ enum AppHookToolNameAliases {
         "bash": ["run_command", "bash", "shell", "exec", "terminal"],
         "bashoutput": ["bashoutput", "bash_output"],
         "killshell": ["killshell", "kill_shell"],
-        "write": ["write_file", "save_file", "filewrite", "write"],
-        "edit": ["edit_file", "fileedit", "edit", "editor"],
+        // apply_patch / multi_edit mutate files like Write and Edit do, so a
+        // guard written for `Write|Edit|MultiEdit` must also see them.
+        "write": ["write_file", "save_file", "filewrite", "write", "apply_patch", "applypatch", "multiedit", "multi_edit"],
+        "edit": ["edit_file", "fileedit", "edit", "editor", "apply_patch", "applypatch", "multiedit", "multi_edit"],
+        "multiedit": ["multiedit", "multi_edit", "apply_patch", "applypatch"],
         "read": ["read_file", "view_file", "cat", "fileread", "read"],
         "glob": ["list_directory", "list_dir", "ls", "glob"],
-        "grep": ["search_code", "grep", "search"],
+        "grep": ["search_code", "grep", "search", "grep_search", "codesearch", "code_search"],
         "notebookedit": ["notebookedit", "notebook_edit"],
-        "task": ["skill"],
+        // Claude Code's Task tool launches subagents; `skill` is a different tool.
+        "task": ["agent", "subagent", "task"],
         "todowrite": ["todowrite", "todo_write"],
         "webfetch": ["webfetch", "web_fetch", "fetch_url", "read_url_content", "http_request", "httprequest"],
         "websearch": ["websearch", "web_search", "search_web"],

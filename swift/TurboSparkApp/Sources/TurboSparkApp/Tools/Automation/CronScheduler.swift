@@ -43,8 +43,10 @@ public struct CronSchedule: Equatable, Sendable {
         self.dayOfMonth = domSet
         self.month = monthSet
         self.dayOfWeek = dowNormalized
-        self.domRestricted = parts[2] != "*"
-        self.dowRestricted = parts[4] != "*"
+        // Standard cron (vixie) treats a field starting with '*' (including
+        // "*/2") as unrestricted for the day-of-month/day-of-week OR rule.
+        self.domRestricted = !parts[2].hasPrefix("*")
+        self.dowRestricted = !parts[4].hasPrefix("*")
     }
 
     /// Parses one field into a set of ints in `[low, high]`.
@@ -97,19 +99,23 @@ public struct CronSchedule: Equatable, Sendable {
         else { return false }
         guard minute.contains(minuteValue), hour.contains(hourValue), month.contains(monthValue)
         else { return false }
+        return dayMatches(day: dayValue, weekday: weekdayValue)
+    }
+
+    /// The day-of-month / day-of-week half of `matches`.
+    private func dayMatches(day: Int, weekday: Int) -> Bool {
         // Calendar.weekday is 1-based with Sunday = 1; cron day-of-week is
         // 0-based with Sunday = 0. (weekday + 6) % 7 is that conversion.
-        let cronWeekday = (weekdayValue + 6) % 7
+        let cronWeekday = (weekday + 6) % 7
         // Standard cron: when BOTH day fields are restricted, EITHER may
         // match; when only one is, it must.
-        let domMatches = dayOfMonth.contains(dayValue)
+        let domMatches = dayOfMonth.contains(day)
         let dowMatches = dayOfWeek.contains(cronWeekday)
-        switch (domRestricted, dowRestricted) {
-        case (true, true): return domMatches || dowMatches
-        case (true, false): return domMatches
-        case (false, true): return dowMatches
-        case (false, false): return true
-        }
+        // A '*'-prefixed field such as "*/2" is "unrestricted" for choosing OR
+        // but still carries a partial set, so the non-OR case ANDs both
+        // (an unrestricted full-range set matches everything).
+        if domRestricted && dowRestricted { return domMatches || dowMatches }
+        return domMatches && dowMatches
     }
 
     /// The next matching moment strictly after `after`, minute resolution,
@@ -117,17 +123,40 @@ public struct CronSchedule: Equatable, Sendable {
     /// is at most ~527k cheap set lookups, and callers run this once per job
     /// state change rather than per tick.
     public func nextFire(after: Date, calendar: Calendar = .current) -> Date? {
-        var cursor = calendar.date(
-            bySetting: .second, value: 0, of: after) ?? after
-        // Strictly after: if `after` lands exactly on a match minute, the
-        // next fire is a minute past it.
-        if matches(cursor, calendar: calendar) {
-            cursor.addTimeInterval(60)
-        } else {
-            cursor.addTimeInterval(60 - Double(calendar.component(.second, from: cursor)))
-        }
+        // Floor `after` to its minute, then start one minute later so the
+        // result is strictly after it. `Calendar.date(bySetting: .second, ...)`
+        // searches FORWARD for the next :00, which already skipped a whole
+        // minute whenever `after` had nonzero seconds (an every-minute job ran
+        // every 2 minutes; a 09:00 job created at 08:59:30 first fired a day late).
+        guard let minuteStart = calendar.dateInterval(of: .minute, for: after)?.start else { return nil }
+        var cursor = minuteStart.addingTimeInterval(60)
         let horizon = cursor.addingTimeInterval(366 * 24 * 3600)
         while cursor < horizon {
+            let comps = calendar.dateComponents([.hour, .day, .month, .weekday], from: cursor)
+            guard let hourValue = comps.hour, let dayValue = comps.day,
+                let monthValue = comps.month, let weekdayValue = comps.weekday
+            else { return nil }
+            // Skip whole months, days, then hours that cannot match instead of
+            // stepping every minute: an impossible schedule such as
+            // "0 9 31 2 *" would otherwise scan all ~527k minutes.
+            if !month.contains(monthValue) {
+                guard let next = calendar.dateInterval(of: .month, for: cursor)?.end,
+                    next > cursor else { return nil }
+                cursor = next
+                continue
+            }
+            if !dayMatches(day: dayValue, weekday: weekdayValue) {
+                guard let next = calendar.dateInterval(of: .day, for: cursor)?.end,
+                    next > cursor else { return nil }
+                cursor = next
+                continue
+            }
+            if !hour.contains(hourValue) {
+                guard let next = calendar.dateInterval(of: .hour, for: cursor)?.end,
+                    next > cursor else { return nil }
+                cursor = next
+                continue
+            }
             if matches(cursor, calendar: calendar) { return cursor }
             cursor.addTimeInterval(60)
         }
@@ -139,6 +168,12 @@ public struct CronSchedule: Equatable, Sendable {
     /// shape the simple recognizers do not name.
     public func describe() -> String {
         func single(_ set: Set<Int>) -> Int? { set.count == 1 ? set.first : nil }
+        // The named shapes below only describe the minute/hour fields, so
+        // they are valid only when no month or day restriction narrows them;
+        // otherwise "Custom schedule" is the honest label.
+        guard month.count == 12, dayOfMonth.count == 31, dayOfWeek.count == 7 else {
+            return describeRestrictedDays()
+        }
         if minute.count == 60 && hour.count == 24 { return "Every minute" }
         // "Every N minutes" covers the evenly-stepped minute field with an
         // otherwise-wild expression.
@@ -153,13 +188,23 @@ public struct CronSchedule: Equatable, Sendable {
         }
         if let minuteValue = single(minute), let hourValue = single(hour) {
             let time = String(format: "%02d:%02d", hourValue, minuteValue)
-            if month.count == 12 && dayOfMonth.count >= 28 && dayOfWeek.count == 7 {
-                return "Daily at \(time)"
-            }
+            return "Daily at \(time)"
+        }
+        return "Custom schedule"
+    }
+
+    /// Labels for the one restricted-day shape the pane names: a single
+    /// time on a weekday restriction with the day-of-month and month wild.
+    private func describeRestrictedDays() -> String {
+        if month.count == 12, dayOfMonth.count == 31,
+            let minuteValue = minute.count == 1 ? minute.first : nil,
+            let hourValue = hour.count == 1 ? hour.first : nil
+        {
+            let time = String(format: "%02d:%02d", hourValue, minuteValue)
             if dayOfWeek.count == 1, let weekday = dayOfWeek.first {
                 return "Weekly on \(weekdayName(weekday)) at \(time)"
             }
-            if dayOfWeek.count == 5, dayOfWeek == Set([1, 2, 3, 4, 5]) {
+            if dayOfWeek == Set([1, 2, 3, 4, 5]) {
                 return "Weekdays at \(time)"
             }
         }
@@ -189,6 +234,18 @@ public struct AppCronJob: Codable, Equatable, Sendable, Identifiable {
     public var nextFireAt: Date?
     /// Last runs, newest first, capped at `runHistoryLimit`.
     public var recentRuns: [CronRunRecord]
+    /// Set only for a one-shot wakeup (`ScheduleWakeup`): the absolute fire
+    /// time. Persisted so relaunch and pause/resume keep it; the cron field is
+    /// a placeholder for these jobs and must never be used to recompute it.
+    public var fireAt: Date?
+
+    /// What CronList and the schedule pane show for this job.
+    public var humanSchedule: String {
+        if let fireAt {
+            return "Once at \(fireAt.formatted(date: .abbreviated, time: .shortened))"
+        }
+        return CronSchedule(cron)?.describe() ?? cron
+    }
 
     public struct CronRunRecord: Codable, Equatable, Sendable {
         public var date: Date
@@ -210,7 +267,8 @@ public struct AppCronJob: Codable, Equatable, Sendable, Identifiable {
         chatID: UUID,
         createdAt: Date = Date(),
         nextFireAt: Date? = nil,
-        recentRuns: [CronRunRecord] = []
+        recentRuns: [CronRunRecord] = [],
+        fireAt: Date? = nil
     ) {
         self.id = id
         self.cron = cron
@@ -221,6 +279,7 @@ public struct AppCronJob: Codable, Equatable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.nextFireAt = nextFireAt
         self.recentRuns = recentRuns
+        self.fireAt = fireAt
     }
 
     static let runHistoryLimit = 10
@@ -238,6 +297,7 @@ public struct AppCronJob: Codable, Equatable, Sendable, Identifiable {
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         nextFireAt = try container.decodeIfPresent(Date.self, forKey: .nextFireAt)
         recentRuns = try container.decodeIfPresent([CronRunRecord].self, forKey: .recentRuns) ?? []
+        fireAt = try container.decodeIfPresent(Date.self, forKey: .fireAt)
     }
 }
 
@@ -285,7 +345,10 @@ public final class CronScheduler: @unchecked Sendable {
         // resume computes it fresh rather than firing immediately.
         lock.lock()
         for index in jobs.indices {
-            if jobs[index].enabled, let schedule = CronSchedule(jobs[index].cron) {
+            if let fireAt = jobs[index].fireAt {
+                // A one-shot keeps its absolute time (a past one is due now).
+                if jobs[index].enabled { jobs[index].nextFireAt = fireAt }
+            } else if jobs[index].enabled, let schedule = CronSchedule(jobs[index].cron) {
                 jobs[index].nextFireAt = schedule.nextFire(after: Date())
             }
         }
@@ -293,8 +356,24 @@ public final class CronScheduler: @unchecked Sendable {
         save()
     }
 
+    /// Writes are serialized and versioned: the snapshot is taken under
+    /// `lock` (reading `jobs` outside it races a concurrent append), and a
+    /// stale snapshot never overwrites a newer one that already landed.
+    private let writeLock = NSLock()
+    private var snapshotVersion = 0
+    private var writtenVersion = 0
+
     private func save() {
-        AppJSONStore.save(jobs, to: fileURL, label: "Cron jobs")
+        lock.lock()
+        snapshotVersion += 1
+        let version = snapshotVersion
+        let snapshot = jobs
+        lock.unlock()
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        guard version > writtenVersion else { return }
+        writtenVersion = version
+        AppJSONStore.save(snapshot, to: fileURL, label: "Cron jobs")
     }
 
     // MARK: - Mutations (executor + pane surface)
@@ -316,9 +395,18 @@ public final class CronScheduler: @unchecked Sendable {
                 NSLocalizedDescriptionKey: "Missing 'prompt': say what to run when the schedule fires."
             ])
         }
+        // A schedule with no occurrence in the search window (for example
+        // "0 9 31 2 *") would be reported as created and never fire.
+        guard let firstFire = schedule.nextFire(after: Date()) else {
+            throw NSError(domain: "TurboSparkTool", code: 60, userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Cron expression '\(cron)' never fires within the next year; "
+                    + "check the day-of-month and month fields."
+            ])
+        }
         let job = AppCronJob(
             cron: cron, prompt: trimmedPrompt, recurring: recurring, chatID: chatID,
-            nextFireAt: schedule.nextFire(after: Date()))
+            nextFireAt: firstFire)
         lock.lock()
         jobs.append(job)
         lock.unlock()
@@ -351,7 +439,9 @@ public final class CronScheduler: @unchecked Sendable {
         var changed = false
         for index in jobs.indices where jobs[index].id == id {
             jobs[index].enabled = enabled
-            if enabled, let schedule = CronSchedule(jobs[index].cron) {
+            if let fireAt = jobs[index].fireAt {
+                jobs[index].nextFireAt = enabled ? fireAt : nil
+            } else if enabled, let schedule = CronSchedule(jobs[index].cron) {
                 jobs[index].nextFireAt = schedule.nextFire(after: Date())
             } else if !enabled {
                 jobs[index].nextFireAt = nil
@@ -370,7 +460,7 @@ public final class CronScheduler: @unchecked Sendable {
     public func createOneShot(fireAt: Date, prompt: String, chatID: UUID) -> AppCronJob {
         let job = AppCronJob(
             cron: "* * * * *", prompt: prompt, recurring: false, chatID: chatID,
-            nextFireAt: fireAt)
+            nextFireAt: fireAt, fireAt: fireAt)
         lock.lock()
         jobs.append(job)
         lock.unlock()
@@ -492,7 +582,7 @@ public final class CronScheduler: @unchecked Sendable {
         }
         var lines = ["Scheduled cron jobs (\(jobs.count)):"]
         for job in jobs {
-            let human = CronSchedule(job.cron)?.describe() ?? job.cron
+            let human = job.humanSchedule
             let next = job.nextFireAt.map {
                 " next \($0.formatted(date: .omitted, time: .shortened))"
             } ?? (job.enabled ? "" : " (paused)")
@@ -508,7 +598,8 @@ public final class CronScheduler: @unchecked Sendable {
     public static func executeScheduleWakeup(
         arguments: [String: String], chatID: UUID?, scheduler: CronScheduler = .shared
     ) throws -> String {
-        if let stop = arguments["stop"], stop.lowercased() == "true" {
+        // JSON true can arrive as "1" depending on the flattening path.
+        if let stop = arguments["stop"], ["true", "1"].contains(stop.lowercased()) {
             return "No active wakeup loop to stop."
         }
         guard let chatID else {

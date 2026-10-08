@@ -56,6 +56,16 @@ public final class AppHookStore: ObservableObject {
 
     let optionSecretStore: any HookOptionSecretStoring
     var explicitlySensitiveOptionKeys: [String: Set<String>] = [:]
+    /// Keys whose in-memory value lives in the Keychain. Remembered even after
+    /// discovery stops reporting the key as sensitive (its plugin was
+    /// disabled), so `saveOptionValues` never writes it to the plaintext file
+    /// and `synchronizeSensitiveOptionValues` never re-saves it as "legacy".
+    var keychainBackedOptionKeys: [String: Set<String>] = [:]
+
+    /// Content hashes of discovered (non-custom) hooks the user switched off.
+    /// Discovery rebuilds those hooks from files on every refresh, so without
+    /// this set the switch silently reverted to enabled.
+    var disabledHashes: Set<String> = []
 
     let fileManager = FileManager.default
 
@@ -67,6 +77,7 @@ public final class AppHookStore: ObservableObject {
         self.optionSecretStore = optionSecretStore
         loadTrustedHashes()
         loadOptionValues()
+        loadDisabledHashes()
     }
 
     /// Captures one project's complete hook policy atomically.
@@ -125,6 +136,14 @@ public final class AppHookStore: ObservableObject {
             hooks[index].isEnabled.toggle()
             if hooks[index].sourceType == .custom {
                 saveCustomHooks()
+            } else {
+                let hash = hooks[index].contentHash
+                if hooks[index].isEnabled {
+                    disabledHashes.remove(hash)
+                } else {
+                    disabledHashes.insert(hash)
+                }
+                saveDisabledHashes()
             }
             recomputeSourceGroups(projectDirectory: lastProjectDirectory)
         }
@@ -139,6 +158,7 @@ public final class AppHookStore: ObservableObject {
         let sensitive = isSensitive ?? sensitiveOptionKeys[sourceID]?.contains(key) == true
         if sensitive {
             explicitlySensitiveOptionKeys[sourceID, default: []].insert(key)
+            keychainBackedOptionKeys[sourceID, default: []].insert(key)
             optionSecretStore.save(
                 value, sourceID: sourceID, key: key, storageDirectory: storageDirectory)
         }

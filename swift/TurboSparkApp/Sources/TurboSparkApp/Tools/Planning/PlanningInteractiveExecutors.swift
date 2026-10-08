@@ -54,7 +54,10 @@ public enum AskUserQuestionExecutor {
                     UserQuestionOption(label: "No", description: "Decline and adjust")
                 ]
             }
-            let multi = (arguments["multiSelect"]?.lowercased() == "true" || arguments["multi_select"]?.lowercased() == "true")
+            // The dispatch gate flattens JSON true to "1", so accept both spellings.
+            let truthy: Set<String> = ["true", "1"]
+            let multi = truthy.contains(arguments["multiSelect"]?.lowercased() ?? "")
+                || truthy.contains(arguments["multi_select"]?.lowercased() ?? "")
             return [UserQuestionItem(question: singleQ, header: header, options: options, multiSelect: multi)]
         }
         throw NSError(
@@ -313,6 +316,7 @@ public enum ProposeSkillsExecutor {
         try FileManager.default.createDirectory(at: skillsDir, withIntermediateDirectories: true)
 
         var savedCount = 0
+        var skippedExisting: [String] = []
         for p in proposals {
             let sanitizedName = p.name.trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "/", with: "-")
@@ -320,14 +324,27 @@ public enum ProposeSkillsExecutor {
                 .lowercased()
             guard !sanitizedName.isEmpty, sanitizedName != ".", sanitizedName != ".." else { continue }
             let skillFolder = skillsDir.appendingPathComponent(sanitizedName, isDirectory: true)
-            try FileManager.default.createDirectory(at: skillFolder, withIntermediateDirectories: true)
             let mdFile = skillFolder.appendingPathComponent("SKILL.md")
+            // A proposal must never silently replace a skill the user already
+            // has: a prompt-injected proposal named after a trusted skill
+            // would otherwise swap its instructions.
+            if FileManager.default.fileExists(atPath: mdFile.path) {
+                skippedExisting.append(sanitizedName)
+                continue
+            }
+            try FileManager.default.createDirectory(at: skillFolder, withIntermediateDirectories: true)
             try p.skillMd.write(to: mdFile, atomically: true, encoding: .utf8)
             savedCount += 1
         }
 
         SkillManager.shared.invalidateResolutionCache()
-        return "Successfully saved \(savedCount) proposed skill(s) to \(scopeLabel)."
+        var message = "Successfully saved \(savedCount) proposed skill(s) to \(scopeLabel)."
+        if !skippedExisting.isEmpty {
+            message += " Not saved because a skill with that name already exists: "
+                + skippedExisting.joined(separator: ", ")
+                + ". Existing skills are never overwritten by a proposal."
+        }
+        return message
     }
 }
 
@@ -342,8 +359,17 @@ public enum ProposeGoalExecutor {
                 userInfo: [NSLocalizedDescriptionKey: "Missing 'condition' parameter for ProposeGoal."]
             )
         }
-        let askUser = (arguments["ask_user"]?.lowercased() != "false")
-        return "Proposed goal: \"\(condition)\" (Requires confirmation: \(askUser ? "Yes" : "No"))."
+        // No confirmation UI or goal wiring exists behind this tool, and a
+        // "proposed, awaiting confirmation" reply made the model wait on, or
+        // claim, a goal that was never created. Goals are set by the user
+        // with /goal.
+        throw NSError(
+            domain: "TurboSparkTool",
+            code: 34,
+            userInfo: [NSLocalizedDescriptionKey:
+                "ProposeGoal is not implemented: no goal was proposed or set (condition: \"\(condition)\"). "
+                + "Ask the user to run /goal themselves."]
+        )
     }
 }
 
@@ -351,10 +377,14 @@ public enum ProposeGoalExecutor {
 
 public enum SendFeedbackExecutor {
     public static func execute(arguments: [String: String]) throws -> String {
-        let type = arguments["type"] ?? arguments["category"] ?? "general"
-        let title = arguments["title"] ?? arguments["summary"] ?? arguments["feedback"] ?? "Feedback"
-        let details = arguments["details"] ?? arguments["description"] ?? arguments["feedback"] ?? title
-        let area = arguments["area"] ?? "general"
-        return "Diagnostic feedback recorded: [\(type.uppercased())] \(title) (Area: \(area))\nDetails: \(details)"
+        // Nothing receives feedback in this client; saying "recorded" would
+        // tell the model a report was filed when it went nowhere.
+        throw NSError(
+            domain: "TurboSparkTool",
+            code: 35,
+            userInfo: [NSLocalizedDescriptionKey:
+                "SendFeedback is not implemented: nothing was recorded or sent. "
+                + "Tell the user in your reply instead."]
+        )
     }
 }

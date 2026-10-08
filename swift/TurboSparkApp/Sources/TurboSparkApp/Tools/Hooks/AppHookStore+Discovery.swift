@@ -24,6 +24,12 @@ extension AppHookStore {
         loaded.append(contentsOf: discoverPluginHooks(
             projectDirectory: projectDirectory, diagnostics: &diagnostics))
 
+        // Re-apply the user's persisted off switch to rediscovered hooks.
+        for index in loaded.indices where loaded[index].sourceType != .custom
+            && disabledHashes.contains(loaded[index].contentHash) {
+            loaded[index].isEnabled = false
+        }
+
         self.hooks = loaded
         self.didRefreshAtLeastOnce = true
         self.discoveryDiagnostics = diagnostics

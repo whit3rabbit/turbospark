@@ -135,13 +135,14 @@ final class REPLWorkerProcess: @unchecked Sendable {
             return Self.localFailure("the evaluate request could not be encoded")
         }
 
-        lock.lock()
-        if didTerminate || !process.isRunning {
-            lock.unlock()
+        // withLock rather than lock()/unlock(): the latter is an error in an
+        // async context under Swift 6 language mode.
+        let (running, mailbox) = lock.withLock { () -> (Bool, AsyncStream<PendingRequest>.Continuation?) in
+            (!(didTerminate || !process.isRunning), mailboxContinuation)
+        }
+        guard running else {
             return Self.localFailure("the worker process is not running")
         }
-        let mailbox = mailboxContinuation
-        lock.unlock()
         guard let mailbox else {
             return Self.localFailure("the worker supervisor is shut down")
         }
