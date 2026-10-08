@@ -86,8 +86,12 @@ public final class TurboSparkSTTModel: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard !closed else { return }
-        closed = true
-        ts_stt_close(handle.raw)
+        // Rust refuses while a stream is still open and keeps the model. Latch
+        // closed only on success, or deinit would be a no-op and the resident
+        // weights would leak for the process lifetime.
+        if ts_stt_close(handle.raw) == 0 {
+            closed = true
+        }
     }
 
     /// Opens a new streaming audio transcription session.

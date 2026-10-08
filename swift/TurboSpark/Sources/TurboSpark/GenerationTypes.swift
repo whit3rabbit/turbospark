@@ -132,11 +132,20 @@ public struct GenerationToolCall: Sendable, Equatable {
         self.id = obj["id"] as? String ?? ""
         self.name = name
         if let args = obj["arguments"] {
-            guard
-                let argsData = try? JSONSerialization.data(withJSONObject: args),
-                let argsText = String(data: argsData, encoding: .utf8)
-            else { return nil }
-            self.argumentsJSON = argsText
+            // `data(withJSONObject:)` raises an uncatchable ObjC exception for a
+            // non-container top level (a double-encoded string or null), which
+            // would abort the app from inside the C callback. A string is
+            // already the raw text; anything else goes through fragments.
+            if let text = args as? String {
+                self.argumentsJSON = text
+            } else {
+                guard
+                    let argsData = try? JSONSerialization.data(
+                        withJSONObject: args, options: [.fragmentsAllowed]),
+                    let argsText = String(data: argsData, encoding: .utf8)
+                else { return nil }
+                self.argumentsJSON = argsText
+            }
         } else {
             self.argumentsJSON = ""
         }

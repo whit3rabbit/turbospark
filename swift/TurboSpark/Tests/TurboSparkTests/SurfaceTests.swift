@@ -1212,27 +1212,53 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(call?.id, "")
     }
 
+    /// A model can emit `arguments` as a double-encoded JSON string or null.
+    /// `JSONSerialization.data(withJSONObject:)` raises an uncatchable ObjC
+    /// exception for a non-container top level, which aborted the app from
+    /// inside the C callback.
+    func testAToolCallPayloadWithNonContainerArgumentsDoesNotCrash() {
+        let str = GenerationToolCall(
+            parsingJSON: #"{"name":"f","arguments":"{\"a\":1}"}"#)
+        XCTAssertEqual(str?.argumentsJSON, #"{"a":1}"#)
+        let null = GenerationToolCall(parsingJSON: #"{"name":"f","arguments":null}"#)
+        XCTAssertEqual(null?.name, "f")
+        XCTAssertEqual(null?.argumentsJSON, "null")
+        let num = GenerationToolCall(parsingJSON: #"{"name":"f","arguments":3}"#)
+        XCTAssertEqual(num?.argumentsJSON, "3")
+    }
+
     // MARK: - Hugging Face Token Auth
 
     func testHfTokenLifecycleAndValidationDecoding() throws {
-        let baselineToken = try TurboSparkCatalog.getHfToken()
+        // Run against a throwaway store. The test used to overwrite, delete
+        // and re-seed the developer's real ~/.turbospark/hf_token, which
+        // could shadow a huggingface-cli token with a stale copy or persist
+        // an env-only HF_TOKEN to disk.
+        let isolatedRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("turbospark-hf-token-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: isolatedRoot, withIntermediateDirectories: true)
+        try TurboSparkCatalog.setStoreRoot(isolatedRoot.path)
         defer {
-            if let baselineToken {
-                try? TurboSparkCatalog.setHfToken(baselineToken)
-            } else {
-                try? TurboSparkCatalog.clearHfToken()
-            }
+            try? TurboSparkCatalog.setStoreRoot(nil)
+            try? FileManager.default.removeItem(at: isolatedRoot)
         }
 
-        // Test set and get
+        // Ambient token (env or the Hugging Face cache) with an empty store.
+        let baselineToken = try TurboSparkCatalog.getHfToken()
+
+        // Test set and get. An exported HF_TOKEN outranks the store file, in
+        // which case the stored value is not observable through the getter.
         try TurboSparkCatalog.setHfToken("hf_test_swift_token_123")
-        XCTAssertEqual(try TurboSparkCatalog.getHfToken(), "hf_test_swift_token_123")
+        if ProcessInfo.processInfo.environment["HF_TOKEN"]?.isEmpty ?? true {
+            XCTAssertEqual(try TurboSparkCatalog.getHfToken(), "hf_test_swift_token_123")
+        }
 
         // Test clear: reverts to whatever ambient token (env/cache) or nil existed
         try TurboSparkCatalog.clearHfToken()
         XCTAssertEqual(try TurboSparkCatalog.getHfToken(), baselineToken)
 
-        // Test validate decoding
+        // Validation hits the network, so it is opt-in.
+        guard ProcessInfo.processInfo.environment["TURBOSPARK_TEST_NETWORK"] == "1" else { return }
         let status = try TurboSparkCatalog.validateHfToken("hf_dummy_invalid_token")
         switch status {
         case .invalid, .unavailable:
