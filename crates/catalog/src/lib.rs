@@ -43,7 +43,7 @@ mod vision;
 pub use audio_catalog::{
     AudioAsset, AudioCapabilities, AudioCatalog, AudioFrontendProvenance, AudioFrontendResource,
     AudioInstalledRecordError, AudioInstalledReport, AudioLegacyInstall, AudioPcmFormat,
-    AudioProfile, AudioProfileIdentity, AudioReadiness, AudioTask,
+    AudioProfile, AudioProfileIdentity, AudioReadiness, AudioTask, VERIFY_CANCELLED,
 };
 pub use auth::{
     resolve_hf_token, resolve_hf_token_with_source, validate_hf_token, HfTokenSource,

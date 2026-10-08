@@ -95,7 +95,7 @@ pub use resident_index::{
     ENTRY_BYTES, HEADER_BYTES,
 };
 pub use safetensors::SafetensorsFile;
-pub use sha256::{hash_data, hash_file, verify_file};
+pub use sha256::{hash_data, hash_file, hash_file_observed, verify_file};
 pub use speech_family::SpeechFamily;
 pub use speech_receipt::{
     SpeechInstallReceipt, AUDIO_MODALITY, SPEECH_INSTALL_KIND, SPEECH_RECEIPT_FILENAME,

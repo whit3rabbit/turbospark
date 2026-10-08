@@ -37,6 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Progress::FlowChunk { index, total } => eprintln!("\nflow chunk {}/{total}", index + 1),
             Progress::ArFrame { .. } => {}
+            _ => {}
         }
         Control::Continue
     })?;

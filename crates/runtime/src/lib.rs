@@ -76,7 +76,7 @@ pub use encoder::{cosine_similarity, EncoderRunner};
 #[cfg(target_os = "macos")]
 pub use qwen3_asr::Qwen3AsrRunner;
 #[cfg(target_os = "macos")]
-pub use whisper::{WhisperRunner, WhisperSegment, WhisperTranscription};
+pub use whisper::{WhisperProgress, WhisperRunner, WhisperSegment, WhisperTranscription};
 #[cfg(target_os = "macos")]
 pub mod moonshine;
 #[cfg(target_os = "macos")]
@@ -153,7 +153,7 @@ pub use speculative::{
     DEFAULT_SPECULATION_BLOCK,
 };
 #[cfg(target_os = "macos")]
-pub use steering::{SteeringPolicy, SteeringVector, MAX_STEER_ROWS};
+pub use steering::{family_dispatches_steering, SteeringPolicy, SteeringVector, MAX_STEER_ROWS};
 pub use turn_stream::{TurnEvent, TurnSplitter};
 
 // Token id width consumed from the core primitives, keeping the dependency

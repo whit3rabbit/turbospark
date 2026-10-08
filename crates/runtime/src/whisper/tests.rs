@@ -174,6 +174,42 @@ fn transcribe_is_deterministic_across_runs() {
 }
 
 #[test]
+fn cooperative_controls_report_windows_and_cancel_in_the_token_loop() {
+    use super::WhisperProgress;
+    let runner = synthetic_runner();
+    let pcm = vec![0.25; WHISPER_SAMPLE_RATE as usize];
+    let expected = runner.transcribe(&pcm, None).unwrap();
+    let mut reached_token = false;
+    let mut windows = vec![];
+    let cancelled = runner.transcribe_with_progress(&pcm, None, &|| false, |event| {
+        match event {
+            WhisperProgress::Window { index, total } => windows.push((index, total)),
+            WhisperProgress::Token {
+                window,
+                emitted,
+                budget,
+            } => {
+                assert_eq!((window, emitted), (0, 0));
+                assert!(budget > 0);
+                reached_token = true;
+                return false;
+            }
+        }
+        true
+    });
+    assert!(reached_token, "cancellation must reach the greedy decoder");
+    assert_eq!(windows, vec![(0, 1)]);
+    assert!(cancelled.unwrap_err().contains("cancelled"));
+    let replay = runner
+        .transcribe_with_progress(&pcm, None, &|| false, |_| true)
+        .unwrap();
+    assert_eq!(
+        replay, expected,
+        "cancelled KV must not leak into a later request"
+    );
+}
+
+#[test]
 fn long_audio_produces_strided_windows_with_absolute_offsets() {
     let runner = synthetic_runner();
     // 62 seconds: window 1 covers [0, 30), window 2 [29, 59), window 3
@@ -1068,7 +1104,7 @@ fn real_model_metal_matches_cpu_transcript() {
         .transcribe(&pcm, Some("en"))
         .expect("cpu transcribe");
     let metal_trans = runner
-        .transcribe_metal(&mut engine, &pcm, Some("en"), &|| false)
+        .transcribe_metal(&mut engine, &pcm, Some("en"), &|| false, &mut |_| true)
         .expect("metal transcribe");
     let cpu_text: Vec<&str> = cpu_trans.segments.iter().map(|s| s.text.as_str()).collect();
     let metal_text: Vec<&str> = metal_trans

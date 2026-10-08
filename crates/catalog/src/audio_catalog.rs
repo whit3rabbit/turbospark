@@ -617,6 +617,32 @@ impl AudioCatalog {
         Ok(path)
     }
 
+    /// [`Self::verify`] that can be stopped and can report progress.
+    ///
+    /// `cancelled` is polled once per hashed chunk (1 MiB), so even one
+    /// multi-gigabyte weight file stops within a chunk of the request rather
+    /// than only between files. `on_progress(asset, completed, total)` reports
+    /// bytes hashed across ALL of the profile's assets, throttled to about
+    /// every 16 MiB and at each file's end. A stopped verification returns
+    /// [`VERIFY_CANCELLED`] as its error. The pinned hashes are compared
+    /// exactly as in [`Self::verify`]: this adds observation, not a weaker
+    /// check, and a cancelled run never reports success.
+    pub fn verify_observed(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        cancelled: &dyn Fn() -> bool,
+        on_progress: &mut dyn FnMut(&str, u64, u64),
+    ) -> Result<PathBuf, String> {
+        let path = self.resolve(store, identity)?;
+        let mut observer = VerifyObserver {
+            cancelled,
+            on_progress,
+        };
+        verify_asset_bytes_observed(self.profile(identity)?, &path, true, None, Some(&mut observer))?;
+        Ok(path)
+    }
+
     /// Full byte verification for the runtime-open boundary, separate from picker resolution.
     pub fn verify(
         &self,
@@ -1135,16 +1161,48 @@ fn regular_paths(root: &Path) -> Result<std::collections::BTreeSet<String>, Stri
     visit(root, root, &mut files)?;
     Ok(files)
 }
+/// The error text a stopped [`AudioCatalog::verify_observed`] returns. A
+/// constant so a caller can recognise its own cancel without parsing prose.
+pub const VERIFY_CANCELLED: &str = "audio verification cancelled";
+
+/// Cancellation and progress for one verification.
+struct VerifyObserver<'a> {
+    cancelled: &'a dyn Fn() -> bool,
+    on_progress: &'a mut dyn FnMut(&str, u64, u64),
+}
+
+/// How many bytes pass between progress reports. The hash reads 1 MiB chunks;
+/// reporting each one would call a host callback thousands of times for a
+/// large model.
+const VERIFY_PROGRESS_STRIDE: u64 = 16 * 1024 * 1024;
+
 fn verify_asset_bytes(
     profile: &AudioProfile,
     root: &Path,
     hash: bool,
     cancel: Option<&CancelFlag>,
 ) -> Result<(), String> {
+    verify_asset_bytes_observed(profile, root, hash, cancel, None)
+}
+
+fn verify_asset_bytes_observed(
+    profile: &AudioProfile,
+    root: &Path,
+    hash: bool,
+    cancel: Option<&CancelFlag>,
+    mut observer: Option<&mut VerifyObserver<'_>>,
+) -> Result<(), String> {
     require_directory(root)?;
+    let total: u64 = profile.assets.iter().map(|a| a.size).sum();
+    let mut finished_bytes = 0u64;
     for asset in &profile.assets {
         if let Some(cancel) = cancel {
             cancel.checkpoint().map_err(|e| e.to_string())?;
+        }
+        if let Some(observer) = observer.as_deref() {
+            if (observer.cancelled)() {
+                return Err(VERIFY_CANCELLED.to_string());
+            }
         }
         let path = root.join(&asset.path);
         // Check every ancestor so a nested asset cannot escape through a symlink.
@@ -1164,14 +1222,44 @@ fn verify_asset_bytes(
                 asset.path
             ));
         }
-        if hash
-            && model_io::hash_file(&path, 1024 * 1024).map_err(|e| e.to_string())? != asset.sha256
-        {
-            return Err(format!(
-                "audio asset {} SHA-256 does not match its immutable pin",
-                asset.path
-            ));
+        if hash {
+            let digest = match observer.as_deref_mut() {
+                None => Some(
+                    model_io::hash_file(&path, 1024 * 1024).map_err(|e| e.to_string())?,
+                ),
+                Some(observer) => {
+                    let mut reported = 0u64;
+                    let base = finished_bytes;
+                    let name = asset.path.as_str();
+                    let digest = model_io::hash_file_observed(&path, 1024 * 1024, |done| {
+                        if (observer.cancelled)() {
+                            return false;
+                        }
+                        if done - reported >= VERIFY_PROGRESS_STRIDE {
+                            reported = done;
+                            (observer.on_progress)(name, base + done, total);
+                        }
+                        true
+                    })
+                    .map_err(|e| e.to_string())?;
+                    if digest.is_some() {
+                        (observer.on_progress)(name, base + asset.size, total);
+                    }
+                    digest
+                }
+            };
+            match digest {
+                None => return Err(VERIFY_CANCELLED.to_string()),
+                Some(digest) if digest != asset.sha256 => {
+                    return Err(format!(
+                        "audio asset {} SHA-256 does not match its immutable pin",
+                        asset.path
+                    ));
+                }
+                Some(_) => {}
+            }
         }
+        finished_bytes += asset.size;
     }
     Ok(())
 }
@@ -1309,6 +1397,56 @@ mod tests {
         };
         store.record(&row).unwrap();
         (catalog, identity, store, row)
+    }
+
+    /// The observed verification must reach the SAME verdict as the plain one
+    /// (it adds observation, not a weaker check), report progress up to the
+    /// total, and stop on request without ever reporting success.
+    #[test]
+    fn observed_verification_agrees_with_the_plain_check_and_can_be_stopped() {
+        let root = Scratch::new();
+        let (catalog, identity, _store, row) = legacy_fixture(&root.0, AudioTask::TextToSpeech);
+        let profile = catalog.get(&identity.alias).unwrap();
+
+        // Untouched: passes, and the last report is "all bytes of all assets".
+        let mut reports: Vec<(String, u64, u64)> = Vec::new();
+        let never = || false;
+        let mut sink = |asset: &str, done: u64, total: u64| {
+            reports.push((asset.to_string(), done, total))
+        };
+        let mut observer = VerifyObserver {
+            cancelled: &never,
+            on_progress: &mut sink,
+        };
+        verify_asset_bytes_observed(profile, &row.path, true, None, Some(&mut observer)).unwrap();
+        let total: u64 = profile.assets.iter().map(|a| a.size).sum();
+        let last = reports.last().expect("at least one progress report");
+        assert_eq!((last.1, last.2), (total, total), "{reports:?}");
+        assert!(reports.windows(2).all(|w| w[0].1 <= w[1].1), "monotonic");
+
+        // Stopped before it starts: the cancel text, not success.
+        let always = || true;
+        let mut ignore = |_: &str, _: u64, _: u64| {};
+        let mut observer = VerifyObserver {
+            cancelled: &always,
+            on_progress: &mut ignore,
+        };
+        let err = verify_asset_bytes_observed(profile, &row.path, true, None, Some(&mut observer))
+            .unwrap_err();
+        assert_eq!(err, VERIFY_CANCELLED);
+
+        // A flipped byte is still refused through the observed path.
+        let victim = row.path.join(&profile.assets[0].path);
+        let mut bytes = fs::read(&victim).unwrap();
+        bytes[0] ^= 0xff;
+        fs::write(&victim, bytes).unwrap();
+        let mut observer = VerifyObserver {
+            cancelled: &never,
+            on_progress: &mut ignore,
+        };
+        let err = verify_asset_bytes_observed(profile, &row.path, true, None, Some(&mut observer))
+            .unwrap_err();
+        assert!(err.contains("SHA-256 does not match"), "{err}");
     }
 
     #[test]
