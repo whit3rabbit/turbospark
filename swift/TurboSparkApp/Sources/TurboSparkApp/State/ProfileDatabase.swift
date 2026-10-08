@@ -281,6 +281,9 @@ final class ProfileDatabase: @unchecked Sendable {
     /// commits, so a failed save can never strand a live database reference.
     func saveChatArchive(_ archive: AppChatArchive) throws -> [String] {
         let encoder = JSONEncoder()
+        // Dictionary key order is randomized per process, so unsorted output
+        // made every chat with tool calls look changed after each launch.
+        encoder.outputFormatting = [.sortedKeys]
         var unreachableAssetIDs: [String] = []
         try transaction {
             let existing = try chatIDs()
@@ -465,6 +468,15 @@ final class ProfileDatabase: @unchecked Sendable {
             }
             message.alternates.forEach(count)
         }
+        // Files the legacy migration encrypted but no chat references (for
+        // example generated images left behind by a deleted chat). The
+        // plaintext originals are gone, so these are the only copies: keep
+        // them reachable through the migration record instead of collecting
+        // them a minute after the next save.
+        if let payload = try loadRecord(key: ProfileRepository.legacyAssetsRecordKey),
+           let descriptors = try? JSONDecoder().decode([ManagedAssetDescriptor].self, from: payload) {
+            for descriptor in descriptors { counts[descriptor.id, default: 0] += 1 }
+        }
         for chat in archive.chats {
             chat.draftAttachments.forEach { count($0.sourcePath) }
             chat.artifacts.forEach { count($0.path) }
@@ -491,6 +503,9 @@ final class ProfileDatabase: @unchecked Sendable {
                 unreachable.append(metadata.id)
                 continue
             }
+            // Skip rows that already carry the right count: this runs on every
+            // debounced save and each update is a synchronous=FULL write.
+            guard metadata.referenceCount != referenceCount else { continue }
             try withStatement("UPDATE assets SET reference_count = ?2 WHERE id = ?1") { statement in
                 try bind(metadata.id, at: 1, to: statement)
                 try bind(Int64(referenceCount), at: 2, to: statement)
@@ -509,10 +524,39 @@ final class ProfileDatabase: @unchecked Sendable {
         try Self.applyFilePermissions(at: url)
     }
 
+    /// Re-encrypts every page under `key`. SQLCipher rewrites the file inside
+    /// one transaction, so a crash leaves it wholly under the old or the new
+    /// key; the caller records both keys durably before calling this.
+    func rekey(to key: Data) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let handle else { throw DatabaseError.closed }
+        // Fold the WAL into the main file and leave WAL mode for the rewrite:
+        // a rollback journal makes the rekey one atomic transaction, whereas
+        // a crash with new-key frames in the -wal beside an old-key main file
+        // would leave a file neither key opens.
+        try execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        try execute("PRAGMA journal_mode = DELETE;")
+        let status = key.withUnsafeBytes { bytes in
+            sqlite3_rekey(handle, bytes.baseAddress, Int32(key.count))
+        }
+        let restored = (try? execute("PRAGMA journal_mode = WAL;")) != nil
+        guard status == SQLITE_OK else {
+            throw DatabaseError.open("SQLCipher refused the replacement key")
+        }
+        guard restored else { throw DatabaseError.open("could not return to WAL mode after rekey") }
+        try Self.applyFilePermissions(at: url)
+    }
+
     /// Produces a transactionally consistent encrypted snapshot using
     /// SQLite's online backup API. Copying the database file itself would
     /// race the WAL and can omit the newest committed rows.
-    func backup(to destination: URL, key: Data) throws {
+    ///
+    /// Returns the asset rows as of the snapshot. They are read under the same
+    /// lock hold as the copy, so the list cannot disagree with the snapshot
+    /// when a row is added or deleted a moment later.
+    @discardableResult
+    func backup(to destination: URL, key: Data) throws -> [AssetMetadata] {
         lock.lock()
         defer { lock.unlock() }
         guard let handle else { throw DatabaseError.closed }
@@ -550,6 +594,7 @@ final class ProfileDatabase: @unchecked Sendable {
               sqlite3_column_text(integrity, 0).map({ String(cString: $0) }) == "ok"
         else { throw DatabaseError.open("snapshot integrity check failed") }
         try Self.applyFilePermissions(at: destination)
+        return try allAssetMetadata()
     }
 
     /// Per-chat projection tables. Keys are scoped to the chat so two chats
@@ -1050,7 +1095,7 @@ final class ProfileDatabase: @unchecked Sendable {
         return result
     }
 
-    private func chatPayload(id: String) throws -> Data? {
+    func chatPayload(id: String) throws -> Data? {
         try withStatement("SELECT payload FROM chats WHERE id = ?1") { statement in
             try bind(id, at: 1, to: statement)
             guard sqlite3_step(statement) == SQLITE_ROW else { return nil }

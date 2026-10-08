@@ -85,9 +85,13 @@ extension AppModel {
         if let old = imageJob?.savedPath, let descriptor = migrated[old] {
             imageJob?.savedPath = descriptor.storedReference
         }
+        // Merge with earlier runs: this record is what keeps unreferenced
+        // migrated files from being garbage-collected.
+        let earlier = (try? ProfileRepository.shared.load(
+            [ManagedAssetDescriptor].self, key: ProfileRepository.legacyAssetsRecordKey)) ?? []
         try ProfileRepository.shared.save(
-            Array(Set(migrated.values)).sorted { $0.id < $1.id },
-            key: "migration:legacy-assets")
+            Array(Set(earlier).union(migrated.values)).sorted { $0.id < $1.id },
+            key: ProfileRepository.legacyAssetsRecordKey)
         persistChats()
         AppChatFileStore.flush()
     }

@@ -34,6 +34,7 @@ enum EncryptedProfileBackup {
         case unexpectedEntry(String)
         case assetInventoryMismatch
         case integrityCheckFailed
+        case assetAuthenticationFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -46,11 +47,17 @@ enum EncryptedProfileBackup {
             case .unexpectedEntry(let path): return "The backup contains an unexpected entry: \(path)."
             case .assetInventoryMismatch: return "The encrypted asset inventory does not match the database."
             case .integrityCheckFailed: return "The restored encrypted database failed its integrity check."
+            case .assetAuthenticationFailed(let id):
+                return "A managed file failed authentication and cannot be backed up (\(id.prefix(8)))."
             }
         }
     }
 
     static let kind = "turbospark-encrypted-profile"
+
+    /// Test seam: runs once the snapshot is frozen and the vault is writable
+    /// again, so a test can add or delete assets at the worst moment.
+    nonisolated(unsafe) static var afterSnapshotHook: (() -> Void)?
 
     static func export(
         profile: UserProfile,
@@ -60,8 +67,6 @@ enum EncryptedProfileBackup {
         store: ProfileVaultStore = .shared,
         exportedAt: Date = Date()
     ) throws -> Manifest {
-        guard let session = store.session else { throw BackupError.locked }
-        guard session.profileID == profile.id else { throw BackupError.wrongProfile }
         let manager = FileManager.default
         let scratch = manager.temporaryDirectory
             .appendingPathComponent("turbospark-exact-export-\(UUID().uuidString)", isDirectory: true)
@@ -69,9 +74,42 @@ enum EncryptedProfileBackup {
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scratch.path)
         defer { try? manager.removeItem(at: scratch) }
         let snapshot = scratch.appendingPathComponent("profile.sqlite3")
-        let databaseKey = ProfileVaultCrypto.deriveKey(
-            masterKey: session.masterKey, purpose: "database")
-        try session.database.backup(to: snapshot, key: databaseKey)
+        let staged = scratch.appendingPathComponent("staged", isDirectory: true)
+
+        // Take the database snapshot, its asset inventory, and a frozen view
+        // of the asset files as one unit. Imports, releases and key rotation
+        // are held off for this short window only; the slow part (hashing,
+        // authenticating and zipping) then reads the staged links, which a
+        // later add, delete or re-key cannot change.
+        var masterKey: Data
+        let rows: [ProfileDatabase.AssetMetadata]
+        do {
+            store.gate.beginExclusive(cancelInFlight: false)
+            defer { store.gate.endExclusive() }
+            let captured: (Data, [ProfileDatabase.AssetMetadata])
+            do {
+                captured = try store.withOperation { operation in
+                    guard operation.profileID == profile.id else { throw BackupError.wrongProfile }
+                    let databaseKey = ProfileVaultCrypto.deriveKey(
+                        masterKey: operation.masterKey, purpose: "database")
+                    let rows = try operation.database.backup(to: snapshot, key: databaseKey)
+                    return (operation.masterKey, rows)
+                }
+            } catch ProfileVaultStore.VaultError.locked {
+                throw BackupError.locked
+            }
+            masterKey = captured.0
+            rows = captured.1
+            do {
+                try stage(
+                    assetIDs: rows.map(\.id), from: store, into: staged)
+            } catch {
+                masterKey.wipe()
+                throw error
+            }
+        }
+        defer { masterKey.wipe() }
+        afterSnapshotHook?()
 
         // Write beside the destination and swap in only after a complete
         // export. The writer truncates its target on init, and the failure
@@ -80,40 +118,41 @@ enum EncryptedProfileBackup {
         let partial = destination.deletingLastPathComponent()
             .appendingPathComponent(".\(destination.lastPathComponent).partial-\(UUID().uuidString)")
         let encrypted = try ProfileEncryptedChunkWriter(
-            destination: partial, passphrase: passphrase, masterKey: session.masterKey)
+            destination: partial, passphrase: passphrase, masterKey: masterKey)
         let zip = ProfileZipStreamWriter { try encrypted.write($0) }
         do {
             var checksums: [Checksum] = []
             var copiedAssetIDs: Set<String> = []
             let databaseDigest = try zip.add(path: "vault/profile.sqlite3", fileURL: snapshot)
             checksums.append(Checksum(databaseDigest))
-            // The asset inventory comes from the database, not the directory
-            // listing: orphan ciphertexts and in-flight temp files are not
-            // part of the profile, and restore requires disk == rows exactly.
-            let knownAssetIDs = Set(try session.database.allAssetMetadata().map(\.id))
-            for (root, prefix) in [(store.assetsURL, "vault/assets"),
-                                   (store.recoveryURL, "vault/recovery")] {
+            let assetStore = ManagedAssetStore(vault: store)
+            let knownAssetIDs = Set(rows.map(\.id))
+            for (root, prefix) in [(staged.appendingPathComponent("assets"), "vault/assets"),
+                                   (staged.appendingPathComponent("recovery"), "vault/recovery")] {
                 // Path enumeration keeps the base and children in the same
                 // /var or /private/var namespace. Mixing URL enumeration
                 // with string prefix removal corrupts temporary-file paths.
                 for file in try recursiveFiles(at: root) {
-                    if prefix == "vault/assets",
-                       !knownAssetIDs.contains(file.deletingPathExtension().lastPathComponent)
-                        || file.pathExtension != "tsasset" {
-                        continue
-                    }
                     let relative = file.path.dropFirst(root.path.count)
                         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    if prefix == "vault/assets" {
+                        let id = file.deletingPathExtension().lastPathComponent
+                        // Restore authenticates every asset; refuse here
+                        // instead of writing a backup that cannot restore.
+                        do {
+                            try assetStore.authenticate(fileAt: file, id: id, masterKey: masterKey)
+                        } catch {
+                            throw BackupError.assetAuthenticationFailed(id)
+                        }
+                        copiedAssetIDs.insert(id)
+                    }
                     let digest = try zip.add(path: "\(prefix)/\(relative)", fileURL: file)
                     checksums.append(Checksum(digest))
-                    if prefix == "vault/assets" {
-                        copiedAssetIDs.insert(file.deletingPathExtension().lastPathComponent)
-                    }
                 }
             }
             // A row whose ciphertext is gone would export "successfully" and
             // then fail restore, which requires disk == rows exactly.
-            guard knownAssetIDs.isSubset(of: copiedAssetIDs) else {
+            guard knownAssetIDs == copiedAssetIDs else {
                 throw BackupError.assetInventoryMismatch
             }
             let manifest = Manifest(
@@ -124,7 +163,7 @@ enum EncryptedProfileBackup {
                 profileCreatedAt: profile.createdAt,
                 exportedAt: exportedAt,
                 appVersion: appVersion,
-                vaultFormatVersion: ProfileSecurityManifest.currentFormatVersion,
+                vaultFormatVersion: ProfileSecurityManifest.baseFormatVersion,
                 databaseSchemaVersion: 1,
                 contents: checksums.sorted { $0.path < $1.path })
             let encoder = JSONEncoder()
@@ -162,9 +201,11 @@ enum EncryptedProfileBackup {
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scratch.path)
         defer { try? manager.removeItem(at: scratch) }
         let zipURL = scratch.appendingPathComponent("payload.zip")
-        let masterKey = try ProfileEncryptedChunkWriter.decrypt(
+        // Wiped in place through this single owner. Nothing else retains the
+        // buffer: the key is never written to disk in the clear.
+        var masterKey = try ProfileEncryptedChunkWriter.decrypt(
             archive: archive, passphrase: passphrase, destination: zipURL)
-        defer { var key = masterKey; key.wipe() }
+        defer { masterKey.wipe() }
         let entries = try await ProfileBackupImport.listEntries(archive: zipURL)
         try ProfileBackupImport.validateArchiveEntries(entries)
         for entry in entries where !isAllowedEntry(entry) {
@@ -197,23 +238,38 @@ enum EncryptedProfileBackup {
         }
 
         let extractedVault = extraction.appendingPathComponent("vault", isDirectory: true)
-        let temporaryManifest = ProfileSecurityManifest(
-            formatVersion: ProfileSecurityManifest.currentFormatVersion,
+        // Verify through the real passphrase path instead of a temporary
+        // security.json holding the raw master key: a crash mid-restore then
+        // leaves only a manifest that needs the passphrase. The wrapping key
+        // is derived once and reused for the verification unlock.
+        let salt = try ProfileVaultCrypto.randomBytes(count: ProfileVaultCrypto.saltByteCount)
+        var wrappingKey = try ProfileVaultCrypto.derivePassphraseKey(
+            passphrase: passphrase, salt: salt)
+        defer { wrappingKey.wipe() }
+        let wrappedKey = try ProfileVaultCrypto.wrapMasterKey(masterKey, with: wrappingKey)
+        let finalManifest = ProfileSecurityManifest(
+            formatVersion: ProfileSecurityManifest.baseFormatVersion,
             profileID: newProfileID,
             publicLabel: "Protected Profile",
-            protectionMode: .local,
-            kdf: nil,
-            localMasterKey: masterKey,
-            wrappedMasterKey: nil,
+            protectionMode: .passphrase,
+            kdf: .init(
+                algorithm: "PBKDF2-HMAC-SHA256",
+                rounds: ProfileVaultCrypto.pbkdf2Rounds,
+                salt: salt),
+            localMasterKey: nil,
+            wrappedMasterKey: wrappedKey,
             quickUnlockEnabled: false,
             createdAt: manifest.profileCreatedAt,
             updatedAt: Date())
-        try writeSecurityManifest(temporaryManifest, to: extractedVault)
+        try writeSecurityManifest(finalManifest, to: extractedVault)
         let verificationStore = ProfileVaultStore(
             rootProvider: { extractedVault },
             profileIDProvider: { newProfileID },
             migrateLegacyData: false)
-        guard let verificationSession = try verificationStore.prepareForLaunch(),
+        let derivedWrappingKey = wrappingKey
+        verificationStore.passphraseKeyDeriver = { _, _, _ in derivedWrappingKey }
+        _ = try verificationStore.prepareForLaunch()
+        guard let verificationSession = try? verificationStore.unlock(passphrase: passphrase),
               try verificationSession.database.integrityCheck()
         else { throw BackupError.integrityCheckFailed }
         let assets = try verificationSession.database.allAssetMetadata()
@@ -237,25 +293,6 @@ enum EncryptedProfileBackup {
         try verificationSession.database.checkpoint()
         verificationStore.lockVault()
 
-        let salt = try ProfileVaultCrypto.randomBytes(count: ProfileVaultCrypto.saltByteCount)
-        let wrappingKey = try ProfileVaultCrypto.derivePassphraseKey(
-            passphrase: passphrase, salt: salt)
-        let finalManifest = ProfileSecurityManifest(
-            formatVersion: ProfileSecurityManifest.currentFormatVersion,
-            profileID: newProfileID,
-            publicLabel: "Protected Profile",
-            protectionMode: .passphrase,
-            kdf: .init(
-                algorithm: "PBKDF2-HMAC-SHA256",
-                rounds: ProfileVaultCrypto.pbkdf2Rounds,
-                salt: salt),
-            localMasterKey: nil,
-            wrappedMasterKey: try ProfileVaultCrypto.wrapMasterKey(masterKey, with: wrappingKey),
-            quickUnlockEnabled: false,
-            createdAt: manifest.profileCreatedAt,
-            updatedAt: Date())
-        try writeSecurityManifest(finalManifest, to: extractedVault)
-
         // A fresh storage root (new Mac, Default-only install) has no profiles/
         // parent yet; create it, then make the profile folder itself exclusively.
         try manager.createDirectory(
@@ -277,6 +314,44 @@ enum EncryptedProfileBackup {
                 name: finalManifest.publicLabel,
                 createdAt: manifest.profileCreatedAt,
                 isProtected: true))
+    }
+
+    /// Links (or, across volumes, copies) the snapshot's asset files and the
+    /// recovery copies into `staged`. Asset files are immutable once written
+    /// (rotation replaces them by rename), so a hard link freezes exactly the
+    /// bytes the snapshot's rows describe even if the live file is deleted or
+    /// re-keyed afterwards.
+    private static func stage(
+        assetIDs: [String], from store: ProfileVaultStore, into staged: URL
+    ) throws {
+        let manager = FileManager.default
+        func freeze(_ source: URL, to target: URL) throws {
+            try manager.createDirectory(
+                at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if link(source.path, target.path) != 0 {
+                try manager.copyItem(at: source, to: target)
+            }
+        }
+        for id in assetIDs {
+            let source = store.assetsURL
+                .appendingPathComponent(String(id.prefix(2)), isDirectory: true)
+                .appendingPathComponent("\(id).tsasset")
+            guard manager.fileExists(atPath: source.path) else {
+                throw BackupError.assetInventoryMismatch
+            }
+            try freeze(source, to: staged
+                .appendingPathComponent("assets", isDirectory: true)
+                .appendingPathComponent(String(id.prefix(2)), isDirectory: true)
+                .appendingPathComponent("\(id).tsasset"))
+        }
+        let recoveryRoot = store.recoveryURL
+        for file in try recursiveFiles(at: recoveryRoot) {
+            let relative = file.path.dropFirst(recoveryRoot.path.count)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            try freeze(file, to: staged
+                .appendingPathComponent("recovery", isDirectory: true)
+                .appendingPathComponent(relative))
+        }
     }
 
     private static func isAllowedEntry(_ entry: String) -> Bool {

@@ -474,4 +474,52 @@ final class ProfileBackupTests: XCTestCase {
             Data("FROM STORES".utf8),
             "app-support is copied second, so the first-party stores win file collisions")
     }
+
+    func testImportRestoresADefaultBackupThatHasNoDotTurbosparkSide() async throws {
+        let machineRoot = root.appendingPathComponent("machine-lean", isDirectory: true)
+        try makeFile("settings.json", contents: "{\"lean\":true}", under: machineRoot)
+        let archive = root.appendingPathComponent("lean-roundtrip.zip")
+        _ = try await ProfileBackup.export(
+            profile: UserProfileStore.defaultProfile,
+            machineRoot: machineRoot,
+            turbosparkHome: root.appendingPathComponent("never-created/.turbospark"),
+            destination: archive,
+            appVersion: "test")
+
+        let destination = root.appendingPathComponent("restored-lean", isDirectory: true)
+        let restored = try await ProfileBackupImport.install(
+            archive: archive, destination: destination)
+        XCTAssertEqual(restored.layout, .defaultTwoRoot)
+        XCTAssertEqual(
+            try bytes(destination.appendingPathComponent("settings.json")),
+            Data("{\"lean\":true}".utf8))
+    }
+
+    func testImportStillRefusesATwoRootBackupWithNeitherSide() async throws {
+        let staging = root.appendingPathComponent("empty-sides", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let manifest = ProfileBackup.Manifest(
+            formatVersion: ProfileBackup.formatVersion,
+            kind: ProfileBackup.manifestKind,
+            profileID: UserProfileStore.defaultProfileID,
+            profileName: "Default",
+            profileCreatedAt: Date(timeIntervalSince1970: 0),
+            isDefault: true,
+            layout: .defaultTwoRoot,
+            exportedAt: Date(timeIntervalSince1970: 0),
+            appVersion: "test",
+            contents: [],
+            includedCategories: nil)
+        try JSONEncoder().encode(manifest).write(
+            to: staging.appendingPathComponent(ProfileBackup.manifestFileName))
+        let archive = root.appendingPathComponent("empty-sides.zip")
+        try await ProfileBackup.runDitto(
+            arguments: ["-c", "-k", staging.path, archive.path], step: "test-zip")
+        do {
+            _ = try await ProfileBackupImport.install(
+                archive: archive, destination: root.appendingPathComponent("never"))
+            XCTFail("a backup with neither side must not restore")
+        } catch ProfileBackupImport.ImportError.layoutCorrupt {
+        }
+    }
 }

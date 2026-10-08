@@ -101,9 +101,17 @@ public final class ProfileVaultCoordinator: ObservableObject {
         AppChatFileStore.flush()
         let displayName = model?.currentProfile.name ?? UserProfileStore.active.name
         try ProfileRepository.shared.save(displayName, key: "profile:display-name")
-        try await Task.detached(priority: .userInitiated) { [store] in
-            try store.protect(passphrase: passphrase, enableQuickUnlock: quickUnlock)
-        }.value
+        do {
+            try await Task.detached(priority: .userInitiated) { [store] in
+                try store.protect(passphrase: passphrase, enableQuickUnlock: quickUnlock)
+            }.value
+        } catch {
+            // A failed key rotation closes the session on purpose: the next
+            // passphrase unlock finishes it. Show the lock screen instead of
+            // leaving a model whose every vault call now throws.
+            if !store.isUnlocked { lockNow() }
+            throw error
+        }
         setActiveRegistryPrivacy(
             name: store.manifest?.publicLabel ?? "Protected Profile", isProtected: true)
         let legacyImages = AppStorageRoot.directory

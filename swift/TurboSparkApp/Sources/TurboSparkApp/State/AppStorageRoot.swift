@@ -119,7 +119,16 @@ public enum AppStorageRoot {
     /// absolute paths and remote URLs retain their existing meaning.
     public static func resolveStoredPath(_ path: String) -> String {
         if ManagedAssetStore.assetID(from: path) != nil {
-            return (try? ManagedAssetStore.shared.materializedURL(for: path).path) ?? ""
+            do {
+                return try ManagedAssetStore.shared.materializedURL(for: path).path
+            } catch {
+                // The empty path is kept for callers that cannot take an
+                // optional, but the cause must name the asset or every later
+                // turn fails with an unattributable `image : ...` error.
+                AppJSONStore.recordReadFailure(
+                    label: "Managed file \(path.suffix(12))", error: error)
+                return ""
+            }
         }
         let expanded = (path as NSString).expandingTildeInPath
         if expanded.hasPrefix("/") || URL(string: expanded)?.scheme != nil {

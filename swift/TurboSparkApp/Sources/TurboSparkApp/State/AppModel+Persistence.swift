@@ -120,7 +120,9 @@ extension AppModel {
         self.serverHost = settings.serverHost
         self.serverFavorites = settings.serverFavorites
         self.serverPinnedPort = settings.serverPinnedPort
-        self.serverAPIKeyInput = ServerKeychain.loadKey() ?? ""
+        let serverKeyRead = ServerKeychain.readKey()
+        self.serverAPIKeyInput = serverKeyRead.value ?? ""
+        self.serverKeyLoadFailed = serverKeyRead.isError
         self.serverEmbeddingModelInput = settings.serverEmbeddingModel
         self.hfEndpointInput = settings.hfEndpoint
         if !settings.hfEndpoint.isEmpty {
@@ -277,8 +279,20 @@ extension AppModel {
         // The API key follows its own storage: Keychain, written only when
         // the field changed, so a persist of unrelated settings does not
         // touch the item.
-        if serverAPIKeyInput != (ServerKeychain.loadKey() ?? "") {
-            ServerKeychain.saveKey(serverAPIKeyInput)
+        // A failed read (locked or denied Keychain) must not look like "no
+        // key": that used to delete the stored key once access came back.
+        switch KeychainSecretSync.action(
+            current: ServerKeychain.readKey(), input: serverAPIKeyInput,
+            loadFailed: serverKeyLoadFailed)
+        {
+        case .none: break
+        case let .save(key):
+            if ServerKeychain.saveKey(key) { serverKeyLoadFailed = false }
+        case .delete:
+            ServerKeychain.saveKey("")
+        case let .adopt(key):
+            serverAPIKeyInput = key
+            serverKeyLoadFailed = false
         }
         MacAppSettingsFileStore.save(settings)
     }
@@ -567,6 +581,14 @@ extension AppModel {
         // cannot race the persists below, then the shells' whole trees die.
         stopAllBackgroundWorkForShutdown()
         detachChatSessionFromServer()
+        // A vault lock discards this model but does not deallocate it until
+        // these tasks end. Left running, an hourly memory capture or a title
+        // pass keeps generating over in-memory plaintext (and holds the old
+        // engine session resident) until its next vault write throws.
+        memoryCaptureTask?.cancel()
+        titleGenerationTask?.cancel()
+        for task in goalIdleTimerTasks.values { task.cancel() }
+        goalIdleTimerTasks.removeAll()
         session = nil
 
         // A draft written before any chat existed lives outside `chats`, and

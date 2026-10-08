@@ -153,13 +153,18 @@ enum ProfileBackupImport {
                     step: "restore")
             }
         case .defaultTwoRoot:
+            var sidesRestored = 0
             for name in [ProfileBackup.dotTurbosparkDirectoryName,
                 ProfileBackup.appSupportDirectoryName] {
                 let source = extraction.appendingPathComponent(name, isDirectory: true)
                 var isDirectory: ObjCBool = false
+                // A machine that never created ~/.turbospark exports no
+                // dot-turbospark/ side. That is an empty side, not corruption;
+                // an archive with neither side still is.
                 guard fileManager.fileExists(atPath: source.path, isDirectory: &isDirectory),
                     isDirectory.boolValue
-                else { throw ImportError.layoutCorrupt }
+                else { continue }
+                sidesRestored += 1
                 for entry in try ProfileBackup.topLevelEntries(of: source) {
                     try await ProfileBackup.runDitto(
                         arguments: [
@@ -169,6 +174,7 @@ enum ProfileBackupImport {
                         step: "restore")
                 }
             }
+            guard sidesRestored > 0 else { throw ImportError.layoutCorrupt }
         }
         return manifest
     }
