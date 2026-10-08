@@ -78,6 +78,18 @@ public struct ChatMessage: Codable, Sendable, Equatable {
 
     private enum PartKind: String, Codable { case text, image }
 
+    /// One part as Rust serializes it (crates/ffi/src/wire.rs WirePart). The
+    /// Rust side has no skip_serializing_if, so an image part always carries
+    /// both `path` and `base64` with the unused one as JSON null. A
+    /// `[String: String]` decode throws on that null, so every field is
+    /// optional here. Encoding stays on the dictionary form above.
+    private struct WirePart: Decodable {
+        var type: String?
+        var text: String?
+        var path: String?
+        var base64: String?
+    }
+
     /// **IMAGES ARE PREPENDED, NOT APPENDED, and that is matched to the
     /// reference rather than chosen.** `apply_chat_template(processor,
     /// config, question, num_images=1)` builds `[image, text]`, so the marker
@@ -114,19 +126,19 @@ public struct ChatMessage: Codable, Sendable, Equatable {
             images = []
             return
         }
-        let parts = try container.decodeIfPresent([[String: String]].self, forKey: .content) ?? []
+        let parts = try container.decodeIfPresent([WirePart].self, forKey: .content) ?? []
         var text = ""
         var decoded: [ChatImage] = []
         for part in parts {
-            switch part["type"] {
+            switch part.type {
             case PartKind.image.rawValue:
-                if let p = part["path"] {
+                if let p = part.path {
                     decoded.append(.path(p))
-                } else if let b = part["base64"] {
+                } else if let b = part.base64 {
                     decoded.append(.base64(b))
                 }
             default:
-                text += part["text"] ?? ""
+                text += part.text ?? ""
             }
         }
         content = text
