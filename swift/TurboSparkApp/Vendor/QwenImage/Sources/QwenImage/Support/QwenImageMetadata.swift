@@ -36,6 +36,7 @@ public enum QwenImageModelMetadata {
 /// Errors surfaced by the Qwen-Image-2.1 pipeline.
 public enum QwenImagePipelineError: Error, Sendable, LocalizedError {
   case invalidDimensions(String)
+  case invalidSteps(Int)
   case invalidModelPath(String)
   case missingSnapshotComponent(String)
   case weightsMissing(String)
@@ -50,6 +51,8 @@ public enum QwenImagePipelineError: Error, Sendable, LocalizedError {
     switch self {
     case .invalidDimensions(let reason):
       return "Invalid image dimensions: \(reason)"
+    case .invalidSteps(let steps):
+      return "Invalid step count \(steps): at least 1 denoising step is required."
     case .invalidModelPath(let path):
       return "Invalid Qwen-Image model path: \(path)"
     case .missingSnapshotComponent(let component):

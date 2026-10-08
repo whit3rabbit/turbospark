@@ -11,6 +11,7 @@ enum HuggingFaceHubError: Error, LocalizedError {
   case invalidRepoId(String)
   case snapshotNotFound(String)
   case noFilesMatched(repoId: String, patterns: [String])
+  case unsafeFilePath(String)
 
   var errorDescription: String? {
     switch self {
@@ -20,6 +21,8 @@ enum HuggingFaceHubError: Error, LocalizedError {
       return "Snapshot not found for: \(repoId)"
     case .noFilesMatched(let repoId, let patterns):
       return "No files matched for '\(repoId)' (patterns: \(patterns.joined(separator: ", ")))"
+    case .unsafeFilePath(let path):
+      return "Refusing unsafe file path from the Hub listing: \(path)"
     }
   }
 }
@@ -130,6 +133,12 @@ enum HuggingFaceHub {
         return patterns.contains { fnmatch($0, filePath, 0) == 0 }
       }
 
+    // A custom HF_ENDPOINT mirror controls these paths and they become
+    // temp-file destinations, so refuse anything that could escape tempRoot.
+    for filePath in filePaths where !isSafeRelativeListingPath(filePath) {
+      throw HuggingFaceHubError.unsafeFilePath(filePath)
+    }
+
     guard !filePaths.isEmpty else {
       throw HuggingFaceHubError.noFilesMatched(repoId: repoId, patterns: patterns)
     }
@@ -176,6 +185,12 @@ enum HuggingFaceHub {
 
     progressHandler?(progress)
     return snapshotURL
+  }
+
+  static func isSafeRelativeListingPath(_ path: String) -> Bool {
+    guard !path.isEmpty, !path.hasPrefix("/"), !path.utf8.contains(0) else { return false }
+    return !path.split(separator: "/", omittingEmptySubsequences: false)
+      .contains { $0.isEmpty || $0 == "." || $0 == ".." }
   }
 
   private static func isCommitHash(_ revision: String) -> Bool {

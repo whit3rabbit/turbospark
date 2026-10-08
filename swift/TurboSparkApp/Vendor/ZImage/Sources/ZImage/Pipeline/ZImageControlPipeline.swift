@@ -184,7 +184,7 @@ public struct ZImageControlGenerationRequest {
 }
 
 public class ZImageControlPipeline: @unchecked Sendable {
-  public enum PipelineError: Error {
+  public enum PipelineError: Error, LocalizedError {
     case notImplemented
     case tokenizerNotLoaded
     case textEncoderNotLoaded
@@ -194,6 +194,20 @@ public class ZImageControlPipeline: @unchecked Sendable {
     case controlImageNotFound(URL)
     case controlImageLoadFailed(String)
     case outputPathRequired
+
+    public var errorDescription: String? {
+      switch self {
+      case .notImplemented: return "ZImage control: not implemented."
+      case .tokenizerNotLoaded: return "ZImage control: tokenizer not loaded."
+      case .textEncoderNotLoaded: return "ZImage control: text encoder not loaded."
+      case .transformerNotLoaded: return "ZImage control: transformer not loaded."
+      case .vaeNotLoaded: return "ZImage control: VAE not loaded."
+      case .weightsMissing(let reason): return "ZImage control: weights missing: \(reason)"
+      case .controlImageNotFound(let url): return "ZImage control: image not found: \(url.path)"
+      case .controlImageLoadFailed(let reason): return "ZImage control: image load failed: \(reason)"
+      case .outputPathRequired: return "ZImage control: an output path is required."
+      }
+    }
   }
 
   private var logger: Logger

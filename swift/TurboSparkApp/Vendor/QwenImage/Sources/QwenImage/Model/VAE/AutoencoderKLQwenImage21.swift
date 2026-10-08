@@ -349,7 +349,7 @@ final class QwenImage21Decoder3d: Module {
     var blocks: [QwenImage21ResidualUpBlock] = []
     for (index, (inDim, outDim)) in zip(dims, dims.dropFirst()).enumerated() {
       let upFlag = index != dimMult.count - 1
-      let temporal = upFlag ? (temporalUpsampleFlags[index] ?? false) : false
+      let temporal = upFlag ? (index < temporalUpsampleFlags.count ? temporalUpsampleFlags[index] : false) : false
       blocks.append(
         QwenImage21ResidualUpBlock(
           inDim: inDim, outDim: outDim,

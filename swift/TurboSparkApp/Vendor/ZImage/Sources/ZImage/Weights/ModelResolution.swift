@@ -49,7 +49,9 @@ public enum ModelResolution {
       return false
     }
 
-    let baseSpec = String(modelSpec.split(separator: ":")[0])
+    // A spec made only of colons splits to nothing; indexing [0] trapped.
+    guard let baseSpecPart = modelSpec.split(separator: ":").first else { return false }
+    let baseSpec = String(baseSpecPart)
     let parts = baseSpec.split(separator: "/")
 
     guard parts.count == 2 else {
@@ -199,9 +201,35 @@ public enum ModelResolution {
       return fm.fileExists(atPath: modelIndex.path) || fm.fileExists(atPath: configFile.path)
     }
 
+    // A snapshot cut short by a cancelled or failed download has some
+    // component shards but not all. Treating it as a cache hit meant
+    // ensureSnapshot never ran again, so the download was never resumed.
+    // Every safetensors index found must have all of its shards on disk.
+    func indexedShardsComplete(_ directory: URL) -> Bool {
+      var dirs = [directory]
+      let contents = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+      for url in contents {
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue { dirs.append(url) }
+      }
+      for dir in dirs {
+        let entries = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        for index in entries where index.lastPathComponent.hasSuffix(".safetensors.index.json") {
+          guard let data = try? Data(contentsOf: index),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let weightMap = object["weight_map"] as? [String: String]
+          else { return false }
+          for shard in Set(weightMap.values) {
+            if !fm.fileExists(atPath: dir.appendingPathComponent(shard).path) { return false }
+          }
+        }
+      }
+      return true
+    }
+
     func isValidCacheDirectory(_ directory: URL) -> Bool {
       if requireWeights {
-        guard directoryHasSafetensors(directory) else { return false }
+        guard directoryHasSafetensors(directory), indexedShardsComplete(directory) else { return false }
       } else {
         guard directoryHasModelIndexOrConfig(directory) else { return false }
       }

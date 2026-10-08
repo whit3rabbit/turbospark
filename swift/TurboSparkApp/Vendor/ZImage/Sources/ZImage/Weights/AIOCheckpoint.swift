@@ -160,7 +160,9 @@ enum ZImageAIOCheckpoint {
 
   private static func findTextEncoderPrefix(in names: Set<String>) -> String? {
     // Look for: text_encoders.<name>.transformer.model.*
-    for name in names {
+    // Set order is random per process; sort so the same file always picks the
+    // same encoder prefix.
+    for name in names.sorted() {
       guard name.hasPrefix("text_encoders.") else { continue }
       let parts = name.split(separator: ".", omittingEmptySubsequences: false)
       guard parts.count >= 4 else { continue }

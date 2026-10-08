@@ -118,10 +118,14 @@ public struct QwenImage21Scheduler: Sendable {
     }
 
     // 3. Stretch so the final sigma terminates at shift_terminal.
-    if let terminal = config.shiftTerminal, terminal > 0, let last = sigmas.last {
+    if let terminal = config.shiftTerminal, terminal > 0, !sigmas.isEmpty {
       let oneMinusZ = sigmas.map { 1 - $0 }
       let scaleFactor = oneMinusZ[oneMinusZ.count - 1] / (1 - terminal)
-      sigmas = oneMinusZ.map { 1 - $0 / scaleFactor }
+      // A one-step ladder is [1.0], so 1 - sigma is 0 and the stretch would
+      // be 0/0 = NaN. Leave it unstretched ([1.0, 0.0] after the append).
+      if scaleFactor != 0 {
+        sigmas = oneMinusZ.map { 1 - $0 / scaleFactor }
+      }
     }
 
     self.numTrainTimesteps = config.numTrainTimesteps

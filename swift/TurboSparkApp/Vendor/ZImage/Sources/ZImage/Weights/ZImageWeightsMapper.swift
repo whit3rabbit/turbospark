@@ -152,7 +152,11 @@ public struct ZImageWeightsMapper {
     }
 
     let contents = try fm.contentsOfDirectory(at: componentDir, includingPropertiesForKeys: nil)
-    let safetensorFiles = contents.filter { $0.pathExtension == "safetensors" }
+    // Skip AppleDouble "._*" sidecars that macOS leaves on FAT/exFAT drives;
+    // MLX.loadArrays throws on them.
+    let safetensorFiles = contents.filter {
+      $0.pathExtension == "safetensors" && !$0.lastPathComponent.hasPrefix("._")
+    }
 
     for file in safetensorFiles {
       let weights = try MLX.loadArrays(url: file)

@@ -54,6 +54,23 @@ enum PeakMemory {
         guard result == KERN_SUCCESS else { return nil }
         return info.phys_footprint
     }
+
+    /// The kernel-maintained lifetime peak of the physical footprint. A sampled
+    /// value misses transients that rise and fall between samples (the VAE
+    /// decode window allocates float32 activations and returns them to the OS
+    /// before the next sample), so the frozen peak must come from here.
+    static func lifetimePeakFootprintBytes() -> UInt64? {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPointer in
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), intPointer, &count)
+            }
+        }
+        guard result == KERN_SUCCESS, info.ledger_phys_footprint_peak > 0 else { return nil }
+        return UInt64(info.ledger_phys_footprint_peak)
+    }
 }
 
 @main
@@ -130,6 +147,9 @@ struct ZImageMLXBenchmark {
         breakdown.finish()
         if let footprint = PeakMemory.currentFootprintBytes() {
             peakMemoryBytes = max(peakMemoryBytes, footprint)
+        }
+        if let lifetimePeak = PeakMemory.lifetimePeakFootprintBytes() {
+            peakMemoryBytes = max(peakMemoryBytes, lifetimePeak)
         }
         try png.write(to: outputURL)
         let elapsed = Date().timeIntervalSince(startedAt)

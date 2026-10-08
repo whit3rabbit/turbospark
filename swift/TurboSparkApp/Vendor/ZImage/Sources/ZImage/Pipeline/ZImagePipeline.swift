@@ -71,7 +71,7 @@ public struct ZImageGenerationRequest: Sendable {
 }
 
 public final class ZImagePipeline: @unchecked Sendable {
-  public enum PipelineError: Error, Sendable {
+  public enum PipelineError: Error, Sendable, LocalizedError {
     case notImplemented
     case tokenizerNotLoaded
     case invalidDimensions(String)
@@ -82,6 +82,21 @@ public final class ZImagePipeline: @unchecked Sendable {
     case weightsMissing(String)
     case modelNotLoaded
     case loraError(LoRAError)
+
+    public var errorDescription: String? {
+      switch self {
+      case .notImplemented: return "ZImage: not implemented."
+      case .tokenizerNotLoaded: return "ZImage: tokenizer not loaded."
+      case .invalidDimensions(let reason): return "ZImage: invalid dimensions: \(reason)"
+      case .invalidModelPath(let reason): return "ZImage: invalid model path: \(reason)"
+      case .textEncoderNotLoaded: return "ZImage: text encoder not loaded."
+      case .transformerNotLoaded: return "ZImage: transformer not loaded."
+      case .vaeNotLoaded: return "ZImage: VAE not loaded."
+      case .weightsMissing(let reason): return "ZImage: weights missing: \(reason)"
+      case .modelNotLoaded: return "ZImage: model not loaded."
+      case .loraError(let error): return "ZImage: LoRA error: \(error.localizedDescription)"
+      }
+    }
   }
 
   private var logger: Logger

@@ -74,7 +74,7 @@ enum QwenImageWeightsMapper {
     _ weights: [String: MLXArray],
     to model: Module,
     logger: Logger
-  ) {
+  ) throws {
     MLXNN.quantize(model: model) { path, _ in
       // Sequential children appear as `x.layers.0` while the checkpoint
       // stores `x.0.scales`.
@@ -85,7 +85,7 @@ enum QwenImageWeightsMapper {
       guard candidates.contains(where: { weights[$0] != nil }) else { return nil }
       return (64, 4, QuantizationMode.affine)
     }
-    applyParameters(weights, to: model, logger: logger)
+    try applyParameters(weights, to: model, logger: logger)
   }
 
   /// Applies dense weights (VAE) with a layout fallback for PyTorch-order
@@ -94,8 +94,8 @@ enum QwenImageWeightsMapper {
     _ weights: [String: MLXArray],
     to model: Module,
     logger: Logger
-  ) {
-    applyParameters(weights, to: model, transposeConvIfNeeded: true, logger: logger)
+  ) throws {
+    try applyParameters(weights, to: model, transposeConvIfNeeded: true, logger: logger)
   }
 
   private static func applyParameters(
@@ -103,7 +103,7 @@ enum QwenImageWeightsMapper {
     to model: Module,
     transposeConvIfNeeded: Bool = false,
     logger: Logger
-  ) {
+  ) throws {
     let parameters = model.parameters().flattened()
     var updates: [(String, MLXArray)] = []
     updates.reserveCapacity(parameters.count)
@@ -129,7 +129,9 @@ enum QwenImageWeightsMapper {
 
     if updates.isEmpty {
       logger.error("no checkpoint tensors matched the module tree")
-      return
+      // Returning here left the layers randomly initialized and the model
+      // marked loaded, so every generation produced a noise image.
+      throw QwenImagePipelineError.weightsMissing("no checkpoint tensors matched the module tree")
     }
     if !missing.isEmpty {
       logger.warning("module parameters without checkpoint tensors (\(missing.count)): \(missing.prefix(8).joined(separator: ", "))")
@@ -140,6 +142,7 @@ enum QwenImageWeightsMapper {
       try model.update(parameters: nested, verify: [.shapeMismatch])
     } catch {
       logger.error("failed to apply weights: \(error)")
+      throw QwenImagePipelineError.weightsMissing("failed to apply weights: \(error)")
     }
   }
 }

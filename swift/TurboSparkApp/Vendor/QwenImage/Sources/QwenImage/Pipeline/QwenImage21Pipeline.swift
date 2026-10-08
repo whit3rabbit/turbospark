@@ -141,7 +141,7 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
       resolved.appending(path: "text_encoder", directoryHint: .isDirectory),
       skipPrefixes: ["vision_tower.", "language_model.lm_head"]
     )
-    QwenImageWeightsMapper.apply(encoderWeights, to: encoder, logger: logger)
+    try QwenImageWeightsMapper.apply(encoderWeights, to: encoder, logger: logger)
     textEncoder = encoder
     Memory.clearCache()
     try Task.checkCancellation()
@@ -151,7 +151,7 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
     let loadedTransformer = QwenImage21Transformer2DModel(configuration: componentConfigs.transformer)
     let transformerWeights = try QwenImageWeightsMapper.loadComponent(
       resolved.appending(path: "transformer", directoryHint: .isDirectory))
-    QwenImageWeightsMapper.apply(transformerWeights, to: loadedTransformer, logger: logger)
+    try QwenImageWeightsMapper.apply(transformerWeights, to: loadedTransformer, logger: logger)
     transformer = loadedTransformer
     Memory.clearCache()
     try Task.checkCancellation()
@@ -161,7 +161,7 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
     let loadedVAE = AutoencoderKLQwenImage21(configuration: componentConfigs.vae)
     let vaeWeights = try QwenImageWeightsMapper.loadComponent(
       resolved.appending(path: "vae", directoryHint: .isDirectory))
-    QwenImageWeightsMapper.applyDense(vaeWeights, to: loadedVAE, logger: logger)
+    try QwenImageWeightsMapper.applyDense(vaeWeights, to: loadedVAE, logger: logger)
     vae = loadedVAE
     Memory.clearCache()
 
@@ -205,6 +205,11 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
     guard width > 0, height > 0 else {
       throw QwenImagePipelineError.invalidDimensions(
         "\(request.width)x\(request.height) collapses to zero at multiple \(multiple)")
+    }
+
+    // The scheduler preconditions steps > 0; surface a throw instead of a trap.
+    guard request.steps >= 1 else {
+      throw QwenImagePipelineError.invalidSteps(request.steps)
     }
 
     try await loadModel(modelSpec: request.model, progressHandler: progressHandler)

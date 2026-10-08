@@ -38,10 +38,14 @@ public final class SafeTensorsReader {
       throw SafeTensorsReaderError.fileTooSmall(fileURL)
     }
 
-    let headerLength = mappedData.prefix(8).withUnsafeBytes { rawBuffer -> Int in
-      let value = rawBuffer.load(as: UInt64.self)
-      return Int(UInt64(littleEndian: value))
+    // Compare as UInt64 first: Int(UInt64) traps when the top bit is set.
+    let rawHeaderLength = mappedData.prefix(8).withUnsafeBytes { rawBuffer -> UInt64 in
+      UInt64(littleEndian: rawBuffer.loadUnaligned(as: UInt64.self))
     }
+    guard rawHeaderLength <= UInt64(mappedData.count - 8) else {
+      throw SafeTensorsReaderError.invalidHeaderLength(fileURL)
+    }
+    let headerLength = Int(rawHeaderLength)
 
     let headerStart = 8
     let headerEnd = headerStart + headerLength
@@ -106,18 +110,22 @@ public final class SafeTensorsReader {
       let startOffset = try SafeTensorsReader.parseOffset(offsetsAny[0], tensorName: key)
       let endOffset = try SafeTensorsReader.parseOffset(offsetsAny[1], tensorName: key)
 
-      guard endOffset >= startOffset else {
+      guard startOffset >= 0, endOffset >= startOffset else {
         throw SafeTensorsReaderError.invalidOffsets(name: key)
       }
 
       let byteCount = endOffset - startOffset
-      let expectedBytes = SafeTensorsReader.expectedByteCount(shape: shape, dtype: dtype)
-      guard byteCount == expectedBytes else {
+      // Crafted headers can carry negative or overflowing dimensions; refuse
+      // them instead of trapping on integer overflow.
+      guard let expectedBytes = SafeTensorsReader.expectedByteCount(shape: shape, dtype: dtype),
+        byteCount == expectedBytes
+      else {
         throw SafeTensorsReaderError.invalidShape(name: key)
       }
 
-      let absoluteOffset = dataStartOffset + startOffset
-      guard absoluteOffset + byteCount <= mappedData.count else {
+      let (absoluteOffset, offsetOverflow) = dataStartOffset.addingReportingOverflow(startOffset)
+      let (absoluteEnd, endOverflow) = absoluteOffset.addingReportingOverflow(byteCount)
+      guard !offsetOverflow, !endOverflow, absoluteEnd <= mappedData.count else {
         throw SafeTensorsReaderError.invalidOffsets(name: key)
       }
 
@@ -204,9 +212,16 @@ public final class SafeTensorsReader {
     throw SafeTensorsReaderError.invalidOffsets(name: tensorName)
   }
 
-  private static func expectedByteCount(shape: [Int], dtype: DType) -> Int {
-    let elements = shape.reduce(1, *)
-    return elements * dtype.size
+  private static func expectedByteCount(shape: [Int], dtype: DType) -> Int? {
+    var elements = 1
+    for dimension in shape {
+      guard dimension >= 0 else { return nil }
+      let (product, overflow) = elements.multipliedReportingOverflow(by: dimension)
+      if overflow { return nil }
+      elements = product
+    }
+    let (bytes, overflow) = elements.multipliedReportingOverflow(by: dtype.size)
+    return overflow ? nil : bytes
   }
 
   private static func mapDType(_ value: String) throws -> DType {

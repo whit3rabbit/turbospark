@@ -388,7 +388,6 @@ public enum ZImageFiles {
       var relative =
         uniqueFiles
         .map { file in file.contains("/") ? file : "\(componentDir)/\(file)" }
-        .filter { fm.fileExists(atPath: snapshot.appending(path: $0).path) }
 
       if let weightsVariant, !weightsVariant.isEmpty {
         let indexHasVariant = matchesWeightsVariant(
@@ -398,6 +397,17 @@ public enum ZImageFiles {
             matchesWeightsVariant(filename: ($0 as NSString).lastPathComponent, weightsVariant: weightsVariant)
           }
         }
+      }
+
+      // A shard the index names but the disk lacks (interrupted copy or
+      // download) must not be filtered away: the remaining shards would load
+      // and the missing layers would run with random weights. Report the
+      // component as unresolved instead.
+      let missing = relative.filter { !fm.fileExists(atPath: snapshot.appending(path: $0).path) }
+      if !missing.isEmpty {
+        logger?.warning(
+          "Weight index \(indexURL.lastPathComponent) lists missing shard(s): \(missing.sorted().joined(separator: ", "))")
+        return []
       }
 
       let selected = selectDeterministicGroup(

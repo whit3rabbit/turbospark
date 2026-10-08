@@ -478,8 +478,12 @@ public final class QwenImage21Transformer2DModel: Module {
 
         if let layerCache {
           // Only the text prefix is timestep-independent and cacheable.
-          layerCache.keys = keyRotated[0..., 0..., 0..<layout.textLength, 0...]
-          layerCache.values = value[0..., 0..., 0..<layout.textLength, 0...]
+          // `contiguous` forces compact copies: a bare slice is a view that
+          // keeps the whole full-sequence K/V buffer alive, so every layer
+          // would pin all ~4k image tokens (GBs across the layers) for all
+          // denoising steps instead of just the short text prefix.
+          layerCache.keys = MLX.contiguous(keyRotated[0..., 0..., 0..<layout.textLength, 0...])
+          layerCache.values = MLX.contiguous(value[0..., 0..., 0..<layout.textLength, 0...])
           MLX.eval(layerCache.keys!, layerCache.values!)
         }
 

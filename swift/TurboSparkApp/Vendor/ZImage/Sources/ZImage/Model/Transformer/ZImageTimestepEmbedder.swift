@@ -48,8 +48,11 @@ final class ZImageTimestepEmbedder: Module {
     let weight = mlp.0.weight
     let dtype: DType?
     if weight.dtype == .uint32, let quantized = mlp.0 as? QuantizedLinear {
-      // The packed plane is U32; compute in the scales precision.
-      dtype = quantized.scales.dtype
+      // The packed plane is U32; compute in the scales precision. Only affine
+      // scales are floats: mxfp4 scales are uint8, and casting the sinusoidal
+      // embedding to them makes quantizedMM throw (a fatalError in mlx-swift).
+      // Leave the input as is for the other modes.
+      dtype = quantized.mode == .affine ? quantized.scales.dtype : nil
     } else {
       switch weight.dtype {
       case .float16, .bfloat16, .float32, .float64:

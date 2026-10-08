@@ -34,6 +34,20 @@ final class QwenImageParityTests: XCTestCase {
     XCTAssertEqual(scheduler.timesteps[7], 20.0, accuracy: 1e-2)
   }
 
+  /// A one-step ladder is [1.0]; the stretch-to-terminal used to divide
+  /// 0/0 and produce a NaN timestep.
+  func testOneStepScheduleIsFiniteAndTerminatesAtZero() {
+    let scheduler = QwenImage21Scheduler(
+      numInferenceSteps: 1,
+      imageSequenceLength: 4096,
+      config: QwenImageSchedulerConfig()
+    )
+    XCTAssertEqual(scheduler.sigmas.count, 2)
+    XCTAssertEqual(scheduler.sigmas[0], 1.0, accuracy: 1e-6)
+    XCTAssertEqual(scheduler.sigmas[1], 0.0, accuracy: 1e-9)
+    XCTAssertTrue(scheduler.timesteps[0].isFinite)
+  }
+
   /// Reference values for N = 40 at a 4096-token image sequence
   /// (1024x1024), `mu = 0.693548`.
   func testSchedulerMatchesTheReferenceScheduleAtFortySteps() {

@@ -552,7 +552,7 @@ extension QwenTextEncoder {
         let src = cursor * hiddenDim
         rowValues.withUnsafeMutableBufferPointer { destPtr in
           replacementValues.withUnsafeBufferPointer { srcPtr in
-            memcpy(
+            _ = memcpy(
               destPtr.baseAddress! + dest,
               srcPtr.baseAddress! + src,
               hiddenDim * MemoryLayout<Float32>.size
