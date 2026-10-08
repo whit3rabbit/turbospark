@@ -39,6 +39,20 @@ enum HfEndpointResolution {
         }
     }
 
+    /// Hosts that may receive the Hugging Face bearer token from Swift-side
+    /// requests: the official site and its CDN/xet subdomains. A custom mirror
+    /// is deliberately NOT included, and neither is any redirect target
+    /// outside this set. https only, so the token is never sent in cleartext.
+    static func isTokenHost(_ url: URL?) -> Bool {
+        guard let url, url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else {
+            return false
+        }
+        for root in ["huggingface.co", "hf.co"] where host == root || host.hasSuffix("." + root) {
+            return true
+        }
+        return false
+    }
+
     /// Whether a non-empty input would be rejected by `isAcceptableMirror`.
     static func isRejectedInput(_ rawInput: String) -> Bool {
         let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)

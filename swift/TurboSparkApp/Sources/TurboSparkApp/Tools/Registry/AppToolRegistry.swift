@@ -691,7 +691,7 @@ public enum AppToolRegistry {
                             + "is installed (the app wires one at startup)."
                     ])
                 }
-                output = try await stopper(agentID)
+                output = try await stopper(agentID, chatID)
 
             case "askuserquestion", "ask_user_question", "ask_question", "question":
                 if AskUserQuestionExecutor.answerWaiter != nil {

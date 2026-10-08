@@ -137,6 +137,26 @@ enum SteeringVectorDownloader {
             completionHandler(.allow)
         }
 
+        /// Drops the bearer token when a redirect leaves the Hugging Face
+        /// hosts (or downgrades to http). URLSession's own cross-origin
+        /// stripping is not something to rely on for a credential.
+        static func redirectedRequest(_ proposed: URLRequest) -> URLRequest {
+            guard !HfEndpointResolution.isTokenHost(proposed.url) else { return proposed }
+            var stripped = proposed
+            stripped.setValue(nil, forHTTPHeaderField: "Authorization")
+            return stripped
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping (URLRequest?) -> Void
+        ) {
+            completionHandler(Self.redirectedRequest(request))
+        }
+
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
             guard !finished else { return }
             guard data.count <= maxBytes - receivedBytes else {
@@ -186,7 +206,10 @@ enum SteeringVectorDownloader {
     static func download(
         source: SteeringVectorSource,
         expectedHidden: Int?,
-        expectedLayers: Int?
+        expectedLayers: Int?,
+        // Injectable for tests (URLProtocol stub, fake token store).
+        configuration: URLSessionConfiguration = .default,
+        tokenProvider: () throws -> String? = { try TurboSparkCatalog.getHfToken() }
     ) async throws -> DownloadedSteeringVector {
         guard let url = source.downloadURL else {
             throw SteeringVectorDownloadError.invalidSource(
@@ -197,7 +220,8 @@ enum SteeringVectorDownloader {
         request.timeoutInterval = 120
         request.setValue("TurboSparkApp/steering-vector", forHTTPHeaderField: "User-Agent")
         do {
-            if let token = try TurboSparkCatalog.getHfToken(), !token.isEmpty {
+            // Only the official HF hosts ever see the token (see isTokenHost).
+            if HfEndpointResolution.isTokenHost(url), let token = try tokenProvider(), !token.isEmpty {
                 request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
             }
         } catch {
@@ -216,7 +240,7 @@ enum SteeringVectorDownloader {
                 file: file,
                 maxBytes: maxBytes,
                 completion: { continuation.resume(with: $0) })
-            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
             session.dataTask(with: request).resume()
             // The session retains its delegate until invalidated; without
             // this each download leaked the session and its connection pool.

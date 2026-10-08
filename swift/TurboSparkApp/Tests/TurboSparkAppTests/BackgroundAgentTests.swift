@@ -111,6 +111,46 @@ final class BackgroundAgentTests: XCTestCase {
         }
     }
 
+    func testAModelInAnotherChatCannotStopOrEnumerateAnAgentItDoesNotOwn() async {
+        let chatA = UUID(), chatB = UUID()
+        appModel.backgroundAgentRuns["bga_a"] = SubagentRunState(
+            id: "bga_a", mode: .background, chatID: chatA)
+        let task = Task<SubagentRunResult, Never> {
+            SubagentRunResult(
+                agentName: "explore", status: "completed", finalResponse: "",
+                totalTurns: 0, totalToolCalls: 0, durationSeconds: 0, runID: "r")
+        }
+        appModel.backgroundAgentTasks["bga_a"] = task
+
+        do {
+            _ = try await appModel.stopBackgroundAgent("bga_a", callerChatID: chatB)
+            XCTFail("Chat B must not stop chat A's agent.")
+        } catch {
+            // The caller's own typed id is echoed; what must not appear is a
+            // "Known ids" listing that includes A's run.
+            XCTAssertTrue("\(error)".contains("None are registered"), "The error must not list A's ids.")
+        }
+        XCTAssertFalse(task.isCancelled)
+        XCTAssertFalse(appModel.killedBackgroundAgentIDs.contains("bga_a"))
+
+        // A nil caller (no chat) owns only chat-less runs.
+        do {
+            _ = try await appModel.stopBackgroundAgent("bga_a", callerChatID: nil)
+            XCTFail("A chat-less caller must not stop chat A's agent.")
+        } catch {}
+        XCTAssertFalse(task.isCancelled)
+
+        // The owner can stop it, and sees it in the hint for an unknown id.
+        do {
+            _ = try await appModel.stopBackgroundAgent("bga_zzz", callerChatID: chatA)
+            XCTFail("unknown id")
+        } catch {
+            XCTAssertTrue("\(error)".contains("bga_a"))
+        }
+        _ = try? await appModel.stopBackgroundAgent("bga_a", callerChatID: chatA)
+        XCTAssertTrue(task.isCancelled)
+    }
+
     func testStoppingWhenNothingIsRegisteredNamesThat() async {
         do {
             _ = try await appModel.stopBackgroundAgent("bga_9")

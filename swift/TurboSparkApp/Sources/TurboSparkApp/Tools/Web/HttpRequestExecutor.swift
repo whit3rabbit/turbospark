@@ -191,6 +191,10 @@ public enum HttpRequestExecutor {
             // address the socket REALLY used is checked here and the
             // response is discarded unseen. This runs before the redirect
             // branch so a 3xx from a rebound host is not followed either.
+            // RESIDUAL RISK (see SWIFT_TOOLS.md, native HTTP client): this
+            // check runs AFTER the request was sent, so a rebound host has
+            // already received it; only the response is withheld. Closing
+            // the send needs a pinned Network.framework client.
             if let validateConnectedAddress {
                 try redirect.checkConnectedAddresses(validateConnectedAddress)
             }

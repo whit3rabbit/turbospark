@@ -139,7 +139,13 @@ public final class AppModel: ObservableObject {
     @Published public var typeSafeServer: OpenKindServer?
     @Published public var typeSafeBusy = false
     @Published public var typeSafePort = "18080"
-    @Published public var typeSafeAPIKeyInput = TypeSafeKeychain.loadKey() ?? ""
+    /// One launch-time read feeds both the field and the failure flag below, so
+    /// a denied Keychain prompt is shown once, not twice.
+    private static let initialTypeSafeKeyRead = TypeSafeKeychain.readKey()
+    @Published public var typeSafeAPIKeyInput = AppModel.initialTypeSafeKeyRead.value ?? ""
+    /// True when the launch-time Keychain read failed (locked or denied): the
+    /// empty field then means "unknown", so Start must not delete the item.
+    var typeSafeKeyLoadFailed = AppModel.initialTypeSafeKeyRead.isError
     @Published public var typeSafeHealth = "Stopped"
     @Published public var typeSafeModels: [LocalModel] = []
     @Published public var typeSafeError: String?
@@ -167,6 +173,9 @@ public final class AppModel: ObservableObject {
     @Published public var serverPortIsValid = true
     @Published public var serverFavorites: [ServerFavorite] = []
     @Published public var serverLive = ServerLiveHistory()
+    /// True when the launch-time Keychain read failed (locked or denied): the
+    /// empty field then means "unknown", so persist must not delete the item.
+    var serverKeyLoadFailed = false
     @Published public var serverPinnedPort: UInt16 = 0
     /// Optional embedding model (.safetensors directory or alias) attached to the server.
     @Published public var serverEmbeddingModelInput: String = ""
@@ -985,13 +994,13 @@ public final class AppModel: ObservableObject {
             }
             return try await self.launchBackgroundAgent(launch)
         }
-        AppToolRegistry.backgroundAgentStopper = { [weak self] id in
+        AppToolRegistry.backgroundAgentStopper = { [weak self] id, callerChatID in
             guard let self else {
                 throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
                     NSLocalizedDescriptionKey: "Background subagents are unavailable: the app model is gone."
                 ])
             }
-            return try await self.stopBackgroundAgent(id)
+            return try await self.stopBackgroundAgent(id, callerChatID: callerChatID)
         }
         AppToolRegistry.observationRecaller = { [weak self] chatID, id, offset, maximum in
             guard let self else {

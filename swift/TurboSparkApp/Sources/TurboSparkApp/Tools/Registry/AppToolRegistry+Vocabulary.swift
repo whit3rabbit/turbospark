@@ -117,8 +117,10 @@ extension AppToolRegistry {
     public static var backgroundAgentLauncher: (@Sendable (BackgroundAgentLaunch) async throws -> String)?
 
     /// Stops a running background subagent by id, returning its final
-    /// status text. Throws for an id that is not a live background agent.
-    public static var backgroundAgentStopper: (@Sendable (String) async throws -> String)?
+    /// status text. Throws for an id that is not a live background agent
+    /// OWNED BY THE CALLING CHAT (second argument): another chat's agents are
+    /// neither stoppable nor listed in the error.
+    public static var backgroundAgentStopper: (@Sendable (String, UUID?) async throws -> String)?
 
     /// Installed by `AppModel` so registry execution can recall a normal
     /// on-disk observation or an encrypted Ghost observation without knowing

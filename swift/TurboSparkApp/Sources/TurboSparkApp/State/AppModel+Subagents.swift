@@ -264,6 +264,22 @@ extension AppModel {
         }
     }
 
+    /// Model-initiated stop: only agents launched from `callerChatID` are
+    /// visible. An id owned by another chat is reported exactly like an
+    /// unknown one, and the "Known ids" hint lists only the caller's own, so
+    /// a chat can neither enumerate nor kill another chat's runs.
+    func stopBackgroundAgent(_ id: String, callerChatID: UUID?) async throws -> String {
+        guard let state = backgroundAgentRuns[id], state.chatID == callerChatID else {
+            let known = backgroundAgentRuns.filter { $0.value.chatID == callerChatID }
+                .keys.sorted().joined(separator: ", ")
+            throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                NSLocalizedDescriptionKey: "No background subagent with id '\(id)'. "
+                    + (known.isEmpty ? "None are registered." : "Known ids: \(known).")
+            ])
+        }
+        return try await stopBackgroundAgent(id)
+    }
+
     /// Stops a running background subagent by id. The runner notices at its
     /// next `Task.isCancelled` check, keeps whatever it had answered, and
     /// the completion path reports the run as killed.

@@ -7,23 +7,24 @@ import Security
 /// it gates access to the server, and the hooks area's own rule ("never
 /// leak secrets") argues against a credential sitting in a plaintext JSON
 /// file beside every other preference. Generic-password item, service
-/// scoped to this app; a Keychain failure degrades to "no key restored"
-/// rather than blocking the server, which then simply starts without one.
+/// scoped to this app; a Keychain read failure degrades to "no key restored"
+/// (and blocks the destructive save path, see KeychainSecretSync) rather
+/// than blocking the server, which then simply starts without one.
 enum ServerKeychain {
     private static let service = "TurboSpark.server"
     private static let account = "server-api-key"
 
-    /// Reads the stored API key, or nil when none is stored (including any
-    /// Keychain error, which is not surfaced: the field simply starts empty).
-    static func loadKey() -> String? {
-        var query: [String: Any] = baseQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
+    /// Reads the stored API key, distinguishing "none stored" from a read
+    /// error (locked or denied Keychain) so callers never treat the latter as
+    /// an empty key.
+    static func readKey() -> KeychainReadResult {
+        KeychainReadResult.read(query: baseQuery)
+    }
 
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+    /// Convenience for callers without a destructive follow-up: nil for both
+    /// "none stored" and a read error.
+    static func loadKey() -> String? {
+        readKey().value
     }
 
     /// Stores (or replaces) the API key. An empty string deletes the item

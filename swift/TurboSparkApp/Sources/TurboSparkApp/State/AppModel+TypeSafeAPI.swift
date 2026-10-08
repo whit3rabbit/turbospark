@@ -16,11 +16,31 @@ extension AppModel {
         typeSafeBusy = true
         defer { typeSafeBusy = false }
         typeSafeError = nil
-        let key = typeSafeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard TypeSafeKeychain.saveKey(key) else {
-            typeSafeError = "Could not save the TypeSafe API key to Keychain."
-            return
+        let typed = typeSafeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Same rule as the server key: an unreadable Keychain must not turn
+        // an empty field into a delete of the stored key.
+        var effectiveKey = typed
+        switch KeychainSecretSync.action(
+            current: TypeSafeKeychain.readKey(), input: typed, loadFailed: typeSafeKeyLoadFailed)
+        {
+        case .none: break
+        case let .save(value):
+            guard TypeSafeKeychain.saveKey(value) else {
+                typeSafeError = "Could not save the TypeSafe API key to Keychain."
+                return
+            }
+            typeSafeKeyLoadFailed = false
+        case .delete:
+            guard TypeSafeKeychain.saveKey("") else {
+                typeSafeError = "Could not save the TypeSafe API key to Keychain."
+                return
+            }
+        case let .adopt(value):
+            typeSafeAPIKeyInput = value
+            typeSafeKeyLoadFailed = false
+            effectiveKey = value
         }
+        let key = effectiveKey
         let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/openkindd")
         let override = ProcessInfo.processInfo.environment["OPENKINDD_BINARY"]
         let binary = override ?? bundled.path
