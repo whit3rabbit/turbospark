@@ -277,4 +277,36 @@ final class WorktreeTests: XCTestCase {
         XCTAssertTrue(worktree.selectedCommitFiles.isEmpty)
         XCTAssertNil(worktree.selectedTimelineCommit)
     }
+
+    /// "View in Git pane" must stay a view-only retarget: the agent's project
+    /// root cannot move as a side effect, and reselecting the project restores
+    /// the pane to the project root.
+    @MainActor
+    func testSelectingWorktreeNeverMovesTheProjectRoot() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("wt-root-\(UUID().uuidString)")
+        let main = base.appendingPathComponent("main")
+        let other = base.appendingPathComponent("other")
+        try fm.createDirectory(at: main, withIntermediateDirectories: true)
+        try fm.createDirectory(at: other, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let model = AppModel()
+        defer { model.shutdown() }
+        let project = AppProject(name: "p", rootDirectoryPath: main.path)
+        model.projects = [project]
+        model.selectProject(id: project.id)
+        let worktree = try XCTUnwrap(model.worktree)
+        let mainCanonical = worktree.rootDirectoryPath
+
+        worktree.selectWorktree(path: other.path)
+        XCTAssertNotEqual(worktree.rootDirectoryPath, mainCanonical, "the Git pane retargets")
+        XCTAssertEqual(model.projects.first?.rootDirectoryPath, main.path,
+                       "the project (agent) root must not move")
+        XCTAssertEqual(model.selectedProject?.rootDirectoryPath, main.path)
+
+        model.selectProject(id: nil)
+        model.selectProject(id: project.id)
+        XCTAssertEqual(model.worktree?.rootDirectoryPath, mainCanonical)
+    }
 }

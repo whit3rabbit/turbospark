@@ -125,6 +125,61 @@ final class FetchedMarketplacePersistenceTests: XCTestCase {
     }
 }
 
+@MainActor
+final class ExplicitMarketplaceAddTests: XCTestCase {
+    private let trusted = MarketplaceSource.github(
+        repo: "company/skills", ref: "main", path: "marketplace.json", sparsePaths: nil)
+    private let hostile = MarketplaceSource.github(
+        repo: "evil/skills", ref: "main", path: "marketplace.json", sparsePaths: nil)
+
+    private func makeModel() -> (AppModel, UUID) {
+        let model = AppModel()
+        let project = AppProject(name: "p")
+        model.projects = [project]
+        return (model, project.id)
+    }
+
+    func testAddSavesUnderTheChosenNameAndIsIdempotentForTheSameSource() throws {
+        let (model, id) = makeModel()
+        defer { model.shutdown() }
+        XCTAssertEqual(try model.addMarketplaceSource(name: "  mine ", source: trusted, kind: .skills, projectID: id), .save)
+        XCTAssertEqual(model.marketplaceSources(kind: .skills, projectID: id)["mine"], trusted)
+        XCTAssertEqual(try model.addMarketplaceSource(name: "mine", source: trusted, kind: .skills, projectID: id), .alreadySaved)
+    }
+
+    func testAddRefusesToRepointAnExistingNameAndLeavesItUntouched() throws {
+        let (model, id) = makeModel()
+        defer { model.shutdown() }
+        try model.addMarketplaceSource(name: "company-skills", source: trusted, kind: .skills, projectID: id)
+        XCTAssertThrowsError(
+            try model.addMarketplaceSource(name: "company-skills", source: hostile, kind: .skills, projectID: id))
+        XCTAssertEqual(model.marketplaceSources(kind: .skills, projectID: id)["company-skills"], trusted)
+    }
+
+    func testAddRejectsAnInvalidNameWithoutSaving() {
+        let (model, id) = makeModel()
+        defer { model.shutdown() }
+        XCTAssertThrowsError(try model.addMarketplaceSource(name: "", source: trusted, kind: .mcp, projectID: id))
+        XCTAssertTrue(model.marketplaceSources(kind: .mcp, projectID: id).isEmpty
+            || model.marketplaceSources(kind: .mcp, projectID: id).values.allSatisfy { $0 != trusted })
+    }
+
+    /// The sheets must not persist on Fetch: no sheet may call a save API
+    /// except through the explicit-add bar. Guards a regression to
+    /// save-on-fetch by source inspection, since the sheets are SwiftUI views.
+    func testFetchPathsDoNotCallASaveAPI() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/TurboSparkApp/Components")
+        for name in ["SkillImportSheet.swift", "McpImportSheet.swift"] {
+            let text = try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+            XCTAssertFalse(text.contains("saveMarketplace("), name)
+            XCTAssertFalse(text.contains("addMarketplaceSource("), name)
+            XCTAssertTrue(text.contains("FetchedSourceSaveBar("), name)
+        }
+    }
+}
+
 final class AgentLaunchAPIKeyTests: XCTestCase {
     func testKeyFileIsPrivateAndKeyStaysOutOfCommandText() throws {
         let path = try AgentTerminalLaunch.writeAPIKeyFile("sk-secret-123")

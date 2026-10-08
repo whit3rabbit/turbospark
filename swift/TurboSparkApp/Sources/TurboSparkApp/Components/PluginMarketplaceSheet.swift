@@ -176,7 +176,7 @@ struct PluginMarketplaceSheet: View {
             source = .directory(path: path)
         }
         do {
-            try model.saveMarketplace(name: name, source: source, kind: .plugins, projectID: projectID)
+            try model.addMarketplaceSource(name: name, source: source, kind: .plugins, projectID: projectID)
             marketplaces = model.marketplaceSources(kind: .plugins, projectID: projectID)
             newMarketplaceName = ""
             newGitHubRepo = ""

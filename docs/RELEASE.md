@@ -162,6 +162,7 @@ TurboSpark.app/Contents/
 +-- PkgInfo
 +-- MacOS/
 |   +-- TurboSparkApp          # CFBundleExecutable
+|   +-- turbospark             # the CLI front end, linked by the cask
 |   +-- turbospark-check       # the CLI, where the cask links it from
 |   +-- turbospark-model
 |   +-- turbospark-server
@@ -377,7 +378,7 @@ stanzas point INTO the installed bundle
 (`#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-check`, and so on),
 which is the standard cask pattern for an app that carries commands. Two
 consequences: the app and the commands are guaranteed to be the same build,
-and `brew uninstall` removes the app and unlinks all three in one step,
+and `brew uninstall` removes the app and unlinks all four in one step,
 because the symlinks are part of the same cask.
 
 **`conflicts_with` is declared on both casks, not one.** Homebrew does not

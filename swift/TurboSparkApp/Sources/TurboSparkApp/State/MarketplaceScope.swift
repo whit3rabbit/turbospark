@@ -12,10 +12,10 @@ public struct ProjectMarketplaces: Codable, Equatable, Sendable {
     }
 }
 
-/// Whether a marketplace just FETCHED for browsing may be remembered under the
-/// name its remote manifest declares. That name is attacker-controlled, so a
-/// fetch must never repoint an existing entry (a trusted "company-skills"
-/// source) at a different source; the manifest is still shown either way.
+/// Whether a marketplace source may be remembered under a user-chosen name.
+/// A name that already points at a DIFFERENT source is never overwritten: a
+/// trusted "company-skills" entry must not be repointed by a later add, and a
+/// project entry would silently shadow an inherited user one.
 public enum FetchedMarketplacePersistence: Equatable, Sendable {
     case save
     case alreadySaved
@@ -31,17 +31,31 @@ public enum FetchedMarketplacePersistence: Equatable, Sendable {
 
 @MainActor
 extension AppModel {
-    /// Remembers a browsed marketplace unless that would overwrite another
-    /// source's entry. Never throws: a failed save must not hide the manifest.
+    /// The ONLY path that remembers a browsed source: an explicit Add with a
+    /// name the user chose. Fetching never calls this, because the manifest's
+    /// own name is attacker-controlled. Throws (and saves nothing) when the
+    /// name is invalid or already points at another source.
     @discardableResult
-    public func saveFetchedMarketplace(
-        name: String, source: MarketplaceSource, kind: MarketplaceKind, projectID: UUID?
-    ) -> FetchedMarketplacePersistence {
+    public func addMarketplaceSource(
+        name rawName: String, source: MarketplaceSource, kind: MarketplaceKind, projectID: UUID?
+    ) throws -> FetchedMarketplacePersistence {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         let decision = FetchedMarketplacePersistence.decide(
             name: name, source: source,
             existing: marketplaceSources(kind: kind, projectID: projectID))
-        if decision == .save {
-            try? saveMarketplace(name: name, source: source, kind: kind, projectID: projectID)
+        switch decision {
+        case .save:
+            try saveMarketplace(name: name, source: source, kind: kind, projectID: projectID)
+        case .alreadySaved:
+            break
+        case .nameTakenByDifferentSource:
+            throw PluginLoadError(
+                pluginName: nil,
+                reason: String(
+                    format: String(
+                        localized: "A source named \"%@\" already exists and points somewhere else. Choose a different name, or remove the existing source first.",
+                        bundle: .module),
+                    name))
         }
         return decision
     }

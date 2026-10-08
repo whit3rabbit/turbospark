@@ -33,6 +33,7 @@ public struct McpImportSheet: View {
 
     @State private var isFetching: Bool = false
     @State private var manifest: McpMarketplaceManifest?
+    @State private var fetchedSource: MarketplaceSource?
     @State private var fetchError: String?
     @State private var installedNames: Set<String> = []
     @State private var entryErrors: [String: String] = [:]
@@ -179,6 +180,14 @@ public struct McpImportSheet: View {
                     .foregroundStyle(.appSecondary)
             }
 
+            if let fetchedSource {
+                FetchedSourceSaveBar(
+                    model: model, source: fetchedSource, kind: .mcp,
+                    projectID: installToProjectScope ? capturedProjectID : nil,
+                    suggestedName: manifest.name)
+                    .id("\(manifest.name)|\(String(describing: fetchedSource))")
+            }
+
             if manifest.servers.isEmpty {
                 Text("This catalog lists no servers.", bundle: .module)
                     .themedFont(.small)
@@ -312,16 +321,17 @@ public struct McpImportSheet: View {
         isFetching = true
         fetchError = nil
         manifest = nil
+        fetchedSource = nil
         entryErrors = [:]
         installedNames = []
 
         let source = explicitSource ?? resolvedSource
-        let sourceProjectID = installToProjectScope ? capturedProjectID : nil
         do {
             let fetched = try await McpMarketplaceManager.shared.fetchMarketplace(source: source)
             manifest = fetched
-            model.saveFetchedMarketplace(
-                name: fetched.name, source: source, kind: .mcp, projectID: sourceProjectID)
+            // Fetching never saves the source (the manifest name is remote-
+            // controlled); the user adds it explicitly from the save bar.
+            fetchedSource = source
         } catch {
             fetchError = error.localizedDescription
         }

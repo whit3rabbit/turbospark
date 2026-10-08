@@ -83,7 +83,7 @@ struct MarketplaceSourcesView: View {
         default: source = .directory(path: value)
         }
         do {
-            try model.saveMarketplace(name: name.trimmingCharacters(in: .whitespaces), source: source, kind: kind, projectID: projectID)
+            try model.addMarketplaceSource(name: name.trimmingCharacters(in: .whitespaces), source: source, kind: kind, projectID: projectID)
             name = ""; location = ""; error = nil
         } catch { self.error = error.localizedDescription }
     }

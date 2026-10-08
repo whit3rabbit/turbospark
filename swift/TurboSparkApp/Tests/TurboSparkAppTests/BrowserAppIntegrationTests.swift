@@ -831,6 +831,29 @@ final class BrowserAppIntegrationTests: XCTestCase {
         XCTAssertTrue(model.browserAutomationCoordinator.isPaneOpen)
     }
 
+    /// Pins the deliberate "no scope after the command returns" rule: an agent
+    /// tab navigation that arrives while no browser command is in flight (a
+    /// wait_until=started navigate that outlived its command, a scheduled form
+    /// submit, a late redirect) is denied, never authorized from a retained
+    /// scope. Each such navigation needs a fresh, permission-checked command.
+    func testAgentTabNavigationWithoutLiveCommandIsDenied() async throws {
+        let model = AppModel()
+        defer { model.shutdown() }
+        model.browserSettings.enabled = true
+        model.setBrowserPaneOpen(true)
+        let coordinator = model.browserAutomationCoordinator
+        let agentTab = coordinator.engine.createTab(owner: .agent, select: true)
+        XCTAssertNil(coordinator.activeAction)
+
+        let destination = try XCTUnwrap(BrowserOrigin(url: try XCTUnwrap(URL(string: "https://example.com/next"))))
+        for phase in [BrowserNavigationCheckPhase.explicitNavigation, .mainFrameAction, .formSubmission, .redirect, .mainFrameResponse] {
+            let decision = await model.authorizeBrowserNavigation(
+                BrowserNavigationAuthorizationRequest(
+                    tabID: agentTab, destination: destination, source: nil, phase: phase))
+            XCTAssertEqual(decision, .deny, "phase \(phase) must be denied with no live command")
+        }
+    }
+
     private static func makeScreenshotImage() -> NSImage {
         let representation = NSBitmapImageRep(
             bitmapDataPlanes: nil,

@@ -17,6 +17,7 @@ public struct SkillImportSheet: View {
     @State private var remoteInput: String = "whit3rabbit/agent-skills"
     @State private var isFetchingRemote: Bool = false
     @State private var remoteManifest: MarketplaceManifest? = nil
+    @State private var remoteSource: MarketplaceSource? = nil
     @State private var remoteError: String? = nil
     @State private var installingSkillNames: Set<String> = []
 
@@ -156,6 +157,14 @@ public struct SkillImportSheet: View {
                     .padding(.vertical, 10)
                     .background(.appPage)
 
+                    if let remoteSource {
+                        FetchedSourceSaveBar(
+                            model: model, source: remoteSource, kind: .skills,
+                            projectID: importToProjectScope ? capturedProjectID : nil,
+                            suggestedName: manifest.name)
+                            .id("\(manifest.name)|\(String(describing: remoteSource))")
+                    }
+
                     Rectangle()
                         .fill(.appBorder)
                         .frame(height: 1)
@@ -227,6 +236,7 @@ public struct SkillImportSheet: View {
         isFetchingRemote = true
         remoteError = nil
         remoteManifest = nil
+        remoteSource = nil
 
         let source: MarketplaceSource
         if let explicitSource { source = explicitSource }
@@ -238,15 +248,13 @@ public struct SkillImportSheet: View {
             source = .git(url: input, ref: nil, path: nil, sparsePaths: nil)
         }
 
-        let sourceProjectID = importToProjectScope ? capturedProjectID : nil
         Task {
             do {
                 let manifest = try await SkillMarketplaceManager.shared.fetchMarketplace(source: source)
                 await MainActor.run {
-                    // Never overwrites a same-named entry that points elsewhere,
-                    // and a failed save never hides the fetched manifest.
-                    model.saveFetchedMarketplace(
-                        name: manifest.name, source: source, kind: .skills, projectID: sourceProjectID)
+                    // Fetching never saves the source: the manifest's name is
+                    // remote-controlled. The user adds it explicitly below.
+                    self.remoteSource = source
                     self.remoteManifest = manifest
                     self.isFetchingRemote = false
                 }

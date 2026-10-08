@@ -297,10 +297,12 @@ jobs:
 
             app "TurboSpark.app"
 
-            # The three CLI binaries ship inside the bundle. Linking them from
-            # there rather than shipping a second copy is what lets one cask
+            # The four CLI binaries (the \`turbospark\` front end plus the three
+            # tools) ship inside the bundle; make-app-bundle.sh signs them.
+            # Linking them from there rather than shipping a second copy is what lets one cask
             # cover both, and it means \`brew uninstall\` removes the app and
             # unlinks the commands in one step.
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-check"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-model"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-server"

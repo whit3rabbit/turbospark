@@ -104,11 +104,15 @@ public struct WorktreeWorktreeListView: View {
                     Button {
                         worktree.selectWorktree(path: wt.path)
                     } label: {
-                        Text("Switch to this worktree", bundle: .module)
+                        Text("View in Git pane", bundle: .module)
                             .themedFont(.tiny, weight: .medium)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
+                    // This only retargets the Git pane. The agent's workspace
+                    // root, hooks and snapshots stay on the project folder, so
+                    // the label must not read as "move the agent here".
+                    .help(Text("Shows this worktree in the Git pane only. The agent keeps working in the project folder.", bundle: .module))
                 }
                 .padding(.top, 2)
             }

@@ -951,6 +951,18 @@ requiring a shell process:
   localhost, ::1), RFC 1918 private subnets (10.0.0.0/8, 172.16.0.0/12,
   192.168.0.0/16), link-local addresses (169.254.0.0/16), and cloud metadata
   endpoints are blocked with a safety refusal.
+- **Residual risk: DNS rebinding sends before it is detected.** The
+  destination is validated by a separate lookup, and URLSession resolves
+  again to connect. The address the socket really used is checked afterwards
+  (`URLSessionTaskMetrics.remoteAddress`) and the response is discarded, but
+  the request itself (method, headers, body) has already reached a rebound
+  private host. Foundation cannot pin a connection to a validated IP: an
+  IP-literal URL sends no SNI, which breaks TLS on shared and CDN hosts. A
+  real pre-connect pin needs a Network.framework HTTP/1.1 client (explicit
+  SNI, own chunked and redirect handling, no system proxy support), which was
+  judged too large and regression-prone for this finding. Side-effecting
+  `http_request` calls (POST/PUT/DELETE/PATCH) are the exposed case; they
+  already go through the normal approval gate.
 
 ### Tavily web search and direct answer extraction
 
@@ -960,6 +972,28 @@ requiring a shell process:
 - `extractTavily`: Extracts clean webpage content for a list of URLs.
 
 Tests: `EnhancedToolsAndHttpTests`, `WebSearchTests`.
+
+### Browser automation: action scope ends when the command returns
+
+An agent-tab navigation is authorized only while a browser tool command is
+in flight (`AppBrowserAutomationCoordinator.activeAction`, consulted by
+`AppModel.authorizeBrowserNavigation`). The scope carries the project, the
+tool call, and the origin the user approved for THAT call. It is cleared
+the moment the command returns, and no "last action" scope is retained.
+
+Consequence, by design: a navigation that arrives later (a
+`browser_navigate` with `wait_until: "started"` whose policy check runs
+after the command returned, a form submit the page schedules, a
+POST/redirect/GET hop, a meta refresh or script redirect) is DENIED and
+the tab shows the permission-policy page. The agent has to issue a fresh
+`browser_navigate`, which is permission-checked on its own. Retaining the
+scope would let a page that the agent merely read drive further navigation
+under an approval the user gave for a different destination, so this
+trades some agent convenience for a hard containment property. An approval
+also never widens to another origin: `currentActionApproved` only counts
+when the destination equals the approved origin.
+
+Test: `BrowserAppIntegrationTests.testAgentTabNavigationWithoutLiveCommandIsDenied`.
 
 ## 17. Gotchas
 

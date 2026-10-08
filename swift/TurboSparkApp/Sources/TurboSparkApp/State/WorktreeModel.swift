@@ -384,7 +384,9 @@ public final class WorktreeModel: ObservableObject {
         }
     }
 
-    /// Switches the active project repository to another linked Git worktree.
+    /// Points the Git pane at another linked worktree. It does NOT move the
+    /// agent: the project's root (tool cwd, hooks, snapshots) is unchanged, and
+    /// re-selecting the project resets this pane to the project root.
     public func selectWorktree(path: String) {
         guard path != rootDirectoryPath else { return }
         updateRoot(path: path)
