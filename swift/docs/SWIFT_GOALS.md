@@ -115,9 +115,10 @@ assembly. The SKILL.state history path gets none, like every reminder.
 - No `CLAUDE_CODE_GOAL_CHECKIN_MINUTES` knob: the intervals are
   constants in `GoalPolicy`. A settings key is the natural follow-up if
   anyone wants to tune them.
-- `/clear` has no equivalent here (this app has no clear command); the
-  goal clears via `/goal clear` or the banner's Stop button, and dies
-  with the chat.
+- `/clear` and `/reset` (`clearOutput`) erase the transcript, so they also
+  clear the chat's goal (timer and baselines included) and drop its queued
+  prompts. Otherwise the goal clears via `/goal clear` or the banner's Stop
+  button, and dies with the chat.
 
 ## UI
 

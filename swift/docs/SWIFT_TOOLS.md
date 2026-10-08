@@ -831,7 +831,8 @@ and -- new -- what happens to the middle.
 
 `compactWithSpill(_:label:spillName:)` is `compact` plus recovery: over
 the cap, the FULL ANSI-stripped text is written under
-`~/Library/Application Support/TurboSpark/spill/` and the model-facing
+`spill/` under the current profile's store root (never shared across
+profiles) and the model-facing
 string names the path with instructions (read_file, or `grep`/`sed` from
 the shell). Under the cap it is exactly the old compaction and writes
 nothing. Callers: the three foreground sites in `ShellCommandRunner`

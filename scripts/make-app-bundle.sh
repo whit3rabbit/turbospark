@@ -137,7 +137,9 @@ done
 }
 
 # The CLI, inside the app. The cask links these onto PATH from here.
-for bin in turbospark-check turbospark-model turbospark-server; do
+# `turbospark` is the front end the Server pane's Launch buttons run
+# (AgentTerminalLaunch.findCLI looks next to the app executable first).
+for bin in turbospark turbospark-check turbospark-model turbospark-server; do
   src="$root/target/$target/release/$bin"
   [ -x "$src" ] || { echo "expected $src to exist; run without --skip-build" >&2; exit 1; }
   cp "$src" "$contents/MacOS/$bin"
@@ -212,6 +214,8 @@ cat > "$contents/Info.plist" <<PLIST
     <string>public.app-category.developer-tools</string>
     <key>LSMinimumSystemVersion</key>
     <string>${min_macos}</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>TurboSpark opens Terminal to run the coding agent you launch from the Server pane.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
@@ -234,7 +238,7 @@ echo "==> codesign (identity: ${identity})"
 # Inner executables first, then the bundle: a signature over the bundle seals
 # what is inside it, so signing the wrapper before its contents invalidates
 # itself. `--deep` is deprecated by Apple for exactly this reason.
-for bin in turbospark-check turbospark-model turbospark-server openkindd; do
+for bin in turbospark turbospark-check turbospark-model turbospark-server openkindd; do
   codesign --force --timestamp=none --sign "$identity" "$contents/MacOS/$bin"
 done
 

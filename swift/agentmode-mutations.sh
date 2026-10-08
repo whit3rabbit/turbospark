@@ -10,20 +10,56 @@ run_filter() {
   swift test --filter "AgentModeTests" 2>&1 | grep -E "Test Case.*(failed|passed)|error:" | grep -v "was modified"
 }
 
+# The file under mutation, its backup, and the checksum of the mutated text.
+# A signal or an early exit must never leave a security gate removed in the
+# source, and a concurrent edit by another session must never be overwritten
+# by a stale backup: restore only when the file still holds exactly what this
+# script wrote.
+CURRENT_FILE=""
+CURRENT_BACKUP=""
+MUTATED_SUM=""
+
+sum_of() { shasum -a 256 < "$1" | cut -d' ' -f1; }
+
+restore() {
+  [ -n "$CURRENT_BACKUP" ] || return 0
+  if [ -n "$MUTATED_SUM" ] && [ "$(sum_of "$CURRENT_FILE")" != "$MUTATED_SUM" ]; then
+    echo "ABORT: $CURRENT_FILE changed during the mutation run; NOT restoring." >&2
+    echo "       Original kept at $CURRENT_BACKUP. Reconcile by hand." >&2
+    CURRENT_BACKUP=""
+    return 1
+  fi
+  cp "$CURRENT_BACKUP" "$CURRENT_FILE" && rm -f "$CURRENT_BACKUP"
+  CURRENT_BACKUP=""
+  MUTATED_SUM=""
+}
+trap 'restore; exit 130' INT TERM
+trap 'restore' EXIT
+
 mutate() {
   local file="$1" expect_fail="$2" desc="$3" old="$4" new="$5"
-  cp "$file" /tmp/agentmode-mutation-backup.swift
-  python3 - "$file" "$old" "$new" <<'EOF'
+  # Refuse to touch a file with uncommitted work: the mutation and restore
+  # would race whoever is editing it.
+  if [ -n "$(git status --porcelain -- "$file" 2>/dev/null)" ]; then
+    echo "SKIPPED [$desc]: $file has uncommitted changes" >&2
+    return 1
+  fi
+  CURRENT_FILE="$file"
+  CURRENT_BACKUP="$(mktemp -t agentmode-mutation)"
+  MUTATED_SUM=""
+  cp "$file" "$CURRENT_BACKUP"
+  python3 - "$file" "$old" "$new" <<'PYEOF'
 import sys
 path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(path).read()
 assert s.count(old) == 1, f"pattern not unique/absent in {path}: {old[:60]!r} count={s.count(old)}"
 open(path, "w").write(s.replace(old, new))
-EOF
-  if [ $? -ne 0 ]; then echo "MUTATION DID NOT APPLY: $desc"; cp /tmp/agentmode-mutation-backup.swift "$file"; return 1; fi
+PYEOF
+  if [ $? -ne 0 ]; then echo "MUTATION DID NOT APPLY: $desc"; restore; return 1; fi
+  MUTATED_SUM="$(sum_of "$file")"
   local out
   out=$(run_filter)
-  cp /tmp/agentmode-mutation-backup.swift "$file"
+  restore || return 1
   if echo "$out" | grep -q "failed"; then
     local failed_cases
     failed_cases=$(echo "$out" | grep "Test Case.*failed" | sed "s/.*Test Case 'AgentModeTests\/\(.*\)' failed.*/\1/" | sort -u | tr '\n' ' ')

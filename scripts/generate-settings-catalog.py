@@ -10,6 +10,9 @@ source = root / 'swift/TurboSparkApp/Sources/TurboSparkApp'
 entries = {}
 for path in sorted(source.rglob('*.swift')):
     for title, pane, timing in re.findall(r'\.settingsControl\("([^"\n]+)", pane: \.(\w+)(?:, timing: \.(\w+))?\)', path.read_text()):
+        # Swift source spells non-ASCII as \u{XXXX}; decode it so json.dumps does not
+        # escape the backslash and emit a literal "\\u{...}" title that matches no control.
+        title = re.sub(r'\\u\{([0-9a-fA-F]+)\}', lambda m: chr(int(m[1], 16)), title)
         entries[(pane, title)] = timing or 'immediate'
 # preferenceRow registers its title in the reusable row helper.
 prefs = (source / 'Components/AppearancePreferencesCardView.swift').read_text()
