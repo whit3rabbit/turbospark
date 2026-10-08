@@ -8,6 +8,10 @@ checkpoints.
 
 `ParakeetTdt::open` reads a local `config.json` and `model.safetensors`.
 `transcribe` accepts finite mono PCM at the configured 16 kHz sample rate.
+`decode` returns the same transcript grouped into sentences with per-token
+waveform timestamps on the upstream grid (subsampling factor times hop
+length over the sample rate per encoder frame), mirroring upstream
+`ParakeetTDT.decode` through the shared `stt::nemo` alignment module.
 The end-to-end example also accepts WAV input and resamples to 16 kHz.
 
 | Profile | Hugging Face repository | Pinned revision | Rust loader |

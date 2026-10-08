@@ -18,6 +18,9 @@ use crate::models::vad::sortformer::{FastConformer, FcEncoderConfig};
 use crate::nn::json::{bool_field, required, text_field, usize_field};
 use crate::nn::symmetric_hann;
 use crate::nn::Linear;
+use crate::stt::nemo::alignment::{
+    sentences_to_result, tokens_to_sentences, AlignedResult, AlignedToken,
+};
 use crate::stt::nemotron_asr::rnnt::{lstm_stack, Joint, LstmLayer};
 use crate::{Result, SpeechError};
 
@@ -495,6 +498,12 @@ impl ParakeetTdt {
 
     /// Transcribes finite mono PCM at the configured sample rate.
     pub fn transcribe(&self, samples: &[f32], sample_rate: u32) -> Result<String> {
+        Ok(self.decode(samples, sample_rate)?.text)
+    }
+
+    /// Transcribes with per-token waveform timestamps grouped into
+    /// sentences, mirroring upstream `ParakeetTDT.decode`.
+    pub fn decode(&self, samples: &[f32], sample_rate: u32) -> Result<AlignedResult> {
         if sample_rate != self.config.sample_rate {
             return Err(SpeechError::Input {
                 why: format!(
@@ -509,11 +518,8 @@ impl ParakeetTdt {
             });
         }
         let (features, frame_count) = self.encoder_features(samples)?;
-        self.decode(&features, frame_count)
-    }
-
-    fn decode(&self, features: &[f32], frame_count: usize) -> Result<String> {
-        Self::greedy_decode(&self.config, &self.decoder, features, frame_count)
+        let tokens = Self::greedy_decode(&self.config, &self.decoder, &features, frame_count)?;
+        Ok(sentences_to_result(tokens_to_sentences(tokens)))
     }
 
     fn greedy_decode(
@@ -521,14 +527,18 @@ impl ParakeetTdt {
         decoder: &TdtDecoder,
         features: &[f32],
         frame_count: usize,
-    ) -> Result<String> {
+    ) -> Result<Vec<AlignedToken>> {
         let blank_id = cfg.vocab_size;
+        // Waveform seconds per encoder frame: the upstream timestamp grid
+        // (subsampling_factor * hop_length / sample_rate).
+        let frame_seconds =
+            cfg.subsampling_factor as f32 * cfg.mel.stft.hop as f32 / cfg.sample_rate as f32;
         let mut last_token = blank_id;
         let mut hidden = vec![vec![0.0f32; cfg.decoder_hidden]; cfg.decoder_layers];
         let mut cell = vec![vec![0.0f32; cfg.decoder_hidden]; cfg.decoder_layers];
         let mut time = 0usize;
         let mut zero_duration_symbols = 0usize;
-        let mut pieces = Vec::new();
+        let mut aligned = Vec::new();
         // Encoder-side joint projection for every frame in one call.
         let encoder_projected = decoder.joint_net.project_encoder(
             &features[..frame_count * cfg.encoder.hidden_size],
@@ -557,12 +567,17 @@ impl ParakeetTdt {
                     (_, hidden, cell) = proposal.take().expect("proposal computed above");
                     let piece = &cfg.vocabulary[token];
                     if !is_special_piece(piece) {
-                        pieces.push(piece.replace('▁', " "));
+                        aligned.push(AlignedToken::new(
+                            token as i32,
+                            piece.replace('▁', " "),
+                            time as f32 * frame_seconds,
+                            duration as f32 * frame_seconds,
+                        ));
                     }
                 }
                 time = time.saturating_add(duration);
             }
-            return Ok(pieces.concat().trim().to_string());
+            return Ok(aligned);
         }
         while time < frame_count {
             let logits = decoder.logits(
@@ -580,7 +595,12 @@ impl ParakeetTdt {
                 (_, hidden, cell) = proposal.take().expect("proposal computed above");
                 let piece = &cfg.vocabulary[token];
                 if !is_special_piece(piece) {
-                    pieces.push(piece.replace('▁', " "));
+                    aligned.push(AlignedToken::new(
+                        token as i32,
+                        piece.replace('▁', " "),
+                        time as f32 * frame_seconds,
+                        duration as f32 * frame_seconds,
+                    ));
                 }
             }
             time = time.saturating_add(duration);
@@ -592,7 +612,7 @@ impl ParakeetTdt {
                 zero_duration_symbols = 0;
             }
         }
-        Ok(pieces.concat().trim().to_string())
+        Ok(aligned)
     }
 }
 
@@ -828,6 +848,7 @@ mod tests {
         let mut zero_duration_symbols = 0usize;
         let mut step_index = 0usize;
         let mut emitted = Vec::new();
+        let mut emitted_steps = Vec::new();
         while time < frame_count {
             let encoder_start = time * cfg.encoder.hidden_size;
             let encoder_frame = &features[encoder_start..encoder_start + cfg.encoder.hidden_size];
@@ -879,6 +900,7 @@ mod tests {
                 hidden = proposed_hidden;
                 cell = proposed_cell;
                 emitted.push(token);
+                emitted_steps.push((time, duration));
             }
             time = time.saturating_add(duration);
             zero_duration_symbols += 1;
@@ -903,6 +925,38 @@ mod tests {
             model.transcribe(&samples, 16_000).unwrap(),
             manifest["transcript"].as_str().unwrap()
         );
+
+        // The aligned decode must reproduce the reference step table: token
+        // ids, emission frames, and decision durations on the subsampled
+        // waveform grid (subsampling_factor * hop_length / sample_rate).
+        let frame_seconds =
+            cfg.subsampling_factor as f32 * cfg.mel.stft.hop as f32 / cfg.sample_rate as f32;
+        let aligned = model.decode(&samples, 16_000).unwrap();
+        assert_eq!(aligned.text, manifest["transcript"].as_str().unwrap());
+        let flat: Vec<&AlignedToken> = aligned
+            .sentences
+            .iter()
+            .flat_map(|sentence| sentence.tokens.iter())
+            .collect();
+        assert_eq!(flat.len(), emitted_steps.len());
+        for ((got, token), (frame, duration)) in flat.iter().zip(&emitted).zip(&emitted_steps) {
+            assert_eq!(got.id as usize, *token);
+            let want_start = *frame as f32 * frame_seconds;
+            let want_duration = *duration as f32 * frame_seconds;
+            assert!(
+                (got.start - want_start).abs() <= 1e-6,
+                "token {} start {} != {want_start}",
+                got.id,
+                got.start
+            );
+            assert!(
+                (got.duration - want_duration).abs() <= 1e-6,
+                "token {} duration {} != {want_duration}",
+                got.id,
+                got.duration
+            );
+            assert_eq!(got.end, got.start + got.duration);
+        }
     }
 }
 
@@ -1192,7 +1246,25 @@ mod decode_parity {
                 let features = rng.vec(frames * ENCODER, 1.5);
                 let want = reference_decode(&decoder, &cfg, &features, frames);
                 let got = ParakeetTdt::greedy_decode(&cfg, &decoder, &features, frames).unwrap();
-                assert_eq!(got, want, "redux {redux} seed {seed}");
+                let text: String = got.iter().map(|t| t.text.as_str()).collect();
+                assert_eq!(text.trim(), want, "redux {redux} seed {seed}");
+                // Timestamps stay ordered and land on the frame grid.
+                let frame_seconds = cfg.subsampling_factor as f32 * cfg.mel.stft.hop as f32
+                    / cfg.sample_rate as f32;
+                let mut last_start = -1.0f32;
+                for token in &got {
+                    assert_eq!(token.end, token.start + token.duration);
+                    assert!(token.start >= last_start, "redux {redux} seed {seed}");
+                    assert!(
+                        (token.duration / frame_seconds).fract() < 1e-4,
+                        "redux {redux} seed {seed}: duration {} off grid",
+                        token.duration
+                    );
+                    last_start = token.start;
+                }
+                // Sentence grouping round-trips the same transcript.
+                let result = sentences_to_result(tokens_to_sentences(got));
+                assert_eq!(result.text, want, "redux {redux} seed {seed}");
                 non_empty += usize::from(!want.is_empty());
             }
         }
