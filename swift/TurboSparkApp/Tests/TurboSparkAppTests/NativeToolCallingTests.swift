@@ -162,11 +162,13 @@ final class NativeToolCallingTests: XCTestCase {
 
     // MARK: replay
 
-    private func nativeRow(content: String = "Checking.", isError: Bool = false) -> AppChatMessage {
+    private func nativeRow(
+        content: String = "Checking.", isError: Bool = false, output: String = "file body"
+    ) -> AppChatMessage {
         let candidate = ToolCallParser.nativeCandidates(
             from: [engineCall("read_file", #"{"path":"a.txt","limit":5}"#)])[0]
         let call = candidate.call!
-        let result = AppToolResult(callID: call.id, output: "file body", isError: isError)
+        let result = AppToolResult(callID: call.id, output: output, isError: isError)
         return AppChatMessage(
             role: .assistant, content: content, toolCalls: [call], toolResults: [result])
     }
@@ -237,7 +239,9 @@ final class NativeToolCallingTests: XCTestCase {
     }
 
     func testMicrocompactClearsOldNativeResultsAndKeepsTheirIdentity() async {
-        let row = nativeRow()
+        // Microcompact only acts when replacing a body actually saves tokens,
+        // so the result has to be larger than its placeholder.
+        let row = nativeRow(output: String(repeating: "line of file content\n", count: 80))
         var messages = AppModel.historyMessages(for: row, nativeLane: true, mediaCapability: .textOnly)
         messages.append(ChatMessage.user("next"))
         let history = AppChatHistoryProjection(

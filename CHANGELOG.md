@@ -84,6 +84,37 @@ when this file gets updated relative to the version bump and the tag.
   adding RAII cleanup guards to prevent memory exhaustion and DoS on malformed audio.
 
 ### Added
+- `crates/model-io`: chunk-observed hashing (`hash_file_observed`) with
+  cooperative chunk-granularity cancellation for large file verification.
+- `crates/catalog`: observed audio profile verification (`verify_observed`)
+  with progress reporting callbacks and cooperative cancellation (`VERIFY_CANCELLED`).
+- `crates/ffi`: standalone tokenizer C ABI (`ts_tokenizer_open`, `ts_tokenizer_close`,
+  `ts_tokenizer_encode`, `ts_tokenizer_decode`, `ts_tokenizer_count_tokens`).
+- `crates/ffi`: tool-aware prompt token counting (`ts_session_count_tokens_with_tools`)
+  and window fitting (`ts_session_fit_window_with_tools_json`) taking tool schemas
+  into prompt budget calculations.
+- `crates/ffi`: model family capabilities query (`ts_family_capabilities_json`)
+  and architecture KV-quantization capability probe (`ts_kv_quant_supported`).
+- `crates/ffi`: cancellable audio session open (`ts_audio_session_open_cancellable`)
+  with `TsAudioOpenToken` lifecycle controls and progress reporting callbacks.
+- `crates/ffi`: legacy audio model deletion (`ts_audio_delete_legacy`) for unmanaged
+  or corrupted receiptless installations.
+- `swift/TurboSpark`: standalone `TurboSparkTokenizer` wrapper for direct tokenization
+  outside model sessions.
+- `swift/TurboSpark`: tool-aware token counting and window fitting methods on
+  `TurboSparkSession`.
+- `swift/TurboSpark`: runtime family capabilities queries (`Runtime.familyCapabilities`).
+- `swift/TurboSpark`: `AudioOpenToken` and cancellable audio opening with live progress
+  in `TurboSparkAudio`.
+- `crates/runtime`: Whisper transcription progress reporting (`WhisperProgress`)
+  with window-level and token-level streaming callbacks.
+- `crates/audio`, `crates/runtime`: MiniMax Music 0.3 flow guidance reuse
+  (`FlowGuidance`), benchmark drivers (`music3_bench`), and spectral distance tools.
+- `swift/TurboSparkApp`: native tool calling engine and comprehensive test suite
+  in `NativeToolCallingTests`.
+- `swift/TurboSparkApp`: audio model installation manager and unmanaged legacy cleanup
+  in `AudioWorkspaceController+Installs`.
+- `swift/TurboSparkApp`: `EngineImageTranscoder` helper for image decoding and scaling.
 - `crates/audio`: added speech-to-speech (STS) model family implementations and test
   fixtures for DialogueSidon, Mel-RoFormer, MossFormer2-SE, and SAM-Audio.
 - `crates/audio`, `crates/runtime`, `crates/ffi`, `swift/TurboSparkApp`: native audio
