@@ -1093,9 +1093,14 @@ impl<'a> MetalWindowDecoder<'a> {
     pub fn decode(self) -> Result<DecodedWindow, String> {
         self.decode_cancellable(&|| false)
     }
-    pub fn decode_cancellable(
+    pub fn decode_cancellable(self, cancelled: &dyn Fn() -> bool) -> Result<DecodedWindow, String> {
+        self.decode_with_progress(cancelled, &mut |_, _| true)
+    }
+
+    pub fn decode_with_progress(
         mut self,
         cancelled: &dyn Fn() -> bool,
+        progress: &mut dyn FnMut(usize, usize) -> bool,
     ) -> Result<DecodedWindow, String> {
         let vocab = self.engine.config.vocab_size;
         let budget = self
@@ -1109,7 +1114,7 @@ impl<'a> MetalWindowDecoder<'a> {
         let mut step_ns = 0u128;
         let mut argmax_ns = 0u128;
         let stop = loop {
-            if cancelled() {
+            if cancelled() || !progress(self.emitted.len(), budget) {
                 return Err("audio job cancelled".into());
             }
             if self.emitted.len() >= budget {

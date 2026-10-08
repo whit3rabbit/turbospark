@@ -42,6 +42,54 @@ pub(crate) fn sigma_schedule(steps: usize) -> Result<Vec<f32>> {
     Ok(sigmas)
 }
 
+/// How often the unconditional CFG branch is re-evaluated inside one chunk.
+///
+/// The exact reference evaluates both branches every step. With
+/// `uncond_interval > 1`, the first `uncond_warmup` steps still do, then the
+/// unconditional forward runs on every `uncond_interval`-th step and the
+/// guidance correction `guided - conditional` it produced is reused (added to
+/// the fresh conditional velocity) in between. That changes the trajectory, so
+/// it is opt-in and the default is the exact path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FlowGuidance {
+    pub uncond_interval: usize,
+    pub uncond_warmup: usize,
+}
+
+impl FlowGuidance {
+    /// Both branches every step: the reference trajectory.
+    pub const EXACT: Self = Self {
+        uncond_interval: 1,
+        uncond_warmup: 2,
+    };
+
+    pub(crate) fn validate(self) -> Result<()> {
+        if self.uncond_interval == 0 {
+            return Err(SpeechError::Input {
+                why: "flow uncond interval must be at least one".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn evaluates_uncond(self, step: usize) -> bool {
+        self.uncond_interval <= 1
+            || step < self.uncond_warmup
+            || (step - self.uncond_warmup) % self.uncond_interval == 0
+    }
+
+    /// Unconditional forwards a chunk of `steps` Euler steps performs.
+    pub fn uncond_forwards(self, steps: usize) -> usize {
+        (0..steps).filter(|s| self.evaluates_uncond(*s)).count()
+    }
+}
+
+impl Default for FlowGuidance {
+    fn default() -> Self {
+        Self::EXACT
+    }
+}
+
 pub(crate) fn guided_velocity(
     unconditional: f32,
     conditional: f32,
@@ -108,6 +156,7 @@ pub(crate) fn denoise_chunk(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn denoise_chunk_typed(
     transformer: &FlowMatchingTransformer,
@@ -122,6 +171,40 @@ pub(crate) fn denoise_chunk_typed(
     previous_condition: Option<&[f32]>,
     condition_dtype: DType,
 ) -> Result<(Vec<f32>, Vec<f32>)> {
+    denoise_chunk_controlled(
+        transformer,
+        latents,
+        condition,
+        channels,
+        cond_dim,
+        len,
+        steps,
+        guidance_scale,
+        FlowGuidance::EXACT,
+        previous_latent,
+        previous_condition,
+        condition_dtype,
+        &mut |_| super::Control::Continue,
+    )?
+    .ok_or_else(super::never_cancelled)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn denoise_chunk_controlled(
+    transformer: &FlowMatchingTransformer,
+    latents: &[f32],
+    condition: &[f32],
+    channels: usize,
+    cond_dim: usize,
+    len: usize,
+    steps: usize,
+    guidance_scale: f32,
+    guidance: FlowGuidance,
+    previous_latent: Option<&[f32]>,
+    previous_condition: Option<&[f32]>,
+    condition_dtype: DType,
+    progress: &mut dyn FnMut(usize) -> super::Control,
+) -> Result<Option<(Vec<f32>, Vec<f32>)>> {
     let mut dtype = condition_dtype;
     let mut condition = condition.to_vec();
     let mut overlap = 0usize;
@@ -150,7 +233,13 @@ pub(crate) fn denoise_chunk_typed(
         Vec::new()
     };
     let zeros = vec![0.0f32; condition.len()];
+    // `guided - conditional` from the last step that ran both branches; only
+    // read when `guidance.uncond_interval > 1`.
+    let mut cached_delta: Vec<f32> = Vec::new();
     for index in 0..steps {
+        if progress(index) == super::Control::Cancel {
+            return Ok(None);
+        }
         let sigma = sigmas[index];
         let sigma_next = sigmas[index + 1];
         if overlap > 0 {
@@ -178,6 +267,14 @@ pub(crate) fn denoise_chunk_typed(
         );
         let velocity = if guidance_scale == 1.0 {
             conditional
+        } else if !guidance.evaluates_uncond(index) {
+            // Reuse the last correction; `cached_delta` was filled by an
+            // earlier step because step 0 always evaluates both branches.
+            let mut guided = Vec::with_capacity(conditional.len());
+            for (c, d) in conditional.iter().zip(&cached_delta) {
+                guided.push(velocity_dtype.round(*c + *d));
+            }
+            guided
         } else {
             let unconditional =
                 transformer.forward_typed(&x, sigma, &zeros, len, dtype, condition_dtype)?;
@@ -190,6 +287,13 @@ pub(crate) fn denoise_chunk_typed(
             let mut guided = Vec::with_capacity(unconditional.len());
             for (u, c) in unconditional.iter().zip(&conditional) {
                 guided.push(guided_velocity(*u, *c, guidance_scale, velocity_dtype));
+            }
+            if guidance.uncond_interval > 1 {
+                cached_delta = guided
+                    .iter()
+                    .zip(&conditional)
+                    .map(|(g, c)| g - c)
+                    .collect();
             }
             guided
         };
@@ -222,5 +326,5 @@ pub(crate) fn denoise_chunk_typed(
             }
         }
     }
-    Ok((x, condition))
+    Ok(Some((x, condition)))
 }

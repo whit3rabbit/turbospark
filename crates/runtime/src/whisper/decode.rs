@@ -190,9 +190,14 @@ impl<'a> WindowDecoder<'a> {
     pub fn decode(self) -> Result<DecodedWindow, String> {
         self.decode_cancellable(&|| false)
     }
-    pub fn decode_cancellable(
+    pub fn decode_cancellable(self, cancelled: &dyn Fn() -> bool) -> Result<DecodedWindow, String> {
+        self.decode_with_progress(cancelled, &mut |_, _| true)
+    }
+
+    pub fn decode_with_progress(
         mut self,
         cancelled: &dyn Fn() -> bool,
+        progress: &mut dyn FnMut(usize, usize) -> bool,
     ) -> Result<DecodedWindow, String> {
         let tokens_cfg = self.runner.tokens;
         let vocab = self.runner.config.vocab_size;
@@ -204,7 +209,7 @@ impl<'a> WindowDecoder<'a> {
             .min(440);
 
         let stop = loop {
-            if cancelled() {
+            if cancelled() || !progress(self.emitted.len(), budget) {
                 return Err("audio job cancelled".into());
             }
             if self.emitted.len() >= budget {

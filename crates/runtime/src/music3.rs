@@ -359,6 +359,14 @@ impl Music3Runner {
     pub fn config(&self) -> &ModelConfig {
         self.model.config()
     }
+    /// Opt in to reusing the flow unconditional CFG branch between steps.
+    /// The default (`FlowGuidance::EXACT`) is the reference trajectory.
+    pub fn set_flow_guidance(
+        &self,
+        guidance: audio::music::minimax_music3::FlowGuidance,
+    ) -> Result<()> {
+        self.model.set_flow_guidance(guidance)
+    }
     /// Per-operation call counts and wall time since the last reset,
     /// slowest total first. Weight upload during `open` is not included.
     pub fn dispatch_profile(&self) -> Vec<DispatchStat> {
@@ -388,6 +396,16 @@ impl Music3Runner {
         request: &TextGenerateRequest,
         cancel: Arc<AtomicBool>,
     ) -> Result<Generation> {
+        self.generate_text_controlled(request, cancel, |_| Control::Continue)
+    }
+
+    /// Atomic cancellation remains independent of callbacks and native model state.
+    pub fn generate_text_controlled(
+        &self,
+        request: &TextGenerateRequest,
+        cancel: Arc<AtomicBool>,
+        mut on_progress: impl FnMut(Progress) -> Control,
+    ) -> Result<Generation> {
         *self.cancellation.borrow_mut() = Some(cancel);
         struct Reset(Cancellation);
         impl Drop for Reset {
@@ -397,7 +415,19 @@ impl Music3Runner {
         }
         let _reset = Reset(self.cancellation.clone());
         checkpoint(&self.cancellation)?;
-        self.model.generate_text(request)
+        let result = self.model.generate_text_with_progress(request, |event| {
+            if checkpoint(&self.cancellation).is_err() {
+                Control::Cancel
+            } else {
+                on_progress(event)
+            }
+        })?;
+        checkpoint(&self.cancellation)?;
+        result
+            .map(|(generation, _)| generation)
+            .ok_or_else(|| SpeechError::Input {
+                why: "audio job cancelled".into(),
+            })
     }
     pub fn generate_text(&self, request: &TextGenerateRequest) -> Result<Generation> {
         self.model.generate_text(request)

@@ -372,7 +372,9 @@ enum Engine {
     Music(Box<crate::Music3Runner>),
 }
 // The observer owns an event sender, so it must be removed even if a backend panics.
+#[cfg(test)]
 struct MusicTraceReset<'a>(&'a crate::Music3Runner);
+#[cfg(test)]
 impl Drop for MusicTraceReset<'_> {
     fn drop(&mut self) {
         self.0.clear_trace_observer();
@@ -452,9 +454,29 @@ impl Engine {
         };
         match self {
             Self::Whisper(model) => {
-                let t = model.transcribe_cancellable(samples, r.language.as_deref(), &|| {
-                    cancel.is_cancelled()
-                })?;
+                let t = model.transcribe_with_progress(
+                    samples,
+                    r.language.as_deref(),
+                    &|| cancel.is_cancelled(),
+                    |progress| {
+                        let progress = match progress {
+                            crate::WhisperProgress::Window { index, total } => AudioProgress {
+                                stage: "window".into(),
+                                completed: index,
+                                total: Some(total),
+                            },
+                            crate::WhisperProgress::Token {
+                                emitted, budget, ..
+                            } => AudioProgress {
+                                stage: "decode".into(),
+                                completed: emitted,
+                                total: Some(budget),
+                            },
+                        };
+                        events.send(AudioEvent::Progress(progress)).is_ok()
+                            && !cancel.is_cancelled()
+                    },
+                )?;
                 result.transcript = Some(AudioTranscript {
                     text: t
                         .segments
@@ -558,24 +580,43 @@ impl Engine {
                 )?;
             }
             Self::Music(model) => {
-                let tx = events.clone();
-                let mut previous = String::new();
-                model.set_trace_observer(move |trace| {
-                    let stage = trace.name.split('.').next().unwrap_or("music");
-                    if stage != previous {
-                        previous = stage.to_string();
-                        let _ = tx.send(AudioEvent::Progress(AudioProgress {
-                            stage: previous.clone(),
-                            completed: 0,
-                            total: None,
-                        }));
-                    }
-                });
-                let reset = MusicTraceReset(model);
-                let generated =
-                    model.generate_text_cancellable(&music_request(r), cancel.0.clone());
-                drop(reset);
-                let generated = generated.map_err(|e| e.to_string())?;
+                use audio::music::minimax_music3::{Control, Progress};
+                let generated = model
+                    .generate_text_controlled(&music_request(r), cancel.0.clone(), |progress| {
+                        let (stage, completed, total) = match progress {
+                            Progress::Tokenized { prompt_tokens } => {
+                                ("tokenized", prompt_tokens, None)
+                            }
+                            Progress::ArFrame { emitted, target } => ("ar", emitted, Some(target)),
+                            Progress::FlowChunk { index, total } => {
+                                ("flow_chunk", index, Some(total))
+                            }
+                            Progress::DepthStep {
+                                codebook, total, ..
+                            } => ("depth", codebook - 1, Some(total)),
+                            Progress::FlowStep { step, total, .. } => ("euler", step, Some(total)),
+                            Progress::VocoderStage {
+                                channel,
+                                stage,
+                                total,
+                                ..
+                            } => ("vocoder", channel * total + stage, Some(2 * total)),
+                        };
+                        if events
+                            .send(AudioEvent::Progress(AudioProgress {
+                                stage: stage.into(),
+                                completed,
+                                total,
+                            }))
+                            .is_ok()
+                            && !cancel.is_cancelled()
+                        {
+                            Control::Continue
+                        } else {
+                            Control::Cancel
+                        }
+                    })
+                    .map_err(|e| e.to_string())?;
                 emit_pcm(
                     &generated.waveform,
                     cancel,
@@ -888,7 +929,7 @@ mod tests {
         let cancel = AudioCancel::default();
         let signal = cancel.clone();
         let result = session.execute(AudioRequest::default(), pcm.samples, cancel, |event| {
-            if matches!(event, AudioEvent::Progress(_)) {
+            if matches!(event, AudioEvent::Progress(AudioProgress { ref stage, completed, .. }) if stage == "decode" && completed > 0) {
                 signal.cancel();
             }
         });
@@ -969,6 +1010,59 @@ mod tests {
             rx.recv_timeout(std::time::Duration::from_secs(1)),
             Err(mpsc::RecvTimeoutError::Disconnected)
         ));
+    }
+
+    #[test]
+    fn cooperative_controls_worker_cancels_during_flow_and_replays_stereo() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../audio/testdata/minimax_music3/converted_plain");
+        let session = AudioSession::open(path, AudioTask::Music, false).unwrap();
+        let request = AudioRequest {
+            task: AudioTask::Music,
+            caption: "piano".into(),
+            lyrics: "[instrumental]".into(),
+            duration_seconds: Some(0.12),
+            steps: Some(2),
+            seed: Some(7),
+            ..Default::default()
+        };
+        let mut expected_pcm = vec![];
+        let expected = session
+            .execute(request.clone(), vec![], AudioCancel::default(), |event| {
+                if let AudioEvent::Pcm(samples) = event {
+                    expected_pcm.extend(samples);
+                }
+            })
+            .unwrap();
+        assert!(expected.sample_count > 0 && expected.sample_count % 2 == 0);
+        assert_eq!(
+            expected.pcm_format,
+            Some(AudioPcmFormat {
+                sample_rate: 44100,
+                channels: 2,
+                interleaved: true
+            })
+        );
+        let cancel = AudioCancel::default();
+        let signal = cancel.clone();
+        let mut reached = false;
+        let error = session.execute(request.clone(), vec![], cancel, |event| {
+            if matches!(event, AudioEvent::Progress(AudioProgress { ref stage, completed: 1, .. }) if stage == "euler") {
+                reached = true;
+                signal.cancel();
+            }
+        }).unwrap_err();
+        assert!(reached && error.contains("cancelled"));
+        let mut replay_pcm = vec![];
+        let replay = session
+            .execute(request, vec![], AudioCancel::default(), |event| {
+                if let AudioEvent::Pcm(samples) = event {
+                    replay_pcm.extend(samples);
+                }
+            })
+            .unwrap();
+        assert_eq!(replay, expected);
+        assert_eq!(replay_pcm, expected_pcm);
     }
     #[test]
     fn opening_refuses_busy_device_instead_of_blocking_profile_teardown() {

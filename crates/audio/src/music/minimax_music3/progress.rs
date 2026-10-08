@@ -11,6 +11,25 @@ pub enum Progress {
     ArFrame { emitted: usize, target: usize },
     /// A flow chunk is about to be denoised and decoded.
     FlowChunk { index: usize, total: usize },
+    /// One residual codebook is about to run (frame zero is AR warmup).
+    DepthStep {
+        frame: usize,
+        codebook: usize,
+        total: usize,
+    },
+    /// One Euler update is about to run inside a flow chunk.
+    FlowStep {
+        chunk: usize,
+        step: usize,
+        total: usize,
+    },
+    /// A stereo channel's projection, upsampling block, or output is about to run.
+    VocoderStage {
+        chunk: usize,
+        channel: usize,
+        stage: usize,
+        total: usize,
+    },
 }
 
 /// What the progress callback asks the pipeline to do next.

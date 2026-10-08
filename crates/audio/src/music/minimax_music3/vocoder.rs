@@ -356,12 +356,26 @@ impl Vocoder {
     pub(crate) fn forward(&self, latents: &[f32], seq: usize) -> Result<Vec<f32>> {
         self.forward_typed(latents, seq, self.snake_out_alpha.dtype)
     }
+    #[cfg(test)]
     pub(crate) fn forward_typed(
         &self,
         latents: &[f32],
         seq: usize,
         input_dtype: DType,
     ) -> Result<Vec<f32>> {
+        self.forward_controlled(latents, seq, input_dtype, &mut |_, _, _| {
+            super::Control::Continue
+        })?
+        .ok_or_else(super::never_cancelled)
+    }
+
+    pub(crate) fn forward_controlled(
+        &self,
+        latents: &[f32],
+        seq: usize,
+        input_dtype: DType,
+        progress: &mut dyn FnMut(usize, usize, usize) -> super::Control,
+    ) -> Result<Option<Vec<f32>>> {
         let half = self.dims.latent_channels / 2;
         if latents.len() != self.dims.latent_channels * seq {
             return Err(SpeechError::Input {
@@ -373,7 +387,11 @@ impl Vocoder {
             });
         }
         let mut out = Vec::with_capacity(2 * seq);
+        let stages = self.blocks.len() + 2;
         for b in 0..2 {
+            if progress(b, 0, stages) == super::Control::Cancel {
+                return Ok(None);
+            }
             // One stereo half as [half, seq], channel-major.
             let mut hidden: Vec<f32> = latents[b * half * seq..(b + 1) * half * seq].to_vec();
             let mut frames = seq;
@@ -406,6 +424,9 @@ impl Vocoder {
             );
             frames = hidden.len() / self.dims.hidden_dim;
             for (index, block) in self.blocks.iter().enumerate() {
+                if progress(b, index + 1, stages) == super::Control::Cancel {
+                    return Ok(None);
+                }
                 hidden = block.forward(
                     &hidden,
                     frames,
@@ -429,6 +450,9 @@ impl Vocoder {
                 }
             }
             let channels = hidden.len() / frames;
+            if progress(b, stages - 1, stages) == super::Control::Cancel {
+                return Ok(None);
+            }
             let activated = activate_snake(
                 &hidden,
                 &self.snake_out_alpha,
@@ -454,6 +478,6 @@ impl Vocoder {
             );
             out.extend(wave);
         }
-        Ok(out)
+        Ok(Some(out))
     }
 }

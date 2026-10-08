@@ -281,6 +281,67 @@ fn real_music3_native_checkpoint_matches_mlx() {
 }
 
 #[test]
+#[ignore = "requires exact audio-workspace 4-bit checkpoint and independent native MLX 0.32.3 reference"]
+fn real_music3_pinned_4bit_native_matches_mlx_and_resets() {
+    let model =
+        PathBuf::from(std::env::var_os("TURBOSPARK_MUSIC3_INSTALL_DIR").expect("install dir"));
+    let reference =
+        PathBuf::from(std::env::var_os("TURBOSPARK_MUSIC3_REFERENCE_DIR").expect("reference dir"));
+    let request: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(reference.join("request.json")).unwrap()).unwrap();
+    assert_eq!(
+        request["checkpoint_revision"],
+        "c7ea32923b245fe5afc22d740a1936ad2ac590f3"
+    );
+    assert_eq!(
+        request["reference_source_sha256"],
+        "a886c16bcb9322986a3a9adac0383ee95e666dbdbd2cf5af8a8c262010ab591a"
+    );
+    assert_eq!(request["hiddens_dtype"], "bfloat16");
+    assert_eq!(request["wave_dtype"], "bfloat16");
+    native_gate(&model, &reference, true);
+}
+
+#[test]
+fn cooperative_controls_cancel_inside_euler_and_replay_exact_stereo() {
+    use audio::music::minimax_music3::{Control, Music3Precision, Progress};
+    use std::sync::{atomic::AtomicBool, Arc};
+    let runner =
+        Music3Runner::open_with_precision(&fixture("converted_plain"), Music3Precision::Float32)
+            .unwrap();
+    let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+    request.duration_seconds = Some(0.12);
+    request.steps = Some(2);
+    request.seed = Some(7);
+    let expected = runner.generate_text(&request).unwrap();
+    let mut reached = false;
+    let error = runner
+        .generate_text_controlled(&request, Arc::new(AtomicBool::new(false)), |event| {
+            assert!(!reached, "no callback after cancellation");
+            if matches!(
+                event,
+                Progress::FlowStep {
+                    chunk: 0,
+                    step: 1,
+                    total: 2
+                }
+            ) {
+                reached = true;
+                Control::Cancel
+            } else {
+                Control::Continue
+            }
+        })
+        .unwrap_err();
+    assert!(reached && error.to_string().contains("cancelled"));
+    let fresh = runner
+        .generate_text_cancellable(&request, Arc::new(AtomicBool::new(false)))
+        .unwrap();
+    assert_eq!(fresh.waveform, expected.waveform);
+    assert_eq!(fresh.waveform.len(), fresh.samples * 2);
+}
+
+#[test]
 fn music3_cancellation_during_compute_resets_for_the_next_request() {
     use std::sync::{
         atomic::{AtomicBool, Ordering},

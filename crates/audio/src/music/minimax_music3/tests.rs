@@ -1289,6 +1289,63 @@ fn progress_request(duration: f64) -> TextGenerateRequest {
 }
 
 #[test]
+fn cooperative_controls_cancel_depth_euler_and_vocoder_and_reset() {
+    let model = load_plain_model();
+    let mut request = progress_request(0.12);
+    request.steps = Some(2);
+    let expected = model.generate_text(&request).unwrap();
+    for target in ["depth", "euler", "vocoder"] {
+        let mut reached = false;
+        let result = model
+            .generate_text_with_progress(&request, |event| {
+                assert!(!reached, "no progress may follow a cancelled checkpoint");
+                reached = matches!(
+                    (target, event),
+                    (
+                        "depth",
+                        Progress::DepthStep {
+                            frame: 1,
+                            codebook: 1,
+                            ..
+                        }
+                    ) | (
+                        "euler",
+                        Progress::FlowStep {
+                            chunk: 0,
+                            step: 1,
+                            total: 2
+                        }
+                    ) | (
+                        "vocoder",
+                        Progress::VocoderStage {
+                            chunk: 0,
+                            channel: 1,
+                            stage: 0,
+                            ..
+                        }
+                    )
+                );
+                if reached {
+                    Control::Cancel
+                } else {
+                    Control::Continue
+                }
+            })
+            .unwrap();
+        assert!(reached, "{target} checkpoint must run inside inference");
+        assert!(
+            result.is_none(),
+            "{target} cancellation must stop inference"
+        );
+        assert_eq!(
+            model.generate_text(&request).unwrap().waveform,
+            expected.waveform,
+            "cache, seeded RNG, and stereo state must reset after {target}"
+        );
+    }
+}
+
+#[test]
 fn progress_reports_each_stage_and_leaves_output_unchanged() {
     let model = load_plain_model();
     // Twelve frames: fewer than the fixture's 27 before its end token.
@@ -1318,7 +1375,9 @@ fn progress_reports_each_stage_and_leaves_output_unchanged() {
         .collect();
     assert_eq!(frames, (1..=target).collect::<Vec<_>>());
     assert_eq!(
-        events.last(),
+        events
+            .iter()
+            .find(|event| matches!(event, Progress::FlowChunk { .. })),
         Some(&Progress::FlowChunk { index: 0, total: 1 })
     );
     assert_eq!((timings.frames, timings.chunks), (target, 1));
@@ -1336,7 +1395,9 @@ fn cancelling_before_or_during_ar_returns_none_and_the_model_stays_reusable() {
         let mut seen = 0usize;
         let outcome = model
             .generate_text_with_progress(&request, |event| {
-                seen += 1;
+                if matches!(event, Progress::Tokenized { .. } | Progress::ArFrame { .. }) {
+                    seen += 1;
+                }
                 let hit = match (stage, event) {
                     ("tokenized", Progress::Tokenized { .. }) => true,
                     ("frame", Progress::ArFrame { emitted, .. }) => emitted == 3,
@@ -1366,7 +1427,9 @@ fn flow_reports_chunks_and_cancelling_mid_flow_leaves_no_state() {
     let mut chunks = vec![];
     let observed = model
         .run_flow_internal(&hiddens, frames, 1, 7, None, &mut |event| {
-            chunks.push(event);
+            if matches!(event, Progress::FlowChunk { .. }) {
+                chunks.push(event);
+            }
             Control::Continue
         })
         .unwrap()
@@ -1387,4 +1450,71 @@ fn flow_reports_chunks_and_cancelling_mid_flow_leaves_no_state() {
         .unwrap();
     assert!(cancelled.is_none());
     assert_eq!(model.run_flow(&hiddens, frames, 1, 7).unwrap(), reference);
+}
+
+#[test]
+fn flow_guidance_schedule_counts_unconditional_forwards() {
+    use super::FlowGuidance;
+    assert_eq!(FlowGuidance::EXACT.uncond_forwards(30), 30);
+    let reuse = FlowGuidance {
+        uncond_interval: 3,
+        uncond_warmup: 2,
+    };
+    // Steps 0 and 1 are warmup; then 2, 5, ..., 29.
+    assert_eq!(reuse.uncond_forwards(30), 12);
+    // A warmup that covers the whole chunk never reuses.
+    let covered = FlowGuidance {
+        uncond_interval: 3,
+        uncond_warmup: 30,
+    };
+    assert_eq!(covered.uncond_forwards(30), 30);
+    let model = load_plain_model();
+    assert!(model
+        .set_flow_guidance(FlowGuidance {
+            uncond_interval: 0,
+            uncond_warmup: 2,
+        })
+        .is_err());
+}
+
+#[test]
+fn flow_guidance_reuse_is_opt_in_and_gated_by_warmup() {
+    use super::FlowGuidance;
+    let model = load_plain_model();
+    let (shape, hiddens) = read_npy("long_flow_hiddens.npy");
+    let frames = shape[1];
+    let steps = 4;
+    let reference = model.run_flow(&hiddens, frames, steps, 7).unwrap();
+
+    // Warmup that covers every step evaluates both branches each time, so the
+    // result is bit-identical to the reference trajectory.
+    model
+        .set_flow_guidance(FlowGuidance {
+            uncond_interval: 2,
+            uncond_warmup: steps,
+        })
+        .unwrap();
+    assert_eq!(
+        model.run_flow(&hiddens, frames, steps, 7).unwrap(),
+        reference
+    );
+
+    // One reused step (step 2 of 0..4) changes the trajectory but stays finite.
+    model
+        .set_flow_guidance(FlowGuidance {
+            uncond_interval: 2,
+            uncond_warmup: 1,
+        })
+        .unwrap();
+    let reused = model.run_flow(&hiddens, frames, steps, 7).unwrap();
+    assert_eq!(reused.len(), reference.len());
+    assert!(reused.iter().all(|v| v.is_finite()));
+    assert_ne!(reused, reference, "reuse must change the trajectory");
+
+    // The setting is per model, not sticky across a reset.
+    model.set_flow_guidance(FlowGuidance::EXACT).unwrap();
+    assert_eq!(
+        model.run_flow(&hiddens, frames, steps, 7).unwrap(),
+        reference
+    );
 }

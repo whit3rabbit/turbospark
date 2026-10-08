@@ -24,6 +24,7 @@
 
 pub mod backend;
 pub mod precision;
+pub use euler::FlowGuidance;
 pub use output_stats::{output_stats, OutputStats};
 pub use precision::Music3Precision;
 pub use progress::{Control, Progress};
@@ -49,7 +50,7 @@ mod tests;
 #[cfg(test)]
 mod timing;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -516,6 +517,8 @@ pub struct Model {
     // Reset at the start of each timed request; `Model` is already
     // single-threaded (`Rc` backend), so a `RefCell` adds no constraint.
     stage: RefCell<StageTimings>,
+    // Opt-in flow CFG reuse; `FlowGuidance::EXACT` is the reference path.
+    flow_guidance: Cell<FlowGuidance>,
 }
 
 /// Chunk windows over `num_frames` AR frames: 200-frame windows hopping
@@ -728,7 +731,17 @@ impl Model {
             backend: store.backend(),
             precision: store.precision(),
             stage: RefCell::new(StageTimings::default()),
+            flow_guidance: Cell::new(FlowGuidance::EXACT),
         })
+    }
+
+    /// Select the flow CFG schedule for later requests. The default is
+    /// [`FlowGuidance::EXACT`]; anything else trades fidelity to the reference
+    /// trajectory for fewer unconditional DiT forwards.
+    pub fn set_flow_guidance(&self, guidance: FlowGuidance) -> Result<()> {
+        guidance.validate()?;
+        self.flow_guidance.set(guidance);
+        Ok(())
     }
 
     /// Generate from the public caption-and-lyrics contract using the
@@ -1083,6 +1096,14 @@ impl Model {
                 .output_dtype(self.lm.output_dtype())
                 .promote(self.depth.projection.output_dtype(self.lm.dtype()));
             for index in 1..config.num_codebooks {
+                if progress(Progress::DepthStep {
+                    frame: frame_index,
+                    codebook: index,
+                    total: config.num_codebooks - 1,
+                }) == Control::Cancel
+                {
+                    return Ok(None);
+                }
                 let seq_len = 2 + (index - 1);
                 let mut depth_in = vec![0.0f32; 2 * seq_len * hidden];
                 for b in 0..2 {
@@ -1386,7 +1407,7 @@ impl Model {
             );
             self.stage.borrow_mut().condition += lap.elapsed();
             let lap = Instant::now();
-            let (latents, cond_out) = euler::denoise_chunk_typed(
+            let Some((latents, cond_out)) = euler::denoise_chunk_controlled(
                 &self.transformer,
                 &noise,
                 &condition_row_major_to_channel(&condition, cond_dim, target),
@@ -1395,10 +1416,21 @@ impl Model {
                 target,
                 steps,
                 DIT_CFG_SCALE,
+                self.flow_guidance.get(),
                 previous_latent.as_deref(),
                 previous_condition.as_deref(),
                 condition_dtype,
-            )?;
+                &mut |step| {
+                    progress(Progress::FlowStep {
+                        chunk: chunk_index,
+                        step,
+                        total: steps,
+                    })
+                },
+            )?
+            else {
+                return Ok(None);
+            };
             self.stage.borrow_mut().dit += lap.elapsed();
             let carry_start = target.saturating_sub(2 * OVERLAP_LATENT_LENGTH);
             let carry_end = carry_start.max(target.saturating_sub(OVERLAP_LATENT_LENGTH));
@@ -1422,7 +1454,23 @@ impl Model {
                     .promote(self.transformer.output_dtype(latent_dtype, condition_dtype));
             }
             let lap = Instant::now();
-            waves.push(self.vocoder.forward_typed(&latents, target, latent_dtype)?);
+            let Some(wave) = self.vocoder.forward_controlled(
+                &latents,
+                target,
+                latent_dtype,
+                &mut |channel, stage, total| {
+                    progress(Progress::VocoderStage {
+                        chunk: chunk_index,
+                        channel,
+                        stage,
+                        total,
+                    })
+                },
+            )?
+            else {
+                return Ok(None);
+            };
+            waves.push(wave);
             let mut stage = self.stage.borrow_mut();
             stage.vocoder += lap.elapsed();
             stage.chunks += 1;

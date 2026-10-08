@@ -58,6 +58,20 @@ pub struct WhisperTranscription {
     pub language: String,
 }
 
+/// A control checkpoint before a window or a greedy token step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhisperProgress {
+    Window {
+        index: usize,
+        total: usize,
+    },
+    Token {
+        window: usize,
+        emitted: usize,
+        budget: usize,
+    },
+}
+
 /// Runtime runner for the whisper speech family. Device selection happens
 /// at open: the Metal engine (`metal::WhisperMetalEngine`) is built when a
 /// Metal device initializes and `TURBOSPARK_WHISPER_DEVICE` does not force
@@ -88,6 +102,16 @@ pub(crate) fn whisper_profile() -> bool {
 }
 
 impl WhisperRunner {
+    /// The buffered result contract with progress on the caller's owning thread.
+    pub fn transcribe_with_progress(
+        &self,
+        pcm: &[f32],
+        language: Option<&str>,
+        cancelled: &dyn Fn() -> bool,
+        mut progress: impl FnMut(WhisperProgress) -> bool,
+    ) -> Result<WhisperTranscription, String> {
+        self.transcribe_controlled(pcm, language, cancelled, &mut progress)
+    }
     /// Opens a speech install directory containing `config.json`,
     /// `model.safetensors`, and `tokenizer.json`.
     pub fn open(model_dir: &Path) -> Result<Self, String> {
@@ -339,6 +363,16 @@ impl WhisperRunner {
         language: Option<&str>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<WhisperTranscription, String> {
+        self.transcribe_controlled(pcm, language, cancelled, &mut |_| true)
+    }
+
+    fn transcribe_controlled(
+        &self,
+        pcm: &[f32],
+        language: Option<&str>,
+        cancelled: &dyn Fn() -> bool,
+        progress: &mut dyn FnMut(WhisperProgress) -> bool,
+    ) -> Result<WhisperTranscription, String> {
         if cancelled() {
             return Err("audio job cancelled".into());
         }
@@ -355,7 +389,7 @@ impl WhisperRunner {
         }
         if let Some(engine) = &self.metal {
             let mut engine = engine.lock().expect("whisper Metal engine lock");
-            return self.transcribe_metal(&mut engine, pcm, language, cancelled);
+            return self.transcribe_metal(&mut engine, pcm, language, cancelled, progress);
         }
         let n_mels = self.config.n_mels;
         let mut segments: Vec<WhisperSegment> = Vec::new();
@@ -363,7 +397,16 @@ impl WhisperRunner {
         let mut window_start = 0usize;
 
         while window_start < pcm.len() {
-            if cancelled() {
+            if cancelled()
+                || !progress(WhisperProgress::Window {
+                    index: window_start / WINDOW_STRIDE_SAMPLES,
+                    total: pcm
+                        .len()
+                        .saturating_sub(WHISPER_WINDOW_SAMPLES)
+                        .div_ceil(WINDOW_STRIDE_SAMPLES)
+                        + 1,
+                })
+            {
                 return Err("audio job cancelled".into());
             }
             let window_len = (pcm.len() - window_start).min(WHISPER_WINDOW_SAMPLES);
@@ -394,7 +437,13 @@ impl WhisperRunner {
 
             let prompt = decode::build_prompt(&self.tokens, language_token);
             let decoder = WindowDecoder::new(self, &encoder_out, seq, &prompt)?;
-            let decoded = decoder.decode_cancellable(cancelled)?;
+            let decoded = decoder.decode_with_progress(cancelled, &mut |emitted, budget| {
+                progress(WhisperProgress::Token {
+                    window: window_start / WINDOW_STRIDE_SAMPLES,
+                    emitted,
+                    budget,
+                })
+            })?;
 
             // The segment covers the window's exclusive region: from this
             // window's start to the next window's start, or the full real
@@ -448,6 +497,7 @@ impl WhisperRunner {
         pcm: &[f32],
         language: Option<&str>,
         cancelled: &dyn Fn() -> bool,
+        progress: &mut dyn FnMut(WhisperProgress) -> bool,
     ) -> Result<WhisperTranscription, String> {
         let n_mels = self.config.n_mels;
         let mut segments: Vec<WhisperSegment> = Vec::new();
@@ -455,7 +505,16 @@ impl WhisperRunner {
         let mut window_start = 0usize;
 
         while window_start < pcm.len() {
-            if cancelled() {
+            if cancelled()
+                || !progress(WhisperProgress::Window {
+                    index: window_start / WINDOW_STRIDE_SAMPLES,
+                    total: pcm
+                        .len()
+                        .saturating_sub(WHISPER_WINDOW_SAMPLES)
+                        .div_ceil(WINDOW_STRIDE_SAMPLES)
+                        + 1,
+                })
+            {
                 return Err("audio job cancelled".into());
             }
             let window_len = (pcm.len() - window_start).min(WHISPER_WINDOW_SAMPLES);
@@ -509,7 +568,13 @@ impl WhisperRunner {
                 self.tokens,
                 &prompt,
             )?;
-            let decoded = decoder.decode_cancellable(cancelled)?;
+            let decoded = decoder.decode_with_progress(cancelled, &mut |emitted, budget| {
+                progress(WhisperProgress::Token {
+                    window: window_start / WINDOW_STRIDE_SAMPLES,
+                    emitted,
+                    budget,
+                })
+            })?;
             if profile {
                 let decode_ms = decode_started.elapsed().as_secs_f64() * 1e3;
                 eprintln!(

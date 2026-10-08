@@ -28,6 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut precision = Music3Precision::Checkpoint;
     let mut warmup = false;
     let mut flow_only = false;
+    let mut guidance = audio::music::minimax_music3::FlowGuidance::EXACT;
     while let Some(flag) = args.next() {
         if flag == "--warmup" {
             warmup = true;
@@ -47,6 +48,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--duration" => duration = Some(value.parse::<f64>()?),
             "--steps" => steps = Some(value.parse::<usize>()?),
             "--seed" => seed = Some(value.parse::<u64>()?),
+            "--flow-uncond-interval" => guidance.uncond_interval = value.parse()?,
+            "--flow-uncond-warmup" => guidance.uncond_warmup = value.parse()?,
             "--precision" => {
                 precision = match value.as_str() {
                     "checkpoint" => Music3Precision::Checkpoint,
@@ -68,6 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opened = Instant::now();
     let runner = turbospark_runtime::Music3Runner::open_with_precision(&model, precision)?;
     let open = opened.elapsed();
+    runner.set_flow_guidance(guidance)?;
 
     let mut warmup_ms = None;
     if warmup {
