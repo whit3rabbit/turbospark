@@ -3,14 +3,53 @@
 // dropped unsupported symbols. This strict scanner keeps each token accountable.
 use super::{input, Result, SpeechError};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Punctuation {
+    SentenceEnd,
+    Pause,
+    Opening,
+    Closing,
+    Quote,
+}
+
+impl Punctuation {
+    // Scanning and chunking share this classification so an accepted pause
+    // cannot be forgotten when reserving a bounded word/punctuation group.
+    fn from_char(ch: char) -> Option<Self> {
+        Some(match ch {
+            '.' | '!' | '?' => Self::SentenceEnd,
+            ';' | ':' | ',' | '\u{2014}' | '\u{2026}' => Self::Pause,
+            '(' => Self::Opening,
+            ')' => Self::Closing,
+            '"' => Self::Quote,
+            _ => return None,
+        })
+    }
+
+    pub(super) fn attaches_to_previous(self) -> bool {
+        self != Self::Opening
+    }
+
+    pub(super) fn ends_sentence(self) -> bool {
+        self == Self::SentenceEnd
+    }
+}
+
 pub(super) struct Token {
     pub word: String,
     pub start: usize,
     pub end: usize,
     pub spoken: Option<String>,
-    pub punctuation: bool,
+    pub punctuation: Option<Punctuation>,
     pub tag: String,
     pub phones: String,
+}
+
+impl Token {
+    pub(super) fn opens_group(&self) -> bool {
+        self.punctuation == Some(Punctuation::Opening)
+            || (self.punctuation == Some(Punctuation::Quote) && self.phones == "\u{201c}")
+    }
 }
 
 pub(super) fn validate_text(text: &str) -> Result<()> {
@@ -87,7 +126,7 @@ pub(super) fn tokens(text: &str) -> Result<Vec<Token>> {
         }
         let start = i;
         let mut spoken = None;
-        let mut punctuation = false;
+        let mut punctuation = None;
         if bytes[i].is_ascii_alphabetic() {
             i += 1;
             while i < bytes.len()
@@ -175,8 +214,8 @@ pub(super) fn tokens(text: &str) -> Result<Vec<Token>> {
                 .expect("scanner is at a character boundary");
             i += ch.len_utf8();
             match ch {
-                ';' | ':' | ',' | '.' | '!' | '?' | '"' | '(' | ')' | '\u{2014}' | '\u{2026}' => {
-                    punctuation = true
+                ch if Punctuation::from_char(ch).is_some() => {
+                    punctuation = Punctuation::from_char(ch)
                 }
                 '-' => {
                     // Hyphen is a word separator, represented by a supported pause.
@@ -197,7 +236,7 @@ pub(super) fn tokens(text: &str) -> Result<Vec<Token>> {
         let mut word = text[start..i].to_string();
         if word == "-" {
             word = "\u{2014}".into();
-            punctuation = true;
+            punctuation = Some(Punctuation::Pause);
             spoken = None;
         }
         out.push(Token {

@@ -11,6 +11,7 @@ mod tagger;
 
 use crate::{Result, SpeechError};
 use lexicon::{Lexicon, TokenContext};
+use normalize::Punctuation;
 use std::{collections::HashMap, path::Path, sync::OnceLock};
 use tagger::PerceptronTagger;
 use turbospark_model_io::safetensors::SafetensorsFile;
@@ -256,7 +257,7 @@ impl EnglishFrontend {
         for token in tokens.iter_mut().rev() {
             let phones = if let Some(number) = &token.spoken {
                 pronounce_number(number, &engine.lexicon)?
-            } else if token.punctuation {
+            } else if token.punctuation.is_some() {
                 if token.phones.is_empty() {
                     token.word.clone()
                 } else {
@@ -425,7 +426,7 @@ fn pronounce_compound(
 
 fn correct_context_tags(tokens: &mut [normalize::Token], lexicon: &Lexicon) {
     for i in 0..tokens.len() {
-        if tokens[i].punctuation || tokens[i].spoken.is_some() {
+        if tokens[i].punctuation.is_some() || tokens[i].spoken.is_some() {
             continue;
         }
         let word = tokens[i].word.to_lowercase();
@@ -467,6 +468,17 @@ fn correct_context_tags(tokens: &mut [normalize::Token], lexicon: &Lexicon) {
     }
 }
 
+fn begins_attached_word_group(tokens: &[normalize::Token], index: usize) -> bool {
+    let mut next = index + 1;
+    if next >= tokens.len() || tokens[index].end != tokens[next].start {
+        return false;
+    }
+    while next < tokens.len() && tokens[next].opens_group() {
+        next += 1;
+    }
+    next < tokens.len() && tokens[next].punctuation.is_none()
+}
+
 fn chunk(
     text: &str,
     tokens: &[normalize::Token],
@@ -476,39 +488,72 @@ fn chunk(
     let mut start = 0;
     let mut phones = String::new();
     let mut count = 0;
-    let mut sentence_has_end = false;
-    for (i, token) in tokens.iter().enumerate() {
-        let gap = if i > start && tokens[i - 1].end < token.start {
-            " "
-        } else {
-            ""
-        };
-        let added = gap.len() + token.phones.chars().count();
-        if count + added > vocab.max_chars && i > start {
+    let mut i = 0;
+    while i < tokens.len() {
+        let mut end = i + 1;
+        // Opening delimiters reserve their following word; accepted pauses
+        // and closers reserve their preceding word, including phoneme spaces.
+        if tokens[i].opens_group() {
+            while end < tokens.len() && tokens[end].opens_group() {
+                end += 1;
+            }
+            if end < tokens.len() && tokens[end].punctuation.is_none() {
+                end += 1;
+            }
+        }
+        while end < tokens.len()
+            // An opening quote with a forward word group must stay with it.
+            // A quote without that group retains the terminal-quote fallback.
+            && (!tokens[end].opens_group()
+                || (tokens[end - 1].end == tokens[end].start
+                    && !begins_attached_word_group(tokens, end)))
+            && tokens[end]
+                .punctuation
+                .is_some_and(Punctuation::attaches_to_previous)
+        {
+            end += 1;
+        }
+        let group_count: usize = (i..end)
+            .map(|j| {
+                tokens[j].phones.chars().count()
+                    + usize::from(j > i && tokens[j - 1].end < tokens[j].start)
+            })
+            .sum();
+        if group_count > vocab.max_chars {
+            return Err(input(&format!(
+                "word and attached terminal punctuation have {group_count} phoneme characters; cannot fit the {}-character Kokoro context",
+                vocab.max_chars
+            )));
+        }
+        let mut gap = i > start && tokens[i - 1].end < tokens[i].start;
+        if count + usize::from(gap) + group_count > vocab.max_chars && i > start {
             emit_segment(text, tokens, start, i, &phones, vocab, &mut segments)?;
             start = i;
             phones.clear();
             count = 0;
-            sentence_has_end = false;
-        } else {
-            phones.push_str(gap);
-            count += gap.len();
+            gap = false;
         }
-        phones.push_str(&token.phones);
-        count += token.phones.chars().count();
-        sentence_has_end |= matches!(token.word.as_str(), "." | "!" | "?");
-        // Keep an adjacent terminal run and all closing delimiters attached
-        // so synthesis never receives a standalone punctuation fragment.
-        let continuing = tokens.get(i + 1).is_some_and(|next| {
-            token.end == next.start && matches!(next.word.as_str(), "." | "!" | "?" | ")" | "\"")
-        });
-        if sentence_has_end && !continuing {
-            emit_segment(text, tokens, start, i + 1, &phones, vocab, &mut segments)?;
-            start = i + 1;
+        if gap {
+            phones.push(' ');
+            count += 1;
+        }
+        for j in i..end {
+            if j > i && tokens[j - 1].end < tokens[j].start {
+                phones.push(' ');
+            }
+            phones.push_str(&tokens[j].phones);
+        }
+        count += group_count;
+        if tokens[i..end]
+            .iter()
+            .any(|token| token.punctuation.is_some_and(Punctuation::ends_sentence))
+        {
+            emit_segment(text, tokens, start, end, &phones, vocab, &mut segments)?;
+            start = end;
             phones.clear();
             count = 0;
-            sentence_has_end = false;
         }
+        i = end;
     }
     if start < tokens.len() {
         emit_segment(
@@ -526,6 +571,7 @@ fn chunk(
     }
     Ok(segments)
 }
+
 fn emit_segment(
     text: &str,
     tokens: &[normalize::Token],
