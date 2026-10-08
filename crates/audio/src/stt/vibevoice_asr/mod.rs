@@ -1139,21 +1139,25 @@ mod tests {
 
         let speech = model.encode_speech(&audio_24k).expect("encode");
         let acoustic: Spots = serde_json::from_value(fixture["acoustic_tokens"].clone()).unwrap();
-        compare_spots(
+        let worst_acoustic = compare_spots(
             &speech.acoustic_tokens,
             &acoustic,
             "acoustic_tokens",
             5.0e-4,
         );
         let semantic: Spots = serde_json::from_value(fixture["semantic_tokens"].clone()).unwrap();
-        compare_spots(
+        let worst_semantic = compare_spots(
             &speech.semantic_tokens,
             &semantic,
             "semantic_tokens",
             5.0e-4,
         );
         let combined: Spots = serde_json::from_value(fixture["speech_features"].clone()).unwrap();
-        compare_spots(&speech.combined, &combined, "speech_features", 5.0e-3);
+        let worst_combined = compare_spots(&speech.combined, &combined, "speech_features", 5.0e-3);
+        eprintln!(
+            "encoder worst: acoustic {worst_acoustic:.3e} semantic {worst_semantic:.3e} \
+             combined {worst_combined:.3e}"
+        );
 
         let duration = audio_24k.len() as f64 / 24_000.0;
         let (prompt_ids, pad_positions) =
@@ -1179,12 +1183,13 @@ mod tests {
         let (last_hidden, mut cache) = model.language_model.prefill(&embeds, rows);
         let hidden_spots: VectorSpots =
             serde_json::from_value(fixture["prefill_hidden_last_row"].clone()).unwrap();
-        compare_vector(
+        let worst_hidden = compare_vector(
             &last_hidden,
             &hidden_spots,
             "prefill_hidden_last_row",
             2.0e-2,
         );
+        eprintln!("prefill hidden worst diff {worst_hidden:.3e}");
 
         let logits = model.language_model.tied_logits(&last_hidden);
         let argmax = crate::nn::argmax(&logits) as i64;
@@ -1211,12 +1216,15 @@ mod tests {
         }
         eprintln!("first logits worst watch diff {worst_logit:.3e}");
         assert!(
-            worst_logit < 3.0e-1,
+            worst_logit < 2.0e-4,
             "first logits worst diff {worst_logit}"
         );
 
-        // Greedy loop with the cached prefill.
-        let mut next = crate::nn::argmax(&logits);
+        // Greedy loop with the cached prefill. Fixture `steps[i]` is the
+        // i-th decision: step 0 is the prefill argmax, step i > 0 the
+        // argmax after stepping token i - 1.
+        let mut decision_logits = logits;
+        let mut next = crate::nn::argmax(&decision_logits);
         let mut generated: Vec<i64> = Vec::new();
         let mut step_index = 0usize;
         let mut worst_logprob = 0.0f32;
@@ -1224,26 +1232,26 @@ mod tests {
             && next as u32 != 151_645
             && generated.len() < super::MAX_NEW_TOKENS
         {
-            let token = i32::try_from(next).unwrap();
-            generated.push(i64::from(token));
-            let embedding = model.language_model.embed(&[token]).unwrap();
-            let hidden = model.language_model.step(&embedding, &mut cache);
-            let step_logits = model.language_model.tied_logits(&hidden);
-            let step_argmax = crate::nn::argmax(&step_logits);
             let record = &fixture["steps"][step_index];
-            if record.is_null() {
-                break;
-            }
+            assert!(
+                !record.is_null(),
+                "reference generated more tokens than the fixture records"
+            );
             assert_eq!(
-                step_argmax as i64,
+                next as i64,
                 record["token"].as_i64().unwrap(),
                 "step {step_index} argmax"
             );
             let reference_top = record["top_logprob"].as_f64().unwrap() as f32;
-            let computed = super::log_softmax_top(&step_logits, step_argmax);
+            let computed = super::log_softmax_top(&decision_logits, next);
             worst_logprob = worst_logprob.max((computed - reference_top).abs());
+            let token = i32::try_from(next).unwrap();
+            generated.push(i64::from(token));
+            let embedding = model.language_model.embed(&[token]).unwrap();
+            let hidden = model.language_model.step(&embedding, &mut cache);
+            decision_logits = model.language_model.tied_logits(&hidden);
+            next = crate::nn::argmax(&decision_logits);
             step_index += 1;
-            next = step_argmax;
         }
         let expected_generated: Vec<i64> = fixture["generated_token_ids"]
             .as_array()

@@ -347,16 +347,24 @@ impl TokenizerEncoder {
 
     /// `waveform [samples] -> latents [frames, vae_dim]`, one latent frame
     /// per `hop_length` input samples (3200 for the pinned ratios).
+    ///
+    /// Stage `i` blocks consume the output of `downsample_layers[i]`: the
+    /// stem feeds stage 0 and each strided downsample feeds the next
+    /// stage, exactly as the reference `TokenizerEncoder.__call__` walks
+    /// `downsample_layers` and `stages` in lockstep.
     pub(crate) fn forward(&self, waveform: &[f32]) -> Vec<f32> {
         let mut frames = waveform.len();
         // Frame-major single channel.
         let x: Vec<f32> = waveform.to_vec();
         let mut x = self.stem.forward(&x, frames);
         frames = x.len() / self.stem.out_channels;
-        for (stage, downsample) in self.stages.iter().zip(&self.downsamples) {
+        for block in &self.stages[0] {
+            block.forward(&mut x, frames);
+        }
+        for (index, downsample) in self.downsamples.iter().enumerate() {
             x = downsample.forward(&x, frames);
             frames = x.len() / downsample.out_channels;
-            for block in stage {
+            for block in &self.stages[index + 1] {
                 block.forward(&mut x, frames);
             }
         }

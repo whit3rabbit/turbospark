@@ -34,12 +34,18 @@ fn resolve_weight<'a>(files: &'a [SafetensorsFile], base: &str) -> (&'a Safetens
         // Higgs Audio v3 stores the shared qwen3 decoder under the raw HF
         // names without any "model." prefix.
         candidates.push(format!("{rest}.weight"));
+        // MOSS-Music keeps the whole text backbone under language_model.
+        candidates.push(format!("language_model.{rest}.weight"));
+        // Voxtral nests the llama model one level deeper.
+        candidates.push(format!("language_model.model.{rest}.weight"));
     }
     if base == "lm_head" {
         // Higgs Audio v3 keeps the untied text LM head under its audio
         // decoder projection name; the reference sanitize renames it to
         // "lm_head.weight" at load.
         candidates.push("audio_decoder_proj.text_lm_head.weight".to_owned());
+        // Voxtral nests the untied head under language_model.
+        candidates.push("language_model.lm_head.weight".to_owned());
     }
     for name in &candidates {
         if let Some(file) = files.iter().find(|f| f.contains_tensor(name)) {
@@ -581,6 +587,43 @@ impl Decoder {
         };
         for (layer, layer_cache) in self.layers.iter().zip(&mut cache.layers) {
             hidden = layer.forward_with_cache(&hidden, rows, Some(layer_cache));
+        }
+        self.final_norm.apply(&mut hidden, rows);
+        (hidden[(rows - 1) * self.hidden_size..].to_vec(), cache)
+    }
+
+    /// Prefill with per-layer injection rows (MOSS-Music deepstack): after
+    /// layer `i` of the first `injections.len()` layers, the matching
+    /// `[rows, hidden]` slice is added to the hidden state. Generation
+    /// steps never inject (the reference passes no deepstack on decode).
+    pub(crate) fn prefill_with_injections(
+        &self,
+        input: &[f32],
+        rows: usize,
+        injections: &[Vec<f32>],
+    ) -> (Vec<f32>, DecodeCache) {
+        let mut hidden = input.to_vec();
+        let mut cache = DecodeCache {
+            layers: self
+                .layers
+                .iter()
+                .map(|layer| AttentionCache::new(layer.attention.key_value_heads))
+                .collect(),
+        };
+        for (layer_index, (layer, layer_cache)) in
+            self.layers.iter().zip(&mut cache.layers).enumerate()
+        {
+            hidden = layer.forward_with_cache(&hidden, rows, Some(layer_cache));
+            if let Some(injection) = injections.get(layer_index) {
+                for row in 0..rows {
+                    for (value, add) in hidden[row * self.hidden_size..(row + 1) * self.hidden_size]
+                        .iter_mut()
+                        .zip(&injection[row * self.hidden_size..(row + 1) * self.hidden_size])
+                    {
+                        *value += add;
+                    }
+                }
+            }
         }
         self.final_norm.apply(&mut hidden, rows);
         (hidden[(rows - 1) * self.hidden_size..].to_vec(), cache)

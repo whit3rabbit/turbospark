@@ -1,25 +1,96 @@
-//! Qwen2 decoder backbone of VibeVoice-ASR.
+//! Qwen2 decoder backbone of Qwen2-Audio.
 //!
 //! Reference: `mlx_audio/lm/models/qwen2.py` at mlx-audio 0.5.7, commit
 //! `e1b19b9054bf163f5d812221a54fcc346f1890e9`. Standard Qwen2: grouped
 //! query attention with biased q/k/v projections, bias-free o_proj and
 //! MLP, full-width RoPE at `rope_theta` in the half-split ("neoX")
-//! convention, RMSNorm pre-norm, and logits from the token embedding
-//! matrix as a linear map (`tie_word_embeddings` is pinned true; the
-//! stored `lm_head` tensor is ignored, matching mlx_lm's sanitize).
+//! convention, RMSNorm pre-norm, and an explicit untied `lm_head`
+//! (`tie_word_embeddings` is pinned false for this family).
 //!
-//! Weights read the raw checkpoint names
-//! `model.language_model.layers.N.*`, `model.language_model.norm.weight`,
-//! and `model.language_model.embed_tokens.weight` directly.
+//! The pinned checkpoint quantizes every LM linear to a 4-bit affine
+//! scheme over 64-value groups (MLX contiguous little-endian packing).
+//! Weights dequantize to f32 at load through the shared `quant` module;
+//! the plain `.bias` tensors of the attention projections ride along.
+//! Weight names are the raw checkpoint names
+//! `language_model.model.layers.N.*`,
+//! `language_model.model.embed_tokens.weight`,
+//! `language_model.model.norm.weight`, and `language_model.lm_head.*`.
+
+use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::nn::{Linear, RmsNorm};
 use crate::ops;
+use crate::quant::{load_quantized, QuantScheme};
 use crate::{Result, SpeechError};
 
-use super::tokenizer_encoder::{load_linear_sharded, load_rms_norm_sharded, load_sharded};
+/// Load a linear (plain or affine-quantized) from the shard carrying it.
+///
+/// Weight and bias must live in the same shard; the pinned checkpoint is
+/// a single `weights.safetensors`. `input`/`output` are the logical
+/// `[output, input]` weight shape.
+fn load_linear(
+    files: &[SafetensorsFile],
+    base: &str,
+    input: usize,
+    output: usize,
+    has_bias: bool,
+    scheme: QuantScheme,
+) -> Result<Linear> {
+    let file = files
+        .iter()
+        .find(|file| file.contains_tensor(&format!("{base}.weight")))
+        .ok_or_else(|| SpeechError::Tensor {
+            name: format!("{base}.weight"),
+            why: "tensor is missing".into(),
+        })?;
+    let (weight, bias) = load_quantized(file, base, scheme)?;
+    if weight.len() != input * output {
+        return Err(SpeechError::Tensor {
+            name: format!("{base}.weight"),
+            why: format!("expected {} values, got {}", input * output, weight.len()),
+        });
+    }
+    if bias.is_some() != has_bias {
+        return Err(SpeechError::Tensor {
+            name: format!("{base}.bias"),
+            why: format!("expected bias presence {has_bias}"),
+        });
+    }
+    Ok(Linear::new(weight, bias, input, output))
+}
+
+/// Load a plain tensor from the first shard that carries it, with a shape
+/// check.
+fn load_sharded(files: &[SafetensorsFile], name: &str, shape: &[usize]) -> Result<Vec<f32>> {
+    let file = files
+        .iter()
+        .find(|file| file.contains_tensor(name))
+        .ok_or_else(|| SpeechError::Tensor {
+            name: name.to_owned(),
+            why: "tensor is missing".into(),
+        })?;
+    let descriptor = file.descriptor(name).ok_or_else(|| SpeechError::Tensor {
+        name: name.to_owned(),
+        why: "tensor is missing".into(),
+    })?;
+    if descriptor.shape != shape {
+        return Err(SpeechError::Tensor {
+            name: name.to_owned(),
+            why: format!("expected shape {shape:?}, got {:?}", descriptor.shape),
+        });
+    }
+    Ok(file.load_as_f32(name)?)
+}
+
+fn load_rms_norm(files: &[SafetensorsFile], name: &str, width: usize, eps: f32) -> Result<RmsNorm> {
+    Ok(RmsNorm::new(
+        load_sharded(files, &format!("{name}.weight"), &[width])?,
+        eps,
+    ))
+}
 
 /// Per-layer cached rotated keys and values, one vector per KV head.
-struct LayerCache {
+pub(crate) struct LayerCache {
     keys: Vec<Vec<f32>>,
     values: Vec<Vec<f32>>,
     len: usize,
@@ -48,39 +119,51 @@ struct Qwen2Attention {
 }
 
 impl Qwen2Attention {
+    #[allow(clippy::too_many_arguments)]
     fn load(
-        files: &[turbospark_model_io::safetensors::SafetensorsFile],
+        files: &[SafetensorsFile],
         prefix: &str,
         query_heads: usize,
         key_value_heads: usize,
         hidden: usize,
         theta: f32,
+        scheme: QuantScheme,
     ) -> Result<Self> {
         let head_dim = hidden / query_heads;
         let q_width = query_heads * head_dim;
         let kv_width = key_value_heads * head_dim;
         Ok(Self {
-            q_proj: load_linear_sharded(files, &format!("{prefix}.q_proj"), hidden, q_width, true)?,
-            k_proj: load_linear_sharded(
+            q_proj: load_linear(
+                files,
+                &format!("{prefix}.q_proj"),
+                hidden,
+                q_width,
+                true,
+                scheme,
+            )?,
+            k_proj: load_linear(
                 files,
                 &format!("{prefix}.k_proj"),
                 hidden,
                 kv_width,
                 true,
+                scheme,
             )?,
-            v_proj: load_linear_sharded(
+            v_proj: load_linear(
                 files,
                 &format!("{prefix}.v_proj"),
                 hidden,
                 kv_width,
                 true,
+                scheme,
             )?,
-            o_proj: load_linear_sharded(
+            o_proj: load_linear(
                 files,
                 &format!("{prefix}.o_proj"),
                 q_width,
                 hidden,
                 false,
+                scheme,
             )?,
             query_heads,
             key_value_heads,
@@ -90,9 +173,9 @@ impl Qwen2Attention {
         })
     }
 
-    /// Causal attention over `[rows, hidden]` with an optional cache to
-    /// append the rotated keys and values to.
-    fn forward(&self, x: &[f32], rows: usize, cache: Option<&mut LayerCache>) -> Vec<f32> {
+    /// Causal attention over `[rows, hidden]`, appending the rotated keys
+    /// and values to `cache`.
+    fn forward(&self, x: &[f32], rows: usize, cache: &mut LayerCache) -> Vec<f32> {
         let query_width = self.query_heads * self.head_dim;
         let query = self.q_proj.forward(x, rows);
         let key = self.k_proj.forward(x, rows);
@@ -117,15 +200,13 @@ impl Qwen2Attention {
             &cos,
             &sin,
         );
-        if let Some(cache) = cache {
-            for head in 0..self.key_value_heads {
-                let start = head * rows * self.head_dim;
-                let end = start + rows * self.head_dim;
-                cache.keys[head].extend_from_slice(&key_heads[start..end]);
-                cache.values[head].extend_from_slice(&value_heads[start..end]);
-            }
-            cache.len = rows;
+        for head in 0..self.key_value_heads {
+            let start = head * rows * self.head_dim;
+            let end = start + rows * self.head_dim;
+            cache.keys[head].extend_from_slice(&key_heads[start..end]);
+            cache.values[head].extend_from_slice(&value_heads[start..end]);
         }
+        cache.len = rows;
 
         // Grouped heads share one KV head; index it directly instead of
         // materializing repeats.
@@ -206,32 +287,36 @@ struct Mlp {
 
 impl Mlp {
     fn load(
-        files: &[turbospark_model_io::safetensors::SafetensorsFile],
+        files: &[SafetensorsFile],
         prefix: &str,
         hidden: usize,
         intermediate: usize,
+        scheme: QuantScheme,
     ) -> Result<Self> {
         Ok(Self {
-            gate: load_linear_sharded(
+            gate: load_linear(
                 files,
                 &format!("{prefix}.gate_proj"),
                 hidden,
                 intermediate,
                 false,
+                scheme,
             )?,
-            up: load_linear_sharded(
+            up: load_linear(
                 files,
                 &format!("{prefix}.up_proj"),
                 hidden,
                 intermediate,
                 false,
+                scheme,
             )?,
-            down: load_linear_sharded(
+            down: load_linear(
                 files,
                 &format!("{prefix}.down_proj"),
                 intermediate,
                 hidden,
                 false,
+                scheme,
             )?,
         })
     }
@@ -260,7 +345,7 @@ impl DecoderLayer {
         let mut normed = x.to_vec();
         self.input_norm.apply(&mut normed, rows);
         let mut cache = LayerCache::new(self.key_value_heads);
-        let attention = self.attention.forward(&normed, rows, Some(&mut cache));
+        let attention = self.attention.forward(&normed, rows, &mut cache);
         let mut residual = x.to_vec();
         for (value, add) in residual.iter_mut().zip(attention) {
             *value += add;
@@ -299,22 +384,23 @@ pub(crate) struct DecodeCache {
     head_dim: usize,
 }
 
-/// The loaded Qwen2 decoder with its tied embedding head.
-pub(crate) struct Qwen2 {
+/// The loaded Qwen2 decoder with its untied quantized logits head.
+pub(crate) struct LanguageModel {
     embeddings: Vec<f32>,
     layers: Vec<DecoderLayer>,
     final_norm: RmsNorm,
+    lm_head: Linear,
     hidden: usize,
     vocab: usize,
     theta: f32,
 }
 
-impl Qwen2 {
-    /// Loads the decoder. `prefix` is the raw checkpoint base, for the
-    /// pinned checkpoint `model.language_model`.
+impl LanguageModel {
+    /// Loads the decoder from the checkpoint shards under the raw
+    /// `language_model.` prefix.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn load(
-        files: &[turbospark_model_io::safetensors::SafetensorsFile],
+        files: &[SafetensorsFile],
         prefix: &str,
         hidden: usize,
         intermediate: usize,
@@ -324,10 +410,11 @@ impl Qwen2 {
         vocab: usize,
         eps: f32,
         theta: f32,
+        scheme: QuantScheme,
     ) -> Result<Self> {
         let layers = (0..layer_count)
             .map(|index| {
-                let layer_prefix = format!("{prefix}.layers.{index}");
+                let layer_prefix = format!("{prefix}.model.layers.{index}");
                 Ok(DecoderLayer {
                     attention: Qwen2Attention::load(
                         files,
@@ -336,15 +423,22 @@ impl Qwen2 {
                         key_value_heads,
                         hidden,
                         theta,
+                        scheme,
                     )?,
-                    mlp: Mlp::load(files, &format!("{layer_prefix}.mlp"), hidden, intermediate)?,
-                    input_norm: load_rms_norm_sharded(
+                    mlp: Mlp::load(
+                        files,
+                        &format!("{layer_prefix}.mlp"),
+                        hidden,
+                        intermediate,
+                        scheme,
+                    )?,
+                    input_norm: load_rms_norm(
                         files,
                         &format!("{layer_prefix}.input_layernorm"),
                         hidden,
                         eps,
                     )?,
-                    post_attention_norm: load_rms_norm_sharded(
+                    post_attention_norm: load_rms_norm(
                         files,
                         &format!("{layer_prefix}.post_attention_layernorm"),
                         hidden,
@@ -357,11 +451,19 @@ impl Qwen2 {
         Ok(Self {
             embeddings: load_sharded(
                 files,
-                &format!("{prefix}.embed_tokens.weight"),
+                &format!("{prefix}.model.embed_tokens.weight"),
                 &[vocab, hidden],
             )?,
             layers,
-            final_norm: load_rms_norm_sharded(files, &format!("{prefix}.norm"), hidden, eps)?,
+            final_norm: load_rms_norm(files, &format!("{prefix}.model.norm"), hidden, eps)?,
+            lm_head: load_linear(
+                files,
+                &format!("{prefix}.lm_head"),
+                hidden,
+                vocab,
+                false,
+                scheme,
+            )?,
             hidden,
             vocab,
             theta,
@@ -379,13 +481,13 @@ impl Qwen2 {
         Ok(ops::embedding(&self.embeddings, self.hidden, ids))
     }
 
-    /// Embedding matrix applied as a linear map (the tied head).
-    pub(crate) fn tied_logits(&self, hidden: &[f32]) -> Vec<f32> {
-        ops::linear(hidden, &self.embeddings, None, 1, self.hidden, self.vocab)
+    /// Logits for one post-norm hidden row through the untied head.
+    pub(crate) fn logits(&self, hidden: &[f32]) -> Vec<f32> {
+        self.lm_head.forward(hidden, 1)
     }
 
-    /// Evaluates the prompt and returns the final post-norm row plus the
-    /// populated cache for the greedy loop.
+    /// Evaluates the prompt embeddings and returns the final post-norm row
+    /// plus the populated cache for the greedy loop.
     pub(crate) fn prefill(&self, input: &[f32], rows: usize) -> (Vec<f32>, DecodeCache) {
         let mut caches = Vec::with_capacity(self.layers.len());
         let mut hidden = input.to_vec();
@@ -418,9 +520,10 @@ impl Qwen2 {
         hidden
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use super::{DecoderLayer, Mlp, Qwen2, Qwen2Attention};
+    use super::{DecoderLayer, LanguageModel, Mlp, Qwen2Attention};
 
     fn deterministic(len: usize, seed: u64) -> Vec<f32> {
         let mut state = seed | 1;
@@ -444,7 +547,7 @@ mod tests {
 
     /// The cache-free reference path, written locally so the production
     /// surface stays lean.
-    fn full_forward(decoder: &Qwen2, input: &[f32], rows: usize) -> Vec<f32> {
+    fn full_forward(decoder: &LanguageModel, input: &[f32], rows: usize) -> Vec<f32> {
         let mut hidden = input.to_vec();
         for layer in &decoder.layers {
             let (out, _) = layer.forward(&hidden, rows);
@@ -455,9 +558,8 @@ mod tests {
     }
 
     /// A tiny two-layer Qwen2 whose cached prefill plus decode steps must
-    /// reproduce the full forward hidden states: the fixture's hidden rows
-    /// come from the cache-free path while the gated run decodes through
-    /// the cache, so the two must agree.
+    /// reproduce the full forward hidden states, and whose untied head
+    /// matches a direct linear map.
     #[test]
     fn cached_prefill_and_steps_match_the_full_forward() {
         let hidden = 8usize;
@@ -480,8 +582,9 @@ mod tests {
             up: linear(hidden, 12, seed + 1),
             down: linear(12, hidden, seed + 2),
         };
-        let decoder = Qwen2 {
-            embeddings: deterministic(31 * hidden, 7),
+        let vocab = 31usize;
+        let decoder = LanguageModel {
+            embeddings: deterministic(vocab * hidden, 7),
             layers: (0..2)
                 .map(|index| DecoderLayer {
                     attention: attention(100 + index),
@@ -492,8 +595,9 @@ mod tests {
                 })
                 .collect(),
             final_norm: norm(hidden),
+            lm_head: linear(hidden, vocab, 900),
             hidden,
-            vocab: 31,
+            vocab,
             theta: 10_000.0,
         };
 
@@ -503,6 +607,12 @@ mod tests {
         let (last, mut cache) = decoder.prefill(&input, rows);
         for (cached, reference) in last.iter().zip(&full[(rows - 1) * hidden..]) {
             assert_eq!(cached.to_bits(), reference.to_bits());
+        }
+        // The untied head maps the post-norm row like a plain linear.
+        let logits = decoder.logits(&last);
+        let reference = crate::ops::linear(&last, &decoder.lm_head.weight, None, 1, hidden, vocab);
+        for (got, want) in logits.iter().zip(&reference) {
+            assert_eq!(got.to_bits(), want.to_bits());
         }
         for row in rows..rows + 3 {
             let token = deterministic(hidden, 1_000 + row as u64);

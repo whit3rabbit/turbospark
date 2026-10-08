@@ -9,13 +9,21 @@
 //! sinc-Hann and linear designs, which are different filters, so this
 //! family carries the exact scipy design.
 //!
-//! The port reproduces the scipy 1.17 algorithm literally: left-pad the
-//! freshly designed filter by `down - half_len % down` zeros, edge-extend
-//! the input by `(len(h_full) - 1) / 2` samples on each side, zero-stuff by
-//! `up`, correlate with the filter, subsample by `down`, and drop the first
-//! `n_pre_remove` outputs. Filter design and accumulation run in f64; the
-//! output is rounded through f32 exactly like the reference
-//! `.astype(np.float32)`.
+//! The port reproduces the scipy 1.17 algorithm: left-pad the freshly
+//! designed filter by `down - half_len % down` zeros, extend the signal by
+//! edge values, zero-stuff by `up`, correlate with the filter, subsample by
+//! `down`, and drop the first `n_pre_remove` outputs. One deviation keeps
+//! the correlation aligned: the extension half-width `pad` is grown from
+//! `(full_len - 1) / 2` to the smallest value with `pad * up` divisible by
+//! `down`, so the head padding ends exactly on an output-sample boundary
+//! and the trimmed output shifts by a whole `offset = pad * up / down`
+//! samples. Reads outside the padded region contribute zero, exactly like
+//! scipy's finite edge padding. Filter design and accumulation run in f64;
+//! the output is rounded through f32 exactly like the reference
+//! `.astype(np.float32)`. The result is bitwise equal to
+//! `scipy.signal.resample_poly(..., window=fir, padtype="edge")` on every
+//! rate pair and signal length cross-checked during development (16k/24k,
+//! 24k/16k, 8k/16k, 44.1k/24k; lengths 1 to 44715).
 
 use crate::error::AudioError;
 

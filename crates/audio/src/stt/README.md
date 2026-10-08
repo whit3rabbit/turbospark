@@ -30,9 +30,21 @@ The [central inventory](../../MODELS.md#stt) tracks upstream source families, ch
 
 - **[VibeVoice-ASR](vibevoice_asr/README.md)**: Microsoft's dual-tokenizer transcriber (acoustic and semantic SConv1d encoders, two MLP connectors, and a Qwen2 1.5B decoder with inline speaker markers), pinned to the streaming checkpoint's offline single-window path with a scipy-compatible kaiser-best resampling frontend.
 
+- **[Qwen2-Audio](qwen2_audio/README.md)**: Qwen2-Audio offline transcription over a whisper-family conv+attention-pooling encoder, a linear projector, and the 4-bit Qwen2 7B decoder spliced into an `<|AUDIO|>` chat prompt.
+
+- **[Voxtral Realtime 4B](voxtral_realtime/README.md)**: Mistral's streaming speech-to-text family pinned to its offline buffered path: 128-band Slaney log-mel, a 32-layer causal sliding-window encoder with a 4x downsample adapter, and the time-conditioned Mistral decoder greedy-decoded over `[BOS]` + streaming-pad prompts with Tekken detokenization.
+
 - **[Cohere Transcribe](cohere_asr/README.md)**: refused family; the official pin is access-gated and the public mirror decodes incoherently through the reference itself, so the module detects the distribution and refuses with the documented reason.
 
+- **[MOSS-Music 8B Thinking](moss_music/README.md)**: music understanding and lyrics ASR over a conv-downsampling whisper-family encoder, deepstack mergers, and the shared Qwen3 decoder; pins an explicit transcription prompt because the upstream default describes music.
+
+- **[Voxtral Mini 3B](voxtral/README.md)**: Mistral's speech understanding model over the whisper-large-v3 audio tower, a 4-frame window projector, and a llama-style text model.
+
 ## Layout and Conventions
+
+The [shared NeMo alignment module](nemo/mod.rs) ports upstream
+`mlx_audio/stt/models/nemo/alignment.py` (timestamped token, sentence, and
+chunk-merge helpers) for the NeMo transducer families.
 
 Each model family owns its subfolder containing:
 - Architecture and decoder modules
