@@ -60,11 +60,9 @@ extension AppModel {
         Task {
             // One whole-tree diff against HEAD. Per-file diffs are the
             // worktree pane's job; this answers "what changed overall".
-            let result = await Self.runProcess(
-                executable: "/usr/bin/git",
+            let result = await Self.runGit(
                 arguments: ["diff", "HEAD", "--stat"], workingDirectory: root)
-            let full = await Self.runProcess(
-                executable: "/usr/bin/git",
+            let full = await Self.runGit(
                 arguments: ["diff", "HEAD"], workingDirectory: root)
             let stat = result.exitCode == 0 ? result.stdout : ""
             let body = full.exitCode == 0 ? Self.limitDiffLines(full.stdout) : ""
@@ -96,8 +94,8 @@ extension AppModel {
         Task {
             gitCommits = await WorktreeModel.queryRecentCommits(rootPath: root, maxCount: 50)
             if gitCommits.isEmpty {
-                let probe = await Self.runProcess(
-                    executable: "/usr/bin/git", arguments: ["status"], workingDirectory: root)
+                let probe = await Self.runGit(
+                    arguments: ["status"], workingDirectory: root)
                 if probe.exitCode != 0 {
                     gitInfoError = probe.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
@@ -190,6 +188,23 @@ extension AppModel {
     }
 
     // MARK: - Process helper
+
+    /// A bounded git invocation with repository-controlled config neutralized
+    /// (see `HardenedGit`). Same result shape and timeout as `runProcess`.
+    static func runGit(
+        arguments: [String], workingDirectory: String
+    ) async -> (exitCode: Int32, stdout: String, stderr: String) {
+        do {
+            let result = try await HardenedGit.run(
+                arguments: arguments, workingDirectory: workingDirectory, timeoutSeconds: 15)
+            let error = result.timedOut && result.stderr.isEmpty
+                ? "Timed out after 15 seconds."
+                : result.stderr
+            return (result.exitCode, result.stdout, error)
+        } catch {
+            return (-1, "", error.localizedDescription)
+        }
+    }
 
     /// One bounded git/gh invocation through the app-wide capped executor.
     /// Its truncation marker is intentionally retained for the git sheet.

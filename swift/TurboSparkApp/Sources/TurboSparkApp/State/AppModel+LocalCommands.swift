@@ -91,22 +91,28 @@ extension AppModel {
 
     /// Delivers a cron prompt into the job's chat.
     ///
-    /// Selected and idle: submit now, through `run()` like any prompt.
-    /// Anything else: park it in the same queue the user's own mid-turn
-    /// prompts take, which turn tails and `selectChat` both drain. A FALSE
-    /// return records a missed run in the job's history, which is how the
-    /// Scheduled Tasks pane says "its chat was deleted" -- the only failure
-    /// mode a parked entry cannot recover from.
-    private func fireCronJob(_ job: AppCronJob) -> Bool {
+    /// **THE PROMPT IS MODEL-AUTHORED, SO IT NEVER TOUCHES THE COMPOSER.**
+    /// It used to be written into `promptText` and sent through `run()`,
+    /// which (a) required composer input to pass `canRun`, parking jobs in
+    /// idle chats, (b) overwrote a half-typed draft, and (c) treated a
+    /// leading `!` as the user's own shell command, skipping the permission
+    /// engine. It now joins the queue flagged `isScheduled` and is
+    /// delivered as plain text by `drainPendingUserMessagesIfIdle` when the
+    /// chat is idle and a model is loaded; otherwise it waits in the queue
+    /// that turn tails and `selectChat` drain. A FALSE return records a
+    /// missed run in the job's history, which is how the Scheduled Tasks
+    /// pane says "its chat was deleted" -- the only failure mode a parked
+    /// entry cannot recover from.
+    func fireCronJob(_ job: AppCronJob) -> Bool {
         guard chats.contains(where: { $0.id == job.chatID }) else { return false }
-        if job.chatID == selectedChatID, canRun {
-            // A cron job's own prompt landing in the composer, not a paste.
-            writePromptTextDirectly(job.prompt)
-            run()
-            return true
-        }
         pendingUserMessages[job.chatID, default: []].append(
-            QueuedUserPrompt(text: job.prompt, attachments: []))
+            QueuedUserPrompt(text: job.prompt, attachments: [], isScheduled: true))
+        // Only drain when the scheduled entry is at the head: a user-parked
+        // entry ahead of it would be restored into the composer by the
+        // drain, which is what must not happen to a draft here.
+        if pendingUserMessages[job.chatID]?.first?.isScheduled == true {
+            drainPendingUserMessagesIfIdle(chatID: job.chatID)
+        }
         return true
     }
 

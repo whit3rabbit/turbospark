@@ -453,7 +453,14 @@ extension AppModel {
                     dispatch: { calls, content in
                         await dispatch(calls, content: content)
                     })
-                if handlingResult == .retried { return }
+                // **NO EARLY RETURN ON `.retried`.** The retry closure calls
+                // `continueAgentLoop`, which declines (Stop pressed, no
+                // session) without starting a turn; returning here then
+                // skipped the tail and latched `generating` and
+                // `isCancellationPending`. When the retry DID start a turn,
+                // `executeGenerationTurn` bumped `generationEpoch`, and the
+                // epoch guards below make this older task a no-op.
+                _ = handlingResult
 
                 // **UNDER THE EPOCH GUARD** (state#98). `dispatch` above can
                 // re-enter `executeGenerationTurn` through the agent loop.
@@ -473,27 +480,34 @@ extension AppModel {
                     reason: interruptionReason.rawValue,
                     continuationsUsed: continuationRequestsStarted)
             }
-            guard self.generationEpoch == myEpoch else { return }
-            self.generating = false
-            self.phase = .idle
-            self.isCancellationPending = false
-            self.runTask = nil
-            self.updateTokenEstimate()
-            // **A BACKGROUND AGENT MAY HAVE FINISHED MID-TURN.** Its
-            // notification parked in `pendingTaskNotifications` because the
-            // chat was busy; this tail is the first idle moment after, under
-            // the same epoch guard that says no newer turn owns the state.
-            // The drain re-checks idleness and may start the next turn here.
-            //
-            // **QUEUED USER PROMPTS DRAIN FIRST.** A prompt the user typed
-            // mid-turn is the older intent; the notification waits one more
-            // tail rather than reverse the order the user saw. (The
-            // notification drain re-checks idleness, so a queue drain that
-            // started a turn parks it cleanly.)
-            self.drainPendingUserMessagesIfIdle(chatID: turnChatID)
-            self.drainPendingTaskNotificationsIfIdle(chatID: turnChatID)
-            self.drainPendingTitleGenerationIfIdle(session: session)
+            self.finishTurnTail(myEpoch: myEpoch, turnChatID: turnChatID, session: session)
         }
+    }
+
+    /// The end-of-turn bookkeeping, split out so the retry path and the
+    /// ordinary path share it and a test can drive it without a model.
+    /// A NEWER turn owns the state when the epoch moved, so this is a no-op.
+    func finishTurnTail(myEpoch: Int, turnChatID: UUID, session: TurboSparkSession?) {
+        guard self.generationEpoch == myEpoch else { return }
+        self.generating = false
+        self.phase = .idle
+        self.isCancellationPending = false
+        self.runTask = nil
+        self.updateTokenEstimate()
+        // **A BACKGROUND AGENT MAY HAVE FINISHED MID-TURN.** Its
+        // notification parked in `pendingTaskNotifications` because the
+        // chat was busy; this tail is the first idle moment after, under
+        // the same epoch guard that says no newer turn owns the state.
+        // The drain re-checks idleness and may start the next turn here.
+        //
+        // **QUEUED USER PROMPTS DRAIN FIRST.** A prompt the user typed
+        // mid-turn is the older intent; the notification waits one more
+        // tail rather than reverse the order the user saw. (The
+        // notification drain re-checks idleness, so a queue drain that
+        // started a turn parks it cleanly.)
+        self.drainPendingUserMessagesIfIdle(chatID: turnChatID)
+        self.drainPendingTaskNotificationsIfIdle(chatID: turnChatID)
+        self.drainPendingTitleGenerationIfIdle(session: session)
     }
 
     private func finishProseTurn(

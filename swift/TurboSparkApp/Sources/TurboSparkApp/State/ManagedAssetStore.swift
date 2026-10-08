@@ -59,16 +59,23 @@ public final class ManagedAssetStore: @unchecked Sendable {
     }
 
     public func store(
-        fileURL: URL,
+        fileURL requestedURL: URL,
         fileName: String? = nil,
         mimeType: String? = nil
     ) throws -> ManagedAssetDescriptor {
         try lock.withLock {
             guard let session = vault.session else { throw AssetError.locked }
+            // attributesOfItem does not follow a terminal symlink, so stat the
+            // resolved target: the header length must describe the bytes the
+            // encrypt pass will actually read through FileHandle.
+            let fileURL = requestedURL.resolvingSymlinksInPath()
             let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
             let byteCount = (attributes[.size] as? NSNumber)?.int64Value ?? 0
-            let assetID = try contentID(fileURL: fileURL, masterKey: session.masterKey)
-            let name = fileName ?? fileURL.lastPathComponent
+            // Both passes below read at most byteCount bytes, so a file that
+            // grows mid-store cannot make the header disagree with the body.
+            let assetID = try contentID(
+                fileURL: fileURL, masterKey: session.masterKey, limit: UInt64(byteCount))
+            let name = fileName ?? requestedURL.lastPathComponent
             let descriptor = ManagedAssetDescriptor(
                 id: assetID, fileName: name, mimeType: mimeType, byteCount: byteCount)
             let destination = assetURL(id: assetID)
@@ -101,7 +108,11 @@ public final class ManagedAssetStore: @unchecked Sendable {
                     purpose: "asset",
                     salt: Data(assetID.utf8))
                 var index: UInt32 = 0
-                while let chunk = try input.read(upToCount: Self.chunkSize), !chunk.isEmpty {
+                var remaining = UInt64(byteCount)
+                while remaining > 0,
+                      let chunk = try input.read(upToCount: Int(min(UInt64(Self.chunkSize), remaining))),
+                      !chunk.isEmpty {
+                    remaining -= UInt64(chunk.count)
                     let nonceData = noncePrefix + index.bigEndianData
                     let nonce = try AES.GCM.Nonce(data: nonceData)
                     let sealed = try AES.GCM.seal(
@@ -114,12 +125,23 @@ public final class ManagedAssetStore: @unchecked Sendable {
                     try output.write(contentsOf: sealed.tag)
                     index &+= 1
                 }
+                // A file that shrank mid-store would leave a header promising
+                // bytes the body does not have: refuse instead of storing it.
+                guard remaining == 0 else { throw AssetError.writeFailed }
                 try output.synchronize()
                 try FileManager.default.moveItem(at: temporary, to: destination)
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o600], ofItemAtPath: destination.path)
-                try session.database.retainAsset(
-                    id: assetID, fileName: name, mimeType: mimeType, byteCount: byteCount)
+                do {
+                    try session.database.retainAsset(
+                        id: assetID, fileName: name, mimeType: mimeType, byteCount: byteCount)
+                } catch {
+                    // No row will ever point at this ciphertext (it was created by
+                    // this call; the dedup path returned earlier), and an orphan
+                    // would poison every later exact backup.
+                    try? FileManager.default.removeItem(at: destination)
+                    throw error
+                }
                 return descriptor
             } catch {
                 try? FileManager.default.removeItem(at: temporary)
@@ -293,14 +315,18 @@ public final class ManagedAssetStore: @unchecked Sendable {
         }
     }
 
-    private func contentID(fileURL: URL, masterKey: Data) throws -> String {
+    private func contentID(fileURL: URL, masterKey: Data, limit: UInt64) throws -> String {
         let key = SymmetricKey(data: ProfileVaultCrypto.deriveKey(
             masterKey: masterKey, purpose: "asset-id"))
         var hmac = HMAC<SHA256>(key: key)
         let input = try FileHandle(forReadingFrom: fileURL)
         defer { try? input.close() }
-        while let chunk = try input.read(upToCount: Self.chunkSize), !chunk.isEmpty {
+        var remaining = limit
+        while remaining > 0,
+              let chunk = try input.read(upToCount: Int(min(UInt64(Self.chunkSize), remaining))),
+              !chunk.isEmpty {
             hmac.update(data: chunk)
+            remaining -= UInt64(chunk.count)
         }
         return Data(hmac.finalize()).hexEncodedString
     }

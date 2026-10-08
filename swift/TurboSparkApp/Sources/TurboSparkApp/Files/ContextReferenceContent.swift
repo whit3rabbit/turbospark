@@ -48,8 +48,7 @@ extension MentionResolver {
             model.showToast("@\(label) needs a project with a git repository.", style: .warning)
             return
         }
-        let result = await AppModel.runProcess(
-            executable: "/usr/bin/git", arguments: arguments, workingDirectory: root)
+        let result = await AppModel.runGit(arguments: arguments, workingDirectory: root)
         guard result.exitCode == 0 else {
             let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             model.showToast(

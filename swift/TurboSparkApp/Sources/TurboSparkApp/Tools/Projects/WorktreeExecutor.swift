@@ -63,12 +63,9 @@ public enum WorktreeExecutor {
     }
 
     private static func runGit(arguments: [String], rootURL: URL) async throws -> ProcessExecutor.Output {
-        try await ProcessExecutor.run(
-            executableURL: URL(fileURLWithPath: "/usr/bin/git"),
-            arguments: arguments,
-            currentDirectoryURL: rootURL,
-            timeoutSeconds: 15.0
-        )
+        // Repo config is attacker-influenceable; see HardenedGit.
+        try await HardenedGit.run(
+            arguments: arguments, workingDirectory: rootURL.path, timeoutSeconds: 15.0)
     }
 
     private static func toolError(code: Int, message: String, output: String) -> NSError {

@@ -50,14 +50,18 @@ mutate "$M" testAHardGatedAskNeverClassifies "hard-gate check removed" \
 ' ''
 
 mutate "$M" testAHighRiskUnrecognizedCommandClassifies "terminal classify flipped to fast-allow" \
-'        if !assessment.isHighRisk {
-            return .fastAllow
+'            return .fastAllow
         }
         return .classify' \
-'        if !assessment.isHighRisk {
-            return .fastAllow
+'            return .fastAllow
         }
         return .fastAllow'
+
+mutate "$M" testOnlyReadOnlyCategoriesTakeTheFastPath "fast path widened to every category" \
+'        if call.category == .fileRead, assessment.category == .fileRead,
+            !assessment.isHighRisk
+        {' \
+'        if !assessment.isHighRisk {'
 
 mutate "$M" testMCPCallsAlwaysClassify "MCP-always-classify removed" \
 '        if call.category == .mcp {

@@ -123,14 +123,12 @@ public enum AppToolRegistry {
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
                 output = try listDirectory(relPath: relPath, rootURL: rootURL)
 
-            case "read_file", "view_file", "cat", "fileread", "read":
-                guard let relPath = call.arguments["path"]
-                    ?? call.arguments["file_path"]
-                    ?? call.arguments["filePath"]
-                    ?? call.arguments["AbsolutePath"]
-                    ?? call.arguments["file"]
-                    ?? call.arguments["TargetFile"]
-                    ?? call.arguments["resource"] else {
+            case _ where readFileAliases.contains(lowerName):
+                // Conflicting spellings are refused, not resolved: the card
+                // and the risk gate read the same resolver.
+                let resolvedRead = ToolArgumentResolver.fileArguments(call.arguments, forRead: true)
+                if let conflict = resolvedRead.conflict { throw conflict }
+                guard let relPath = resolvedRead.path else {
                     throw NSError(domain: "TurboSparkTool", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' or 'file_path' argument."])
                 }
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
@@ -168,21 +166,14 @@ public enum AppToolRegistry {
                     contextLines: contextLines, comparisonPath: comparisonPath,
                     numRevisions: numRevisions)
 
-            case "write_file", "save_file", "filewrite", "write", "create_file", "write_to_file":
-                guard let relPath = call.arguments["path"]
-                    ?? call.arguments["file_path"]
-                    ?? call.arguments["filePath"]
-                    ?? call.arguments["TargetFile"]
-                    ?? call.arguments["AbsolutePath"]
-                    ?? call.arguments["file"] else {
+            case _ where writeFileAliases.contains(lowerName):
+                let resolvedWrite = ToolArgumentResolver.fileArguments(call.arguments)
+                if let conflict = resolvedWrite.conflict { throw conflict }
+                guard let relPath = resolvedWrite.path else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' or 'file_path' argument."])
                 }
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
-                let content = call.arguments["content"]
-                    ?? call.arguments["CodeContent"]
-                    ?? call.arguments["text"]
-                    ?? call.arguments["code"]
-                    ?? ""
+                let content = resolvedWrite.content ?? ""
                 output = try await writeFile(relPath: relPath, content: content, rootURL: rootURL)
                 if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
@@ -190,24 +181,15 @@ public enum AppToolRegistry {
                     Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
                 }
 
-            case "edit_file", "fileedit", "edit", "replace_file_content", "editor":
-                guard let relPath = call.arguments["path"]
-                    ?? call.arguments["file_path"]
-                    ?? call.arguments["filePath"]
-                    ?? call.arguments["TargetFile"]
-                    ?? call.arguments["AbsolutePath"]
-                    ?? call.arguments["file"] else {
+            case _ where editFileAliases.contains(lowerName):
+                let resolvedEdit = ToolArgumentResolver.fileArguments(call.arguments)
+                if let conflict = resolvedEdit.conflict { throw conflict }
+                guard let relPath = resolvedEdit.path else {
                     throw NSError(domain: "TurboSparkTool", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing 'file_path' argument."])
                 }
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
                 let command = call.arguments["command"] ?? call.arguments["cmd"] ?? "str_replace"
-                let newStr = call.arguments["new_string"]
-                    ?? call.arguments["newString"]
-                    ?? call.arguments["replacement"]
-                    ?? call.arguments["newStr"]
-                    ?? call.arguments["ReplacementContent"]
-                    ?? call.arguments["file_text"]
-                    ?? ""
+                let newStr = resolvedEdit.newString ?? ""
                 let insertLine = call.arguments["insert_line"]
                     ?? call.arguments["insertLine"]
                     ?? call.arguments["line"]
@@ -220,12 +202,7 @@ public enum AppToolRegistry {
                     ?? call.arguments["AllowMultiple"]
                     ?? call.arguments["allowMultiple"])?.lowercased() ?? "")
 
-                let oldStr = call.arguments["old_string"]
-                    ?? call.arguments["oldString"]
-                    ?? call.arguments["target"]
-                    ?? call.arguments["oldStr"]
-                    ?? call.arguments["TargetContent"]
-                    ?? ""
+                let oldStr = resolvedEdit.oldString ?? ""
                 let normalizedCmd = command.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
                 if normalizedCmd != "undo_edit" && normalizedCmd != "undo" && normalizedCmd != "insert" && normalizedCmd != "pattern_replace" {
                     if oldStr.isEmpty {
@@ -796,21 +773,57 @@ public enum AppToolRegistry {
                 output = try await ToolSearchExecutor.execute(
                     call: call, project: project, chatID: chatID)
 
+            case "codemode":
+                // Execution consults the flag independently from catalog
+                // advertisement so a stale or forged call cannot run while
+                // the feature is off.
+                guard CodemodeSettings.isEnabled else {
+                    throw NSError(domain: "TurboSparkCodemode", code: 10, userInfo: [
+                        NSLocalizedDescriptionKey: "codemode is disabled. Enable it in MCP settings first."
+                    ])
+                }
+                guard let script = call.arguments["code"], !script.isEmpty else {
+                    throw NSError(domain: "TurboSparkCodemode", code: 11, userInfo: [
+                        NSLocalizedDescriptionKey: "Missing 'code' argument."
+                    ])
+                }
+                let codemodeServers = AppToolCatalogMcp.visibleServers(
+                    global: GlobalMcpFileStore.load().servers, project: project)
+                let codemodeDescriptors = ToolSearchCatalog.descriptors(
+                    servers: codemodeServers, permissions: project?.permissions)
+                let codemodeHandler = CodemodeNestedRunner.callHandler(
+                    descriptors: codemodeDescriptors, project: project, chatID: chatID)
+                let sandboxResult = await CodemodeSandbox.run(
+                    code: script,
+                    entries: CodemodeIdentifier.entries(for: codemodeDescriptors),
+                    storeKey: chatID?.uuidString ?? "codemode",
+                    callHandler: codemodeHandler)
+                let formatted = CodemodeSandbox.promptOutput(for: sandboxResult)
+                archivalOutput = CodemodeSandbox.archivalCalls(for: sandboxResult)
+                if formatted.isError {
+                    throw CodemodeResultStop(
+                        output: formatted.output,
+                        isError: true,
+                        archivalOutput: archivalOutput)
+                }
+                output = formatted.output
+
             case "call_mcp_tool", "callmcptool", "mcp_tool":
-                guard let serverName = call.arguments["server"]
-                    ?? call.arguments["server_name"]
-                    ?? call.arguments["serverName"]
-                    ?? call.arguments["ServerName"] else {
+                // Same parser the permission rules and the risk classifier
+                // use; an ambiguous target throws here instead of picking
+                // a winner.
+                let target = try ToolArgumentResolver.mcpTarget(call.arguments)
+                guard let serverName = target.server else {
                     throw NSError(domain: "TurboSparkTool", code: 5, userInfo: [NSLocalizedDescriptionKey: "Missing 'server' argument for MCP tool call."])
                 }
-                guard let toolName = call.arguments["toolName"]
-                    ?? call.arguments["tool_name"]
-                    ?? call.arguments["ToolName"]
-                    ?? call.arguments["tool"]
-                    ?? call.arguments["name"] else {
+                guard let toolName = target.tool else {
                     throw NSError(domain: "TurboSparkTool", code: 6, userInfo: [NSLocalizedDescriptionKey: "Missing 'toolName' argument for MCP tool call."])
                 }
-                output = try await executeMcpCall(serverName: serverName, toolName: toolName, arguments: call.arguments, project: project, rootURL: rootURL)
+                output = try await executeMcpCall(
+                    serverName: serverName, toolName: toolName, arguments: call.arguments,
+                    wireArguments: McpWireArguments.build(
+                        strings: call.arguments, typed: call.typedArguments?.values),
+                    project: project, rootURL: rootURL)
 
             default:
                 if call.name.contains("__") && call.name.lowercased().hasPrefix("mcp__") {
@@ -818,7 +831,11 @@ public enum AppToolRegistry {
                     if parts.count >= 3 {
                         let serverName = parts[1]
                         let toolName = parts[2...].joined(separator: "__")
-                        output = try await executeMcpCall(serverName: serverName, toolName: toolName, arguments: call.arguments, project: project, rootURL: rootURL)
+                        output = try await executeMcpCall(
+                            serverName: serverName, toolName: toolName, arguments: call.arguments,
+                            wireArguments: McpWireArguments.build(
+                                strings: call.arguments, typed: call.typedArguments?.values),
+                            project: project, rootURL: rootURL)
                     } else {
                         throw NSError(domain: "TurboSparkTool", code: 19, userInfo: [
                             NSLocalizedDescriptionKey: "Malformed MCP tool name: '\(call.name)'."
@@ -831,6 +848,15 @@ public enum AppToolRegistry {
                         ])
                     }
                     output = try await CustomToolExecutor.execute(tool: customTool, arguments: call.arguments, projectRootURL: rootURL)
+                } else if let root = project?.rootDirectoryURL,
+                          CustomToolManager.shared.untrustedProjectTools(for: root)
+                              .contains(where: { $0.name.lowercased() == call.name.lowercased() }) {
+                    // A repo-authored tool the user has not approved yet. It
+                    // is never loaded, so say why instead of "not implemented".
+                    throw NSError(domain: "TurboSparkTool", code: 31, userInfo: [
+                        NSLocalizedDescriptionKey: "Project tool '\(call.name)' has not been approved by the user "
+                            + "and was not executed. Ask the user to review and trust it first."
+                    ])
                 } else {
                     // Fabricating "Executed successfully" for a tool with no
                     // real handler let the model believe hallucinated results
@@ -860,6 +886,15 @@ public enum AppToolRegistry {
                 durationSeconds: elapsed,
                 browserCardMetadata: browserCardMetadata,
                 continuationStopReason: stop.reason)
+        } catch let stop as CodemodeResultStop {
+            let elapsed = Date().timeIntervalSince(startTime)
+            return AppToolResult(
+                callID: call.id,
+                output: stop.output,
+                isError: stop.isError,
+                durationSeconds: elapsed,
+                browserCardMetadata: browserCardMetadata,
+                archivalOutput: stop.archivalOutput)
         } catch is CancellationError {
             // **A STOP IS NOT A TOOL FAILURE** (state#64). `CancellationError`
             // localizes to "cancelled", so a command the USER stopped reached
@@ -890,6 +925,7 @@ public enum AppToolRegistry {
         serverName: String,
         toolName: String,
         arguments: [String: String],
+        wireArguments: [String: Any]? = nil,
         project: AppProject?,
         rootURL: URL
     ) async throws -> String {
@@ -923,7 +959,9 @@ public enum AppToolRegistry {
         return try await McpClientEngine.shared.callTool(
             config: matchedServer,
             toolName: toolName,
-            arguments: arguments,
+            // Typed values when the caller kept them (see
+            // `McpWireArguments`); the flat strings otherwise.
+            arguments: wireArguments ?? arguments,
             workingDirectory: rootURL
         )
     }

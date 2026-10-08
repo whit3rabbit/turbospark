@@ -223,7 +223,8 @@ public enum ToolCallParser {
             rawInvocation: raw,
             status: .pendingApproval,
             category: AppToolRegistry.category(for: name, projectURL: projectURL),
-            riskAssessment: ToolRiskClassifier.assessRisk(name: name, arguments: arguments)
+            riskAssessment: ToolRiskClassifier.assessRisk(
+                name: name, arguments: arguments, projectURL: projectURL)
         )
     }
 

@@ -153,11 +153,12 @@ final class REPLFileAccessBroker: Sendable {
             let root = URL(fileURLWithPath: trimmedRoot, isDirectory: true)
                 .standardizedFileURL
                 .resolvingSymlinksInPath()
-            let candidate = (cleaned.hasPrefix("/")
-                ? URL(fileURLWithPath: cleaned)
-                : root.appendingPathComponent(cleaned))
-                .standardizedFileURL
-                .resolvingSymlinksInPath()
+            // A not-yet-existing write target must still have its existing
+            // ancestors resolved, or `link/new.txt` escapes through `link`.
+            let candidate = AppToolSandbox.resolvedForContainment(
+                cleaned.hasPrefix("/")
+                    ? URL(fileURLWithPath: cleaned)
+                    : root.appendingPathComponent(cleaned))
             if candidate.path == root.path || candidate.path.hasPrefix(root.path + "/") {
                 return candidate
             }

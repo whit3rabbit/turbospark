@@ -261,6 +261,7 @@ extension AppModel {
                 self.imageGenerationTask = nil
                 return
             }
+            var usedSession: (any ImageGenerationSession)?
             do {
                 try Task.checkCancellation()
                 guard let selected = self.selectedImageModel,
@@ -270,6 +271,7 @@ extension AppModel {
                         message: "Select a supported MLX image model from the curated list.")
                 }
                 let session = try self.sharedImageSession(for: selected)
+                usedSession = session
                 try await ImageGenerationSequence.run(requests) { index, request in
                     self.imageBatchIndex = index + 1
                     self.imageJob = AppImageJob(
@@ -314,6 +316,11 @@ extension AppModel {
                 }
                 self.showToast("Image generation failed: \(error.localizedDescription)", style: .error)
             }
+            // A cancelled stream ends the consumer at once, but the detached
+            // MLX producer keeps going until its next cancellation point.
+            // Hold the permit (and the UI's generating gate) until it has
+            // really stopped, or the next job runs on the same pipeline.
+            await usedSession?.waitUntilIdle()
             self.generating = false
             self.isCancellationPending = false
             self.imageGenerationTask = nil

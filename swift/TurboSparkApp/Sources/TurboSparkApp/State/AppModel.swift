@@ -320,8 +320,17 @@ public final class AppModel: ObservableObject {
         }
         if let project = selectedProject {
             var updated = project
+            // The presets own only the category matrix. Deny/allow rules,
+            // browser origin grants and REPL roots are owned elsewhere (the
+            // MCP and browser approval cards, the project sheet); a preset
+            // swap that dropped them would silently lift a user's deny rule.
+            let live = project.permissions
             updated.permissions = AppProjectPermissions.preset(for: mode)
             updated.permissions.mode = mode
+            updated.permissions.mcpAllowRules = live.mcpAllowRules
+            updated.permissions.mcpDenyRules = live.mcpDenyRules
+            updated.permissions.browserOriginAllowlist = live.browserOriginAllowlist
+            updated.permissions.replFileAccessRoots = live.replFileAccessRoots
             updateProject(updated)
         } else {
             activePermissionMode = mode
@@ -841,6 +850,23 @@ public final class AppModel: ObservableObject {
     /// pending), the stale tail is a no-op instead of clobbering the new
     /// turn's state out from under it (state#10).
     var generationEpoch: Int = 0
+
+    /// A non-fork `/skill` expansion produced INSIDE the submission task.
+    /// `run()` would park it (the task still holds `submitting`), so the
+    /// submission's defer replays it once `submitting` is clear.
+    struct DeferredSkillSubmission: Equatable {
+        let chatID: UUID
+        let text: String
+        let presentation: MidTurnInputPresentation?
+    }
+    var deferredSkillSubmission: DeferredSkillSubmission?
+
+    /// Test seam for scheduled-prompt delivery: a `TurboSparkSession` cannot
+    /// be built without a real model. Nil in production.
+    var scheduledDeliveryModelReadyOverride: Bool?
+    var hasModelReadyForScheduledDelivery: Bool {
+        scheduledDeliveryModelReadyOverride ?? (session != nil)
+    }
 
     /// Prevent a stale install consumer from changing a newer install's state.
     /// Cancellation keeps its consumer alive until the native writer exits.

@@ -125,6 +125,24 @@ extension AppToolRegistry {
     /// which transcript implementation owns the chat.
     public static var observationRecaller: (@Sendable (UUID?, String, Int, Int) async throws -> String)?
 
+    /// The names `execute` routes to the read, write and edit handlers.
+    ///
+    /// **ONE TABLE FOR DISPATCH AND CLASSIFICATION.** `execute` switches on
+    /// these sets and `AppToolCatalog.builtInCategory` derives the permission
+    /// category from them, so a name that reaches a write handler is always
+    /// `.fileWrite`. The category table used to list its own, shorter copy:
+    /// `create_file` reached `writeFile` but was gated as `.automation`,
+    /// which skipped the sensitive-path check inside a `batch`.
+    static let readFileAliases: Set<String> = [
+        "read_file", "view_file", "cat", "fileread", "read",
+    ]
+    static let writeFileAliases: Set<String> = [
+        "write_file", "save_file", "filewrite", "write", "create_file", "write_to_file",
+    ]
+    static let editFileAliases: Set<String> = [
+        "edit_file", "fileedit", "edit", "replace_file_content", "editor",
+    ]
+
     /// Tool names `execute(call:in:)` actually has a real handler for,
     /// independent of which `OpenAITool` DEFINITIONS `AppToolCatalog`
     /// advertises to the model. A name outside this set (and not a dynamic
@@ -134,7 +152,7 @@ extension AppToolRegistry {
     /// also what lets `AppToolCatalog` avoid advertising a tool with no
     /// backing executor in the first place -- keep it in sync with the
     /// `switch` in `execute(call:in:)` below.
-    static let supportedToolNames: Set<String> = [
+    static let supportedToolNames: Set<String> = Set<String>([
         "list_directory", "list_dir", "ls", "glob",
         "read_file", "view_file", "cat", "fileread", "read",
         "write_file", "save_file", "filewrite", "write",
@@ -187,7 +205,7 @@ extension AppToolRegistry {
         "call_mcp_tool", "callmcptool", "mcp_tool",
         "listmcpresources", "list_mcp_resources", "list_resources",
         "readmcpresource", "read_mcp_resource", "read_resource"
-    ]
+    ]).union(writeFileAliases).union(editFileAliases)
 
     /// Tool names whose handler resolves a filesystem path or spawns a
     /// process, and therefore cannot run without a project root.
@@ -197,7 +215,7 @@ extension AppToolRegistry {
     /// Every `mcp__server__tool` call is treated as
     /// rooted too: `executeMcpCall` passes the root as the server's working
     /// directory, so there is no correct value to pass without one.
-    static let workspaceRootedToolNames: Set<String> = [
+    static let workspaceRootedToolNames: Set<String> = Set<String>([
         "list_directory", "list_dir", "ls", "glob",
         "read_file", "view_file", "cat", "fileread", "read",
         "write_file", "save_file", "filewrite", "write",
@@ -214,15 +232,20 @@ extension AppToolRegistry {
         "exitworktree", "exit_worktree",
         "memory", "remember",
         "tool_call",
+        "codemode",
         "call_mcp_tool", "callmcptool", "mcp_tool",
         "listmcpresources", "list_mcp_resources", "list_resources",
         "readmcpresource", "read_mcp_resource", "read_resource"
-    ]
+    ]).union(writeFileAliases).union(editFileAliases)
 
     /// Whether `execute(call:in:)` has a real handler for `toolName`.
     public static func isImplemented(_ toolName: String, projectURL: URL? = nil) -> Bool {
         let lower = toolName.lowercased()
         if lower.contains("__") && lower.hasPrefix("mcp__") { return true }
+        // `codemode` has a handler but is opt-in: the gate lives here, not
+        // in `supportedToolNames`, so a disabled codemode disappears from
+        // every advertised list the way memoryTools does.
+        if lower == CodemodeToolDefinitions.toolName { return CodemodeSettings.isEnabled }
         if supportedToolNames.contains(lower) { return true }
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL)
         return custom.contains(where: { $0.name.lowercased() == lower })

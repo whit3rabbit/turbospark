@@ -5,6 +5,66 @@ import ZImage
 protocol ImageGenerationSession: AnyObject, Sendable {
     func cancel()
     func generate(_ options: ImageGenerateOptions) -> AsyncThrowingStream<ImageGenerationEvent, Error>
+    /// Returns once the detached producer behind the last `generate` has
+    /// actually stopped. Cancelling a stream finishes the CONSUMER at once,
+    /// but the producer keeps running until its next cancellation point
+    /// (model load, text encode and VAE decode have none), so the job permit
+    /// must not be released before this returns.
+    func waitUntilIdle() async
+}
+
+extension ImageGenerationSession {
+    func waitUntilIdle() async {}
+}
+
+/// The session's one running producer, with an identity check on clear.
+/// A previous run's late `clear` must not null the NEXT run's task (that
+/// would make it uncancellable), and `waitUntilIdle` must see the newest.
+final class ImageProducerSlot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<Void, Never>?
+    private var token: UUID?
+
+    func store(_ task: Task<Void, Never>, token: UUID) {
+        lock.lock()
+        self.task = task
+        self.token = token
+        lock.unlock()
+    }
+
+    /// Clears only if `token` still owns the slot.
+    func clear(token: UUID) {
+        lock.lock()
+        if self.token == token {
+            task = nil
+            self.token = nil
+        }
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        let current = task
+        lock.unlock()
+        current?.cancel()
+    }
+
+    func waitUntilIdle() async {
+        // A producer that finishes clears its own slot, so loop until the
+        // slot is empty or holds a task that has already completed.
+        while true {
+            lock.lock()
+            let current = task
+            lock.unlock()
+            guard let current else { return }
+            await current.value
+            lock.lock()
+            let same = task == current
+            if same { task = nil; token = nil }
+            lock.unlock()
+            if same { return }
+        }
+    }
 }
 
 /// Adapts the upstream Swift + MLX Z-Image pipeline to the app's image stream.
@@ -16,8 +76,7 @@ final class MLXImageGenerationSession: ImageGenerationSession, @unchecked Sendab
     private let modelID: String
     private let revision: String
     private let quantization: String
-    private let taskLock = NSLock()
-    private var activeTask: Task<Void, Never>?
+    private let producer = ImageProducerSlot()
 
     init(model: ImageInstalledModel) {
         modelID = model.modelID
@@ -36,10 +95,11 @@ final class MLXImageGenerationSession: ImageGenerationSession, @unchecked Sendab
     }
 
     func cancel() {
-        taskLock.lock()
-        let task = activeTask
-        taskLock.unlock()
-        task?.cancel()
+        producer.cancel()
+    }
+
+    func waitUntilIdle() async {
+        await producer.waitUntilIdle()
     }
 
     func generate(
@@ -52,6 +112,7 @@ final class MLXImageGenerationSession: ImageGenerationSession, @unchecked Sendab
             let revision = self.revision
             let quantization = self.quantization
             let sourcePath = self.sourcePath
+            let token = UUID()
             let task = Task.detached(priority: .userInitiated) {
                 do {
                     let modelSpec = try sourcePath.map {
@@ -125,25 +186,13 @@ final class MLXImageGenerationSession: ImageGenerationSession, @unchecked Sendab
                 } catch {
                     continuation.finish(throwing: error)
                 }
-                self.clearActiveTask()
+                self.producer.clear(token: token)
             }
-            self.storeActiveTask(task)
+            self.producer.store(task, token: token)
             continuation.onTermination = { [weak self] reason in
                 if case .cancelled = reason { self?.cancel() }
             }
         }
-    }
-
-    private func storeActiveTask(_ task: Task<Void, Never>) {
-        taskLock.lock()
-        activeTask = task
-        taskLock.unlock()
-    }
-
-    private func clearActiveTask() {
-        taskLock.lock()
-        activeTask = nil
-        taskLock.unlock()
     }
 }
 

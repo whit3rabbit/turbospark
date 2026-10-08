@@ -32,12 +32,9 @@ extension WorktreeModel {
         exitCode: Int32, stdout: String, stderr: String
     ) {
         do {
-            let result = try await ProcessExecutor.run(
-                executableURL: URL(fileURLWithPath: "/usr/bin/git"),
-                arguments: args,
-                currentDirectoryURL: URL(fileURLWithPath: rootPath),
-                timeoutSeconds: gitTimeoutSeconds
-            )
+            let result = try await HardenedGit.run(
+                arguments: args, workingDirectory: rootPath,
+                timeoutSeconds: gitTimeoutSeconds)
             if result.timedOut {
                 return (
                     -1, result.stdout,

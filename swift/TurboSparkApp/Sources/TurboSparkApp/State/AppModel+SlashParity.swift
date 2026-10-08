@@ -329,6 +329,11 @@ extension AppModel {
         let removed = chats[index].messages.count - (anchorIndex + 1)
         guard removed > 0 else { return }
         chats[index].messages.removeSubrange((anchorIndex + 1)...)
+        // A compaction boundary past the new end would make history assembly
+        // skip every remaining row, so the next prompt never reached the
+        // model. The anchor prompt itself stays live, so the summary may
+        // only cover the rows before it.
+        clampStoredCompaction(chatID: selectedChatID, toRow: anchorIndex)
         // The checklist is transcript state too: a TodoWrite list from a
         // rewound turn describes work the conversation no longer contains.
         chats[index].todos = []

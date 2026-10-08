@@ -132,7 +132,8 @@ public enum AppToolPermissionEngine {
         }()
 
         let risk: ToolRiskAssessment = {
-            let base = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+            let base = call.riskAssessment ?? ToolRiskClassifier.assessRisk(
+                name: call.name, arguments: call.arguments, projectURL: project?.rootDirectoryURL)
             if category == .browser,
                let origin = browserContext?.origin,
                AppToolSandbox.isPrivateOrMetadataHost(origin.host),

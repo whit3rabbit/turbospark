@@ -29,16 +29,57 @@ public struct SandboxConfig: Sendable, Equatable {
 
 /// Sandbox validator enforcing filesystem boundaries and network access rules.
 public enum AppToolSandbox {
+    /// Canonical form of `url` for containment checks, valid even when the
+    /// leaf (or several trailing components) does not exist yet.
+    ///
+    /// **`resolvingSymlinksInPath` DOES NOTHING FOR A PATH THAT DOES NOT
+    /// EXIST.** A new file under a symlinked directory (`link/new.txt`
+    /// with `link -> /outside`) therefore came back unresolved, passed the
+    /// lexical prefix check, and the write then followed the symlink out of
+    /// the project. This resolves the deepest ancestor that exists (using
+    /// `lstat`, so a dangling symlink counts as existing and is followed by
+    /// hand) and re-appends the not-yet-created components, so the result
+    /// contains no symlink a later `createDirectory`/write could traverse.
+    public static func resolvedForContainment(_ url: URL) -> URL {
+        resolvedForContainment(url, depth: 0)
+    }
+
+    private static func resolvedForContainment(_ url: URL, depth: Int) -> URL {
+        let std = url.standardizedFileURL
+        let path = std.path
+        var info = stat()
+        if lstat(path, &info) == 0 {
+            let isLink = (info.st_mode & S_IFMT) == S_IFLNK
+            var target = stat()
+            if isLink, stat(path, &target) != 0, depth < 16,
+                let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: path)
+            {
+                // Dangling symlink: a write through it would create the
+                // destination, so judge the destination instead.
+                let parent = resolvedForContainment(std.deletingLastPathComponent(), depth: depth + 1)
+                let next = dest.hasPrefix("/")
+                    ? URL(fileURLWithPath: dest)
+                    : parent.appendingPathComponent(dest)
+                return resolvedForContainment(next, depth: depth + 1)
+            }
+            return std.resolvingSymlinksInPath()
+        }
+        // `/` always exists, so the walk terminates; the guard is belt and braces.
+        guard path != "/", !path.isEmpty else { return std }
+        let parent = resolvedForContainment(std.deletingLastPathComponent(), depth: depth)
+        return std
+    }
+
     /// Validates whether a file path is permitted for write operations.
     public static func validateWritePath(_ url: URL, rootURL: URL, config: SandboxConfig = SandboxConfig()) throws {
-        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
-        let rootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let path = resolvedForContainment(url).path
+        let rootPath = resolvedForContainment(rootURL).path
         let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
 
         // Must stay inside workspace root unless explicitly allowed
         let isInsideRoot = path == rootPath || path.hasPrefix(rootPrefix)
         let isExplicitlyAllowed = config.allowedWritePaths.contains {
-            let allowed = $0.standardizedFileURL.resolvingSymlinksInPath().path
+            let allowed = resolvedForContainment($0).path
             return path == allowed || path.hasPrefix(allowed.hasSuffix("/") ? allowed : allowed + "/")
         }
 
@@ -70,9 +111,12 @@ public enum AppToolSandbox {
     /// forms of an IPv4 address that most HTTP clients resolve happily
     /// (`http://2130706433/` is `127.0.0.1`).
     public static func isPrivateOrMetadataHost(_ host: String) -> Bool {
-        let clean = host.lowercased()
+        var clean = host.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        // `localhost.` and `127.0.0.1.` are the same hosts as the unqualified
+        // spellings (a rooted DNS name), and URLSession resolves them.
+        while clean.hasSuffix(".") { clean.removeLast() }
         guard !clean.isEmpty else { return false }
 
         let namedHosts: Set<String> = [
@@ -86,23 +130,61 @@ public enum AppToolSandbox {
             return true
         }
 
-        // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
-        if clean.hasPrefix("fc") || clean.hasPrefix("fd") || clean.hasPrefix("fe8")
-            || clean.hasPrefix("fe9") || clean.hasPrefix("fea") || clean.hasPrefix("feb")
-        {
-            if clean.contains(":") { return true }
+        // Any IPv6 literal is parsed to bytes rather than prefix-matched on
+        // the string: `::ffff:127.0.0.1`, `::ffff:7f00:1` and `0::1` are all
+        // loopback and no textual prefix test sees them all.
+        if clean.contains(":") {
+            return isPrivateIPv6Literal(clean)
         }
 
         if let packed = packedIPv4(clean) {
-            let a = (packed >> 24) & 0xFF
-            let b = (packed >> 16) & 0xFF
-            if a == 0 || a == 10 || a == 127 { return true }
-            if a == 169 && b == 254 { return true }  // link-local, incl. 169.254.169.254
-            if a == 172 && (16...31).contains(b) { return true }
-            if a == 192 && b == 168 { return true }
-            if a == 100 && (64...127).contains(b) { return true }  // CGNAT
+            return isPrivateIPv4(packed)
         }
 
+        return false
+    }
+
+    private static func isPrivateIPv4(_ packed: UInt32) -> Bool {
+        let a = (packed >> 24) & 0xFF
+        let b = (packed >> 16) & 0xFF
+        if a == 0 || a == 10 || a == 127 { return true }
+        if a == 169 && b == 254 { return true }  // link-local, incl. 169.254.169.254
+        if a == 172 && (16...31).contains(b) { return true }
+        if a == 192 && b == 168 { return true }
+        if a == 100 && (64...127).contains(b) { return true }  // CGNAT
+        return false
+    }
+
+    /// Fails closed: a string with a colon that is not a valid IPv6 literal
+    /// is not a host this app should be connecting to anyway.
+    private static func isPrivateIPv6Literal(_ literal: String) -> Bool {
+        // Drop a zone id (`fe80::1%en0`); inet_pton rejects it.
+        let address = literal.split(separator: "%", maxSplits: 1).first.map(String.init) ?? literal
+        var storage = in6_addr()
+        guard inet_pton(AF_INET6, address, &storage) == 1 else { return true }
+        let bytes = withUnsafeBytes(of: &storage) { Array($0) }
+
+        func embedded(_ offset: Int) -> UInt32 {
+            bytes[offset..<(offset + 4)].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        }
+
+        if bytes.dropLast().allSatisfy({ $0 == 0 }) && bytes.last! <= 1 { return true }  // :: and ::1
+        if bytes[0] & 0xFE == 0xFC { return true }  // fc00::/7 unique-local
+        if bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80 { return true }  // fe80::/10 link-local
+        // ::ffff:a.b.c.d (mapped) and ::a.b.c.d (deprecated compatible).
+        if bytes[0..<10].allSatisfy({ $0 == 0 })
+            && ((bytes[10] == 0xFF && bytes[11] == 0xFF) || (bytes[10] == 0 && bytes[11] == 0))
+        {
+            return isPrivateIPv4(embedded(12))
+        }
+        // 64:ff9b::/96 NAT64 carries an IPv4 address in the low 32 bits.
+        if bytes[0] == 0x00, bytes[1] == 0x64, bytes[2] == 0xFF, bytes[3] == 0x9B,
+            bytes[4..<12].allSatisfy({ $0 == 0 })
+        {
+            return isPrivateIPv4(embedded(12))
+        }
+        // 2002::/16 6to4 carries one in bytes 2-5.
+        if bytes[0] == 0x20 && bytes[1] == 0x02 { return isPrivateIPv4(embedded(2)) }
         return false
     }
 

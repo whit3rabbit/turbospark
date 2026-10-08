@@ -164,16 +164,25 @@ public enum ToolRiskClassifier {
     // MARK: - Public Risk Evaluator
 
     /// Evaluates the security risk of any tool call.
-    public static func assessRisk(name: String, arguments: [String: String]) -> ToolRiskAssessment {
+    ///
+    /// `projectURL` must be the project the CALL was categorized against
+    /// (`AppToolCatalog.category(for:projectURL:)`): a project-scoped custom
+    /// tool is unknown without it and would fall through to the low-risk
+    /// automation arm.
+    public static func assessRisk(
+        name: String, arguments: [String: String], projectURL: URL? = nil
+    ) -> ToolRiskAssessment {
         let lowerName = name.lowercased()
-        let category = AppToolCatalog.category(for: lowerName)
+        let category = AppToolCatalog.category(for: lowerName, projectURL: projectURL)
 
         // A batch is only a transport for its children. Its approval card must
         // reflect the strongest embedded action rather than the low-risk
         // automation wrapper, or approving that wrapper conceals a dangerous
         // shell or file operation.
         if lowerName == "batch", let items = try? BatchToolExecutor.parseItems(from: arguments) {
-            let childRisks = items.map { assessRisk(name: $0.tool, arguments: $0.parameters) }
+            let childRisks = items.map {
+                assessRisk(name: $0.tool, arguments: $0.parameters, projectURL: projectURL)
+            }
             if let strongest = childRisks.first(where: { $0.level == .high })
                 ?? childRisks.first(where: { $0.level == .low })
                 ?? childRisks.first
@@ -184,6 +193,25 @@ public enum ToolRiskClassifier {
                     reasons: ["Batch contains \(items.count) nested tool call(s)."]
                         + strongest.reasons,
                     hardGated: strongest.hardGated)
+            }
+        }
+
+        // The MCP bridge is rated on the tool it will DIAL, resolved by the
+        // same parser the executor and the permission rules use. Rating the
+        // literal "call_mcp_tool" matched no destructive verb, and two
+        // different spellings of the tool name could let an allow rule for
+        // one name cover a call that runs another.
+        if ToolArgumentResolver.mcpBridgeToolNames.contains(lowerName) {
+            do {
+                let target = try ToolArgumentResolver.mcpTarget(arguments)
+                if let tool = target.tool {
+                    return assessMcpTool(name: tool, arguments: arguments)
+                }
+            } catch {
+                return ToolRiskAssessment(
+                    level: .high, category: .mcp,
+                    reasons: ["MCP call names its target ambiguously: \(error.localizedDescription)"],
+                    hardGated: true)
             }
         }
 
@@ -199,20 +227,33 @@ public enum ToolRiskClassifier {
              "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings",
              "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "senduserfile", "send_user_file":
             // Check if read_file or snip is accessing a sensitive credential path
-            if let path = arguments["path"] ?? arguments["file_path"] {
-                if isSensitivePath(path) {
-                    return ToolRiskAssessment(
-                        level: .high,
-                        category: category,
-                        reasons: ["Attempting to read sensitive credential or system path: '\(path)'"],
-                        hardGated: true
-                    )
-                }
+            // Every spelling the executor accepts is checked, not just
+            // `path`: `AbsolutePath`/`TargetFile` reads reached the executor
+            // unexamined.
+            if let path = ToolArgumentResolver.allPathValues(arguments).first(where: isSensitivePath) {
+                return ToolRiskAssessment(
+                    level: .high,
+                    category: category,
+                    reasons: ["Attempting to read sensitive credential or system path: '\(path)'"],
+                    hardGated: true
+                )
             }
             return ToolRiskAssessment(level: .safe, category: category, reasons: [])
 
         default:
             break
+        }
+
+        // A custom tool is a user- or repo-authored command. Its call
+        // arguments say nothing about what it runs, so the terminal command
+        // classifier (which would see an empty command and answer safe) does
+        // not apply: it is at least low, in its enforced category.
+        if AppToolCatalog.builtInCategory(for: lowerName) == nil,
+           CustomToolManager.shared.resolveEffectiveTools(for: projectURL)
+               .contains(where: { $0.name.lowercased() == lowerName })
+        {
+            return ToolRiskAssessment(
+                level: .low, category: category, reasons: ["Custom tool '\(name)'"])
         }
 
         // 2. Terminal Command Risk
@@ -223,10 +264,17 @@ public enum ToolRiskClassifier {
 
         // 3. File Modification Risk
         if category == .fileWrite {
-            let path = arguments["path"] ?? arguments["file_path"] ?? ""
             var reasons: [String] = []
 
-            if isSensitivePath(path) {
+            // Same resolver as the executor and the approval card. An
+            // ambiguous call is refused by the executor; rate it high so
+            // nothing auto-approves it first.
+            let resolved = ToolArgumentResolver.fileArguments(arguments)
+            if let conflict = resolved.conflict {
+                reasons.append("Conflicting file arguments: \(conflict.localizedDescription)")
+            }
+            // Check every spelling present, not only the winner.
+            for path in ToolArgumentResolver.allPathValues(arguments) where isSensitivePath(path) {
                 reasons.append("Modifying sensitive or system file: '\(path)'")
             }
 

@@ -82,6 +82,22 @@ public struct CustomToolDefinition: Identifiable, Codable, Sendable, Equatable {
         self.sourcePath = sourcePath
     }
 
+    /// The category permissions and risk are decided on.
+    ///
+    /// **THE DECLARED CATEGORY IS A REQUEST, NOT A GRANT.** A definition file
+    /// is written by whoever wrote the repo, and a `command` or `script` tool
+    /// runs a shell whatever its file says, so it is never classified below
+    /// `terminal`; an `http` tool is never below `web`. Declaring `fileRead`
+    /// used to make a shell tool run silently under the default preset.
+    public var effectiveCategory: AppToolCategory {
+        switch execution.type {
+        case .command, .script:
+            return .terminal
+        case .http:
+            return category == .terminal ? .terminal : .web
+        }
+    }
+
     /// Converts definition into an OpenAI-compatible function calling specification.
     public var openAITool: OpenAITool {
         OpenAITool.function(

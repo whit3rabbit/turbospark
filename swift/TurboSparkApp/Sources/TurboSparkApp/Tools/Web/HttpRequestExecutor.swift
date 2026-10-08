@@ -144,17 +144,21 @@ public enum HttpRequestExecutor {
         return output.formatResponse()
     }
 
-    private static func performRequest(
+    /// Shared with `WebFetchExecutor` so both tools validate every hop the
+    /// same way. `validate` is injectable so a test can reach a loopback
+    /// fixture on the first hop and still prove the redirect hop is refused.
+    static func performRequest(
         _ request: URLRequest,
         configuration: URLSessionConfiguration,
-        customSession: URLSession?
+        customSession: URLSession?,
+        validate: (URL) throws -> Void = HttpRequestDestinationValidator.validate
     ) async throws -> (Data, URLResponse) {
         // Injected sessions are test transports. Production redirects are
         // stopped and replayed only after validating the new destination.
         if let customSession {
             let result = try await customSession.data(for: request)
             if let finalURL = result.1.url {
-                try HttpRequestDestinationValidator.validate(finalURL)
+                try validate(finalURL)
             }
             return result
         }
@@ -165,7 +169,7 @@ public enum HttpRequestExecutor {
             guard let currentRequest = nextRequest, let currentURL = currentRequest.url else {
                 throw requestError(6, "Redirect produced a malformed URL.")
             }
-            try HttpRequestDestinationValidator.validate(currentURL)
+            try validate(currentURL)
 
             let redirect = HttpRequestRedirectDelegate()
             let result = try await session.data(for: currentRequest, delegate: redirect)
@@ -174,7 +178,7 @@ public enum HttpRequestExecutor {
                 continue
             }
             if let finalURL = result.1.url {
-                try HttpRequestDestinationValidator.validate(finalURL)
+                try validate(finalURL)
             }
             return result
         }
@@ -190,7 +194,7 @@ public enum HttpRequestExecutor {
     }
 }
 
-private final class HttpRequestRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class HttpRequestRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var redirectedRequest: URLRequest?
 

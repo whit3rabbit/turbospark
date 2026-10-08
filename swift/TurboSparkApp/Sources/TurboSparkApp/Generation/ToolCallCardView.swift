@@ -692,18 +692,11 @@ struct ToolCallCardView: View {
     }
 
     private var fileWritePreview: some View {
-        let targetPath = call.arguments["TargetFile"]
-            ?? call.arguments["AbsolutePath"]
-            ?? call.arguments["path"]
-            ?? call.arguments["file_path"]
-            ?? call.arguments["filePath"]
-            ?? call.arguments["file"]
-            ?? "file"
-        let content = call.arguments["CodeContent"]
-            ?? call.arguments["content"]
-            ?? call.arguments["text"]
-            ?? call.arguments["code"]
-            ?? ""
+        // The executor's own resolver: what the card shows is what runs, and
+        // an ambiguous call shows a refusal marker instead of one candidate.
+        let resolvedWrite = ToolArgumentResolver.fileArguments(call.arguments)
+        let targetPath = ToolArgumentResolver.displayPath(call.arguments)
+        let content = resolvedWrite.content ?? ""
         let fileName = (targetPath as NSString).lastPathComponent
         let lang = detectLanguage(from: fileName)
 
@@ -737,23 +730,10 @@ struct ToolCallCardView: View {
     }
 
     private var fileEditPreview: some View {
-        let targetPath = call.arguments["TargetFile"]
-            ?? call.arguments["AbsolutePath"]
-            ?? call.arguments["path"]
-            ?? call.arguments["file_path"]
-            ?? call.arguments["filePath"]
-            ?? call.arguments["file"]
-            ?? "file"
-        let oldStr = call.arguments["TargetContent"]
-            ?? call.arguments["old_string"]
-            ?? call.arguments["oldString"]
-            ?? call.arguments["target"]
-            ?? ""
-        let newStr = call.arguments["ReplacementContent"]
-            ?? call.arguments["new_string"]
-            ?? call.arguments["newString"]
-            ?? call.arguments["replacement"]
-            ?? ""
+        let resolvedEdit = ToolArgumentResolver.fileArguments(call.arguments)
+        let targetPath = ToolArgumentResolver.displayPath(call.arguments)
+        let oldStr = resolvedEdit.oldString ?? ""
+        let newStr = resolvedEdit.newString ?? ""
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -824,13 +804,7 @@ struct ToolCallCardView: View {
     }
 
     private var fileReadPreview: some View {
-        let targetPath = call.arguments["AbsolutePath"]
-            ?? call.arguments["path"]
-            ?? call.arguments["file_path"]
-            ?? call.arguments["filePath"]
-            ?? call.arguments["file"]
-            ?? call.arguments["TargetFile"]
-            ?? "file"
+        let targetPath = ToolArgumentResolver.displayPath(call.arguments, forRead: true)
         let start = call.arguments["StartLine"] ?? call.arguments["start_line"] ?? call.arguments["startLine"] ?? call.arguments["start"]
         let end = call.arguments["EndLine"] ?? call.arguments["end_line"] ?? call.arguments["endLine"] ?? call.arguments["end"]
 

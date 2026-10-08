@@ -435,6 +435,110 @@ final class ProfileVaultTests: XCTestCase {
         XCTAssertEqual(try session.database.allAssetMetadata(), before)
     }
 
+    func testLegacyMigrationImportsNestedTreesBeforeDeletingThem() throws {
+        let manager = FileManager.default
+        let profileDir = ProfileMemoryStore.shared.directory
+        let memoryBase = MemoryStore.defaultBase()
+        defer {
+            try? manager.removeItem(at: profileDir)
+            try? manager.removeItem(at: memoryBase)
+        }
+        // Nested layouts exactly as the legacy plaintext stores wrote them.
+        let projectMemory = memoryBase
+            .appendingPathComponent("projects/proj-key/memory", isDirectory: true)
+        try manager.createDirectory(at: projectMemory, withIntermediateDirectories: true)
+        try Data("project note".utf8).write(to: projectMemory.appendingPathComponent("topic.md"))
+        try manager.createDirectory(at: profileDir, withIntermediateDirectories: true)
+        try Data("profile memory".utf8).write(to: profileDir.appendingPathComponent("MEMORY.md"))
+        let chat = UUID().uuidString
+        let observationDir = root.appendingPathComponent("tool-observations/\(chat)", isDirectory: true)
+        try manager.createDirectory(at: observationDir, withIntermediateDirectories: true)
+        try Data("obs bytes".utf8).write(to: observationDir.appendingPathComponent("o1.bin"))
+        // A hidden file is not imported, so the tree holding it must survive.
+        try Data("keep".utf8).write(to: observationDir.appendingPathComponent(".keep"))
+
+        let vault = root.appendingPathComponent("legacy", isDirectory: true)
+        let store = ProfileVaultStore(
+            rootProvider: { vault }, profileIDProvider: { "legacy" }, migrateLegacyData: true)
+        _ = try store.prepareForLaunch()
+        let repository = ProfileRepository(store: store)
+
+        XCTAssertEqual(
+            try repository.rawRecord(key: "memory:file:projects/proj-key/memory/topic.md"),
+            Data("project note".utf8))
+        XCTAssertEqual(
+            try repository.rawRecord(key: "memory:file:profile/MEMORY.md"), Data("profile memory".utf8))
+        XCTAssertEqual(
+            try repository.rawRecord(key: ToolObservationStore.recordKey(
+                relativePath: "\(chat)/o1.bin")),
+            Data("obs bytes".utf8))
+        // Fully imported memory roots are removed; the observation tree with an
+        // unimported hidden file keeps that file but loses the imported one.
+        XCTAssertFalse(manager.fileExists(atPath: profileDir.path))
+        XCTAssertFalse(manager.fileExists(atPath: observationDir.appendingPathComponent("o1.bin").path))
+        XCTAssertTrue(manager.fileExists(atPath: observationDir.appendingPathComponent(".keep").path))
+    }
+
+    func testExactBackupIgnoresOrphanAssetsAndRestoresIntoFreshStorageRoot() async throws {
+        let source = makeStore(id: "orphan-source")
+        _ = try source.prepareForLaunch()
+        let assetStore = ManagedAssetStore(vault: source)
+        let asset = try assetStore.store(
+            data: Data("kept bytes".utf8), fileName: "kept.bin", mimeType: nil)
+        // A ciphertext with no database row (failed retain, crash before GC)
+        // plus a stray in-flight temp file: neither belongs in the backup.
+        let orphanID = String(repeating: "ab", count: 32)
+        let orphanDirectory = source.assetsURL.appendingPathComponent("ab", isDirectory: true)
+        try FileManager.default.createDirectory(at: orphanDirectory, withIntermediateDirectories: true)
+        try Data("junk".utf8).write(to: orphanDirectory.appendingPathComponent("\(orphanID).tsasset"))
+        try Data("junk".utf8).write(to: orphanDirectory.appendingPathComponent(".\(orphanID).x.tmp"))
+
+        let archive = root.appendingPathComponent("orphan.turbospark-profile")
+        let password = "orphan backup password"
+        _ = try EncryptedProfileBackup.export(
+            profile: UserProfile(id: "orphan-source", name: "Orphan"),
+            destination: archive, passphrase: password, appVersion: "tests", store: source)
+
+        // profiles/ does not exist under this fresh storage root.
+        let freshRoot = root.appendingPathComponent("fresh-root", isDirectory: true)
+        let destination = freshRoot
+            .appendingPathComponent("profiles", isDirectory: true)
+            .appendingPathComponent("restored-id", isDirectory: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: freshRoot.path))
+        _ = try await EncryptedProfileBackup.restore(
+            archive: archive, destination: destination, newProfileID: "restored-id",
+            displayName: "Restored", passphrase: password)
+
+        let installed = destination.appendingPathComponent("private-vault/assets", isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installed
+            .appendingPathComponent("\(asset.id.prefix(2))/\(asset.id).tsasset").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: installed
+            .appendingPathComponent("ab/\(orphanID).tsasset").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: installed
+            .appendingPathComponent("ab/.\(orphanID).x.tmp").path))
+    }
+
+    func testSymlinkedSourceStoresAndRoundTrips() throws {
+        let store = makeStore(id: "symlink-asset")
+        _ = try store.prepareForLaunch()
+        let assets = ManagedAssetStore(vault: store)
+        let payload = Data((0..<5000).map { UInt8($0 % 251) })
+        let target = root.appendingPathComponent("target.bin")
+        try payload.write(to: target)
+        let link = root.appendingPathComponent("link.bin")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        let descriptor = try assets.store(fileURL: link)
+        // lstat of a symlink reports the link's own tiny length, not the target's.
+        XCTAssertEqual(descriptor.byteCount, Int64(payload.count))
+        XCTAssertEqual(descriptor.fileName, "link.bin")
+        var out = Data()
+        try assets.streamDecrypted(reference: descriptor.storedReference) { out.append($0) }
+        XCTAssertEqual(out, payload)
+        // Same content through the real path dedups onto the same asset.
+        XCTAssertEqual(try assets.store(fileURL: target).id, descriptor.id)
+    }
+
     private func makeStore(id: String) -> ProfileVaultStore {
         let vault = root.appendingPathComponent(id, isDirectory: true)
         return ProfileVaultStore(

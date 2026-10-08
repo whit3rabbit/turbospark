@@ -298,7 +298,10 @@ enum ToolOutputProjection {
 
 enum TodoBoundaryCompactionPolicy {
     static func completedTransition(previous: [TodoItem], current: [TodoItem]) -> Bool {
-        let oldByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+        let oldByID = Dictionary(
+            // Ids are model-supplied and not deduplicated at todo_write
+            // acceptance; a repeated id must not trap. Last one wins.
+            previous.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         return current.contains { item in item.isCompleted && oldByID[item.id]?.isCompleted != true }
     }
 

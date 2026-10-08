@@ -515,6 +515,70 @@ final class ProfileDatabase: @unchecked Sendable {
         try Self.applyFilePermissions(at: destination)
     }
 
+    /// Per-chat projection tables. Keys are scoped to the chat so two chats
+    /// may legitimately share a row id (a branch, a duplicate, or a model that
+    /// numbers its todos "1", "2"); a global key made the second save fail.
+    /// Todos key on ordinal because model-chosen ids can repeat inside one chat.
+    static let childTableDDL: [String: String] = [
+        "messages": """
+        CREATE TABLE IF NOT EXISTS messages(
+            id TEXT NOT NULL,
+            chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            ordinal INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            payload_version INTEGER NOT NULL,
+            payload BLOB NOT NULL,
+            PRIMARY KEY(chat_id, id)
+        );
+        """,
+        "alternates": """
+        CREATE TABLE IF NOT EXISTS alternates(
+            id TEXT NOT NULL,
+            chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            message_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            payload_version INTEGER NOT NULL,
+            payload BLOB NOT NULL,
+            PRIMARY KEY(chat_id, id)
+        );
+        """,
+        "attachments": """
+        CREATE TABLE IF NOT EXISTS attachments(
+            id TEXT NOT NULL,
+            chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            asset_id TEXT,
+            file_name TEXT NOT NULL,
+            extracted_text TEXT NOT NULL,
+            payload_version INTEGER NOT NULL,
+            payload BLOB NOT NULL,
+            PRIMARY KEY(chat_id, id)
+        );
+        """,
+        "artifacts": """
+        CREATE TABLE IF NOT EXISTS artifacts(
+            id TEXT NOT NULL,
+            chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            asset_id TEXT,
+            title TEXT NOT NULL,
+            payload_version INTEGER NOT NULL,
+            payload BLOB NOT NULL,
+            PRIMARY KEY(chat_id, id)
+        );
+        """,
+        "todos": """
+        CREATE TABLE IF NOT EXISTS todos(
+            id TEXT NOT NULL,
+            chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            ordinal INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            payload_version INTEGER NOT NULL,
+            payload BLOB NOT NULL,
+            PRIMARY KEY(chat_id, ordinal)
+        );
+        """,
+    ]
+
     private func createSchema() throws {
         try execute(
             """
@@ -540,24 +604,9 @@ final class ProfileDatabase: @unchecked Sendable {
             );
             CREATE INDEX IF NOT EXISTS chats_project_updated
                 ON chats(project_id, updated_at DESC);
-            CREATE TABLE IF NOT EXISTS messages(
-                id TEXT PRIMARY KEY,
-                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-                ordinal INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                created_at REAL NOT NULL,
-                payload_version INTEGER NOT NULL,
-                payload BLOB NOT NULL
-            );
+            \(Self.childTableDDL["messages"]!)
             CREATE INDEX IF NOT EXISTS messages_chat_ordinal ON messages(chat_id, ordinal);
-            CREATE TABLE IF NOT EXISTS alternates(
-                id TEXT PRIMARY KEY,
-                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-                message_id TEXT NOT NULL,
-                ordinal INTEGER NOT NULL,
-                payload_version INTEGER NOT NULL,
-                payload BLOB NOT NULL
-            );
+            \(Self.childTableDDL["alternates"]!)
             CREATE TABLE IF NOT EXISTS drafts(
                 chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
                 text TEXT NOT NULL,
@@ -571,23 +620,8 @@ final class ProfileDatabase: @unchecked Sendable {
                 payload_version INTEGER NOT NULL,
                 payload BLOB NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS attachments(
-                id TEXT PRIMARY KEY,
-                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-                asset_id TEXT,
-                file_name TEXT NOT NULL,
-                extracted_text TEXT NOT NULL,
-                payload_version INTEGER NOT NULL,
-                payload BLOB NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS artifacts(
-                id TEXT PRIMARY KEY,
-                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-                asset_id TEXT,
-                title TEXT NOT NULL,
-                payload_version INTEGER NOT NULL,
-                payload BLOB NOT NULL
-            );
+            \(Self.childTableDDL["attachments"]!)
+            \(Self.childTableDDL["artifacts"]!)
             CREATE TABLE IF NOT EXISTS memory(
                 id TEXT PRIMARY KEY,
                 scope TEXT NOT NULL,
@@ -641,14 +675,7 @@ final class ProfileDatabase: @unchecked Sendable {
                 vector BLOB NOT NULL,
                 payload_version INTEGER NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS todos(
-                id TEXT PRIMARY KEY,
-                chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-                ordinal INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                payload_version INTEGER NOT NULL,
-                payload BLOB NOT NULL
-            );
+            \(Self.childTableDDL["todos"]!)
             CREATE TABLE IF NOT EXISTS profile_settings(
                 key TEXT PRIMARY KEY,
                 payload_version INTEGER NOT NULL,
@@ -678,6 +705,7 @@ final class ProfileDatabase: @unchecked Sendable {
             INSERT OR IGNORE INTO schema_migrations(version, applied_at)
             VALUES(1, unixepoch());
             """)
+        try migrateChildTableKeys()
         try migrateChatProjections()
     }
 
@@ -805,6 +833,54 @@ final class ProfileDatabase: @unchecked Sendable {
             guard sqlite3_column_type(statement, 0) != SQLITE_NULL else { return nil }
             return sqlite3_column_int64(statement, 0)
         }
+    }
+
+    /// Rewrites databases created with a global `id` primary key on the per-chat
+    /// projection tables to the chat-scoped keys in `childTableDDL`. The tables
+    /// are write-only projections of `chats.payload`, but the copy keeps every
+    /// existing row anyway (OR IGNORE only guards against a pre-existing
+    /// duplicate bricking the open). One transaction: all tables or none.
+    private func migrateChildTableKeys() throws {
+        let columns: [String: String] = [
+            "messages": "id, chat_id, ordinal, role, created_at, payload_version, payload",
+            "alternates": "id, chat_id, message_id, ordinal, payload_version, payload",
+            "attachments": "id, chat_id, asset_id, file_name, extracted_text, payload_version, payload",
+            "artifacts": "id, chat_id, asset_id, title, payload_version, payload",
+            "todos": "id, chat_id, ordinal, status, payload_version, payload",
+        ]
+        var stale: [String] = []
+        for table in columns.keys.sorted() where try !chatIDIsPrimaryKey(table: table) {
+            stale.append(table)
+        }
+        guard !stale.isEmpty else { return }
+        try transaction {
+            for table in stale {
+                try execute("ALTER TABLE \(table) RENAME TO \(table)_old;")
+                if table == "messages" { try execute("DROP INDEX IF EXISTS messages_chat_ordinal;") }
+                try execute(Self.childTableDDL[table]!)
+                try execute(
+                    "INSERT OR IGNORE INTO \(table)(\(columns[table]!)) SELECT \(columns[table]!) FROM \(table)_old;")
+                try execute("DROP TABLE \(table)_old;")
+            }
+            try execute("CREATE INDEX IF NOT EXISTS messages_chat_ordinal ON messages(chat_id, ordinal);")
+            try execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, unixepoch());")
+        }
+    }
+
+    private func chatIDIsPrimaryKey(table: String) throws -> Bool {
+        var isKey = false
+        try withStatement("PRAGMA table_info(\(table));") { statement in
+            while true {
+                let result = sqlite3_step(statement)
+                if result == SQLITE_DONE { break }
+                guard result == SQLITE_ROW else { throw DatabaseError.step(errorMessage) }
+                if columnText(statement, index: 1) == "chat_id", sqlite3_column_int(statement, 5) > 0 {
+                    isKey = true
+                }
+            }
+        }
+        return isKey
     }
 
     /// Adds chat metadata projections for fast indexing and preserves them

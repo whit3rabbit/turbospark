@@ -171,25 +171,20 @@ public enum ToolCallDiffFormatter {
 
         // 8. File Edits: replace_file_content, edit_file, editor, etc.
         if lowerName.contains("replace") || lowerName.contains("edit") || lowerName == "editor" {
-            let targetPath = arguments["TargetFile"]
-                ?? arguments["AbsolutePath"]
-                ?? arguments["path"]
-                ?? arguments["file_path"]
-                ?? arguments["filePath"]
-                ?? arguments["file"]
-                ?? "file"
+            let resolvedEdit = ToolArgumentResolver.fileArguments(arguments)
+            let targetPath = ToolArgumentResolver.displayPath(arguments)
             let fileName = (targetPath as NSString).lastPathComponent
 
             var additions: Int? = nil
             var deletions: Int? = nil
 
-            if let targetContent = arguments["TargetContent"] ?? arguments["old_string"] ?? arguments["target"] {
+            if let targetContent = resolvedEdit.oldString {
                 deletions = countLines(targetContent)
                 // Zero is "nothing removed" (a pure insertion), which the
                 // badge's absence says better than "-0".
                 if deletions == 0 { deletions = nil }
             }
-            if let replacementContent = arguments["ReplacementContent"] ?? arguments["new_string"] ?? arguments["replacement"] {
+            if let replacementContent = resolvedEdit.newString {
                 additions = countLines(replacementContent)
                 if additions == 0 { additions = nil }
             }
@@ -222,17 +217,12 @@ public enum ToolCallDiffFormatter {
 
         // 9. File Writes: write_to_file, write_file, create_file
         if lowerName.contains("write") || lowerName.contains("create") {
-            let targetPath = arguments["TargetFile"]
-                ?? arguments["AbsolutePath"]
-                ?? arguments["path"]
-                ?? arguments["file_path"]
-                ?? arguments["filePath"]
-                ?? arguments["file"]
-                ?? "file"
+            let resolvedWrite = ToolArgumentResolver.fileArguments(arguments)
+            let targetPath = ToolArgumentResolver.displayPath(arguments)
             let fileName = (targetPath as NSString).lastPathComponent
 
             var additions: Int? = nil
-            if let content = arguments["CodeContent"] ?? arguments["content"] ?? arguments["text"] {
+            if let content = resolvedWrite.content {
                 additions = countLines(content)
             }
 
@@ -304,13 +294,7 @@ public enum ToolCallDiffFormatter {
 
         // 13. File Reads: view_file, read_file
         if lowerName.contains("view") || lowerName.contains("read") {
-            let targetPath = arguments["AbsolutePath"]
-                ?? arguments["path"]
-                ?? arguments["file_path"]
-                ?? arguments["filePath"]
-                ?? arguments["file"]
-                ?? arguments["TargetFile"]
-                ?? "file"
+            let targetPath = ToolArgumentResolver.displayPath(arguments, forRead: true)
             let fileName = (targetPath as NSString).lastPathComponent
 
             var lineRange: String? = nil

@@ -146,6 +146,9 @@ extension AppModel {
                 // tail to clear this, and a latched flag greys Stop out and
                 // makes `continueAgentLoop` refuse every later turn.
                 if !self.generating { self.isCancellationPending = false }
+                // A non-fork /skill expansion could not run() while this task
+                // held `submitting`; it goes now that the gate is clear.
+                self.flushDeferredSkillSubmission(cancelled: Task.isCancelled)
             }
             self.stopHookReentryCount = 0
             // A user prompt is the goal loop's external clock: it lifts a

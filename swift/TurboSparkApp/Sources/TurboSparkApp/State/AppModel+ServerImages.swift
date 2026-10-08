@@ -72,10 +72,21 @@ extension AppModel {
         let coordinator = ImageJobCoordinator.shared
         let acquired = await coordinator.acquire()
         guard acquired else { return }
-        defer { Task { await coordinator.release() } }
+        var usedSession: (any ImageGenerationSession)?
+        // Release only after the detached producer has really stopped: a
+        // cancelled stream ends this request at once, but the MLX task keeps
+        // running to its next cancellation point.
+        defer {
+            let finished = usedSession
+            Task {
+                await finished?.waitUntilIdle()
+                await coordinator.release()
+            }
+        }
         do {
             try Task.checkCancellation()
             let session = try sharedImageSession(for: model)
+            usedSession = session
             let options = ImageGenerateOptions(
                 prompt: request.prompt, seed: request.seed,
                 width: request.width, height: request.height,

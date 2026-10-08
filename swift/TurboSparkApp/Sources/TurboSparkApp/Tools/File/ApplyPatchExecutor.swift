@@ -72,6 +72,17 @@ public enum ApplyPatchExecutor {
                     ))
                 }
             } else if isNewFile {
+                // A `--- /dev/null` header asserts the file does not exist.
+                // Overwriting here would skip the read-before-write gate
+                // `write_file` enforces and lose user edits while reporting
+                // success; `git apply` refuses, so do the same. `lstat` via
+                // attributesOfItem so a dangling symlink also counts.
+                if (try? FileManager.default.attributesOfItem(atPath: secureURL.path)) != nil {
+                    throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                        NSLocalizedDescriptionKey: "Patch creates '\(fileRelPath)' but it already exists. "
+                            + "Refusing to overwrite; use a normal update hunk against the current content."
+                    ])
+                }
                 // Collect added lines
                 var contentLines: [String] = []
                 for hunkLine in currentHunkLines {

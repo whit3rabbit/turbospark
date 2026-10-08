@@ -9,10 +9,10 @@ import TurboSpark
 /// sensitive paths, the repo-import MCP gate) keep their human, and the
 /// classifier is consulted only where the ladder ran out of answer. Within
 /// that band this mirrors Qwen Code's layering: MCP tools always classify
-/// (their annotations are the server's own claims), while a non-MCP call
-/// the static ladder scored `.safe`/`.low` runs on the fast path -- that is
-/// the same population `.auto` already runs, so asking a model about `ls`
-/// would only add latency.
+/// (their annotations are the server's own claims), and so does everything
+/// that can write, execute or schedule. Only a non-high-risk `fileRead` ask
+/// runs on the fast path, where a model verdict would add latency and no
+/// safety.
 enum AgentModeRouting {
     enum PreClassifierDecision: Equatable {
         /// The ordinary approval card (or, for a subagent with no UI, the
@@ -37,7 +37,15 @@ enum AgentModeRouting {
         if call.category == .mcp {
             return .classify
         }
-        if !assessment.isHighRisk {
+        // READ-ONLY CATEGORIES ONLY. A `.safe`/`.low` score is the static
+        // ladder's "nothing known-bad here", not "reviewed": fileWrite,
+        // terminal (an allowlisted interpreter running a script the model
+        // just wrote), custom tools and scheduling asks are exactly what the
+        // `.agent` matrix leaves at `.ask` for the classifier to judge, and
+        // `.auto` mode would put a card on each. They classify.
+        if call.category == .fileRead, assessment.category == .fileRead,
+            !assessment.isHighRisk
+        {
             return .fastAllow
         }
         return .classify

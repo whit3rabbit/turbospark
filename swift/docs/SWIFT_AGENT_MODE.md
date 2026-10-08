@@ -42,14 +42,19 @@ sites run; do not re-derive it inline. In order:
 | `assessment.isHardGated` | manual card / subagent refusal |
 | session suspended, or skip thresholds tripped | manual card, with the skip notice |
 | category `.mcp` | classify |
-| risk `.safe` or `.low` (non-MCP) | run, no card, no classifier call |
-| otherwise (e.g. `.high` "not a recognized command") | classify |
+| category `.fileRead` and risk not `.high` | run, no card, no classifier call |
+| otherwise (any write, terminal, browser, custom or scheduling ask; `.high` "not a recognized command") | classify |
 
 MCP calls always classify because a tool name plus the server's OWN
 annotations is exactly what a classifier exists to weigh (qwen-code's rule;
-the annotations are forwarded flagged unverified). The `.safe`/`.low` fast
-path is the same population `.auto` already runs, so a classifier call
-there would only add latency.
+the annotations are forwarded flagged unverified). Only read-only
+`fileRead` asks take the fast path. A `.safe`/`.low` risk score on a write,
+a terminal command (for example an allowlisted interpreter running a script
+the model just wrote), a custom tool or a scheduling call (`CronCreate`,
+`ScheduleWakeup`) only means the static ladder found nothing known-bad; the
+`.agent` matrix leaves those categories at `.ask` precisely so the
+classifier (or a card) judges them, and `.auto` mode with the same matrix
+shows a card for each.
 
 The verdicts map: allow -> run (tool card marked "Classifier Approved");
 block -> refusal carrying "Blocked by Agent mode policy: <reason>" plus the

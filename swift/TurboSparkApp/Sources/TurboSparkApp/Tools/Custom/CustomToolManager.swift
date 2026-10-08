@@ -46,7 +46,8 @@ public final class CustomToolManager: @unchecked Sendable {
                 for case let fileURL as URL in enumerator {
                     let ext = fileURL.pathExtension.lowercased()
                     guard ext == "json" || ext == "yaml" || ext == "yml" else { continue }
-                    if let tool = try? CustomToolParser.parse(fileURL: fileURL, scope: .userGlobal) {
+                    if let tool = try? CustomToolParser.parse(fileURL: fileURL, scope: .userGlobal),
+                       !AppToolCatalog.isBuiltInToolName(tool.name) {
                         toolsByName[tool.name.lowercased()] = tool
                     }
                 }
@@ -70,29 +71,65 @@ public final class CustomToolManager: @unchecked Sendable {
             return Array(effectiveByName.values).sorted(by: { $0.name < $1.name })
         }
 
-        let projectToolDir = projectURL.appendingPathComponent(".turbospark/tools", isDirectory: true)
-        let agentToolDir = projectURL.appendingPathComponent(".agents/tools", isDirectory: true)
-        let fm = FileManager.default
-
-        for dir in [projectToolDir, agentToolDir] {
-            guard fm.fileExists(atPath: dir.path) else { continue }
-            if let enumerator = fm.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) {
-                for case let fileURL as URL in enumerator {
-                    let ext = fileURL.pathExtension.lowercased()
-                    guard ext == "json" || ext == "yaml" || ext == "yml" else { continue }
-                    if let tool = try? CustomToolParser.parse(fileURL: fileURL, scope: .projectLocal(projectPath: projectURL.path)) {
-                        if tool.isEnabled {
-                            // Project tools override global tools
-                            effectiveByName[tool.name.lowercased()] = tool
-                        } else {
-                            effectiveByName.removeValue(forKey: tool.name.lowercased())
-                        }
-                    }
-                }
+        // Untrusted project tools are skipped entirely, including a "disabled"
+        // definition that would otherwise suppress a global tool of that name.
+        for tool in scanProjectTools(at: projectURL)
+        where CustomToolTrustStore.shared.isTrusted(tool) {
+            if tool.isEnabled {
+                // Project tools override global tools
+                effectiveByName[tool.name.lowercased()] = tool
+            } else {
+                effectiveByName.removeValue(forKey: tool.name.lowercased())
             }
         }
 
         return Array(effectiveByName.values).sorted(by: { $0.name < $1.name })
+    }
+
+    /// Every parseable, non-colliding tool file in the project's tool
+    /// folders, trusted or not.
+    private func scanProjectTools(at projectURL: URL) -> [CustomToolDefinition] {
+        let projectToolDir = projectURL.appendingPathComponent(".turbospark/tools", isDirectory: true)
+        let agentToolDir = projectURL.appendingPathComponent(".agents/tools", isDirectory: true)
+        let fm = FileManager.default
+        var found: [CustomToolDefinition] = []
+        for dir in [projectToolDir, agentToolDir] {
+            guard fm.fileExists(atPath: dir.path) else { continue }
+            guard let enumerator = fm.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else { continue }
+            for case let fileURL as URL in enumerator {
+                let ext = fileURL.pathExtension.lowercased()
+                guard ext == "json" || ext == "yaml" || ext == "yml" else { continue }
+                guard let tool = try? CustomToolParser.parse(
+                    fileURL: fileURL, scope: .projectLocal(projectPath: projectURL.path))
+                else { continue }
+                // A custom tool may never take a shipped tool's name, or a
+                // repo file named `bash.json` could stand in for the shell.
+                guard !AppToolCatalog.isBuiltInToolName(tool.name) else { continue }
+                found.append(tool)
+            }
+        }
+        return found
+    }
+
+    /// Project tools that exist on disk but are not trusted yet, so they are
+    /// neither offered nor executed. The approval UI lists these.
+    public func untrustedProjectTools(for projectURL: URL) -> [CustomToolDefinition] {
+        lock.lock()
+        defer { lock.unlock() }
+        return scanProjectTools(at: projectURL)
+            .filter { $0.isEnabled && !CustomToolTrustStore.shared.isTrusted($0) }
+            .sorted { $0.name < $1.name }
+    }
+
+    /// The approval entry point a UI calls once the user has reviewed the
+    /// tool's command: trusts the CURRENT on-disk definition of `name`.
+    /// Returns false when no pending project tool has that name.
+    @discardableResult
+    public func trustProjectTool(named name: String, projectURL: URL) -> Bool {
+        guard let tool = untrustedProjectTools(for: projectURL)
+            .first(where: { $0.name.lowercased() == name.lowercased() }) else { return false }
+        CustomToolTrustStore.shared.trust(tool)
+        return true
     }
 
     /// Persists a custom tool definition to disk.
@@ -113,6 +150,12 @@ public final class CustomToolManager: @unchecked Sendable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(tool)
         try data.write(to: fileURL, options: .atomic)
+        // A tool the user just authored in the app is trusted; the trust key
+        // includes the parsed source path, so re-read the file to compute it.
+        if tool.scope.isProjectScope,
+           let saved = try? CustomToolParser.parse(fileURL: fileURL, scope: tool.scope) {
+            CustomToolTrustStore.shared.trust(saved)
+        }
         reloadGlobalTools()
     }
 

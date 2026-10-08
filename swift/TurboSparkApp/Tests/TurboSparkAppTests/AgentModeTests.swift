@@ -227,11 +227,31 @@ final class AgentModeTests: XCTestCase {
             .classify)
     }
 
-    func testALowRiskNonMCPAskTakesTheFastPath() {
-        let assessment = ToolRiskAssessment(level: .low, category: .terminal, reasons: [])
+    func testALowRiskReadOnlyAskTakesTheFastPath() {
+        let assessment = ToolRiskAssessment(level: .low, category: .fileRead, reasons: [])
         XCTAssertEqual(
-            routingDecision(call("run_command", ["command": "cargo build"], .terminal), assessment),
+            routingDecision(call("read_file", ["path": "a.txt"], .fileRead), assessment),
             .fastAllow)
+    }
+
+    func testOnlyReadOnlyCategoriesTakeTheFastPath() {
+        // A low score on a write, an interpreter run, a browser step or a
+        // scheduled job is "nothing known-bad", not "reviewed": all classify.
+        let cases: [(String, [String: String], AppToolCategory)] = [
+            ("write_file", ["path": "run.py", "content": "x"], .fileWrite),
+            ("run_command", ["command": "python3 run.py"], .terminal),
+            ("browser_click", [:], .browser),
+            ("CronCreate", ["cron": "* * * * *", "prompt": "!echo x"], .automation),
+            ("web_fetch", ["url": "https://example.com"], .web)
+        ]
+        for (name, args, category) in cases {
+            for level in [ToolRiskLevel.safe, .low] {
+                let assessment = ToolRiskAssessment(level: level, category: category, reasons: [])
+                XCTAssertEqual(
+                    routingDecision(call(name, args, category), assessment), .classify,
+                    "\(name) at \(level) must not be fast-allowed")
+            }
+        }
     }
 
     func testAHighRiskUnrecognizedCommandClassifies() {
@@ -374,13 +394,16 @@ final class AgentModeTests: XCTestCase {
         XCTAssertNotNil(refusal, "unavailable must fail closed for an unattended run")
     }
 
-    func testASubagentAllowlistedCommandRunsUnderAgentMode() async {
+    func testASubagentTerminalAskNoLongerSkipsTheClassifier() async {
         let session = "subagent-agent-fast"
         await resetGate(session)
+        // The fast path is read-only now: a terminal ask classifies, and
+        // with no model loaded in this test the classifier is unavailable,
+        // so the unattended run fails closed instead of running it unseen.
         let refusal = await SubagentRunner.permissionRefusal(
             for: call("run_command", ["command": "cargo test"], .terminal),
             project: agentProject())
-        XCTAssertNil(refusal, "the static fast path runs without a card, so a subagent runs it")
+        XCTAssertNotNil(refusal, "a terminal ask must not be fast-allowed for a subagent")
     }
 
     func testASubagentDenylistCommandStillRefusesUnderAgentMode() async {
@@ -450,17 +473,39 @@ final class AgentModeTests: XCTestCase {
     }
 
     @MainActor
-    func testRouterFastAllowsALowRiskAskWithoutCallingTheClassifier() async {
+    func testRouterFastAllowsALowRiskReadAskWithoutCallingTheClassifier() async {
         let model = AppModel()
         let stub = ClassifierStub(verdict: .allow)
         model.agentModeClassifierOverride = stub
         let outcome = await model.resolveAskUnderAgentMode(
-            call("run_command", ["command": "cargo build"], .terminal),
-            assessment: ToolRiskAssessment(level: .low, category: .terminal, reasons: []),
+            call("read_file", ["path": "a.txt"], .fileRead),
+            assessment: ToolRiskAssessment(level: .low, category: .fileRead, reasons: []),
             chatID: UUID(),
             project: agentProject())
         XCTAssertEqual(outcome, .run(byClassifier: false))
         XCTAssertEqual(stub.callCount, 0, "the fast path must not spend a classifier call")
+    }
+
+    @MainActor
+    func testRouterClassifiesALowRiskWriteAndInterpreterAsk() async {
+        let model = AppModel()
+        let stub = ClassifierStub(verdict: .block(reason: "unreviewed script"))
+        model.agentModeClassifierOverride = stub
+        for (name, args, category) in [
+            ("write_file", ["path": "run.py", "content": "x"], AppToolCategory.fileWrite),
+            ("run_command", ["command": "python3 run.py"], .terminal),
+            ("CronCreate", ["cron": "* * * * *", "prompt": "p"], .automation)
+        ] {
+            let outcome = await model.resolveAskUnderAgentMode(
+                call(name, args, category),
+                assessment: ToolRiskAssessment(level: .low, category: category, reasons: []),
+                chatID: UUID(),
+                project: agentProject())
+            guard case .denyWithReason = outcome else {
+                return XCTFail("\(name) must reach the classifier, got \(outcome)")
+            }
+        }
+        XCTAssertEqual(stub.callCount, 3)
     }
 
     /// Counting stub: lets tests assert the classifier was (or was not)

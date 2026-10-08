@@ -50,6 +50,16 @@ public enum AppToolCallStatus: String, Codable, Sendable {
     case failed
 }
 
+/// Original typed JSON arguments of a call (see `AppToolCall.typedArguments`).
+/// Equality is always true so carrying it never changes call identity.
+public struct TransientTypedArguments: Equatable, Sendable {
+    public var values: [String: ToolCallJSONValue]
+
+    public init(values: [String: ToolCallJSONValue]) { self.values = values }
+
+    public static func == (lhs: TransientTypedArguments, rhs: TransientTypedArguments) -> Bool { true }
+}
+
 /// A parsed tool call requested by the model.
 public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
     public var id = UUID()
@@ -73,6 +83,16 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
     public var autoApprovedBy: String?
     /// Timestamp when invocation was requested.
     public var createdAt: Date
+    /// The model's original JSON values, kept beside the flat `arguments`
+    /// projection so an MCP `tools/call` can send numbers, booleans, arrays
+    /// and objects as what they were. Never persisted and never part of
+    /// equality: `arguments` stays the single value everything else reads.
+    public var typedArguments: TransientTypedArguments?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, approvalID, name, arguments, rawInvocation, status, category
+        case riskAssessment, autoApprovedBy, createdAt
+    }
 
     public init(
         id: UUID = UUID(),
@@ -84,8 +104,10 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         category: AppToolCategory = .fileRead,
         riskAssessment: ToolRiskAssessment? = nil,
         autoApprovedBy: String? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        typedArguments: TransientTypedArguments? = nil
     ) {
+        self.typedArguments = typedArguments
         self.id = id
         self.approvalID = approvalID
         self.name = name

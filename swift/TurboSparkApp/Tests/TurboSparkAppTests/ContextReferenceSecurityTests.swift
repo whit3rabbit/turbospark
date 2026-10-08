@@ -44,7 +44,9 @@ final class ContextReferenceSecurityTests: XCTestCase {
         try "#!/bin/sh\ntouch '\(marker.path)'\n".write(
             to: helper, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
-        if driver == "external" {
+        if driver == "fsmonitor" {
+            try git(["config", "core.fsmonitor", helper.path], in: root)
+        } else if driver == "external" {
             try git(["config", "diff.external", helper.path], in: root)
         } else {
             try "* diff=malicious\n".write(
@@ -74,5 +76,56 @@ final class ContextReferenceSecurityTests: XCTestCase {
                     "\(reference) should still produce an attachment")
             }
         }
+    }
+
+    /// core.fsmonitor runs during plain `git diff`/`status` and is not
+    /// disabled by --no-ext-diff or --no-textconv.
+    @MainActor
+    func testGitReferencesDoNotExecuteConfiguredFsmonitor() async throws {
+        for reference in ["@diff", "@staged"] {
+            let (root, marker) = try repository(for: reference, driver: "fsmonitor")
+            defer { try? FileManager.default.removeItem(at: root) }
+            // Creating the repo may itself have run the monitor; start clean.
+            try? FileManager.default.removeItem(at: marker)
+
+            let model = AppModel()
+            let chatID = UUID()
+            _ = await MentionResolver.resolveMentions(
+                in: reference, projectRoot: root, chatID: chatID, into: model)
+
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: marker.path),
+                "\(reference) executed the configured core.fsmonitor command")
+            XCTAssertEqual(
+                model.chats.first(where: { $0.id == chatID })?.draftAttachments.count, 1)
+        }
+    }
+
+    /// The worktree pane refresh (status/numstat) and the per-file diff run
+    /// on every tool result, so they must not execute repo config either.
+    func testWorktreeRefreshAndDiffDoNotExecuteFsmonitorOrExternalDiff() async throws {
+        for driver in ["fsmonitor", "external"] {
+            let (root, marker) = try repository(for: "@diff", driver: driver)
+            defer { try? FileManager.default.removeItem(at: root) }
+            try? FileManager.default.removeItem(at: marker)
+
+            let status = await WorktreeModel.queryGitStatus(rootPath: root.path)
+            XCTAssertTrue(status.isGit)
+            XCTAssertFalse(status.changes.isEmpty, "the refresh path should still see the change")
+            _ = await WorktreeModel.queryGitDiff(rootPath: root.path, file: "tracked.txt")
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: marker.path),
+                "worktree git refresh executed the configured \(driver) helper")
+        }
+    }
+
+    func testHardenedGitArgumentsPlaceFlagsBeforeAndAfterTheSubcommand() {
+        let args = HardenedGit.arguments(["diff", "HEAD", "--numstat"])
+        XCTAssertTrue(args.starts(with: ["--no-pager", "-c", "core.fsmonitor=false"]))
+        XCTAssertTrue(args.contains("core.hooksPath=/dev/null"))
+        let diffIndex = args.firstIndex(of: "diff")!
+        XCTAssertEqual(args[diffIndex + 1], "--no-ext-diff")
+        XCTAssertEqual(args[diffIndex + 2], "--no-textconv")
+        XCTAssertEqual(HardenedGit.environment(base: [:])["GIT_OPTIONAL_LOCKS"], "0")
     }
 }

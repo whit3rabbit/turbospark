@@ -542,62 +542,78 @@ public final class ProfileRepository: @unchecked Sendable {
         for source in filesToDelete {
             try FileManager.default.removeItem(at: source)
         }
-        let migratedRoots = memoryRoots + observationRoots
+        // The profile and projects memory roots overlap, so de-duplicate.
+        let migratedRoots = Array(Set(memoryRoots + observationRoots))
         for root in migratedRoots.sorted(by: { $0.path.count > $1.path.count }) {
             if migratedRoots.contains(where: { root.path.hasPrefix($0.path + "/") }) { continue }
             try FileManager.default.removeItem(at: root)
         }
     }
 
-    private func migrateLegacyMemory() throws -> [URL] {
+    /// Imports every regular file under `root` as a raw record and returns what
+    /// is safe to delete afterwards. The whole root is returned only when every
+    /// entry on disk (including hidden files and symlinks, which the import
+    /// skips) was imported and read back; otherwise only the imported files are
+    /// returned so unimported data is never removed.
+    private func importLegacyTree(
+        root: URL, skipsHiddenFiles: Bool, keyFor: (String) -> String
+    ) throws -> [URL] {
         let manager = FileManager.default
-        let roots: [(url: URL, prefix: String)] = [
-            (ProfileMemoryStore.shared.directory, "profile"),
-            (MemoryStore.defaultBase().appendingPathComponent("projects", isDirectory: true),
-             "projects"),
-        ]
-        var migratedRoots: [URL] = []
-        for (root, prefix) in roots {
-            guard manager.fileExists(atPath: root.path) else { continue }
-            let enumerator = manager.enumerator(
-                at: root, includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsPackageDescendants])
-            while let file = enumerator?.nextObject() as? URL,
-                  (try file.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true {
-                let relative = String(file.path.dropFirst(root.path.count))
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                let key = "memory:file:\(prefix)/\(relative)"
-                let data = try Data(contentsOf: file)
-                try saveRawRecord(data, key: key)
-                guard try rawRecord(key: key) == data else {
-                    throw ProfileVaultStore.VaultError.integrityCheckFailed
-                }
-            }
-            migratedRoots.append(root)
-        }
-        return migratedRoots
-    }
-
-    private func migrateLegacyToolObservations() throws -> [URL] {
-        let manager = FileManager.default
-        let root = store.rootURL.deletingLastPathComponent()
-            .appendingPathComponent("tool-observations", isDirectory: true)
         guard manager.fileExists(atPath: root.path) else { return [] }
-        let enumerator = manager.enumerator(
-            at: root, includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants])
-        while let file = enumerator?.nextObject() as? URL,
-              (try file.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true {
-            let relative = String(file.path.dropFirst(root.path.count))
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let key = ToolObservationStore.recordKey(relativePath: relative)
+        // Path-based enumeration yields paths relative to `root`. URL
+        // enumeration can return /private/var for a /var root, and slicing
+        // that by the root's string length corrupts the record keys.
+        guard let enumerator = manager.enumerator(atPath: root.path) else {
+            throw ProfileVaultStore.VaultError.integrityCheckFailed
+        }
+        var everything = 0
+        var imported: [URL] = []
+        // `while let` over the enumerator only (no trailing boolean condition),
+        // so a directory entry is skipped instead of ending the walk.
+        while let relative = enumerator.nextObject() as? String {
+            let file = root.appendingPathComponent(relative)
+            let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
+            let isLink = (try? file.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+            if values.isDirectory == true && !isLink { continue }
+            // Everything that is not a plain directory must be accounted for
+            // before the root may be deleted.
+            everything += 1
+            let hidden = relative.split(separator: "/").contains { $0.hasPrefix(".") }
+            guard values.isRegularFile == true, !isLink, !(skipsHiddenFiles && hidden) else {
+                continue
+            }
+            let key = keyFor(relative)
             let data = try Data(contentsOf: file)
             try saveRawRecord(data, key: key)
             guard try rawRecord(key: key) == data else {
                 throw ProfileVaultStore.VaultError.integrityCheckFailed
             }
+            imported.append(file)
         }
-        return [root]
+        return imported.count == everything ? [root] : imported
+    }
+
+    private func migrateLegacyMemory() throws -> [URL] {
+        let roots: [(url: URL, prefix: String)] = [
+            (ProfileMemoryStore.shared.directory, "profile"),
+            (MemoryStore.defaultBase().appendingPathComponent("projects", isDirectory: true),
+             "projects"),
+        ]
+        var removable: [URL] = []
+        for (root, prefix) in roots {
+            removable += try importLegacyTree(root: root, skipsHiddenFiles: false) {
+                "memory:file:\(prefix)/\($0)"
+            }
+        }
+        return removable
+    }
+
+    private func migrateLegacyToolObservations() throws -> [URL] {
+        let root = store.rootURL.deletingLastPathComponent()
+            .appendingPathComponent("tool-observations", isDirectory: true)
+        return try importLegacyTree(root: root, skipsHiddenFiles: true) {
+            ToolObservationStore.recordKey(relativePath: $0)
+        }
     }
 
     private func database() throws -> ProfileDatabase {

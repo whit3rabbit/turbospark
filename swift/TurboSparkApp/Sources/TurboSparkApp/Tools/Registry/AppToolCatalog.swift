@@ -32,6 +32,10 @@ public enum AppToolCatalog {
     /// Progressive-disclosure tools for dynamic MCP servers.
     public static let toolSearchTools: [OpenAITool] = ToolSearchToolDefinitions.all
 
+    /// Codemode script tool. Computed: empty while the feature flag is off,
+    /// the same gate pattern `memoryTools` uses.
+    public static var codemodeTools: [OpenAITool] { CodemodeToolDefinitions.all }
+
     /// Interactive questions, plan mode, findings, skills, and feedback tools.
     public static let planningInteractiveTools: [OpenAITool] = PlanningInteractiveToolDefinitions.all + SkillToolDefinitions.all
 
@@ -76,6 +80,7 @@ public enum AppToolCatalog {
         tools.append(contentsOf: memoryTools)
         tools.append(contentsOf: automationTools)
         tools.append(contentsOf: toolSearchTools)
+        tools.append(contentsOf: codemodeTools)
         tools.append(contentsOf: BrowserToolDefinitions.tools(availableFor: browserAvailability))
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: nil).map { $0.openAITool }
         tools.append(contentsOf: custom)
@@ -103,6 +108,7 @@ public enum AppToolCatalog {
             l.append(contentsOf: mcpTools)
             l.append(contentsOf: planningInteractiveTools)
             l.append(contentsOf: memoryTools)
+            l.append(contentsOf: codemodeTools)
             list = l
 
         case .researcher:
@@ -113,6 +119,7 @@ public enum AppToolCatalog {
             l.append(contentsOf: mcpTools)
             l.append(contentsOf: planningInteractiveTools)
             l.append(contentsOf: memoryTools)
+            l.append(contentsOf: codemodeTools)
             list = l
 
         case .autonomous:
@@ -126,6 +133,7 @@ public enum AppToolCatalog {
             l.append(contentsOf: taskAgentTools)
             l.append(contentsOf: mcpTools)
             l.append(contentsOf: memoryTools)
+            l.append(contentsOf: codemodeTools)
             list = l
         }
 
@@ -159,9 +167,47 @@ public enum AppToolCatalog {
     /// turn's project.
     public static func category(for toolName: String, projectURL: URL? = nil) -> AppToolCategory {
         let name = toolName.lowercased()
+        // Built-in names are classified FIRST and a custom tool can never
+        // take one (CustomToolManager rejects colliding names), so a file in
+        // a cloned repo cannot reclassify `bash` as a read.
+        if let builtIn = builtInCategory(for: name) { return builtIn }
         if let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL).first(where: { $0.name.lowercased() == name }) {
-            return custom.category
+            return custom.effectiveCategory
         }
+        return .automation
+    }
+
+    /// Whether `toolName` is part of the shipped vocabulary: a name the
+    /// category table, the executor, or an advertised definition owns. A
+    /// custom tool may not use one of these (case-insensitive).
+    public static func isBuiltInToolName(_ toolName: String) -> Bool {
+        let name = toolName.lowercased()
+        return builtInCategory(for: name) != nil
+            || AppToolRegistry.supportedToolNames.contains(name)
+            || builtInDefinitionNames.contains(name)
+    }
+
+    private static var builtInDefinitionNames: Set<String> {
+        var lists: [[OpenAITool]] = [
+            fileTools, terminalTools, taskAgentTools, webTools, projectArtifactTools,
+            mcpTools, planningInteractiveTools, memoryTools, automationTools,
+            toolSearchTools, codemodeTools, BrowserToolDefinitions.all,
+        ]
+        lists.removeAll { $0.isEmpty }
+        return Set(lists.joined().map { $0.function.name.lowercased() })
+    }
+
+    /// The category table for shipped names; nil for a name this table does
+    /// not own (a custom tool, or an unknown name that falls to
+    /// `.automation`). Alias sets for the file handlers come from
+    /// `AppToolRegistry`, the same sets `execute` dispatches on.
+    static func builtInCategory(for name: String) -> AppToolCategory? {
+        if AppToolRegistry.writeFileAliases.contains(name)
+            || AppToolRegistry.editFileAliases.contains(name)
+        {
+            return .fileWrite
+        }
+        if AppToolRegistry.readFileAliases.contains(name) { return .fileRead }
         if name.contains("__") || name.hasPrefix("mcp_") || name.hasPrefix("mcp.") {
             return .mcp
         }
@@ -177,14 +223,14 @@ public enum AppToolCatalog {
             return .browser
         case "batch", "schedule", "cron", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
             return .automation
-        case "tool_call", "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource":
+        case "tool_call", "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource", "codemode":
             return .mcp
         case "tool_search", "tool_describe":
             return .fileRead
         case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file", "recall_tool_output":
             return .fileRead
         default:
-            return .automation
+            return nil
         }
     }
 
@@ -351,7 +397,9 @@ public enum AppToolCatalog {
         let deferred = availableTools?.deferredMcpTools ?? ToolSearchCatalog.descriptors(
             servers: mcpServers, permissions: project?.permissions)
         guard !deferred.isEmpty else { return base }
-        return base + ToolSearchCatalog.promptListing(
+        let listing = base + ToolSearchCatalog.promptListing(
+            descriptors: deferred, contextTokens: contextTokens)
+        return listing + CodemodeCatalog.declarationsSection(
             descriptors: deferred, contextTokens: contextTokens)
     }
 }

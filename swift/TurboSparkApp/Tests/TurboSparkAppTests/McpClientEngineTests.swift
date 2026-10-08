@@ -218,6 +218,25 @@ final class McpClientEngineTests: XCTestCase {
         XCTAssertEqual(env["GITHUB_TOKEN"], "explicit")
     }
 
+    func testExecutableDirectoryAndHomebrewPrecedeTheInheritedPath() {
+        let env = McpClientEngine.childEnvironment(
+            parent: parentFixture, passthrough: [], declared: [:],
+            executableDirectory: "/opt/tools/bin")
+
+        XCTAssertEqual(
+            env["PATH"],
+            "/opt/tools/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin")
+    }
+
+    func testADeclaredPathIsNotEnrichedWhenAnExecutableDirectoryIsGiven() {
+        let env = McpClientEngine.childEnvironment(
+            parent: parentFixture, passthrough: [],
+            declared: ["PATH": "/custom/bin"],
+            executableDirectory: "/opt/tools/bin")
+
+        XCTAssertEqual(env["PATH"], "/custom/bin")
+    }
+
     func testABlankPassthroughEntryIsIgnored() {
         let env = McpClientEngine.childEnvironment(
             parent: parentFixture, passthrough: ["", "   ", " GITHUB_TOKEN "], declared: [:])

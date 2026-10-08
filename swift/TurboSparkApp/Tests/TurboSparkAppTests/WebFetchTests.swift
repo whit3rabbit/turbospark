@@ -190,6 +190,60 @@ final class WebFetchTests: XCTestCase {
         }
     }
 
+    func testAlternateLoopbackSpellingsAreClassifiedPrivate() {
+        let hosts = [
+            "::ffff:127.0.0.1", "::ffff:7f00:1", "0::1", "[::1]", "::ffff:a9fe:a9fe",
+            "localhost.", "127.0.0.1.", "LOCALHOST", "0x7f.1", "fe80::1%en0", "64:ff9b::7f00:1",
+            "2002:7f00:1::", "::127.0.0.1", "not:valid:ip",
+        ]
+        for host in hosts {
+            XCTAssertTrue(AppToolSandbox.isPrivateOrMetadataHost(host), "\(host) must be private")
+        }
+        for host in ["example.com", "93.184.216.34", "2606:4700:4700::1111", "::ffff:5db8:d822"] {
+            XCTAssertFalse(AppToolSandbox.isPrivateOrMetadataHost(host), "\(host) must be public")
+        }
+    }
+
+    func testMappedAndTrailingDotHostsAreRefusedByFetch() async {
+        for url in [
+            "http://[::ffff:127.0.0.1]:9/", "http://[::ffff:7f00:1]:9/", "http://[0::1]:9/",
+            "http://localhost.:9/", "http://127.0.0.1.:9/",
+        ] {
+            do {
+                _ = try await WebFetchExecutor.fetch(url: url)
+                XCTFail("Should have refused \(url)")
+            } catch {
+                XCTAssertTrue(
+                    error.localizedDescription.contains("private")
+                        || error.localizedDescription.contains("denied"),
+                    "\(url): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// The first hop is allowed through an injected validator (the fixture is
+    /// on loopback); the redirect target `localhost` must still be refused by
+    /// the real validation, and must never be requested.
+    func testRedirectToLoopbackIsRefusedAndNeverRequested() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        let first = server.url("/redirect")
+        let validator: (URL) throws -> Void = { url in
+            if url == first { return }
+            try HttpRequestDestinationValidator.validate(url)
+        }
+        do {
+            _ = try await WebFetchExecutor.fetch(
+                url: first.absoluteString, destinationValidator: validator)
+            XCTFail("a redirect to localhost must be refused")
+        } catch {
+            XCTAssertTrue(
+                error.localizedDescription.contains("private"),
+                error.localizedDescription)
+        }
+        XCTAssertEqual(server.requestCount(for: "/redirect"), 1)
+        XCTAssertEqual(server.requestCount(for: "/landing"), 0)
+    }
+
     // MARK: - AppToolRegistry Execution
 
     func testAppToolRegistryWebFetchExecutionMissingUrl() async {

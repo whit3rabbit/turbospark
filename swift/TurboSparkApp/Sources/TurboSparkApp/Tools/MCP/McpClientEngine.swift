@@ -128,7 +128,8 @@ public actor McpClientEngine {
         process.environment = Self.childEnvironment(
             parent: ProcessInfo.processInfo.environment,
             passthrough: envPassthrough,
-            declared: env)
+            declared: env,
+            executableDirectory: (resolvedExecutable as NSString).deletingLastPathComponent)
 
         if let workingDirectory {
             process.currentDirectoryURL = workingDirectory
@@ -478,11 +479,26 @@ public actor McpClientEngine {
     public static func childEnvironment(
         parent: [String: String],
         passthrough: [String],
-        declared: [String: String]
+        declared: [String: String],
+        executableDirectory: String? = nil
     ) -> [String: String] {
         var environment: [String: String] = [:]
         for key in baselineEnvironmentKeys {
             if let value = parent[key] { environment[key] = value }
+        }
+        // A GUI launch inherits only /usr/bin:/bin:/usr/sbin:/sbin, so an
+        // `npx` shebang (`#!/usr/bin/env node`) cannot find node. Put the
+        // resolved executable's directory and the Homebrew locations ahead
+        // of the inherited PATH. A PATH in `declared` still replaces all of
+        // this below.
+        if let executableDirectory {
+            var entries: [String] = []
+            for dir in [executableDirectory, "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+                + (parent["PATH"] ?? "").components(separatedBy: ":")
+            where !dir.isEmpty && !entries.contains(dir) {
+                entries.append(dir)
+            }
+            environment["PATH"] = entries.joined(separator: ":")
         }
         for key in passthrough {
             let trimmed = key.trimmingCharacters(in: .whitespaces)

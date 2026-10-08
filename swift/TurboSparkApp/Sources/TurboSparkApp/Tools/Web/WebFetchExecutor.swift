@@ -49,8 +49,10 @@ public enum WebFetchExecutor {
         url urlString: String,
         format: String = "markdown",
         timeout: Int? = nil,
-        customSession: URLSession? = nil
+        customSession: URLSession? = nil,
+        destinationValidator injectedValidator: ((URL) throws -> Void)? = nil
     ) async throws -> String {
+        let destinationValidator = injectedValidator ?? { try HttpRequestDestinationValidator.validate($0) }
         let trimmedUrl = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmedUrl), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             throw NSError(
@@ -68,15 +70,11 @@ public enum WebFetchExecutor {
             )
         }
 
-        if AppToolSandbox.isPrivateOrMetadataHost(host) {
-            throw NSError(
-                domain: "TurboSparkWebFetch",
-                code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "Access to private network or metadata host '\(host)' is denied."]
-            )
-        }
-
-        try AppToolSandbox.validateDomain(host)
+        // Lexical check, DNS-resolution check and domain policy in one place.
+        // Every redirect hop goes through the same validator inside
+        // performRequest, so a public page cannot bounce the fetch to
+        // loopback, LAN or a metadata address.
+        try destinationValidator(url)
 
         let targetFormat = ["text", "html"].contains(format.lowercased()) ? format.lowercased() : "markdown"
         let resolvedTimeout = min(Self.maxTimeoutSeconds, max(1, timeout ?? Self.defaultTimeoutSeconds))
@@ -94,9 +92,11 @@ public enum WebFetchExecutor {
         let sessionConfig = URLSessionConfiguration.ephemeral
         sessionConfig.timeoutIntervalForRequest = TimeInterval(resolvedTimeout)
         sessionConfig.timeoutIntervalForResource = TimeInterval(resolvedTimeout)
-        let session = customSession ?? URLSession(configuration: sessionConfig)
 
-        var (data, response) = try await session.data(for: createRequest(userAgent: browserUserAgent))
+        var (data, response) = try await HttpRequestExecutor.performRequest(
+            createRequest(userAgent: browserUserAgent),
+            configuration: sessionConfig, customSession: customSession,
+            validate: destinationValidator)
         var httpResponse = response as? HTTPURLResponse
 
         // Cloudflare challenge fallback retry
@@ -104,7 +104,11 @@ public enum WebFetchExecutor {
             let cfHeader = resp.value(forHTTPHeaderField: "cf-mitigated")?.lowercased()
             if cfHeader == "challenge" || resp.statusCode == 403 {
                 let retryReq = createRequest(userAgent: fallbackUserAgent)
-                if let (retryData, retryResp) = try? await session.data(for: retryReq),
+                // Same validated path as the first request: a retry must not
+                // be a way around the redirect checks.
+                if let (retryData, retryResp) = try? await HttpRequestExecutor.performRequest(
+                    retryReq, configuration: sessionConfig, customSession: customSession,
+                    validate: destinationValidator),
                    let retryHttp = retryResp as? HTTPURLResponse,
                    (200...299).contains(retryHttp.statusCode) {
                     data = retryData

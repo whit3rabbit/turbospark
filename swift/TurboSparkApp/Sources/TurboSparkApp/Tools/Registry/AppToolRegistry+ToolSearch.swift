@@ -92,6 +92,7 @@ extension AppToolRegistry {
             serverName: serverName,
             toolName: toolName,
             arguments: stringArguments,
+            wireArguments: McpWireArguments.build(strings: stringArguments, original: arguments),
             project: project,
             rootURL: project?.rootDirectoryURL ?? URL(fileURLWithPath: "/dev/null"))
         let postResults = await AppHookExecutionEngine.shared.dispatch(

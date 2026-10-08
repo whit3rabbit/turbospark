@@ -4,6 +4,7 @@ enum REPLWorkerMain {
     static let workerModeArgument = "--turbospark-js-repl-worker"
     private static let smokeArgument = "--smoke"
     static let serveArgument = "--serve"
+    static let serveCodemodeArgument = "--codemode-serve"
     /// Transport-level bound for one request line, independent of the
     /// script-size limit so the JSON envelope never pushes a small script
     /// over the configured request bound.
@@ -53,6 +54,10 @@ enum REPLWorkerMain {
         guard isWorkerInvocation(arguments) else { return false }
         if arguments.contains(serveArgument) {
             serveRequests()
+            return true
+        }
+        if arguments.contains(serveCodemodeArgument) {
+            serveCodemodeRequests()
             return true
         }
         guard arguments.contains(smokeArgument) else { return true }
@@ -217,6 +222,107 @@ enum REPLWorkerMain {
                     reply(ResultMessage(id: message.id, result: box.load()))
                 default:
                     localFailure(id: -1, "unknown request type \(type)")
+                }
+            }
+        }
+    }
+
+    // MARK: Codemode serve loop
+
+    /// Thread-safe newline writer for worker stdout. Codemode writes come
+    /// from both the serve thread (nothing) and the execution thread (call,
+    /// output, and terminal lines), so the write itself is lock guarded.
+    private final class StdoutLineWriter: @unchecked Sendable {
+        private let lock = NSLock()
+
+        func write(_ line: Data?) {
+            guard var framed = line else { return }
+            framed.append(0x0A)
+            lock.lock()
+            defer { lock.unlock() }
+            FileHandle.standardOutput.write(framed)
+        }
+    }
+
+    /// Serves exactly one codemode script execution per process lifetime.
+    /// The request line carries the whole run (code, tool entries, store
+    /// snapshot, limits); while it executes, the loop keeps reading stdin
+    /// so nested-call results can arrive, then writes one terminal
+    /// `done` or `crash` line and exits the process.
+    private static func serveCodemodeRequests() {
+        let writer = StdoutLineWriter()
+        let decoder = JSONDecoder()
+        var buffer = Data()
+        var context: CodemodeWorkerContext?
+        var executionStarted = false
+
+        func writeCrash(_ message: String) {
+            writer.write(CodemodeWire.encodeLine(CodemodeWire.Crash(type: "crash", message: message)))
+        }
+
+        while true {
+            // Same raw-read requirement as serveRequests: Foundation's
+            // read(upToCount:) blocks to full length or EOF on a pipe.
+            var incoming = [UInt8](repeating: 0, count: 65_536)
+            let byteCount = read(STDIN_FILENO, &incoming, incoming.count)
+            guard byteCount > 0 else { break }
+            buffer.append(contentsOf: incoming[0..<byteCount])
+
+            while let newlineIndex = buffer.firstIndex(of: 0x0A) {
+                let lineData = buffer[buffer.startIndex..<newlineIndex]
+                buffer.removeSubrange(buffer.startIndex...newlineIndex)
+                guard !lineData.isEmpty else { continue }
+                if lineData.count > maximumTransportBytes {
+                    writeCrash("codemode request of \(lineData.count) bytes exceeds the "
+                        + "\(maximumTransportBytes) byte transport limit")
+                    continue
+                }
+                guard let lineObject = try? decoder.decode(
+                    [String: REPLWorkerProbeValue].self, from: Data(lineData)),
+                    let type = lineObject["type"]?.stringValue
+                else {
+                    writeCrash("codemode request is not a JSON object with a type")
+                    continue
+                }
+
+                switch type {
+                case "codemode":
+                    guard !executionStarted else {
+                        writeCrash("this worker already served its one codemode execution")
+                        continue
+                    }
+                    guard let request = try? decoder.decode(
+                        CodemodeWire.RunRequest.self, from: Data(lineData))
+                    else {
+                        writeCrash("codemode request is malformed")
+                        continue
+                    }
+                    executionStarted = true
+                    let workerContext = CodemodeWorkerContext(
+                        request: request, sendLine: { writer.write($0) })
+                    context = workerContext
+                    Task.detached(priority: .utility) {
+                        let outcome = workerContext.run()
+                        switch outcome {
+                        case .done(let done):
+                            writer.write(CodemodeWire.encodeLine(done))
+                        case .crashed(let message):
+                            writeCrash(message)
+                        }
+                        // The terminal line is the process's last word; the
+                        // supervisor kills us anyway, but exiting here keeps
+                        // a finished worker from lingering on its pipes.
+                        exit(EXIT_SUCCESS)
+                    }
+                case "result":
+                    guard let result = try? decoder.decode(
+                        CodemodeWire.CallResult.self, from: Data(lineData))
+                    else { continue }
+                    context?.deliver(result: result)
+                default:
+                    // Unknown lines are ignored: this worker serves exactly
+                    // one protocol and its supervisor sends only that.
+                    continue
                 }
             }
         }

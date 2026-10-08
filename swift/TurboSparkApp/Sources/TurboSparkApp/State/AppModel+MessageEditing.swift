@@ -317,6 +317,16 @@ extension AppModel {
         prefix[messageIndex].content = newText
         prefix[messageIndex].createdAt = now
         prefix[messageIndex].alternates = []
+        // Fresh identities: the branch must not share row ids with the source
+        // (ForEach identity, and the per-chat child tables in the vault).
+        for index in prefix.indices {
+            prefix[index].id = UUID()
+            prefix[index].alternates = prefix[index].alternates.map { alternate in
+                var copied = alternate
+                copied.id = UUID()
+                return copied
+            }
+        }
         branch.messages = prefix
         branch.contextSummary = summary
         branch.compactedMessageCount = min(boundary, messageIndex)

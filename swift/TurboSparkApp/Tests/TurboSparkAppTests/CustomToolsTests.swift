@@ -8,6 +8,17 @@ final class CustomToolsTests: XCTestCase {
         return dir
     }
 
+    /// Project tools load only once trusted (review item 19). Tests that
+    /// exercise a trusted project tool approve it in an isolated store.
+    private func trustingProjectTools(in root: URL) -> CustomToolTrustStore {
+        let saved = CustomToolTrustStore.shared
+        CustomToolTrustStore.shared = CustomToolTrustStore(fileURL: nil)
+        for tool in CustomToolManager.shared.untrustedProjectTools(for: root) {
+            CustomToolTrustStore.shared.trust(tool)
+        }
+        return saved
+    }
+
     // MARK: - state#81: a failing command is a failing tool call
 
     func testANonZeroExitIsReportedAsAnErrorEvenWhenTheCommandPrinted() async throws {
@@ -192,6 +203,8 @@ final class CustomToolsTests: XCTestCase {
         try json.write(
             to: toolsDir.appendingPathComponent("deploy_thing.json"), atomically: true,
             encoding: .utf8)
+        let savedStore = trustingProjectTools(in: tempDir)
+        defer { CustomToolTrustStore.shared = savedStore }
 
         XCTAssertEqual(
             AppToolCatalog.category(for: "deploy_thing", projectURL: tempDir), .terminal,
@@ -335,6 +348,8 @@ final class CustomToolsTests: XCTestCase {
         try json.write(to: toolURL, atomically: true, encoding: .utf8)
 
         let project = AppProject(name: "TestProj", rootDirectoryPath: tempDir.path)
+        let savedStore = trustingProjectTools(in: tempDir)
+        defer { CustomToolTrustStore.shared = savedStore }
 
         let call = AppToolCall(
             name: "custom_echo",

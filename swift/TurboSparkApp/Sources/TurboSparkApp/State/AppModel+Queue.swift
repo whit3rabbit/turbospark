@@ -28,11 +28,20 @@ public struct QueuedUserPrompt: Identifiable, Equatable {
     public var text: String
     /// The draft attachments, MOVED out of the chat row at enqueue time.
     public var attachments: [AppPromptAttachment]
+    /// Authored by the scheduler (a cron job or wakeup the MODEL created),
+    /// not typed by the user. It never goes through the composer, `run()`,
+    /// or bang/slash parsing: a model-authored `!cmd` must not become a
+    /// permission-free shell command.
+    public var isScheduled: Bool
 
-    public init(id: UUID = UUID(), text: String, attachments: [AppPromptAttachment] = []) {
+    public init(
+        id: UUID = UUID(), text: String, attachments: [AppPromptAttachment] = [],
+        isScheduled: Bool = false
+    ) {
         self.id = id
         self.text = text
         self.attachments = attachments
+        self.isScheduled = isScheduled
     }
 }
 
@@ -127,6 +136,16 @@ extension AppModel {
             let queued = pendingUserMessages[chatID], !queued.isEmpty
         else { return nil }
         let first = queued[0]
+        if first.isScheduled {
+            // Model-origin text: appended as a plain user turn, composer and
+            // draft untouched, no bang/slash parsing. Waits (stays parked)
+            // until a model is loaded.
+            guard hasModelReadyForScheduledDelivery else { return nil }
+            pendingUserMessages[chatID] = queued.count > 1 ? Array(queued.dropFirst()) : nil
+            injectScheduledPrompt(first.text, chatID: chatID)
+            return PendingUserSubmission(
+                text: first.text, attachments: [], presentation: .userSteer)
+        }
         let submission = PendingUserSubmission(
             text: first.text,
             attachments: first.attachments,
@@ -142,6 +161,19 @@ extension AppModel {
         writePromptTextDirectly(submission.text)
         run(presentation: submission.presentation)
         return submission
+    }
+
+    /// Starts a turn from a scheduler-authored prompt without the composer.
+    ///
+    /// Mirrors `injectTaskNotification`: append the user row, run step 0.
+    /// The text is sanitized like any model-bound prompt. No
+    /// `UserPromptSubmit` hook runs, same as notification injection: the
+    /// text is not user input.
+    func injectScheduledPrompt(_ text: String, chatID: UUID) {
+        let content = UnicodeSanitization.sanitize(text)
+        guard !content.isEmpty else { return }
+        mutateTurnMessages(for: chatID) { $0.append(AppChatMessage(role: .user, content: content)) }
+        executeGenerationTurn(step: 0, chatID: chatID)
     }
 
     /// Delivers parked prompts MID-TURN at an agent-loop step boundary, and

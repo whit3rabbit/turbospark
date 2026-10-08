@@ -81,9 +81,11 @@ extension AppToolRegistry {
         }
 
         let root = rootURL.standardizedFileURL.resolvingSymlinksInPath()
-        let targetURL = root.appendingPathComponent(cleaned)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
+        // Not plain `resolvingSymlinksInPath`: that is a no-op for a path
+        // that does not exist yet, so `link/new.txt` (link -> outside)
+        // passed the prefix check below.
+        let targetURL = AppToolSandbox.resolvedForContainment(
+            root.appendingPathComponent(cleaned))
 
         guard targetURL.path == root.path || targetURL.path.hasPrefix(root.path + "/") else {
             throw NSError(
@@ -228,18 +230,17 @@ extension AppToolRegistry {
 
         case "time_machine":
             let revCount = max(1, min(20, numRevisions ?? 5))
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = ["log", "-p", "-n", "\(revCount)", "--", targetURL.path]
-            process.currentDirectoryURL = rootURL
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let gitOutput = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            if process.terminationStatus != 0 || gitOutput.isEmpty || gitOutput.contains("not a git repository") {
+            // ProcessExecutor drains both pipes concurrently and enforces a
+            // timeout; the old waitUntilExit-then-read deadlocked once git
+            // output passed the pipe buffer (~64 KB) and ignored Stop.
+            let result = try await HardenedGit.run(
+                arguments: ["log", "-p", "-n", "\(revCount)", "--", targetURL.path],
+                workingDirectory: rootURL.path,
+                timeoutSeconds: 15.0,
+                mergeStreams: true
+            )
+            let gitOutput = result.combinedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if result.exitCode != 0 || result.timedOut || gitOutput.isEmpty || gitOutput.contains("not a git repository") {
                 return "No git history found for \(relPath)."
             }
             return compactOutput(gitOutput, maxLines: 150)
@@ -619,7 +620,7 @@ extension AppToolRegistry {
     static func searchCode(pattern: String, relPath: String, rootURL: URL) throws -> String {
         let targetURL = try resolveSecurePath(relPath: relPath, rootURL: rootURL)
         let fm = FileManager.default
-        guard let enumerator = fm.enumerator(at: targetURL, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
+        guard let enumerator = fm.enumerator(at: targetURL, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
             throw NSError(domain: "TurboSparkTool", code: 12, userInfo: [NSLocalizedDescriptionKey: "Cannot search path."])
         }
 
@@ -635,6 +636,15 @@ extension AppToolRegistry {
             if path.contains("/node_modules/") || path.contains("/target/") || path.contains("/.build/")
                 || path.contains("/.git/")
             {
+                continue
+            }
+            // **SKIP SYMLINKS AND NON-REGULAR FILES.** Only the start path
+            // is containment-checked above; a symlink inside the project
+            // (`notes.txt -> ~/.ssh/id_ed25519`) would otherwise be read
+            // here with no prompt, since search is always-safe. `read_file`
+            // refuses the same link through `resolveSecurePath`.
+            let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true || values?.isRegularFile != true {
                 continue
             }
             let size = AppFileReadLimits.fileSize(of: fileURL)

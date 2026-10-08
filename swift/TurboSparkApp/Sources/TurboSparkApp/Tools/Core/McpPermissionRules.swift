@@ -54,9 +54,14 @@ public enum McpPermissionRule {
             guard parts.count >= 3 else { return nil }
             return (parts[1], parts[2...].joined(separator: "__"))
         }
-        guard let server = arguments["server"] ?? arguments["server_name"] else { return nil }
-        let tool = arguments["toolName"] ?? arguments["tool"] ?? arguments["name"]
-        return (server, tool)
+        // Same key set and precedence as the executor (one shared parser).
+        // An ambiguous call (two different tool spellings) has no target
+        // here; the risk classifier rates it high and the executor refuses
+        // it, so it can never match an allow rule for one name and run
+        // another.
+        guard let parsed = try? ToolArgumentResolver.mcpTarget(arguments),
+              let server = parsed.server else { return nil }
+        return (server, parsed.tool)
     }
 
     private static func normalized(_ value: String) -> String {

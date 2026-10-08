@@ -80,12 +80,21 @@ enum EncryptedProfileBackup {
             var checksums: [Checksum] = []
             let databaseDigest = try zip.add(path: "vault/profile.sqlite3", fileURL: snapshot)
             checksums.append(Checksum(databaseDigest))
+            // The asset inventory comes from the database, not the directory
+            // listing: orphan ciphertexts and in-flight temp files are not
+            // part of the profile, and restore requires disk == rows exactly.
+            let knownAssetIDs = Set(try session.database.allAssetMetadata().map(\.id))
             for (root, prefix) in [(store.assetsURL, "vault/assets"),
                                    (store.recoveryURL, "vault/recovery")] {
                 // Path enumeration keeps the base and children in the same
                 // /var or /private/var namespace. Mixing URL enumeration
                 // with string prefix removal corrupts temporary-file paths.
                 for file in try recursiveFiles(at: root) {
+                    if prefix == "vault/assets",
+                       !knownAssetIDs.contains(file.deletingPathExtension().lastPathComponent)
+                        || file.pathExtension != "tsasset" {
+                        continue
+                    }
                     let relative = file.path.dropFirst(root.path.count)
                         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                     let digest = try zip.add(path: "\(prefix)/\(relative)", fileURL: file)
@@ -227,6 +236,10 @@ enum EncryptedProfileBackup {
             updatedAt: Date())
         try writeSecurityManifest(finalManifest, to: extractedVault)
 
+        // A fresh storage root (new Mac, Default-only install) has no profiles/
+        // parent yet; create it, then make the profile folder itself exclusively.
+        try manager.createDirectory(
+            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try manager.createDirectory(at: destination, withIntermediateDirectories: false)
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: destination.path)
         let installedVault = destination.appendingPathComponent("private-vault", isDirectory: true)

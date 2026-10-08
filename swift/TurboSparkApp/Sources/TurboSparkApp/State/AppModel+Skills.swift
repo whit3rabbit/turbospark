@@ -258,12 +258,46 @@ extension AppModel {
             }
             // Programmatic expansion of a skill payload, which is often
             // larger than the paste threshold; never a paste.
-            writePromptTextDirectly(
+            submitExpandedSkillPrompt(
                 rawArgs.isEmpty
                     ? "Execute the following skill instructions:\n\n\(payload)"
-                    : "Execute the following skill instructions with arguments: \(rawArgs)\n\n\(payload)")
-            run(presentation: presentation)
+                    : "Execute the following skill instructions with arguments: \(rawArgs)\n\n\(payload)",
+                presentation: presentation)
             return true
+        }
+    }
+
+    /// Sends an expanded skill prompt through the ordinary submission.
+    ///
+    /// Called from inside the submission task, which still holds
+    /// `submitting`: a direct `run()` there fails `canRun`, parks the text
+    /// in the message queue, and nothing drains it (the task's tail is not a
+    /// turn tail). The replay is deferred to that task's defer instead.
+    func submitExpandedSkillPrompt(_ text: String, presentation: MidTurnInputPresentation?) {
+        if submitting {
+            deferredSkillSubmission = DeferredSkillSubmission(
+                chatID: selectedChatID, text: text, presentation: presentation)
+            return
+        }
+        writePromptTextDirectly(text)
+        run(presentation: presentation)
+    }
+
+    /// Replays a deferred skill expansion. Called from the submission
+    /// task's defer AFTER `submitting` is cleared. A cancelled submission
+    /// drops it; a chat the user moved away from gets it queued (the queue
+    /// drains it when that chat is next idle) rather than overwriting the
+    /// composer of the chat now on screen.
+    func flushDeferredSkillSubmission(cancelled: Bool) {
+        guard let deferred = deferredSkillSubmission else { return }
+        deferredSkillSubmission = nil
+        guard !cancelled else { return }
+        if deferred.chatID == selectedChatID {
+            writePromptTextDirectly(deferred.text)
+            run(presentation: deferred.presentation)
+        } else if chats.contains(where: { $0.id == deferred.chatID }) {
+            pendingUserMessages[deferred.chatID, default: []].append(
+                QueuedUserPrompt(text: deferred.text))
         }
     }
 }

@@ -112,6 +112,7 @@ enum ToolCallDispatchGate {
             case .validated(_, let arguments):
                 var call = proposedCall
                 call.arguments = executorArguments(from: arguments)
+                call.typedArguments = TransientTypedArguments(values: arguments)
                 dispatchableCalls.append(call)
             case .refused(let refusal):
                 refusals.append(refusal)
@@ -170,6 +171,7 @@ enum ToolCallDispatchGate {
                 case .validated(_, let arguments):
                     var call = rescued
                     call.arguments = executorArguments(from: arguments)
+                    call.typedArguments = TransientTypedArguments(values: arguments)
                     allCalls.append(call)
                 case .refused(let refusal):
                     allRefusals.append(refusal)
@@ -191,7 +193,9 @@ enum ToolCallDispatchGate {
         }
     }
 
-    private static func executorArguments(
+    /// Internal: `McpWireArguments` re-derives this projection to detect an
+    /// argument that was edited after validation.
+    static func executorArguments(
         from arguments: [String: ToolCallJSONValue]
     ) -> [String: String] {
         arguments.mapValues { value in

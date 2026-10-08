@@ -45,6 +45,7 @@ public struct McpSettingsPaneView: View {
             headerBar
             filterAndPillsBar
             Divider()
+            codemodeFeatureToggle
 
             if filteredServers.isEmpty {
                 emptyState
@@ -92,6 +93,28 @@ public struct McpSettingsPaneView: View {
         .sheet(isPresented: $showingAgentImportSheet) {
             AgentContentImportSheet(
                 model: model, initialCategory: .mcpServers, projectID: nil)
+        }
+    }
+
+    /// Opt-in codemode scripting. The flag is read fresh through the
+    /// binding so catalog advertisement and execution agree on the value,
+    /// and changes land on the next turn like the rest of this pane.
+    private var codemodeFeatureToggle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(isOn: Binding(
+                get: { CodemodeSettings.isEnabled },
+                set: { CodemodeSettings.setEnabled($0) }
+            )) {
+                Text("Codemode", bundle: .module)
+                    .themedFont(.callout, weight: .medium)
+            }
+            .toggleStyle(.switch)
+            .help("Runs model-written JavaScript that can batch deferred MCP tool calls; every inner call still passes its permission and hook gates")
+            .accessibilityLabel(Text("Codemode", bundle: .module))
+            .accessibilityHint(Text("Batch MCP tool calls inside one sandboxed script.", bundle: .module))
+            Text("Batch MCP tool calls inside one sandboxed script.", bundle: .module)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
         }
     }
 

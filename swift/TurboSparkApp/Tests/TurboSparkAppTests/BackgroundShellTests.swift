@@ -176,4 +176,21 @@ final class BackgroundShellTests: XCTestCase {
             XCTAssertTrue("\(error)".contains("Too many background commands"))
         }
     }
+
+    /// A launch failure (missing working directory) used to close the pipe
+    /// read handles while reader threads could still call availableData,
+    /// which raises an uncaught Objective-C exception. Looped so the old race
+    /// would crash the test process.
+    func testLaunchFailureWithMissingDirectoryDoesNotCrashReaders() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("turbospark-missing-\(UUID().uuidString)")
+        for _ in 0..<500 {
+            XCTAssertThrowsError(
+                try BackgroundShellManager.shared.launch(
+                    command: "echo hi", startDirectory: missing,
+                    environment: ProcessInfo.processInfo.environment,
+                    chatID: nil, description: nil))
+        }
+        XCTAssertTrue(BackgroundShellManager.shared.knownShellIDs(chatID: nil).isEmpty)
+    }
 }

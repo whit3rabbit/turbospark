@@ -182,18 +182,16 @@ final class BackgroundShellManager: @unchecked Sendable {
         // thread that drains to EOF, never a readabilityHandler with its
         // second-reader race. EOF arrives when the child (and any
         // grandchild holding the write end) exits or is killed.
+        //
+        // The group is entered up front (so the termination handler's wait
+        // is correct even for a child that exits instantly) but the reader
+        // threads only start after run() succeeds. On a launch failure no
+        // thread has touched the handles, so closing them is safe; closing
+        // them under a started reader raises an uncaught
+        // NSFileHandleOperationException from availableData.
         let readers = DispatchGroup()
-        for handle in [stdoutPipe.fileHandleForReading, stderrPipe.fileHandleForReading] {
-            readers.enter()
-            DispatchQueue.global(qos: .utility).async {
-                defer { readers.leave() }
-                while true {
-                    let chunk = handle.availableData
-                    if chunk.isEmpty { break }
-                    buffer.append(chunk)
-                }
-            }
-        }
+        let readHandles = [stdoutPipe.fileHandleForReading, stderrPipe.fileHandleForReading]
+        for _ in readHandles { readers.enter() }
 
         // The completion handler closes the state only after the readers
         // have drained, so a `completed` status never coexists with unread
@@ -227,6 +225,16 @@ final class BackgroundShellManager: @unchecked Sendable {
             // close parent's write handles immediately so EOF is cleanly delivered when child exits.
             try? stdoutPipe.fileHandleForWriting.close()
             try? stderrPipe.fileHandleForWriting.close()
+            for handle in readHandles {
+                DispatchQueue.global(qos: .utility).async {
+                    defer { readers.leave() }
+                    while true {
+                        let chunk = handle.availableData
+                        if chunk.isEmpty { break }
+                        buffer.append(chunk)
+                    }
+                }
+            }
         } catch {
             // The shell never started, so its id must not resolve: a
             // BashOutput against it would otherwise poll forever on a
@@ -234,12 +242,12 @@ final class BackgroundShellManager: @unchecked Sendable {
             lock.lock()
             records.removeValue(forKey: id)
             lock.unlock()
-            // Close pipe handles so reader threads see EOF and exit rather
-            // than blocking forever on availableData.
+            // No reader was started, so closing every handle is race-free.
             try? stdoutPipe.fileHandleForWriting.close()
             try? stderrPipe.fileHandleForWriting.close()
             try? stdoutPipe.fileHandleForReading.close()
             try? stderrPipe.fileHandleForReading.close()
+            for _ in readHandles { readers.leave() }
             throw error
         }
         return record
