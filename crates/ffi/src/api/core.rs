@@ -23,7 +23,9 @@ pub unsafe extern "C" fn ts_last_error(buf: *mut c_char, cap: usize) -> usize {
 /// Frees a string this library handed out through a `char **`.
 #[no_mangle]
 pub unsafe extern "C" fn ts_string_free(ptr: *mut c_char) {
-    strings::free(ptr);
+    // Guarded like every teardown: a panic in a Drop must come back as a
+    // recorded error, not unwind across `extern "C"`.
+    abi::guard_value((), || strings::free(ptr));
 }
 
 /// This process's peak physical footprint in bytes, or 0 where unavailable.

@@ -55,9 +55,13 @@ fn open_platform(_dir: &str, _options: &wire::OpenOptions) -> Result<Session, St
 /// Must not be called while a generation is in flight on another thread.
 #[no_mangle]
 pub unsafe extern "C" fn ts_session_close(ptr: *mut TsSession) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    // Guarded: dropping a session runs the runner and audio Drop impls, and
+    // a panic there must not unwind across `extern "C"`.
+    abi::guard_value((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 /// Asks the in-flight generation to stop.
@@ -69,9 +73,11 @@ pub unsafe extern "C" fn ts_session_close(ptr: *mut TsSession) {
 /// does not cancel the next one.
 #[no_mangle]
 pub unsafe extern "C" fn ts_session_cancel(ptr: *const TsSession) {
-    if let Some(session) = ptr.as_ref() {
-        session.cancel();
-    }
+    abi::guard_value((), || {
+        if let Some(session) = ptr.as_ref() {
+            session.cancel();
+        }
+    })
 }
 
 /// Frees the vision tower's open resources on this session (vision memory

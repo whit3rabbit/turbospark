@@ -227,9 +227,13 @@ pub unsafe extern "C" fn ts_server_detach_model(
 /// This is also what releases every attached model.
 #[no_mangle]
 pub unsafe extern "C" fn ts_server_stop(ptr: *mut TsServer) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    // Guarded: stopping joins the server thread and drops every attached
+    // model, any of whose Drop impls could panic.
+    abi::guard_value((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 /// `{ "port", "host", "modelId", "models", "authEnabled", "uptimeSeconds" }`.

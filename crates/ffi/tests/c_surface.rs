@@ -597,6 +597,81 @@ fn a_panic_is_caught_and_becomes_an_error_code() {
     assert!(message.contains("deliberate test panic"), "got {message:?}");
 }
 
+#[test]
+fn a_panicking_drop_in_teardown_is_caught_by_guard_value() {
+    // Models the close/stop/free entry points: they drop an owned handle, and
+    // a panic in that Drop must come back as a recorded error rather than
+    // unwinding across `extern "C"`.
+    struct PanicOnDrop;
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("deliberate drop panic");
+        }
+    }
+    let boxed = Box::new(PanicOnDrop);
+    abi::guard_value((), || drop(boxed));
+    assert!(
+        last_error().contains("deliberate drop panic"),
+        "got {:?}",
+        last_error()
+    );
+}
+
+#[test]
+fn teardown_entry_points_accept_null_and_every_extern_c_fn_is_guarded() {
+    // Null stays a documented no-op through the guarded bodies.
+    unsafe {
+        turbospark_ffi::ts_session_close(ptr::null_mut());
+        turbospark_ffi::ts_session_cancel(ptr::null());
+        turbospark_ffi::ts_image_session_close(ptr::null_mut());
+        turbospark_ffi::ts_image_session_cancel(ptr::null());
+        turbospark_ffi::ts_image_buffer_free(ptr::null_mut(), 0);
+        turbospark_ffi::ts_server_stop(ptr::null_mut());
+        turbospark_ffi::ts_string_free(ptr::null_mut());
+    }
+    // Structural check: a Rust test cannot make a real handle's Drop panic,
+    // so assert the guard is present in every exported body. Intentionally
+    // unguarded entry points are listed with the reason.
+    let allow = [
+        // Must not clear the slot it reads.
+        "ts_last_error",
+        // Reads a counter; nothing can panic.
+        "ts_peak_footprint_bytes",
+        // Thin wrappers over `recommend_json_impl`, which is guarded.
+        "ts_recommend_json",
+        "ts_recommend_progress_json",
+    ];
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut stack = vec![root];
+    let mut unguarded = Vec::new();
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (at, _) in text.match_indices("extern \"C\" fn ") {
+                    let rest = &text[at + "extern \"C\" fn ".len()..];
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    // Body ends at the first column-0 closing brace.
+                    let body = rest.split("\n}\n").next().unwrap_or(rest);
+                    if !body.contains("guard") && !allow.contains(&name.as_str()) {
+                        unguarded.push(name);
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        unguarded.is_empty(),
+        "unguarded extern \"C\" fns: {unguarded:?}"
+    );
+}
+
 // ------------------------------------------------------- model management
 
 #[test]

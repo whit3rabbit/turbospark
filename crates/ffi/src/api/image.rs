@@ -33,17 +33,22 @@ pub unsafe extern "C" fn ts_image_session_open(
 /// in flight, matching the text-session ABI contract.
 #[no_mangle]
 pub unsafe extern "C" fn ts_image_session_close(ptr: *mut TsImageSession) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+    // Guarded: see `ts_session_close`.
+    abi::guard_value((), || {
+        if !ptr.is_null() {
+            drop(Box::from_raw(ptr));
+        }
+    })
 }
 
 /// Requests cancellation without taking the backend lock.
 #[no_mangle]
 pub unsafe extern "C" fn ts_image_session_cancel(ptr: *const TsImageSession) {
-    if let Some(session) = ptr.as_ref() {
-        session.cancel();
-    }
+    abi::guard_value((), || {
+        if let Some(session) = ptr.as_ref() {
+            session.cancel();
+        }
+    })
 }
 
 /// Generates one PNG. The PNG is returned in an explicitly owned byte buffer;
@@ -116,10 +121,12 @@ pub unsafe extern "C" fn ts_image_generate(
 /// Reclaims a PNG byte buffer returned by `ts_image_generate`.
 #[no_mangle]
 pub unsafe extern "C" fn ts_image_buffer_free(ptr: *mut u8, len: usize) {
-    if !ptr.is_null() {
-        let slice = std::ptr::slice_from_raw_parts_mut(ptr, len);
-        drop(Box::from_raw(slice));
-    }
+    abi::guard_value((), || {
+        if !ptr.is_null() {
+            let slice = std::ptr::slice_from_raw_parts_mut(ptr, len);
+            drop(Box::from_raw(slice));
+        }
+    })
 }
 
 fn format_stage(stage: image::ImageStage) -> String {

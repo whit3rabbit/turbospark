@@ -54,6 +54,10 @@ pub unsafe extern "C" fn ts_store_relocate(
         }
         let destination = strings::required(destination, "destination")
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        // Checked before any copy starts. Not atomic against an install that
+        // begins afterwards, so the app must also stop queueing installs
+        // while it relocates.
+        models::refuse_while_installing().map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let relocation = catalog::relocate_default_store(Path::new(destination), |done, total| {
             if let Some(f) = cb {
                 unsafe {

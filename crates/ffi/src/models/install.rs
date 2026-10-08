@@ -30,6 +30,23 @@ pub(crate) fn cancel_active_installs() -> usize {
     active.len()
 }
 
+/// Refuses a model-store move while any install walk (text, image or audio)
+/// is registered. A walk resolves its destination root once and keeps
+/// writing there, so a relocation that deletes the old tree under it would
+/// fail the walk or publish into a directory that was just removed.
+pub(crate) fn refuse_while_installing() -> Result<(), String> {
+    let active = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
+    if active.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "cannot move the model store while {} install(s) are running; \
+             wait for them to finish or cancel them first",
+            active.len()
+        ))
+    }
+}
+
 /// These signals never wait for the worker itself. Only its next checkpoint
 /// parks, so the UI remains responsive while an HTTP chunk is in flight.
 pub(crate) fn pause_active_installs() -> usize {
@@ -258,7 +275,11 @@ mod cancel_tests {
         let image = ActiveInstall::register_image();
         assert_eq!(unsafe { crate::ts_install_pause() }, 0);
         assert_eq!(unsafe { crate::ts_install_resume() }, 0);
+        // A store move must refuse while any walk is registered, image
+        // walks included, and succeed to proceed once they are gone.
+        assert!(refuse_while_installing().unwrap_err().contains("install"));
         drop(image);
+        assert!(refuse_while_installing().is_ok());
 
         let before = installs_finished();
         let active = ActiveInstall::register();
