@@ -98,6 +98,7 @@ public final class GhostChatVault {
         // Every field of the payload is a Codable value type, so encoding
         // cannot fail in practice; dropping the entry is the safe recovery
         // if one ever does, and `open` above already answers empty.
+        ManagedAssetPins.set(ManagedAssetPins.assetIDs(in: payload.messages), owner: chatID)
         guard let plaintext = try? encoder.encode(payload) else {
             ciphertext[chatID] = nil
             return
@@ -116,12 +117,14 @@ public final class GhostChatVault {
 
     /// Drops one chat's ciphertext.
     public func wipe(for chatID: UUID) {
+        ManagedAssetPins.clear(owner: chatID)
         ciphertext[chatID] = nil
     }
 
     /// Drops everything and replaces the key, so no later seal can be
     /// correlated with an earlier one. Called on quit.
     public func wipeAll() {
+        ManagedAssetPins.clearAll()
         ciphertext.removeAll()
         key = SymmetricKey(size: .bits256)
     }

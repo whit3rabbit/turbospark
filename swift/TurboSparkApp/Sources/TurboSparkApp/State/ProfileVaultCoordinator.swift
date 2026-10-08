@@ -11,7 +11,36 @@ public final class ProfileVaultCoordinator: ObservableObject {
         case error(String)
     }
 
-    public static let shared = ProfileVaultCoordinator()
+    public static let shared: ProfileVaultCoordinator = {
+        let coordinator = ProfileVaultCoordinator()
+        coordinator.installLockObservers()
+        return coordinator
+    }()
+
+    /// Notification names that mean "the person left the Mac". Observed for
+    /// the life of the process (not from a view): with the window closed the
+    /// app keeps running for the menu bar item and server, and a view-scoped
+    /// observer would be gone while the master key and decrypted caches are
+    /// still live.
+    static let lockTriggerNotifications: [(center: () -> NotificationCenter, name: Notification.Name)] = [
+        ({ NSWorkspace.shared.notificationCenter }, NSWorkspace.sessionDidResignActiveNotification),
+        ({ NSWorkspace.shared.notificationCenter }, NSWorkspace.screensDidSleepNotification),
+        ({ DistributedNotificationCenter.default() }, Notification.Name("com.apple.screenIsLocked")),
+    ]
+
+    private var lockObservers: [NSObjectProtocol] = []
+
+    func installLockObservers() {
+        guard lockObservers.isEmpty else { return }
+        for trigger in Self.lockTriggerNotifications {
+            let token = trigger.center().addObserver(
+                forName: trigger.name, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.lockNow() }
+            }
+            lockObservers.append(token)
+        }
+    }
 
     @Published public private(set) var state: State = .locked
     @Published public private(set) var model: AppModel?

@@ -339,6 +339,7 @@ final class ProfileVaultTests: XCTestCase {
             settingsFiles: [
                 "settings.json": Data("{\"private\":true}".utf8),
                 "appearance.json": Data("{\"theme\":\"dark\"}".utf8),
+                "global_mcp_servers.json": Data("{\"env\":{\"GITHUB_TOKEN\":\"x\"}}".utf8),
             ],
             chatFiles: [],
             memoryFiles: [])
@@ -367,6 +368,8 @@ final class ProfileVaultTests: XCTestCase {
         let settingsEntries = Set(try ProfileBackupImport.entries(from: settingsListing))
         XCTAssertTrue(settingsEntries.contains("settings/settings.json"))
         XCTAssertTrue(settingsEntries.contains("settings/appearance.json"))
+        // MCP server env/headers hold tokens; the open export must not carry them.
+        XCTAssertFalse(settingsEntries.contains("settings/global_mcp_servers.json"))
 
         let emptyURL = root.appendingPathComponent("empty.zip")
         try OpenProfileExport.export(

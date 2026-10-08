@@ -258,4 +258,16 @@ extension SettingsScopeTests {
         XCTAssertEqual(remaining["shared"]?.map(\.installPath), Array(records.dropFirst()).map(\.installPath))
         XCTAssertFalse(fm.fileExists(atPath: folder.path))
     }
+
+    func testLegacyDisabledListsMergeOnlyOnce() {
+        var archive = DisabledItemStore.Archive()
+        XCTAssertTrue(DisabledItemStore.migrateLegacy(
+            &archive, legacySkills: ["user:s"], legacyAgents: ["user:explorer"]))
+        XCTAssertEqual(archive.agents, ["user:explorer"])
+        // The user re-enables the agent; the next launch must not undo it.
+        archive.agents = []
+        XCTAssertFalse(DisabledItemStore.migrateLegacy(
+            &archive, legacySkills: ["user:s"], legacyAgents: ["user:explorer"]))
+        XCTAssertTrue(archive.agents.isEmpty)
+    }
 }

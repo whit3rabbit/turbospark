@@ -73,11 +73,18 @@ enum EncryptedProfileBackup {
             masterKey: session.masterKey, purpose: "database")
         try session.database.backup(to: snapshot, key: databaseKey)
 
+        // Write beside the destination and swap in only after a complete
+        // export. The writer truncates its target on init, and the failure
+        // path used to delete it, destroying the older backup the user had
+        // just chosen to replace.
+        let partial = destination.deletingLastPathComponent()
+            .appendingPathComponent(".\(destination.lastPathComponent).partial-\(UUID().uuidString)")
         let encrypted = try ProfileEncryptedChunkWriter(
-            destination: destination, passphrase: passphrase, masterKey: session.masterKey)
+            destination: partial, passphrase: passphrase, masterKey: session.masterKey)
         let zip = ProfileZipStreamWriter { try encrypted.write($0) }
         do {
             var checksums: [Checksum] = []
+            var copiedAssetIDs: Set<String> = []
             let databaseDigest = try zip.add(path: "vault/profile.sqlite3", fileURL: snapshot)
             checksums.append(Checksum(databaseDigest))
             // The asset inventory comes from the database, not the directory
@@ -99,7 +106,15 @@ enum EncryptedProfileBackup {
                         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                     let digest = try zip.add(path: "\(prefix)/\(relative)", fileURL: file)
                     checksums.append(Checksum(digest))
+                    if prefix == "vault/assets" {
+                        copiedAssetIDs.insert(file.deletingPathExtension().lastPathComponent)
+                    }
                 }
+            }
+            // A row whose ciphertext is gone would export "successfully" and
+            // then fail restore, which requires disk == rows exactly.
+            guard knownAssetIDs.isSubset(of: copiedAssetIDs) else {
+                throw BackupError.assetInventoryMismatch
             }
             let manifest = Manifest(
                 formatVersion: formatVersion,
@@ -118,9 +133,14 @@ enum EncryptedProfileBackup {
             _ = try zip.add(path: manifestFileName, data: encoder.encode(manifest))
             try zip.finish()
             try encrypted.finish()
+            if manager.fileExists(atPath: destination.path) {
+                _ = try manager.replaceItemAt(destination, withItemAt: partial)
+            } else {
+                try manager.moveItem(at: partial, to: destination)
+            }
             return manifest
         } catch {
-            try? manager.removeItem(at: destination)
+            try? manager.removeItem(at: partial)
             throw error
         }
     }

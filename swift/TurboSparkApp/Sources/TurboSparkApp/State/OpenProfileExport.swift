@@ -54,6 +54,12 @@ enum OpenProfileExport {
     ]
     static let allCategoryIDs = Set(categories.map(\.id))
 
+    /// Settings records that hold secrets in plaintext (MCP server `env` and
+    /// `headers` carry tokens). The open export is unencrypted and meant for
+    /// sharing preferences, so these never ride along under "settings". The
+    /// encrypted backup path (ProfileBackup) is the supported way to move them.
+    static let credentialBearingSettingsFiles: Set<String> = ["global_mcp_servers.json"]
+
     static func export(
         snapshot: ProfileExportSnapshot,
         included: Set<String>,
@@ -113,7 +119,8 @@ enum OpenProfileExport {
                     path: "projects/projects.json", data: encoder.encode(snapshot.projects)))
             }
             if included.contains("settings") {
-                for name in snapshot.settingsFiles.keys.sorted() {
+                for name in snapshot.settingsFiles.keys.sorted()
+                where !credentialBearingSettingsFiles.contains(name) {
                     guard let data = snapshot.settingsFiles[name] else { continue }
                     checksums.append(try zip.add(path: "settings/\(name)", data: data))
                 }

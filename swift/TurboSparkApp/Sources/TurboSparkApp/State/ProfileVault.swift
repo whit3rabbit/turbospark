@@ -379,7 +379,14 @@ public final class ProfileRepository: @unchecked Sendable {
     ) throws -> T? {
         let database = try database()
         if let data = try database.loadRecord(key: key) {
-            return try decoder.decode(type, from: data)
+            do {
+                return try decoder.decode(type, from: data)
+            } catch {
+                // The caller falls back to an empty default and its next save
+                // replaces this record, so keep the raw payload recoverable.
+                try? quarantineRecord(key: key, payload: data, in: database)
+                throw error
+            }
         }
         guard let legacyURL,
               FileManager.default.fileExists(atPath: legacyURL.path)
@@ -388,6 +395,18 @@ public final class ProfileRepository: @unchecked Sendable {
         let value = try decoder.decode(type, from: data)
         try database.saveRecord(key: key, payload: data)
         return value
+    }
+
+    /// Copies an undecodable record to `quarantine:<key>:<unix time>`. Skips
+    /// the copy when an identical payload is already quarantined so a record
+    /// that stays broken across launches does not grow the table.
+    func quarantineRecord(key: String, payload: Data, in database: ProfileDatabase) throws {
+        let prefix = "quarantine:\(key):"
+        if try database.loadRecords(prefix: prefix).contains(where: { $0.1 == payload }) {
+            return
+        }
+        try database.saveRecord(
+            key: prefix + String(Int(Date().timeIntervalSince1970)), payload: payload)
     }
 
     public func save<T: Encodable>(_ value: T, key: String) throws {
@@ -493,6 +512,14 @@ public final class ProfileRepository: @unchecked Sendable {
         return "json:\(relative)"
     }
 
+    /// True when the migration wrote anything the open-time check has not
+    /// already covered, or is about to delete plaintext sources.
+    static func needsPostMigrationIntegrityCheck(
+        importedFiles: Int, memoryRoots: Int, observationRoots: Int
+    ) -> Bool {
+        importedFiles > 0 || memoryRoots > 0 || observationRoots > 0
+    }
+
     func migrateLegacyPrivateFiles() throws {
         let root = store.rootURL.deletingLastPathComponent()
         let names = Self.protectedFileNames.sorted()
@@ -503,38 +530,58 @@ public final class ProfileRepository: @unchecked Sendable {
         for name in names {
             let source = root.appendingPathComponent(name)
             guard FileManager.default.fileExists(atPath: source.path) else { continue }
-            if let key = Self.protectedRecordKey(for: source) {
-                if name == "chats_archive.json" {
-                    _ = try loadChatArchive(legacyURL: source)
-                } else if name == "projects_archive.json" {
-                    _ = try loadProjectArchive(legacyURL: source)
-                } else if try database().loadRecord(key: key) == nil {
-                    try database().saveRecord(key: key, payload: Data(contentsOf: source))
+            // **BEST EFFORT PER FILE.** One truncated legacy file (a restored
+            // v1 backup is copied without validating its JSON) used to throw
+            // out of every launch and unlock, locking the whole profile on a
+            // file the error never named. A file that fails stays on disk,
+            // is not deleted, and is reported; the vault still opens.
+            do {
+                if let key = Self.protectedRecordKey(for: source) {
+                    if name == "chats_archive.json" {
+                        _ = try loadChatArchive(legacyURL: source)
+                    } else if name == "projects_archive.json" {
+                        _ = try loadProjectArchive(legacyURL: source)
+                    } else if try database().loadRecord(key: key) == nil {
+                        try database().saveRecord(key: key, payload: Data(contentsOf: source))
+                    }
                 }
+                let data = try Data(contentsOf: source)
+                let sealed = try AES.GCM.seal(
+                    data,
+                    using: SymmetricKey(data: recoveryKey),
+                    authenticating: Data(name.utf8))
+                guard let combined = sealed.combined else {
+                    throw ProfileVaultCrypto.CryptoError.malformedEnvelope
+                }
+                let destination = store.recoveryURL.appendingPathComponent("\(name).legacy.enc")
+                try combined.write(to: destination, options: .atomic)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: destination.path)
+                let verify = try AES.GCM.open(
+                    AES.GCM.SealedBox(combined: Data(contentsOf: destination)),
+                    using: SymmetricKey(data: recoveryKey),
+                    authenticating: Data(name.utf8))
+                guard verify == data else { throw ProfileVaultStore.VaultError.integrityCheckFailed }
+                filesToDelete.append(source)
+            } catch {
+                NSLog(
+                    "Legacy migration skipped %@ (left in place): %@",
+                    name, String(describing: error))
+                continue
             }
-            let data = try Data(contentsOf: source)
-            let sealed = try AES.GCM.seal(
-                data,
-                using: SymmetricKey(data: recoveryKey),
-                authenticating: Data(name.utf8))
-            guard let combined = sealed.combined else {
-                throw ProfileVaultCrypto.CryptoError.malformedEnvelope
-            }
-            let destination = store.recoveryURL.appendingPathComponent("\(name).legacy.enc")
-            try combined.write(to: destination, options: .atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600], ofItemAtPath: destination.path)
-            let verify = try AES.GCM.open(
-                AES.GCM.SealedBox(combined: Data(contentsOf: destination)),
-                using: SymmetricKey(data: recoveryKey),
-                authenticating: Data(name.utf8))
-            guard verify == data else { throw ProfileVaultStore.VaultError.integrityCheckFailed }
-            filesToDelete.append(source)
         }
         let memoryRoots = try migrateLegacyMemory()
         let observationRoots = try migrateLegacyToolObservations()
-        guard try database().integrityCheck() else {
-            throw ProfileVaultStore.VaultError.integrityCheckFailed
+        // The open already ran a full integrity check. Repeating it here
+        // re-verified every page on each launch and unlock even when nothing
+        // was imported; only gate deletion of legacy sources on it.
+        if Self.needsPostMigrationIntegrityCheck(
+            importedFiles: filesToDelete.count, memoryRoots: memoryRoots.count,
+            observationRoots: observationRoots.count)
+        {
+            guard try database().integrityCheck() else {
+                throw ProfileVaultStore.VaultError.integrityCheckFailed
+            }
         }
         try database().checkpoint()
         // Deletion is the final phase. If any import, authentication, or

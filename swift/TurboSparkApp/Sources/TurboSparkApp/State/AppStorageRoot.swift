@@ -153,7 +153,17 @@ public enum AppJSONStore {
     ///
     /// Not thrown: `save()` is called from `didSet`-shaped paths that cannot
     /// propagate, and the point is that the failure stops being INVISIBLE.
-    public private(set) nonisolated(unsafe) static var lastWriteError: String?
+    public private(set) static var lastWriteError: String? {
+        get { latchLock.withLock { latchWriteError } }
+        set { latchLock.withLock { latchWriteError = newValue } }
+    }
+
+    /// The error latches are written on the chat writer queue and read on the
+    /// main thread; an unsynchronized String is a torn read at best.
+    private static let latchLock = NSLock()
+    private nonisolated(unsafe) static var latchWriteError: String?
+    private nonisolated(unsafe) static var latchReadError: String?
+    private nonisolated(unsafe) static var latchReadFailureCount = 0
 
     /// Clears the recorded write failure once it has been shown.
     public static func clearLastWriteError() {
@@ -165,7 +175,17 @@ public enum AppJSONStore {
     /// Same reason `lastWriteError` exists: `load()` is called from `init()`
     /// and cannot propagate, and the point is that the failure stops being
     /// invisible.
-    public private(set) nonisolated(unsafe) static var lastReadError: String?
+    public private(set) static var lastReadError: String? {
+        get { latchLock.withLock { latchReadError } }
+        set { latchLock.withLock { latchReadError = newValue } }
+    }
+
+    /// Monotonic count of read failures, so a caller can tell "this load
+    /// failed" from "this load found nothing" without relying on the message.
+    public private(set) static var readFailureCount: Int {
+        get { latchLock.withLock { latchReadFailureCount } }
+        set { latchLock.withLock { latchReadFailureCount = newValue } }
+    }
 
     /// Clears the recorded read failure once it has been shown.
     public static func clearLastReadError() {
@@ -219,6 +239,7 @@ public enum AppJSONStore {
     /// Quarantines an unreadable file and records why, on stderr and on
     /// `lastReadError`.
     private static func report(label: String, url: URL, error: Error, verb: String) {
+        readFailureCount += 1
         let quarantined = quarantine(url)
         let kept =
             quarantined.map { "the unreadable file was kept at \($0.path)" }
@@ -258,7 +279,12 @@ public enum AppJSONStore {
 
     static func recordReadFailure(label: String, error: Error) {
         let message = "\(label) could not be read: \(error.localizedDescription)"
-        lastReadError = message
+        // One critical section so a concurrent reader never sees the count
+        // bumped without its message.
+        latchLock.withLock {
+            latchReadFailureCount += 1
+            latchReadError = message
+        }
         FileHandle.standardError.write("TurboSpark: \(message)\n".data(using: .utf8)!)
     }
 

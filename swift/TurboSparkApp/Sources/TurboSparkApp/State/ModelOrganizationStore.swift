@@ -291,6 +291,7 @@ public final class ModelOrganizationStore: ObservableObject {
     }
 
     private func load() {
+        let failuresBefore = AppJSONStore.readFailureCount
         if let decoded = AppJSONStore.load(
             [String: ModelCustomMetadata].self, from: Self.fileURL,
             label: "model organization metadata")
@@ -298,6 +299,13 @@ public final class ModelOrganizationStore: ObservableObject {
             self.metadataByModelKey = decoded
             return
         }
+        // A failed read is not an absent record: migrating then would write
+        // the stale legacy dictionary over the vault's real data. The legacy
+        // key also belongs to the Default profile only; importing it into a
+        // later profile leaks the Default user's notes and tags.
+        guard AppJSONStore.readFailureCount == failuresBefore,
+            UserProfileStore.isDefault
+        else { return }
         // One-time migration off `UserDefaults`, so an existing user's
         // nicknames and favorites survive the move. Left in place rather than
         // deleted: reading it costs nothing and removing it would silently

@@ -98,6 +98,16 @@ extension AppModel {
         return panel.runModal() == .OK ? panel.url : nil
     }
 
+    /// Adds the restored profile to a FRESHLY loaded registry and saves it.
+    /// A restore can run for minutes; writing back the registry snapshot taken
+    /// at its start would drop a profile created meanwhile (orphaning its
+    /// folder) and resurrect one deleted meanwhile. Returns the saved registry,
+    /// or nil when the add or the save failed.
+    static func registerRestoredProfile(_ profile: UserProfile) -> UserProfileRegistry? {
+        guard let fresh = try? registryAdding(profile) else { return nil }
+        return UserProfileStore.saveRegistry(fresh) ? fresh : nil
+    }
+
     @discardableResult
     func importEncryptedProfileBackup(
         _ archive: URL,
@@ -135,9 +145,8 @@ extension AppModel {
                 self.profileBackupInFlight = false
                 switch outcome {
                 case .success((_, let profile)):
-                    registry.profiles.append(profile)
-                    if UserProfileStore.saveRegistry(registry) {
-                        self.profiles = registry.profiles
+                    if let saved = Self.registerRestoredProfile(profile) {
+                        self.profiles = saved.profiles
                         self.showToast(
                             "Encrypted backup restored as a locked profile.", style: .success)
                     } else {

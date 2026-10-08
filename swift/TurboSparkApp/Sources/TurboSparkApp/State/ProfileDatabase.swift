@@ -48,6 +48,11 @@ final class ProfileDatabase: @unchecked Sendable {
     let url: URL
     private let lock = NSRecursiveLock()
     private var handle: OpaquePointer?
+    /// Row ids that failed to decode at the last load. They are not in memory,
+    /// so saves must leave them alone instead of treating them as deleted.
+    private let undecodableLock = NSLock()
+    private var undecodableChatIDs: Set<String> = []
+    private var undecodableProjectIDs: Set<String> = []
     private var workflowSchemaStatusStorage: WorkflowSchemaStatus = .uninitialized
 
     var workflowSchemaStatus: WorkflowSchemaStatus {
@@ -216,13 +221,22 @@ final class ProfileDatabase: @unchecked Sendable {
     func loadChatArchive() throws -> AppChatArchive? {
         let selected = try loadMetadata(key: "selected-chat-id")
         var chats: [AppChat] = []
+        var skipped: Set<String> = []
         let decoder = JSONDecoder()
         try withStatement(
-            "SELECT payload, title, title_provenance, title_generation_attempted, recovery_anchor FROM chats ORDER BY updated_at DESC, id ASC"
+            "SELECT payload, title, title_provenance, title_generation_attempted, recovery_anchor, id FROM chats ORDER BY updated_at DESC, id ASC"
         ) { statement in
             while sqlite3_step(statement) == SQLITE_ROW {
-                guard let payload = columnData(statement, index: 0) else { continue }
-                guard var chat = try? decoder.decode(AppChat.self, from: payload) else { continue }
+                let rowID = columnText(statement, index: 5)
+                guard let payload = columnData(statement, index: 0),
+                      var chat = try? decoder.decode(AppChat.self, from: payload)
+                else {
+                    // A row this build cannot read (written by a newer build)
+                    // is not in memory, so a later save must not mistake it
+                    // for a chat the user deleted.
+                    if let rowID { skipped.insert(rowID) }
+                    continue
+                }
                 let payloadFields = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any]
 
                 if payloadFields?["title"] == nil || payloadFields?["title"] is NSNull,
@@ -254,6 +268,9 @@ final class ProfileDatabase: @unchecked Sendable {
                 chats.append(chat)
             }
         }
+        undecodableLock.lock()
+        undecodableChatIDs = skipped
+        undecodableLock.unlock()
         guard selected != nil || !chats.isEmpty else { return nil }
         let selectedID = selected.flatMap(UUID.init(uuidString:)) ?? chats.first?.id ?? UUID()
         return AppChatArchive(selectedChatID: selectedID, chats: chats)
@@ -276,7 +293,10 @@ final class ProfileDatabase: @unchecked Sendable {
                     try updateSearchIndex(for: chat)
                 }
             }
-            for removed in existing.subtracting(current) {
+            undecodableLock.lock()
+            let protectedIDs = undecodableChatIDs
+            undecodableLock.unlock()
+            for removed in existing.subtracting(current).subtracting(protectedIDs) {
                 try deleteChat(id: removed)
             }
             try saveMetadata(key: "selected-chat-id", value: archive.selectedChatID.uuidString)
@@ -289,15 +309,23 @@ final class ProfileDatabase: @unchecked Sendable {
     func loadProjectArchive() throws -> AppProjectArchive? {
         let selected = try loadMetadata(key: "selected-project-id")
         var projects: [AppProject] = []
+        var skipped: Set<String> = []
         let decoder = JSONDecoder()
-        try withStatement("SELECT payload FROM projects ORDER BY updated_at DESC, id ASC") { statement in
+        try withStatement("SELECT payload, id FROM projects ORDER BY updated_at DESC, id ASC") { statement in
             while sqlite3_step(statement) == SQLITE_ROW {
                 guard let payload = columnData(statement, index: 0),
                       let project = try? decoder.decode(AppProject.self, from: payload)
-                else { continue }
+                else {
+                    // Same rule as chats: unreadable is not deleted.
+                    if let id = columnText(statement, index: 1) { skipped.insert(id) }
+                    continue
+                }
                 projects.append(project)
             }
         }
+        undecodableLock.lock()
+        undecodableProjectIDs = skipped
+        undecodableLock.unlock()
         guard selected != nil || !projects.isEmpty else { return nil }
         return AppProjectArchive(
             selectedProjectID: selected.flatMap(UUID.init(uuidString:)),
@@ -329,7 +357,10 @@ final class ProfileDatabase: @unchecked Sendable {
                     try stepDone(statement)
                 }
             }
-            for removed in existing.subtracting(current) {
+            undecodableLock.lock()
+            let protectedIDs = undecodableProjectIDs
+            undecodableLock.unlock()
+            for removed in existing.subtracting(current).subtracting(protectedIDs) {
                 try withStatement("DELETE FROM projects WHERE id = ?1") { statement in
                     try bind(removed, at: 1, to: statement)
                     try stepDone(statement)
@@ -390,7 +421,8 @@ final class ProfileDatabase: @unchecked Sendable {
             INSERT INTO assets(id, file_name, mime_type, byte_count, reference_count, created_at)
             VALUES(?1, ?2, ?3, ?4, 1, ?5)
             ON CONFLICT(id) DO UPDATE SET
-                reference_count=assets.reference_count + 1
+                reference_count=assets.reference_count + 1,
+                created_at=excluded.created_at
             """) { statement in
             try bind(id, at: 1, to: statement)
             try bind(fileName, at: 2, to: statement)
@@ -441,8 +473,13 @@ final class ProfileDatabase: @unchecked Sendable {
 
         var unreachable: [String] = []
         let pendingWriteCutoff = Date().addingTimeInterval(-60)
+        // Temporary (ghost) chats are never archived, so their images are
+        // referenced only from memory. Without this the 60 s grace window
+        // would expire and collect assets a live ghost chat still uses.
+        let pinned = ManagedAssetPins.allPinned()
         for metadata in try allAssetMetadata() {
             guard let referenceCount = counts[metadata.id], referenceCount > 0 else {
+                if pinned.contains(metadata.id) { continue }
                 // File encryption and chat attachment are separate operations.
                 // A concurrent chat save must not collect a payload still on
                 // its way back from the import task to the main actor.
@@ -1003,7 +1040,7 @@ final class ProfileDatabase: @unchecked Sendable {
         return rows
     }
 
-    private func chatIDs() throws -> Set<String> {
+    func chatIDs() throws -> Set<String> {
         var result: Set<String> = []
         try withStatement("SELECT id FROM chats") { statement in
             while sqlite3_step(statement) == SQLITE_ROW {
@@ -1414,14 +1451,14 @@ final class ProfileDatabase: @unchecked Sendable {
         }
     }
 
-    private func scalarText(_ sql: String) throws -> String? {
+    func scalarText(_ sql: String) throws -> String? {
         try withStatement(sql) { statement in
             guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
             return columnText(statement, index: 0)
         }
     }
 
-    private func execute(_ sql: String) throws {
+    func execute(_ sql: String) throws {
         lock.lock()
         defer { lock.unlock() }
         guard let handle else { throw DatabaseError.closed }
@@ -2363,5 +2400,54 @@ extension ProfileDatabase: WorkflowJournalStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         return encoder
+    }
+}
+
+
+/// Asset ids referenced only by in-memory state (ghost chats), which the
+/// database cannot see. Reconciliation never collects a pinned asset.
+enum ManagedAssetPins {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var byOwner: [UUID: Set<String>] = [:]
+
+    static func set(_ ids: Set<String>, owner: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        byOwner[owner] = ids.isEmpty ? nil : ids
+    }
+
+    static func clear(owner: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        byOwner[owner] = nil
+    }
+
+    static func clearAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        byOwner.removeAll()
+    }
+
+    static func allPinned() -> Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        return byOwner.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+    }
+
+    /// Asset ids a message list references.
+    static func assetIDs(in messages: [AppChatMessage]) -> Set<String> {
+        var ids: Set<String> = []
+        func add(_ reference: String?) {
+            if let reference, let id = ManagedAssetStore.assetID(from: reference) { ids.insert(id) }
+        }
+        func visit(_ message: AppChatMessage) {
+            message.imagePaths.forEach { add($0) }
+            for result in message.toolResults {
+                result.mediaReferences?.forEach { add($0.assetReference) }
+            }
+            message.alternates.forEach(visit)
+        }
+        messages.forEach(visit)
+        return ids
     }
 }

@@ -14,7 +14,7 @@ struct ModelStoreMigrationSheet: View {
 
     private var currentRoot: String { ModelStorageManager.defaultTurboSparkStoreRoot }
     private var canMove: Bool {
-        !isMoving && !model.generating && model.session == nil && !model.isInstallingModel
+        !isMoving && model.canRelocateModelStore
             && !destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -31,7 +31,7 @@ struct ModelStoreMigrationSheet: View {
             locationRow(title: "Current store", path: currentRoot)
             locationRow(title: "New store", path: destination.isEmpty ? "Choose a folder" : destination)
 
-            if model.session != nil || model.generating || model.isInstallingModel {
+            if !model.canRelocateModelStore {
                 Label {
                     Text("Stop generation and unload the current model before moving the store.", bundle: .module)
                 } icon: {
@@ -129,6 +129,7 @@ struct ModelStoreMigrationSheet: View {
                         totalBytes = total
                     case let .finished(result):
                         model.turboSparkStoreRoot = result.destination
+                        ModelStoreRootRecord.save(result.destination)
                         model.persistSettings()
                         model.refreshModels()
                         model.showToast("Moved TurboSpark models to \(result.destination)", style: .success, duration: 5)
@@ -141,5 +142,19 @@ struct ModelStoreMigrationSheet: View {
                 isMoving = false
             }
         }
+    }
+}
+
+extension AppModel {
+    /// Whether the managed store may be moved right now. Every writer into
+    /// the old root must be idle: a running or queued install would publish
+    /// into a tree the relocation is about to delete, and a served or loaded
+    /// model holds files open under it.
+    var canRelocateModelStore: Bool {
+        !generating && session == nil && !hasActiveModelDownload
+            && !modelDownloads.contains(where: { !$0.status.isTerminal })
+            && Self.modelInstallOwner == nil
+            && serverAttachedSessions.isEmpty
+            && imageSession == nil
     }
 }

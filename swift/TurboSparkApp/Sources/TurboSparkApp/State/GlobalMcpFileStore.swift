@@ -8,6 +8,16 @@ public struct GlobalMcpArchive: Codable, Sendable {
         self.servers = servers
     }
 
+    private enum CodingKeys: String, CodingKey { case servers }
+
+    /// Element-level tolerance: one row this build cannot decode (a transport
+    /// from a newer build) costs that row, not the whole list that the next
+    /// save would then overwrite.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        servers = try c.decodeLossyArray(McpServerConfig.self, forKey: .servers)
+    }
+
     public static func empty() -> GlobalMcpArchive {
         GlobalMcpArchive(servers: [])
     }

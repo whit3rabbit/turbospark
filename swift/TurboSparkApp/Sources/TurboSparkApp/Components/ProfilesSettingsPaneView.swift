@@ -257,6 +257,7 @@ struct ProfilesSettingsPaneView: View {
                 exactBackupPassphrase = ""
                 exactBackupConfirmation = ""
                 exactBackupError = nil
+                exportAuthenticationPassphrase = ""
                 exactBackupSheet = .export
             } label: { Text("Export Encrypted Backup...", bundle: .module) }
             .disabled(model.profileBackupInFlight)
@@ -634,6 +635,14 @@ struct ProfilesSettingsPaneView: View {
             if mode == .export {
                 SecureField("Confirm export password", text: $exactBackupConfirmation)
                     .textFieldStyle(.roundedBorder)
+                // Same recent-authentication gate as the plaintext ZIP: an
+                // unlocked-but-unattended protected profile must not be
+                // exportable to removable media with a password the person
+                // at the keyboard just made up.
+                if vaultCoordinator.isProtected, !hasRecentProfileAuthentication {
+                    SecureField("Recovery passphrase", text: $exportAuthenticationPassphrase)
+                        .textFieldStyle(.roundedBorder)
+                }
             }
             Text(mode == .export
                  ? "Use at least 15 characters. The backup contains an authenticated SQLCipher snapshot and encrypted managed assets. The device Keychain item is excluded."
@@ -654,8 +663,18 @@ struct ProfilesSettingsPaneView: View {
                 .keyboardShortcut(.cancelAction)
                 Button {
                     if mode == .export {
-                        exactBackupSheet = nil
-                        model.runEncryptedProfileBackupExport(passphrase: exactBackupPassphrase)
+                        let exportPassphrase = exactBackupPassphrase
+                        Task {
+                            if vaultCoordinator.isProtected, !hasRecentProfileAuthentication {
+                                guard await vaultCoordinator.authenticateRecently(
+                                    with: exportAuthenticationPassphrase) else {
+                                    exactBackupError = "Authentication failed."
+                                    return
+                                }
+                            }
+                            exactBackupSheet = nil
+                            model.runEncryptedProfileBackupExport(passphrase: exportPassphrase)
+                        }
                     } else if let exactBackupURL,
                               model.importEncryptedProfileBackup(
                                 exactBackupURL,

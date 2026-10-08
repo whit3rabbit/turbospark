@@ -26,7 +26,8 @@ extension AppModel {
     /// paths from disk.
     func loadSettings() {
         let settings = MacAppSettingsFileStore.load()
-        let configuredStoreRoot = settings.turboSparkStoreRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        let configuredStoreRoot = ModelStoreRootRecord.resolve(
+            profileValue: settings.turboSparkStoreRoot)
         try? TurboSparkCatalog.setStoreRoot(configuredStoreRoot.isEmpty ? nil : configuredStoreRoot)
         self.turboSparkStoreRoot = configuredStoreRoot
         self.maxContextTokens = Self.clampedSetting(
@@ -539,6 +540,19 @@ extension AppModel {
         typeSafeServer = nil
         stopServerPolling()
 
+        // A reply that is still streaming exists only in `outputText`; the
+        // runTask tail that would normally preserve it never runs before the
+        // process exits (or before a vault lock replaces the profile). Save
+        // it as an interrupted row now so Continue/Retry has an anchor.
+        // Only when the selected chat ends in a non-assistant row, i.e. it
+        // is the chat awaiting this reply; the epoch bump keeps the late
+        // tail from preserving it a second time.
+        if generating, !outputText.isEmpty || !outputReasoningText.isEmpty,
+            turnMessages(for: selectedChatID).last.map({ $0.role != .assistant }) ?? false
+        {
+            finishCancelled(chatID: selectedChatID, reason: "cancelled")
+            generationEpoch += 1
+        }
         // Deliberately NOT `unloadModel()`: that refuses while `generating`,
         // which is exactly the case where the flush below matters most.
         cancel()

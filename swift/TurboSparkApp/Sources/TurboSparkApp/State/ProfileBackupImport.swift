@@ -54,6 +54,12 @@ enum ProfileBackupImport {
         guard unsafe.isEmpty else { throw ImportError.unsafeEntries(unsafe) }
     }
 
+    /// The default 1 MB capture cap truncates the listing of an archive with
+    /// about 11k entries (a large Exact Backup), and a truncated listing is
+    /// refused, so the backup would export fine and never restore. 64 MB
+    /// covers well over a million entries.
+    static let listingCapBytes = 64 * 1024 * 1024
+
     static func entries(from output: ProcessExecutor.Output) throws -> [String] {
         guard output.exitCode == 0, !output.timedOut, !output.outputTruncated else {
             throw ImportError.unreadableArchive
@@ -77,7 +83,8 @@ enum ProfileBackupImport {
             let output = try await ProcessExecutor.run(
                 executableURL: zipinfoURL,
                 arguments: ["-1", archive.path],
-                timeoutSeconds: 120)
+                timeoutSeconds: 120,
+                outputCapBytes: listingCapBytes)
             return try entries(from: output)
         } catch let error as ImportError {
             throw error
@@ -93,8 +100,9 @@ enum ProfileBackupImport {
             let output = try await ProcessExecutor.run(
                 executableURL: unzipURL,
                 arguments: ["-p", archive.path, ProfileBackup.manifestFileName],
-                timeoutSeconds: 120)
-            guard output.exitCode == 0, !output.timedOut else {
+                timeoutSeconds: 120,
+                outputCapBytes: listingCapBytes)
+            guard output.exitCode == 0, !output.timedOut, !output.outputTruncated else {
                 throw ImportError.manifestMissing
             }
             return Data(output.stdout.utf8)

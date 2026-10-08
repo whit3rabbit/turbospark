@@ -280,7 +280,17 @@ public enum UserProfileStore {
     }
 
     public static func userScopeSubdirectory(_ relative: String) -> URL {
-        userScopeSubdirectory(
+        // A test run must never read or write the developer's real
+        // ~/.turbospark (skill install ledger, agents). Mirrors
+        // `MemoryStore.defaultBase`.
+        if AppStorageRoot.isRunningTests {
+            let url = AppStorageRoot.machineRoot
+                .appendingPathComponent("user-scope", isDirectory: true)
+                .appendingPathComponent(relative, isDirectory: true)
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            return url
+        }
+        return userScopeSubdirectory(
             relative,
             profileID: active.id,
             homeDirectory: FileManager.default.homeDirectoryForCurrentUser,

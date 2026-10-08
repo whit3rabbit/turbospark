@@ -318,6 +318,7 @@ final class ModelDeletionGuardTests: XCTestCase {
             family: "gemma4", installBytes: 1, installedOn: "today")
         XCTAssertTrue(AppModel.isAttachedToServer(model: row, servedIDs: ["served"]))
         XCTAssertTrue(AppModel.isAttachedToServer(model: row, servedIDs: ["/tmp/served.gturbo"]))
+        XCTAssertTrue(AppModel.isAttachedToServer(model: row, servedIDs: ["served.gturbo"]))
         XCTAssertFalse(AppModel.isAttachedToServer(model: row, servedIDs: ["other"]))
         XCTAssertFalse(AppModel.isAttachedToServer(model: row, servedIDs: []))
     }

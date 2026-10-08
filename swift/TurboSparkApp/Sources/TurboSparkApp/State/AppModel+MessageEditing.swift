@@ -234,20 +234,25 @@ extension AppModel {
     static func editApplied(
         to messages: [AppChatMessage], anchorIndex: Int, newText: String, now: Date
     ) -> (messages: [AppChatMessage], responseVariants: [AppChatMessage]) {
+        // Flatten rather than drop: the earlier versions the prompt already
+        // carries stay, oldest first, so a second edit does not lose the
+        // original text.
+        let priorVersions = messages[anchorIndex].alternates
         var oldVersion = messages[anchorIndex]
         oldVersion.alternates = []
         var edited = oldVersion
         edited.content = newText
         edited.createdAt = now
-        edited.alternates = [oldVersion]
+        edited.alternates = priorVersions + [oldVersion]
 
         var responseVariants: [AppChatMessage] = []
         if anchorIndex + 1 < messages.count {
             let chain = Array(messages[(anchorIndex + 1)...])
             if isSingleProseResponse(chain) {
                 var oldResponse = chain[0]
+                let priorResponses = oldResponse.alternates
                 oldResponse.alternates = []
-                responseVariants = [oldResponse]
+                responseVariants = priorResponses + [oldResponse]
             }
         }
 
@@ -256,7 +261,35 @@ extension AppModel {
         return (result, responseVariants)
     }
 
+    /// Runs the edited text through the same gates a typed prompt gets: Unicode
+    /// sanitization (invisible tag and bidi characters) and the
+    /// `UserPromptSubmit` hooks. Returns the sanitized text, or nil with
+    /// `error` set when a hook refused it. Ghost chats skip the hook, like
+    /// `run()`, because the hook receives the full prompt text.
+    func gateEditedPrompt(_ text: String, chatID: UUID) async -> String? {
+        let clean = UnicodeSanitization.sanitize(text)
+        guard !clean.isEmpty else { return nil }
+        let chat = chats.first(where: { $0.id == chatID })
+        if chat?.isGhost == true { return clean }
+        let project = projects.first { $0.id == chat?.projectID }
+        let verdict = await evaluateUserPromptSubmit(prompt: clean, chatID: chatID, project: project)
+        if verdict.preventContinuation {
+            error = verdict.continuationStopReason ?? "A hook declined to continue this prompt."
+            return nil
+        }
+        if verdict.isBlocked {
+            error = verdict.blockReason ?? "Prompt blocked by a UserPromptSubmit hook."
+            return nil
+        }
+        return clean
+    }
+
     /// Commits an in-place edit of the last prompt and re-runs the turn.
+    ///
+    /// The hook gate is asynchronous, so the transcript mutation happens
+    /// after it; `true` means the edit passed the synchronous checks and is
+    /// being gated. A refusing hook leaves the transcript and the open editor
+    /// untouched and sets `error`.
     @discardableResult
     public func commitEdit(messageID: UUID, newText: String, chatID: UUID? = nil) -> Bool {
         let targetID = chatID ?? selectedChatID
@@ -267,17 +300,26 @@ extension AppModel {
         guard let anchorIndex = Self.lastPromptAnchorIndex(in: messages),
             messages[anchorIndex].id == messageID
         else { return false }
-        let applied = Self.editApplied(
-            to: messages, anchorIndex: anchorIndex, newText: trimmed, now: Date())
-        pendingResponseVariants[targetID] = applied.responseVariants
-        mutateRecoveryState(for: targetID) { messages, anchor in
-            messages = applied.messages
-            anchor = nil
+        Task { @MainActor in
+            guard let gated = await self.gateEditedPrompt(trimmed, chatID: targetID) else { return }
+            // State may have moved while the hook ran: re-validate.
+            guard self.editingAllowed(chatID: targetID) else { return }
+            let messages = self.turnMessages(for: targetID)
+            guard let anchorIndex = Self.lastPromptAnchorIndex(in: messages),
+                messages[anchorIndex].id == messageID
+            else { return }
+            let applied = Self.editApplied(
+                to: messages, anchorIndex: anchorIndex, newText: gated, now: Date())
+            self.pendingResponseVariants[targetID] = applied.responseVariants
+            self.mutateRecoveryState(for: targetID) { messages, anchor in
+                messages = applied.messages
+                anchor = nil
+            }
+            self.clampStoredCompaction(chatID: targetID, toRow: anchorIndex)
+            self.editingMessageID = nil
+            self.updateTokenEstimate()
+            self.executeGenerationTurn(step: 0, chatID: targetID)
         }
-        clampStoredCompaction(chatID: targetID, toRow: anchorIndex)
-        editingMessageID = nil
-        updateTokenEstimate()
-        executeGenerationTurn(step: 0, chatID: targetID)
         return true
     }
 
@@ -336,39 +378,54 @@ extension AppModel {
     /// Forks the conversation at a user prompt into a new chat with the
     /// edited text in place, selects the branch and re-runs from there.
     /// The original conversation is left exactly as it was.
+    ///
+    /// The edited text passes the `UserPromptSubmit` hooks and Unicode
+    /// sanitization first, so the branch is created after an asynchronous
+    /// gate: `true` means the request passed the synchronous checks. A
+    /// refusing hook creates nothing and sets `error`.
     @discardableResult
-    public func branchFrom(messageID: UUID, editedText: String, chatID: UUID? = nil) -> UUID? {
+    public func branchFrom(messageID: UUID, editedText: String, chatID: UUID? = nil) -> Bool {
         let sourceID = chatID ?? selectedChatID
         let trimmed = editedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        guard editingAllowed(chatID: sourceID) else { return nil }
+        guard !trimmed.isEmpty else { return false }
+        guard editingAllowed(chatID: sourceID) else { return false }
         guard let sourceIndex = chats.firstIndex(where: { $0.id == sourceID }),
             !chats[sourceIndex].isGhost
-        else { return nil }
-        let source = chats[sourceIndex]
+        else { return false }
         let messages = turnMessages(for: sourceID)
         guard let messageIndex = messages.firstIndex(where: { $0.id == messageID }),
             messages[messageIndex].role == .user,
             UserMemoryInputMessage.parse(messages[messageIndex].content) == nil
-        else { return nil }
-        let compaction = compactionState(chatID: sourceID)
-        let branch = Self.branchedChat(
-            from: source, messageIndex: messageIndex, messages: messages,
-            newText: trimmed, summary: compaction.summary, boundary: compaction.boundary,
-            now: Date())
-        chats.insert(branch, at: 0)
-        selectedChatID = branch.id
-        persistChats()
-        updateTokenEstimate()
-        let branchID = branch.id
-        let branchProject = projects.first { $0.id == branch.projectID }
-        Task {
-            _ = await self.dispatchLifecycleHook(
-                event: .sessionStart, chatID: branchID, project: branchProject,
-                source: "clear")
+        else { return false }
+        Task { @MainActor in
+            guard let gated = await self.gateEditedPrompt(trimmed, chatID: sourceID) else { return }
+            // State may have moved while the hook ran: re-validate.
+            guard self.editingAllowed(chatID: sourceID),
+                let sourceIndex = self.chats.firstIndex(where: { $0.id == sourceID }),
+                !self.chats[sourceIndex].isGhost
+            else { return }
+            let source = self.chats[sourceIndex]
+            let messages = self.turnMessages(for: sourceID)
+            guard let messageIndex = messages.firstIndex(where: { $0.id == messageID }) else { return }
+            let compaction = self.compactionState(chatID: sourceID)
+            let branch = Self.branchedChat(
+                from: source, messageIndex: messageIndex, messages: messages,
+                newText: gated, summary: compaction.summary, boundary: compaction.boundary,
+                now: Date())
+            self.chats.insert(branch, at: 0)
+            self.selectedChatID = branch.id
+            self.persistChats()
+            self.updateTokenEstimate()
+            let branchID = branch.id
+            let branchProject = self.projects.first { $0.id == branch.projectID }
+            Task {
+                _ = await self.dispatchLifecycleHook(
+                    event: .sessionStart, chatID: branchID, project: branchProject,
+                    source: "clear")
+            }
+            self.executeGenerationTurn(step: 0, chatID: branchID)
         }
-        executeGenerationTurn(step: 0, chatID: branchID)
-        return branchID
+        return true
     }
 
     // MARK: - Compaction clamp

@@ -347,7 +347,7 @@ final class MessageEditBranchTests: XCTestCase {
         XCTAssertFalse(model.beginEdit(messageID: userMessage.id))
         XCTAssertFalse(model.regenerateResponse())
         XCTAssertFalse(model.commitEdit(messageID: userMessage.id, newText: "rewritten"))
-        XCTAssertNil(model.branchFrom(messageID: userMessage.id, editedText: "rewritten"))
+        XCTAssertFalse(model.branchFrom(messageID: userMessage.id, editedText: "rewritten"))
         XCTAssertEqual(model.turnMessages(for: chat.id).count, 2, "refusals leave the transcript alone")
     }
 }

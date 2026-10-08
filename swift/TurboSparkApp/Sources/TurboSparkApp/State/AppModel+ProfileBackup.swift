@@ -169,8 +169,18 @@ extension AppModel {
                 self.profileBackupInFlight = false
                 switch outcome {
                 case .success:
-                    if UserProfileStore.saveRegistry(registry) {
-                        self.profiles = registry.profiles
+                    // Re-read the registry now: a restore can run for minutes,
+                    // and saving the snapshot taken at the start would revert
+                    // a profile deleted, created or protected in the meantime.
+                    guard let fresh = try? Self.registryAdding(profile) else {
+                        try? FileManager.default.removeItem(at: destination)
+                        self.showToast(
+                            "Backup import failed: the profile name is no longer available.",
+                            style: .error, duration: 8)
+                        return
+                    }
+                    if UserProfileStore.saveRegistry(fresh) {
+                        self.profiles = fresh.profiles
                         self.showToast(
                             "Profile \"\(profile.name)\" imported from backup. Switch to it to start using it.",
                             style: .success)
@@ -190,6 +200,13 @@ extension AppModel {
             }
         }
         return true
+    }
+
+    /// The CURRENT registry with `profile` added (name re-validated).
+    static func registryAdding(_ profile: UserProfile) throws -> UserProfileRegistry {
+        var fresh = UserProfileStore.loadRegistry()
+        try UserProfileStore.adding(profile, to: &fresh)
+        return fresh
     }
 
     // MARK: - Failure wording

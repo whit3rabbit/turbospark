@@ -24,6 +24,22 @@ enum DisabledItemStore {
     struct Archive: Codable {
         var skills: [String] = []
         var agents: [String] = []
+        /// Set once the legacy UserDefaults lists were folded in. Without it
+        /// the merge ran on every launch and resurrected anything the user
+        /// re-enabled afterwards. Optional so older files decode unchanged.
+        var legacyMerged: Bool?
+    }
+
+    /// The one-shot legacy fold, pure for testing. Returns whether `archive`
+    /// changed (and so needs saving).
+    static func migrateLegacy(
+        _ archive: inout Archive, legacySkills: [String], legacyAgents: [String]
+    ) -> Bool {
+        guard archive.legacyMerged != true else { return false }
+        archive.skills = Array(Set(archive.skills).union(legacySkills))
+        archive.agents = Array(Set(archive.agents).union(legacyAgents))
+        archive.legacyMerged = true
+        return true
     }
 
     enum Kind {
@@ -64,25 +80,10 @@ enum DisabledItemStore {
         // write once so the next launch reads only this file. The legacy keys
         // are left in place rather than deleted -- removing them would strand
         // a user who moves back to an older build mid-upgrade.
-        var migrated = false
-        for kind in [Kind.skills, Kind.agents] {
-            let legacy = UserDefaults.standard.stringArray(forKey: kind.legacyDefaultsKey) ?? []
-            guard !legacy.isEmpty else { continue }
-            switch kind {
-            case .skills:
-                let merged = Set(archive.skills).union(legacy)
-                if merged.count != archive.skills.count {
-                    archive.skills = Array(merged)
-                    migrated = true
-                }
-            case .agents:
-                let merged = Set(archive.agents).union(legacy)
-                if merged.count != archive.agents.count {
-                    archive.agents = Array(merged)
-                    migrated = true
-                }
-            }
-        }
+        let migrated = migrateLegacy(
+            &archive,
+            legacySkills: UserDefaults.standard.stringArray(forKey: Kind.skills.legacyDefaultsKey) ?? [],
+            legacyAgents: UserDefaults.standard.stringArray(forKey: Kind.agents.legacyDefaultsKey) ?? [])
         cache = archive
         if migrated { AppJSONStore.save(archive, to: fileURL, label: "Disabled items") }
         return archive

@@ -294,6 +294,11 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var presentationLabel: String?
     /// Whether this user message is explicitly pinned as a standing instruction.
     public var isStandingInstruction: Bool
+    /// True for user-role rows the app or a hook wrote (Stop-hook reasons,
+    /// guardrail nudges, goal check-ins, bang output, scheduled prompts). The
+    /// Agent-mode classifier must not read them as something the human asked
+    /// for: their text can carry injected content.
+    public var isSynthetic: Bool
     /// Optional thinking or reasoning output preceding the response.
     public var reasoning: String
     /// Reason why generation stopped for this message turn.
@@ -344,8 +349,10 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         alternates: [AppChatMessage] = [],
         createdAt: Date = Date(),
         isStandingInstruction: Bool = false,
-        presentationLabel: String? = nil
+        presentationLabel: String? = nil,
+        isSynthetic: Bool = false
     ) {
+        self.isSynthetic = isSynthetic
         self.id = id
         self.role = role
         self.content = content
@@ -388,6 +395,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
         presentationLabel = try container.decodeIfPresent(String.self, forKey: .presentationLabel)
         isStandingInstruction = (try? container.decode(Bool.self, forKey: .isStandingInstruction)) ?? false
+        isSynthetic = (try? container.decode(Bool.self, forKey: .isSynthetic)) ?? false
         reasoning = try container.decodeIfPresent(String.self, forKey: .reasoning) ?? ""
         stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)
         // Lossy: one malformed call must not take the whole archive down.
@@ -664,7 +672,10 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
             isGhost: false,
             isPinned: false,
             usage: usage,
-            goal: goal,
+            // The copy starts with no goal: `activeGoals` is only seeded at
+            // launch, so a copied goal would be inert this session and then
+            // run in both chats after relaunch.
+            goal: nil,
             isArchived: false)
         copy.messages = messages.map { message in
             var copied = message
@@ -679,6 +690,10 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         copy.artifacts = artifacts.map { artifact in
             var copied = artifact
             copied.id = UUID()
+            // The Outputs section and AppArtifact.upsert key on chatID; the
+            // source id would leave the copy's Outputs empty and make upsert
+            // append duplicates.
+            copied.chatID = copy.id
             return copied
         }
         return copy

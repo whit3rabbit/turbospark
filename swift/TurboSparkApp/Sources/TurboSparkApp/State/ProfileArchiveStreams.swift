@@ -299,7 +299,12 @@ final class ProfileEncryptedChunkWriter {
         else { throw ProfileVaultCrypto.CryptoError.malformedEnvelope }
         let salt = fixed.subdata(in: cursor..<(cursor + ProfileVaultCrypto.saltByteCount))
         cursor += ProfileVaultCrypto.saltByteCount
-        guard let rounds = fixed.readBEUInt32(at: &cursor) else {
+        // Bounded BEFORE the KDF runs: the header is unauthenticated, and a
+        // crafted 0xFFFFFFFF would pin a CPU for hours in an uncancellable
+        // task. Writers use 600_000, so this leaves wide room either way.
+        guard let rounds = fixed.readBEUInt32(at: &cursor),
+              (100_000...10_000_000).contains(rounds)
+        else {
             throw ProfileVaultCrypto.CryptoError.malformedEnvelope
         }
         let noncePrefix = fixed.subdata(in: cursor..<(cursor + 8))
