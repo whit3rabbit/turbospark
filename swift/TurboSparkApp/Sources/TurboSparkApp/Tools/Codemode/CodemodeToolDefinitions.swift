@@ -34,7 +34,9 @@ public enum CodemodeToolDefinitions {
             + "`return` the useful summary. Top-level await and return work. Only your printed "
             + "output and return value come back, not the individual tool results. The sandbox "
             + "has no network, filesystem, timers, or modules; every inner call still runs the "
-            + "tool's own permission and hook gates.",
+            + "tool's own permission and hook gates, so a tool that needs interactive approval "
+            + "fails inside the script and must be called directly instead. A script may make at "
+            + "most 200 tool calls, and a tool result over 2 MiB is rejected rather than clipped.",
         parameters: .object(
             properties: [
                 "code": .string(
@@ -46,40 +48,91 @@ public enum CodemodeToolDefinitions {
     )
 }
 
-/// Builds the Codemode declarations section appended to the system prompt:
-/// one binding line per granted deferred MCP tool, budgeted like the
-/// deferred listing (8,000 characters, or 5% of context when known).
+/// Builds the system-prompt listing of deferred MCP tools.
+///
+/// With codemode off this is exactly `ToolSearchCatalog.promptListing`. With
+/// it on, there is ONE listing under the `## Deferred MCP Tools` heading
+/// rather than that listing plus a second `## Codemode` one naming the same
+/// tools: each line carries the tool's typed `tools.<name>(args)` signature,
+/// so a script can be written correctly without a `tool_describe` round trip.
 public enum CodemodeCatalog {
-    public static let listingCharacterLimit = 8_000
+    /// Larger than the plain listing's 8,000 because a typed line is longer,
+    /// and still under the 16,000 the two separate listings could add up to.
+    public static let listingCharacterLimit = 12_000
     private static let descriptionCharacterLimit = 120
+    /// Room kept for the closing "N more tools" line when the listing is cut.
+    private static let overflowLineReserve = 100
 
-    public static func declarationsSection(
-        descriptors: [DeferredToolDescriptor], contextTokens: Int?
+    public static func promptListing(
+        descriptors: [DeferredToolDescriptor],
+        contextTokens: Int? = nil,
+        codemodeOffered: Bool = true,
+        enabled: Bool = CodemodeSettings.isEnabled
     ) -> String {
-        guard CodemodeSettings.isEnabled else { return "" }
         let entries = CodemodeIdentifier.entries(for: descriptors)
-        guard !entries.isEmpty else { return "" }
-        var lines = [
-            "",
-            "## Codemode",
-            "The `codemode` tool runs one JavaScript script in a sandbox. Inside it, "
-                + "`await tools.<binding>({...})` calls the deferred MCP tool of that name: hooks "
-                + "and permissions still apply per call, and a call that needs interactive "
-                + "approval fails inside the script (make that one directly instead). Each call "
-                + "resolves to the tool's text result as a string. Only `text()`/console output "
-                + "and the script's return value reach you. Use `tool_describe` for full schemas.",
-            "Bindings:"
-        ]
+        // `codemodeOffered` is false for an agent whose allow-list does not
+        // include the tool: bindings for a tool it cannot call are noise.
+        guard enabled, codemodeOffered, !entries.isEmpty else {
+            return ToolSearchCatalog.promptListing(
+                descriptors: descriptors, contextTokens: contextTokens)
+        }
+
+        var schemas: [String: String] = [:]
+        for descriptor in descriptors where schemas[descriptor.name] == nil {
+            schemas[descriptor.name] = descriptor.inputSchemaJSON
+        }
+
+        var lines = ToolSearchCatalog.promptHeaderLines()
+        lines.append(
+            "Inside the `codemode` tool, call these as `await tools.<name>(args)` instead: one "
+                + "script can chain, loop and filter many calls, and only the script's printed "
+                + "output and return value come back. Every call resolves to the tool's text "
+                + "result as a string (use JSON.parse when it returns JSON). Hooks and "
+                + "permissions still apply per call.")
+
         let contextLimit = contextTokens.map { max(600, $0 / 20) } ?? listingCharacterLimit
         let limit = min(listingCharacterLimit, contextLimit)
+        var used = lines.joined(separator: "\n").count
+        var listed = 0
         for entry in entries {
-            let line = "- `tools.\(entry.jsName)(args)`: Promise<text result> // "
-                + shortDescription(entry.description)
-            let candidate = (lines + [line]).joined(separator: "\n")
-            guard candidate.count <= limit else { break }
-            lines.append(line)
+            let typed = typedLine(entry, schemaJSON: schemas[entry.name] ?? "{}")
+            let compact = compactLine(entry)
+            // Typed when it fits; otherwise the plain name-and-description
+            // line (what the listing showed before signatures existed), so a
+            // long catalog degrades per tool instead of dropping tools early.
+            if used + 1 + typed.count <= limit - overflowLineReserve {
+                lines.append(typed)
+                used += 1 + typed.count
+            } else if used + 1 + compact.count <= limit - overflowLineReserve {
+                lines.append(compact)
+                used += 1 + compact.count
+            } else {
+                break
+            }
+            listed += 1
+        }
+        if listed < entries.count {
+            lines.append("- \(entries.count - listed) more tools are not listed; find them with `tool_search`.")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// `- `tools.name(args: { ... }): Promise<string>`: description`
+    static func typedLine(_ entry: CodemodeToolEntry, schemaJSON: String) -> String {
+        let arguments = CodemodeSchemaRenderer.argumentsDeclaration(schemaJSON: schemaJSON)
+        return "- `tools.\(entry.jsName)(\(arguments)): Promise<string>`: "
+            + shortDescription(entry.description) + aliasNote(entry)
+    }
+
+    /// `- `tools.name(args)`: description`
+    static func compactLine(_ entry: CodemodeToolEntry) -> String {
+        "- `tools.\(entry.jsName)(args)`: " + shortDescription(entry.description) + aliasNote(entry)
+    }
+
+    /// `tool_describe` and `tool_call` take the advertised name; the script
+    /// binding is its sanitized form (and a suffixed one when two collide).
+    private static func aliasNote(_ entry: CodemodeToolEntry) -> String {
+        entry.jsName == entry.name ? "" : " (tool name: `\(entry.name)`)"
     }
 
     private static func shortDescription(_ raw: String) -> String {

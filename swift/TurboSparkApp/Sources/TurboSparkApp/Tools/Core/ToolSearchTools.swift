@@ -99,6 +99,18 @@ public enum ToolSearchCatalog {
         return result.sorted { $0.name < $1.name }
     }
 
+    /// Narrows a catalog to the tools the CALLING AGENT may use. The default is
+    /// the task-local filter a subagent's gate sets (see
+    /// `AppToolRegistry.callerToolFilter`); with none set, which is the main
+    /// conversation, the catalog is returned unchanged.
+    static func filtered(
+        _ descriptors: [DeferredToolDescriptor],
+        by allows: (@Sendable (String) -> Bool)? = AppToolRegistry.callerToolFilter
+    ) -> [DeferredToolDescriptor] {
+        guard let allows else { return descriptors }
+        return descriptors.filter { allows($0.name) }
+    }
+
     /// The heading and discovery instructions that open the deferred-tool
     /// listing. Shared with `CodemodeCatalog.promptListing`, which adds the
     /// codemode bindings under the same heading instead of a second listing.
@@ -308,8 +320,10 @@ public enum ToolSearchExecutor {
     ) async throws -> String {
         let servers = AppToolCatalogMcp.visibleServers(
             global: GlobalMcpFileStore.load().servers, project: project)
-        let descriptors = ToolSearchCatalog.descriptors(
-            servers: servers, permissions: project?.permissions)
+        // Narrowed to what the calling agent was offered, so a restricted
+        // subagent cannot search for, describe or call a tool it was denied.
+        let descriptors = ToolSearchCatalog.filtered(
+            ToolSearchCatalog.descriptors(servers: servers, permissions: project?.permissions))
         switch call.name.lowercased() {
         case "tool_search":
             let queries = ToolSearchCatalog.parseList(call.arguments["queries"] ?? "")

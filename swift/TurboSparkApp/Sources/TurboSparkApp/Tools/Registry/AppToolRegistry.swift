@@ -817,8 +817,13 @@ public enum AppToolRegistry {
                 }
                 let codemodeServers = AppToolCatalogMcp.visibleServers(
                     global: GlobalMcpFileStore.load().servers, project: project)
-                let codemodeDescriptors = ToolSearchCatalog.descriptors(
-                    servers: codemodeServers, permissions: project?.permissions)
+                // Narrowed HERE, in the registry's own task: the caller's tool
+                // filter is task-local and does not reach the worker's
+                // detached call tasks. Both the script's `ALL_TOOLS` and the
+                // set its calls are checked against come from this list.
+                let codemodeDescriptors = ToolSearchCatalog.filtered(
+                    ToolSearchCatalog.descriptors(
+                        servers: codemodeServers, permissions: project?.permissions))
                 let codemodeHandler = CodemodeNestedRunner.callHandler(
                     descriptors: codemodeDescriptors, project: project, chatID: chatID)
                 let sandboxResult = await CodemodeSandbox.run(

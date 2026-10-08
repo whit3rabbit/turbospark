@@ -63,6 +63,11 @@ struct CodemodeError: Sendable, Equatable, Codable {
     var name: String?
     var message: String
     var stack: String?
+    /// 1-based line in the model's script where the failure happened, when
+    /// the engine could attribute one. JavaScriptCore's own `stack` carries
+    /// no frame text without a source URL, so this is what lets the model
+    /// fix the line that threw.
+    var line: Int?
 }
 
 struct CodemodeStoreWrite: Sendable, Equatable, Codable {
@@ -91,8 +96,33 @@ struct CodemodeLimits: Sendable, Equatable, Codable {
     var maximumOutputItems: Int
     var maximumStoreValueCharacters: Int
     var maximumStoreTotalCharacters: Int
-    /// Cap on one nested tool result handed into the VM as JSON.
-    var maximumCallPayloadCharacters: Int
+    /// Keys in the per-chat store. Enforced inside the VM so the script gets a
+    /// deterministic RangeError; the host box keeps its own cap as a backstop.
+    var maximumStoreKeys: Int
+    /// Bound on one call's JSON arguments, in characters. A script can build
+    /// arguments of any size; this keeps one call from putting a huge line on
+    /// the wire and a huge object into an MCP server.
+    var maximumCallArgumentCharacters: Int
+    /// Bound, in UTF-8 bytes, on one nested tool result handed into the VM.
+    /// A result over the bound is REJECTED, never truncated: a script that
+    /// parses or counts a clipped result computes a wrong answer with no
+    /// error. The bound exists to protect memory and the wire line limit
+    /// (`CodemodeWire.maximumLineBytes`); the output budget is separate and
+    /// only counts what the script prints or returns.
+    var maximumCallResultBytes: Int
+    /// Total nested calls one script may make. Each call spawns an MCP
+    /// server process, so an unbounded loop of calls is a fork-exhaustion
+    /// and side-effect amplifier for the whole app.
+    var maximumCalls: Int
+    /// Nested calls in flight at once. Calls past this wait for a slot
+    /// instead of failing, so `Promise.all` over a long list still works.
+    var maximumConcurrentCalls: Int
+    /// Physical memory footprint the worker process may reach, in bytes;
+    /// 0 disables the check. JavaScriptCore has no in-process heap limit and
+    /// macOS does not enforce `RLIMIT_AS`, so the host polls the worker's
+    /// footprint (`proc_pid_rusage`) and kills it past the bound, which also
+    /// works for a script spinning in a synchronous loop.
+    var maximumWorkerMemoryBytes: Int
     var defaultTimeout: TimeInterval
     var maximumTimeout: TimeInterval
     /// Script size bound, matching the REPL request bound.
@@ -103,7 +133,12 @@ struct CodemodeLimits: Sendable, Equatable, Codable {
         maximumOutputItems: Int = 1_000,
         maximumStoreValueCharacters: Int = 64 * 1_024,
         maximumStoreTotalCharacters: Int = 256 * 1_024,
-        maximumCallPayloadCharacters: Int = 64 * 1_024,
+        maximumStoreKeys: Int = 256,
+        maximumCallArgumentCharacters: Int = 1_024 * 1_024,
+        maximumCallResultBytes: Int = 2 * 1_024 * 1_024,
+        maximumCalls: Int = 200,
+        maximumConcurrentCalls: Int = 8,
+        maximumWorkerMemoryBytes: Int = 1_024 * 1_024 * 1_024,
         defaultTimeout: TimeInterval = 120,
         maximumTimeout: TimeInterval = 600,
         maximumScriptBytes: Int = 1_024 * 1_024
@@ -112,7 +147,12 @@ struct CodemodeLimits: Sendable, Equatable, Codable {
         self.maximumOutputItems = maximumOutputItems
         self.maximumStoreValueCharacters = maximumStoreValueCharacters
         self.maximumStoreTotalCharacters = maximumStoreTotalCharacters
-        self.maximumCallPayloadCharacters = maximumCallPayloadCharacters
+        self.maximumStoreKeys = maximumStoreKeys
+        self.maximumCallArgumentCharacters = maximumCallArgumentCharacters
+        self.maximumCallResultBytes = maximumCallResultBytes
+        self.maximumWorkerMemoryBytes = maximumWorkerMemoryBytes
+        self.maximumCalls = maximumCalls
+        self.maximumConcurrentCalls = maximumConcurrentCalls
         self.defaultTimeout = defaultTimeout
         self.maximumTimeout = maximumTimeout
         self.maximumScriptBytes = maximumScriptBytes
@@ -159,23 +199,29 @@ enum CodemodeIdentifier {
         return name
     }
 
-    /// Builds the callable entries for a descriptor list. Both the sanitized
-    /// identifier and the original advertised name are callable; when two
-    /// names sanitize to the same identifier the first (descriptors arrive
-    /// name-sorted) wins for the identifier form.
+    /// Builds the callable entries for a descriptor list. A tool is callable
+    /// as `tools.<jsName>` and, where the prelude can bind it, by its
+    /// advertised name too. Advertised names repeated (compared
+    /// case-insensitively, as the catalog does) collapse to the first. When
+    /// two DIFFERENT names sanitize to one identifier (`mcp__a-b__c` and
+    /// `mcp__a_b__c`), the first keeps the identifier and each later one gets
+    /// a numeric suffix (`..._2`), so no tool becomes unreachable.
     static func entries(for descriptors: [DeferredToolDescriptor]) -> [CodemodeToolEntry] {
-        var byJSName: [String: CodemodeToolEntry] = [:]
-        var byAdvertised: Set<String> = []
+        var usedJSNames: Set<String> = []
+        var seenAdvertised: Set<String> = []
         var result: [CodemodeToolEntry] = []
         for descriptor in descriptors {
-            guard byAdvertised.insert(descriptor.name.lowercased()).inserted else { continue }
-            let jsName = sanitize(descriptor.name)
-            if byJSName[jsName] == nil {
-                byJSName[jsName] = CodemodeToolEntry(
-                    name: descriptor.name, jsName: jsName, description: descriptor.description)
-                result.append(CodemodeToolEntry(
-                    name: descriptor.name, jsName: jsName, description: descriptor.description))
+            guard seenAdvertised.insert(descriptor.name.lowercased()).inserted else { continue }
+            let base = sanitize(descriptor.name)
+            var jsName = base
+            var suffix = 2
+            while usedJSNames.contains(jsName) {
+                jsName = "\(base)_\(suffix)"
+                suffix += 1
             }
+            usedJSNames.insert(jsName)
+            result.append(CodemodeToolEntry(
+                name: descriptor.name, jsName: jsName, description: descriptor.description))
         }
         return result
     }

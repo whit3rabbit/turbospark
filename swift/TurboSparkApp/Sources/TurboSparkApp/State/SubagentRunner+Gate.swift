@@ -115,8 +115,15 @@ extension SubagentRunner {
             return errorObservation(refusal)
         }
 
-        let toolResult = await AppToolRegistry.execute(
-            call: call, in: project, chatID: chatID, subagentDepth: depth)
+        // The profile also bounds what a call can reach INSIDE the registry:
+        // `codemode` and `tool_search` build their catalogs from it, since the
+        // name checks above only see the outer tool name and `tool_call`'s target.
+        let toolResult = await AppToolRegistry.$callerToolFilter.withValue(
+            { [agent] name in agent.isToolAllowed(name) }
+        ) {
+            await AppToolRegistry.execute(
+                call: call, in: project, chatID: chatID, subagentDepth: depth)
+        }
 
         var results = await AppHookExecutionEngine.shared.dispatch(
             event: .postToolUse,

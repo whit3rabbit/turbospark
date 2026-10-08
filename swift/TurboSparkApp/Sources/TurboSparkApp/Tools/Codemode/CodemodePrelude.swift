@@ -18,9 +18,18 @@ import Foundation
 /// walk (the context is fresh per execution and discarded with its process),
 /// no `image()` (this app's tool results are text), and no host globals.
 enum CodemodePrelude {
+    /// Source URLs the two scripts are evaluated under. JavaScriptCore's
+    /// `Error.stack` has no frame text without one (a bare `f@\\nglobal code@`),
+    /// so naming the script is what makes a stack and a line number
+    /// attributable. The prelude gets its own name so its frames can be told
+    /// apart from the model's and dropped from what the model sees.
+    static let scriptURL = "codemode.js"
+    static let preludeURL = "codemode-prelude.js"
+
     /// Interpolates the numeric bounds into the prelude source. Only Int
-    /// values reach the string, never script-controlled data; the tool
-    /// list and store snapshot arrive through bridges instead.
+    /// values and the two constant URLs above reach the string, never
+    /// script-controlled data; the tool list and store snapshot arrive
+    /// through bridges instead.
     static func source(limits: CodemodeLimits) -> String {
         """
         (() => {
@@ -36,6 +45,9 @@ enum CodemodePrelude {
           const MAX_OUTPUT_ITEMS = \(limits.maximumOutputItems);
           const MAX_STORE_VALUE_CHARS = \(limits.maximumStoreValueCharacters);
           const MAX_STORE_TOTAL_CHARS = \(limits.maximumStoreTotalCharacters);
+          const MAX_STORE_KEYS = \(limits.maximumStoreKeys);
+          const MAX_CALL_ARGUMENT_CHARS = \(limits.maximumCallArgumentCharacters);
+          const PRELUDE_URL = "\(preludeURL)";
 
           const entries = parse(toolsInit());
           const snapshot = parse(storeInit());
@@ -55,6 +67,18 @@ enum CodemodePrelude {
           let outputItemCount = 0;
           const pendingWrites = new Map();
 
+          // Drops the frames the model cannot act on: the prelude's own, and
+          // the wrapper's synthetic "global code" call site.
+          const scriptFrames = (rawStack) => {
+            const kept = [];
+            for (const frame of stringValue(rawStack).split("\\n")) {
+              if (frame.indexOf(PRELUDE_URL) !== -1) continue;
+              if (frame.indexOf("global code@") === 0) continue;
+              kept.push(frame);
+            }
+            return kept.join("\\n");
+          };
+
           const describeError = (error) => {
             let name = "Error";
             let message = "the script threw an undescribable value";
@@ -64,7 +88,9 @@ enum CodemodePrelude {
                 if (error.name !== undefined) name = stringValue(error.name);
                 if (error.message !== undefined) message = stringValue(error.message);
                 else message = stringValue(error);
-                if (error.stack !== undefined && error.stack !== null) stack = stringValue(error.stack);
+                if (error.stack !== undefined && error.stack !== null) {
+                  stack = scriptFrames(error.stack);
+                }
               } else {
                 message = stringValue(error);
               }
@@ -155,6 +181,12 @@ enum CodemodePrelude {
                 + "such as ids or summaries; use text() to report larger data.");
             }
             const existing = storeMap.get(key);
+            // Deterministic here rather than evicting later on the host: the
+            // script learns at the write that the store is full.
+            if (existing === undefined && storeMap.size >= MAX_STORE_KEYS) {
+              throw new RangeError("store is full: it holds at most " + MAX_STORE_KEYS
+                + " keys. Delete keys with store(key, undefined) or pack related values into one key.");
+            }
             const existingCost = existing === undefined ? 0 : key.length + existing.length;
             const nextTotal = storeTotalCharacters - existingCost + key.length + json.length;
             if (nextTotal > MAX_STORE_TOTAL_CHARS) {
@@ -178,6 +210,16 @@ enum CodemodePrelude {
           // --- tools: one promise-returning function per entry ---
           const makeCaller = (toolName) => {
             return (...args) => new Promise((resolve, reject) => {
+              // Once the result is settled (return, exit(), a failure, or a
+              // caught output-cap breach) no further call may cross the
+              // bridge. Settling guards output, but a script that catches the
+              // exit sentinel or the RangeError keeps running, and every
+              // call it makes would otherwise still reach the host and run
+              // its tool for real.
+              if (finished) {
+                reject(new Error("tools." + toolName + " cannot be called after the script has finished"));
+                return;
+              }
               let json = null;
               if (args.length === 1) {
                 try { json = stringify(args[0]); } catch (error) {
@@ -186,6 +228,12 @@ enum CodemodePrelude {
                 }
                 if (json === undefined) {
                   reject(new TypeError("tools." + toolName + " arguments must be JSON-serializable"));
+                  return;
+                }
+                if (json.length > MAX_CALL_ARGUMENT_CHARS) {
+                  reject(new RangeError("tools." + toolName + " arguments are " + json.length
+                    + " characters, over the " + MAX_CALL_ARGUMENT_CHARS
+                    + " character limit for one call. Send less per call."));
                   return;
                 }
               } else if (args.length > 1) {
@@ -302,6 +350,22 @@ enum CodemodePrelude {
                 const encoded = stringify(value);
                 json = encoded === undefined ? stringValue(value) : encoded;
               } catch (_) { json = stringValue(value); }
+            }
+            if (json !== undefined) {
+              // The return value shares the output budget with text() and
+              // console. Without this, `return bigArray` skips every cap the
+              // output path enforces and lands in the model's context whole.
+              const cost = json.length + 1;
+              if (outputCharacters + cost > MAX_OUTPUT_CHARS) {
+                fail({
+                  name: "RangeError",
+                  message: "script return value of " + json.length + " characters does not fit the "
+                    + "output limit of " + MAX_OUTPUT_CHARS + " characters (" + outputCharacters
+                    + " already used by text() and console). Return a summary instead of the full data."
+                });
+                return;
+              }
+              outputCharacters += cost;
             }
             succeed(json);
           }, false);

@@ -8,6 +8,13 @@ import Foundation
 /// One process serves exactly one script execution and exits after writing
 /// its terminal message, so there is no init/reset lifecycle to manage.
 enum CodemodeWire {
+    /// Bound on one wire line in either direction. Sized so the largest
+    /// nested result (`CodemodeLimits.maximumCallResultBytes`) still fits
+    /// after the worst-case double JSON escaping it takes on the way in
+    /// (about 7x for control characters), and so a worker that never ends a
+    /// line cannot grow the host's buffer without limit.
+    static let maximumLineBytes = 16 * 1_024 * 1_024
+
     /// Host -> worker: run one script. Sent as the first and only request.
     struct RunRequest: Codable {
         var type = "codemode"

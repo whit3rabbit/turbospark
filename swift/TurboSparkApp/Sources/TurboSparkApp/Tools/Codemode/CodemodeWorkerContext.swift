@@ -24,8 +24,32 @@ final class CodemodeWorkerContext: @unchecked Sendable {
     private var pendingCallbacks: [Int: JSValue] = [:]
     private var nextCallID = 0
     private var outputItems: [CodemodeOutputItem] = []
-    private var capturedException: String?
+    private var capturedException: CapturedException?
     private let outcomeBox = CodemodeOutcomeBox()
+
+    /// A JavaScript exception the engine handed back at compile or top level,
+    /// split into the parts the model needs. `toString()` alone would read
+    /// "SyntaxError: Unexpected token ';'" and drop the line.
+    struct CapturedException {
+        var name: String?
+        var message: String?
+        var description: String
+        /// Only set when the exception came from the model's script, not the
+        /// prelude, so a prelude line is never reported as a script line.
+        var scriptLine: Int?
+
+        init(_ exception: JSValue?) {
+            description = exception?.toString() ?? "unknown error"
+            guard let exception, exception.isObject else { return }
+            name = exception.forProperty("name")?.toString()
+            message = exception.forProperty("message")?.toString()
+            if exception.forProperty("sourceURL")?.toString() == CodemodePrelude.scriptURL,
+               let line = exception.forProperty("line"), line.isNumber
+            {
+                scriptLine = Int(line.toInt32())
+            }
+        }
+    }
 
     /// Backstop deadline for the settlement poll loop. The supervisor owns
     /// the real deadline and terminates the process; this only guarantees
@@ -61,16 +85,22 @@ final class CodemodeWorkerContext: @unchecked Sendable {
             // (the REPLWorkerContext pattern). Script-level errors reach
             // the done bridge through the wrapper; what arrives here is a
             // prelude/compile failure or a stray uncaught throw.
-            self?.capturedException = exception?.toString()
+            self?.capturedException = CapturedException(exception)
         }
 
         installBridges(into: context)
-        context.evaluateScript(CodemodePrelude.source(limits: request.limits))
+        context.evaluateScript(
+            CodemodePrelude.source(limits: request.limits),
+            withSourceURL: URL(string: CodemodePrelude.preludeURL))
         if let failure = currentException(context) {
-            return .crashed("the codemode prelude failed: \(failure)")
+            return .crashed("the codemode prelude failed: \(failure.description)")
         }
 
-        context.evaluateScript(CodemodePrelude.wrapper(code: request.code))
+        // Named so stack frames and error lines are attributable to the
+        // script (see `CodemodePrelude.scriptURL`).
+        context.evaluateScript(
+            CodemodePrelude.wrapper(code: request.code),
+            withSourceURL: URL(string: CodemodePrelude.scriptURL))
         if let failure = currentException(context) {
             // A syntax error or a synchronous top-level throw surfaces here
             // as a script failure; everything after the first await reports
@@ -190,24 +220,32 @@ final class CodemodeWorkerContext: @unchecked Sendable {
         }
     }
 
-    private func currentException(_ context: JSContext) -> String? {
-        let captured = capturedException ?? context.exception?.toString()
+    private func currentException(_ context: JSContext) -> CapturedException? {
+        let captured = capturedException
+            ?? context.exception.map { CapturedException($0) }
         capturedException = nil
         context.exception = nil
         return captured
     }
 
-    private func scriptError(_ description: String) -> CodemodeWire.Done {
+    private func scriptError(_ exception: CapturedException) -> CodemodeWire.Done {
         CodemodeWire.Done(
             ok: false,
             value: nil,
-            error: encodeErrorJSON(name: "SyntaxError", message: description, stack: nil),
+            error: encodeErrorJSON(
+                name: exception.name ?? "SyntaxError",
+                message: exception.message ?? exception.description,
+                stack: nil,
+                line: exception.scriptLine),
             writes: nil)
     }
 
-    private func encodeErrorJSON(name: String, message: String, stack: String?) -> String {
+    private func encodeErrorJSON(
+        name: String, message: String, stack: String?, line: Int? = nil
+    ) -> String {
         var object: [String: Any] = ["name": name, "message": message]
         if let stack, !stack.isEmpty { object["stack"] = stack }
+        if let line { object["line"] = line }
         guard let data = try? JSONSerialization.data(withJSONObject: object),
               let text = String(data: data, encoding: .utf8)
         else { return "{\"name\":\"Error\",\"message\":\"the script failed\"}" }

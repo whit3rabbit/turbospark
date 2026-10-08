@@ -56,6 +56,9 @@ enum REPLWorkerMain {
             serveRequests()
             return true
         }
+        if arguments.contains(CodemodeWorkerSandbox.probeArgument) {
+            CodemodeWorkerSandbox.runProbe(arguments: arguments)
+        }
         if arguments.contains(serveCodemodeArgument) {
             serveCodemodeRequests()
             return true
@@ -258,6 +261,15 @@ enum REPLWorkerMain {
 
         func writeCrash(_ message: String) {
             writer.write(CodemodeWire.encodeLine(CodemodeWire.Crash(type: "crash", message: message)))
+        }
+
+        // Confine this process BEFORE any script or JavaScript context exists,
+        // and fail closed: a worker that could not confine itself must not run
+        // model-written code. Irreversible, and nothing below needs what it
+        // removes (stdin and stdout are already open).
+        if let failure = CodemodeWorkerSandbox.apply() {
+            writeCrash("the codemode worker could not confine itself and did not run the script: \(failure)")
+            return
         }
 
         while true {

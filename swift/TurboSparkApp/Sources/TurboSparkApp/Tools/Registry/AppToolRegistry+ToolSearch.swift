@@ -9,6 +9,22 @@ extension AppToolRegistry {
         var errorDescription: String? { output }
     }
 
+    /// The tool filter of the AGENT making the current tool call: set by the
+    /// subagent gate around `execute`, nil in the main conversation.
+    ///
+    /// An agent's allow-list decides which tools it is OFFERED and which call
+    /// NAMES its gate admits (`tool_call` is checked there by its target).
+    /// `codemode` carries tool names inside a script and `tool_search` /
+    /// `tool_describe` list tools, so without this they would show and reach
+    /// every MCP tool of the project, not the set the agent was offered. They
+    /// read it through `ToolSearchCatalog.filtered`.
+    ///
+    /// A task-local rather than a new parameter because `execute` has five
+    /// callers. It reaches child tasks but NOT `Task.detached`, which is why
+    /// codemode narrows its catalog before it starts the worker and not in the
+    /// worker's call handler.
+    @TaskLocal static var callerToolFilter: (@Sendable (String) -> Bool)? = nil
+
     static func deferredMcpPreHookStop(
         _ decision: AppHookPreToolUseDecision
     ) -> DeferredMcpContinuationStop? {
