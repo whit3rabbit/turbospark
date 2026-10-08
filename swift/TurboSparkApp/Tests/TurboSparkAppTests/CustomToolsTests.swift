@@ -2,6 +2,12 @@ import XCTest
 @testable import TurboSparkApp
 
 final class CustomToolsTests: XCTestCase {
+
+    /// A schema declaring string parameters; undeclared arguments are no longer substituted.
+    private func declared(_ names: String...) -> JSONSchema {
+        JSONSchema.object(
+            properties: Dictionary(uniqueKeysWithValues: names.map { ($0, JSONSchemaProperty(type: "string")) }))
+    }
     private func makeTempDirectory() throws -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("custom_tools_\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -112,6 +118,7 @@ final class CustomToolsTests: XCTestCase {
         let tool = CustomToolDefinition(
             name: "echo_arg",
             toolDescription: "echoes",
+            parameters: declared("msg"),
             execution: CustomToolExecution(type: .command, command: "echo {{msg}}")
         )
         let output = try await CustomToolExecutor.execute(
@@ -136,6 +143,7 @@ final class CustomToolsTests: XCTestCase {
         let tool = CustomToolDefinition(
             name: "read_env",
             toolDescription: "reads",
+            parameters: declared("msg"),
             execution: CustomToolExecution(type: .command, command: "printf '%s' \"$TOOL_ARG_MSG\"")
         )
         let output = try await CustomToolExecutor.execute(
@@ -163,6 +171,7 @@ final class CustomToolsTests: XCTestCase {
         let tool = CustomToolDefinition(
             name: "echo_quoted_arg",
             toolDescription: "echoes",
+            parameters: declared("greeting", "target"),
             execution: CustomToolExecution(
                 type: .command, command: "echo 'Result: {{greeting}} {{target}}'"))
         let output = try await CustomToolExecutor.execute(
@@ -286,6 +295,7 @@ final class CustomToolsTests: XCTestCase {
         let tool = CustomToolDefinition(
             name: "echo_greeting",
             toolDescription: "Echo greeting",
+            parameters: declared("greeting", "target"),
             execution: execution
         )
 
@@ -314,6 +324,7 @@ final class CustomToolsTests: XCTestCase {
         let tool = CustomToolDefinition(
             name: "run_script",
             toolDescription: "Runs script",
+            parameters: declared("val"),
             execution: execution
         )
 
@@ -338,6 +349,7 @@ final class CustomToolsTests: XCTestCase {
             "name": "custom_echo",
             "toolDescription": "Custom echo tool",
             "category": "terminal",
+            "parameters": {"type": "object", "properties": {"msg": {"type": "string"}}},
             "execution": {
                 "type": "command",
                 "command": "echo 'CustomEcho: {{msg}}'"

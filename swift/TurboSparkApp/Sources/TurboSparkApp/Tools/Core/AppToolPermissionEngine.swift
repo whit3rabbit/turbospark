@@ -389,6 +389,14 @@ public enum AppToolPermissionEngine {
             return .allow
         }
 
+        // The trailing allow (agentAuto, and any mode not handled above) must
+        // not skip the discovery guard the permissive and auto arms apply: a
+        // just-enabled server's destructive tool would otherwise run unasked.
+        if mcpAnnotationsUnknown {
+            return askBecauseAnnotationsUnknown(
+                defaultReason: "this tool's own destructive/read-only annotations are not yet known.")
+        }
+
         return .allow
     }
 }

@@ -27,7 +27,7 @@ public enum AppToolRegistry {
     ///   `agent` without bound.
     public static func execute(
         call: AppToolCall, in project: AppProject?, chatID: UUID? = nil, subagentDepth: Int = 0,
-        webToolsEnabled: Bool = true
+        webToolsEnabled: Bool = true, fallbackMode: AppPermissionMode? = nil
     ) async -> AppToolResult {
         let startTime = Date()
 
@@ -112,16 +112,25 @@ public enum AppToolRegistry {
             var producedFiles: [ArtifactRegistrar.ProducedFile] = []
             switch call.name.lowercased() {
             case "list_directory", "list_dir", "ls", "glob":
+                // `glob` with a pattern is a recursive pattern match under
+                // `path`; it used to fall into a flat listing that treated the
+                // pattern as a directory name. The list aliases (and a glob
+                // with no pattern) keep directory-listing semantics.
+                let globPattern = lowerName == "glob" ? call.arguments["pattern"] : nil
                 let relPath = call.arguments["path"]
                     ?? call.arguments["file_path"]
                     ?? call.arguments["filePath"]
                     ?? call.arguments["DirectoryPath"]
                     ?? call.arguments["dir"]
                     ?? call.arguments["directory"]
-                    ?? call.arguments["pattern"]
+                    ?? (globPattern == nil ? call.arguments["pattern"] : nil)
                     ?? "."
                 SkillManager.shared.notePathTouched(relPath, projectURL: resolvedRoot)
-                output = try listDirectory(relPath: relPath, rootURL: rootURL)
+                if let globPattern, !globPattern.isEmpty {
+                    output = try globFiles(pattern: globPattern, relPath: relPath, rootURL: rootURL)
+                } else {
+                    output = try listDirectory(relPath: relPath, rootURL: rootURL)
+                }
 
             case _ where readFileAliases.contains(lowerName):
                 // Conflicting spellings are refused, not resolved: the card
@@ -282,9 +291,14 @@ public enum AppToolRegistry {
                 if syntextEnabled, resolvedRoot != nil {
                     do {
                         let searchTool = await SyntextIndexManager.shared.tool(for: rootURL)
+                        // The index searches the whole repo; scope it to `path`
+                        // via a directory-prefix filter unless the caller gave
+                        // an explicit filter (the index takes only one).
+                        let scopedFilter = pathFilter
+                            ?? syntextPathScope(relPath: relPath, rootURL: rootURL)
                         output = try await searchTool.grep(
                             query: pattern,
-                            pathFilter: pathFilter,
+                            pathFilter: scopedFilter,
                             fileTypes: fileTypes,
                             caseSensitive: caseSensitive,
                             literalSearch: literalSearch,
@@ -293,10 +307,16 @@ public enum AppToolRegistry {
                             maxResults: maxResults
                         )
                     } catch {
-                        output = try searchCode(pattern: pattern, relPath: relPath, rootURL: rootURL)
+                        output = try searchCode(
+                            pattern: pattern, relPath: relPath, rootURL: rootURL,
+                            literal: literalSearch, caseSensitive: caseSensitive,
+                            pathFilter: pathFilter, fileTypes: fileTypes, maxResults: maxResults)
                     }
                 } else {
-                    output = try searchCode(pattern: pattern, relPath: relPath, rootURL: rootURL)
+                    output = try searchCode(
+                        pattern: pattern, relPath: relPath, rootURL: rootURL,
+                        literal: literalSearch, caseSensitive: caseSensitive,
+                        pathFilter: pathFilter, fileTypes: fileTypes, maxResults: maxResults)
                 }
 
             case "run_command", "bash", "shell", "exec", "terminal":
@@ -418,8 +438,15 @@ public enum AppToolRegistry {
                         NSLocalizedDescriptionKey: "Browser automation is disabled or unavailable.",
                     ])
                 }
-                let requestedOrigin = call.arguments["url"].flatMap { rawURL in
-                    URL(string: rawURL).flatMap { BrowserOrigin(url: $0) }
+                // Take the origin from the same parsed command the executor
+                // navigates to, so an approval card for one origin can never
+                // be applied to a differently-parsed (for example
+                // whitespace-padded) URL.
+                var requestedOrigin: BrowserOrigin?
+                if case .navigate(let url, _, _)? = BrowserToolExecutor.command(
+                    for: call.name, arguments: call.arguments)
+                {
+                    requestedOrigin = URL(string: url).flatMap { BrowserOrigin(url: $0) }
                 }
                 let actionOrigin = requestedOrigin ?? runtime.permissionContext?.origin
                 browserCardMetadata = AppToolBrowserCardMetadata(origin: actionOrigin)
@@ -555,7 +582,8 @@ public enum AppToolRegistry {
                     project: project,
                     chatID: chatID,
                     subagentDepth: subagentDepth,
-                    webToolsEnabled: webToolsEnabled
+                    webToolsEnabled: webToolsEnabled,
+                    fallbackMode: fallbackMode
                 )
 
             case "agent", "subagent", "task":
@@ -749,7 +777,7 @@ public enum AppToolRegistry {
                 output = try await SleepExecutor.execute(arguments: call.arguments)
 
             case "pushnotification", "push_notification", "notify":
-                output = try PushNotificationExecutor.execute(arguments: call.arguments)
+                output = try await PushNotificationExecutor.execute(arguments: call.arguments)
 
             case "config", "config_tool":
                 output = try ConfigToolExecutor.execute(arguments: call.arguments, project: project)
@@ -796,7 +824,10 @@ public enum AppToolRegistry {
                 let sandboxResult = await CodemodeSandbox.run(
                     code: script,
                     entries: CodemodeIdentifier.entries(for: codemodeDescriptors),
-                    storeKey: chatID?.uuidString ?? "codemode",
+                    // No chat means no durable owner for `store()`: the run
+                    // gets an empty store and its writes are dropped, rather
+                    // than sharing one store between unrelated chat-less runs.
+                    storeKey: chatID?.uuidString,
                     callHandler: codemodeHandler)
                 let formatted = CodemodeSandbox.promptOutput(for: sandboxResult)
                 archivalOutput = CodemodeSandbox.archivalCalls(for: sandboxResult)

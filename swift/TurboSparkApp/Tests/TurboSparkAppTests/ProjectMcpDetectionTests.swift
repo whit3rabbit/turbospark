@@ -292,4 +292,21 @@ final class ProjectMcpDetectionTests: XCTestCase {
             XCTFail("Expected stdio transport")
         }
     }
+
+    func testURLTransformRunsBeforeURLParsing() {
+        // A placeholder in the port makes URL(string:) return nil; it must be
+        // expanded on the raw string first.
+        let json = #"{"mcpServers": {"s": {"url": "http://localhost:${port}/${seg}"}}}"#
+        let plain = ProjectMcpDetector.parseConfigData(
+            Data(json.utf8), sourcePath: "/x", sourceLabel: "x", rootURL: nil)
+        XCTAssertTrue(plain.isEmpty)
+        let expanded = ProjectMcpDetector.parseConfigData(
+            Data(json.utf8), sourcePath: "/x", sourceLabel: "x", rootURL: nil,
+            urlTransform: { $0.replacingOccurrences(of: "${port}", with: "8080")
+                .replacingOccurrences(of: "${seg}", with: "mcp") })
+        guard case .sse(let url, _)? = expanded.first?.transport else {
+            return XCTFail("expected an sse server")
+        }
+        XCTAssertEqual(url.absoluteString, "http://localhost:8080/mcp")
+    }
 }

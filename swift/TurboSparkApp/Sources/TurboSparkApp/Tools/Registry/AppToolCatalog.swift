@@ -397,9 +397,15 @@ public enum AppToolCatalog {
         let deferred = availableTools?.deferredMcpTools ?? ToolSearchCatalog.descriptors(
             servers: mcpServers, permissions: project?.permissions)
         guard !deferred.isEmpty else { return base }
-        let listing = base + ToolSearchCatalog.promptListing(
-            descriptors: deferred, contextTokens: contextTokens)
-        return listing + CodemodeCatalog.declarationsSection(
-            descriptors: deferred, contextTokens: contextTokens)
+        // One listing: with codemode on, each line carries the tool's typed
+        // `tools.<name>(args)` signature instead of a second section naming
+        // the same tools. Bindings are shown only when this turn actually
+        // offers the tool (an agent allow-list can remove it).
+        let codemodeOffered = availableTools.map { available in
+            available.definitions.contains { $0.function.name == CodemodeToolDefinitions.toolName }
+        } ?? true
+        return base + CodemodeCatalog.promptListing(
+            descriptors: deferred, contextTokens: contextTokens,
+            codemodeOffered: codemodeOffered)
     }
 }

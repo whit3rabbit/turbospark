@@ -15,6 +15,11 @@ public struct McpSettingsPaneView: View {
     @State private var expandedServerIDs: Set<UUID> = []
     @State private var testingServerID: UUID?
     @State private var testResultToast: (id: UUID, message: String, isError: Bool)?
+    /// Backed by the same `UserDefaults` key `CodemodeSettings.isEnabled`
+    /// reads. A `Binding(get:set:)` over `UserDefaults` is invisible to
+    /// SwiftUI, so the switch never redrew after a tap; `@AppStorage` is
+    /// observed and invalidates this view.
+    @AppStorage(CodemodeSettings.storageKey) private var codemodeEnabled = false
 
     public init(model: AppModel) {
         self.model = model
@@ -96,15 +101,13 @@ public struct McpSettingsPaneView: View {
         }
     }
 
-    /// Opt-in codemode scripting. The flag is read fresh through the
-    /// binding so catalog advertisement and execution agree on the value,
-    /// and changes land on the next turn like the rest of this pane.
+    /// Opt-in codemode scripting. Catalog advertisement and execution both
+    /// read `CodemodeSettings.isEnabled`, which is this same `UserDefaults`
+    /// key, so they agree with the switch; changes land on the next turn like
+    /// the rest of this pane.
     private var codemodeFeatureToggle: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Toggle(isOn: Binding(
-                get: { CodemodeSettings.isEnabled },
-                set: { CodemodeSettings.setEnabled($0) }
-            )) {
+            Toggle(isOn: $codemodeEnabled) {
                 Text("Codemode", bundle: .module)
                     .themedFont(.callout, weight: .medium)
             }
@@ -411,9 +414,7 @@ public struct McpSettingsPaneView: View {
         let result = await model.testMcpServer(server)
         switch result {
         case .success(let tools):
-            var updated = server
-            updated.discoveredTools = tools
-            model.updateGlobalMcpServer(updated)
+            model.setGlobalMcpDiscoveredTools(id: server.id, tools: tools, transport: server.transport)
             testResultToast = (id: server.id, message: "Connected: Discovered \(tools.count) tools.", isError: false)
         case .failure(let error):
             testResultToast = (id: server.id, message: "Error: \(error.localizedDescription)", isError: true)

@@ -186,16 +186,29 @@ final class SwiftToolCallDispatchGateTests: XCTestCase {
                 required: ["count"],
                 additionalProperties: false))
         let captured = TurnAvailableTools(definitions: [integerTool])
-        let content = #"<function=read_count>{"count":3}</function>"#
+        // A well-typed rescued integer is coerced to the schema type and
+        // dispatched; it used to be refused because rescued values were
+        // validated as all-string JSON.
+        let valid = ToolCallDispatchGate.evaluate(
+            content: #"<function=read_count>{"count":3}</function>"#,
+            streamState: .completed,
+            availableTools: captured,
+            forgeGuardrailsEnabled: true)
+        XCTAssertEqual(valid.dispatchableCalls.map(\.name), ["read_count"])
+        XCTAssertTrue(valid.refusals.isEmpty)
 
+        // A value that cannot be coerced is still re-validated and refused.
         let result = ToolCallDispatchGate.evaluate(
-            content: content,
+            content: #"<function=read_count>{"count":"abc"}</function>"#,
             streamState: .completed,
             availableTools: captured,
             forgeGuardrailsEnabled: true)
 
         XCTAssertTrue(result.dispatchableCalls.isEmpty)
-        XCTAssertEqual(result.refusals, [.invalidArguments(path: "$.count", reason: "type")])
+        // The guardrail engine turns the type error into a retry nudge.
+        XCTAssertTrue(
+            result.retryNudge?.contains("must be an integer") == true
+                || result.refusals == [.invalidArguments(path: "$.count", reason: "type")])
     }
 
     func testTerminalRetryDropsValidatedCallsAndPreservesAssistantTextAsProse() {

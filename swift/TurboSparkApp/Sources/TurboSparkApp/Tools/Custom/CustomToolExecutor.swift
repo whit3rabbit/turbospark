@@ -2,12 +2,40 @@ import Foundation
 
 /// Executor responsible for running user-defined custom tools.
 public enum CustomToolExecutor {
+    /// The scrubbed baseline a custom tool starts from. The child used to get
+    /// only the tool's own `environment`, i.e. no PATH or LANG, so "npm test"
+    /// or "brew list" failed with "command not found" while the same command
+    /// worked through run_command. Still an allowlist: no secrets inherited.
+    static func baseEnvironment(parent: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        var env: [String: String] = [:]
+        for key in ["HOME", "LANG", "TMPDIR"] {
+            if let value = parent[key] { env[key] = value }
+        }
+        // A Finder launch inherits only the system PATH; add the Homebrew
+        // locations a developer's tools live in.
+        var entries: [String] = []
+        for dir in (parent["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin").components(separatedBy: ":")
+            + ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+        where !dir.isEmpty && !entries.contains(dir) {
+            entries.append(dir)
+        }
+        env["PATH"] = entries.joined(separator: ":")
+        env["LANG"] = env["LANG"].flatMap { $0.isEmpty ? nil : $0 } ?? "en_US.UTF-8"
+        return env
+    }
+
     /// Executes a custom tool call with argument interpolation and process isolation.
     public static func execute(
         tool: CustomToolDefinition,
-        arguments: [String: String],
+        arguments rawArguments: [String: String],
         projectRootURL: URL
     ) async throws -> String {
+        // Only declared parameters take part in substitution and the
+        // environment. An undeclared model-supplied key (say "home") would
+        // otherwise turn a template's `$HOME` into `${TOOL_ARG_HOME}` and let
+        // the model choose where the tool writes.
+        let declared = Set(tool.parameters.properties?.keys.map { $0 } ?? [])
+        let arguments = rawArguments.filter { declared.contains($0.key) }
         switch tool.execution.type {
         case .command:
             guard var cmd = tool.execution.command else {
@@ -18,7 +46,8 @@ public enum CustomToolExecutor {
             // placeholder sites. The renderer preserves the template's quote
             // context without ever putting a value into `zsh -c` source.
             cmd = substituteArguments(into: cmd, arguments: arguments)
-            var environment = tool.execution.environment ?? [:]
+            var environment = baseEnvironment()
+            for (key, val) in tool.execution.environment ?? [:] { environment[key] = val }
             for (key, val) in arguments {
                 environment["TOOL_ARG_\(environmentKey(for: key))"] = val
             }
@@ -31,6 +60,7 @@ public enum CustomToolExecutor {
                 timeoutSeconds: timeout
             )
             let combined = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+            try failIfUnsuccessful(result, toolName: tool.name, output: combined, timeout: timeout)
             if combined.isEmpty {
                 return "(Command finished with exit code \(result.exitCode))"
             }
@@ -59,14 +89,16 @@ public enum CustomToolExecutor {
             }
 
             let interpreter = tool.execution.scriptInterpreter ?? "/bin/zsh"
+            let scriptTimeout = tool.execution.timeoutSeconds ?? 30.0
             let result = try await ProcessExecutor.run(
                 executableURL: URL(fileURLWithPath: interpreter),
                 arguments: [scriptFile.path] + args,
                 currentDirectoryURL: projectRootURL,
-                environment: tool.execution.environment ?? [:],
-                timeoutSeconds: tool.execution.timeoutSeconds ?? 30.0
+                environment: baseEnvironment().merging(tool.execution.environment ?? [:]) { _, declared in declared },
+                timeoutSeconds: scriptTimeout
             )
             let combined = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+            try failIfUnsuccessful(result, toolName: tool.name, output: combined, timeout: scriptTimeout)
             if combined.isEmpty {
                 return "(Script executed with exit code \(result.exitCode))"
             }
@@ -83,13 +115,32 @@ public enum CustomToolExecutor {
                 for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
             }
             req.httpBody = try JSONSerialization.data(withJSONObject: arguments, options: [])
+            // URLSession's defaults are 60 s idle and 7 days overall, so a
+            // slow-drip endpoint held the turn; honor the tool's own limit.
+            req.timeoutInterval = tool.execution.timeoutSeconds ?? 30.0
             let (data, response) = try await URLSession.shared.data(for: req)
-            let body = String(decoding: data, as: UTF8.self)
+            // A multi-megabyte body would otherwise land whole in the model context.
+            let body = AppToolRegistry.compactOutput(String(decoding: data, as: UTF8.self))
             if let http = response as? HTTPURLResponse {
                 return "HTTP \(http.statusCode):\n\(body)"
             }
             return body
         }
+    }
+
+    /// A non-zero exit or a timeout is a failure the model must see as one;
+    /// returning partial output as a normal result read as success.
+    private static func failIfUnsuccessful(
+        _ result: ProcessExecutor.Output, toolName: String, output: String, timeout: TimeInterval
+    ) throws {
+        guard result.timedOut || result.exitCode != 0 else { return }
+        let headline = result.timedOut
+            ? "Custom tool '\(toolName)' timed out after \(Int(timeout))s and was terminated"
+            : "Custom tool '\(toolName)' exited with status \(result.exitCode)"
+        let detail = output.isEmpty ? "" : ":\n\(AppToolRegistry.compactOutput(output))"
+        throw NSError(
+            domain: "TurboSparkTool", code: 33,
+            userInfo: [NSLocalizedDescriptionKey: headline + detail])
     }
 
     /// Rewrites `{{key}}`, `${key}` and `$KEY` in a shell command template to

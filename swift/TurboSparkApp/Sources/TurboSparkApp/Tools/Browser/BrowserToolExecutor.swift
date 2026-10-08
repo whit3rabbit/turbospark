@@ -73,12 +73,25 @@ public enum BrowserToolExecutor {
         }
 
         let approvalMatchesOrigin = runtime.permissionContext?.origin == contextOrigin
+        // The caller's `currentActionApproved` covers the origin it showed the
+        // user. For a navigation that is the raw `url` argument's origin; if it
+        // differs from the destination parsed here (for example a padded URL),
+        // the approval does not transfer.
+        let callerApprovalApplies: Bool
+        if case .navigate = command {
+            let rawOrigin = call.arguments["url"]
+                .flatMap { URL(string: $0) }
+                .flatMap { BrowserOrigin(url: $0) }
+            callerApprovalApplies = currentActionApproved && rawOrigin == contextOrigin
+        } else {
+            callerApprovalApplies = currentActionApproved
+        }
         let browserContext = BrowserPermissionContext(
             origin: contextOrigin,
             owner: .agent,
-            currentActionApproved: approvalMatchesOrigin
-                && (runtime.permissionContext?.currentActionApproved ?? false)
-                || currentActionApproved)
+            currentActionApproved: (approvalMatchesOrigin
+                && (runtime.permissionContext?.currentActionApproved ?? false))
+                || callerApprovalApplies)
         var authorizedCall = call
         authorizedCall.category = .browser
         authorizedCall.riskAssessment = ToolRiskClassifier.assessRisk(

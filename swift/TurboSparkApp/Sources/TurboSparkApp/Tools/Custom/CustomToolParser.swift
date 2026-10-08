@@ -105,9 +105,19 @@ public enum CustomToolParser {
 
         var schema = JSONSchema.emptyObject()
         if let paramsDict = dict["parameters"] as? [String: Any],
-           let paramsData = try? JSONSerialization.data(withJSONObject: paramsDict, options: []),
-           let decodedSchema = try? JSONDecoder().decode(JSONSchema.self, from: paramsData) {
-            schema = decodedSchema
+           let paramsData = try? JSONSerialization.data(withJSONObject: paramsDict, options: []) {
+            if let decodedSchema = try? JSONDecoder().decode(JSONSchema.self, from: paramsData) {
+                schema = decodedSchema
+            } else if let json = String(data: paramsData, encoding: .utf8) {
+                // The strict decode rejects ordinary schemas (a numeric
+                // `default`, a type union, a property without a type) and the
+                // empty schema this used to substitute told the model the
+                // tool takes no parameters and let the gate validate
+                // nothing. This converter tolerates numeric defaults and marks
+                // shapes it cannot represent, so the gate refuses the call
+                // rather than silently skipping validation.
+                schema = AppToolCatalogMcp.parameterSchema(from: json)
+            }
         }
 
         let isEnabled = (dict["isEnabled"] as? Bool) ?? (dict["enabled"] as? Bool) ?? true

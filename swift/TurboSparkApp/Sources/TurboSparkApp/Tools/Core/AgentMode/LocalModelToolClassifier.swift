@@ -1,26 +1,6 @@
 import Foundation
 import TurboSpark
 
-/// Whether the generate task of one classification is still running. A plain
-/// lock over a bool: the timeout sleeper consults it so `session.cancel()`
-/// can only fire against a live generate.
-final class GenerationDone: @unchecked Sendable {
-    private let lock = NSLock()
-    private var done = false
-
-    func mark() {
-        lock.lock()
-        done = true
-        lock.unlock()
-    }
-
-    var isDone: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return done
-    }
-}
-
 /// The permission classifier backed by the loaded chat model
 /// (`swift/docs/SWIFT_AGENT_MODE.md`).
 ///
@@ -133,15 +113,15 @@ public struct LocalModelToolClassifier: ToolCallClassifying {
         ]
     }
 
-    /// Drains one generate under the timeout. On timeout the session's
-    /// current generation is cancelled -- safe because this classifier owns
-    /// the idle queue while it runs -- and the verdict reads as unavailable.
-    ///
-    /// The done-flag keeps the cancel pointed at OUR generate: the sleeper
-    /// only cancels while the generate task is provably still running, so a
-    /// timeout expiring against a finished generate cannot leak
-    /// `session.cancel()` into whatever queued next (a background agent's
-    /// turn shares this queue).
+    /// Drains one generate under the timeout. On timeout the group is
+    /// cancelled, which cancels the generate child; its stream termination
+    /// reaches `QueuedGenerationStream.Request.cancel()`, which cancels in
+    /// Rust only when THIS request is the one running, and otherwise stops it
+    /// from ever starting. There is deliberately no `session.cancel()`: the
+    /// session is shared, and a session-wide cancel at the timeout ended an
+    /// unrelated turn (the user's chat reply, a background agent) while this
+    /// classifier's own generate, still queued, never ran. The verdict reads
+    /// as unavailable.
     func generate(messages: [ChatMessage]) async -> String {
         guard let session else { return "" }
         var options = GenerateOptions()
@@ -153,12 +133,10 @@ public struct LocalModelToolClassifier: ToolCallClassifying {
         options.maxNewTokens = Self.maxVerdictTokens
         options.reasoning = .off
 
-        let done = GenerationDone()
         return await withTaskGroup(
             of: String.self, returning: String.self
         ) { group in
             group.addTask {
-                defer { done.mark() }
                 var text = ""
                 do {
                     for try await event in session.generate(messages, options: options) {
@@ -175,9 +153,6 @@ public struct LocalModelToolClassifier: ToolCallClassifying {
             }
             group.addTask {
                 try? await Task.sleep(nanoseconds: UInt64(Self.timeout * 1_000_000_000))
-                if !Task.isCancelled, !done.isDone {
-                    session.cancel()
-                }
                 return ""
             }
             let first = await group.next() ?? ""

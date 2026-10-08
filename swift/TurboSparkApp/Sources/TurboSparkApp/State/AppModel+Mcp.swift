@@ -43,6 +43,23 @@ extension AppModel {
         }
     }
 
+    /// Stores the tools a connection test discovered, merged into the CURRENT
+    /// config. A test can run for a minute while the user toggles or edits the
+    /// server; writing back the pre-test copy would silently revert that.
+    /// Skips the write when the server is gone or its transport changed, since
+    /// the tools then describe a different server.
+    @discardableResult
+    public func setGlobalMcpDiscoveredTools(
+        id: UUID, tools: [McpDiscoveredTool], transport: McpTransportSpec
+    ) -> Bool {
+        guard let index = globalMcpServers.firstIndex(where: { $0.id == id }),
+            globalMcpServers[index].transport == transport
+        else { return false }
+        globalMcpServers[index].discoveredTools = tools
+        persistGlobalMcpServers()
+        return true
+    }
+
     /// Deletes a global MCP server by ID.
     public func deleteGlobalMcpServer(id: UUID) {
         if let removed = globalMcpServers.first(where: { $0.id == id }) {

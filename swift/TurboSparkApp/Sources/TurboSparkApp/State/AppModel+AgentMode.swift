@@ -166,9 +166,20 @@ extension AppModel {
     /// The recent user text, capped, so the classifier can weigh intent
     /// against the soft-deny list. The last two user messages are the
     /// signal; older turns are the transcript's job, not the verdict's.
+    /// Only rows the human typed count as intent. Task notifications, peer or
+    /// coordinator input, goal check-ins, Stop-hook reasons, guardrail nudges
+    /// and bang output are user-ROLE rows but carry third-party text, so a
+    /// fetched page could otherwise "request" a soft-denied action.
+    nonisolated static func humanIntentMessages(_ rows: [AppChatMessage]) -> [AppChatMessage] {
+        rows.filter {
+            $0.role == .user && !$0.content.isEmpty && !$0.isSynthetic
+                && ($0.presentationLabel == nil
+                    || $0.presentationLabel == MidTurnInputPresentation.userSteer.label)
+        }
+    }
+
     func recentUserIntent(chatID: UUID) -> String {
-        let userMessages = turnMessages(for: chatID)
-            .filter { $0.role == .user && !$0.content.isEmpty }
+        let userMessages = Self.humanIntentMessages(turnMessages(for: chatID))
             .suffix(2)
             .map { $0.content }
         guard !userMessages.isEmpty else { return "" }

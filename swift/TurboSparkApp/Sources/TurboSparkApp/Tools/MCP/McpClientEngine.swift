@@ -28,6 +28,27 @@ private final class LineBuffer: @unchecked Sendable {
     }
 }
 
+/// Capped tail of a child's stderr, so a server that dies at startup (missing
+/// API key, bad args, `env: node: No such file`) can be reported with its own
+/// message instead of a generic timeout.
+private final class StderrTail: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bytes = Data()
+    private static let cap = 4096
+
+    func append(_ chunk: Data) {
+        lock.lock(); defer { lock.unlock() }
+        bytes.append(chunk)
+        if bytes.count > Self.cap { bytes = bytes.suffix(Self.cap) }
+    }
+
+    var text: String {
+        lock.lock(); defer { lock.unlock() }
+        return String(decoding: bytes, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 /// JSON-RPC 2.0 Client and Process Coordinator for Model Context Protocol servers.
 public actor McpClientEngine {
     public static let shared = McpClientEngine()
@@ -106,14 +127,14 @@ public actor McpClientEngine {
         envPassthrough: [String],
         workingDirectory: URL?,
         errorCode: Int
-    ) throws -> (process: Process, stdinPipe: Pipe, stdoutBuffer: LineBuffer) {
+    ) throws -> (process: Process, stdinPipe: Pipe, stdoutBuffer: LineBuffer, stderrTail: StderrTail) {
         let process = Process()
         // An unresolvable command is refused by name here rather than handed
         // to `/usr/bin/env` to look up at spawn time. The old fallback made
         // "this server's command does not exist" indistinguishable from
         // "this server started and then failed", and put the lookup somewhere
         // this process could neither observe nor report.
-        guard let resolvedExecutable = Self.resolveExecutablePath(command) else {
+        guard let resolvedExecutable = Self.resolveExecutablePath(command, relativeTo: workingDirectory) else {
             throw NSError(
                 domain: "McpClientEngine", code: errorCode,
                 userInfo: [
@@ -152,10 +173,13 @@ public actor McpClientEngine {
                 stdoutBuffer.append(chunk)
             }
         }
+        let stderrTail = StderrTail()
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
             if chunk.isEmpty {
                 handle.readabilityHandler = nil
+            } else {
+                stderrTail.append(chunk)
             }
         }
 
@@ -165,7 +189,7 @@ public actor McpClientEngine {
             throw NSError(domain: "McpClientEngine", code: errorCode, userInfo: [NSLocalizedDescriptionKey: "Failed to spawn MCP server '\(serverName)': \(error.localizedDescription)"])
         }
 
-        return (process, stdinPipe, stdoutBuffer)
+        return (process, stdinPipe, stdoutBuffer, stderrTail)
     }
 
     private func discoverToolsViaStdio(
@@ -177,7 +201,7 @@ public actor McpClientEngine {
         workingDirectory: URL?,
         timeoutSeconds: TimeInterval
     ) async throws -> [McpDiscoveredTool] {
-        let (process, stdinPipe, stdoutBuffer) = try spawnStdioServer(
+        let (process, stdinPipe, stdoutBuffer, stderrTail) = try spawnStdioServer(
             serverName: serverName, command: command, args: args, env: env,
             envPassthrough: envPassthrough,
             workingDirectory: workingDirectory, errorCode: 1
@@ -214,7 +238,10 @@ public actor McpClientEngine {
         try sendJsonRpc(initRequest, to: stdinPipe)
 
         // Read response
-        _ = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: 1, timeoutSeconds: timeoutSeconds)
+        let initResponse = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: 1, timeoutSeconds: timeoutSeconds, process: process, stderrTail: stderrTail, serverName: serverName)
+        // A JSON-RPC error here (for example a missing token) used to be
+        // dropped, so the settings test showed success with zero tools.
+        try Self.throwIfRpcError(initResponse, serverName: serverName, step: "initialize")
 
         // Step 2: Send `notifications/initialized`
         let initializedNotification: [String: Any] = [
@@ -224,20 +251,29 @@ public actor McpClientEngine {
         ]
         try sendJsonRpc(initializedNotification, to: stdinPipe)
 
-        // Step 3: Send `tools/list`
-        let toolsRequest: [String: Any] = [
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": [:] as [String: Any]
-        ]
-        try sendJsonRpc(toolsRequest, to: stdinPipe)
+        // Step 3: Send `tools/list`, following `nextCursor` pages. The page
+        // count is capped so a server that always returns a cursor cannot
+        // keep discovery running forever.
+        var toolsArray: [[String: Any]] = []
+        var cursor: String?
+        for page in 0..<20 {
+            let requestID = 2 + page
+            var params: [String: Any] = [:]
+            if let cursor { params["cursor"] = cursor }
+            let toolsRequest: [String: Any] = [
+                "jsonrpc": "2.0",
+                "id": requestID,
+                "method": "tools/list",
+                "params": params
+            ]
+            try sendJsonRpc(toolsRequest, to: stdinPipe)
 
-        let toolsResponse = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: 2, timeoutSeconds: timeoutSeconds)
-
-        guard let result = toolsResponse["result"] as? [String: Any],
-              let toolsArray = result["tools"] as? [[String: Any]] else {
-            return []
+            let toolsResponse = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: requestID, timeoutSeconds: timeoutSeconds, process: process, stderrTail: stderrTail, serverName: serverName)
+            try Self.throwIfRpcError(toolsResponse, serverName: serverName, step: "tools/list")
+            guard let result = toolsResponse["result"] as? [String: Any] else { break }
+            toolsArray.append(contentsOf: (result["tools"] as? [[String: Any]]) ?? [])
+            guard let next = result["nextCursor"] as? String, !next.isEmpty, next != cursor else { break }
+            cursor = next
         }
 
         var discovered: [McpDiscoveredTool] = []
@@ -254,7 +290,9 @@ public actor McpClientEngine {
             if let rawAnnotations = rawTool["annotations"] as? [String: Any] {
                 annotations = McpToolAnnotations(
                     title: rawAnnotations["title"] as? String,
-                    readOnly: rawAnnotations["readOnly"] as? Bool,
+                    // The MCP spec key is `readOnlyHint`; `readOnly` is kept
+                    // for servers that used the short form.
+                    readOnly: (rawAnnotations["readOnlyHint"] as? Bool) ?? (rawAnnotations["readOnly"] as? Bool),
                     destructiveHint: rawAnnotations["destructiveHint"] as? Bool,
                     idempotentHint: rawAnnotations["idempotentHint"] as? Bool,
                     openWorldHint: rawAnnotations["openWorldHint"] as? Bool
@@ -264,6 +302,16 @@ public actor McpClientEngine {
         }
 
         return discovered
+    }
+
+    /// Throws with the server's message when a JSON-RPC response carries `error`.
+    static func throwIfRpcError(_ response: [String: Any], serverName: String, step: String) throws {
+        guard let error = response["error"] else { return }
+        let message = (error as? [String: Any])?["message"] as? String ?? "\(error)"
+        throw NSError(
+            domain: "TurboSparkMcp", code: 8,
+            userInfo: [NSLocalizedDescriptionKey:
+                "MCP server '\(serverName)' rejected \(step): \(String(message.prefix(300)))"])
     }
 
     private func callToolViaStdio(
@@ -277,7 +325,7 @@ public actor McpClientEngine {
         workingDirectory: URL?,
         timeoutSeconds: TimeInterval
     ) async throws -> String {
-        let (process, stdinPipe, stdoutBuffer) = try spawnStdioServer(
+        let (process, stdinPipe, stdoutBuffer, stderrTail) = try spawnStdioServer(
             serverName: serverName, command: command, args: args, env: env,
             envPassthrough: envPassthrough,
             workingDirectory: workingDirectory, errorCode: 2
@@ -307,7 +355,7 @@ public actor McpClientEngine {
             ]
         ]
         try sendJsonRpc(initRequest, to: stdinPipe)
-        _ = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: 1, timeoutSeconds: timeoutSeconds)
+        _ = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: 1, timeoutSeconds: timeoutSeconds, process: process, stderrTail: stderrTail, serverName: serverName)
 
         let initializedNotification: [String: Any] = [
             "jsonrpc": "2.0",
@@ -328,7 +376,7 @@ public actor McpClientEngine {
         ]
         try sendJsonRpc(callRequest, to: stdinPipe)
 
-        let callResponse = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: 2, timeoutSeconds: timeoutSeconds)
+        let callResponse = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: 2, timeoutSeconds: timeoutSeconds, process: process, stderrTail: stderrTail, serverName: serverName)
 
         if let errorDict = callResponse["error"] as? [String: Any],
            let errorMsg = errorDict["message"] as? String {
@@ -433,10 +481,22 @@ public actor McpClientEngine {
     /// and the timeout never fires. Polling a buffer that something else is
     /// filling concurrently keeps this loop's own tick honoring the deadline
     /// regardless of the child's I/O timing.
-    private func readJsonRpcResponse(from buffer: LineBuffer, expectedId: Int, timeoutSeconds: TimeInterval) async throws -> [String: Any] {
+    private func readJsonRpcResponse(
+        from buffer: LineBuffer,
+        expectedId: Int,
+        timeoutSeconds: TimeInterval,
+        process: Process,
+        stderrTail: StderrTail,
+        serverName: String
+    ) async throws -> [String: Any] {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
+        // Set when the child is first seen dead. The stdout/stderr handlers run
+        // on another thread and can lag the exit by a few ticks, so keep
+        // draining briefly before giving up instead of failing instantly.
+        var exitedAt: Date?
 
         while Date() < deadline {
+            if exitedAt == nil, !process.isRunning { exitedAt = Date() }
             // Drain every line already buffered before waiting again: a
             // single chunk can contain more than one JSON-RPC message when
             // the server batches its writes, and looking at only the first
@@ -448,10 +508,20 @@ public actor McpClientEngine {
                     return json
                 }
             }
+            if let exitedAt, Date().timeIntervalSince(exitedAt) > 0.25 {
+                let status = process.terminationStatus
+                let tail = stderrTail.text
+                throw NSError(domain: "McpClientEngine", code: 7, userInfo: [NSLocalizedDescriptionKey:
+                    "MCP server '\(serverName)' exited (status \(status)) before answering request \(expectedId)."
+                    + (tail.isEmpty ? "" : " stderr: \(tail)")])
+            }
             try await Task.sleep(nanoseconds: 30_000_000) // 30ms
         }
 
-        throw NSError(domain: "McpClientEngine", code: 5, userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for MCP response (id: \(expectedId))."])
+        let tail = stderrTail.text
+        throw NSError(domain: "McpClientEngine", code: 5, userInfo: [NSLocalizedDescriptionKey:
+            "Timed out waiting for MCP response (id: \(expectedId))."
+            + (tail.isEmpty ? "" : " Server stderr: \(tail)")])
     }
 
     // MARK: - Spawn inputs (pure, so they can be tested without spawning)
@@ -522,7 +592,13 @@ public actor McpClientEngine {
         guard let cwd else { return fallback }
         let expanded = expandPathVariables(cwd).trimmingCharacters(in: .whitespaces)
         guard !expanded.isEmpty else { return fallback }
-        return URL(fileURLWithPath: (expanded as NSString).expandingTildeInPath)
+        let tildeExpanded = (expanded as NSString).expandingTildeInPath
+        // A relative cwd means "relative to the project", not to the app's
+        // own cwd (which is `/` for a Finder launch).
+        if !tildeExpanded.hasPrefix("/"), let fallback {
+            return URL(fileURLWithPath: tildeExpanded, relativeTo: fallback).standardizedFileURL
+        }
+        return URL(fileURLWithPath: tildeExpanded)
     }
 
     /// Expands the same `${HOME}` / `$HOME` spellings a config file may carry.
@@ -541,9 +617,20 @@ public actor McpClientEngine {
     /// Static so the marketplace can ask the same question before installing an
     /// entry. Two spellings of "can this command be launched" would drift, and
     /// the one that drifted would accept a server the spawn then refuses.
-    public static func resolveExecutablePath(_ name: String) -> String? {
-        if name.hasPrefix("/") || name.hasPrefix("./") || name.hasPrefix("../") {
-            return name
+    public static func resolveExecutablePath(_ name: String, relativeTo base: URL? = nil) -> String? {
+        if name.hasPrefix("/") { return name }
+        if name.hasPrefix("~") {
+            let expanded = (name as NSString).expandingTildeInPath
+            return FileManager.default.isExecutableFile(atPath: expanded) ? expanded : nil
+        }
+        if name.contains("/") {
+            // A relative path ("./scripts/x.sh", "node_modules/.bin/server")
+            // is relative to the server's working directory, never to the
+            // app's own cwd. Without a base (the marketplace pre-check) keep
+            // accepting it as before.
+            guard let base else { return name.hasPrefix("./") || name.hasPrefix("../") ? name : nil }
+            let candidate = URL(fileURLWithPath: name, relativeTo: base).standardizedFileURL.path
+            return FileManager.default.isExecutableFile(atPath: candidate) ? candidate : nil
         }
         let commonPaths = [
             "/usr/local/bin",

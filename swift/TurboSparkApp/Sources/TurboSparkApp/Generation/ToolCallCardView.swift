@@ -42,11 +42,22 @@ struct ToolCallCardView: View {
             return ToolCallSummaryInfo(action: presentation.localizedLabel,
                 target: call.arguments["path"] ?? call.arguments["query"] ?? "")
         }
-        return ToolCallDiffFormatter.summarize(callName: call.name, arguments: call.arguments)
+        // The body reads `summary` several times and re-runs for every
+        // streamed token; summarizing a large write splits its whole content.
+        return ToolCallSummaryCache.summary(for: call)
     }
 
     private var isPendingApproval: Bool {
-        call.status == .pendingApproval || (model.pendingToolCall?.id == call.id)
+        // A parked agent batch persists `.pendingApproval` on EVERY member,
+        // but one verdict covers the whole batch and only the primary call's
+        // buttons are wired to it. Showing controls on the others would be
+        // buttons that look live and do nothing.
+        if model.pendingToolCall?.id != call.id,
+            model.pendingBatchCalls?.contains(where: { $0.id == call.id }) == true
+        {
+            return false
+        }
+        return call.status == .pendingApproval || (model.pendingToolCall?.id == call.id)
     }
 
     /// Whether THIS call is the one the turn is parked on, waiting for the
@@ -128,6 +139,14 @@ struct ToolCallCardView: View {
         return ["file-pen", "files"].contains(ToolPresentation.resolve(n).icon)
     }
 
+    private var isMultiEditCall: Bool {
+        ["multiedit", "multi_edit"].contains(call.name.lowercased())
+    }
+
+    private var isHttpRequestCall: Bool {
+        ["http_request", "httprequest"].contains(call.name.lowercased())
+    }
+
     private var isPatchCall: Bool {
         let n = call.name.lowercased()
         return n == "apply_patch" || n == "applypatch"
@@ -190,7 +209,14 @@ struct ToolCallCardView: View {
                         patchPreview
                     } else if isWriteCall {
                         fileWritePreview
-                    } else if isEditCall {
+                    } else if isMultiEditCall, let summary = ToolApprovalPreviewSummary.multiEditSummary(call.arguments) {
+                        ToolCodeCellView(label: "edits", code: summary, language: "diff")
+                    } else if isHttpRequestCall {
+                        ToolCodeCellView(
+                            label: "request",
+                            code: ToolApprovalPreviewSummary.httpRequestSummary(call.arguments),
+                            language: "http")
+                    } else if isEditCall, !isMultiEditCall {
                         fileEditPreview
                     } else if isWebFetchCall {
                         // Before the read arm: a fetch tool named
@@ -844,7 +870,7 @@ struct ToolCallCardView: View {
                 .themedFont(.small)
                 .foregroundStyle(.appAccent)
 
-            if let url = URL(string: urlString), url.scheme != nil {
+            if let url = ToolPresentation.webLink(urlString) {
                 Link(urlString, destination: url)
                     .font(theme.code(.small, weight: .semibold))
                     .foregroundStyle(.appAccent)
@@ -1125,4 +1151,33 @@ struct ToolCallCardView: View {
         }
         .padding(.top, 4)
     }
+}
+
+/// Memoizes `ToolCallDiffFormatter.summarize` per call id. An entry is reused
+/// only while the call's name and arguments are equal to what produced it, so
+/// a streaming call whose arguments grow recomputes once per change instead
+/// of once per read, and a finished call never recomputes.
+@MainActor
+enum ToolCallSummaryCache {
+    private struct Entry {
+        let name: String
+        let arguments: [String: String]
+        let summary: ToolCallSummaryInfo
+    }
+    private static var entries: [UUID: Entry] = [:]
+    private static let maxEntries = 256
+    static private(set) var computeCount = 0
+
+    static func summary(for call: AppToolCall) -> ToolCallSummaryInfo {
+        if let hit = entries[call.id], hit.name == call.name, hit.arguments == call.arguments {
+            return hit.summary
+        }
+        computeCount += 1
+        let summary = ToolCallDiffFormatter.summarize(callName: call.name, arguments: call.arguments)
+        if entries.count >= maxEntries { entries.removeAll() }
+        entries[call.id] = Entry(name: call.name, arguments: call.arguments, summary: summary)
+        return summary
+    }
+
+    static func reset() { entries.removeAll(); computeCount = 0 }
 }

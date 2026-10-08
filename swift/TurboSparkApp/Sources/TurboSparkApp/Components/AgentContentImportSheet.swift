@@ -315,7 +315,8 @@ public struct AgentContentImportSheet: View {
                 found = Self.scanAgents(
                     projectURL: projectURL, allowSharedRoots: allowSharedRoots)
             case .mcpServers:
-                found = Self.scanMcpServers(existingNames: existingMcpNames)
+                found = Self.scanMcpServers(
+                    existingNames: existingMcpNames, allowSharedRoots: allowSharedRoots)
             }
             DispatchQueue.main.async {
                 self.groups = found
@@ -471,15 +472,20 @@ public struct AgentContentImportSheet: View {
     /// Global MCP servers from other tools' config files. Always imported
     /// into the GLOBAL list, disabled; name collisions against existing
     /// global servers are pre-marked.
-    nonisolated private static func scanMcpServers(existingNames: [String]) -> [CandidateGroup] {
-        ExternalAgentMcpReader.discoverSources().map { source in
+    /// Other agents' global configs live outside the profile; a non-default
+    /// profile is isolated, so (like skills and agents) it sees none of them.
+    nonisolated static func scanMcpServers(
+        existingNames: [String], allowSharedRoots: Bool
+    ) -> [CandidateGroup] {
+        guard allowSharedRoots else { return [] }
+        return ExternalAgentMcpReader.discoverSources().map { source in
             CandidateGroup(
                 id: source.agent.rawValue,
                 label: source.label,
                 items: source.servers.map { server in
                     ImportCandidate(
                         name: server.name,
-                        detail: server.commandSummary,
+                        detail: server.approvalSummary.lines.joined(separator: "  |  "),
                         sourceLocation: source.configPath,
                         alreadyImported: McpServerConfig.nameIsTaken(
                             server.name, among: existingNames),
@@ -518,7 +524,8 @@ public struct AgentContentImportSheet: View {
             }
         case .agents:
             model.importAgent(
-                from: selectedURL, targetScope: importToProjectScope ? .project : .userGlobal)
+                from: selectedURL, targetScope: importToProjectScope ? .project : .userGlobal,
+                projectRootURL: project?.rootDirectoryURL)
         case .mcpServers:
             break
         }
@@ -553,7 +560,8 @@ public struct AgentContentImportSheet: View {
             let scope: AppAgentScope = importToProjectScope ? .project : .userGlobal
             for candidate in selected {
                 guard let source = candidate.agentSource else { continue }
-                model.importAgent(from: source, targetScope: scope)
+                model.importAgent(
+                    from: source, targetScope: scope, projectRootURL: project?.rootDirectoryURL)
             }
         case .mcpServers:
             var imported = 0

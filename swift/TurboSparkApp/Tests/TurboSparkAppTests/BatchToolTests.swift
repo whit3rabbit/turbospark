@@ -135,4 +135,37 @@ final class BatchToolTests: XCTestCase {
         XCTAssertTrue(result.output.contains("Nested call requires separate approval"))
         XCTAssertTrue(result.output.contains("1 failed"))
     }
+
+    func testBatchChildCallMcpToolHonorsDenyRule() async throws {
+        let project = AppProject(
+            name: "batch_test",
+            permissions: AppProjectPermissions(
+                mode: .auto, mcp: .allow, automation: .allow,
+                mcpDenyRules: ["mcp__github__delete_repository"]))
+        let batchArgs = [
+            "tool_calls": """
+            [{"tool":"call_mcp_tool","parameters":{"serverName":"github","toolName":"delete_repository","repo":"x"}}]
+            """
+        ]
+
+        let result = await AppToolRegistry.execute(
+            call: AppToolCall(name: "batch", arguments: batchArgs, category: .automation),
+            in: project)
+
+        XCTAssertTrue(result.output.contains("1 failed"), result.output)
+        XCTAssertTrue(result.output.contains("is denied by a project permission rule"), result.output)
+    }
+
+    func testProjectlessBatchChildHonorsTheChatsAskMode() async throws {
+        let batchArgs = [
+            "tool_calls": """
+            [{"tool":"web_fetch","parameters":{"url":"https://example.invalid/"}}]
+            """
+        ]
+        let result = await AppToolRegistry.execute(
+            call: AppToolCall(name: "batch", arguments: batchArgs, category: .automation),
+            in: nil, fallbackMode: .ask)
+
+        XCTAssertTrue(result.output.contains("Nested call requires separate approval"), result.output)
+    }
 }

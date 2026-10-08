@@ -99,16 +99,23 @@ public enum ToolSearchCatalog {
         return result.sorted { $0.name < $1.name }
     }
 
+    /// The heading and discovery instructions that open the deferred-tool
+    /// listing. Shared with `CodemodeCatalog.promptListing`, which adds the
+    /// codemode bindings under the same heading instead of a second listing.
+    public static func promptHeaderLines() -> [String] {
+        [
+            "",
+            "## Deferred MCP Tools",
+            "Dynamic MCP tools are discoverable through `tool_search`. Use `tool_describe` for the full schema, then `tool_call` with the exact name and a JSON arguments object. Calls that require interactive approval must be made as the direct MCP tool in the main conversation.",
+        ]
+    }
+
     public static func promptListing(
         descriptors: [DeferredToolDescriptor], contextTokens: Int? = nil
     ) -> String {
         let contextLimit = contextTokens.map { max(600, $0 / 20) } ?? listingCharacterLimit
         let limit = min(listingCharacterLimit, contextLimit)
-        var lines = [
-            "",
-            "## Deferred MCP Tools",
-            "Dynamic MCP tools are discoverable through `tool_search`. Use `tool_describe` for the full schema, then `tool_call` with the exact name and a JSON arguments object. Calls that require interactive approval must be made as the direct MCP tool in the main conversation.",
-        ]
+        var lines = promptHeaderLines()
         for descriptor in descriptors {
             let description = shortDescription(descriptor.description)
             let line = "- `" + descriptor.name + "`: " + description

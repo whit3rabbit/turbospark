@@ -156,6 +156,34 @@ final class SubagentBatchRoutingTests: XCTestCase {
         }
     }
 
+    func testAPreToolUseAskParksTheBatchEvenWhenThePresetWouldAllowIt() async {
+        let chatID = makeChat(appModel)
+        let store = AppHookStore.shared
+        let hook = AppHookCommand(
+            name: "Ask Agents",
+            event: .preToolUse,
+            type: .command,
+            command: "echo '{\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"confirm agents\"}'",
+            matcher: "agent",
+            sourceType: .custom)
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
+
+        let first = agentCall("first task")
+        let second = agentCall("second task")
+        await appModel.handleExtractedToolCalls(
+            [first, second], fullContent: "reply", reasoning: "",
+            result: generationResult(),
+            currentStep: 0, chatID: chatID, project: permissiveProject())
+
+        XCTAssertEqual(appModel.pendingBatchCalls?.count, 2,
+                       "The hook's ask must park the batch; permissive `.allow` ran it with no card.")
+        XCTAssertTrue(
+            appModel.pendingToolCall?.riskAssessment?.reasons.contains("confirm agents") ?? false,
+            "The card must carry the hook's reason.")
+        XCTAssertTrue(lastMessage?.toolResults.isEmpty ?? false, "Nothing ran.")
+    }
+
     func testApprovingAParkedBatchRunsEveryCallAndUpdatesInPlace() async throws {
         let chatID = makeChat(appModel)
         let dir = FileManager.default.temporaryDirectory

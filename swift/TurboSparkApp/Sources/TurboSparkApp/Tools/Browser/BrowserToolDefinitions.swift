@@ -116,10 +116,10 @@ public enum BrowserToolDefinitions {
                 required: ["direction"])),
         OpenAITool.function(
             name: "browser_screenshot",
-            description: "Capture a screenshot of the controlled browser tab.",
-            parameters: object([
-                "full_page": .boolean(description: "Capture the full page instead of the viewport."),
-            ])),
+            // Viewport only: the WebKit backend rejects full-page capture as
+            // unsupported, which read to the model as "screenshots do not work".
+            description: "Capture a screenshot of the visible viewport of the controlled browser tab.",
+            parameters: object([:])),
         OpenAITool.function(
             name: "browser_snapshot",
             description: "Read a bounded, value-masked snapshot of the controlled browser tab.",

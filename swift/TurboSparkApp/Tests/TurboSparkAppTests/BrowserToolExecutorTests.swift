@@ -193,6 +193,35 @@ final class BrowserToolExecutorTests: XCTestCase {
         XCTAssertEqual(commandsAfterOtherProject.count, 1, "An ask must not invoke the browser backend.")
     }
 
+    func testApprovalForOneOriginDoesNotCoverPaddedNavigationToAnother() async throws {
+        let origin = try XCTUnwrap(BrowserOrigin(origin: "https://docs.example"))
+        let project = AppProject(
+            name: "Ask first",
+            permissions: AppProjectPermissions(browser: .allow))
+        let recorder = BrowserCommandRecorder()
+        let runtime = BrowserToolRuntime(
+            availability: enabledAvailability(),
+            permissionContext: BrowserPermissionContext(origin: origin),
+            perform: { command in
+                await recorder.append(command)
+                throw BrowserControlError.engineCrashed
+            })
+        // The card/approval covers the agent tab's origin; the padded URL
+        // trims to a different origin.
+        let call = AppToolCall(
+            name: "browser_navigate",
+            arguments: ["url": " http://169.254.169.254/"],
+            category: .browser,
+            riskAssessment: .safe)
+        let outcome = await BrowserToolExecutor.execute(
+            call: call, in: project, runtime: runtime, currentActionApproved: true)
+        guard case .pendingApproval = outcome else {
+            return XCTFail("Approval for docs.example must not cover another origin, got \(outcome).")
+        }
+        let commands = await recorder.commands()
+        XCTAssertTrue(commands.isEmpty)
+    }
+
     func testExplicitCurrentActionApprovalRunsOnlyTheRequestedBrowserAction() async throws {
         let origin = try XCTUnwrap(BrowserOrigin(origin: "https://example.test"))
         let project = AppProject(

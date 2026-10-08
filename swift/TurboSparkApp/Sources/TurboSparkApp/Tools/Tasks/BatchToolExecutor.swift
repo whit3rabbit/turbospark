@@ -40,6 +40,11 @@ public enum BatchToolExecutor {
         case int(Int)
         case double(Double)
         case bool(Bool)
+        /// Nested containers are decoded structurally (not flattened to ""),
+        /// then re-encoded as compact JSON text exactly as the non-batch path
+        /// flattens container arguments.
+        indirect case array([AnyCodableValue])
+        indirect case object([String: AnyCodableValue])
 
         var asString: String {
             switch self {
@@ -47,6 +52,11 @@ public enum BatchToolExecutor {
             case .int(let i): return String(i)
             case .double(let d): return String(d)
             case .bool(let b): return String(b)
+            case .array, .object:
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+                guard let data = try? encoder.encode(self) else { return "" }
+                return String(decoding: data, as: UTF8.self)
             }
         }
 
@@ -60,6 +70,10 @@ public enum BatchToolExecutor {
                 self = .bool(boolVal)
             } else if let doubleVal = try? container.decode(Double.self) {
                 self = .double(doubleVal)
+            } else if let array = try? container.decode([AnyCodableValue].self) {
+                self = .array(array)
+            } else if let object = try? container.decode([String: AnyCodableValue].self) {
+                self = .object(object)
             } else {
                 self = .string("")
             }
@@ -72,6 +86,8 @@ public enum BatchToolExecutor {
             case .int(let i): try container.encode(i)
             case .double(let d): try container.encode(d)
             case .bool(let b): try container.encode(b)
+            case .array(let a): try container.encode(a)
+            case .object(let o): try container.encode(o)
             }
         }
     }
@@ -100,7 +116,8 @@ public enum BatchToolExecutor {
         project: AppProject?,
         chatID: UUID? = nil,
         subagentDepth: Int = 0,
-        webToolsEnabled: Bool = true
+        webToolsEnabled: Bool = true,
+        fallbackMode: AppPermissionMode? = nil
     ) async throws -> String {
         let items = try parseItems(from: arguments)
         guard !items.isEmpty else {
@@ -134,6 +151,7 @@ public enum BatchToolExecutor {
         var results = [(Int, String, AppToolResult)]()
         results.reserveCapacity(items.count)
 
+        let gate = MutationGate()
         await withTaskGroup(of: (Int, String, AppToolResult).self) { group in
             for (idx, item) in items.enumerated() {
                 group.addTask {
@@ -162,7 +180,8 @@ public enum BatchToolExecutor {
                     let sessionApproved = await SessionApprovalStore.shared.isApproved(
                         sessionID: sessionID, toolName: call.name, command: call.shellCommand)
                     switch AppToolPermissionEngine.evaluate(
-                        call: call, project: project, sessionApproved: sessionApproved)
+                        call: call, project: project, sessionApproved: sessionApproved,
+                        fallbackMode: fallbackMode)
                     {
                     case .deny(let reason):
                         return (idx, item.tool, refused(call, reason: reason))
@@ -189,6 +208,12 @@ public enum BatchToolExecutor {
                         break
                     }
 
+                    // Mutating children run one at a time. Two edit_file calls on
+                    // one path otherwise both read the same original and the
+                    // second write drops the first edit while both report
+                    // SUCCESS. Read-only children stay parallel.
+                    let mutates = call.category == .fileWrite || call.category == .terminal
+                    if mutates { await gate.acquire() }
                     let res = await AppToolRegistry.execute(
                         call: call,
                         in: project,
@@ -196,6 +221,7 @@ public enum BatchToolExecutor {
                         subagentDepth: subagentDepth,
                         webToolsEnabled: webToolsEnabled
                     )
+                    if mutates { await gate.release() }
                     var hookResults = await AppHookExecutionEngine.shared.dispatch(
                         event: .postToolUse,
                         sessionID: sessionID,
@@ -266,5 +292,27 @@ public enum BatchToolExecutor {
             output: "Error: Nested batch call '\(call.name)' was refused. \(reason)",
             isError: true,
             durationSeconds: 0)
+    }
+}
+
+/// FIFO mutual exclusion for the mutating children of one batch.
+actor MutationGate {
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if busy {
+            await withCheckedContinuation { waiters.append($0) }
+        } else {
+            busy = true
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            busy = false
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 }

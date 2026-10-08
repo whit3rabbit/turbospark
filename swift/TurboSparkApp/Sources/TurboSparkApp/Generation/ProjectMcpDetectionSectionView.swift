@@ -97,10 +97,10 @@ struct ProjectMcpDetectionSectionView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(server.name)
                                 .themedCode(.small, weight: .semibold)
-                            Text(server.commandSummary)
+                            Text(verbatim: server.approvalSummary.text)
                                 .themedFont(.tiny)
                                 .foregroundStyle(.appSecondary)
-                                .lineLimit(1)
+                                .lineLimit(5)
                         }
                         Spacer()
                         let alreadyImported = projectServers.contains { $0.name == server.name }

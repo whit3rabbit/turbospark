@@ -215,6 +215,21 @@ public enum ToolRiskClassifier {
             }
         }
 
+        // A user-scope skill is listed in every project and its instructions
+        // are followed as trusted guidance, so writing one is never routine.
+        // Mirrors ProposeSkillsExecutor's scope rule (explicit "user", or no
+        // project to scope to).
+        if lowerName == "propose_skills" || lowerName == "proposeskills",
+           arguments["scope"]?.lowercased() == "user" || projectURL == nil || projectURL?.path == "/"
+        {
+            return ToolRiskAssessment(
+                level: .high, category: category,
+                reasons: [
+                    "Writes a skill into the user-global skills directory, which applies to every project.",
+                ],
+                hardGated: true)
+        }
+
         // 1. Always Safe Builtin Tools
         switch lowerName {
         case "list_directory", "list_dir", "ls", "glob", "read_file", "view_file", "cat", "fileread", "read",
@@ -288,7 +303,7 @@ public enum ToolRiskClassifier {
 
         // 4. Web & Network Risk
         if category == .web {
-            let urlString = arguments["url"] ?? arguments["uri"] ?? ""
+            let urlString = ToolApprovalPreviewSummary.httpURL(arguments) ?? ""
             if !urlString.isEmpty {
                 guard let url = URL(string: urlString), let host = url.host, !host.isEmpty else {
                     // A URL this app cannot parse is one it cannot classify.

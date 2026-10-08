@@ -39,7 +39,7 @@ public enum AppFileReadLimits {
                     NSLocalizedDescriptionKey:
                         "\(relPath) is \(size / 1_024 / 1_024) MB, over the "
                         + "\(maximumBytes / 1_024 / 1_024) MB limit for a single read. "
-                        + "Use start_line and end_line, or a shell command, to read part of it."
+                        + "Line bounds do not avoid the limit; use a shell command such as `sed -n '1,100p' <file>` to read part of it."
                 ])
         }
         return try String(contentsOf: url, encoding: .utf8)
@@ -180,7 +180,14 @@ extension AppToolRegistry {
         // through read_file must not evict half the project's real hashes
         // from the store's 512-entry cache.
         if !ShellOutputFormatting.isUnderSpillRoot(targetURL) {
-            await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: content)
+            // Hash the bytes on disk, not the decoded text: decoding drops a
+            // UTF-8 BOM, so a hash of `content` never matched the file and
+            // every later edit/write of a BOM file was refused as stale.
+            if let raw = try? Data(contentsOf: targetURL) {
+                await FileSnapshotStore.shared.recordSnapshot(url: targetURL, data: raw)
+            } else {
+                await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: content)
+            }
         }
 
         let selectedMode = mode?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? "lines"
@@ -299,7 +306,9 @@ extension AppToolRegistry {
             if let endLine {
                 eLine = min(allLines.count, max(sLine, endLine))
             } else {
-                let requestedCount = limit ?? 120
+                // Clamp BEFORE the addition: a model-supplied limit near Int.max
+                // overflows `sLine + requestedCount` and traps the whole app.
+                let requestedCount = min(max(limit ?? 120, 1), allLines.count)
                 eLine = min(allLines.count, max(sLine, sLine + requestedCount - 1))
             }
 
@@ -422,7 +431,16 @@ extension AppToolRegistry {
                     NSLocalizedDescriptionKey: "No previous backup found to undo for \(relPath)."
                 ])
             }
+            // The backup is a single slot taken before the last edit. If the
+            // file changed since (a later write, or the user's own edit),
+            // restoring it would silently discard that work.
+            guard await FileSnapshotStore.shared.backupMatchesCurrent(url: targetURL) else {
+                throw NSError(domain: "TurboSparkTool", code: 17, userInfo: [
+                    NSLocalizedDescriptionKey: "Refusing to undo \(relPath): the file has changed since the edit the backup was taken for. Re-read it and make the change explicitly."
+                ])
+            }
             try previous.write(to: targetURL, atomically: true, encoding: .utf8)
+            await FileSnapshotStore.shared.discardBackup(url: targetURL)
             await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: previous)
             return "Successfully rolled back \(relPath) to previous snapshot."
         }
@@ -430,6 +448,18 @@ extension AppToolRegistry {
         if await FileSnapshotStore.shared.isStale(url: targetURL) {
             throw NSError(domain: "TurboSparkTool", code: 16, userInfo: [
                 NSLocalizedDescriptionKey: "File '\(relPath)' has been modified on disk since it was last read. Please re-read the file before editing."
+            ])
+        }
+
+        // str_replace verifies itself (old_string must match what is on disk).
+        // insert and pattern_replace do not, so a regex like `[\s\S]*` could
+        // replace a file the model never read; apply write_file's read gate.
+        if selectedCommand == "insert" || selectedCommand == "pattern_replace",
+            !(await FileSnapshotStore.shared.isTracked(url: targetURL))
+        {
+            throw NSError(domain: "TurboSparkTool", code: 25, userInfo: [
+                NSLocalizedDescriptionKey: "File '\(relPath)' has not been read this session. "
+                    + "Use read_file on it first, then \(selectedCommand)."
             ])
         }
 
@@ -446,7 +476,8 @@ extension AppToolRegistry {
             var lines = content.components(separatedBy: "\n")
             var targetIndex: Int?
             if let lineNum = Int(target) {
-                targetIndex = max(0, min(lines.count - 1, lineNum - 1))
+                // Clamp before subtracting: Int.min - 1 traps and kills the app.
+                targetIndex = max(0, min(lines.count - 1, max(lineNum, 1) - 1))
             } else {
                 targetIndex = lines.firstIndex(where: { $0.contains(target) })
             }
@@ -617,7 +648,45 @@ extension AppToolRegistry {
         static let maxBytesRead = 64 * 1024 * 1024
     }
 
-    static func searchCode(pattern: String, relPath: String, rootURL: URL) throws -> String {
+    /// A Syntext directory-prefix filter equivalent to `relPath`, or nil for
+    /// the project root (nothing to scope).
+    static func syntextPathScope(relPath: String, rootURL: URL) -> String? {
+        guard let target = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) else { return nil }
+        let rootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let targetPath = target.standardizedFileURL.resolvingSymlinksInPath().path
+        guard targetPath != rootPath, targetPath.hasPrefix(rootPath + "/") else { return nil }
+        var rel = String(targetPath.dropFirst(rootPath.count + 1))
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: targetPath, isDirectory: &isDir), isDir.boolValue {
+            rel += "/"
+        }
+        return rel
+    }
+
+    /// Fallback text search. The pattern is a case-insensitive regex unless
+    /// `literal` is set (or it does not compile, in which case it is searched
+    /// as literal text). `pathFilter` is a glob over project-relative paths and
+    /// `fileTypes` are extensions.
+    static func searchCode(
+        pattern: String,
+        relPath: String,
+        rootURL: URL,
+        literal: Bool = false,
+        caseSensitive: Bool = false,
+        pathFilter: String? = nil,
+        fileTypes: [String] = [],
+        maxResults: Int = 40
+    ) throws -> String {
+        let matchLimit = max(1, min(maxResults, 500))
+        var regex: NSRegularExpression?
+        if !literal {
+            regex = try? NSRegularExpression(
+                pattern: pattern, options: caseSensitive ? [] : [.caseInsensitive])
+        }
+        let globMatcher = try pathFilter.flatMap { filter -> NSRegularExpression? in
+            filter.isEmpty ? nil : try? globRegex(filter)
+        }
+        let extensions = Set(fileTypes.map { $0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ". *")) }.filter { !$0.isEmpty })
         let targetURL = try resolveSecurePath(relPath: relPath, rootURL: rootURL)
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(at: targetURL, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
@@ -651,6 +720,13 @@ extension AppToolRegistry {
             if let size, size > AppFileReadLimits.maximumBytes {
                 continue
             }
+            let relForFilter = path.hasPrefix(rootPrefix) ? String(path.dropFirst(rootPrefix.count)) : path
+            if !extensions.isEmpty, !extensions.contains(fileURL.pathExtension.lowercased()) { continue }
+            if let globMatcher,
+               globMatcher.firstMatch(
+                in: relForFilter, options: [],
+                range: NSRange(location: 0, length: (relForFilter as NSString).length)) == nil
+            { continue }
             filesVisited += 1
             if filesVisited > SearchBudget.maxFilesVisited || bytesRead > SearchBudget.maxBytesRead {
                 exhaustedBudget = true
@@ -660,7 +736,16 @@ extension AppToolRegistry {
             bytesRead += text.utf8.count
             let lines = text.components(separatedBy: "\n")
             for (lineIdx, line) in lines.enumerated() {
-                if line.lowercased().contains(lowerPattern) {
+                let isMatch: Bool
+                if let regex {
+                    isMatch = regex.firstMatch(
+                        in: line, options: [], range: NSRange(location: 0, length: (line as NSString).length)) != nil
+                } else if caseSensitive {
+                    isMatch = line.contains(pattern)
+                } else {
+                    isMatch = line.lowercased().contains(lowerPattern)
+                }
+                if isMatch {
                     // `dropFirst`, not `replacingOccurrences`: the latter
                     // strips EVERY occurrence of the root prefix, so a path
                     // that repeats it (a nested checkout, a symlinked
@@ -668,10 +753,10 @@ extension AppToolRegistry {
                     let rel =
                         path.hasPrefix(rootPrefix) ? String(path.dropFirst(rootPrefix.count)) : path
                     matches.append("\(rel):\(lineIdx + 1): \(line.trimmingCharacters(in: .whitespaces))")
-                    if matches.count >= 40 { break }
+                    if matches.count >= matchLimit { break }
                 }
             }
-            if matches.count >= 40 { break }
+            if matches.count >= matchLimit { break }
         }
 
         if matches.isEmpty {

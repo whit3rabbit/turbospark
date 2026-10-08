@@ -65,16 +65,21 @@ public enum ProjectMcpDetector {
     }
 
     /// Parses a JSON configuration file into a list of McpServerConfig items.
-    public static func parseConfigFile(at url: URL, rootURL: URL?) -> [McpServerConfig] {
+    public static func parseConfigFile(
+        at url: URL, rootURL: URL?, urlTransform: ((String) -> String)? = nil
+    ) -> [McpServerConfig] {
         guard let data = try? Data(contentsOf: url) else { return [] }
-        return parseConfigData(data, sourcePath: url.path, sourceLabel: url.lastPathComponent, rootURL: rootURL)
+        return parseConfigData(
+            data, sourcePath: url.path, sourceLabel: url.lastPathComponent, rootURL: rootURL,
+            urlTransform: urlTransform)
     }
 
     /// The data-level form of `parseConfigFile`, for configs that came from
     /// somewhere other than a file -- a plugin manifest's inline
     /// `mcpServers` record, wrapped in `{"mcpServers": ...}` by its caller.
     public static func parseConfigData(
-        _ data: Data, sourcePath: String, sourceLabel: String, rootURL: URL?
+        _ data: Data, sourcePath: String, sourceLabel: String, rootURL: URL?,
+        urlTransform: ((String) -> String)? = nil
     ) -> [McpServerConfig] {
         // Sanitize trailing commas / comments if possible before parsing JSON
         let sanitizedData = sanitizeJsonComments(data)
@@ -149,8 +154,12 @@ public enum ProjectMcpDetector {
                 configs.append(spec)
             }
             // 3. SSE transport: url + headers (OpenCode type: "remote" or Cursor/Claude url)
-            else if let urlString = (serverDict["url"] as? String) ?? (serverDict["endpoint"] as? String),
-                    let sseURL = URL(string: urlString) {
+            // `urlTransform` runs on the RAW string: a placeholder in the
+            // host or port (`${user_config.port}`) makes URL(string:) return
+            // nil, and one in the path is percent-encoded so a later
+            // string-level expansion never sees it.
+            else if let rawURLString = (serverDict["url"] as? String) ?? (serverDict["endpoint"] as? String),
+                    let sseURL = URL(string: urlTransform?(rawURLString) ?? rawURLString) {
                 let headers = (serverDict["headers"] as? [String: String]) ?? [:]
 
                 let spec = McpServerConfig(

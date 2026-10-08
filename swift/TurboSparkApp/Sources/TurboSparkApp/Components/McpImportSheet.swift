@@ -221,7 +221,7 @@ public struct McpImportSheet: View {
                     // A catalog entry names a binary this app will spawn. What
                     // the user is approving is that command line, not a name in
                     // somebody else's repository.
-                    Text(entry.commandSummary)
+                    Text(verbatim: McpServerConfig(name: entry.name, transport: entry.transport).approvalSummary.text)
                         .themedCode(.tiny)
                         .foregroundStyle(.appSecondary)
                         .textSelection(.enabled)
@@ -320,7 +320,8 @@ public struct McpImportSheet: View {
         do {
             let fetched = try await McpMarketplaceManager.shared.fetchMarketplace(source: source)
             manifest = fetched
-            try model.saveMarketplace(name: fetched.name, source: source, kind: .mcp, projectID: sourceProjectID)
+            model.saveFetchedMarketplace(
+                name: fetched.name, source: source, kind: .mcp, projectID: sourceProjectID)
         } catch {
             fetchError = error.localizedDescription
         }

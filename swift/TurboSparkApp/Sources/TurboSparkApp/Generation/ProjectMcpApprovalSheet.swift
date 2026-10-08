@@ -58,11 +58,22 @@ struct ProjectMcpApprovalSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(approval.config.name)
                     .themedCode(.base, weight: .semibold)
-                Text(approval.config.commandSummary)
-                    .themedCode(.small)
-                    .foregroundStyle(.appSecondary)
-                    .textSelection(.enabled)
-                    .lineLimit(3)
+                // The full argv, env, cwd and forwarded variables, never
+                // truncated: this is what the approval actually runs.
+                let summary = approval.config.approvalSummary
+                ScrollView {
+                    Text(verbatim: summary.text)
+                        .themedCode(.small)
+                        .foregroundStyle(.appSecondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 140)
+                if !summary.riskyEnvNames.isEmpty {
+                    Text(verbatim: "! " + summary.riskyEnvNames.joined(separator: ", "))
+                        .themedCode(.small, weight: .semibold)
+                        .foregroundStyle(.red)
+                }
                 Text("Declared in \(approval.sourceRelativePath)", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
@@ -96,7 +107,6 @@ struct ProjectMcpApprovalSheet: View {
                     model.approvePendingMcpServer(id: approval.id)
                 } label: { Text("Approve", bundle: .module) }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)

@@ -73,6 +73,7 @@ public enum TodoWriteExecutor {
 
     private static func extractItems(from array: [[String: Any]]) -> [TodoItem] {
         var items: [TodoItem] = []
+        var seenIDs: Set<String> = []
         for obj in array {
             let content = (obj["content"] as? String)
                 ?? (obj["task"] as? String)
@@ -87,7 +88,17 @@ public enum TodoWriteExecutor {
                 ?? (obj["active_form"] as? String)
                 ?? (obj["active"] as? String)
                 ?? trimmedContent
-            let id = (obj["id"] as? String) ?? UUID().uuidString
+            // Ids drive row identity in the checklist view: derive a positional
+            // one when the model omits it (a random UUID re-identified every row
+            // on each update) and suffix collisions so ForEach never sees two
+            // rows with the same identity.
+            var id = (obj["id"] as? String) ?? "todo-\(items.count + 1)"
+            if seenIDs.contains(id) {
+                var n = 2
+                while seenIDs.contains("\(id)-\(n)") { n += 1 }
+                id = "\(id)-\(n)"
+            }
+            seenIDs.insert(id)
 
             items.append(TodoItem(
                 id: id,
@@ -99,12 +110,37 @@ public enum TodoWriteExecutor {
         return items
     }
 
+    /// True when the caller deliberately asked for an empty list.
+    private static func isExplicitClear(_ arguments: [String: String]) -> Bool {
+        guard let raw = arguments["todos"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        else { return false }
+        if raw == "[]" { return true }
+        if let data = raw.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let list = dict["todos"] as? [Any], list.isEmpty
+        {
+            return true
+        }
+        return false
+    }
+
     /// Executes the TodoWrite update, generates output text and triggers the update callback.
     public static func execute(
         arguments: [String: String],
         chatID: UUID? = nil
     ) throws -> (output: String, todos: [TodoItem]) {
         let newTodos = try parseTodos(from: arguments)
+        // Only an explicit empty list clears the checklist. A truncated
+        // payload, an unknown item key, or `{}` parses to nothing and used to
+        // wipe the saved list while telling the model the update succeeded.
+        if newTodos.isEmpty && !isExplicitClear(arguments) {
+            throw NSError(
+                domain: "TurboSparkTool", code: 80,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "TodoWrite could not read any todo items from 'todos' (expected a JSON array "
+                    + "of objects with 'content' and 'status'). The existing list was left unchanged. "
+                    + "Pass \"[]\" to clear it."])
+        }
         onTodosUpdated?(chatID, newTodos)
 
         let completedCount = newTodos.filter { $0.isCompleted }.count

@@ -63,12 +63,22 @@ struct ToolApprovalMenuPopover: View {
     let currentMode: AppPermissionMode
     let onSelect: (AppPermissionMode) -> Void
 
-    private let displayModes: [AppPermissionMode] = [
+    private static let standardModes: [AppPermissionMode] = [
         .ask,
         .auto,
         .permissive,
         .fullAccess,
     ]
+
+    /// The active mode is always listed and checked, even when it is not one
+    /// of the standard rows (for example Agent mode), so it can be re-selected.
+    static func displayModes(including current: AppPermissionMode) -> [AppPermissionMode] {
+        standardModes.contains(current) ? standardModes : [current] + standardModes
+    }
+
+    private var displayModes: [AppPermissionMode] {
+        Self.displayModes(including: currentMode)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

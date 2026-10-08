@@ -104,7 +104,11 @@ struct ToolCodeCellView: View {
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = filename
         if panel.runModal() == .OK, let url = panel.url {
-            try? code.write(to: url, atomically: true, encoding: .utf8)
+            do {
+                try code.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
         }
     }
 }

@@ -143,7 +143,8 @@ enum ToolCallDispatchGate {
             // to the legacy shallow inspector would reject valid containers.
             parsedCalls: [],
             availableTools: availableTools.definitions,
-            requiresCall: false)
+            requiresCall: false,
+            projectURL: projectURL)
         {
         case .accept:
             return ToolCallDispatchGateResult(
@@ -161,7 +162,11 @@ enum ToolCallDispatchGate {
             var allCalls = dispatchableCalls
             var allRefusals = refusals
             for rescued in rescuedCalls {
-                guard let argumentsJSON = jsonArguments(from: rescued.arguments) else {
+                guard let argumentsJSON = jsonArguments(
+                    from: rescued.arguments,
+                    toolName: rescued.name,
+                    tools: availableTools.definitions)
+                else {
                     allRefusals.append(.malformedJSON)
                     continue
                 }
@@ -217,11 +222,52 @@ enum ToolCallDispatchGate {
         return String(data: data, encoding: .utf8)
     }
 
-    private static func jsonArguments(from arguments: [String: String]) -> String? {
+    /// Rescued calls carry string-only arguments. Coerce each value to the
+    /// property's declared schema type before validation, otherwise every
+    /// integer/number/boolean/container argument is refused as a type error
+    /// and the rescued call is silently dropped.
+    static func jsonArguments(
+        from arguments: [String: String],
+        toolName: String,
+        tools: [OpenAITool]
+    ) -> String? {
+        let properties = tools.first {
+            $0.function.name.caseInsensitiveCompare(toolName) == .orderedSame
+        }?.function.parameters.properties
+        var typed: [String: Any] = [:]
+        for (key, value) in arguments {
+            typed[key] = coerce(value, type: properties?[key]?.type.lowercased())
+        }
         guard let data = try? JSONSerialization.data(
-            withJSONObject: arguments, options: [.sortedKeys]),
+            withJSONObject: typed, options: [.sortedKeys]),
             let value = String(data: data, encoding: .utf8) else { return nil }
         return value
+    }
+
+    private static func coerce(_ value: String, type: String?) -> Any {
+        switch type {
+        case "integer", "int":
+            return Int(value) ?? value
+        case "number", "float", "double":
+            if let int = Int(value) { return int }
+            if let double = Double(value), double.isFinite { return double }
+            return value
+        case "boolean", "bool":
+            switch value.lowercased() {
+            case "true", "1": return true
+            case "false", "0": return false
+            default: return value
+            }
+        case "object", "array":
+            if let data = value.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data),
+               (type == "object" ? parsed is [String: Any] : parsed is [Any]) {
+                return parsed
+            }
+            return value
+        default:
+            return value
+        }
     }
 }
 

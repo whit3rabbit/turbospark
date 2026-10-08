@@ -16,18 +16,23 @@ public enum McpResourceExecutor {
             return "No active MCP servers configured or matching '\(serverFilter ?? "")'."
         }
 
-        var results: [String] = ["Available MCP Resources:"]
-        for s in enabled {
-            let transportLabel: String
-            switch s.transport {
-            case .stdio(let cmd, _, _, _, _): transportLabel = "stdio: \(cmd)"
-            case .sse(let url, _): transportLabel = "sse: \(url.absoluteString)"
-            }
-            results.append("\nServer: \(s.name) (\(transportLabel))")
-            results.append("  - Tools available: \(s.discoveredTools.count)")
-            results.append("  - Status: Connected")
-        }
-        return results.joined(separator: "\n")
+        // No `resources/list` request is ever sent, so there is nothing true
+        // to report: neither a connection status (never checked) nor a
+        // resource list. Say so rather than print "Connected" with zero
+        // resources, which the model would read as an empty server.
+        throw NSError(
+            domain: "TurboSparkTool",
+            code: 81,
+            userInfo: [NSLocalizedDescriptionKey: notImplementedMessage(
+                "ListMcpResources", servers: enabled.map(\.name))]
+        )
+    }
+
+    static func notImplementedMessage(_ tool: String, servers: [String]) -> String {
+        "\(tool) is not implemented: this client does not send resources/list or "
+            + "resources/read to MCP servers (\(servers.joined(separator: ", "))), so NO "
+            + "resource was listed or read and nothing is known about their contents. "
+            + "Use the server's MCP tools instead."
     }
 
     public static func readResource(arguments: [String: String], project: AppProject?, rootURL: URL) async throws -> String {
@@ -65,6 +70,13 @@ public enum McpResourceExecutor {
             )
         }
 
-        return "Retrieved resource '\(uri)' from MCP server '\(serverName)':\n(Content format: application/octet-stream, length: 0 bytes)"
+        // Never contacts the server; a fabricated "retrieved, 0 bytes" made
+        // the model report a real resource as empty.
+        throw NSError(
+            domain: "TurboSparkTool",
+            code: 81,
+            userInfo: [NSLocalizedDescriptionKey: notImplementedMessage(
+                "ReadMcpResource", servers: [server.name]) + " (uri '\(uri)' was NOT read)"]
+        )
     }
 }

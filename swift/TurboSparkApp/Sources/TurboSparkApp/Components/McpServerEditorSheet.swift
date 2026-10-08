@@ -272,7 +272,7 @@ public struct McpServerEditorSheet: View {
         case .stdio(let cmd, let args, let env, let cwd, let passthrough):
             transportType = "stdio"
             command = cmd
-            argsText = args.joined(separator: "\n")
+            argsText = McpServerFormValidation.argsText(for: args)
             envText = env.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
             cwdText = cwd ?? ""
             envPassthroughText = passthrough.joined(separator: "\n")
@@ -287,10 +287,14 @@ public struct McpServerEditorSheet: View {
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let transport: McpTransportSpec
         if transportType == "stdio" {
-            let parsedArgs = argsText.components(separatedBy: .newlines)
-                .flatMap { $0.components(separatedBy: " ") }
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
+            var parsedArgs = McpServerFormValidation.parseArguments(argsText)
+            // Untouched text means untouched arguments: a single argument
+            // with a space in it is indistinguishable from "a b" on one line.
+            if case .stdio(_, let existingArgs, _, _, _)? = existingConfig?.transport,
+                argsText == McpServerFormValidation.argsText(for: existingArgs)
+            {
+                parsedArgs = existingArgs
+            }
 
             var envDict: [String: String] = [:]
             for line in envText.components(separatedBy: .newlines) {

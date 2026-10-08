@@ -8,6 +8,25 @@ import Foundation
 /// here is reachable from a test with no window, no model and no subprocess.
 public struct McpServerFormValidation: Equatable, Sendable {
 
+    /// Parses the editor's arguments box. A multi-line box is one argument per
+    /// line, which is how `argsText(for:)` fills it, so an argument that holds
+    /// a space ("/Users/me/Application Support/notes") survives a round trip.
+    /// Only a single-line box is split on spaces (the quick "-y pkg" entry).
+    public static func parseArguments(_ text: String) -> [String] {
+        let lines = text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if lines.count == 1 {
+            return lines[0].components(separatedBy: " ").filter { !$0.isEmpty }
+        }
+        return lines
+    }
+
+    /// The text the editor shows for existing arguments.
+    public static func argsText(for args: [String]) -> String {
+        args.joined(separator: "\n")
+    }
+
     /// The transport arm the form is currently on.
     public enum Transport: String, Equatable, Sendable {
         case stdio

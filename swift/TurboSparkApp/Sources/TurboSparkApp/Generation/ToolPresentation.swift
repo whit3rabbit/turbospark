@@ -96,8 +96,15 @@ struct ToolPresentation: Equatable {
 
     static func webURL(for call: AppToolCall) -> URL? {
         guard ["globe", "network", "search"].contains(resolve(call.name).icon),
-              let value = call.arguments["url"] ?? call.arguments["uri"],
-              let url = URL(string: value),
+              let value = call.arguments["url"] ?? call.arguments["uri"]
+        else { return nil }
+        return webLink(value)
+    }
+
+    /// http(s) URLs with a host only: a model-supplied file: or app deep link
+    /// must never become a clickable Link that NSWorkspace would launch.
+    static func webLink(_ value: String) -> URL? {
+        guard let url = URL(string: value),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil
         else { return nil }
         return url

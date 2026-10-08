@@ -18,7 +18,8 @@ public enum ForgeGuardrailsEngine {
         text: String,
         parsedCalls: [AppToolCall],
         availableTools: [OpenAITool],
-        requiresCall: Bool = false
+        requiresCall: Bool = false,
+        projectURL: URL? = nil
     ) -> ForgeGuardrailVerdict {
         let toolNames = Set(availableTools.map { $0.function.name })
         if toolNames.isEmpty {
@@ -29,7 +30,7 @@ public enum ForgeGuardrailsEngine {
         var calls = parsedCalls
         var wasRescued = false
         if calls.isEmpty {
-            let rescued = rescueToolCalls(from: text, availableToolNames: toolNames)
+            let rescued = rescueToolCalls(from: text, availableToolNames: toolNames, projectURL: projectURL)
             if !rescued.isEmpty {
                 calls = rescued
                 wasRescued = true
@@ -46,7 +47,9 @@ public enum ForgeGuardrailsEngine {
         }
 
         // 3. Validate arguments against schema for all calls
-        let specsByName = Dictionary(uniqueKeysWithValues: availableTools.map { ($0.function.name, $0) })
+        // uniquingKeysWith: a project custom tool may shadow a built-in name, and the
+        // uniqueKeysWithValues initializer traps on duplicates (crashes the app).
+        let specsByName = Dictionary(availableTools.map { ($0.function.name, $0) }, uniquingKeysWith: { first, _ in first })
         var validationErrors: [String] = []
 
         for call in calls {
@@ -77,7 +80,10 @@ public enum ForgeGuardrailsEngine {
     }
 
     /// Rescues tool calls from varied markup dialects (XML, Markdown, Mistral, bare JSON).
-    public static func rescueToolCalls(from text: String, availableToolNames: Set<String>) -> [AppToolCall] {
+    /// `projectURL` is the project the rescued call will run in: a project-scoped
+    /// custom tool is unknown to the classifier without it and would be rated
+    /// as low-risk automation.
+    public static func rescueToolCalls(from text: String, availableToolNames: Set<String>, projectURL: URL? = nil) -> [AppToolCall] {
         var results: [AppToolCall] = []
 
         // Pattern 1: Qwen / Generic XML style `<function=name>args</function>` or `<function_call name="name">args</function_call>`
@@ -105,8 +111,8 @@ public enum ForgeGuardrailsEngine {
                     // allowlist is the whole point of this check.
                     if isToolNameAllowed(name, in: availableToolNames) {
                         let args = parseArgumentsString(body)
-                        let category = AppToolRegistry.category(for: name)
-                        let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args)
+                        let category = AppToolRegistry.category(for: name, projectURL: projectURL)
+                        let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args, projectURL: projectURL)
                         results.append(AppToolCall(
                             name: name,
                             arguments: args,
@@ -149,8 +155,8 @@ public enum ForgeGuardrailsEngine {
                     let value = pairsNSString.substring(with: pair.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
                     if !key.isEmpty { args[key] = value }
                 }
-                let category = AppToolRegistry.category(for: name)
-                let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args)
+                let category = AppToolRegistry.category(for: name, projectURL: projectURL)
+                let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args, projectURL: projectURL)
                 results.append(AppToolCall(
                     name: name,
                     arguments: args,
@@ -184,8 +190,8 @@ public enum ForgeGuardrailsEngine {
                 guard isToolNameAllowed(name, in: availableToolNames) else { continue }
                 let body = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
                 let args = body.isEmpty ? [:] : parseArgumentsString(body)
-                let category = AppToolRegistry.category(for: name)
-                let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args)
+                let category = AppToolRegistry.category(for: name, projectURL: projectURL)
+                let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args, projectURL: projectURL)
                 results.append(AppToolCall(
                     name: name,
                     arguments: args,
@@ -212,8 +218,8 @@ public enum ForgeGuardrailsEngine {
                 guard isToolNameAllowed(name, in: availableToolNames) else { continue }
                 let body = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
                 let args = parseGemmaArguments(body)
-                let category = AppToolRegistry.category(for: name)
-                let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args)
+                let category = AppToolRegistry.category(for: name, projectURL: projectURL)
+                let risk = ToolRiskClassifier.assessRisk(name: name, arguments: args, projectURL: projectURL)
                 results.append(AppToolCall(
                     name: name,
                     arguments: args,
@@ -235,7 +241,7 @@ public enum ForgeGuardrailsEngine {
                 for match in matches {
                     guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
                     let rawBlock = nsString.substring(with: match.range(at: 1))
-                    if let parsed = parseJsonCalls(rawBlock, availableToolNames: availableToolNames) {
+                    if let parsed = parseJsonCalls(rawBlock, availableToolNames: availableToolNames, projectURL: projectURL) {
                         return parsed
                     }
                 }
@@ -251,7 +257,7 @@ public enum ForgeGuardrailsEngine {
                 guard match.numberOfRanges > 1 else { continue }
                 guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
                 let inner = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-                if let parsed = parseJsonCalls(inner, availableToolNames: availableToolNames) {
+                if let parsed = parseJsonCalls(inner, availableToolNames: availableToolNames, projectURL: projectURL) {
                     results.append(contentsOf: parsed)
                 }
             }
@@ -273,7 +279,7 @@ public enum ForgeGuardrailsEngine {
             for match in matches {
                 guard !ToolCallParser.isPrefixedByIncompleteToolCallLabel(match.range(at: 0), in: text) else { continue }
                 let inner = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-                if let parsed = parseJsonCalls(inner, availableToolNames: availableToolNames) {
+                if let parsed = parseJsonCalls(inner, availableToolNames: availableToolNames, projectURL: projectURL) {
                     // The raw invocation is the whole tagged block, so
                     // `sanitizeProse` removes the wrapper along with the call.
                     return parsed.map { call in
@@ -291,7 +297,7 @@ public enum ForgeGuardrailsEngine {
         }
 
         // Pattern 4: Bare JSON object anywhere in text
-        if let parsed = parseJsonCalls(text.trimmingCharacters(in: .whitespacesAndNewlines), availableToolNames: availableToolNames) {
+        if let parsed = parseJsonCalls(text.trimmingCharacters(in: .whitespacesAndNewlines), availableToolNames: availableToolNames, projectURL: projectURL) {
             results.append(contentsOf: parsed)
         }
 
@@ -458,12 +464,12 @@ public enum ForgeGuardrailsEngine {
         return args.isEmpty ? extractKeyValuePairs(from: string) : args
     }
 
-    private static func parseJsonCalls(_ string: String, availableToolNames: Set<String>) -> [AppToolCall]? {
+    private static func parseJsonCalls(_ string: String, availableToolNames: Set<String>, projectURL: URL?) -> [AppToolCall]? {
         guard let data = string.data(using: .utf8) else { return nil }
 
         // Try single JSON object: {"name": "...", "arguments": {...}} or {"tool": "...", "parameters": {...}}
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let call = convertJsonDictToToolCall(obj, availableToolNames: availableToolNames, raw: string) {
+            if let call = convertJsonDictToToolCall(obj, availableToolNames: availableToolNames, raw: string, projectURL: projectURL) {
                 return [call]
             }
         }
@@ -472,7 +478,7 @@ public enum ForgeGuardrailsEngine {
         if let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
             var calls: [AppToolCall] = []
             for item in array {
-                if let call = convertJsonDictToToolCall(item, availableToolNames: availableToolNames, raw: string) {
+                if let call = convertJsonDictToToolCall(item, availableToolNames: availableToolNames, raw: string, projectURL: projectURL) {
                     calls.append(call)
                 }
             }
@@ -491,7 +497,7 @@ public enum ForgeGuardrailsEngine {
         !name.isEmpty && availableToolNames.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
     }
 
-    private static func convertJsonDictToToolCall(_ dict: [String: Any], availableToolNames: Set<String>, raw: String) -> AppToolCall? {
+    private static func convertJsonDictToToolCall(_ dict: [String: Any], availableToolNames: Set<String>, raw: String, projectURL: URL?) -> AppToolCall? {
         let name = (dict["name"] as? String) ?? (dict["tool"] as? String) ?? (dict["function"] as? String)
         guard let toolName = name, isToolNameAllowed(toolName, in: availableToolNames) else { return nil }
 
@@ -502,8 +508,8 @@ public enum ForgeGuardrailsEngine {
             args = parseArgumentsString(strArgs)
         }
 
-        let category = AppToolRegistry.category(for: toolName)
-        let risk = ToolRiskClassifier.assessRisk(name: toolName, arguments: args)
+        let category = AppToolRegistry.category(for: toolName, projectURL: projectURL)
+        let risk = ToolRiskClassifier.assessRisk(name: toolName, arguments: args, projectURL: projectURL)
         return AppToolCall(
             name: toolName,
             arguments: args,
@@ -520,9 +526,11 @@ public enum ForgeGuardrailsEngine {
             if let s = v as? String {
                 result[k] = s
             } else if let num = v as? NSNumber {
-                result[k] = num.stringValue
-            } else if let b = v as? Bool {
-                result[k] = b ? "true" : "false"
+                // JSON true/false bridge to NSNumber; stringValue would give "1"/"0"
+                // and fail the engine's own boolean check.
+                result[k] = CFGetTypeID(num) == CFBooleanGetTypeID()
+                    ? (num.boolValue ? "true" : "false")
+                    : num.stringValue
             } else if let subData = try? JSONSerialization.data(withJSONObject: v, options: []),
                       let subStr = String(data: subData, encoding: .utf8) {
                 result[k] = subStr
