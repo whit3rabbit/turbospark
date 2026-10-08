@@ -205,11 +205,25 @@ public struct AgentEditorSheet: View {
     }
 
     private func saveAction() {
-        if var agent = agentToEdit {
+        if let resolved = agentToEdit {
+            // Edit the on-disk definition, not the resolved one: the resolved
+            // view carries a built-in's tool ceiling for a shadowing project
+            // agent and would write it into the user's file. Tool lists are
+            // only taken from the form when the user actually changed them.
+            var agent = resolved
+            if let path = resolved.filePath,
+                let onDisk = try? AgentParser.parseFile(
+                    at: URL(fileURLWithPath: path), scope: resolved.scope,
+                    sourceAgent: resolved.sourceAgent)
+            {
+                agent = onDisk
+            }
+            let toolsChanged = parseToolList(allowedToolsText) != resolved.tools
+            let disallowedChanged = parseToolList(disallowedToolsText) != resolved.disallowedTools
             agent.displayName = displayNameText.isEmpty ? agent.name.capitalized : displayNameText
             agent.agentDescription = descriptionText
-            agent.tools = parseToolList(allowedToolsText)
-            agent.disallowedTools = parseToolList(disallowedToolsText)
+            if toolsChanged { agent.tools = parseToolList(allowedToolsText) }
+            if disallowedChanged { agent.disallowedTools = parseToolList(disallowedToolsText) }
             agent.maxTurns = maxTurns
             agent.systemPrompt = systemPrompt
             model.updateAgent(agent)

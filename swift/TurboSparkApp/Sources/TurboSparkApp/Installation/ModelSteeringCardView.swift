@@ -218,7 +218,9 @@ struct ModelSteeringCardView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .disabled(!descriptor.isSteeringReady || !compatibility.allowsEnabling)
+            // Only gate enabling: an already-enabled preset must stay disableable
+            // even when it does not fit the model being viewed.
+            .disabled(!isEnabled && (!descriptor.isSteeringReady || !compatibility.allowsEnabling))
             .help(compatibility.summary)
         }
         .padding(.vertical, 4)

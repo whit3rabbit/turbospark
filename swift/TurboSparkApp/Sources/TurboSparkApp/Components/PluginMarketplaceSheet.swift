@@ -158,7 +158,8 @@ struct PluginMarketplaceSheet: View {
                 loadError = "A GitHub source is owner/repo, e.g. anthropics/claude-plugins-official."
                 return
             }
-            source = .github(repo: repo, ref: "main", path: nil, sparsePaths: nil)
+            // nil ref = the repo default branch (master/trunk repos have no "main").
+            source = .github(repo: repo, ref: nil, path: nil, sparsePaths: nil)
         case "git":
             let url = newGitURL.trimmingCharacters(in: .whitespaces)
             guard url.hasPrefix("https://") || url.hasPrefix("http://") || url.hasPrefix("ssh://") else {
@@ -284,6 +285,7 @@ struct PluginMarketplaceSheet: View {
                 Button { install(entry: entry, scope: installScope) } label: {
                     Text("Install", bundle: .module)
                 }
+                .disabled(isLoading)
             }
         }
         .padding(10)
@@ -301,6 +303,10 @@ struct PluginMarketplaceSheet: View {
         let targetProjectID = projectID
         isLoading = true
         loadError = nil
+        // Drop the previous marketplace's entries and checkout so Install cannot
+        // pair them with this marketplace's name and source during the fetch.
+        entries = []
+        checkoutDirectory = nil
         defer { if targetProjectID == projectID && name == selectedMarketplaceName { isLoading = false } }
         do {
             // Refresh re-clones/pulls; a plain selection reuses the cache

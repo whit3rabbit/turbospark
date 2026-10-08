@@ -233,10 +233,19 @@ struct WorktreeView: View {
                     ForEach(worktree.availableBranches, id: \.self) { branch in
                         if branch != worktree.currentBranch {
                             Button {
-                                Task { _ = await worktree.switchBranch(to: branch) }
+                                Task {
+                                    let result = await worktree.switchBranch(to: branch)
+                                    if !result.success {
+                                        model.showToast(
+                                            result.error ?? "Failed to switch branch.", style: .error)
+                                    }
+                                }
                             } label: {
                                 Text("Switch to \(branch)", bundle: .module)
                             }
+                            // A checkout swaps file contents under the agent
+                            // mid-edit, so mirror the workspace-root guard.
+                            .disabled(model.generating || model.submitting || model.pendingToolCall != nil)
                         }
                     }
                 }

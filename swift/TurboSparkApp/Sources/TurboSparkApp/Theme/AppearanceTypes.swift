@@ -395,7 +395,11 @@ public extension Color {
     /// Initializes a SwiftUI Color from a hexadecimal color string (e.g. `#RRGGBB` or `#RRGGBBAA`).
     init?(hex: String) {
         var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
+        // Strip only a leading '#'. The Scanner alone accepts a valid prefix
+        // ("1D6FEG" parsed as 1D6FE), so require every character to be a hex
+        // digit before trusting the length switch below.
+        if hexSanitized.hasPrefix("#") { hexSanitized.removeFirst() }
+        guard hexSanitized.allSatisfy(\.isHexDigit) else { return nil }
 
         var rgb: UInt64 = 0
         guard Scanner(string: hexSanitized).scanHexInt64(&rgb) else { return nil }

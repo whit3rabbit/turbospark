@@ -162,7 +162,9 @@ struct PromptComposerView: View {
                 EmptyView()
             }
             .keyboardShortcut("u", modifiers: .command)
-            .disabled(model.isRunning)
+            // Also off while an import runs: overlapping imports clobber the
+            // extracting flag and each other's error text.
+            .disabled(model.isRunning || isExtractingDocuments)
             .opacity(0)
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)

@@ -36,8 +36,10 @@ struct MemorySettingsPaneView: View {
                     Button { editingClaim = nil } label: { Text("Cancel", bundle: .module) }
                     Spacer()
                     Button {
-                        perform { try MemoryLedgerStore.shared.edit(claim.id, text: draftText) }
-                        editingClaim = nil
+                        // Keep the sheet (and the draft) open when the edit fails.
+                        if perform({ try MemoryLedgerStore.shared.edit(claim.id, text: draftText) }) {
+                            editingClaim = nil
+                        }
                     } label: { Text("Save", bundle: .module) }
                     .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -70,13 +72,16 @@ struct MemorySettingsPaneView: View {
         ledgerState = MemoryLedgerStore.shared.snapshot()
     }
 
-    private func perform(_ action: () throws -> Void) {
+    @discardableResult
+    private func perform(_ action: () throws -> Void) -> Bool {
         do {
             try action()
             managerError = nil
             reloadLedger()
+            return true
         } catch {
             managerError = error.localizedDescription
+            return false
         }
     }
 

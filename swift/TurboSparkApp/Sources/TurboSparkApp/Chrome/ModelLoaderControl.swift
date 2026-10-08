@@ -281,8 +281,8 @@ struct ModelLoaderControl: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Reasoning effort: \(model.reasoning.label). Click to change (takes effect immediately without reloading model).")
-        .accessibilityLabel("Reasoning effort: \(model.reasoning.label)")
+        .help("Reasoning effort: \(model.reasoningLabel(for: model.reasoning)). Click to change (takes effect immediately without reloading model).")
+        .accessibilityLabel("Reasoning effort: \(model.reasoningLabel(for: model.reasoning))")
         .accessibilityHint("Select reasoning depth")
     }
 
@@ -364,7 +364,8 @@ struct ModelLoaderControl: View {
     }
 
     private var loaderState: LoaderState {
-        if model.isInstallingModel { return .installing }
+        // A download of some other model must not mask a live, ready session.
+        if model.isInstallingModel && model.session == nil { return .installing }
         if model.opening { return .opening }
         if model.installed.isEmpty { return .noneInstalled }
         guard model.selected != nil else { return .noneSelected }

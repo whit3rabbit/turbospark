@@ -43,6 +43,13 @@ struct BrowserDialogApprovalView: View {
                 Text(titleKey, bundle: .module)
                     .themedFont(.base, weight: .semibold)
 
+                // The page that raised the dialog, like Chrome and Safari
+                // label theirs: a background tab must not be able to pose as
+                // the page the user is looking at.
+                Text("Message from \(Self.originLabel(request))", bundle: .module)
+                    .themedCode(.small, weight: .semibold)
+                    .foregroundStyle(.appSecondary)
+
                 Text(request.message)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -80,6 +87,12 @@ struct BrowserDialogApprovalView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("browser-dialog-approval")
+    }
+
+    /// The origin shown in the dialog; `?` when the engine could not name
+    /// one, which is itself a signal worth surfacing.
+    static func originLabel(_ request: BrowserDialogRequest) -> String {
+        request.sourceOrigin?.canonicalString ?? "?"
     }
 
     private var titleKey: LocalizedStringKey {

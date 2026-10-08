@@ -300,6 +300,9 @@ struct RecapSheet: View {
                         Label(isCopied ? "Copied" : "Copy", systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.plain)
+                    // Copying before the recap lands would blank the clipboard.
+                    .disabled(model.recapText.isEmpty)
+                    .onChange(of: model.recapText) { _, _ in isCopied = false }
                     Spacer()
                     Button { dismiss() } label: { Text("Close", bundle: .module) }
                         .keyboardShortcut(.defaultAction)

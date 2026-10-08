@@ -35,6 +35,9 @@ struct MarkdownContentWithTablesView: View {
                     case .table(let grid):
                         if grid.isInteractiveCandidate {
                             InteractiveMarkdownTableView(grid: grid)
+                                // Fresh sort/selection state for a different table
+                                // (e.g. after a reply-variant switch at the same position).
+                                .id(grid.markdown)
                         } else {
                             ChatMessageMarkdownView(grid.markdown, onPreviewHTML: onPreviewHTML)
                         }
@@ -81,7 +84,11 @@ struct InteractiveMarkdownTableView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // displayRows sorts the whole table; evaluate it once per render, not
+        // once per row (it was read in the ForEach and again in each divider
+        // check, giving O(n^2 log n) per render).
+        let rows = displayRows
+        return VStack(alignment: .leading, spacing: 0) {
             toolbar
             // The grid: a header row of sort buttons over the data rows.
             // LazyVStack is unnecessary by design -- a table worth
@@ -93,13 +100,13 @@ struct InteractiveMarkdownTableView: View {
                     }
                 }
                 Divider()
-                ForEach(Array(displayRows.enumerated()), id: \.offset) { displayIndex, entry in
+                ForEach(Array(rows.enumerated()), id: \.offset) { displayIndex, entry in
                     rowView(
                         row: entry.row,
                         isSelected: selectedRowIndices.contains(entry.index))
                         .contentShape(Rectangle())
                         .onTapGesture { toggleSelection(entry.index) }
-                    if displayIndex < displayRows.count - 1 {
+                    if displayIndex < rows.count - 1 {
                         Divider().opacity(0.5)
                     }
                 }
@@ -257,7 +264,13 @@ struct InteractiveMarkdownTableView: View {
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.nameFieldStringValue = "table.csv"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? displayGrid.csv().write(to: url, atomically: true, encoding: .utf8)
+        do {
+            try displayGrid.csv().write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            // Never flash the success state for a file that was not written.
+            NSAlert(error: error).runModal()
+            return
+        }
         flashCopied()
     }
 }

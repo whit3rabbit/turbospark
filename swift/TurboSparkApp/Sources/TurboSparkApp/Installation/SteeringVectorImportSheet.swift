@@ -16,6 +16,9 @@ struct SteeringVectorImportSheet: View {
     @State private var scale = String(AppSteeringPreset.defaultScale)
     @State private var isDownloading = false
     @State private var errorMessage: String?
+    // Kept so closing the sheet can stop the import; otherwise a backed-out
+    // download still installs a preset and turns steering on.
+    @State private var downloadTask: Task<Void, Never>?
 
     private var descriptor: ModelFeatureDescriptor {
         ModelFeatureDescriptor.resolve(installedModel: installedModel)
@@ -51,6 +54,7 @@ struct SteeringVectorImportSheet: View {
             footer
         }
         .frame(minWidth: 560, minHeight: 470)
+        .onDisappear { downloadTask?.cancel() }
     }
 
     private var header: some View {
@@ -208,12 +212,14 @@ struct SteeringVectorImportSheet: View {
         isDownloading = true
         errorMessage = nil
 
-        Task {
+        downloadTask = Task {
             do {
                 let result = try await SteeringVectorDownloader.download(
                     source: requestedSource,
                     expectedHidden: descriptor.hiddenSize,
                     expectedLayers: descriptor.layerCount)
+                // Cancelled while the download was in flight: change nothing.
+                try Task.checkCancellation()
 
                 if let existing = model.steeringPresets.first(where: {
                     URL(fileURLWithPath: $0.vectorPath).standardizedFileURL.path
@@ -239,6 +245,8 @@ struct SteeringVectorImportSheet: View {
                     duration: 7.0)
                 isDownloading = false
                 dismiss()
+            } catch is CancellationError {
+                isDownloading = false
             } catch {
                 errorMessage = error.localizedDescription
                 isDownloading = false

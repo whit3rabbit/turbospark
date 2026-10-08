@@ -16,6 +16,7 @@ final class ModelHubFilterTests: XCTestCase {
         family: String,
         status: String = "verified",
         downloadBytes: UInt64 = 1_000,
+        installBytes: UInt64? = nil,
         notes: String? = nil,
         installed: Bool = false
     ) throws -> CatalogEntry {
@@ -26,7 +27,7 @@ final class ModelHubFilterTests: XCTestCase {
           "name": "\(name)",
           "family": "\(family)",
           "download_bytes": \(downloadBytes),
-          "install_bytes": \(downloadBytes),
+          "install_bytes": \(installBytes ?? downloadBytes),
           "status": "\(status)",
           \(notesField)
           "installed": \(installed)
@@ -212,6 +213,18 @@ final class ModelHubFilterTests: XCTestCase {
         filter.sort = .size
         let result = filter.apply(to: try catalog(), installedAliases: [], recommendations: [:])
         XCTAssertEqual(result.map(\.alias), ["mistral7b", "gemma4", "gemma4-gguf"])
+    }
+
+    /// The "Installed size" sort must use install bytes, not download bytes.
+    func testSizeSortUsesInstallBytes() throws {
+        var filter = discoveryFilter()
+        filter.sort = .size
+        let rows = [
+            try entry(alias: "big-dl-small-disk", name: "A (MLX INT4)", family: "llama", downloadBytes: 9_000, installBytes: 1_000),
+            try entry(alias: "small-dl-big-disk", name: "B (MLX INT4)", family: "llama", downloadBytes: 2_000, installBytes: 8_000),
+        ]
+        let result = filter.apply(to: rows, installedAliases: [], recommendations: [:])
+        XCTAssertEqual(result.map(\.alias), ["big-dl-small-disk", "small-dl-big-disk"])
     }
 
     /// Tests that best-fit sorting orders resident before streams before refused.

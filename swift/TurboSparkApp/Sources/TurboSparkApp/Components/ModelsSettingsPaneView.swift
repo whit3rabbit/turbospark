@@ -251,7 +251,7 @@ public struct ModelsSettingsPaneView: View {
                     Spacer()
                     Button {
                         model.refreshModels()
-                        rescanLmStudioCount()
+                        Task { await rescanLmStudioCount() }
                         model.showToast("Rescanned local and LM Studio models", style: .info)
                     } label: {
                         Label { Text("Rescan Now", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
@@ -262,7 +262,7 @@ public struct ModelsSettingsPaneView: View {
             }
             .padding(14)
             .task(id: "\(activeLmStudioPath)|\(model.enableLMStudioDetection)") {
-                rescanLmStudioCount()
+                await rescanLmStudioCount()
             }
             .background(.appPage)
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -287,7 +287,22 @@ public struct ModelsSettingsPaneView: View {
         }
     }
 
-    private func rescanLmStudioCount() {
-        lmStudioModelCount = ModelStorageManager.scanModels(in: activeLmStudioPath, sourceTag: "LM Studio").count
+    /// Counts off the main actor: the walk can span hundreds of GB on an
+    /// external or network volume, and ran inline on the main thread before.
+    private func rescanLmStudioCount() async {
+        let path = activeLmStudioPath
+        let enabled = model.enableLMStudioDetection
+        let count = await Task.detached(priority: .utility) {
+            Self.lmStudioModelCount(path: path, detectionEnabled: enabled)
+        }.value
+        guard !Task.isCancelled else { return }
+        lmStudioModelCount = count
+    }
+
+    /// The count is only displayed while detection is on, so a disabled
+    /// detection never touches the disk.
+    nonisolated static func lmStudioModelCount(path: String, detectionEnabled: Bool) -> Int {
+        guard detectionEnabled else { return 0 }
+        return ModelStorageManager.scanModels(in: path, sourceTag: "LM Studio").count
     }
 }

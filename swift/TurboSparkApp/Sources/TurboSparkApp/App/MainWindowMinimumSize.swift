@@ -16,6 +16,16 @@ struct MainWindowMinimumSize: NSViewRepresentable {
         view.applyMinimumSize()
     }
 
+    /// A minimum larger than the screen's visible area would push the window
+    /// off screen and, through contentMinSize, stop the user from shrinking it
+    /// back. The layout degrades inside the smaller window instead.
+    static func clamped(_ size: CGSize, toScreen screen: CGSize?) -> CGSize {
+        guard let screen, screen.width > 0, screen.height > 0 else { return size }
+        return CGSize(
+            width: min(size.width, screen.width),
+            height: min(size.height, screen.height))
+    }
+
     final class ConstraintView: NSView {
         var minimumSize: CGSize
 
@@ -33,6 +43,8 @@ struct MainWindowMinimumSize: NSViewRepresentable {
 
         func applyMinimumSize() {
             guard let window else { return }
+            let minimumSize = MainWindowMinimumSize.clamped(
+                minimumSize, toScreen: window.screen?.visibleFrame.size)
             window.contentMinSize = minimumSize
             let current = window.contentRect(forFrameRect: window.frame).size
             let required = CGSize(

@@ -57,8 +57,10 @@ enum ANSIColorizer {
                 current.text = ""
             }
             scanner = scanner[escape...]
-            let introducer = scanner.count > 1
-                ? scanner[scanner.index(after: scanner.startIndex)] : nil
+            // Index checks, not scanner.count: count is O(n) and this runs
+            // once per escape, which made large colored outputs quadratic.
+            let next = scanner.index(after: scanner.startIndex)
+            let introducer = next < scanner.endIndex ? scanner[next] : nil
             if introducer == "]" {
                 // OSC string: consumed whole, through its terminator (BEL,
                 // ST = ESC backslash, or the single-byte 0x9C).
@@ -84,7 +86,10 @@ enum ANSIColorizer {
             }
             // CSI ... final-byte; SGR is the one ending in 'm'. Everything
             // else (cursor moves, private modes) is consumed and dropped.
-            guard scanner.count > 2, introducer == "[" else {
+            guard introducer == "[",
+                  scanner.index(scanner.startIndex, offsetBy: 2, limitedBy: scanner.endIndex)
+                    .map({ $0 < scanner.endIndex }) == true
+            else {
                 // Not CSI: drop the ESC and one following byte (two-char
                 // escape sequences) and keep going.
                 scanner = scanner.dropFirst(2)

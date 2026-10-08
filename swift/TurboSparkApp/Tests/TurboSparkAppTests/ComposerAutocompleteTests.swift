@@ -248,6 +248,17 @@ final class ComposerAutocompleteTests: XCTestCase {
             ComposerAutocompleteEngine.maxSuggestions)
     }
 
+    func testInvocableSkillsMatchTheSlashListFilter() {
+        let skills = [
+            skill("deploy"),
+            skill("off", enabled: false),
+            skill("model-only", userInvocable: false),
+            skill("stats"),  // shadowed by the built-in /stats
+        ]
+        let names = ComposerAutocompleteEngine.invocableSkills(skills).map(\.name)
+        XCTAssertEqual(names, ["deploy"])
+    }
+
     // MARK: - Controller
 
     @MainActor

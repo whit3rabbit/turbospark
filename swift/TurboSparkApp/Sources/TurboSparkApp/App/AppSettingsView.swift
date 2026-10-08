@@ -97,6 +97,14 @@ public struct AppSettingsView: View {
                 selectedTab = tab
             }
         }
+        .onAppear { consumeRequestedTab() }
+        .onChange(of: model.requestedSettingsTab) { _, _ in consumeRequestedTab() }
+    }
+
+    private func consumeRequestedTab() {
+        guard let tab = model.requestedSettingsTab else { return }
+        selectedTab = tab
+        model.requestedSettingsTab = nil
     }
 
     // MARK: - Sidebar
@@ -148,6 +156,9 @@ public struct AppSettingsView: View {
         let filtered = tabs.filter { tab in
             searchText.isEmpty ||
             tab.title.localizedCaseInsensitiveContains(searchText) ||
+            // The title the user actually sees, in the active language.
+            NSLocalizedString(tab.title, bundle: .module, comment: "")
+                .localizedCaseInsensitiveContains(searchText) ||
             tab.keywords.contains { $0.localizedCaseInsensitiveContains(searchText) }
         }
 

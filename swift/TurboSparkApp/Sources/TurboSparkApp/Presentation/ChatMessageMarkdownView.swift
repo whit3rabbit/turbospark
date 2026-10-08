@@ -172,7 +172,7 @@ extension AppFontDescriptor {
 
 /// Container view for fenced code blocks featuring a language tag, copy and
 /// (for html) a sandboxed-preview action.
-private struct CodeBlockContainer<Content: View>: View {
+struct CodeBlockContainer<Content: View>: View {
     let language: String?
     let code: String
     var onPreviewHTML: ((String) -> Void)?
@@ -198,7 +198,27 @@ private struct CodeBlockContainer<Content: View>: View {
     /// that is not a chart fence.
     private var chartPreviewHTML: String? {
         guard onPreviewHTML != nil else { return nil }
-        switch language?.lowercased() {
+        return Self.chartHTML(language: language, code: code)
+    }
+
+    /// The fence body is model-authored, so it is validated as JSON and
+    /// embedded as DATA (an application/json script block read through
+    /// JSON.parse) rather than interpolated into executable script. A body
+    /// that is not JSON (including a script-injection attempt) yields nil and
+    /// no preview. `<` is escaped so a literal closing script tag in a label
+    /// cannot end the data block.
+    static func chartHTML(language: String?, code: String) -> String? {
+        let kind = language?.lowercased()
+        guard ["echarts", "echarts-fulldata", "chartjs", "chart.js", "chart"].contains(kind ?? ""),
+              let data = code.data(using: .utf8),
+              (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) != nil
+        else { return nil }
+        let option = code
+            .replacingOccurrences(of: "<", with: "\\u003c")
+            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+        let optionBlock = "<script type=\"application/json\" id=\"opt\">\(option)</script>"
+        switch kind {
         case "echarts", "echarts-fulldata":
             // The panel grants network per page, so the CDN fetch asks once;
             // until then the page shows its own loading notice instead of a
@@ -209,12 +229,13 @@ private struct CodeBlockContainer<Content: View>: View {
             #c{width:100%;height:100%}#n{font:13px -apple-system;padding:16px;color:#666}</style></head>
             <body><div id="n">Loading ECharts from cdn.jsdelivr.net (grant network access to render)...</div>
             <div id="c"></div>
+            \(optionBlock)
             <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
             <script>
             var el=document.getElementById('n');
             try{
               if(typeof echarts==='undefined'){el.textContent='ECharts failed to load. Grant network access and retry.';}
-              else{el.remove();echarts.init(document.getElementById('c')).setOption(\(code));}
+              else{el.remove();echarts.init(document.getElementById('c')).setOption(JSON.parse(document.getElementById('opt').textContent));}
             }catch(e){el.textContent='Chart error: '+e.message;}
             </script></body></html>
             """
@@ -225,12 +246,13 @@ private struct CodeBlockContainer<Content: View>: View {
             #c{width:100%;height:100%;position:relative}#n{font:13px -apple-system;padding:16px;color:#666}</style></head>
             <body><div id="n">Loading Chart.js from cdn.jsdelivr.net (grant network access to render)...</div>
             <div id="c"><canvas id="cv"></canvas></div>
+            \(optionBlock)
             <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
             <script>
             var el=document.getElementById('n');
             try{
               if(typeof Chart==='undefined'){el.textContent='Chart.js failed to load. Grant network access and retry.';}
-              else{el.remove();new Chart(document.getElementById('cv'),\(code));}
+              else{el.remove();new Chart(document.getElementById('cv'),JSON.parse(document.getElementById('opt').textContent));}
             }catch(e){el.textContent='Chart error: '+e.message;}
             </script></body></html>
             """
@@ -291,7 +313,7 @@ private struct CodeBlockContainer<Content: View>: View {
                     HStack(spacing: 4) {
                         Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                             .accessibilityHidden(true)
-                        Text(isCopied ? "Copied" : "Copy")
+                        isCopied ? Text("Copied", bundle: .module) : Text("Copy", bundle: .module)
                     }
                     .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(isCopied ? theme.accent : theme.secondaryText)

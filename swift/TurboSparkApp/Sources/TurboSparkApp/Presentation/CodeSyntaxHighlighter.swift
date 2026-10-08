@@ -248,7 +248,9 @@ enum CodeSyntaxHighlighter {
             }
 
             // Word accumulation for keyword matching (cLike/hash/sql only).
-            if family != .markup, char.isLetter || char == "_" {
+            // Digits continue an identifier once a word has started (u8, var1);
+            // only a leading digit starts a number.
+            if family != .markup, char.isLetter || char == "_" || (!word.isEmpty && char.isNumber) {
                 word.append(char)
                 index += 1
                 continue

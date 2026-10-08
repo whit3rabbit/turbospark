@@ -120,17 +120,9 @@ struct ModelRecommendationRow: View {
 
     /// Determines whether a recommendation refers to a Mixture-of-Experts architecture.
     static func isMoEModel(_ rec: ModelRecommendation) -> Bool {
-        let alias = rec.alias.lowercased()
-        let family = rec.family?.lowercased() ?? ""
-        return rec.slotCacheSlots > 0
-            || rec.verdict == .streams
-            || alias.contains("gemma")
-            || alias.contains("qwen3moe")
-            || alias.contains("gptoss")
-            || alias.contains("ornith")
-            || alias.contains("ternary")
-            || alias.contains("mixtral")
-            || family.contains("moe")
+        // One source of truth: the descriptor's exact family set. Alias
+        // substrings mislabeled dense models (ornith, ternary) as MoE.
+        return rec.slotCacheSlots > 0 || ModelFeatureDescriptor.isKnownMoEFamily(rec.family)
     }
 }
 

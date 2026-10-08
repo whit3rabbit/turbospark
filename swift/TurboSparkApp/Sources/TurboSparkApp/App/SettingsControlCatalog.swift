@@ -98,7 +98,7 @@ enum SettingsControlCatalog {
         .init(title: "Mirror Endpoint ($HF_ENDPOINT)", pane: .models, timing: .action),
         .init(title: "Model loading guardrails", pane: .models, timing: .modelReload),
         .init(title: "Move Model Store", pane: .models, timing: .immediate),
-        .init(title: "Add Folder\\u{2026}", pane: .permissions, timing: .immediate),
+        .init(title: "Add Folder\u{2026}", pane: .permissions, timing: .immediate),
         .init(title: "Authorized Workspace Folders", pane: .permissions, timing: .immediate),
         .init(title: "Files & Privacy Permissions", pane: .permissions, timing: .immediate),
         .init(title: "Grant Access", pane: .permissions, timing: .immediate),

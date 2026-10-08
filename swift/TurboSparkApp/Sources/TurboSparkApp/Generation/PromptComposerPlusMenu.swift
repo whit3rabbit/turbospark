@@ -180,6 +180,8 @@ struct PromptComposerPlusMenu: View {
                             } label: {
                                 Label("Use in Chat (/\(skill.name))", systemImage: "arrow.right.circle")
                             }
+                            // The submit handler refuses disabled and model-only skills.
+                            .disabled(!skill.isEnabled || !skill.manifest.userInvocable)
 
                             Button {
                                 model.toggleSkillEnabled(skill)

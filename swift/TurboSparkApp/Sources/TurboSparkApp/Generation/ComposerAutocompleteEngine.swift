@@ -110,6 +110,17 @@ enum ComposerAutocompleteEngine {
 
     // MARK: - Slash candidates
 
+    /// The skills a `/name` can actually dispatch: enabled, user-invocable and
+    /// not shadowed by a built-in. Shared with `/help` so the two lists agree.
+    static func invocableSkills(
+        _ skills: [AppSkill], builtIns: [BuiltInSlashCommand] = BuiltInSlashCommand.all
+    ) -> [AppSkill] {
+        let takenNames = Set(builtIns.flatMap { [$0.name] + $0.aliases })
+        return skills
+            .filter { $0.isEnabled && $0.manifest.userInvocable }
+            .filter { !takenNames.contains($0.name.lowercased()) }
+    }
+
     /// Commands and skills matching a typed `/prefix`, best first.
     ///
     /// A skill whose name collides with a built-in command (or alias) is
@@ -123,10 +134,7 @@ enum ComposerAutocompleteEngine {
     ) -> [ComposerSuggestion] {
         let clean = prefix.lowercased()
         let commandRows = builtIns.map { ComposerSuggestion(builtIn: $0) }
-        let takenNames = Set(builtIns.flatMap { [$0.name] + $0.aliases })
-        let skillRows = skills
-            .filter { $0.isEnabled && $0.manifest.userInvocable }
-            .filter { !takenNames.contains($0.name.lowercased()) }
+        let skillRows = invocableSkills(skills, builtIns: builtIns)
             .map { ComposerSuggestion(skill: $0) }
 
         var ranked: [(bucket: Int, suggestion: ComposerSuggestion)] = []

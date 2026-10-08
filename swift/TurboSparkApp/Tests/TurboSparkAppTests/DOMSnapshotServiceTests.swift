@@ -402,6 +402,31 @@ final class DOMSnapshotServiceTests: XCTestCase {
         }
     }
 
+    func testCommittedGenerationMatchesSnapshotAndActsWithoutResnapshot() async throws {
+        let fixture = try fixtureURL("forms")
+        let page = try await makePage(fixture: fixture)
+        defer { page.service.invalidate(); page.webView.stopLoading() }
+
+        let snapshot = try await page.service.snapshot()
+        let generation = try page.service.committedGeneration()
+        XCTAssertEqual(generation, snapshot.generation)
+
+        // An action addressed with the cheap accessor must resolve a reference
+        // minted by the earlier snapshot.
+        let reference = try XCTUnwrap(node(named: "Continue", in: snapshot).reference)
+        let outcome = try await page.service.perform(.click, on: .reference(reference), generation: generation)
+        XCTAssertEqual(outcome.reference, reference)
+
+        page.service.navigationStarted()
+        XCTAssertThrowsError(try page.service.committedGeneration()) { error in
+            XCTAssertEqual(error as? DOMSnapshotServiceError, .inactiveDocument)
+        }
+        page.service.invalidate()
+        XCTAssertThrowsError(try page.service.committedGeneration()) { error in
+            XCTAssertEqual(error as? DOMSnapshotServiceError, .unavailable)
+        }
+    }
+
     func testInvalidateDisconnectsTheBridgeHandler() async throws {
         let fixture = try fixtureURL("forms")
         let page = try await makePage(fixture: fixture)

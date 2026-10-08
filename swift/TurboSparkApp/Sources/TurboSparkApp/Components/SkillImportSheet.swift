@@ -242,8 +242,11 @@ public struct SkillImportSheet: View {
         Task {
             do {
                 let manifest = try await SkillMarketplaceManager.shared.fetchMarketplace(source: source)
-                try model.saveMarketplace(name: manifest.name, source: source, kind: .skills, projectID: sourceProjectID)
                 await MainActor.run {
+                    // Never overwrites a same-named entry that points elsewhere,
+                    // and a failed save never hides the fetched manifest.
+                    model.saveFetchedMarketplace(
+                        name: manifest.name, source: source, kind: .skills, projectID: sourceProjectID)
                     self.remoteManifest = manifest
                     self.isFetchingRemote = false
                 }

@@ -83,7 +83,14 @@ extension AppModel {
            let url = URL(string: rawURL) {
             origin = BrowserOrigin(url: url)
         } else {
-            origin = AppToolRegistry.browserToolRuntimeProvider?(call, project)?.permissionContext?.origin
+            // Side-effect free on purpose: this runs while SwiftUI evaluates
+            // approval cards, so it must not go through the registry provider,
+            // which opens the browser pane and publishes AppModel state.
+            origin = browserAutomationCoordinator.runtime(
+                for: call,
+                project: project,
+                availability: browserToolAvailability()
+            )?.permissionContext?.origin
         }
         return BrowserPermissionContext(origin: origin)
     }

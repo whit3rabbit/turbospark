@@ -349,7 +349,13 @@ private struct TypeSafeQuestionCard: View {
                 ForEach(question.levels.indices, id: \.self) { index in
                     HStack {
                         Text(verbatim: "\(index)").frame(width: 25)
-                        TextField("level", text: $question.levels[index])
+                        // A bounds-checked binding: ForEach over indices keeps
+                        // this row alive for one pass after Remove shrinks the
+                        // array, and a direct `$question.levels[index]` then
+                        // traps with "Index out of range".
+                        TextField("level", text: Binding(
+                            get: { question.levels.indices.contains(index) ? question.levels[index] : "" },
+                            set: { if question.levels.indices.contains(index) { question.levels[index] = $0 } }))
                         Button {
                             if question.levels.count > 2 { question.levels.remove(at: index) }
                         } label: { Text("Remove", bundle: .module) }

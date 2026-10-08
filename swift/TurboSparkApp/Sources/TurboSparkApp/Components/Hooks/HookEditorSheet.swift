@@ -27,6 +27,13 @@ public struct HookEditorSheet: View {
         self.onDismiss = onDismiss
     }
 
+    /// The execution engine never evaluates `.prompt` hooks, so a NEW one
+    /// would silently gate nothing. It stays selectable only when editing a
+    /// discovered hook that already has that type, so the editor can show it.
+    static func selectableTypes(existing: AppHookType?) -> [AppHookType] {
+        AppHookType.allCases.filter { $0 != .prompt || existing == .prompt }
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -81,7 +88,7 @@ public struct HookEditorSheet: View {
                             Text("Hook Type", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
                             Picker("", selection: $type) {
-                                ForEach(AppHookType.allCases) { t in
+                                ForEach(Self.selectableTypes(existing: existingHook?.type)) { t in
                                     Text(t.title).tag(t)
                                 }
                             }
@@ -165,6 +172,9 @@ public struct HookEditorSheet: View {
             }
                         .themedFont(.small)
                         .padding(.top, 4)
+                        // The engine ignores async for these events (the result gates the
+                        // action), so the switch would promise something it cannot deliver.
+                        .disabled(AppHookExecutionEngine.blockingEvents.contains(event))
                 }
                 .padding(20)
             }
@@ -185,7 +195,9 @@ public struct HookEditorSheet: View {
                 } label: { Text("Save Hook", bundle: .module) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
-                .disabled(command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || (type == .prompt && existingHook?.type != .prompt))
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)

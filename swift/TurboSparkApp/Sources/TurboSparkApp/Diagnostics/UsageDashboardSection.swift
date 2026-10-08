@@ -167,7 +167,10 @@ private struct UsageDashboardSectionView: View {
     /// column starts on the right row. Unparseable keys land on Monday.
     static func weekday(of dayKey: String?) -> Int {
         guard let dayKey, let date = DateFormatter.utcDay.date(from: dayKey) else { return 1 }
-        return Calendar(identifier: .gregorian).component(.weekday, from: date) - 1
+        // Keys are UTC days; a local-zone calendar shifts them a day west of UTC.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        return calendar.component(.weekday, from: date) - 1
     }
 
     static func heatColor(tokens: Int, maxTokens: Int) -> Color {

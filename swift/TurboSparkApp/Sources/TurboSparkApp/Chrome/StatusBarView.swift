@@ -17,7 +17,6 @@ struct StatusBarView: View {
     /// Historical ring buffers for live sparkline graphs (up to 16 data points).
     @State private var throughputHistory: [Double] = []
 
-    private let poll = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -52,7 +51,16 @@ struct StatusBarView: View {
                 .frame(height: 0.5)
         }
         .onAppear { refreshMetrics() }
-        .onReceive(poll) { _ in refreshMetrics() }
+        .task {
+            // Lifetime follows view identity, not struct re-creation: a Timer
+            // publisher stored on the struct restarted on every parent render
+            // (every ~25 ms while generating), so the 2 s poll never fired.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                if Task.isCancelled { break }
+                refreshMetrics()
+            }
+        }
         .onChange(of: model.liveTokenCount) { refreshMetrics() }
     }
 

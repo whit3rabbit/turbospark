@@ -13,6 +13,12 @@ public final class AppSpeechSynthesizer: NSObject, ObservableObject, AVSpeechSyn
     /// Whether speech synthesis is currently active.
     @Published public private(set) var isSpeaking: Bool = false
 
+    /// The utterance whose lifecycle owns `speakingMessageID`. Delegate
+    /// callbacks arrive on a later main-actor turn, so switching from message
+    /// A to B queues `didCancel(A)` AFTER B started; without this identity
+    /// check it would clear B's state while B is still playing.
+    private(set) var currentUtterance: AVSpeechUtterance?
+
     public override init() {
         super.init()
         synthesizer.delegate = self
@@ -43,6 +49,7 @@ public final class AppSpeechSynthesizer: NSObject, ObservableObject, AVSpeechSyn
         }
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
 
+        currentUtterance = utterance
         speakingMessageID = messageID
         isSpeaking = true
         synthesizer.speak(utterance)
@@ -53,6 +60,16 @@ public final class AppSpeechSynthesizer: NSObject, ObservableObject, AVSpeechSyn
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
+        currentUtterance = nil
+        speakingMessageID = nil
+        isSpeaking = false
+    }
+
+    /// Clears the speaking state only when `utterance` is still the active
+    /// one; a stale callback from a replaced utterance is ignored.
+    func utteranceEnded(_ utterance: AVSpeechUtterance) {
+        guard utterance === currentUtterance else { return }
+        currentUtterance = nil
         speakingMessageID = nil
         isSpeaking = false
     }
@@ -77,9 +94,10 @@ public final class AppSpeechSynthesizer: NSObject, ObservableObject, AVSpeechSyn
         _ synthesizer: AVSpeechSynthesizer,
         didFinish utterance: AVSpeechUtterance
     ) {
+        // AVSpeechUtterance is not Sendable; the identity is only compared.
+        nonisolated(unsafe) let ended = utterance
         Task { @MainActor in
-            self.speakingMessageID = nil
-            self.isSpeaking = false
+            self.utteranceEnded(ended)
         }
     }
 
@@ -87,9 +105,10 @@ public final class AppSpeechSynthesizer: NSObject, ObservableObject, AVSpeechSyn
         _ synthesizer: AVSpeechSynthesizer,
         didCancel utterance: AVSpeechUtterance
     ) {
+        // AVSpeechUtterance is not Sendable; the identity is only compared.
+        nonisolated(unsafe) let ended = utterance
         Task { @MainActor in
-            self.speakingMessageID = nil
-            self.isSpeaking = false
+            self.utteranceEnded(ended)
         }
     }
 }

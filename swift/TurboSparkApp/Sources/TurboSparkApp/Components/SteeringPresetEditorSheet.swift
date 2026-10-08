@@ -18,6 +18,9 @@ struct SteeringPresetEditorSheet: View {
     @State private var draft: AppSteeringPreset
     @State private var vectorInfo: ControlVectorInfo?
     @State private var readError: String?
+    // Set once the user touches the Mode picker; from then on the file's
+    // declared mode must not overwrite the explicit choice.
+    @State private var modeTouched = false
 
     private let onSave: (AppSteeringPreset) -> Void
 
@@ -45,7 +48,7 @@ struct SteeringPresetEditorSheet: View {
             footer
         }
         .frame(width: 560, height: 620)
-        .onAppear { readVector() }
+        .onAppear { readVector(applyDeclaredMode: false) }
     }
 
     private var header: some View {
@@ -118,7 +121,10 @@ struct SteeringPresetEditorSheet: View {
 
     private var editSection: some View {
         Section(header: Text("Edit", bundle: .module)) {
-            Picker(selection: $draft.mode) {
+            Picker(selection: Binding(
+                get: { draft.mode },
+                set: { draft.mode = $0; modeTouched = true }
+            )) {
                 ForEach(AppSteeringModeOption.allCases) { mode in
                     Text(mode.menuLabel).tag(mode)
                 }
@@ -182,8 +188,9 @@ struct SteeringPresetEditorSheet: View {
         return "\(info.coveredLayers) of \(info.spannedLayers)\(range)"
     }
 
-    private func readVector() {
-        let result = AppModel.readingVectorShape(into: draft)
+    private func readVector(applyDeclaredMode: Bool = true) {
+        let result = AppModel.readingVectorShape(
+            into: draft, applyDeclaredMode: applyDeclaredMode && !modeTouched)
         draft = result.preset
         vectorInfo = result.info
         readError = result.error

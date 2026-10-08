@@ -76,7 +76,11 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
             return true
         case .system:
             if #available(macOS 13.0, *) {
-                let code = Locale.current.language.languageCode?.identifier ?? "en"
+                // Direction follows the localization the bundle actually
+                // resolves, not the system locale: a system set to Persian
+                // with no Persian catalog shows English and must stay LTR.
+                let code = Bundle.module.preferredLocalizations.first
+                    ?? Locale.current.language.languageCode?.identifier ?? "en"
                 return Locale.Language(identifier: code).characterDirection == .rightToLeft
             } else {
                 return false

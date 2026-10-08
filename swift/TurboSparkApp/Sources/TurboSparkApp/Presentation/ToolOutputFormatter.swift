@@ -7,6 +7,11 @@ public enum ToolOutputFormatter {
     private static let c1Osc: UInt8 = 0x9D
     private static let c1St: UInt8 = 0x9C
     private static let bel: UInt8 = 0x07
+    // Text is UTF-8, so a C1 control scalar (U+009B, U+009D, U+009C) is the
+    // two bytes C2 xx. A bare 0x9B/0x9D/0x9C byte is only ever a continuation
+    // byte of another character (0x9C ends curly quotes, for example) and
+    // must never be treated as a control.
+    private static let c1Lead: UInt8 = 0xC2
 
     public struct OutputTail: Equatable, Sendable {
         public let fullText: String
@@ -47,8 +52,8 @@ public enum ToolOutputFormatter {
                     i += 1
                 }
                 continue
-            } else if byte == c1Csi {
-                i += 1
+            } else if byte == c1Lead, i + 1 < count, bytes[i + 1] == c1Csi {
+                i += 2
                 while i < count && bytes[i] >= 0x20 && bytes[i] <= 0x3F {
                     i += 1
                 }
@@ -59,12 +64,17 @@ public enum ToolOutputFormatter {
             }
 
             // Check for ESC ] (OSC) or single-byte C1 OSC (0x9D)
-            if (byte == esc && i + 1 < count && bytes[i + 1] == 0x5D) || byte == c1Osc {
-                i += (byte == esc ? 2 : 1)
+            let isC1Osc = byte == c1Lead && i + 1 < count && bytes[i + 1] == c1Osc
+            if (byte == esc && i + 1 < count && bytes[i + 1] == 0x5D) || isC1Osc {
+                i += 2
                 // Consume until BEL (0x07) or ST (ESC \ or 0x9C)
                 while i < count {
-                    if bytes[i] == bel || bytes[i] == c1St {
+                    if bytes[i] == bel {
                         i += 1
+                        break
+                    }
+                    if bytes[i] == c1Lead, i + 1 < count, bytes[i + 1] == c1St {
+                        i += 2
                         break
                     }
                     if bytes[i] == esc && i + 1 < count && bytes[i + 1] == 0x5C {

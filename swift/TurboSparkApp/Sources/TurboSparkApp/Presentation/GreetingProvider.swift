@@ -26,17 +26,38 @@ public struct Greeting: Identifiable, Codable, Sendable, Equatable {
     public func text(for language: AppLanguage) -> String {
         switch language {
         case .system:
-            let code = Locale.current.language.languageCode?.identifier ?? "en"
-            if let matched = translations[code] {
-                return matched
-            }
-            return translations["en"] ?? id
+            return Self.resolve(translations, for: Locale.current.language, fallbackID: id)
         default:
             if let matched = translations[language.rawValue] {
                 return matched
             }
             return translations["en"] ?? id
         }
+    }
+}
+
+extension Greeting {
+    /// Picks the best translation for a system language: script (zh-Hans,
+    /// zh-Hant), region (pt-BR), bare code, a prefix match, then English.
+    static func resolve(
+        _ translations: [String: String], for lang: Locale.Language, fallbackID: String
+    ) -> String {
+        // zh_TW carries no explicit script and pt no region; maximizing
+        // fills in Hant / BR so the specific catalog keys are reachable.
+        let lang = Locale.Language(identifier: lang.maximalIdentifier)
+        let code = lang.languageCode?.identifier ?? "en"
+        var candidates: [String] = []
+        if let script = lang.script?.identifier { candidates.append("\(code)-\(script)") }
+        if let region = lang.region?.identifier { candidates.append("\(code)-\(region)") }
+        candidates.append(code)
+        for key in candidates {
+            if let matched = translations[key] { return matched }
+        }
+        if let key = translations.keys.sorted().first(where: { $0.hasPrefix(code + "-") }),
+           let matched = translations[key] {
+            return matched
+        }
+        return translations["en"] ?? fallbackID
     }
 }
 

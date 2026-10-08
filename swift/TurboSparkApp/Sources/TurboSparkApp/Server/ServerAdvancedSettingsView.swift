@@ -248,7 +248,20 @@ struct ServerAdvancedSettingsView: View {
             binaryPath: cli.path,
             modelArgument: modelArgument,
             port: model.serverPinnedPort == 0 ? nil : model.serverPinnedPort)
-        guard let command else { return }
+        guard var command else { return }
+        // The daemon a launch starts (or the agent talking to a keyed one)
+        // needs the key configured above; the CLI reads TURBOSPARK_API_KEY.
+        if let key = AppModel.serverAPIKey(from: model.serverAPIKeyInput) {
+            do {
+                let keyFile = try AgentTerminalLaunch.writeAPIKeyFile(key)
+                command = AgentTerminalLaunch.commandExportingAPIKey(command, keyFilePath: keyFile)
+            } catch {
+                model.showToast(
+                    "Could not pass the API key to the launch: \(error.localizedDescription)",
+                    style: .error)
+                return
+            }
+        }
         do {
             try AgentTerminalLaunch.openInTerminal(command: command)
             model.showToast("Opening Terminal...", style: .info)

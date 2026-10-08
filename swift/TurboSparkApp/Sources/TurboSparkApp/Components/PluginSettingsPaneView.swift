@@ -149,10 +149,12 @@ public struct PluginSettingsPaneView: View {
                 Rectangle().fill(.appBorder).frame(height: 1)
             }
 
+            // One read of the enable stores per render, not per row.
+            let enabledIDs = PluginManager.shared.enabledPluginIDs(projectURL: scopedProject?.rootDirectoryURL)
             List(plugins, selection: $selectedPluginID) { plugin in
                 PluginListRow(
                     plugin: plugin,
-                    isEnabled: PluginManager.shared.isEnabled(pluginID: plugin.id, projectURL: scopedProject?.rootDirectoryURL),
+                    isEnabled: enabledIDs.contains(plugin.id),
                     toggle: { model.setPluginPreference(id: plugin.id, enabled: $0, scope: scopedProject.map(PluginInstallScope.project) ?? .user) })
                     .tag(plugin.id)
             }

@@ -48,7 +48,12 @@ struct ChatSearchOverlayView: View {
             guard isPresented else { return }
             scheduleRebuild()
         }
-        .onChange(of: query) { _, _ in recomputeHits() }
+        .onChange(of: query) { _, _ in
+            // A new query starts at the best (first) hit instead of keeping a
+            // stale row that the clamp would push to the last one.
+            selectedIndex = 0
+            recomputeHits()
+        }
     }
 
     // MARK: - Layout
@@ -211,10 +216,7 @@ struct ChatSearchOverlayView: View {
         // chat would open without appearing in the list. Both moves are
         // guarded on the model side: mid-turn they refuse, and the dialog
         // still closes.
-        if model.selectedProjectID != hit.projectID {
-            model.selectProject(id: hit.projectID)
-        }
-        model.selectChat(id: hit.id)
+        model.openChat(id: hit.id)
         isPresented = false
     }
 

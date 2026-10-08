@@ -505,6 +505,9 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
             phase = .mainFrameAction
         }
         let source = navigationAction.sourceFrame.request.url.flatMap(BrowserOrigin.init(url:))
+        // A fragment-only change never commits or finishes, so marking the tab
+        // loading (and invalidating the snapshot bridge) would leave it stuck.
+        let isSameDocument = Self.isSameDocumentNavigation(from: webView.url, to: destination.url)
         let request = BrowserNavigationAuthorizationRequest(
             tabID: tabID,
             destination: destination.origin,
@@ -517,7 +520,9 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
             webView: webView,
             gate: BrowserNavigationPolicyGate { [weak self, weak managedTab] shouldAllow in
                 guard let self, let managedTab else { return }
-                if shouldAllow {
+                if shouldAllow && isSameDocument {
+                    // Policy still ran; only the load bookkeeping is skipped.
+                } else if shouldAllow {
                     managedTab.pendingResponseOrigins.insert(destination.origin.canonicalString)
                     managedTab.activeNavigationURL = destination.url.absoluteString
                     self.startLoadIfNeeded(tabID, destination: destination)
@@ -532,6 +537,19 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
                 decisionHandler(shouldAllow ? .allow : .cancel)
             }
         )
+    }
+
+    /// True when `destination` differs from `current` only by its fragment, so
+    /// WebKit will scroll within the loaded document without a load cycle.
+    nonisolated static func isSameDocumentNavigation(from current: URL?, to destination: URL) -> Bool {
+        guard let current, destination.fragment != nil || current.fragment != nil else { return false }
+        func stripped(_ url: URL) -> String? {
+            guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+            components.fragment = nil
+            return components.string
+        }
+        guard let a = stripped(current), let b = stripped(destination) else { return false }
+        return a == b && current.fragment != destination.fragment
     }
 
     public func webView(

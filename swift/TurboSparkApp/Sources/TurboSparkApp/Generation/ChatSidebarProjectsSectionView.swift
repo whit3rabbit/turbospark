@@ -12,6 +12,7 @@ struct ChatSidebarProjectsSectionView: View {
     @Binding var projectBeingEdited: AppProject?
     @Binding var projectForMcpSettings: AppProject?
     @State private var hoveredProjectID: UUID?
+    @State private var projectPendingDeletion: AppProject?
 
     @ScaledMetric private var projectActionSize: CGFloat = 22
 
@@ -49,6 +50,26 @@ struct ChatSidebarProjectsSectionView: View {
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
+        // Deleting a project drops its configuration with no way back, and
+        // the menu item sits directly under Reveal in Finder.
+        .alert(
+            Text("Delete Project", bundle: .module),
+            isPresented: Binding(
+                get: { projectPendingDeletion != nil },
+                set: { if !$0 { projectPendingDeletion = nil } }),
+            presenting: projectPendingDeletion
+        ) { project in
+            Button(role: .destructive) {
+                model.deleteProject(id: project.id)
+            } label: {
+                Text("Delete Project", bundle: .module)
+            }
+            Button(role: .cancel) {} label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: { project in
+            Text(verbatim: project.name)
+        }
     }
 
     private var allChatsRow: some View {
@@ -163,7 +184,7 @@ struct ChatSidebarProjectsSectionView: View {
                 }
                 Divider()
                 Button(role: .destructive) {
-                    model.deleteProject(id: project.id)
+                    projectPendingDeletion = project
                 } label: {
                     Label { Text("Delete Project", bundle: .module) } icon: { Image(systemName: "trash") }
                 }

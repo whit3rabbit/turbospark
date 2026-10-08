@@ -26,7 +26,7 @@ struct ModelDetailPaneView: View {
             verdict: recommendation?.verdict,
             installBytes: recommendation?.installBytes ?? entry.installBytes,
             downloadBytes: entry.downloadBytes,
-            freeDiskBytes: ModelInstallGate.freeSpace(at: AppStorageRoot.directory))
+            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore())
     }
 
     private var visuals: ModelFamilyVisuals {
@@ -42,7 +42,7 @@ struct ModelDetailPaneView: View {
     }
 
     private var isDownloadingThis: Bool {
-        model.isInstallingModel
+        model.isInstallingModel && model.installingAlias == entry.alias
     }
 
     var body: some View {

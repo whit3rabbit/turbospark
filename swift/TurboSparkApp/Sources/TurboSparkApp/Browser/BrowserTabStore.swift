@@ -73,17 +73,26 @@ public enum BrowserPopupRequestResult: Equatable, Sendable {
 
 /// Stores tab metadata and coordinates managed tab lifecycle requests.
 /// WebView creation and navigation remain the responsibility of the browser engine.
-public final class BrowserTabStore {
+public final class BrowserTabStore: @unchecked Sendable {
     private struct AgentControlLease {
         let tabID: BrowserTabID
         let token: BrowserAgentControlToken
     }
 
-    public private(set) var tabs: [BrowserTab] = []
-    public private(set) var activeTabID: BrowserTabID?
-    public var agentControlledTabID: BrowserTabID? { agentControlLease?.tabID }
-
+    // The store is read by the BrowserAutomationSession actor (cooperative
+    // pool) while WebKit delegate callbacks and user actions mutate it on the
+    // main thread. A Swift Array read during an in-place write is undefined
+    // behavior, and the lease check-then-act must be atomic, so every access
+    // goes through this recursive lock (recursive because requestPopup calls
+    // createTab).
+    private let lock = NSRecursiveLock()
+    private var tabsStorage: [BrowserTab] = []
+    private var activeTabIDStorage: BrowserTabID?
     private var agentControlLease: AgentControlLease?
+
+    public var tabs: [BrowserTab] { lock.withLock { tabsStorage } }
+    public var activeTabID: BrowserTabID? { lock.withLock { activeTabIDStorage } }
+    public var agentControlledTabID: BrowserTabID? { lock.withLock { agentControlLease?.tabID } }
 
     public init() {}
 
@@ -95,52 +104,60 @@ public final class BrowserTabStore {
         title: String? = nil,
         select: Bool = true
     ) -> BrowserTabID {
-        let tab = BrowserTab(title: title, address: address, owner: owner)
-        tabs.append(tab)
-        if select || activeTabID == nil {
-            activeTabID = tab.id
+        lock.withLock {
+            let tab = BrowserTab(title: title, address: address, owner: owner)
+            tabsStorage.append(tab)
+            if select || activeTabIDStorage == nil {
+                activeTabIDStorage = tab.id
+            }
+            return tab.id
         }
-        return tab.id
     }
 
     public func tab(id: BrowserTabID) -> BrowserTab? {
-        tabs.first { $0.id == id }
+        lock.withLock { tabsStorage.first { $0.id == id } }
     }
 
     public func selectTab(_ tabID: BrowserTabID) throws {
-        guard tabs.contains(where: { $0.id == tabID }) else {
-            throw BrowserTabStoreError.tabNotFound(tabID)
+        try lock.withLock {
+            guard tabsStorage.contains(where: { $0.id == tabID }) else {
+                throw BrowserTabStoreError.tabNotFound(tabID)
+            }
+            activeTabIDStorage = tabID
         }
-        activeTabID = tabID
     }
 
     /// Closing the active tab selects the next tab in order, or the previous tab if it was last.
     public func closeTab(_ tabID: BrowserTabID) throws {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else {
-            throw BrowserTabStoreError.tabNotFound(tabID)
-        }
+        try lock.withLock {
+            guard let index = tabsStorage.firstIndex(where: { $0.id == tabID }) else {
+                throw BrowserTabStoreError.tabNotFound(tabID)
+            }
 
-        if agentControlLease?.tabID == tabID {
-            agentControlLease = nil
-        }
-        tabs.remove(at: index)
-        guard activeTabID == tabID else { return }
+            if agentControlLease?.tabID == tabID {
+                agentControlLease = nil
+            }
+            tabsStorage.remove(at: index)
+            guard activeTabIDStorage == tabID else { return }
 
-        if tabs.isEmpty {
-            activeTabID = nil
-        } else {
-            activeTabID = tabs[min(index, tabs.count - 1)].id
+            if tabsStorage.isEmpty {
+                activeTabIDStorage = nil
+            } else {
+                activeTabIDStorage = tabsStorage[min(index, tabsStorage.count - 1)].id
+            }
         }
     }
 
     /// Records a requested navigation. The engine performs the actual load and reports its result.
     public func startNavigation(in tabID: BrowserTabID, to address: String) throws {
-        let index = try indexOfTab(tabID)
-        guard tabs[index].loadState != .crashed else {
-            throw BrowserTabStoreError.invalidLoadTransition(tabs[index].loadState)
+        try lock.withLock {
+            let index = try indexOfTab(tabID)
+            guard tabsStorage[index].loadState != .crashed else {
+                throw BrowserTabStoreError.invalidLoadTransition(tabsStorage[index].loadState)
+            }
+            tabsStorage[index].address = address
+            tabsStorage[index].loadState = .loading
         }
-        tabs[index].address = address
-        tabs[index].loadState = .loading
     }
 
     public func completeNavigation(
@@ -148,77 +165,91 @@ public final class BrowserTabStore {
         title: String? = nil,
         address: String? = nil
     ) throws {
-        let index = try indexOfTab(tabID)
-        guard tabs[index].loadState == .loading else {
-            throw BrowserTabStoreError.invalidLoadTransition(tabs[index].loadState)
+        try lock.withLock {
+            let index = try indexOfTab(tabID)
+            guard tabsStorage[index].loadState == .loading else {
+                throw BrowserTabStoreError.invalidLoadTransition(tabsStorage[index].loadState)
+            }
+            if let title {
+                tabsStorage[index].title = title
+            }
+            if let address {
+                tabsStorage[index].address = address
+            }
+            tabsStorage[index].loadState = .loaded
         }
-        if let title {
-            tabs[index].title = title
-        }
-        if let address {
-            tabs[index].address = address
-        }
-        tabs[index].loadState = .loaded
     }
 
     public func failNavigation(in tabID: BrowserTabID, reason: String) throws {
-        let index = try indexOfTab(tabID)
-        guard tabs[index].loadState == .loading else {
-            throw BrowserTabStoreError.invalidLoadTransition(tabs[index].loadState)
+        try lock.withLock {
+            let index = try indexOfTab(tabID)
+            guard tabsStorage[index].loadState == .loading else {
+                throw BrowserTabStoreError.invalidLoadTransition(tabsStorage[index].loadState)
+            }
+            tabsStorage[index].loadState = .failed(reason: reason)
         }
-        tabs[index].loadState = .failed(reason: reason)
     }
 
     /// Records content-process termination without constructing or navigating a WebView.
     public func markCrashed(_ tabID: BrowserTabID) throws {
-        let index = try indexOfTab(tabID)
-        tabs[index].loadState = .crashed
+        try lock.withLock {
+            let index = try indexOfTab(tabID)
+            tabsStorage[index].loadState = .crashed
+        }
     }
 
     /// Explicitly recovers the tab record after a crash. The engine must load the address again.
     public func restoreCrashedTab(_ tabID: BrowserTabID) throws {
-        let index = try indexOfTab(tabID)
-        guard tabs[index].loadState == .crashed else {
-            throw BrowserTabStoreError.invalidLoadTransition(tabs[index].loadState)
+        try lock.withLock {
+            let index = try indexOfTab(tabID)
+            guard tabsStorage[index].loadState == .crashed else {
+                throw BrowserTabStoreError.invalidLoadTransition(tabsStorage[index].loadState)
+            }
+            tabsStorage[index].loadState = .restored
         }
-        tabs[index].loadState = .restored
     }
 
     /// Transfers the tab to direct user control before accepting user-driven navigation or popups.
     public func transferOwnershipToUser(of tabID: BrowserTabID) throws {
-        let index = try indexOfTab(tabID)
-        tabs[index].owner = .user
-        if agentControlLease?.tabID == tabID {
-            agentControlLease = nil
+        try lock.withLock {
+            let index = try indexOfTab(tabID)
+            tabsStorage[index].owner = .user
+            if agentControlLease?.tabID == tabID {
+                agentControlLease = nil
+            }
         }
     }
 
     /// Acquires the store's single agent-control slot for an agent-owned tab.
     /// Reacquiring the current tab returns its existing token without changing ownership.
     public func acquireAgentControl(for tabID: BrowserTabID) throws -> BrowserAgentControlToken {
-        let index = try indexOfTab(tabID)
-        guard tabs[index].owner == .agent else {
-            throw BrowserTabStoreError.tabNotAgentOwned(tabID)
-        }
-
-        if let currentLease = agentControlLease {
-            guard currentLease.tabID == tabID else {
-                throw BrowserTabStoreError.agentControlAlreadyAssigned(currentLease.tabID)
+        try lock.withLock {
+            let index = try indexOfTab(tabID)
+            guard tabsStorage[index].owner == .agent else {
+                throw BrowserTabStoreError.tabNotAgentOwned(tabID)
             }
-            return currentLease.token
-        }
 
-        let token = BrowserAgentControlToken()
-        agentControlLease = AgentControlLease(tabID: tabID, token: token)
-        return token
+            if let currentLease = agentControlLease {
+                guard currentLease.tabID == tabID else {
+                    throw BrowserTabStoreError.agentControlAlreadyAssigned(currentLease.tabID)
+                }
+                return currentLease.token
+            }
+
+            let token = BrowserAgentControlToken()
+            agentControlLease = AgentControlLease(tabID: tabID, token: token)
+            return token
+        }
     }
 
     /// Resolves a token only while it still owns the current agent-controlled tab.
     public func agentControlledTab(for token: BrowserAgentControlToken) throws -> BrowserTabID {
-        guard let currentLease = agentControlLease, currentLease.token == token else {
-            throw BrowserTabStoreError.invalidAgentControlToken
+        try lock.withLock {
+            guard let currentLease = agentControlLease, currentLease.token == token else {
+                throw BrowserTabStoreError.invalidAgentControlToken
+            }
+            return currentLease.tabID
         }
-        return currentLease.tabID
     }
 
     /// Routes user popups into managed tabs and refuses agent popups without creating a tab.
@@ -226,16 +257,19 @@ public final class BrowserTabStore {
         from sourceTabID: BrowserTabID,
         address: String? = nil
     ) throws -> BrowserPopupRequestResult {
-        let sourceIndex = try indexOfTab(sourceTabID)
-        guard tabs[sourceIndex].owner == .user else {
-            return .deniedAgentPopup
-        }
+        try lock.withLock {
+            let sourceIndex = try indexOfTab(sourceTabID)
+            guard tabsStorage[sourceIndex].owner == .user else {
+                return .deniedAgentPopup
+            }
 
-        return .opened(tabID: createTab(owner: .user, address: address))
+            return .opened(tabID: createTab(owner: .user, address: address))
+        }
     }
 
+    // Callers must hold `lock`.
     private func indexOfTab(_ tabID: BrowserTabID) throws -> Int {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else {
+        guard let index = tabsStorage.firstIndex(where: { $0.id == tabID }) else {
             throw BrowserTabStoreError.tabNotFound(tabID)
         }
         return index

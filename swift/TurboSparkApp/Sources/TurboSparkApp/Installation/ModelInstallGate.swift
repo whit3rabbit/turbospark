@@ -100,6 +100,18 @@ enum ModelInstallGate {
     ///
     /// `nil` is NOT zero. A failed query must not read as a full disk, or the
     /// gate refuses every install on a machine whose volume it cannot inspect.
+    /// Free space on the volume that holds the model store, not on the
+    /// Application Support volume. The store can be moved to another disk, and
+    /// the store directory may not exist yet, so walk up to the nearest
+    /// existing ancestor before querying.
+    static func freeSpaceOnModelStore() -> UInt64? {
+        var url = URL(fileURLWithPath: ModelStorageManager.defaultTurboSparkStoreRoot)
+        while !FileManager.default.fileExists(atPath: url.path), url.path != "/" {
+            url = url.deletingLastPathComponent()
+        }
+        return freeSpace(at: url)
+    }
+
     static func freeSpace(at url: URL) -> UInt64? {
         guard
             let values = try? url.resourceValues(forKeys: [

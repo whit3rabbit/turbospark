@@ -31,6 +31,9 @@ enum AgentTerminalLaunch {
             .appendingPathComponent(".cargo/bin/turbospark"))
         candidates.append(URL(fileURLWithPath: home)
             .appendingPathComponent(".local/bin/turbospark"))
+        // A GUI app's PATH is launchd's minimal one, which omits Homebrew.
+        candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/turbospark"))
+        candidates.append(URL(fileURLWithPath: "/usr/local/bin/turbospark"))
         return candidates.first {
             $0.isFileURL && FileManager.default.isExecutableFile(atPath: $0.path)
         }
@@ -57,6 +60,34 @@ enum AgentTerminalLaunch {
                 domain: "AgentTerminalLaunch", code: Int(process.terminationStatus),
                 userInfo: [NSLocalizedDescriptionKey: message])
         }
+    }
+
+    /// Writes `key` to a 0600 file in the per-user temp directory and returns
+    /// its path. The key travels to the launched shell through this file
+    /// rather than the command text, so it never lands in Terminal's
+    /// scrollback, shell history, or `ps` output.
+    static func writeAPIKeyFile(_ key: String) throws -> String {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("turbospark-launch-\(UUID().uuidString).key")
+        // Created with the final mode: write-then-chmod would leave a window
+        // where the secret is world-readable under a permissive umask.
+        guard FileManager.default.createFile(
+            atPath: url.path, contents: Data(key.utf8), attributes: [.posixPermissions: 0o600])
+        else {
+            throw NSError(
+                domain: "AgentTerminalLaunch", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not write the API key file."])
+        }
+        return url.path
+    }
+
+    /// Prefixes `command` so the launched shell exports `TURBOSPARK_API_KEY`
+    /// from `keyFilePath` and deletes the file before anything else runs.
+    /// Without it `turbospark start` spawns an unauthenticated daemon (or the
+    /// agent is refused with 401 by a keyed one).
+    static func commandExportingAPIKey(_ command: String, keyFilePath: String) -> String {
+        let file = ShellQuote.single(keyFilePath)
+        return "export TURBOSPARK_API_KEY=\"$(cat \(file))\" && rm -f \(file) && \(command)"
     }
 
     /// The degrade path when Terminal cannot be scripted (automation

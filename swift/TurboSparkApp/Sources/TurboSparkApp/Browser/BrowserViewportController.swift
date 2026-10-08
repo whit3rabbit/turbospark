@@ -27,6 +27,11 @@ public final class BrowserViewportController: ObservableObject {
     @Published public private(set) var mode: BrowserViewportMode = .responsive
     @Published public private(set) var preference: BrowserViewportPreference
 
+    /// The scroll view's content offset in fixed mode (zero when responsive).
+    /// The element picker's hit layer is overlaid on the scroll view's
+    /// viewport, not on the page, so its coordinates must add this offset.
+    @Published public private(set) var scrollOffset: CGPoint = .zero
+
     private let writePreference: (BrowserViewportPreference) -> Void
 
     public init(
@@ -45,6 +50,18 @@ public final class BrowserViewportController: ObservableObject {
 
     public var isFixed: Bool {
         mode == .fixed
+    }
+
+    public func setScrollOffset(_ offset: CGPoint) {
+        guard offset != scrollOffset else { return }
+        scrollOffset = offset
+    }
+
+    /// Maps a point in the hit layer (viewport coordinates) to page CSS
+    /// pixels: add the scroll offset, then undo the page zoom.
+    public nonisolated static func cssPoint(viewPoint: CGPoint, scrollOffset: CGPoint, scale: CGFloat) -> CGPoint {
+        let s = max(scale, 0.01)
+        return CGPoint(x: (viewPoint.x + scrollOffset.x) / s, y: (viewPoint.y + scrollOffset.y) / s)
     }
 
     public func setMode(_ mode: BrowserViewportMode) {
@@ -115,8 +132,29 @@ private struct BrowserViewportHost: NSViewRepresentable {
     let webView: WKWebView
     let containerSize: CGSize
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    final class Coordinator {
+        var observer: NSObjectProtocol?
+        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+    }
+
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        let controller = self.controller
+        context.coordinator.observer = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView,
+            queue: .main
+        ) { [weak scrollView] _ in
+            MainActor.assumeIsolated {
+                guard let scrollView else { return }
+                controller.setScrollOffset(
+                    controller.isFixed ? scrollView.contentView.bounds.origin : .zero)
+            }
+        }
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true

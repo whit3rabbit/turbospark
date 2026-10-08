@@ -13,10 +13,20 @@ final class BrowserSettingsPaneViewModel: ObservableObject {
     @Published private(set) var settings: BrowserSettings
 
     private let onChange: (BrowserSettings) -> Void
+    /// The owner's live value. Edits are applied on top of it rather than on
+    /// this view model's own copy, which goes stale when something else (the
+    /// Chrome bookmark import) changes the settings while the pane is open;
+    /// writing the stale copy back used to wipe the imported bookmarks.
+    private let latest: (() -> BrowserSettings)?
     private var awaitingFirstEnableConfirmation = false
 
-    init(settings: BrowserSettings, onChange: @escaping (BrowserSettings) -> Void = { _ in }) {
+    init(
+        settings: BrowserSettings,
+        latest: (() -> BrowserSettings)? = nil,
+        onChange: @escaping (BrowserSettings) -> Void = { _ in }
+    ) {
         self.settings = settings
+        self.latest = latest
         self.onChange = onChange
     }
 
@@ -58,9 +68,10 @@ final class BrowserSettingsPaneViewModel: ObservableObject {
     }
 
     private func update(_ mutate: (inout BrowserSettings) -> Void) {
-        var updated = settings
+        let base = latest?() ?? settings
+        var updated = base
         mutate(&updated)
-        guard updated != settings else { return }
+        guard updated != base else { return }
         settings = updated
         onChange(updated)
     }

@@ -93,7 +93,7 @@ public struct HookOptionsConfigSheet: View {
                         .foregroundStyle(.red)
                 }
                 Spacer()
-                Text(verbatim: "$\(spec.key.uppercased())")
+                Text(verbatim: "$CLAUDE_PLUGIN_OPTION_\(AppHookExecutionEngine.optionEnvSuffix(for: spec.key))")
                     .themedCode(.tiny)
                     .foregroundStyle(.appSecondary)
                     .padding(.horizontal, 6)

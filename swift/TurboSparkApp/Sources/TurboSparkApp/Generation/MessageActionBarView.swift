@@ -198,6 +198,7 @@ struct MessageSpeechButton: View {
 struct MessageTimestampBadge: View {
     let date: Date
     @State private var isHovered = false
+    @Environment(\.locale) private var locale
 
     var body: some View {
         HStack(spacing: 3) {
@@ -205,7 +206,7 @@ struct MessageTimestampBadge: View {
                 .themedFont(.tiny, weight: .medium)
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
-            Text(isHovered ? MessageTimestampFormatter.standardString(for: date) : MessageTimestampFormatter.relativeString(for: date))
+            Text(isHovered ? MessageTimestampFormatter.standardString(for: date, locale: locale) : MessageTimestampFormatter.relativeString(for: date, locale: locale))
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
                 .lineLimit(1)
@@ -218,8 +219,8 @@ struct MessageTimestampBadge: View {
                 isHovered = hovering
             }
         }
-        .help(MessageTimestampFormatter.exactString(for: date))
-        .accessibilityLabel("Sent \(MessageTimestampFormatter.relativeString(for: date)), \(MessageTimestampFormatter.exactString(for: date))")
+        .help(MessageTimestampFormatter.exactString(for: date, locale: locale))
+        .accessibilityLabel("Sent \(MessageTimestampFormatter.relativeString(for: date, locale: locale)), \(MessageTimestampFormatter.exactString(for: date, locale: locale))")
     }
 }
 

@@ -136,6 +136,17 @@ struct RootView: View {
             })) {
                 ProjectMcpApprovalSheet(model: model)
         }
+        // Presented only once the MCP sheet is done: two sheets requested at
+        // the same time on one view would drop one of them. Dismissing
+        // defers (the tools stay off and re-prompt on the next selection);
+        // only an explicit per-tool Reject is remembered, for the session.
+        .sheet(isPresented: Binding(
+            get: { model.pendingMcpApprovals.isEmpty && !model.pendingProjectToolApprovals.isEmpty },
+            set: { presented in
+                if !presented { model.pendingProjectToolApprovals.removeAll() }
+            })) {
+                ProjectToolApprovalSheet(model: model)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             isSidebarExpanded.toggle()
         }

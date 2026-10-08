@@ -236,8 +236,9 @@ struct ModelHubView: View {
             downloadBytes: entry.downloadBytes,
             isInstalled: isInstalled,
             isActive: isActive,
-            isDownloading: model.isInstallingModel,
-            downloadFraction: model.installProgressFraction,
+            isDownloading: model.isInstallingModel && model.installingAlias == entry.alias,
+            downloadFraction: model.isInstallingModel && model.installingAlias == entry.alias
+                ? model.installProgressFraction : nil,
             recommendation: rec,
             isSelected: isSelected,
             onSelect: { selectedAlias = entry.alias }

@@ -147,7 +147,7 @@ private struct ThinkingLevelControl: View {
 /// falls back to the fixed `AppContextLengthOption` presets (unpriced) in
 /// that case, because Auto and a custom size are not rungs either way and a
 /// probe failure should not remove the ability to pick a window at all.
-private struct ContextLadderPicker: View {
+struct ContextLadderPicker: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
@@ -198,7 +198,9 @@ private struct ContextLadderPicker: View {
             }
         }
         .padding(.vertical, 2)
-        .task(id: model.selected?.path) { await loadLadder() }
+        .task(id: Self.ladderKey(path: model.selected?.path, slots: model.activeCacheSlots, loadGuard: model.activeLoadGuard)) {
+            await loadLadder()
+        }
         .onAppear { syncIsCustom() }
         .onChange(of: model.maxContextTokens) { _, _ in syncIsCustom() }
         .animation(.smooth(duration: 0.2), value: isCustom)
@@ -242,6 +244,10 @@ private struct ContextLadderPicker: View {
     /// as "Custom".
     private func syncIsCustom() {
         let tokens = model.maxContextTokens
+        // Custom is a sticky user choice: dragging the slider across a rung
+        // value, or seeding Custom from Auto with a rung-sized value, must not
+        // flip it off. Every explicit row tap clears the flag itself.
+        if isCustom && tokens != 0 { return }
         if tokens == 0 {
             isCustom = false
             return
@@ -257,9 +263,22 @@ private struct ContextLadderPicker: View {
         isCustom = true
     }
 
+    /// Everything the ladder is priced from. `OpenOptions` values are not
+    /// Equatable, so their descriptions stand in; without the slots and guard
+    /// in the task id, changing either would leave a stale ladder.
+    static func ladderKey(
+        path: String?, slots: OpenOptions.Sizing, loadGuard: OpenOptions.LoadGuard
+    ) -> String {
+        "\(path ?? "")|\(slots)|\(loadGuard)"
+    }
+
     /// Reads the INSTALLED model's own manifest through the same trio
     /// `ts_session_open` reads, so the ladder and the open cannot disagree.
+    /// Priced with the user's load guard and cache slots so verdicts match
+    /// what the loader will decide.
     private func loadLadder() async {
+        let slots = model.activeCacheSlots
+        let loadGuard = model.activeLoadGuard
         guard let path = model.selected?.path, !path.isEmpty else {
             ladder = nil
             loadFailed = false
@@ -267,7 +286,14 @@ private struct ContextLadderPicker: View {
             return
         }
         do {
-            ladder = try TurboSparkCatalog.contextLadder(modelPath: path)
+            // Detached: the FFI call walks the install directory, and this
+            // view is MainActor-inferred.
+            let found = try await Task.detached(priority: .userInitiated) {
+                try TurboSparkCatalog.contextLadder(
+                    modelPath: path, expertCacheSlots: slots, loadGuard: loadGuard)
+            }.value
+            if Task.isCancelled { return }
+            ladder = found
             loadFailed = false
         } catch {
             // Reported, not swallowed: a silent nil here is indistinguishable

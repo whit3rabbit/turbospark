@@ -7,6 +7,7 @@ import SwiftUI
 @MainActor
 struct ChatSidebarGroupedProjectsView: View {
     @Environment(\.appTheme) private var theme
+    @Environment(\.locale) private var locale
     @ObservedObject var model: AppModel
     let searchText: String
     @Binding var showingProjectSettingsSheet: Bool
@@ -19,6 +20,7 @@ struct ChatSidebarGroupedProjectsView: View {
 
     @State private var expandedProjectIDs: Set<UUID> = []
     @State private var hoveredProjectID: UUID?
+    @State private var projectPendingDeletion: AppProject?
     @State private var hoveredChatID: UUID?
 
     @ScaledMetric private var actionButtonSize: CGFloat = 20
@@ -56,6 +58,26 @@ struct ChatSidebarGroupedProjectsView: View {
             .padding(.bottom, 12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Deleting a project drops its configuration with no way back, and
+        // the menu item sits directly under Reveal in Finder.
+        .alert(
+            Text("Delete Project", bundle: .module),
+            isPresented: Binding(
+                get: { projectPendingDeletion != nil },
+                set: { if !$0 { projectPendingDeletion = nil } }),
+            presenting: projectPendingDeletion
+        ) { project in
+            Button(role: .destructive) {
+                model.deleteProject(id: project.id)
+            } label: {
+                Text("Delete Project", bundle: .module)
+            }
+            Button(role: .cancel) {} label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: { project in
+            Text(verbatim: project.name)
+        }
     }
 
     // MARK: - Filtered Data
@@ -237,7 +259,7 @@ struct ChatSidebarGroupedProjectsView: View {
                     }
                     Divider()
                     Button(role: .destructive) {
-                        model.deleteProject(id: project.id)
+                        projectPendingDeletion = project
                     } label: {
                         Label { Text("Delete Project", bundle: .module) } icon: { Image(systemName: "trash") }
                     }
@@ -276,18 +298,7 @@ struct ChatSidebarGroupedProjectsView: View {
 
         return HStack(spacing: 5) {
             Button {
-                if let project {
-                    if model.selectedProjectID != project.id {
-                        model.selectProject(id: project.id)
-                    }
-                } else if model.selectedProjectID != nil {
-                    // Same rule the search overlay's `open` applies: the
-                    // Chat tab's list is project-scoped, so opening a chat
-                    // OUTSIDE the selected project must move the project
-                    // selection first or the chat opens invisibly.
-                    model.selectProject(id: nil)
-                }
-                model.selectChat(id: chat.id)
+                model.openChat(id: chat.id)
             } label: {
                 HStack(spacing: 6) {
                     taskIcon(chat: chat, isSelected: isSelected, isRecent: isRecent)
@@ -308,7 +319,7 @@ struct ChatSidebarGroupedProjectsView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isRunning && !isSelected)
-            .help("\(chat.title) - \(MessageTimestampFormatter.relativeString(for: chat.updatedAt))")
+            .help("\(chat.title) - \(MessageTimestampFormatter.relativeString(for: chat.updatedAt, locale: locale))")
             .accessibilityLabel(chat.title)
             .accessibilityValue(isSelected ? "Selected" : "")
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)

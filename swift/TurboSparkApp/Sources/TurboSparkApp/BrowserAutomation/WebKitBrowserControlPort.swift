@@ -86,14 +86,14 @@ public final class WebKitBrowserControlPort: BrowserControlPort, @unchecked Send
 
             case let .click(reference, _):
                 let service = try snapshotService()
-                let generation = try await service.snapshot().generation
+                let generation = try service.committedGeneration()
                 try checkNotCancelled(request.id)
                 let action = try await service.perform(.click, on: .reference(reference), generation: generation)
                 value = .clicked(BrowserElementActionResult(reference: action.reference))
 
             case let .type(reference, text, submit, _):
                 let service = try snapshotService()
-                let generation = try await service.snapshot().generation
+                let generation = try service.committedGeneration()
                 try checkNotCancelled(request.id)
                 let action = try await service.perform(
                     .type(text: text, submit: submit),
@@ -104,7 +104,7 @@ public final class WebKitBrowserControlPort: BrowserControlPort, @unchecked Send
 
             case let .pressKey(reference, key, _):
                 let service = try snapshotService()
-                let generation = try await service.snapshot().generation
+                let generation = try service.committedGeneration()
                 try checkNotCancelled(request.id)
                 let locator: DOMSnapshotLocator = reference.map(DOMSnapshotLocator.reference)
                     ?? .cssSelector("body")
@@ -113,7 +113,7 @@ public final class WebKitBrowserControlPort: BrowserControlPort, @unchecked Send
 
             case let .scroll(reference, direction, amount):
                 let service = try snapshotService()
-                let generation = try await service.snapshot().generation
+                let generation = try service.committedGeneration()
                 try checkNotCancelled(request.id)
                 let locator: DOMSnapshotLocator = reference.map(DOMSnapshotLocator.reference)
                     ?? .cssSelector("body")
@@ -150,7 +150,7 @@ public final class WebKitBrowserControlPort: BrowserControlPort, @unchecked Send
                 let envelope = try await snapshotService().snapshot()
                 try checkNotCancelled(request.id)
                 let visibleNodes = scope == .interactiveElements
-                    ? envelope.nodes.filter { $0.reference != nil }
+                    ? Self.retainingReferencedNodes(envelope.nodes)
                     : envelope.nodes
                 let boundedEnvelope = DOMSnapshotEnvelope(
                     version: envelope.version,
@@ -193,6 +193,31 @@ public final class WebKitBrowserControlPort: BrowserControlPort, @unchecked Send
             durationMilliseconds: Self.elapsedMilliseconds(since: start),
             screenshotPNGData: screenshotPNGData
         )
+    }
+
+    /// Keeps only nodes that carry an element reference and rewrites each
+    /// `parentIndex` to the position of its nearest retained ancestor (nil
+    /// when none), so the filtered tree never points out of range or at the
+    /// wrong node.
+    static func retainingReferencedNodes(_ nodes: [DOMSnapshotNode]) -> [DOMSnapshotNode] {
+        var newIndex: [Int: Int] = [:]
+        for (index, node) in nodes.enumerated() where node.reference != nil {
+            newIndex[index] = newIndex.count
+        }
+        return nodes.enumerated().compactMap { index, node in
+            guard node.reference != nil else { return nil }
+            var ancestor = node.parentIndex
+            var hops = 0
+            // The hop bound guards against a malformed (cyclic) snapshot.
+            while let candidate = ancestor, newIndex[candidate] == nil, hops < nodes.count {
+                ancestor = nodes.indices.contains(candidate) ? nodes[candidate].parentIndex : nil
+                hops += 1
+            }
+            let remapped = ancestor.flatMap { newIndex[$0] }
+            return DOMSnapshotNode(
+                role: node.role, name: node.name, parentIndex: remapped,
+                bounds: node.bounds, reference: node.reference)
+        }
     }
 
     @MainActor

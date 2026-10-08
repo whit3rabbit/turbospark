@@ -296,7 +296,6 @@ struct ChromeTelemetryView: View {
     @State private var memoryBytes: UInt64?
     @State private var cpuPercent: Double?
 
-    private let poll = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 11) {
@@ -314,7 +313,16 @@ struct ChromeTelemetryView: View {
                 .stroke(.appBorder, lineWidth: 0.5)
         }
         .onAppear(perform: refresh)
-        .onReceive(poll) { _ in refresh() }
+        .task {
+            // Lifetime follows view identity, not struct re-creation: a Timer
+            // publisher stored on the struct restarted on every parent render
+            // (every ~25 ms while generating), so the 2 s poll never fired.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                if Task.isCancelled { break }
+                refresh()
+            }
+        }
     }
 
     private var divider: some View {

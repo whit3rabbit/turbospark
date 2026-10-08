@@ -39,9 +39,10 @@ public enum AppDockIconRenderer {
             // Sparkle symbol
             if let spark = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil) {
                 let config = NSImage.SymbolConfiguration(pointSize: 48, weight: .semibold)
-                if let tinted = spark.withSymbolConfiguration(config) {
+                // NSColor.set() does not tint SF Symbol draws (they rendered black); bake the color into the symbol.
+                let tintedConfig = config.applying(NSImage.SymbolConfiguration(paletteColors: [NSColor(srgbRed: 0.41, green: 0.88, blue: 0.44, alpha: 1.0)]))
+                if let tinted = spark.withSymbolConfiguration(tintedConfig) {
                     let rect = NSRect(x: 32, y: 32, width: 64, height: 64)
-                    NSColor(srgbRed: 0.41, green: 0.88, blue: 0.44, alpha: 1.0).set()
                     tinted.draw(in: rect)
                 }
             }
@@ -58,9 +59,10 @@ public enum AppDockIconRenderer {
 
             if let symbol = NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: nil) {
                 let config = NSImage.SymbolConfiguration(pointSize: 42, weight: .bold)
-                if let tinted = symbol.withSymbolConfiguration(config) {
+                // NSColor.set() does not tint SF Symbol draws (they rendered black); bake the color into the symbol.
+                let tintedConfig = config.applying(NSImage.SymbolConfiguration(paletteColors: [NSColor.white]))
+                if let tinted = symbol.withSymbolConfiguration(tintedConfig) {
                     let rect = NSRect(x: 28, y: 34, width: 72, height: 60)
-                    NSColor.white.set()
                     tinted.draw(in: rect)
                 }
             }
@@ -77,9 +79,10 @@ public enum AppDockIconRenderer {
 
             if let symbol = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: nil) {
                 let config = NSImage.SymbolConfiguration(pointSize: 46, weight: .medium)
-                if let tinted = symbol.withSymbolConfiguration(config) {
+                // NSColor.set() does not tint SF Symbol draws (they rendered black); bake the color into the symbol.
+                let tintedConfig = config.applying(NSImage.SymbolConfiguration(paletteColors: [NSColor(srgbRed: 0.22, green: 0.65, blue: 1.0, alpha: 1.0)]))
+                if let tinted = symbol.withSymbolConfiguration(tintedConfig) {
                     let rect = NSRect(x: 30, y: 30, width: 68, height: 68)
-                    NSColor(srgbRed: 0.22, green: 0.65, blue: 1.0, alpha: 1.0).set()
                     tinted.draw(in: rect)
                 }
             }
@@ -93,9 +96,10 @@ public enum AppDockIconRenderer {
 
             if let symbol = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil) {
                 let config = NSImage.SymbolConfiguration(pointSize: 46, weight: .bold)
-                if let tinted = symbol.withSymbolConfiguration(config) {
+                // NSColor.set() does not tint SF Symbol draws (they rendered black); bake the color into the symbol.
+                let tintedConfig = config.applying(NSImage.SymbolConfiguration(paletteColors: [NSColor.white]))
+                if let tinted = symbol.withSymbolConfiguration(tintedConfig) {
                     let rect = NSRect(x: 32, y: 32, width: 64, height: 64)
-                    NSColor.white.set()
                     tinted.draw(in: rect)
                 }
             }

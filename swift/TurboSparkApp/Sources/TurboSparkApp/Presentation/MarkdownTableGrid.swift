@@ -214,12 +214,21 @@ struct MarkdownTableGrid: Equatable {
     func sortedRowIndices(byColumn column: Int, direction: SortDirection) -> [Int] {
         guard column >= 0, column < columnCount else { return Array(rows.indices) }
         let normalized = rows.map { ($0[safe: column] ?? "").replacingOccurrences(of: ",", with: "") }
-        let isNumericColumn = normalized.allSatisfy { Double($0) != nil }
+        // Blank cells (and short rows) must not demote a numeric column to
+        // string order; they sort last in both directions instead.
+        func isBlank(_ index: Int) -> Bool {
+            normalized[index].trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        let isNumericColumn = normalized.indices.allSatisfy {
+            isBlank($0) || Double(normalized[$0].trimmingCharacters(in: .whitespaces)) != nil
+        }
         return rows.indices.sorted { lhs, rhs in
+            let lhsBlank = isBlank(lhs), rhsBlank = isBlank(rhs)
+            if lhsBlank || rhsBlank { return !lhsBlank && rhsBlank }
             let comparison: ComparisonResult
             if isNumericColumn {
-                let left = Double(normalized[lhs]) ?? 0
-                let right = Double(normalized[rhs]) ?? 0
+                let left = Double(normalized[lhs].trimmingCharacters(in: .whitespaces)) ?? 0
+                let right = Double(normalized[rhs].trimmingCharacters(in: .whitespaces)) ?? 0
                 comparison = left < right ? .orderedAscending
                     : (left > right ? .orderedDescending : .orderedSame)
             } else {
@@ -271,7 +280,11 @@ struct MarkdownTableGrid: Equatable {
             // headers and values as text before applying CSV/TSV escaping.
             let firstNonWhitespace = value.first { !$0.isWhitespace }
             let safeValue: String
-            if let firstNonWhitespace, "=+-@".contains(firstNonWhitespace) {
+            // A pure numeric literal (-5, +3.2, 1,200) cannot be a formula, and
+            // prefixing it turns the cell into text that breaks sums.
+            let isPlainNumber = Double(
+                value.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")) != nil
+            if let firstNonWhitespace, "=+-@".contains(firstNonWhitespace), !isPlainNumber {
                 safeValue = "'" + value
             } else {
                 safeValue = value

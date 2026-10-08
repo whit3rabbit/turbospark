@@ -11,10 +11,17 @@ protocol ImageGenerationSession: AnyObject, Sendable {
     /// (model load, text encode and VAE decode have none), so the job permit
     /// must not be released before this returns.
     func waitUntilIdle() async
+    /// Cancels, waits for the producer to stop, then releases the pipeline's
+    /// weights AND the allocator cache behind them. Dropping the session
+    /// alone deallocates the weight buffers into the MLX buffer cache, where
+    /// they stay resident (10 to 20 GB at `.warm` residency) until some later
+    /// cache clear, so the memory is not returned to the system.
+    func unload() async
 }
 
 extension ImageGenerationSession {
     func waitUntilIdle() async {}
+    func unload() async { cancel() }
 }
 
 /// The session's one running producer, with an identity check on clear.
@@ -100,6 +107,18 @@ final class MLXImageGenerationSession: ImageGenerationSession, @unchecked Sendab
 
     func waitUntilIdle() async {
         await producer.waitUntilIdle()
+    }
+
+    func unload() async {
+        cancel()
+        await producer.waitUntilIdle()
+        pipeline.unloadModel()
+    }
+
+    // Backstop for any path that just drops the session: by deinit nothing
+    // can be running on the pipeline, and `unloadModel` clears the MLX cache.
+    deinit {
+        pipeline.unloadModel()
     }
 
     func generate(

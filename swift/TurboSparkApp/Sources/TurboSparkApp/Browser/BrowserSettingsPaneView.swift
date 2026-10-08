@@ -8,7 +8,9 @@ struct BrowserSettingsPaneView: View {
 
     init(model: AppModel) {
         self.model = model
-        let viewModel = BrowserSettingsPaneViewModel(settings: model.browserSettings) { settings in
+        let viewModel = BrowserSettingsPaneViewModel(
+            settings: model.browserSettings, latest: { model.browserSettings }
+        ) { settings in
             model.browserSettings = settings
             model.persistSettingsDebounced()
         }

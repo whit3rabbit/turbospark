@@ -2752,6 +2752,137 @@
         }
       }
     },
+    "Message from %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0631\u0633\u0627\u0644\u0629 \u0645\u0646 %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nachricht von %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message from %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mensaje de %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message de %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05d5\u05d3\u05e2\u05d4 \u05de\u05d0\u05ea %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0915\u093e \u0938\u0902\u0926\u0947\u0936"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pesan dari %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Messaggio da %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u304b\u3089\u306e\u30e1\u30c3\u30bb\u30fc\u30b8"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\uc758 \uba54\uc2dc\uc9c0"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bericht van %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wiadomo\u015b\u0107 od %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mensagem de %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0421\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u043e\u0442 %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Meddelande fr\u00e5n %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ kayna\u011f\u0131ndan mesaj"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u0432\u0456\u0434\u043e\u043c\u043b\u0435\u043d\u043d\u044f \u0432\u0456\u0434 %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tin nh\u1eafn t\u1eeb %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6765\u81ea %@ \u7684\u6d88\u606f"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4f86\u81ea %@ \u7684\u8a0a\u606f"
+          }
+        }
+      }
+    },
     "%@ (current)": {
       "extractionState": "manual",
       "localizations": {
@@ -117016,6 +117147,1316 @@
           "stringUnit": {
             "state": "translated",
             "value": "\u6a19\u6e96"
+          }
+        }
+      }
+    },
+    "Project Tool Approval": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629 \u0639\u0644\u0649 \u0623\u062f\u0648\u0627\u062a \u0627\u0644\u0645\u0634\u0631\u0648\u0639"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Freigabe von Projektwerkzeugen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project Tool Approval"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aprobaci\u00f3n de herramientas del proyecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Approbation des outils du projet"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d0\u05d9\u05e9\u05d5\u05e8 \u05db\u05dc\u05d9 \u05d4\u05e4\u05e8\u05d5\u05d9\u05e7\u05d8"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092a\u094d\u0930\u094b\u091c\u0947\u0915\u094d\u091f \u091f\u0942\u0932 \u0915\u0940 \u0938\u094d\u0935\u0940\u0915\u0943\u0924\u093f"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Persetujuan Alat Proyek"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Approvazione degli strumenti del progetto"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30d7\u30ed\u30b8\u30a7\u30af\u30c8\u30c4\u30fc\u30eb\u306e\u627f\u8a8d"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ud504\ub85c\uc81d\ud2b8 \ub3c4\uad6c \uc2b9\uc778"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Goedkeuring van projecttools"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zatwierdzanie narz\u0119dzi projektu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aprova\u00e7\u00e3o de ferramentas do projeto"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435 \u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u043e\u0432 \u043f\u0440\u043e\u0435\u043a\u0442\u0430"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Godk\u00e4nnande av projektverktyg"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Proje Arac\u0131 Onay\u0131"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0456\u0434\u0442\u0432\u0435\u0440\u0434\u0436\u0435\u043d\u043d\u044f \u0456\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0456\u0432 \u043f\u0440\u043e\u0454\u043a\u0442\u0443"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ph\u00ea duy\u1ec7t c\u00f4ng c\u1ee5 c\u1ee7a d\u1ef1 \u00e1n"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u9879\u76ee\u5de5\u5177\u5ba1\u6279"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5c08\u6848\u5de5\u5177\u6838\u51c6"
+          }
+        }
+      }
+    },
+    "Review each tool in full before approving. An approved tool runs commands on this machine with your privileges. Rejecting leaves it off.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0631\u0627\u062c\u0639 \u0643\u0644 \u0623\u062f\u0627\u0629 \u0628\u0627\u0644\u0643\u0627\u0645\u0644 \u0642\u0628\u0644 \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629. \u0627\u0644\u0623\u062f\u0627\u0629 \u0627\u0644\u0645\u0639\u062a\u0645\u062f\u0629 \u062a\u0634\u063a\u0651\u0644 \u0623\u0648\u0627\u0645\u0631 \u0639\u0644\u0649 \u0647\u0630\u0627 \u0627\u0644\u062c\u0647\u0627\u0632 \u0628\u0635\u0644\u0627\u062d\u064a\u0627\u062a\u0643. \u0627\u0644\u0631\u0641\u0636 \u064a\u064f\u0628\u0642\u064a\u0647\u0627 \u0645\u0639\u0637\u0651\u0644\u0629."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pr\u00fcfe jedes Werkzeug vollst\u00e4ndig, bevor du es freigibst. Ein freigegebenes Werkzeug f\u00fchrt Befehle auf diesem Mac mit deinen Rechten aus. Ablehnen l\u00e4sst es deaktiviert."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review each tool in full before approving. An approved tool runs commands on this machine with your privileges. Rejecting leaves it off."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revisa cada herramienta por completo antes de aprobarla. Una herramienta aprobada ejecuta comandos en este equipo con tus privilegios. Rechazarla la deja desactivada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Examinez chaque outil en entier avant de l'approuver. Un outil approuv\u00e9 ex\u00e9cute des commandes sur cet ordinateur avec vos privil\u00e8ges. Le rejeter le laisse d\u00e9sactiv\u00e9."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05e2\u05d9\u05d9\u05e0\u05d5 \u05d1\u05db\u05dc \u05db\u05dc\u05d9 \u05d1\u05de\u05dc\u05d5\u05d0\u05d5 \u05dc\u05e4\u05e0\u05d9 \u05d4\u05d0\u05d9\u05e9\u05d5\u05e8. \u05db\u05dc\u05d9 \u05de\u05d0\u05d5\u05e9\u05e8 \u05de\u05e8\u05d9\u05e5 \u05e4\u05e7\u05d5\u05d3\u05d5\u05ea \u05d1\u05de\u05d7\u05e9\u05d1 \u05d6\u05d4 \u05e2\u05dd \u05d4\u05d4\u05e8\u05e9\u05d0\u05d5\u05ea \u05e9\u05dc\u05db\u05dd. \u05d3\u05d7\u05d9\u05d9\u05d4 \u05de\u05e9\u05d0\u05d9\u05e8\u05d4 \u05d0\u05d5\u05ea\u05d5 \u05db\u05d1\u05d5\u05d9."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0938\u094d\u0935\u0940\u0915\u0943\u0924\u093f \u0926\u0947\u0928\u0947 \u0938\u0947 \u092a\u0939\u0932\u0947 \u0939\u0930 \u091f\u0942\u0932 \u0915\u094b \u092a\u0942\u0930\u093e \u092a\u0922\u093c\u0947\u0902\u0964 \u0938\u094d\u0935\u0940\u0915\u0943\u0924 \u091f\u0942\u0932 \u0907\u0938 \u0915\u0902\u092a\u094d\u092f\u0942\u091f\u0930 \u092a\u0930 \u0906\u092a\u0915\u0947 \u0905\u0927\u093f\u0915\u093e\u0930\u094b\u0902 \u0915\u0947 \u0938\u093e\u0925 \u0915\u092e\u093e\u0902\u0921 \u091a\u0932\u093e\u0924\u093e \u0939\u0948\u0964 \u0905\u0938\u094d\u0935\u0940\u0915\u093e\u0930 \u0915\u0930\u0928\u0947 \u092a\u0930 \u0935\u0939 \u092c\u0902\u0926 \u0930\u0939\u0924\u093e \u0939\u0948\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tinjau setiap alat secara lengkap sebelum menyetujui. Alat yang disetujui menjalankan perintah di komputer ini dengan hak akses Anda. Menolak membuatnya tetap nonaktif."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Controlla ogni strumento per intero prima di approvarlo. Uno strumento approvato esegue comandi su questo computer con i tuoi privilegi. Rifiutarlo lo lascia disattivato."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u627f\u8a8d\u3059\u308b\u524d\u306b\u3001\u5404\u30c4\u30fc\u30eb\u306e\u5185\u5bb9\u3092\u3059\u3079\u3066\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002\u627f\u8a8d\u3055\u308c\u305f\u30c4\u30fc\u30eb\u306f\u3001\u3042\u306a\u305f\u306e\u6a29\u9650\u3067\u3053\u306e\u30b3\u30f3\u30d4\u30e5\u30fc\u30bf\u4e0a\u306e\u30b3\u30de\u30f3\u30c9\u3092\u5b9f\u884c\u3057\u307e\u3059\u3002\u62d2\u5426\u3059\u308b\u3068\u30aa\u30d5\u306e\u307e\u307e\u306b\u306a\u308a\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc2b9\uc778\ud558\uae30 \uc804\uc5d0 \uac01 \ub3c4\uad6c\ub97c \uc804\uccb4\uc801\uc73c\ub85c \uac80\ud1a0\ud558\uc138\uc694. \uc2b9\uc778\ub41c \ub3c4\uad6c\ub294 \uc0ac\uc6a9\uc790 \uad8c\ud55c\uc73c\ub85c \uc774 \ucef4\ud4e8\ud130\uc5d0\uc11c \uba85\ub839\uc744 \uc2e4\ud589\ud569\ub2c8\ub2e4. \uac70\ubd80\ud558\uba74 \uaebc\uc9c4 \uc0c1\ud0dc\ub85c \uc720\uc9c0\ub429\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bekijk elke tool volledig voordat je deze goedkeurt. Een goedgekeurde tool voert opdrachten uit op deze computer met jouw rechten. Weigeren laat de tool uitgeschakeld."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przejrzyj ka\u017cde narz\u0119dzie w ca\u0142o\u015bci przed zatwierdzeniem. Zatwierdzone narz\u0119dzie uruchamia polecenia na tym komputerze z Twoimi uprawnieniami. Odrzucenie pozostawia je wy\u0142\u0105czone."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revise cada ferramenta por completo antes de aprovar. Uma ferramenta aprovada executa comandos neste computador com seus privil\u00e9gios. Rejeitar a mant\u00e9m desativada."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u043f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u043a\u0430\u0436\u0434\u044b\u0439 \u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442 \u043f\u0435\u0440\u0435\u0434 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435\u043c. \u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043d\u043d\u044b\u0439 \u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442 \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442 \u043a\u043e\u043c\u0430\u043d\u0434\u044b \u043d\u0430 \u044d\u0442\u043e\u043c \u043a\u043e\u043c\u043f\u044c\u044e\u0442\u0435\u0440\u0435 \u0441 \u0432\u0430\u0448\u0438\u043c\u0438 \u043f\u0440\u0430\u0432\u0430\u043c\u0438. \u041e\u0442\u043a\u043b\u043e\u043d\u0435\u043d\u0438\u0435 \u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u0442 \u0435\u0433\u043e \u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d\u043d\u044b\u043c."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Granska varje verktyg i sin helhet innan du godk\u00e4nner det. Ett godk\u00e4nt verktyg k\u00f6r kommandon p\u00e5 den h\u00e4r datorn med dina beh\u00f6righeter. Om du avvisar det f\u00f6rblir det avst\u00e4ngt."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Onaylamadan \u00f6nce her arac\u0131 tamamen inceleyin. Onaylanan bir ara\u00e7 bu bilgisayarda komutlar\u0131 sizin yetkilerinizle \u00e7al\u0131\u015ft\u0131r\u0131r. Reddetmek arac\u0131 kapal\u0131 b\u0131rak\u0131r."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u0432\u043d\u0456\u0441\u0442\u044e \u043f\u0435\u0440\u0435\u0433\u043b\u044f\u043d\u044c\u0442\u0435 \u043a\u043e\u0436\u0435\u043d \u0456\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442 \u043f\u0435\u0440\u0435\u0434 \u043f\u0456\u0434\u0442\u0432\u0435\u0440\u0434\u0436\u0435\u043d\u043d\u044f\u043c. \u041f\u0456\u0434\u0442\u0432\u0435\u0440\u0434\u0436\u0435\u043d\u0438\u0439 \u0456\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442 \u0432\u0438\u043a\u043e\u043d\u0443\u0454 \u043a\u043e\u043c\u0430\u043d\u0434\u0438 \u043d\u0430 \u0446\u044c\u043e\u043c\u0443 \u043a\u043e\u043c\u043f'\u044e\u0442\u0435\u0440\u0456 \u0437 \u0432\u0430\u0448\u0438\u043c\u0438 \u043f\u0440\u0430\u0432\u0430\u043c\u0438. \u0412\u0456\u0434\u0445\u0438\u043b\u0435\u043d\u043d\u044f \u0437\u0430\u043b\u0438\u0448\u0430\u0454 \u0439\u043e\u0433\u043e \u0432\u0438\u043c\u043a\u043d\u0435\u043d\u0438\u043c."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "H\u00e3y xem to\u00e0n b\u1ed9 t\u1eebng c\u00f4ng c\u1ee5 tr\u01b0\u1edbc khi ph\u00ea duy\u1ec7t. C\u00f4ng c\u1ee5 \u0111\u01b0\u1ee3c duy\u1ec7t s\u1ebd ch\u1ea1y l\u1ec7nh tr\u00ean m\u00e1y n\u00e0y v\u1edbi quy\u1ec1n c\u1ee7a b\u1ea1n. T\u1eeb ch\u1ed1i s\u1ebd gi\u1eef c\u00f4ng c\u1ee5 \u1edf tr\u1ea1ng th\u00e1i t\u1eaft."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6279\u51c6\u524d\u8bf7\u5b8c\u6574\u67e5\u770b\u6bcf\u4e2a\u5de5\u5177\u3002\u83b7\u6279\u7684\u5de5\u5177\u4f1a\u4ee5\u4f60\u7684\u6743\u9650\u5728\u8fd9\u53f0\u7535\u8111\u4e0a\u8fd0\u884c\u547d\u4ee4\u3002\u62d2\u7edd\u5219\u4fdd\u6301\u5173\u95ed\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6838\u51c6\u524d\u8acb\u5b8c\u6574\u6aa2\u8996\u6bcf\u500b\u5de5\u5177\u3002\u7372\u51c6\u7684\u5de5\u5177\u6703\u4ee5\u4f60\u7684\u6b0a\u9650\u5728\u9019\u90e8\u96fb\u8166\u4e0a\u57f7\u884c\u6307\u4ee4\u3002\u62d2\u7d55\u5247\u7dad\u6301\u95dc\u9589\u3002"
+          }
+        }
+      }
+    },
+    "Declared category": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0641\u0626\u0629 \u0627\u0644\u0645\u0639\u0644\u0646\u0629"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Angegebene Kategorie"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Declared category"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Categor\u00eda declarada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cat\u00e9gorie d\u00e9clar\u00e9e"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05e7\u05d8\u05d2\u05d5\u05e8\u05d9\u05d4 \u05de\u05d5\u05e6\u05d4\u05e8\u05ea"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0918\u094b\u0937\u093f\u0924 \u0936\u094d\u0930\u0947\u0923\u0940"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kategori yang dinyatakan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Categoria dichiarata"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5ba3\u8a00\u3055\u308c\u305f\u30ab\u30c6\u30b4\u30ea"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc120\uc5b8\ub41c \uce74\ud14c\uace0\ub9ac"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opgegeven categorie"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zadeklarowana kategoria"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Categoria declarada"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u044f\u0432\u043b\u0435\u043d\u043d\u0430\u044f \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deklarerad kategori"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bildirilen kategori"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u044f\u0432\u043b\u0435\u043d\u0430 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0456\u044f"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Danh m\u1ee5c \u0111\u01b0\u1ee3c khai b\u00e1o"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u58f0\u660e\u7684\u7c7b\u522b"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5ba3\u544a\u7684\u985e\u5225"
+          }
+        }
+      }
+    },
+    "Effective category": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0641\u0626\u0629 \u0627\u0644\u0641\u0639\u0644\u064a\u0629"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wirksame Kategorie"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effective category"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Categor\u00eda efectiva"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cat\u00e9gorie effective"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05e7\u05d8\u05d2\u05d5\u05e8\u05d9\u05d4 \u05d1\u05e4\u05d5\u05e2\u05dc"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092a\u094d\u0930\u092d\u093e\u0935\u0940 \u0936\u094d\u0930\u0947\u0923\u0940"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kategori efektif"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Categoria effettiva"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5b9f\u969b\u306b\u9069\u7528\u3055\u308c\u308b\u30ab\u30c6\u30b4\u30ea"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc2e4\uc81c \uc801\uc6a9 \uce74\ud14c\uace0\ub9ac"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effectieve categorie"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Obowi\u0105zuj\u0105ca kategoria"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Categoria efetiva"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0424\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "G\u00e4llande kategori"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ge\u00e7erli kategori"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0424\u0430\u043a\u0442\u0438\u0447\u043d\u0430 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0456\u044f"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Danh m\u1ee5c c\u00f3 hi\u1ec7u l\u1ef1c"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5b9e\u9645\u751f\u6548\u7684\u7c7b\u522b"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5be6\u969b\u751f\u6548\u7684\u985e\u5225"
+          }
+        }
+      }
+    },
+    "Shell command": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0623\u0645\u0631 \u0634\u0644"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shell-Befehl"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shell command"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comando de shell"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Commande shell"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05e4\u05e7\u05d5\u05d3\u05ea \u05de\u05e2\u05d8\u05e4\u05ea"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0936\u0947\u0932 \u0915\u092e\u093e\u0902\u0921"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Perintah shell"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comando shell"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30b7\u30a7\u30eb\u30b3\u30de\u30f3\u30c9"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc178 \uba85\ub839"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shell-opdracht"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Polecenie pow\u0142oki"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comando de shell"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041a\u043e\u043c\u0430\u043d\u0434\u0430 \u043e\u0431\u043e\u043b\u043e\u0447\u043a\u0438"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skalkommando"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kabuk komutu"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041a\u043e\u043c\u0430\u043d\u0434\u0430 \u043e\u0431\u043e\u043b\u043e\u043d\u043a\u0438"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L\u1ec7nh shell"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shell \u547d\u4ee4"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shell \u6307\u4ee4"
+          }
+        }
+      }
+    },
+    "Script": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0633\u0643\u0631\u0628\u062a"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skript"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Script"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Script"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Script"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05e1\u05e7\u05e8\u05d9\u05e4\u05d8"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0938\u094d\u0915\u094d\u0930\u093f\u092a\u094d\u091f"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skrip"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Script"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30b9\u30af\u30ea\u30d7\u30c8"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc2a4\ud06c\ub9bd\ud2b8"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Script"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skrypt"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Script"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0421\u043a\u0440\u0438\u043f\u0442"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skript"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Betik"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0421\u043a\u0440\u0438\u043f\u0442"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "T\u1eadp l\u1ec7nh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u811a\u672c"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6307\u4ee4\u78bc"
+          }
+        }
+      }
+    },
+    "HTTP request": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0637\u0644\u0628 HTTP"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP-Anfrage"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP request"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solicitud HTTP"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requ\u00eate HTTP"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d1\u05e7\u05e9\u05ea HTTP"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP \u0905\u0928\u0941\u0930\u094b\u0927"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permintaan HTTP"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Richiesta HTTP"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP \u30ea\u30af\u30a8\u30b9\u30c8"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP \uc694\uccad"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP-verzoek"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u017b\u0105danie HTTP"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requisi\u00e7\u00e3o HTTP"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP-\u0437\u0430\u043f\u0440\u043e\u0441"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP-beg\u00e4ran"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP iste\u011fi"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP-\u0437\u0430\u043f\u0438\u0442"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Y\u00eau c\u1ea7u HTTP"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP \u8bf7\u6c42"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HTTP \u8981\u6c42"
+          }
+        }
+      }
+    },
+    "Full definition": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u062a\u0639\u0631\u064a\u0641 \u0627\u0644\u0643\u0627\u0645\u0644"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vollst\u00e4ndige Definition"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Full definition"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Definici\u00f3n completa"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "D\u00e9finition compl\u00e8te"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05d2\u05d3\u05e8\u05d4 \u05de\u05dc\u05d0\u05d4"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092a\u0942\u0930\u0940 \u092a\u0930\u093f\u092d\u093e\u0937\u093e"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Definisi lengkap"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Definizione completa"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5b8c\u5168\u306a\u5b9a\u7fa9"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc804\uccb4 \uc815\uc758"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volledige definitie"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pe\u0142na definicja"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Defini\u00e7\u00e3o completa"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u043b\u043d\u043e\u0435 \u043e\u043f\u0440\u0435\u0434\u0435\u043b\u0435\u043d\u0438\u0435"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fullst\u00e4ndig definition"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tam tan\u0131m"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u0432\u043d\u0435 \u0432\u0438\u0437\u043d\u0430\u0447\u0435\u043d\u043d\u044f"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0110\u1ecbnh ngh\u0129a \u0111\u1ea7y \u0111\u1ee7"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5b8c\u6574\u5b9a\u4e49"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5b8c\u6574\u5b9a\u7fa9"
+          }
+        }
+      }
+    },
+    "The declared category is weaker than what this tool really does, so the effective category is enforced instead.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0641\u0626\u0629 \u0627\u0644\u0645\u0639\u0644\u0646\u0629 \u0623\u0636\u0639\u0641 \u0645\u0645\u0627 \u062a\u0641\u0639\u0644\u0647 \u0647\u0630\u0647 \u0627\u0644\u0623\u062f\u0627\u0629 \u0641\u0639\u0644\u0627\u064b\u060c \u0644\u0630\u0644\u0643 \u062a\u064f\u0637\u0628\u064e\u0651\u0642 \u0627\u0644\u0641\u0626\u0629 \u0627\u0644\u0641\u0639\u0644\u064a\u0629 \u0628\u062f\u0644\u0627\u064b \u0645\u0646\u0647\u0627."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die angegebene Kategorie ist schw\u00e4cher als das, was dieses Werkzeug tats\u00e4chlich tut. Daher gilt stattdessen die wirksame Kategorie."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The declared category is weaker than what this tool really does, so the effective category is enforced instead."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La categor\u00eda declarada es m\u00e1s d\u00e9bil de lo que esta herramienta hace realmente, as\u00ed que se aplica la categor\u00eda efectiva."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La cat\u00e9gorie d\u00e9clar\u00e9e est plus faible que ce que fait r\u00e9ellement cet outil. La cat\u00e9gorie effective est donc appliqu\u00e9e \u00e0 sa place."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05e7\u05d8\u05d2\u05d5\u05e8\u05d9\u05d4 \u05d4\u05de\u05d5\u05e6\u05d4\u05e8\u05ea \u05d7\u05dc\u05e9\u05d4 \u05de\u05de\u05d4 \u05e9\u05d4\u05db\u05dc\u05d9 \u05e2\u05d5\u05e9\u05d4 \u05d1\u05e4\u05d5\u05e2\u05dc, \u05d5\u05dc\u05db\u05df \u05e0\u05d0\u05db\u05e4\u05ea \u05d4\u05e7\u05d8\u05d2\u05d5\u05e8\u05d9\u05d4 \u05d1\u05e4\u05d5\u05e2\u05dc \u05d1\u05de\u05e7\u05d5\u05de\u05d4."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0918\u094b\u0937\u093f\u0924 \u0936\u094d\u0930\u0947\u0923\u0940 \u0909\u0938 \u0915\u093e\u092e \u0938\u0947 \u0915\u092e\u091c\u093c\u094b\u0930 \u0939\u0948 \u091c\u094b \u092f\u0939 \u091f\u0942\u0932 \u0935\u093e\u0938\u094d\u0924\u0935 \u092e\u0947\u0902 \u0915\u0930\u0924\u093e \u0939\u0948, \u0907\u0938\u0932\u093f\u090f \u0907\u0938\u0915\u0947 \u092c\u0926\u0932\u0947 \u092a\u094d\u0930\u092d\u093e\u0935\u0940 \u0936\u094d\u0930\u0947\u0923\u0940 \u0932\u093e\u0917\u0942 \u0915\u0940 \u091c\u093e\u0924\u0940 \u0939\u0948\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kategori yang dinyatakan lebih lemah daripada yang sebenarnya dilakukan alat ini, sehingga kategori efektif yang diberlakukan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La categoria dichiarata \u00e8 pi\u00f9 debole di ci\u00f2 che lo strumento fa davvero, quindi viene applicata la categoria effettiva."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5ba3\u8a00\u3055\u308c\u305f\u30ab\u30c6\u30b4\u30ea\u306f\u3053\u306e\u30c4\u30fc\u30eb\u306e\u5b9f\u969b\u306e\u52d5\u4f5c\u3088\u308a\u5f31\u3044\u305f\u3081\u3001\u4ee3\u308f\u308a\u306b\u5b9f\u969b\u306e\u30ab\u30c6\u30b4\u30ea\u304c\u9069\u7528\u3055\u308c\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc120\uc5b8\ub41c \uce74\ud14c\uace0\ub9ac\uac00 \uc774 \ub3c4\uad6c\uc758 \uc2e4\uc81c \ub3d9\uc791\ubcf4\ub2e4 \uc57d\ud558\ubbc0\ub85c, \ub300\uc2e0 \uc2e4\uc81c \uc801\uc6a9 \uce74\ud14c\uace0\ub9ac\uac00 \uc0ac\uc6a9\ub429\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De opgegeven categorie is zwakker dan wat deze tool echt doet, dus de effectieve categorie wordt afgedwongen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zadeklarowana kategoria jest s\u0142absza ni\u017c rzeczywiste dzia\u0142anie tego narz\u0119dzia, wi\u0119c obowi\u0105zuje kategoria rzeczywista."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A categoria declarada \u00e9 mais fraca do que o que esta ferramenta realmente faz, ent\u00e3o a categoria efetiva \u00e9 aplicada no lugar dela."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u044f\u0432\u043b\u0435\u043d\u043d\u0430\u044f \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f \u0441\u043b\u0430\u0431\u0435\u0435, \u0447\u0435\u043c \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442\u0430, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u0432\u043c\u0435\u0441\u0442\u043e \u043d\u0435\u0451 \u043f\u0440\u0438\u043c\u0435\u043d\u044f\u0435\u0442\u0441\u044f \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den deklarerade kategorin \u00e4r svagare \u00e4n vad verktyget faktiskt g\u00f6r, s\u00e5 den g\u00e4llande kategorin till\u00e4mpas i st\u00e4llet."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bildirilen kategori, bu arac\u0131n ger\u00e7ekte yapt\u0131\u011f\u0131ndan daha zay\u0131f; bu y\u00fczden onun yerine ge\u00e7erli kategori uygulan\u0131r."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u044f\u0432\u043b\u0435\u043d\u0430 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0456\u044f \u0441\u043b\u0430\u0431\u0448\u0430 \u0437\u0430 \u0442\u0435, \u0449\u043e \u0456\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442 \u0440\u043e\u0431\u0438\u0442\u044c \u043d\u0430\u0441\u043f\u0440\u0430\u0432\u0434\u0456, \u0442\u043e\u043c\u0443 \u0437\u0430\u043c\u0456\u0441\u0442\u044c \u043d\u0435\u0457 \u0437\u0430\u0441\u0442\u043e\u0441\u043e\u0432\u0443\u0454\u0442\u044c\u0441\u044f \u0444\u0430\u043a\u0442\u0438\u0447\u043d\u0430 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0456\u044f."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Danh m\u1ee5c \u0111\u01b0\u1ee3c khai b\u00e1o y\u1ebfu h\u01a1n nh\u1eefng g\u00ec c\u00f4ng c\u1ee5 n\u00e0y th\u1ef1c s\u1ef1 l\u00e0m, n\u00ean danh m\u1ee5c c\u00f3 hi\u1ec7u l\u1ef1c \u0111\u01b0\u1ee3c \u00e1p d\u1ee5ng thay th\u1ebf."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u58f0\u660e\u7684\u7c7b\u522b\u6bd4\u8be5\u5de5\u5177\u7684\u5b9e\u9645\u884c\u4e3a\u66f4\u5bbd\u677e,\u56e0\u6b64\u6539\u4e3a\u5f3a\u5236\u4f7f\u7528\u5b9e\u9645\u751f\u6548\u7684\u7c7b\u522b\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5ba3\u544a\u7684\u985e\u5225\u6bd4\u6b64\u5de5\u5177\u7684\u5be6\u969b\u884c\u70ba\u66f4\u5bec\u9b06,\u56e0\u6b64\u6539\u70ba\u5f37\u5236\u4f7f\u7528\u5be6\u969b\u751f\u6548\u7684\u985e\u5225\u3002"
+          }
+        }
+      }
+    },
+    "This tool changed on disk after it was shown. Review the refreshed list.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u063a\u064a\u0651\u0631\u062a \u0647\u0630\u0647 \u0627\u0644\u0623\u062f\u0627\u0629 \u0639\u0644\u0649 \u0627\u0644\u0642\u0631\u0635 \u0628\u0639\u062f \u0639\u0631\u0636\u0647\u0627. \u0631\u0627\u062c\u0639 \u0627\u0644\u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0645\u062d\u062f\u0651\u062b\u0629."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Werkzeug wurde auf dem Datentr\u00e4ger ge\u00e4ndert, nachdem es angezeigt wurde. Pr\u00fcfe die aktualisierte Liste."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This tool changed on disk after it was shown. Review the refreshed list."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta herramienta cambi\u00f3 en el disco despu\u00e9s de mostrarse. Revisa la lista actualizada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cet outil a chang\u00e9 sur le disque apr\u00e8s son affichage. Examinez la liste actualis\u00e9e."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05db\u05dc\u05d9 \u05d4\u05d6\u05d4 \u05d4\u05e9\u05ea\u05e0\u05d4 \u05d1\u05d3\u05d9\u05e1\u05e7 \u05dc\u05d0\u05d7\u05e8 \u05e9\u05d4\u05d5\u05e6\u05d2. \u05e2\u05d9\u05d9\u05e0\u05d5 \u05d1\u05e8\u05e9\u05d9\u05de\u05d4 \u05d4\u05de\u05e2\u05d5\u05d3\u05db\u05e0\u05ea."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092f\u0939 \u091f\u0942\u0932 \u0926\u093f\u0916\u093e\u090f \u091c\u093e\u0928\u0947 \u0915\u0947 \u092c\u093e\u0926 \u0921\u093f\u0938\u094d\u0915 \u092a\u0930 \u092c\u0926\u0932 \u0917\u092f\u093e\u0964 \u0905\u0926\u094d\u092f\u0924\u0928 \u0938\u0942\u091a\u0940 \u0915\u0940 \u0938\u092e\u0940\u0915\u094d\u0937\u093e \u0915\u0930\u0947\u0902\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alat ini berubah di disk setelah ditampilkan. Tinjau daftar yang telah diperbarui."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo strumento \u00e8 cambiato sul disco dopo essere stato mostrato. Controlla l'elenco aggiornato."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u3053\u306e\u30c4\u30fc\u30eb\u306f\u8868\u793a\u5f8c\u306b\u30c7\u30a3\u30b9\u30af\u4e0a\u3067\u5909\u66f4\u3055\u308c\u307e\u3057\u305f\u3002\u66f4\u65b0\u3055\u308c\u305f\u4e00\u89a7\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc774 \ub3c4\uad6c\ub294 \ud45c\uc2dc\ub41c \ud6c4 \ub514\uc2a4\ud06c\uc5d0\uc11c \ubcc0\uacbd\ub418\uc5c8\uc2b5\ub2c8\ub2e4. \uc0c8\ub85c \uace0\uce5c \ubaa9\ub85d\uc744 \uac80\ud1a0\ud558\uc138\uc694."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze tool is op schijf gewijzigd nadat hij werd getoond. Bekijk de vernieuwde lijst."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To narz\u0119dzie zmieni\u0142o si\u0119 na dysku po wy\u015bwietleniu. Przejrzyj od\u015bwie\u017con\u0105 list\u0119."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta ferramenta mudou no disco depois de ser exibida. Revise a lista atualizada."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u042d\u0442\u043e\u0442 \u0438\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442 \u0438\u0437\u043c\u0435\u043d\u0438\u043b\u0441\u044f \u043d\u0430 \u0434\u0438\u0441\u043a\u0435 \u043f\u043e\u0441\u043b\u0435 \u043f\u043e\u043a\u0430\u0437\u0430. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u043e\u0431\u043d\u043e\u0432\u043b\u0451\u043d\u043d\u044b\u0439 \u0441\u043f\u0438\u0441\u043e\u043a."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verktyget \u00e4ndrades p\u00e5 disken efter att det visades. Granska den uppdaterade listan."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu ara\u00e7 g\u00f6sterildikten sonra diskte de\u011fi\u015fti. Yenilenen listeyi inceleyin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0426\u0435\u0439 \u0456\u043d\u0441\u0442\u0440\u0443\u043c\u0435\u043d\u0442 \u0437\u043c\u0456\u043d\u0438\u0432\u0441\u044f \u043d\u0430 \u0434\u0438\u0441\u043a\u0443 \u043f\u0456\u0441\u043b\u044f \u043f\u043e\u043a\u0430\u0437\u0443. \u041f\u0435\u0440\u0435\u0433\u043b\u044f\u043d\u044c\u0442\u0435 \u043e\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0439 \u0441\u043f\u0438\u0441\u043e\u043a."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "C\u00f4ng c\u1ee5 n\u00e0y \u0111\u00e3 thay \u0111\u1ed5i tr\u00ean \u1ed5 \u0111\u0129a sau khi \u0111\u01b0\u1ee3c hi\u1ec3n th\u1ecb. H\u00e3y xem l\u1ea1i danh s\u00e1ch \u0111\u00e3 l\u00e0m m\u1edbi."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8be5\u5de5\u5177\u5728\u663e\u793a\u540e\u4e8e\u78c1\u76d8\u4e0a\u53d1\u751f\u4e86\u53d8\u5316\u3002\u8bf7\u67e5\u770b\u5237\u65b0\u540e\u7684\u5217\u8868\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u5de5\u5177\u5728\u986f\u793a\u5f8c\u65bc\u78c1\u789f\u4e0a\u767c\u751f\u4e86\u8b8a\u66f4\u3002\u8acb\u6aa2\u8996\u91cd\u65b0\u6574\u7406\u5f8c\u7684\u6e05\u55ae\u3002"
           }
         }
       }

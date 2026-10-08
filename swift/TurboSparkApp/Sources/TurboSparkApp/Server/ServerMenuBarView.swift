@@ -8,6 +8,9 @@ import TurboSpark
 /// switching, and live serving statistics.
 public struct ServerMenuBarView: View {
     @ObservedObject public var model: AppModel
+    /// True while a daemon verb runs off the main actor, so a second click
+    /// cannot start an overlapping stop/restart.
+    @State private var daemonBusy = false
 
     public init(model: AppModel) {
         self.model = model
@@ -75,9 +78,11 @@ public struct ServerMenuBarView: View {
             Button("Stop Background Daemon (PID \(daemon.pid.map(String.init) ?? "?"))") {
                 stopDaemon()
             }
+            .disabled(daemonBusy)
             Button {
                 restartDaemon()
             } label: { Text("Restart Background Daemon", bundle: .module) }
+            .disabled(daemonBusy)
             Button {
                 model.startServer()
             } label: { Text("Start In-App Server", bundle: .module) }
@@ -90,6 +95,7 @@ public struct ServerMenuBarView: View {
             Button {
                 startDaemon()
             } label: { Text("Start Background Daemon", bundle: .module) }
+            .disabled(daemonBusy)
         }
     }
 
@@ -108,35 +114,50 @@ public struct ServerMenuBarView: View {
     /// binds its own default port with no API key, whatever the Advanced
     /// pane has configured.
     private func startDaemon() {
-        do {
-            try TurboSparkDaemon.start(args: daemonArgs)
-            model.showToast("Started background daemon", style: .info)
-        } catch {
-            model.showToast(
-                "Could not start the background daemon: \(error.localizedDescription)",
-                style: .error)
+        runDaemonVerb(success: "Started background daemon", failure: "start") { args in
+            try TurboSparkDaemon.start(args: args)
         }
     }
 
     private func stopDaemon() {
-        do {
+        runDaemonVerb(success: "Stopped background daemon", failure: "stop") { _ in
             try TurboSparkDaemon.stop()
-            model.showToast("Stopped background daemon", style: .info)
-        } catch {
-            model.showToast(
-                "Could not stop the background daemon: \(error.localizedDescription)",
-                style: .error)
         }
     }
 
     private func restartDaemon() {
-        do {
-            try TurboSparkDaemon.restart(args: daemonArgs)
-            model.showToast("Restarted background daemon", style: .info)
-        } catch {
-            model.showToast(
-                "Could not restart the background daemon: \(error.localizedDescription)",
-                style: .error)
+        runDaemonVerb(success: "Restarted background daemon", failure: "restart") { args in
+            try TurboSparkDaemon.restart(args: args)
+        }
+    }
+
+    /// Runs one daemon verb detached. Stop waits up to ~3 s for SIGTERM
+    /// shutdown plus the liveness checks, and may wait longer on the daemon
+    /// lock, so doing it inline froze the whole UI (streaming chat included).
+    /// The FFI calls only touch files and processes, so they are safe off the
+    /// main actor; the toast is published back on it.
+    private func runDaemonVerb(
+        success: String,
+        failure verb: String,
+        _ body: @escaping @Sendable ([String]) throws -> Void
+    ) {
+        guard !daemonBusy else { return }
+        daemonBusy = true
+        let args = daemonArgs
+        let model = model
+        Task {
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result { try body(args) }
+            }.value
+            daemonBusy = false
+            switch outcome {
+            case .success:
+                model.showToast(success, style: .info)
+            case .failure(let error):
+                model.showToast(
+                    "Could not \(verb) the background daemon: \(error.localizedDescription)",
+                    style: .error)
+            }
         }
     }
 

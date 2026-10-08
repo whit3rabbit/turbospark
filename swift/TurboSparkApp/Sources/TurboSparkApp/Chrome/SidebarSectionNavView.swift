@@ -87,7 +87,7 @@ struct SidebarSectionNavView: View {
         // whole point of this presentation. The rail keeps its tooltip
         // because there the title is the only thing a tooltip can add.
         .help("\(section.title) (⌘\(String(section.shortcutKey)))")
-        .accessibilityLabel(section.title)
+        .accessibilityLabel(Text(LocalizedStringKey(section.title), bundle: .module))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityHint("Switches the main pane to \(section.title)")
         .onHover { hovering in

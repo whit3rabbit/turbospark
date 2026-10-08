@@ -117,6 +117,16 @@ public final class AppBrowserAutomationCoordinator: ObservableObject {
         permissionContext: BrowserPermissionContext
     ) async throws -> BrowserControlResult {
         guard isPaneOpen else { throw BrowserAutomationSessionError.detached }
+        // The user may have closed (or the engine lost) the agent tab. Release
+        // the session's attachment to it BEFORE a replacement tab is created,
+        // or attach(to:) fails with alreadyAttached on every later call.
+        // Done ahead of the in-flight guard so no await sits between it and
+        // the activeAction assignment.
+        if let stale = agentTabID, tabStore.tab(id: stale)?.owner != .agent {
+            agentTabID = nil
+            ownershipToken = nil
+            await automationSession.tabClosed(tabID: stale)
+        }
         guard activeAction == nil else { throw BrowserAutomationSessionError.commandInFlight }
         let tabID = controlledTabID()
         let scope = BrowserRuntimeActionScope(

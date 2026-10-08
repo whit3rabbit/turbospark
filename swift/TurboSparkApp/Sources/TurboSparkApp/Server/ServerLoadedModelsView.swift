@@ -19,7 +19,9 @@ struct ServerLoadedModelsView: View {
                     .themedFont(.small, weight: .semibold)
                     .foregroundStyle(.appSecondary)
                 Spacer()
-                if model.session != nil, !rows.contains(where: \.isChatSession) {
+                // attachChatSession is a no-op without a running, idle server.
+                if model.session != nil, model.server != nil, !model.serverBusy,
+                   !rows.contains(where: \.isChatSession) {
                     // The cheap path, and worth its own button: the chat
                     // model is already mapped, so serving it costs nothing
                     // where a second install costs its whole footprint.

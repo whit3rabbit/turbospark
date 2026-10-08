@@ -17,6 +17,16 @@ final class OfficeArchive {
     /// Running counter of bytes decompressed across all entries read so far.
     private var consumedBytes = 0
 
+    /// A private copy of the archive under the fixed name `doc.zip`.
+    /// `unzip` treats its archive argument as a wildcard when the exact name
+    /// is not found, so `Q3 [final].docx` can resolve to a sibling `Q3 f.docx`
+    /// and extract the wrong document's text. A fixed safe name removes
+    /// every metacharacter the user controls.
+    private let workDirectory: URL
+    private let safeArchiveURL: URL
+
+    deinit { try? FileManager.default.removeItem(at: workDirectory) }
+
     /// Inspects the archive table of contents and verifies entries exist within limits.
     ///
     /// - Parameters:
@@ -26,8 +36,26 @@ final class OfficeArchive {
     init(url: URL, limits: DocumentTextExtractor.Limits) throws {
         self.url = url
         self.limits = limits
+        let work = FileManager.default.temporaryDirectory
+            .appendingPathComponent("turbospark-office-\(UUID().uuidString)", isDirectory: true)
+        let safe = work.appendingPathComponent("doc.zip")
+        do {
+            try FileManager.default.createDirectory(
+                at: work, withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700])
+            // copyItem clones on APFS, so this is not a second full copy.
+            try FileManager.default.copyItem(at: url, to: safe)
+        } catch {
+            try? FileManager.default.removeItem(at: work)
+            throw DocumentTextExtractionError.invalidArchive(url.lastPathComponent)
+        }
+        workDirectory = work
+        safeArchiveURL = safe
+        // A throwing init does not run deinit, so clean up on failure here.
+        var initialized = false
+        defer { if !initialized { try? FileManager.default.removeItem(at: work) } }
         let result = try Self.runUnzip(
-            arguments: ["-l", url.path],
+            arguments: ["-l", safe.path],
             maximumOutputBytes: limits.maximumEntryBytes,
             timeout: limits.timeout,
             fileName: url.lastPathComponent)
@@ -47,6 +75,7 @@ final class OfficeArchive {
             throw DocumentTextExtractionError.invalidArchive(url.lastPathComponent)
         }
         entries = parsedEntries
+        initialized = true
     }
 
     /// Extracts uncompressed bytes for a named entry path inside the archive.
@@ -62,7 +91,7 @@ final class OfficeArchive {
             limits.maximumEntryBytes,
             max(0, limits.maximumSelectedBytes - consumedBytes))
         let result = try Self.runUnzip(
-            arguments: ["-p", url.path, entry],
+            arguments: ["-p", safeArchiveURL.path, entry],
             maximumOutputBytes: budget,
             timeout: limits.timeout,
             fileName: url.lastPathComponent)

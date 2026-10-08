@@ -222,7 +222,9 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
       };
       const boundsFor = element => {
         const rect = element.getBoundingClientRect();
-        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        // Integers: 17-digit doubles inflate when Swift re-encodes the JSON and
+        // would push a near-budget snapshot over the byte cap.
+        return { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) };
       };
       const isActionable = element => element.matches(actionableSelector);
       const hasExactKeys = (value, expected) => {
@@ -315,9 +317,15 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
         let visited = 0;
         let element = walker.nextNode();
         while (element) {
-          if (visited >= maximumLocatorNodes) return { error: "locator_limit" };
+          if (visited >= maximumLocatorNodes) {
+            // Past the walk budget a first match is still a usable target;
+            // report it as ambiguous instead of failing the whole action
+            // (a reference-less scroll on a large page matches body early).
+            return first ? { element: first, ambiguous: true } : { error: "locator_limit" };
+          }
           visited += 1;
-          if (visible(element) && matches(element)) {
+          // matches() first: visible() forces layout and most nodes do not match.
+          if (matches(element) && visible(element)) {
             if (first) {
               ambiguous = true;
               break;
@@ -426,7 +434,17 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
               truncated = true;
               return;
             }
-            if (excludedTags.has(element.tagName) || !visible(element)) return;
+            if (excludedTags.has(element.tagName)) return;
+            if (!visible(element)) {
+              // A zero-size box (display: contents, a collapsed float wrapper)
+              // can still hold visible children, so descend without emitting a
+              // node. Only display:none, visibility:hidden and opacity 0
+              // genuinely hide the subtree.
+              const style = getComputedStyle(element);
+              if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return;
+              for (const child of element.children) visit(child, parentIndex, depth + 1);
+              return;
+            }
 
             const actionable = isActionable(element);
             const candidate = {
@@ -602,6 +620,19 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
         isInstalled = false
     }
 
+    /// The active document generation, without taking a snapshot. Element
+    /// actions only need the generation to address references minted by an
+    /// earlier snapshot; the full DOM walk they used to run first cost O(n^2)
+    /// in the page and could fail (byte cap) for actions that never needed it.
+    /// Throws the same errors `snapshot()` throws before it touches the page.
+    public func committedGeneration() throws -> UUID {
+        guard isInstalled else { throw DOMSnapshotServiceError.unavailable }
+        guard hasCommittedDocument, expectedOrigin != nil, webView != nil else {
+            throw DOMSnapshotServiceError.inactiveDocument
+        }
+        return currentGeneration
+    }
+
     public func snapshot() async throws -> DOMSnapshotEnvelope {
         guard isInstalled else { throw DOMSnapshotServiceError.unavailable }
         guard hasCommittedDocument, expectedOrigin != nil, let webView else {
@@ -635,7 +666,10 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
 
         guard let object = result as? [String: Any],
               JSONSerialization.isValidJSONObject(object),
-              let data = try? JSONSerialization.data(withJSONObject: object),
+              // Same encoding the JS budget measured: escaped slashes would
+              // otherwise inflate a near-budget snapshot past the cap.
+              let data = try? JSONSerialization.data(
+                  withJSONObject: object, options: [.withoutEscapingSlashes]),
               data.count <= maximumBytes,
               let envelope = try? JSONDecoder().decode(DOMSnapshotEnvelope.self, from: data),
               envelope.version == "ts_snapshot_v1",
@@ -894,7 +928,8 @@ public final class DOMSnapshotService: NSObject, WKScriptMessageHandlerWithReply
                   snapshot["version"] as? String == "ts_snapshot_v1",
                   snapshot["generation"] as? String == currentGeneration.uuidString,
                   JSONSerialization.isValidJSONObject(snapshot),
-                  let data = try? JSONSerialization.data(withJSONObject: snapshot),
+                  let data = try? JSONSerialization.data(
+                      withJSONObject: snapshot, options: [.withoutEscapingSlashes]),
                   data.count <= maximumBytes else {
                 replyHandler(nil, "Snapshot message rejected")
                 return

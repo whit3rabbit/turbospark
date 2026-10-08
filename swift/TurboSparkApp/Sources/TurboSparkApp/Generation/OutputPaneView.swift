@@ -35,13 +35,13 @@ struct OutputPaneView: View {
             Button {
                 copy(model.outputConversationPlainText)
             } label: { Text("Copy conversation", bundle: .module) }
-            .disabled(model.outputConversationPlainText.isEmpty)
+            .disabled(!model.hasOutputConversationText)
 
             if model.memoryEnabled {
                 Button {
                     showingMemoryCapture = true
                 } label: { Text("Add conversation to memory", bundle: .module) }
-                .disabled(model.outputConversationPlainText.isEmpty)
+                .disabled(!model.hasOutputConversationText)
             }
 
             Divider()

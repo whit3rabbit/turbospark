@@ -139,17 +139,29 @@ struct ArtifactWebView: NSViewRepresentable {
         // while waiting; the panel shows a blank frame for that instant.
         ArtifactContentRuleList.shared.withOfflineRules { rules in
             guard let rules else {
-                // Compilation failing means the load proceeds under the
-                // navigation delegate alone. That delegate cannot see
-                // subresource fetches, which is exactly why the rules
-                // exist; a WebKit that cannot compile two static rules is
-                // broken well beyond this panel.
-                loadDocument(document, in: webView)
+                // Fail closed: the navigation delegate cannot see subresource
+                // fetches, so loading the real page without the rules would
+                // let it beacon out while the banner says the network is off.
+                webView.loadHTMLString(ArtifactWebView.offlineUnavailableHTML, baseURL: nil)
                 return
             }
             webView.configuration.userContentController.add(rules)
             loadDocument(document, in: webView)
         }
+    }
+
+    static let offlineUnavailableHTML =
+        "<p>The preview could not be loaded: the offline sandbox is unavailable.</p>"
+    static let stoppedHTML = "<p>The preview stopped because the page crashed.</p>"
+
+    /// Pure so it can be tested: a file: navigation is only ever allowed inside
+    /// the load's read folder, and never once the page holds a network grant
+    /// (a network-enabled page was loaded as inline HTML and has no file scope).
+    nonisolated static func allowsFileNavigation(to url: URL, readFolder: URL?, networkAllowed: Bool) -> Bool {
+        guard !networkAllowed, let folder = readFolder else { return false }
+        let folderPath = folder.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        return path == folderPath || path.hasPrefix(folderPath + "/")
     }
 
     private func loadDocument(_ document: ArtifactWebDocument, in webView: WKWebView) {
@@ -169,6 +181,14 @@ struct ArtifactWebView: NSViewRepresentable {
         var networkAllowed = false
         var loadedDocument: ArtifactWebDocument?
         var loadedNetworkAllowed = false
+        private var terminationCount = 0
+
+        /// One reload per view: a page that exhausts memory on load would
+        /// otherwise be killed and reloaded forever.
+        func shouldReloadAfterTermination() -> Bool {
+            terminationCount += 1
+            return terminationCount <= 1
+        }
 
         func webView(
             _ webView: WKWebView,
@@ -183,7 +203,11 @@ struct ArtifactWebView: NSViewRepresentable {
         /// a blank frame; a preview that silently went blank reads as a
         /// broken page rather than a reclaimed one.
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            webView.reload()
+            if shouldReloadAfterTermination() {
+                webView.reload()
+            } else {
+                webView.loadHTMLString(ArtifactWebView.stoppedHTML, baseURL: nil)
+            }
         }
 
         private func policy(for navigationAction: WKNavigationAction) -> WKNavigationActionPolicy {
@@ -201,14 +225,9 @@ struct ArtifactWebView: NSViewRepresentable {
                 // the belt, not the wall. The trailing slash keeps the
                 // prefix check from accepting a SIBLING whose name extends
                 // the folder's ("/x/artifacts-secret" under "/x/artifacts").
-                if let folder = loadedDocument?.readAccessFolder {
-                    let folderPath = folder.standardizedFileURL.path
-                    let path = url.standardizedFileURL.path
-                    if path == folderPath || path.hasPrefix(folderPath + "/") {
-                        return .allow
-                    }
-                }
-                return .cancel
+                return ArtifactWebView.allowsFileNavigation(
+                    to: url, readFolder: loadedDocument?.readAccessFolder, networkAllowed: networkAllowed)
+                    ? .allow : .cancel
             }
 
             let isWebScheme = scheme == "http" || scheme == "https"

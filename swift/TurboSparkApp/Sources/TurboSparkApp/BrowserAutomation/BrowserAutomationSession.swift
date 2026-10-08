@@ -89,6 +89,11 @@ public actor BrowserAutomationSession {
     @discardableResult
     public func attach(to tabID: BrowserTabID) throws -> BrowserAgentControlToken {
         guard !cancellationInProgress else { throw BrowserAutomationSessionError.commandInFlight }
+        // Defensive: an attachment to a tab the store no longer has can never
+        // be used again and would block every new attach.
+        if let stale = attachment, tabStore.tab(id: stale.tabID) == nil {
+            attachment = nil
+        }
         if let attachment {
             guard attachment.tabID == tabID else {
                 throw BrowserAutomationSessionError.alreadyAttached(attachment.tabID)

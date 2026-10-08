@@ -11,7 +11,11 @@ struct InstalledModelDetailPaneView: View {
     @State private var showingDeleteConfirm = false
 
     private var descriptor: ModelFeatureDescriptor {
-        ModelFeatureDescriptor.resolve(installedModel: installedModel)
+        // Pass the open session's own report when this model is the loaded
+        // one, so the badges agree with the steering card's engine answer.
+        ModelFeatureDescriptor.resolve(
+            installedModel: installedModel,
+            sessionInfo: isCurrentlyLoaded ? model.info : nil)
     }
 
     private var visuals: ModelFamilyVisuals {
@@ -24,9 +28,12 @@ struct InstalledModelDetailPaneView: View {
 
     /// This machine's answer for this install, or `nil` when the catalog has
     /// no row for it (a scanned or side-loaded directory).
-    private var fit: ModelRecommendation? {
-        model.fit(for: installedModel.alias)
-    }
+    ///
+    /// Loaded off the main actor by the `.task` below and cached in
+    /// `@State`. It used to call the synchronous recommend pass from `body`,
+    /// twice per evaluation, and this pane observes the whole AppModel.
+    private var fit: ModelRecommendation? { loadedFit }
+    @State private var loadedFit: ModelRecommendation? = nil
 
     /// The context and slot count the figures above are computed at.
     ///
@@ -111,7 +118,7 @@ struct InstalledModelDetailPaneView: View {
                 InstalledModelOrganizationCardView(installedModel: installedModel)
 
                 InstalledModelDeveloperCommandsView(
-                    alias: installedModel.alias,
+                    modelPath: installedModel.path,
                     defaultSystemPrompt: model.defaultSystemPrompt,
                     onShowToast: { msg in
                         model.showToast(msg, style: .info)
@@ -120,14 +127,18 @@ struct InstalledModelDetailPaneView: View {
             }
             .padding(24)
         }
-        .onAppear {
-            loadLadder()
+        // `.task(id:)` cancels the previous load when the key changes, so a
+        // slower earlier read can never land after a newer one, and slot or
+        // load-guard changes now reload the ladder too.
+        .task(id: ladderKey) {
+            await loadLadder()
         }
-        .onChange(of: installedModel.alias) {
-            loadLadder()
-        }
-        .onChange(of: installedModel.path) {
-            loadLadder()
+        .task(id: "\(installedModel.alias)|\(model.fitRecommendationConfigurationID)") {
+            let alias = installedModel.alias
+            if loadedFit?.alias != alias { loadedFit = nil }
+            let rows = try? await model.loadFitRecommendations(probeIfNeeded: false)
+            guard !Task.isCancelled else { return }
+            loadedFit = rows?.first { $0.alias == alias }
         }
         .confirmationDialog(
             "Delete \(installedModel.alias)?",
@@ -143,23 +154,31 @@ struct InstalledModelDetailPaneView: View {
         }
     }
 
+    /// Everything the ladder depends on. `OpenOptions` values are not
+    /// Equatable, so their descriptions stand in for them.
+    private var ladderKey: String {
+        "\(installedModel.path)|\(model.activeCacheSlots)|\(model.activeLoadGuard)"
+    }
+
     /// Reads the ladder off this install's own manifest.
     ///
     /// Failure leaves it `nil` and the card simply omits the table. An
     /// install whose shape cannot be read has no ladder, and a ladder of
     /// zeros would be worse than none (swift Gotcha 23).
-    private func loadLadder() {
+    ///
+    /// The FFI call reads the manifest and walks the install directory, so it
+    /// runs detached: this view is MainActor-inferred and a plain `Task`
+    /// would inherit that and block the main thread on every selection.
+    private func loadLadder() async {
         ladder = nil
         let path = installedModel.path
         let slots = model.activeCacheSlots
         let guard_ = model.activeLoadGuard
-        Task {
-            let found = try? TurboSparkCatalog.contextLadder(
+        let found = await Task.detached(priority: .userInitiated) {
+            try? TurboSparkCatalog.contextLadder(
                 modelPath: path, expertCacheSlots: slots, loadGuard: guard_)
-            // The pane can be showing a DIFFERENT model by the time this
-            // lands, which is the same captured-identity rule the agent loop
-            // follows (state#17): publish only if the subject still matches.
-            if installedModel.path == path { ladder = found }
-        }
+        }.value
+        // A changed key cancels this task; never publish a stale result.
+        if !Task.isCancelled { ladder = found }
     }
 }

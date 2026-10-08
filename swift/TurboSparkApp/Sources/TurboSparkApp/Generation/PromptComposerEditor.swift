@@ -148,7 +148,7 @@ struct PromptComposerEditor: View {
                         // caret move inside a half-written multi-line
                         // message; the autocomplete popup outranks it.
                         if press.key == .upArrow, press.modifiers.isEmpty,
-                            historyBrowser?.canStepBack(draftText: model.promptText) == true {
+                            (historyBrowser ?? ComposerHistoryBrowser()).canStepBack(draftText: model.promptText) {
                             applyHistoryStep(backward: true)
                             return .handled
                         }
@@ -159,6 +159,12 @@ struct PromptComposerEditor: View {
                         }
                         if press.key == .return {
                             if press.modifiers.contains(.shift) {
+                                return .ignored
+                            }
+                            // Return while an input method is composing (Japanese,
+                            // Chinese, Korean) commits the conversion; it must
+                            // reach the text view, not send the draft.
+                            if (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true {
                                 return .ignored
                             }
                             // CanRunOrQueue, not canRun: a Return during a

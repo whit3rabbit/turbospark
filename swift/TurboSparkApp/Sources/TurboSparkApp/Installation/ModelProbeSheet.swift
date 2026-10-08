@@ -18,6 +18,10 @@ struct ModelProbeSheet: View {
     @State private var variants: RepoVariants? = nil
     @State private var isListingVariants = false
     @State private var showsConfirm = false
+    // Bumped per request so a slower earlier probe or variant listing cannot
+    // overwrite the result of a newer one.
+    @State private var probeGeneration = 0
+    @State private var variantsGeneration = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,7 +53,7 @@ struct ModelProbeSheet: View {
             variants: variants,
             ggufFile: ggufFile,
             selectedVariant: selectedVariant,
-            freeDiskBytes: ModelInstallGate.freeSpace(at: AppStorageRoot.directory)
+            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore()
         )
     }
 
@@ -142,6 +146,18 @@ struct ModelProbeSheet: View {
                     .onChange(of: repo) {
                         let clean = Self.sanitizeRepo(repo)
                         if clean != repo { repo = clean }
+                        // A report, variant list, or filename from the
+                        // previous repo must not gate the install of this one.
+                        // Bump the generations so an in-flight probe or
+                        // listing for the old repo cannot land afterwards.
+                        report = nil
+                        probeError = nil
+                        variants = nil
+                        ggufFile = ""
+                        probeGeneration += 1
+                        variantsGeneration += 1
+                        isProbing = false
+                        isListingVariants = false
                     }
                     .onSubmit { listVariants() }
             } label: {
@@ -208,6 +224,12 @@ struct ModelProbeSheet: View {
                         TextField("e.g. model-q4_k_m.gguf", text: $ggufFile)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("GGUF filename (optional)")
+                            // A probe of a different filename says nothing
+                            // about this one.
+                            .onChange(of: ggufFile) {
+                                report = nil
+                                probeError = nil
+                            }
                     }
                     Button {
                         listVariants()
@@ -293,8 +315,25 @@ struct ModelProbeSheet: View {
         guard !clean.isEmpty else { return }
         isListingVariants = true
         variants = nil
+        variantsGeneration += 1
+        let generation = variantsGeneration
+        // Blocking network FFI (up to the HTTP timeout): keep it off the
+        // main actor so the spinner animates and the app stays responsive.
         Task {
-            variants = try? TurboSparkCatalog.variants(repo: clean)
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result { try TurboSparkCatalog.variants(repo: clean) }
+            }.value
+            guard generation == variantsGeneration else { return }
+            switch outcome {
+            case .success(let found):
+                variants = found
+            case .failure(let error):
+                // Surface it (a 401/404/offline failure otherwise looks like
+                // "this repo has no GGUF variants"); reuse probeError so the
+                // existing sign-in hint applies.
+                variants = nil
+                probeError = "Variant listing failed: \(error.localizedDescription)"
+            }
             isListingVariants = false
         }
     }
@@ -314,21 +353,36 @@ struct ModelProbeSheet: View {
         isProbing = true
         probeError = nil
         report = nil
+        probeGeneration += 1
+        let generation = probeGeneration
+        let file = ggufFile.isEmpty ? nil : ggufFile
+        let sidecar = cleanSidecar.isEmpty ? nil : cleanSidecar
+        // The configuration this app will OPEN under, so the probe's fit and
+        // a session's allocation are one answer. Captured on the main actor;
+        // the blocking network FFI itself runs detached.
+        let context = model.activeFitContext
+        let slots = model.activeCacheSlots
+        let loadGuard = model.activeLoadGuard
         Task {
-            do {
-                report = try TurboSparkCatalog.probe(
-                    repo: cleanRepo,
-                    file: ggufFile.isEmpty ? nil : ggufFile,
-                    sidecarRepo: cleanSidecar.isEmpty ? nil : cleanSidecar,
-                    // The configuration this app will OPEN under, so the
-                    // probe's fit and a session's allocation are one answer.
-                    context: model.activeFitContext,
-                    expertCacheSlots: model.activeCacheSlots,
-                    loadGuard: model.activeLoadGuard)
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result {
+                    try TurboSparkCatalog.probe(
+                        repo: cleanRepo,
+                        file: file,
+                        sidecarRepo: sidecar,
+                        context: context,
+                        expertCacheSlots: slots,
+                        loadGuard: loadGuard)
+                }
+            }.value
+            guard generation == probeGeneration else { return }
+            switch outcome {
+            case .success(let probed):
+                report = probed
                 _ = AccessibilityNotification.Announcement.post(
                     .init("Probe complete. Report is available.")
                 )
-            } catch {
+            case .failure(let error):
                 let msg = "Probe failed: \(error.localizedDescription)"
                 probeError = msg
                 _ = AccessibilityNotification.Announcement.post(.init(msg))

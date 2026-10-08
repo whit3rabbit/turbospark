@@ -44,5 +44,12 @@ struct ServerConnectionView: View {
         .onChange(of: model.serverPinnedPort) { _, _ in syncPort() }
     }
 
-    private func syncPort() { port = model.serverPinnedPort == 0 ? "" : String(model.serverPinnedPort) }
+    private func syncPort() {
+        port = model.serverPinnedPort == 0 ? "" : String(model.serverPinnedPort)
+        // The text now mirrors a valid pinned port. A recreated view starts
+        // with no portError, so clear stale invalid state or Start stays
+        // disabled with no visible reason.
+        portError = nil
+        model.serverPortIsValid = true
+    }
 }

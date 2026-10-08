@@ -53,6 +53,8 @@ public struct TaskProgressFlameIcon: View {
     @Binding var isFloating: Bool
 
     @State private var internalFloating = false
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
     public init(size: CGFloat = 16, isFloating: Binding<Bool>? = nil) {
         self.size = size
@@ -84,6 +86,8 @@ public struct TaskProgressFlameIcon: View {
         }
         .offset(y: activeFloating ? -2.5 : 2.5)
         .onAppear {
+            // The bob repeats forever, so honor Reduce motion by not starting it.
+            guard !appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion) else { return }
             withAnimation(
                 .easeInOut(duration: 0.9)
                 .repeatForever(autoreverses: true)

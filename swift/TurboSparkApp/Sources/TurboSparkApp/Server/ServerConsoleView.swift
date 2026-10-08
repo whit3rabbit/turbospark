@@ -64,6 +64,15 @@ struct ServerConsoleView: View {
             }
         }
         .background(.appElevated.opacity(0.4))
+        // The picker only shows for 2+ served models, so a filter on a model
+        // that is no longer served (after a restart) would be invisible and
+        // stuck. Stale expanded ids would also open unrelated new rows.
+        .onChange(of: model.serverMetrics.servingModels) { _, serving in
+            if let filter = modelFilter, !serving.contains(filter) {
+                modelFilter = nil
+                expanded.removeAll()
+            }
+        }
     }
 
     private var toolbar: some View {

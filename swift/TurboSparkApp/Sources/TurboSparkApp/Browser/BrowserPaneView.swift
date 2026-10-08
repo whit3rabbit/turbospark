@@ -167,6 +167,9 @@ final class BrowserPaneModel: ObservableObject {
         guard let selectedTabID else { return false }
         if case .crashed? = selectedTabState?.loadState {
             do {
+                // The user's click is direct input: take the tab over first so
+                // the reload is not judged as an agent navigation.
+                engine.prepareForDirectUserInput(in: selectedTabID)
                 try engine.recoverCrashedTab(selectedTabID)
                 refresh()
                 return true
@@ -224,7 +227,7 @@ enum BrowserTabPresentation: Equatable {
 @MainActor
 struct BrowserTabView: View {
     let engine: WebKitBrowserEngine
-    let viewportController: BrowserViewportController
+    @ObservedObject var viewportController: BrowserViewportController
     @ObservedObject var elementPicker: ElementPickerController
     let tabID: BrowserTabID
     let state: BrowserEngineTabState?
@@ -286,10 +289,10 @@ struct BrowserTabView: View {
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
-                            elementPicker.updateCandidate(at: CGPoint(
-                                x: location.x / max(scale, 0.01),
-                                y: location.y / max(scale, 0.01)
-                            ))
+                            elementPicker.updateCandidate(at: BrowserViewportController.cssPoint(
+                                viewPoint: location,
+                                scrollOffset: viewportController.scrollOffset,
+                                scale: scale))
                         case .ended:
                             elementPicker.clearHoverCandidate()
                         }
@@ -311,8 +314,8 @@ struct BrowserTabView: View {
                             height: max(1, bounds.height * scale)
                         )
                         .position(
-                            x: (bounds.x + bounds.width / 2) * scale,
-                            y: (bounds.y + bounds.height / 2) * scale
+                            x: (bounds.x + bounds.width / 2) * scale - viewportController.scrollOffset.x,
+                            y: (bounds.y + bounds.height / 2) * scale - viewportController.scrollOffset.y
                         )
                         .allowsHitTesting(false)
                 }
@@ -430,13 +433,23 @@ public struct BrowserPaneView: View {
             }
         }
         .onAppear { model.refresh() }
-        .onReceive(engine.$tabStates) { _ in model.refresh() }
+        // @Published emits in willSet, so a synchronous refresh would read the
+        // PRE-change tabStates. Hop to the next main-queue turn to see the new value.
+        .onReceive(engine.$tabStates.receive(on: DispatchQueue.main)) { _ in model.refresh() }
         .onChange(of: model.selectedTabID) { _, _ in elementPicker.cancel() }
+        // Show the page that raised a dialog before presenting it, so a
+        // background tab cannot draw a prompt over the page being viewed.
+        .onChange(of: engine.pendingDialogs.first?.tabID, initial: true) { _, tabID in
+            if let tabID { model.selectTab(tabID) }
+        }
         .overlay {
             if let request = engine.pendingDialogs.first {
                 BrowserDialogApprovalView(request: request) { requestID, decision in
                     engine.resolvePendingDialog(requestID, decision: decision)
                 }
+                // Fresh view state per dialog: otherwise text typed into one
+                // prompt carries over to the next queued dialog's origin.
+                .id(request.id)
                 .zIndex(4)
             }
         }

@@ -172,7 +172,7 @@ struct ModelHubFilter: Equatable {
         case .name:
             list.sort { $0.alias.localizedCaseInsensitiveCompare($1.alias) == .orderedAscending }
         case .size:
-            list.sort { $0.downloadBytes < $1.downloadBytes }
+            list.sort { $0.installBytes < $1.installBytes }
         }
 
         return list

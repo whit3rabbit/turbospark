@@ -179,4 +179,27 @@ final class BrowserTabStoreTests: XCTestCase {
         XCTAssertEqual(store.tab(id: tabID)?.owner, .user)
         XCTAssertEqual(store.tab(id: popupID)?.owner, .user)
     }
+
+    /// The session actor reads the store while WebKit callbacks and user
+    /// actions mutate it. Hammering both sides must neither crash nor lose a
+    /// tab (an unsynchronized Array append/read races and corrupts or traps).
+    func testConcurrentReadsAndMutationsKeepStoreConsistent() throws {
+        let store = BrowserTabStore()
+        let seed = store.createTab(owner: .user, address: "https://seed.example")
+        let iterations = 400
+
+        DispatchQueue.concurrentPerform(iterations: iterations * 2) { i in
+            if i % 2 == 0 {
+                _ = store.createTab(owner: .user, address: "https://t\(i).example", select: false)
+            } else {
+                _ = store.tab(id: seed)
+                _ = store.tabs.count
+                try? store.startNavigation(in: seed, to: "https://n\(i).example")
+                try? store.failNavigation(in: seed, reason: "x")
+            }
+        }
+
+        XCTAssertEqual(store.tabs.count, 1 + iterations)
+        XCTAssertEqual(Set(store.tabs.map(\.id)).count, 1 + iterations)
+    }
 }

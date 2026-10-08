@@ -165,11 +165,46 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     /// or "deepseek" is not thereby a Gemma-4-shaped MoE, and `qwen38` is
     /// this repo's dense MTP/DFlash2 family, not MoE at all -- the old
     /// alias-substring chain wrongly flagged it as MoE.
+    /// True when `family` is exactly one of the families with a documented MoE
+    /// architecture. Shared with the recommendation row so the two surfaces
+    /// cannot disagree about whether a model is MoE.
+    static func isKnownMoEFamily(_ family: String?) -> Bool {
+        guard let family else { return false }
+        return knownMoEFamilies.contains(family.lowercased())
+    }
+
+    /// True when `repo` looks like a real Hugging Face `owner/name`. Scanner
+    /// tags such as `custom/foo` and `lm studio/foo` share the shape but name
+    /// no Hugging Face repository, so they must not become links.
+    static func isHuggingFaceRepo(_ repo: String) -> Bool {
+        let lower = repo.lowercased()
+        guard !lower.hasPrefix("custom/"), !lower.hasPrefix("lm studio/") else { return false }
+        let parts = repo.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return false }
+        return parts.allSatisfy { part in
+            !part.isEmpty && part.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) }
+        }
+    }
+
     private static let knownMoEFamilies: Set<String> = [
         "gemma4", "qwen36", "qwen4exp", "qwen3moe", "qwen35moe", "gptoss", "mixtral",
         // deepseek2: 64 experts top-6 plus a fused shared expert.
         "deepseek2",
     ]
+
+    /// True when `lowercasedPath` is a root or lies below one, matched on a path
+    /// component boundary so `/x/models-old` is not under `/x/models`. The
+    /// app's process-local store root is included because a moved store has no
+    /// ".turbospark" component and no TURBOSPARK_HOME.
+    static func isUnderStoreRoot(lowercasedPath: String, roots: [String]) -> Bool {
+        for root in roots {
+            var r = root.lowercased()
+            while r.count > 1 && r.hasSuffix("/") { r.removeLast() }
+            guard !r.isEmpty else { continue }
+            if lowercasedPath == r || lowercasedPath.hasPrefix(r == "/" ? "/" : r + "/") { return true }
+        }
+        return false
+    }
 
     /// Pure mirror of `model_io::rht_supported` + `model_io::layer_is_quantized`'s
     /// "does any layer qualify" check, taking the same three facts those
@@ -275,13 +310,12 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         // "Custom Folder", and the "TurboSpark" source filter returned
         // zero results for exactly the installs it should have matched.
         let turboSparkHomeOverride = ProcessInfo.processInfo.environment["TURBOSPARK_HOME"]
-        let isUnderTurboSparkStore: Bool = {
-            if let override = turboSparkHomeOverride, !override.isEmpty {
-                let normalized = ModelStorageManager.expandPath(override).lowercased()
-                if !normalized.isEmpty && lPath.hasPrefix(normalized) { return true }
-            }
-            return lPath.contains(".turbospark")
-        }()
+        var storeRoots = [ModelStorageManager.defaultTurboSparkStoreRoot]
+        if let override = turboSparkHomeOverride, !override.isEmpty {
+            storeRoots.append(ModelStorageManager.expandPath(override))
+        }
+        let isUnderTurboSparkStore = Self.isUnderStoreRoot(lowercasedPath: lPath, roots: storeRoots)
+            || lPath.contains(".turbospark")
         let source: StorageSource
         if lRepo.hasPrefix("lm studio/") || lPath.contains(".lmstudio") {
             source = .lmStudio
@@ -293,32 +327,14 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
 
         // 2. Manifest inspection if path exists -- the one source of
         // REAL, per-install measurements available without a live session.
-        var manifestContext: Int? = nil
-        var manifestLayers: Int? = nil
-        var manifestHidden: Int? = nil
-        var manifestVocab: Int? = nil
-        var manifestExperts: Int? = nil
-        var manifestTopK: Int? = nil
-        var supportsKvQuant = false
-
-        if !path.isEmpty {
-            let manifestURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).appendingPathComponent("manifest.json")
-            if let data = try? Data(contentsOf: manifestURL),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if let arch = json["arch"] as? [String: Any] {
-                    manifestContext = (arch["trainedContext"] as? Int) ?? (arch["slidingWindow"] as? Int)
-                    manifestLayers = arch["numLayers"] as? Int
-                    manifestHidden = arch["hiddenSize"] as? Int
-                    manifestVocab = arch["vocabSize"] as? Int
-                    manifestExperts = arch["numExperts"] as? Int
-                    manifestTopK = arch["topKExperts"] as? Int
-                    supportsKvQuant = Self.kvQuantEligible(
-                        fullHeadDim: arch["fullHeadDim"] as? Int,
-                        fullAttentionLayerMask: arch["fullAttentionLayerMask"] as? [Int],
-                        numLayers: manifestLayers)
-                }
-            }
-        }
+        let facts = path.isEmpty ? ManifestFacts() : ManifestFactsCache.facts(forInstallPath: path)
+        let manifestContext = facts.context
+        let manifestLayers = facts.layers
+        let manifestHidden = facts.hidden
+        let manifestVocab = facts.vocab
+        let manifestExperts = facts.experts
+        let manifestTopK = facts.topK
+        let supportsKvQuant = facts.supportsKvQuant
 
         // 3. Format & quantization (U1): a resolved catalog entry's own
         // `name` states this explicitly (every GGUF row's name leads with
@@ -456,5 +472,85 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
             expertCount: manifestExperts,
             topKExperts: manifestTopK
         )
+    }
+}
+
+/// The per-install numbers `ModelFeatureDescriptor.resolve` reads from
+/// `manifest.json`.
+struct ManifestFacts: Equatable {
+    var context: Int?
+    var layers: Int?
+    var hidden: Int?
+    var vocab: Int?
+    var experts: Int?
+    var topK: Int?
+    var supportsKvQuant = false
+
+    /// Pure parse of the manifest bytes; an unreadable manifest yields the
+    /// all-nil value, matching the old inline behaviour.
+    static func parse(_ data: Data) -> ManifestFacts {
+        var facts = ManifestFacts()
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arch = json["arch"] as? [String: Any] else { return facts }
+        // A sliding window is not the trained context; leave it unknown.
+        facts.context = arch["trainedContext"] as? Int
+        facts.layers = arch["numLayers"] as? Int
+        facts.hidden = arch["hiddenSize"] as? Int
+        facts.vocab = arch["vocabSize"] as? Int
+        facts.experts = arch["numExperts"] as? Int
+        facts.topK = arch["topKExperts"] as? Int
+        facts.supportsKvQuant = ModelFeatureDescriptor.kvQuantEligible(
+            fullHeadDim: arch["fullHeadDim"] as? Int,
+            fullAttentionLayerMask: arch["fullAttentionLayerMask"] as? [Int],
+            numLayers: facts.layers)
+        return facts
+    }
+}
+
+/// Memoizes `ManifestFacts` per install path. `resolve` runs many times per
+/// SwiftUI body on the main thread; without this each call re-read and
+/// re-parsed manifest.json. An entry is trusted only while the file's mtime
+/// and size are unchanged, so a re-install or edit is picked up on the next
+/// call without any explicit invalidation.
+enum ManifestFactsCache {
+    private struct Entry {
+        let stamp: Stamp
+        let facts: ManifestFacts
+    }
+    private struct Stamp: Equatable {
+        let modified: Date?
+        let size: Int?
+    }
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var entries: [String: Entry] = [:]
+    private static let maxEntries = 256
+
+    static func facts(forInstallPath path: String) -> ManifestFacts {
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            .appendingPathComponent("manifest.json")
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let stamp = Stamp(
+            modified: attrs?[.modificationDate] as? Date,
+            size: (attrs?[.size] as? NSNumber)?.intValue)
+        lock.lock()
+        if let hit = entries[url.path], hit.stamp == stamp, attrs != nil {
+            lock.unlock()
+            return hit.facts
+        }
+        lock.unlock()
+        let facts = (try? Data(contentsOf: url)).map(ManifestFacts.parse) ?? ManifestFacts()
+        lock.lock()
+        if entries.count >= maxEntries { entries.removeAll() }
+        entries[url.path] = Entry(stamp: stamp, facts: facts)
+        lock.unlock()
+        return facts
+    }
+
+    /// Test seam.
+    static func reset() {
+        lock.lock(); entries.removeAll(); lock.unlock()
+    }
+    static var cachedCount: Int {
+        lock.lock(); defer { lock.unlock() }; return entries.count
     }
 }

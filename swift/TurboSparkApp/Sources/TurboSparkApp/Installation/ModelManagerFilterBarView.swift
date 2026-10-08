@@ -190,6 +190,11 @@ struct ModelManagerFilterBarView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+        // Removing the last use of the selected tag hides the whole tag bar,
+        // which would leave a filter active with no control to clear it.
+        .onChange(of: orgStore.allKnownTags) { _, tags in
+            if let tag = selectedTag, !tags.contains(tag) { selectedTag = nil }
+        }
     }
 
     private var searchField: some View {

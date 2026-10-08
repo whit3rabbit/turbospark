@@ -72,7 +72,8 @@ struct InstalledModelHeroHeaderView: View {
                 }
 
                 if !installedModel.repo.isEmpty && installedModel.repo != "local" {
-                    if let url = URL(string: "https://huggingface.co/\(installedModel.repo)") {
+                    if ModelFeatureDescriptor.isHuggingFaceRepo(installedModel.repo),
+                       let url = URL(string: "https://huggingface.co/\(installedModel.repo)") {
                         Link(destination: url) {
                             HStack(spacing: 3) {
                                 Text(installedModel.repo)

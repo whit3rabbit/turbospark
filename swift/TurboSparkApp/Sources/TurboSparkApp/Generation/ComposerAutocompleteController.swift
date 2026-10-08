@@ -47,6 +47,9 @@ final class ComposerAutocompleteController: ObservableObject {
             return
         }
         dismissedMatch = nil
+        // A changed query starts at the best (top) match; the clamp in
+        // setSuggestions alone would park the highlight on the worst row.
+        if triggerMatch != match { selectedIndex = 0 }
         triggerMatch = match
         recompute()
     }

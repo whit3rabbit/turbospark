@@ -404,13 +404,19 @@ private struct ChromeBookmarkTreeParser {
                 }
             case "url":
                 guard let chromeID = Self.validIdentifier(child["id"] as? String),
-                      let title = Self.cleanTitle(child["name"] as? String),
                       let url = Self.safeBookmarkURL(child["url"] as? String),
                       identifiers.insert("bookmark:\(chromeID)").inserted
                 else {
                     skippedItemCount += 1
                     continue
                 }
+                // Chrome stores icon-only bookmark bar entries with an empty
+                // name. The URL is still valid, so fall back to it instead of
+                // silently dropping the bookmark.
+                let title = Self.cleanTitle(child["name"] as? String)
+                    ?? Self.cleanTitle(URL(string: url)?.host)
+                    ?? Self.cleanTitle(url)
+                    ?? url
                 visitedNodeCount += 1
                 bookmarks.append(BrowserBookmark(id: "bookmark:\(chromeID)", title: title, url: url))
             default:

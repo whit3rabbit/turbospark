@@ -51,7 +51,10 @@ struct ProfileMemoryCaptureSheet: View {
         .padding(20)
         .frame(minWidth: 600)
         .task {
-            if let summary = await model.summarizeConversationForProfileMemory() {
+            let startingDraft = draft
+            if let summary = await model.summarizeConversationForProfileMemory(),
+                draft == startingDraft  // never overwrite edits made while summarizing
+            {
                 draft = summary
             }
             isSummarizing = false

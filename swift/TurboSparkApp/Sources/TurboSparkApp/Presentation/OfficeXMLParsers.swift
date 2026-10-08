@@ -8,6 +8,9 @@ import Foundation
 final class FlowingTextXMLParser: NSObject, XMLParserDelegate {
     private var output = ""
     private var capturedText: String?
+    // `<w:tabs>` / `<a:tabLst>` hold tab-stop DEFINITIONS whose child `tab`
+    // elements are not tab characters; emitting them added stray columns.
+    private var tabDefinitionDepth = 0
 
     /// Parses XML data and returns extracted plain text.
     ///
@@ -16,6 +19,7 @@ final class FlowingTextXMLParser: NSObject, XMLParserDelegate {
     func parse(_ data: Data) throws -> String {
         output = ""
         capturedText = nil
+        tabDefinitionDepth = 0
         let parser = XMLParser(data: data)
         parser.delegate = self
         guard parser.parse() else {
@@ -35,8 +39,10 @@ final class FlowingTextXMLParser: NSObject, XMLParserDelegate {
         switch localName(elementName) {
         case "t":
             capturedText = ""
+        case "tabs", "tabLst":
+            tabDefinitionDepth += 1
         case "tab":
-            output += "\t"
+            if tabDefinitionDepth == 0 { output += "\t" }
         case "br":
             output += "\n"
         default:
@@ -56,6 +62,8 @@ final class FlowingTextXMLParser: NSObject, XMLParserDelegate {
         qualifiedName qName: String?
     ) {
         switch localName(elementName) {
+        case "tabs", "tabLst":
+            tabDefinitionDepth = max(0, tabDefinitionDepth - 1)
         case "t":
             output += capturedText ?? ""
             capturedText = nil

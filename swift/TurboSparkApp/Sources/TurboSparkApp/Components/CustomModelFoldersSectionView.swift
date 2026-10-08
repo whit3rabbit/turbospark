@@ -99,15 +99,33 @@ struct CustomModelFoldersSectionView: View {
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
         }
         .task(id: model.customModelDirectories) {
-            rescanCounts()
+            await rescanCounts()
         }
     }
 
-    private func rescanCounts() {
-        scannedCounts = Dictionary(
-            uniqueKeysWithValues: model.customModelDirectories.map {
-                ($0, ModelStorageManager.scanModels(in: $0, sourceTag: "Custom").count)
-            })
+    /// Walks off the main actor: a folder on an external or network drive can
+    /// take seconds, and the walk used to block the UI.
+    private func rescanCounts() async {
+        let folders = model.customModelDirectories
+        let counts = await Task.detached(priority: .utility) {
+            Self.folderCounts(for: folders)
+        }.value
+        guard !Task.isCancelled else { return }
+        scannedCounts = counts
+    }
+
+    /// `customModelDirectories` is decoded leniently and never deduplicated,
+    /// so a repeated path must not trap the dictionary build.
+    nonisolated static func folderCounts(
+        for folders: [String], count: (String) -> Int = {
+            ModelStorageManager.scanModels(in: $0, sourceTag: "Custom").count
+        }
+    ) -> [String: Int] {
+        var result: [String: Int] = [:]
+        for folder in folders where result[folder] == nil {
+            result[folder] = count(folder)
+        }
+        return result
     }
 
     private func addCustomFolder() {

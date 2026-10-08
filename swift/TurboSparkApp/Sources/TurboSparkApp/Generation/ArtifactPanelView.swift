@@ -297,13 +297,23 @@ struct ArtifactPanelView: View {
                 unavailableView("The file is no longer at its written path.")
             }
         case .markdown:
-            ScrollView {
-                ChatMessageMarkdownView(sourceText ?? "")
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            // An oversized or non-UTF-8 file would otherwise render as an
+            // empty page, which reads as an empty file.
+            if sourceReadFailed {
+                unavailableView("The source could not be read as text.")
+            } else {
+                ScrollView {
+                    ChatMessageMarkdownView(sourceText ?? "")
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         case .text:
-            monospacedSourceView
+            if sourceReadFailed {
+                unavailableView("The source could not be read as text.")
+            } else {
+                monospacedSourceView
+            }
         case .image:
             if let url = artifact.url, let image = NSImage(contentsOf: url) {
                 ImagePreviewView(image: image)
@@ -464,7 +474,22 @@ struct ArtifactPanelView: View {
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = artifact.fileName
         if panel.runModal() == .OK, let destination = panel.url {
-            try? FileManager.default.copyItem(at: url, to: destination)
+            // NSSavePanel already confirmed Replace with the user, but
+            // copyItem refuses an existing destination. Copy to a sibling
+            // temp name first so a failed copy cannot destroy the old file.
+            do {
+                let fm = FileManager.default
+                if fm.fileExists(atPath: destination.path) {
+                    let staging = destination.deletingLastPathComponent()
+                        .appendingPathComponent(".turbospark-save-\(UUID().uuidString)")
+                    try fm.copyItem(at: url, to: staging)
+                    _ = try fm.replaceItemAt(destination, withItemAt: staging)
+                } else {
+                    try fm.copyItem(at: url, to: destination)
+                }
+            } catch {
+                model.showToast("Could not save a copy: \(error.localizedDescription)", style: .error)
+            }
         }
     }
 
@@ -474,7 +499,11 @@ struct ArtifactPanelView: View {
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = "preview.html"
         if panel.runModal() == .OK, let destination = panel.url {
-            try? preview.html.write(to: destination, atomically: true, encoding: .utf8)
+            do {
+                try preview.html.write(to: destination, atomically: true, encoding: .utf8)
+            } catch {
+                model.showToast("Could not export the preview: \(error.localizedDescription)", style: .error)
+            }
         }
     }
 

@@ -164,7 +164,7 @@ struct HelpSheetView: View {
                                 command.summary,
                                 mono: true)
                         }
-                        ForEach(model.userSkills.filter { $0.isEnabled }) { skill in
+                        ForEach(ComposerAutocompleteEngine.invocableSkills(model.effectiveSkills)) { skill in
                             helpRow("/\(skill.name)", skill.skillDescription, mono: true)
                         }
                     }

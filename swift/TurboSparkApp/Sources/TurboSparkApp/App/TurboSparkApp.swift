@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
@@ -68,6 +69,11 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
             // outlives the process (FanController's header).
             FanController.shared.restoreOnQuitIfNeeded()
             AppShutdownCoordinator.shared.onTerminate?()
+            // A protected profile's decrypted attachment cache lives under
+            // ~/Library/Caches; without this it survives Cmd-Q (and is only
+            // purged at the next launch's vault open). No-op when the vault
+            // has no live session.
+            ManagedAssetStore.shared.purgeDecryptedCache()
         }
     }
 }
@@ -89,6 +95,9 @@ struct TurboSparkApp: App {
     @ObservedObject private var updateController = SparkleUpdateController.shared
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
+    // The MenuBarExtra's icon and insertion depend on model state this struct
+    // does not otherwise observe; the bridge republishes only those two bits.
+    @StateObject private var menuBarState = MenuBarStateBridge()
 
     init() {
         AppFontRegistrar.registerBundledFonts()
@@ -147,6 +156,99 @@ struct TurboSparkApp: App {
                 .disabled(!updateController.canCheckForUpdates)
             }
             if let model = vaultCoordinator.model {
+                // Own Commands type so the menus OBSERVE the model: a Scene's
+                // body only re-evaluates for the App's own observed objects, which
+                // left disabled states and labels frozen at their first values.
+                TurboSparkModelCommands(
+                    model: model,
+                    appearanceManager: appearanceManager,
+                    languageRawValue: $languageRawValue)
+            }
+        }
+
+        Settings {
+            // A SEPARATE SCENE, so nothing `RootView` injects reaches it. The
+            // theme has to be injected again here or every view in this window
+            // reads `ResolvedAppTheme.fallback` -- the light defaults -- while
+            // the window itself renders dark.
+            Group {
+                if let model = vaultCoordinator.model {
+                    AppSettingsView(model: model)
+                        .appThemed()
+                } else {
+                    ProfileUnlockView(coordinator: vaultCoordinator)
+                }
+            }
+            .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
+            .environment(\.locale, currentLanguage.locale)
+            .environment(\.layoutDirection, currentLanguage.layoutDirection)
+        }
+
+        MenuBarExtra(
+            "TurboSpark",
+            systemImage: menuBarState.isServerRunning ? "bolt.fill" : "bolt",
+            // Guard writes to prevent an infinite re-render loop: MenuBarExtra
+            // on macOS writes back its insertion state on each scene graph evaluation.
+            // Directly passing $model.showMenuBarItem fires objectWillChange on
+            // unchanged values and spins the main thread at 100% CPU.
+            isInserted: Binding(
+                get: { menuBarState.showItem },
+                set: { newValue in
+                    if let model = vaultCoordinator.model,
+                       model.showMenuBarItem != newValue {
+                        model.showMenuBarItem = newValue
+                    }
+                }
+            )
+        ) {
+            // A THIRD scene: the same reason the Settings scene above injects
+            // its own theme applies here, and the menu bar's own text and
+            // icons were reading `ResolvedAppTheme.fallback` for the life of
+            // the feature (swift/docs/SWIFT_SETTINGS_AUDIT.md item 7).
+            if let model = vaultCoordinator.model {
+                ServerMenuDashboardView(model: model)
+                    .appThemed()
+            }
+        }
+        .menuBarExtraStyle(.window)
+    }
+}
+
+
+/// Republishes just the two AppModel facts the MenuBarExtra scene needs, so a
+/// server start/stop or the menu-bar toggle refreshes the scene.
+@MainActor
+final class MenuBarStateBridge: ObservableObject {
+    @Published private(set) var isServerRunning = false
+    @Published private(set) var showItem = false
+    private var cancellable: AnyCancellable?
+
+    init() {
+        cancellable = ProfileVaultCoordinator.shared.$model
+            .map { model -> AnyPublisher<(Bool, Bool), Never> in
+                guard let model else { return Just((false, false)).eraseToAnyPublisher() }
+                return Publishers.CombineLatest(
+                    model.$server.map { $0 != nil }, model.$showMenuBarItem
+                ).eraseToAnyPublisher()
+            }
+            .switchToLatest()
+            .sink { [weak self] running, show in
+                guard let self else { return }
+                if self.isServerRunning != running { self.isServerRunning = running }
+                if self.showItem != show { self.showItem = show }
+            }
+    }
+}
+
+/// The model-dependent menu commands. A `Commands` value with an
+/// `@ObservedObject` model re-evaluates on every model publish, which the App
+/// struct's own `body` does not.
+struct TurboSparkModelCommands: Commands {
+    @ObservedObject var model: AppModel
+    @ObservedObject var appearanceManager: AppearanceManager
+    @Binding var languageRawValue: String
+
+    var body: some Commands {
             // Menu-bar chrome takes its text from `Text(_:bundle:)` labels
             // rather than bare `LocalizedStringKey`s: the string catalog lives
             // in `Bundle.module`, and the key-only initializers
@@ -363,7 +465,10 @@ struct TurboSparkApp: App {
                         : Text("Queue Message", bundle: .module)
                 }
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(!model.canRunOrQueue)
+                // The Images composer owns this chord there. If the menu item
+                // stays enabled it takes the chord from a disabled Generate
+                // button and sends the image prompt to the text model.
+                .disabled(!model.canRunOrQueue || model.activeSection == .images)
 
                 Button {
                     model.cancel()
@@ -485,57 +590,8 @@ struct TurboSparkApp: App {
                     Text("Language", bundle: .module)
                 }
             }
-            }
-        }
-
-        Settings {
-            // A SEPARATE SCENE, so nothing `RootView` injects reaches it. The
-            // theme has to be injected again here or every view in this window
-            // reads `ResolvedAppTheme.fallback` -- the light defaults -- while
-            // the window itself renders dark.
-            Group {
-                if let model = vaultCoordinator.model {
-                    AppSettingsView(model: model)
-                        .appThemed()
-                } else {
-                    ProfileUnlockView(coordinator: vaultCoordinator)
-                }
-            }
-            .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
-            .environment(\.locale, currentLanguage.locale)
-            .environment(\.layoutDirection, currentLanguage.layoutDirection)
-        }
-
-        MenuBarExtra(
-            "TurboSpark",
-            systemImage: vaultCoordinator.model?.server != nil ? "bolt.fill" : "bolt",
-            // Guard writes to prevent an infinite re-render loop: MenuBarExtra
-            // on macOS writes back its insertion state on each scene graph evaluation.
-            // Directly passing $model.showMenuBarItem fires objectWillChange on
-            // unchanged values and spins the main thread at 100% CPU.
-            isInserted: Binding(
-                get: { vaultCoordinator.model?.showMenuBarItem ?? false },
-                set: { newValue in
-                    if let model = vaultCoordinator.model,
-                       model.showMenuBarItem != newValue {
-                        model.showMenuBarItem = newValue
-                    }
-                }
-            )
-        ) {
-            // A THIRD scene: the same reason the Settings scene above injects
-            // its own theme applies here, and the menu bar's own text and
-            // icons were reading `ResolvedAppTheme.fallback` for the life of
-            // the feature (swift/docs/SWIFT_SETTINGS_AUDIT.md item 7).
-            if let model = vaultCoordinator.model {
-                ServerMenuDashboardView(model: model)
-                    .appThemed()
-            }
-        }
-        .menuBarExtraStyle(.window)
     }
 }
-
 
 extension Notification.Name {
     /// Posted by the Cmd+L command; PromptComposerView listens to it and

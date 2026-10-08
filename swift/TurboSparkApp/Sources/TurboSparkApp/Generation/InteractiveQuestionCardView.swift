@@ -15,24 +15,37 @@ struct InteractiveQuestionCardView: View {
     @ObservedObject var model: AppModel
     let questions: [UserQuestionItem]
 
-    /// Selected labels per question header. Single-select questions record
+    /// Selected labels per question INDEX (headers can repeat). Single-select questions record
     /// their (single) pick here too when the card holds several questions;
     /// a lone single-select question answers immediately and never touches
     /// this.
-    @State private var selections: [String: Set<String>] = [:]
+    @State private var selections: [Int: Set<String>] = [:]
 
     /// Whether answers wait for the footer button: any set of more than one
     /// question must submit as ONE map.
     private var defersToFooter: Bool { questions.count > 1 }
 
     private var allQuestionsAnswered: Bool {
-        !questions.isEmpty && questions.allSatisfy { selectedCount($0) > 0 }
+        // A question with no options can never be answered by tapping, so it
+        // must not hold the whole card hostage.
+        !questions.isEmpty && questions.enumerated().allSatisfy {
+            $0.element.options.isEmpty || selectedCount($0.offset) > 0
+        }
+    }
+
+    /// The key a question's answer travels under. Headers can repeat (small
+    /// local models often reuse one), and a map keyed by a repeated header
+    /// would silently drop all but one answer.
+    private func answerKey(_ index: Int) -> String {
+        let header = questions[index].header
+        let duplicated = questions.filter { $0.header == header }.count > 1
+        return duplicated ? "\(header) (\(index + 1))" : header
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(questions.enumerated()), id: \.offset) { _, question in
-                oneQuestion(question)
+            ForEach(Array(questions.enumerated()), id: \.offset) { index, question in
+                oneQuestion(question, index: index)
             }
             footer
         }
@@ -86,8 +99,8 @@ struct InteractiveQuestionCardView: View {
     private func submitAll() {
         guard allQuestionsAnswered else { return }
         var answers: [String: String] = [:]
-        for question in questions {
-            answers[question.header] = (selections[question.header] ?? [])
+        for index in questions.indices where !questions[index].options.isEmpty {
+            answers[answerKey(index)] = (selections[index] ?? [])
                 .sorted()
                 .joined(separator: ", ")
         }
@@ -95,7 +108,7 @@ struct InteractiveQuestionCardView: View {
     }
 
     @ViewBuilder
-    private func oneQuestion(_ question: UserQuestionItem) -> some View {
+    private func oneQuestion(_ question: UserQuestionItem, index: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text(question.header)
@@ -111,42 +124,42 @@ struct InteractiveQuestionCardView: View {
             if question.multiSelect {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
-                        multiRow(question, option)
+                        multiRow(question, index, option)
                     }
                 }
                 if !defersToFooter {
                     Button {
-                        submitMulti(question)
+                        submitMulti(question, index)
                     } label: {
-                        Text(submitTitle(question))
+                        Text(submitTitle(index))
                     }
                     .buttonStyle(.plain)
                     .themedFont(.small, weight: .semibold)
                     .foregroundStyle(.appAccent)
-                    .disabled(selectedCount(question) == 0)
+                    .disabled(selectedCount(index) == 0)
                     .padding(.top, 2)
                     .accessibilityLabel("Submit answer for \(question.header)")
                 }
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
-                        singleRow(question, option)
+                        singleRow(question, index, option)
                     }
                 }
             }
         }
     }
 
-    private func singleRow(_ question: UserQuestionItem, _ option: UserQuestionOption) -> some View {
-        let isSelected = selections[question.header]?.contains(option.label) ?? false
+    private func singleRow(_ question: UserQuestionItem, _ index: Int, _ option: UserQuestionOption) -> some View {
+        let isSelected = selections[index]?.contains(option.label) ?? false
         return Button {
             if defersToFooter {
                 // Record the pick and wait for the footer: the submit is
                 // all-or-nothing, so an immediate send would strand the
                 // other questions unanswered.
-                selections[question.header] = [option.label]
+                selections[index] = [option.label]
             } else {
-                model.submitUserQuestionAnswers([question.header: option.label])
+                model.submitUserQuestionAnswers([answerKey(index): option.label])
             }
         } label: {
             optionRow(option, isSelected: isSelected, systemImage: isSelected ? "circle.fill" : "circle")
@@ -157,10 +170,10 @@ struct InteractiveQuestionCardView: View {
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
-    private func multiRow(_ question: UserQuestionItem, _ option: UserQuestionOption) -> some View {
-        let isSelected = selections[question.header]?.contains(option.label) ?? false
+    private func multiRow(_ question: UserQuestionItem, _ index: Int, _ option: UserQuestionOption) -> some View {
+        let isSelected = selections[index]?.contains(option.label) ?? false
         return Button {
-            toggle(question, option)
+            toggle(index, option)
         } label: {
             optionRow(option, isSelected: isSelected, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
         }
@@ -193,28 +206,28 @@ struct InteractiveQuestionCardView: View {
         .contentShape(Rectangle())
     }
 
-    private func toggle(_ question: UserQuestionItem, _ option: UserQuestionOption) {
-        var set = selections[question.header] ?? []
+    private func toggle(_ index: Int, _ option: UserQuestionOption) {
+        var set = selections[index] ?? []
         if set.contains(option.label) {
             set.remove(option.label)
         } else {
             set.insert(option.label)
         }
-        selections[question.header] = set
+        selections[index] = set
     }
 
-    private func selectedCount(_ question: UserQuestionItem) -> Int {
-        selections[question.header]?.count ?? 0
+    private func selectedCount(_ index: Int) -> Int {
+        selections[index]?.count ?? 0
     }
 
-    private func submitTitle(_ question: UserQuestionItem) -> String {
-        let count = selectedCount(question)
+    private func submitTitle(_ index: Int) -> String {
+        let count = selectedCount(index)
         return count > 0 ? "Submit (\(count))" : "Submit"
     }
 
-    private func submitMulti(_ question: UserQuestionItem) {
-        let labels = (selections[question.header] ?? []).sorted()
+    private func submitMulti(_ question: UserQuestionItem, _ index: Int) {
+        let labels = (selections[index] ?? []).sorted()
         guard !labels.isEmpty else { return }
-        model.submitUserQuestionAnswers([question.header: labels.joined(separator: ", ")])
+        model.submitUserQuestionAnswers([answerKey(index): labels.joined(separator: ", ")])
     }
 }

@@ -448,6 +448,9 @@ struct EngineSettingsPaneView: View {
             SecureField("API key (optional)", text: $model.serverAPIKeyInput)
             .settingsControl("API key (optional)", pane: .engine, timing: .action)
                 .disabled(model.server != nil)
+                // Without this the key only reached disk on an unrelated save, so a
+                // crash before one relaunched the auto-started server with a stale key.
+                .onChange(of: model.serverAPIKeyInput) { _, _ in model.persistSettingsDebounced() }
 
             Text("Serves the currently loaded model over OpenAI- and Anthropic-compatible HTTP endpoints on loopback, sharing the same engine this app's chat uses -- not a second copy of the model. Loading a different model, or unloading, stops the server. Loopback keeps it off the network and NOT off this machine: without an API key, any process running here can reach it.", bundle: .module)
             .themedFont(.small)

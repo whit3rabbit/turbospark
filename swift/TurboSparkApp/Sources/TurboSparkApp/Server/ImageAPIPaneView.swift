@@ -147,7 +147,9 @@ struct ImageAPIPaneView: View {
                 "response_format": "b64_json"
             ])
             let (data, response) = try await URLSession.shared.data(for: request)
-            let document = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            // Parse leniently: error bodies are often plain text (extractor
+            // rejections, proxy pages) and must reach the user verbatim.
+            let document = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
                   let item = (document?["data"] as? [[String: Any]])?.first,
                   let encoded = item["b64_json"] as? String,

@@ -330,6 +330,9 @@ public struct HfAuthTokenCardView: View {
             try TurboSparkCatalog.setHfToken(trimmed)
             savedToken = trimmed
             model.showToast("Hugging Face API token saved", style: .success)
+            // Re-resolve: HF_TOKEN or a huggingface-cli token can outrank the
+            // store, so show the token that is actually in effect.
+            loadSavedToken()
         } catch {
             model.showToast("Failed to save token: \(error.localizedDescription)", style: .error)
         }
@@ -341,7 +344,16 @@ public struct HfAuthTokenCardView: View {
             savedToken = nil
             tokenInput = ""
             validationStatus = nil
-            model.showToast("Hugging Face token removed", style: .info)
+            // Re-resolve: removing the stored token can expose an environment
+            // or huggingface-cli token that is still sent on installs.
+            loadSavedToken()
+            if savedToken != nil {
+                model.showToast(
+                    "Stored token removed, but another token is still in effect (environment variable or Hugging Face CLI cache).",
+                    style: .info)
+            } else {
+                model.showToast("Hugging Face token removed", style: .info)
+            }
         } catch {
             model.showToast("Failed to clear token: \(error.localizedDescription)", style: .error)
         }
@@ -354,6 +366,13 @@ public struct HfAuthTokenCardView: View {
     }
 
     private func saveMirrorEndpoint() {
+        // Reject (rather than silently reset) a mirror the token must not be sent to.
+        if HfEndpointResolution.isRejectedInput(mirrorEndpointInput) {
+            // Reuses the existing interpolated toast key so no new string needs translating.
+            let reason = "use an https:// URL (http only for localhost)"
+            model.showToast("Failed to set mirror endpoint: \(reason)", style: .error)
+            return
+        }
         let effective = HfEndpointResolution.effectiveEndpoint(from: mirrorEndpointInput)
             ?? HfEndpointResolution.defaultEndpoint
         model.hfEndpointInput = effective
