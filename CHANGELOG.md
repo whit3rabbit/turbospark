@@ -55,9 +55,54 @@ when this file gets updated relative to the version bump and the tag.
   profile, the plaintext export no longer includes MCP credentials, and
   sensitive plugin options stay out of the plaintext hook options file.
 
+- `swift/TurboSparkApp`: enabling profile protection now rotates the master
+  key instead of wrapping the old plaintext one. The new key is wrapped and
+  durable before any data changes, the database and every asset and recovery
+  copy are re-encrypted, and the old key is dropped last. An interrupted
+  rotation resumes on the next unlock. The manifest is v2 only while a
+  rotation is pending, so older builds refuse it. Profiles protected by an
+  older build are not rotated retroactively. Disable and re-enable
+  protection to rotate them.
+- `swift/TurboSparkApp`: key derivation and Keychain prompts no longer run
+  under the vault lock, and locking waits for or cancels in-flight asset
+  imports instead of wiping the key under them. Exact backup export snapshots
+  rows and asset ids together and authenticates every asset, and restore no
+  longer writes a plaintext-key file to scratch.
+- `crates/repack`, `crates/catalog`, `swift/TurboSparkApp`: the Hugging Face
+  token is sent only over https to `huggingface.co`, `hf.co` and their
+  subdomains. A configured mirror or a redirect target never receives it, and
+  token validation reports a mirror instead of sending the token to it.
+- `swift/TurboSparkApp`: a locked or denied Keychain is no longer read as "no
+  key", so it cannot delete a stored server or TypeSafe key. `stop_agent`
+  treats another chat's agent as unknown.
+- `crates/ffi`: the string, session, image and server teardown entry points
+  run inside `abi::guard_value`, so a panic cannot unwind across `extern "C"`.
+  A test fails on any new unguarded entry point.
+- `crates/audio`, `swift/TurboSparkApp`: bounded audio normalization and enforced
+  resource limits, validating decoded sample rates (8,000..=192,000 Hz) and channel
+  counts (1..=8), capping probe frame counts, chunking resampling buffers, and
+  adding RAII cleanup guards to prevent memory exhaustion and DoS on malformed audio.
+
 ### Added
+- `crates/audio`: added speech-to-speech (STS) model family implementations and test
+  fixtures for DialogueSidon, Mel-RoFormer, MossFormer2-SE, and SAM-Audio.
+- `crates/audio`, `crates/runtime`, `crates/ffi`, `swift/TurboSparkApp`: native audio
+  workspace architecture with audio capture, waveform library management, media IO,
+  controls, visualizers, recording setup, playback, and app model audio integration.
+- `crates/audio`, `crates/runtime`, `crates/cli`, `crates/gpu`: MiniMax Music 0.3 Metal
+  performance optimizations, including affine wide GEMV packing, exact-bf16 16-bit
+  scale storage, eight 4-bit codes per word decoding in tiled linear kernels, tiled
+  MMA convolution kernels, cancellation and progress callback APIs, and benchmark drivers.
 - `swift/TurboSparkApp`: approval sheet for project custom tools
   (`ProjectToolApprovalSheet`) backed by `CustomToolTrustStore`.
+- `swift/TurboSparkApp`: MCP stdio servers keep one persistent session per
+  server and configuration (`McpStdioSession`). Concurrent calls multiplex over
+  it by JSON-RPC id, a crash fails in-flight calls with the stderr tail and the
+  next call restarts it, and idle sessions close after five minutes.
+  Discovery still spawns a fresh process.
+- `crates/repack`: GGUF installs record the repo, the 40-hex commit and the file
+  in `.resume-provenance.json` and resume from leftover expert layers only when
+  the record matches.
 - `swift/TurboSparkApp`: `make swift-test-app` and `make swift-test-qwenimage`
   run the TurboSparkApp and QwenImage suites, which no make target ran before.
   See `docs/TESTING.md`. The QwenImage suite needs the Metal toolchain.
@@ -273,8 +318,23 @@ when this file gets updated relative to the version bump and the tag.
   error instead of reporting success.
 - `swift/TurboSparkApp`: the app bundle includes and signs the `turbospark` CLI,
   and `make dmg` fails if it is missing.
+- `swift/TurboSparkApp`: fetching a marketplace no longer saves a source. An
+  explicit Add source button does, and it refuses a name that already points at
+  a different source. The worktree switch is relabeled "View in Git pane",
+  because it never moved the agent's working root.
+- `crates/ffi`: `ts_store_relocate` returns `TS_ERR_INVALID_ARGUMENT` while an
+  install is registered. The check is not atomic against an install that
+  starts afterwards, so the app must also stop queueing installs during a move.
+- `.github/workflows/release.yml`: the app cask links the bundled `turbospark`
+  binary. This was checked by rendering the casks with dummy values, not by a
+  release run.
+- `crates/catalog`: installers announce the byte transfer with a
+  `[phase] transfer` progress line, which the app maps to the running state.
+  Later repack lines still read as packing because there is no end marker yet.
 
 ### Fixed
+- `swift/TurboSparkApp`: use native `AudioObjectID` array rather than `NSNumber` in
+  `CATapDescription` initializers to fix compilation on macOS 15+ SDK.
 - `swift/TurboSparkApp`: parenthesized optional existential type in
   `AppModel.swift` as `(any ImageGenerationSession)?` to satisfy Swift 6 and
   Xcode 16 syntax requirements on macos-15 packaging runners.
@@ -311,6 +371,9 @@ when this file gets updated relative to the version bump and the tag.
   `notebook_edit` targets the right cell.
 - `swift/TurboSparkApp`: cron `nextFire` no longer skips a minute, one-shot
   wakeups keep their fire time, and impossible schedules are rejected.
+- `swift/TurboSparkApp`: the chat sidebar layout is built once per body, worktree
+  diffs parse once per distinct text, and the status bar no longer refreshes
+  telemetry on every streamed token. No speedup was measured.
 - `swift/TurboSparkApp`: tool, state, browser, model hub, server and
   presentation fixes from a full review of `swift/`. Of the review's 28
   critical and high issues all are fixed. Most of the 244 medium and 319 low

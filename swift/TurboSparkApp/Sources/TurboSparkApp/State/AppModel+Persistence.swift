@@ -561,7 +561,7 @@ extension AppModel {
         // Only when the selected chat ends in a non-assistant row, i.e. it
         // is the chat awaiting this reply; the epoch bump keeps the late
         // tail from preserving it a second time.
-        if generating, !outputText.isEmpty || !outputReasoningText.isEmpty,
+        if generating, !audioSummaryInFlight, !outputText.isEmpty || !outputReasoningText.isEmpty,
             turnMessages(for: selectedChatID).last.map({ $0.role != .assistant }) ?? false
         {
             finishCancelled(chatID: selectedChatID, reason: "cancelled")
@@ -572,6 +572,7 @@ extension AppModel {
         cancel()
         prepareModelDownloadsForShutdown()
         imageSession?.cancel()
+        audioWorkspace.shutdown()
         imageSession = nil
         imageSessionPath = nil
         // Background work is NOT reachable by `cancel()`: shells are
@@ -580,7 +581,6 @@ extension AppModel {
         // the process exits). Agents are cancelled first so a completion
         // cannot race the persists below, then the shells' whole trees die.
         stopAllBackgroundWorkForShutdown()
-        detachChatSessionFromServer()
         // A vault lock discards this model but does not deallocate it until
         // these tasks end. Left running, an hourly memory capture or a title
         // pass keeps generating over in-memory plaintext (and holds the old
@@ -589,6 +589,7 @@ extension AppModel {
         titleGenerationTask?.cancel()
         for task in goalIdleTimerTasks.values { task.cancel() }
         goalIdleTimerTasks.removeAll()
+        detachChatSessionFromServer()
         session = nil
 
         // A draft written before any chat existed lives outside `chats`, and

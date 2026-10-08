@@ -6,7 +6,7 @@ import Foundation
 /// The message comes from the library's per-thread error slot, read
 /// immediately after the failing call and on the same thread, which is what
 /// its contract requires.
-public struct TurboSparkError: Error, CustomStringConvertible {
+public struct TurboSparkError: LocalizedError, CustomStringConvertible {
     public enum Code: Int32, Sendable {
         case invalidArgument = 1
         case open = 2
@@ -29,6 +29,7 @@ public struct TurboSparkError: Error, CustomStringConvertible {
     }
 
     public var description: String { "\(code): \(message)" }
+    public var errorDescription: String? { message }
 
     /// Reads the library's error slot. Call ONLY after a non-zero return,
     /// on the thread that made the call.

@@ -29,6 +29,7 @@ CLAUDE.local.md
 __pycache__/
 
 # Local
+.vscode/
 compile_flags.txt
 # Build products the SwiftPM package needs beside its module map. Both are
 # COPIED there by `scripts/swift-lib.sh`; the canonical header is

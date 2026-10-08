@@ -44,6 +44,7 @@ struct TopBarView: View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
                 sidebarToggle
+                AudioRecordingBadge(controller: model.audioWorkspace, openWorkspace: { model.activeSection = .audio })
                 GenerationPhaseIndicator(model: model)
                 if let worktree = model.worktree, worktree.isGitRepository {
                     gitPill(worktree: worktree)
@@ -90,10 +91,10 @@ struct TopBarView: View {
                     }
                 }
                 unloadButton
-                if model.browserSettings.enabled && model.activeSection != .images {
+                if model.browserSettings.enabled && model.activeSection != .images && model.activeSection != .audio {
                     browserToggle
                 }
-                if model.activeSection != .images {
+                if model.activeSection != .images && model.activeSection != .audio {
                     inspectorToggle
                 }
             }

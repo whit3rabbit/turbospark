@@ -1090,7 +1090,13 @@ impl<'a> MetalWindowDecoder<'a> {
     /// Greedy decode until `<|endoftext|>`, the token budget, or the
     /// repetition limit. Returns the emitted text tokens (specials and the
     /// eot excluded).
-    pub fn decode(mut self) -> Result<DecodedWindow, String> {
+    pub fn decode(self) -> Result<DecodedWindow, String> {
+        self.decode_cancellable(&|| false)
+    }
+    pub fn decode_cancellable(
+        mut self,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<DecodedWindow, String> {
         let vocab = self.engine.config.vocab_size;
         let budget = self
             .engine
@@ -1103,6 +1109,9 @@ impl<'a> MetalWindowDecoder<'a> {
         let mut step_ns = 0u128;
         let mut argmax_ns = 0u128;
         let stop = loop {
+            if cancelled() {
+                return Err("audio job cancelled".into());
+            }
             if self.emitted.len() >= budget {
                 break StopReason::TokenBudget;
             }

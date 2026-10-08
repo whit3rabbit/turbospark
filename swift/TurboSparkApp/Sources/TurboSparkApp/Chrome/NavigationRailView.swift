@@ -33,7 +33,24 @@ struct NavigationRailView: View {
     var body: some View {
         VStack(spacing: 4) {
             ForEach(AppModel.AppNavigationSection.allCases) { section in
-                railButton(section)
+                if section == .audio {
+                    Menu {
+                        AudioDestinationMenu(model: model)
+                    } label: {
+                        Image(systemName: section.systemImage)
+                            .font(theme.ui(.callout, weight: .medium))
+                            .foregroundStyle(model.activeSection == .audio ? theme.accent : Color.secondary)
+                            .frame(width: itemSize, height: itemSize)
+                            .background(theme.accent.opacity(model.activeSection == .audio ? 0.14 : 0),
+                                        in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help(Text("Audio", bundle: .module))
+                    .accessibilityLabel(Text("Audio", bundle: .module))
+                    .accessibilityAddTraits(model.activeSection == .audio ? .isSelected : [])
+                } else {
+                    railButton(section)
+                }
             }
             Spacer(minLength: 0)
             settingsButton

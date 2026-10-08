@@ -1,4 +1,5 @@
 import Foundation
+import TurboSpark
 
 /// Saved history retains the original source so Retry cannot change models.
 public struct ModelDownload: Identifiable, Codable, Equatable {
@@ -6,11 +7,13 @@ public struct ModelDownload: Identifiable, Codable, Equatable {
         case catalog(alias: String)
         case repository(repo: String, alias: String, file: String?, sidecarRepo: String?)
         case image(alias: String)
+        case audio(identity: AudioProfileIdentity)
 
         var alias: String {
             switch self {
             case .catalog(let alias), .repository(_, let alias, _, _), .image(let alias):
                 return alias
+            case .audio(let identity): return identity.alias
             }
         }
 
@@ -21,6 +24,11 @@ public struct ModelDownload: Identifiable, Codable, Equatable {
             switch self {
             case .catalog, .repository: return "text:\(normalized)"
             case .image: return "image:\(normalized)"
+            case .audio(let identity):
+                // Pin every identity field so a retry cannot silently adopt a new catalog revision.
+                let fields = [identity.task.rawValue, normalized, identity.repository,
+                              identity.revision, identity.assetFingerprint]
+                return "audio:" + fields.map { "\($0.utf8.count):\($0)" }.joined()
             }
         }
     }

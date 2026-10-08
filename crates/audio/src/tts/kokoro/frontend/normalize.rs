@@ -94,9 +94,29 @@ pub(super) fn tokens(text: &str) -> Result<Vec<Token>> {
                 && (bytes[i].is_ascii_alphabetic()
                     || (bytes[i] == b'\''
                         && i + 1 < bytes.len()
+                        && bytes[i + 1].is_ascii_alphabetic())
+                    || (bytes[i] == b'-'
+                        && i + 1 < bytes.len()
                         && bytes[i + 1].is_ascii_alphabetic()))
             {
                 i += 1;
+            }
+            if bytes.get(i) == Some(&b'\'') {
+                // A trailing possessive apostrophe is part of the lexical word.
+                i += 1;
+            }
+            if i == start + 1 && bytes.get(i) == Some(&b'.') {
+                let mut dotted_end = i;
+                while dotted_end + 2 < bytes.len()
+                    && bytes[dotted_end] == b'.'
+                    && bytes[dotted_end + 1].is_ascii_alphabetic()
+                    && bytes[dotted_end + 2] == b'.'
+                {
+                    dotted_end += 2;
+                }
+                if dotted_end > i {
+                    i = dotted_end + 1;
+                }
             }
             // Keep dictionary abbreviations atomic; the period is not a boundary.
             if i < bytes.len()
@@ -218,7 +238,12 @@ fn number_words(number: &str, ordinal: bool, currency: bool, negative: bool) -> 
     }
     let mut spoken = if ordinal {
         ordinal_words(n)
-    } else if !currency && parts.len() == 1 && digits.len() == 4 && (1000..=9999).contains(&n) {
+    } else if !currency
+        && parts.len() == 1
+        && digits.len() == 4
+        && groups.len() == 1
+        && (1000..=9999).contains(&n)
+    {
         let high = n / 100;
         let low = n % 100;
         if high % 10 == 0 && low < 10 {
@@ -250,15 +275,23 @@ fn number_words(number: &str, ordinal: bool, currency: bool, negative: bool) -> 
         };
         spoken = format!("{} {}", spoken, if n == 1 { "dollar" } else { "dollars" });
         if cents != 0 {
-            spoken.push_str(&format!(
-                " and {} {}",
+            let cents = format!(
+                "{} {}",
                 cardinal(cents),
                 if cents == 1 { "cent" } else { "cents" }
-            ));
+            );
+            if n == 0 {
+                spoken = cents;
+            } else {
+                spoken.push_str(&format!(" and {cents}"));
+            }
         }
     } else if parts.len() == 2 {
         let fraction = parts[1];
-        if fraction.is_empty() || fraction.len() > 9 {
+        if fraction.is_empty()
+            || fraction.len() > 9
+            || !fraction.bytes().all(|c| c.is_ascii_digit())
+        {
             return Err(input("decimal fractions support one through nine digits"));
         }
         spoken.push_str(" point");

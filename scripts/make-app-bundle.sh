@@ -216,6 +216,10 @@ cat > "$contents/Info.plist" <<PLIST
     <string>${min_macos}</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>TurboSpark opens Terminal to run the coding agent you launch from the Server pane.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>TurboSpark records microphone audio for meetings and local transcription when you start recording.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>TurboSpark captures audio from the apps you select for a meeting. Screen frames are not saved.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>

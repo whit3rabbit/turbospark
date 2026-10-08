@@ -164,3 +164,8 @@ pub use foundation::TokenId;
 pub mod music3;
 #[cfg(target_os = "macos")]
 pub use music3::Music3Runner;
+
+/// Process-wide exclusion shared by text, image and audio hosts.
+pub mod heavy;
+#[cfg(target_os = "macos")]
+pub mod native_audio;

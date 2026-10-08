@@ -29,6 +29,7 @@ extension AppModel {
         case modelManager
         case modelHub
         case server
+        case audio
 
         public var id: String { rawValue }
         public var title: String {
@@ -39,6 +40,7 @@ extension AppModel {
             case .modelManager: return "Installed"
             case .modelHub: return "Discover"
             case .server: return "API"
+            case .audio: return "Audio"
             }
         }
         public var systemImage: String {
@@ -49,6 +51,7 @@ extension AppModel {
             case .modelManager: return "internaldrive"
             case .modelHub: return "shippingbox"
             case .server: return "server.rack"
+            case .audio: return "waveform"
             }
         }
         /// Filled variant used when the section is the active one.
@@ -60,6 +63,7 @@ extension AppModel {
             case .modelManager: return "internaldrive.fill"
             case .modelHub: return "shippingbox.fill"
             case .server: return "server.rack"
+            case .audio: return "waveform"
             }
         }
         /// Keyboard shortcut character shown in the rail tooltip.
@@ -71,6 +75,7 @@ extension AppModel {
             case .modelManager: return "4"
             case .modelHub: return "5"
             case .server: return "6"
+            case .audio: return "7"
             }
         }
     }

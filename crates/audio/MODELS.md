@@ -390,14 +390,14 @@ Speech-to-speech and audio processing. [Pinned source directory](https://github.
 | Source directory | Class | Local task(s) | Identity / profile notes | Current Rust path |
 |---|---|---|---|---|
 | `deepfilternet` | README | 46 | Enhancement; v1/v2/v3 are separate profile gates | [Flat port](src/sts/deepfilternet/mod.rs) |
-| `dialogue_sidon` | README | 49 | Separation / restoration; alias `dialoguesidon` | None |
+| `dialogue_sidon` | README | 49 | Separation / restoration; alias `dialoguesidon` | [Flat port](src/sts/dialogue_sidon/mod.rs) |
 | `lfm_audio` | README | 50 | STS / TTS / STT; aliases `lfm2_audio`, `lfm2.5` | None |
-| `mel_roformer` | Source | None | Default task-qualified family | None |
+| `mel_roformer` | Source | None | Default task-qualified family | [Flat port](src/sts/mel_roformer/mod.rs) |
 | `mimo_audio` | README | 51 | Base/Instruct; STS / TTS / STT / understanding | None |
 | `moshi` | Source | None | Alias `moshiko` | None |
-| `mossformer2_se` | README | 47 | Enhancement; alias `mossformer2` | None |
+| `mossformer2_se` | README | 47 | Enhancement; alias `mossformer2` | [Flat port](src/sts/mossformer2_se/mod.rs) |
 | `nemotron_voicechat` | README | 52 | Full-duplex STS / transcription / function calling | None |
-| `sam_audio` | README | 48 | Text-guided source separation; alias `samaudio` | None |
+| `sam_audio` | README | 48 | Text-guided source separation; alias `samaudio` | [Flat port](src/sts/sam_audio/mod.rs) |
 
 ## VAD
 

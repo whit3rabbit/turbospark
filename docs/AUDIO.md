@@ -4,6 +4,10 @@
 
 For comprehensive model and role documentation, see [TurboSpark Audio Architecture](audio/README.md).
 
+For the macOS product workflows, see [Audio workspace](AUDIO_WORKSPACE.md).
+The [capability audit](AUDIO_WORKSPACE_CAPABILITIES.md) distinguishes portable model
+source from runnable native integrations and qualification.
+
 ## Module Map
 
 ### 1. Signal Processing Primitives

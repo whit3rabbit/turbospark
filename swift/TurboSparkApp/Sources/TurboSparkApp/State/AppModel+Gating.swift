@@ -69,7 +69,7 @@ extension AppModel {
     /// queues nothing, because nothing drains the queue at the END of an
     /// open, and a prompt parked there would sit forever.
     public var canQueue: Bool {
-        guard !imageModeEnabled else { return false }
+        guard !imageModeEnabled, !audioSummaryInFlight else { return false }
         return Self.canQueueTerms(
             generating: generating,
             submitting: submitting,

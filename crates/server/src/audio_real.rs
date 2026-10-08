@@ -7,12 +7,11 @@
 //! Requests reach the thread over a bounded channel: a full channel is
 //! [`AudioError::Busy`], never an unbounded queue of multi-hundred-megabyte
 //! sample buffers. A request whose HTTP future was dropped is skipped if it
-//! has not started; one already running finishes (the runners expose no
-//! cancel hook).
+//! has not started; an active request is cancelled at its next backend checkpoint.
 //!
-//! Nothing here gates against chat generation on the same GPU: that gate
-//! (`HeavyWorkGuard`) lives in the FFI host. Concurrent chat and audio work
-//! shares the device unsynchronized.
+//! Native execution shares the process-wide heavyweight gate with the FFI host.
+//! Dropped requests signal cancellation, while the worker retains the permit
+//! until the model has stopped. HTTP task spellings remain adapter-owned.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, oneshot};
 use turbospark_audio::music::minimax_music3::TextGenerateRequest;
-use turbospark_audio::tts::kokoro::{KokoroSynthesizer, SynthesisRequest, Voice};
+use turbospark_audio::tts::kokoro::Voice;
 
 use crate::audio::{
     AudioError, AudioModelInfo, AudioProvider, AudioTask, GenerateRequest, GeneratedAudio,
@@ -36,19 +35,19 @@ const STT_QUEUE: usize = 4;
 const TTS_QUEUE: usize = 4;
 const MUSIC_QUEUE: usize = 2;
 
-enum Engine {
-    // Boxed: the variants differ by kilobytes and `Engine` lives for the
-    // whole worker, so the size gap would be paid per model for nothing.
-    Whisper(Box<runtime::WhisperRunner>),
-    Qwen3Asr(Box<runtime::Qwen3AsrRunner>),
-    Kokoro(Box<KokoroSynthesizer>),
-    Music(Box<runtime::Music3Runner>),
+type Engine = runtime::native_audio::AudioSession;
+struct CancelOnDrop(runtime::native_audio::AudioCancel);
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
 }
 
 enum Work {
     Transcribe {
         samples: Vec<f32>,
         language: Option<String>,
+        cancel: runtime::native_audio::AudioCancel,
         reply: oneshot::Sender<Result<Transcription, AudioError>>,
     },
     Speak {
@@ -58,6 +57,7 @@ enum Work {
     },
     Generate {
         request: TextGenerateRequest,
+        cancel: runtime::native_audio::AudioCancel,
         reply: oneshot::Sender<Result<GeneratedAudio, AudioError>>,
     },
 }
@@ -79,175 +79,143 @@ impl Worker {
 }
 
 fn open_engine(task: AudioTask, dir: &Path) -> Result<Engine, String> {
+    // The standalone HTTP contract already permits the portable Kokoro/Qwen paths.
+    Engine::open(dir.to_path_buf(), native_task(task), true)
+}
+fn native_task(task: AudioTask) -> runtime::native_audio::AudioTask {
     match task {
-        AudioTask::SpeechToText => {
-            // The same sniff the FFI host and the catalog probe make:
-            // `config.json` `model_type`, defaulting to Whisper.
-            let config = std::fs::read_to_string(dir.join("config.json"))
-                .map_err(|e| format!("read config.json: {e}"))?;
-            let model_type = serde_json::from_str::<serde_json::Value>(&config)
-                .ok()
-                .and_then(|v| v.get("model_type")?.as_str().map(str::to_owned));
-            match model_type.as_deref() {
-                Some("qwen3_asr") => Ok(Engine::Qwen3Asr(Box::new(runtime::Qwen3AsrRunner::open(
-                    dir,
-                )?))),
-                _ => Ok(Engine::Whisper(Box::new(runtime::WhisperRunner::open(
-                    dir,
-                )?))),
-            }
-        }
-        AudioTask::TextToSpeech => KokoroSynthesizer::open(dir)
-            .map(|k| Engine::Kokoro(Box::new(k)))
-            .map_err(|e| e.to_string()),
-        AudioTask::Music => runtime::Music3Runner::open(dir)
-            .map(|m| Engine::Music(Box::new(m)))
-            .map_err(|e| e.to_string()),
+        AudioTask::SpeechToText => runtime::native_audio::AudioTask::SpeechToText,
+        AudioTask::TextToSpeech => runtime::native_audio::AudioTask::TextToSpeech,
+        AudioTask::Music => runtime::native_audio::AudioTask::Music,
     }
 }
 
-/// Qwen3-ASR takes language NAMES ("English"); OpenAI-style clients, and
-/// Whisper, send ISO 639-1 codes. The table is the model's published
-/// `support_languages` list keyed by code. Anything else passes through and
-/// the model refuses it, which surfaces as a 400.
-fn qwen_language_name(code: &str) -> String {
-    const NAMES: [(&str, &str); 30] = [
-        ("zh", "Chinese"),
-        ("en", "English"),
-        ("yue", "Cantonese"),
-        ("ar", "Arabic"),
-        ("de", "German"),
-        ("fr", "French"),
-        ("es", "Spanish"),
-        ("pt", "Portuguese"),
-        ("id", "Indonesian"),
-        ("it", "Italian"),
-        ("ko", "Korean"),
-        ("ru", "Russian"),
-        ("th", "Thai"),
-        ("vi", "Vietnamese"),
-        ("ja", "Japanese"),
-        ("tr", "Turkish"),
-        ("hi", "Hindi"),
-        ("ms", "Malay"),
-        ("nl", "Dutch"),
-        ("sv", "Swedish"),
-        ("da", "Danish"),
-        ("fi", "Finnish"),
-        ("pl", "Polish"),
-        ("cs", "Czech"),
-        ("fil", "Filipino"),
-        ("fa", "Persian"),
-        ("el", "Greek"),
-        ("ro", "Romanian"),
-        ("hu", "Hungarian"),
-        ("mk", "Macedonian"),
-    ];
-    NAMES
-        .iter()
-        .find(|(c, _)| c.eq_ignore_ascii_case(code))
-        .map_or_else(|| code.to_string(), |(_, name)| name.to_string())
-}
+#[cfg(test)]
+use runtime::native_audio::qwen_language_name;
 
 fn failed(e: impl std::fmt::Display) -> AudioError {
     AudioError::Failed(e.to_string())
 }
 
-fn transcription(t: runtime::WhisperTranscription) -> Transcription {
-    let text = t
-        .segments
-        .iter()
-        .map(|s| s.text.trim())
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    Transcription {
-        text,
-        language: Some(t.language).filter(|l| !l.is_empty()),
-        segments: t
-            .segments
-            .into_iter()
-            .map(|s| TranscribedSegment {
-                start_seconds: s.start_seconds,
-                end_seconds: s.end_seconds,
-                text: s.text,
-            })
-            .collect(),
-    }
-}
-
 fn run(engine: Engine, queue: Receiver<Work>) {
-    // Ends when every `SyncSender` is gone, which drops the model: unloading
-    // is dropping the worker.
+    use runtime::native_audio::{AudioEvent, AudioRequest};
     while let Ok(work) = queue.recv() {
-        match (&engine, work) {
-            (
-                Engine::Whisper(_) | Engine::Qwen3Asr(_),
-                Work::Transcribe {
-                    samples,
-                    language,
-                    reply,
-                },
-            ) => {
+        match work {
+            Work::Transcribe {
+                samples,
+                language,
+                reply,
+                cancel,
+            } => {
                 if reply.is_closed() {
                     continue;
                 }
-                let result = match &engine {
-                    Engine::Whisper(r) => r.transcribe(&samples, language.as_deref()),
-                    Engine::Qwen3Asr(r) => {
-                        let named = language.as_deref().map(qwen_language_name);
-                        r.transcribe(&samples, named.as_deref())
-                    }
-                    _ => unreachable!("matched above"),
-                };
-                let _ = reply.send(result.map(transcription).map_err(|e| {
-                    // The runners report bad input (unsupported language,
-                    // empty audio) and real failures through one string
-                    // error; the language case is the one a client causes.
-                    if e.contains("language") {
-                        AudioError::Invalid(e)
-                    } else {
-                        AudioError::Failed(e)
-                    }
-                }));
-            }
-            (
-                Engine::Kokoro(k),
-                Work::Speak {
-                    text,
-                    speed,
-                    chunks,
-                },
-            ) => {
-                let mut request = SynthesisRequest::new(text);
-                request.speed = speed;
-                let outcome =
-                    k.synthesize(&request, |audio| chunks.blocking_send(Ok(audio)).is_ok());
-                if let Err(e) = outcome {
-                    // Bad text (unsupported characters, too long a sentence)
-                    // is the caller's; send it as the stream's first item.
-                    let _ = chunks.blocking_send(Err(AudioError::Invalid(e.to_string())));
-                }
-            }
-            (Engine::Music(m), Work::Generate { request, reply }) => {
-                if reply.is_closed() {
-                    continue;
-                }
-                let result = m
-                    .generate_text(&request)
-                    .map_err(failed)
-                    .map(|g| GeneratedAudio {
-                        sample_rate: g.sample_rate,
-                        channels: 2,
-                        samples: g.waveform,
+                let result = engine
+                    .execute(
+                        AudioRequest {
+                            task: native_task(AudioTask::SpeechToText),
+                            language,
+                            ..AudioRequest::default()
+                        },
+                        samples,
+                        cancel,
+                        |_| {},
+                    )
+                    .map_err(|error| {
+                        if error.contains("language") {
+                            AudioError::Invalid(error)
+                        } else {
+                            failed(error)
+                        }
+                    })
+                    .and_then(|result| {
+                        let t = result
+                            .transcript
+                            .ok_or_else(|| failed("missing native transcript"))?;
+                        Ok(Transcription {
+                            text: t.text,
+                            language: t.language,
+                            segments: t
+                                .segments
+                                .into_iter()
+                                .map(|s| TranscribedSegment {
+                                    start_seconds: s.start_seconds.unwrap_or(0.0),
+                                    end_seconds: s.end_seconds.unwrap_or(0.0),
+                                    text: s.text,
+                                })
+                                .collect(),
+                        })
                     });
                 let _ = reply.send(result);
             }
-            // The provider only routes work to a worker of the right task.
-            (_, other) => {
-                if let Work::Transcribe { reply, .. } = other {
-                    let _ = reply.send(Err(failed("model does not do speech to text")));
+            Work::Speak {
+                text,
+                speed,
+                chunks,
+            } => {
+                let cancel = runtime::native_audio::AudioCancel::default();
+                let signal = cancel.clone();
+                let outcome = engine.execute(
+                    AudioRequest {
+                        task: native_task(AudioTask::TextToSpeech),
+                        text,
+                        speed,
+                        ..AudioRequest::default()
+                    },
+                    vec![],
+                    cancel,
+                    |event| {
+                        if let AudioEvent::Pcm(pcm) = event {
+                            if chunks.blocking_send(Ok(pcm)).is_err() {
+                                signal.cancel();
+                            }
+                        }
+                    },
+                );
+                if let Err(e) = outcome {
+                    let _ = chunks.blocking_send(Err(AudioError::Invalid(e)));
                 }
+            }
+            Work::Generate {
+                request,
+                reply,
+                cancel,
+            } => {
+                if reply.is_closed() {
+                    continue;
+                }
+                let mut samples = Vec::new();
+                let result = engine
+                    .execute(
+                        AudioRequest {
+                            task: native_task(AudioTask::Music),
+                            caption: request.caption,
+                            lyrics: request.lyrics,
+                            duration_seconds: request.duration_seconds,
+                            steps: request.steps,
+                            seed: request.seed,
+                            ..AudioRequest::default()
+                        },
+                        vec![],
+                        cancel,
+                        |event| {
+                            if let AudioEvent::Pcm(pcm) = event {
+                                samples.extend_from_slice(&pcm);
+                            }
+                        },
+                    )
+                    .map_err(failed)
+                    .and_then(|r| {
+                        let format = r
+                            .pcm_format
+                            .ok_or_else(|| failed("missing native PCM format"))?;
+                        Ok(GeneratedAudio {
+                            sample_rate: format.sample_rate,
+                            channels: format.channels as u16,
+                            samples,
+                        })
+                    });
+                let _ = reply.send(result);
             }
         }
     }
@@ -309,6 +277,7 @@ fn task_of_alias(alias: &str) -> Option<AudioTask> {
             CatalogTask::SpeechToText => AudioTask::SpeechToText,
             CatalogTask::TextToSpeech => AudioTask::TextToSpeech,
             CatalogTask::Music => AudioTask::Music,
+            _ => return None,
         });
     }
     if catalog::speech::embedded_entry(alias).is_ok() {
@@ -423,7 +392,9 @@ impl AudioProvider for RealAudioProvider {
         Box::pin(async move {
             let worker = self.worker(&request.model, AudioTask::SpeechToText)?;
             let (reply, rx) = oneshot::channel();
+            let cancellation = CancelOnDrop(runtime::native_audio::AudioCancel::default());
             worker.submit(Work::Transcribe {
+                cancel: cancellation.0.clone(),
                 samples: request.samples,
                 language: request.language,
                 reply,
@@ -471,7 +442,9 @@ impl AudioProvider for RealAudioProvider {
             text.validate()
                 .map_err(|e| AudioError::Invalid(e.to_string()))?;
             let (reply, rx) = oneshot::channel();
+            let cancellation = CancelOnDrop(runtime::native_audio::AudioCancel::default());
             worker.submit(Work::Generate {
+                cancel: cancellation.0.clone(),
                 request: text,
                 reply,
             })?;

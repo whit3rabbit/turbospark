@@ -91,6 +91,13 @@ final class ProfileDatabase: @unchecked Sendable {
             try execute("PRAGMA synchronous = FULL;")
             try execute("PRAGMA secure_delete = ON;")
             try createSchema()
+            try execute("""
+                CREATE TABLE IF NOT EXISTS audio_asset_references(
+                    record_key TEXT NOT NULL,
+                    asset_id TEXT NOT NULL REFERENCES assets(id),
+                    PRIMARY KEY(record_key, asset_id)
+                );
+                """)
             do {
                 workflowSchemaStatusStorage = try migrateWorkflowSchema()
             } catch {
@@ -481,6 +488,14 @@ final class ProfileDatabase: @unchecked Sendable {
             chat.draftAttachments.forEach { count($0.sourcePath) }
             chat.artifacts.forEach { count($0.path) }
             chat.messages.forEach(count)
+        }
+
+        // Audio outlives the chat that happened to trigger this collection.
+        // Read normalized references, including records this build cannot decode.
+        try withStatement("SELECT asset_id FROM audio_asset_references") { statement in
+            while sqlite3_step(statement) == SQLITE_ROW {
+                if let id = columnText(statement, index: 0) { counts[id, default: 0] += 1 }
+            }
         }
 
         var unreachable: [String] = []
@@ -2494,5 +2509,55 @@ enum ManagedAssetPins {
         }
         messages.forEach(visit)
         return ids
+    }
+}
+
+extension ProfileDatabase {
+    /// The payload and reference graph must commit together, or a chat save
+    /// could collect a chunk whose manifest update failed.
+    func saveAudioRecord(key: String, payload: Data, references: [String]) throws {
+        guard key.hasPrefix("audio:item:") else { throw CocoaError(.coderInvalidValue) }
+        let ids = try Set(references.map { reference in
+            guard let id = ManagedAssetStore.assetID(from: reference) else { throw CocoaError(.coderInvalidValue) }
+            return id
+        })
+        try transaction {
+            try saveRecord(key: key, payload: payload)
+            try withStatement("DELETE FROM audio_asset_references WHERE record_key = ?1") { statement in
+                try bind(key, at: 1, to: statement)
+                try stepDone(statement)
+            }
+            for id in ids {
+                try withStatement("INSERT INTO audio_asset_references(record_key, asset_id) VALUES(?1, ?2)") { statement in
+                    try bind(key, at: 1, to: statement)
+                    try bind(id, at: 2, to: statement)
+                    try stepDone(statement)
+                }
+            }
+        }
+    }
+
+    func collectUnusedAudioAssets() throws -> [String] {
+        var unreachable: [String] = []
+        try transaction {
+            let archive = try loadChatArchive() ?? AppChatArchive(selectedChatID: UUID(), chats: [])
+            unreachable = try reconcileAssetReferences(in: archive)
+        }
+        return unreachable
+    }
+
+    func deleteAudioRecord(key: String) throws -> [String] {
+        guard key.hasPrefix("audio:item:") else { throw CocoaError(.coderInvalidValue) }
+        var unreachable: [String] = []
+        try transaction {
+            try withStatement("DELETE FROM audio_asset_references WHERE record_key = ?1") { statement in
+                try bind(key, at: 1, to: statement)
+                try stepDone(statement)
+            }
+            try deleteRecord(key: key)
+            let archive = try loadChatArchive() ?? AppChatArchive(selectedChatID: UUID(), chats: [])
+            unreachable = try reconcileAssetReferences(in: archive)
+        }
+        return unreachable
     }
 }

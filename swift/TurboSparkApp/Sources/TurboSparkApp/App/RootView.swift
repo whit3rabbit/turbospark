@@ -154,7 +154,7 @@ struct RootView: View {
             isChatSearchPresented.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
-            guard model.activeSection != .images else { return }
+            guard model.activeSection != .images && model.activeSection != .audio else { return }
             // A preview pane owns the right column while it is open, so the
             // same key has to be able to close it: otherwise the shortcut
             // silently toggles a pane the user cannot see. All three
@@ -195,7 +195,7 @@ struct RootView: View {
         }
         .onChange(of: model.isModelAvailable) { wasAvailable, isAvailable in
             // Loading during a conversation must not steal its reading space.
-            if !wasAvailable, isAvailable, !model.hasOutputTranscript, model.activeSection != .images {
+            if !wasAvailable, isAvailable, !model.hasOutputTranscript, model.activeSection != .images && model.activeSection != .audio {
                 isInspectorVisible = true
             }
         }
@@ -203,7 +203,7 @@ struct RootView: View {
             if !enabled { model.setBrowserPaneOpen(false) }
         }
         .onChange(of: model.activeSection) { _, section in
-            if section == .images { model.setBrowserPaneOpen(false) }
+            if section == .images || section == .audio { model.setBrowserPaneOpen(false) }
         }
         // Theme the complete scene once. Applying this to an overlay also
         // paints its empty space, hiding every pane underneath it.
@@ -211,7 +211,7 @@ struct RootView: View {
     }
 
     private func toggleModelSettings() {
-        guard model.activeSection != .images else { return }
+        guard model.activeSection != .images && model.activeSection != .audio else { return }
         if rightColumnClaimant.isBrowserPane {
             model.setBrowserPaneOpen(false)
             isInspectorVisible = true
@@ -256,7 +256,7 @@ struct RootView: View {
     /// directly; the third claimant (`htmlPreview`) is what made the chain a
     /// decision worth naming (`AppRightColumnClaimant`).
     private var rightColumnClaimant: AppRightColumnClaimant {
-        guard model.activeSection != .images else { return .none }
+        guard model.activeSection != .images && model.activeSection != .audio else { return .none }
         return AppRightColumnClaimant.resolve(
             openArtifactID: model.openArtifactID,
             htmlPreviewID: model.htmlPreviewID,
@@ -268,7 +268,7 @@ struct RootView: View {
 
     @ViewBuilder
     private var rightColumn: some View {
-        if model.activeSection == .images {
+        if model.activeSection == .images || model.activeSection == .audio {
             EmptyView()
         } else {
             switch rightColumnClaimant {
@@ -362,6 +362,8 @@ struct RootView: View {
         switch model.activeSection {
         case .images:
             ImagesSectionView(model: model)
+        case .audio:
+            AudioWorkspaceView(model: model, controller: model.audioWorkspace)
         case .modelManager:
             ModelManagerView(model: model)
         case .modelHub:

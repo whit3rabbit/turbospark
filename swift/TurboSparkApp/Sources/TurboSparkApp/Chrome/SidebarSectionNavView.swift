@@ -30,6 +30,9 @@ struct SidebarSectionNavView: View {
         VStack(spacing: 2) {
             ForEach(AppModel.AppNavigationSection.allCases) { section in
                 sectionRow(section)
+                if section == .audio && model.activeSection == .audio {
+                    AudioSidebarDestinations(model: model, controller: model.audioWorkspace)
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -58,6 +61,11 @@ struct SidebarSectionNavView: View {
                     .lineLimit(1)
 
                 Spacer(minLength: 0)
+                if section == .audio {
+                    Image(systemName: isSelected ? "chevron.down" : "chevron.right")
+                        .font(theme.ui(.tiny)).foregroundStyle(.appSecondary)
+                        .accessibilityHidden(true)
+                }
             }
             .padding(.horizontal, 8)
             .frame(height: rowHeight)

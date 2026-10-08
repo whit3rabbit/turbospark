@@ -194,6 +194,41 @@ fn a_resident_q2_0_tag_is_refused() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Q2_0 routed phase 2 currently specializes to top_k=10. An install with Q2_0 down
+/// projections and a non-10 top_k model (such as Gemma 4 with top_k=8 or Mixtral with top_k=2)
+/// must be refused cleanly at open time rather than panicking in the GPU dispatch.
+#[test]
+fn an_install_with_q2_0_down_and_non_top10_is_refused_at_open() {
+    let (dir, arch) = gguf_install(SyntheticGgufShape::iq_mixed());
+    assert_ne!(arch.top_k_experts, 10);
+
+    let layout_path = dir.join("packed_experts").join("layout.json");
+    let mut layout_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&layout_path).unwrap()).unwrap();
+
+    for layer in layout_json["layers"].as_array_mut().unwrap() {
+        for expert in layer["experts"].as_array_mut().unwrap() {
+            expert["tensors"]["down"]["dtype"] = serde_json::json!("q2_0");
+        }
+    }
+    std::fs::write(
+        &layout_path,
+        serde_json::to_vec_pretty(&layout_json).unwrap(),
+    )
+    .unwrap();
+
+    let text = match RealForwardRunner::open(&dir, arch) {
+        Ok(_) => panic!("an install with Q2_0 down projection and top_k != 10 must not open"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        text.contains("Q2_0 routed layout, which requires top_k=10"),
+        "expected Q2_0 top_k=10 refusal, got: {text}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Opening is not running. This drives real decode steps through the whole
 /// Q8_0 path on real Metal hardware: the embedding lookup, the attention and
 /// shared-expert GEMVs, the routed-expert decode pair reading streamed

@@ -23,3 +23,6 @@ pub use models::*;
 pub use server::*;
 pub use session::*;
 pub use stt::*;
+
+mod audio;
+pub use audio::*;

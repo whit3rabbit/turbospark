@@ -1080,3 +1080,19 @@ private extension NSRecursiveLock {
         return try body()
     }
 }
+
+extension ProfileRepository {
+    func saveAudioRecord(key: String, payload: Data, references: [String]) throws {
+        try database().saveAudioRecord(key: key, payload: payload, references: references)
+    }
+
+    func collectUnusedAudioAssets() throws {
+        let unreachable = try database().collectUnusedAudioAssets()
+        ManagedAssetStore(vault: store).garbageCollect(ids: unreachable)
+    }
+
+    func deleteAudioRecord(key: String) throws {
+        let unreachable = try database().deleteAudioRecord(key: key)
+        ManagedAssetStore(vault: store).garbageCollect(ids: unreachable)
+    }
+}

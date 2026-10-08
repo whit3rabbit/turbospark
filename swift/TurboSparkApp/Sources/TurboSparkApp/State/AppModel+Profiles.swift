@@ -133,7 +133,7 @@ extension AppModel {
     /// shared model directory the new process would scan mid-write.
     public var canSwitchProfile: Bool {
         !generating && !submitting && !isInstallingModel && imageGenerationTask == nil
-            && !hasUnsavedImageResult
+            && !hasUnsavedImageResult && !audioWorkspace.isInstalling
     }
 
     private var hasUnsavedImageResult: Bool {

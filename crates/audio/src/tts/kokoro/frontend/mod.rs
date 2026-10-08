@@ -1,7 +1,9 @@
 //! Self-contained US English frontend and checked Kokoro sentence contract.
 //!
 //! Dictionary, stress, inflection and POS machinery is adapted from the pinned
-//! Misaki Rust frontend. No process, Python runtime or neural fallback is used.
+//! Misaki Rust frontend. Compound and punctuation-context behavior follows
+//! hexgrad/misaki fba1236595f2d2bf21d414ba6e57d25256afada3 (Apache-2.0,
+//! see licenses/MISAKI-APACHE-2.0.txt). No process or Python runtime is used.
 mod data;
 mod lexicon;
 mod normalize;
@@ -13,7 +15,6 @@ use std::{collections::HashMap, path::Path, sync::OnceLock};
 use tagger::PerceptronTagger;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
-const FRONTEND_ENABLED: bool = true;
 /// Two blank tokens also occupy the checkpoint's 512 position table.
 pub const MAX_PHONEME_CHARS: usize = 510;
 const STYLE_WIDTH: usize = 256;
@@ -223,11 +224,6 @@ impl EnglishFrontend {
         request: &SynthesisRequest,
         vocab: &PhonemeVocabulary,
     ) -> Result<Vec<SynthesisSegment>> {
-        if !FRONTEND_ENABLED {
-            return Err(SpeechError::Unsupported {
-                why: "portable English frontend disabled".into(),
-            });
-        }
         request.validate()?;
         let engine = ENGINE.get_or_init(|| Engine {
             lexicon: Lexicon::new(),
@@ -241,8 +237,19 @@ impl EnglishFrontend {
         let mut tokens = normalize::tokens(&normalized)?;
         let words: Vec<_> = tokens.iter().map(|t| t.word.as_str()).collect();
         let tags = engine.tagger.tag(&words);
+        let mut opening_quote = true;
         for (token, tag) in tokens.iter_mut().zip(tags) {
             token.tag = tag.tag;
+            if token.word == "\"" {
+                // The trained vocabulary distinguishes opening and closing quotes.
+                token.phones = if opening_quote {
+                    "\u{201c}"
+                } else {
+                    "\u{201d}"
+                }
+                .into();
+                opening_quote = !opening_quote;
+            }
         }
         correct_context_tags(&mut tokens, &engine.lexicon);
         let mut future = TokenContext::default();
@@ -250,18 +257,36 @@ impl EnglishFrontend {
             let phones = if let Some(number) = &token.spoken {
                 pronounce_number(number, &engine.lexicon)?
             } else if token.punctuation {
-                token.word.clone()
-            } else {
-                let stress = if token.word == token.word.to_lowercase() {
-                    None
-                } else if token.word == token.word.to_uppercase() {
-                    Some(engine.lexicon.cap_stresses.1)
+                if token.phones.is_empty() {
+                    token.word.clone()
                 } else {
-                    Some(engine.lexicon.cap_stresses.0)
-                };
-                engine.lexicon.get_word(&token.word,&token.tag,stress,Some(&future)).map(|p|p.0)
-                    .or_else(||engine.lexicon.get_nnp(&token.word).map(|p|p.0))
-                    .ok_or_else(||SpeechError::Unsupported {why:format!("cannot phonemize {:?}; only ASCII English words, numbers and supported punctuation can be pronounced",token.word)})?
+                    token.phones.clone()
+                }
+            } else {
+                let stress = word_stress(&token.word, &engine.lexicon);
+                engine.lexicon
+                    .get_word(&token.word, &token.tag, stress, Some(&future))
+                    .map(|p| p.0)
+                    .or_else(|| {
+                        if token.word.contains('-') {
+                            pronounce_compound(&token.word, &token.tag, &engine.lexicon, &future)
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| {
+                        if token.word.chars().all(|c| c.is_ascii_alphabetic()) {
+                            engine.lexicon.get_nnp(&token.word).map(|p| p.0)
+                        } else {
+                            None
+                        }
+                    })
+                    .ok_or_else(|| SpeechError::Unsupported {
+                        why: format!(
+                            "cannot phonemize {:?}; only ASCII English words, numbers and supported punctuation can be pronounced",
+                            token.word
+                        ),
+                    })?
             };
             // Kokoro v1 uses T for the American flap and t for the glottal stop.
             let phones = phones.replace('\u{27e}', "T").replace('\u{294}', "t");
@@ -272,10 +297,7 @@ impl EnglishFrontend {
                 )));
             }
             // Sound, rather than spelling, controls articles before hour/university.
-            future.future_vowel=phones.chars().find_map(|c| {
-                if "AIOQWYaiu\u{e6}\u{251}\u{252}\u{254}\u{259}\u{25b}\u{25c}\u{26a}\u{28a}\u{28c}\u{1d7b}".contains(c){Some(true)}
-                else if "bdfhjklmnpstvwz\u{f0}\u{14b}\u{261}\u{279}\u{27e}\u{283}\u{292}\u{2a4}\u{2a7}\u{3b8}".contains(c){Some(false)}else{None}
-            });
+            future.future_vowel = next_vowel(&phones, future.future_vowel);
             future.future_to = token.word.eq_ignore_ascii_case("to");
             token.phones = phones;
         }
@@ -288,12 +310,117 @@ fn pronounce_number(spoken: &str, lexicon: &Lexicon) -> Result<String> {
         .split_whitespace()
         .map(|w| {
             lexicon
-                .get_word(w, "NN", None, None)
+                // Misaki deliberately removes stress from decimal "point".
+                .get_word(w, "NN", if w == "point" { Some(-2.0) } else { None }, None)
                 .map(|p| p.0)
                 .ok_or_else(|| input(&format!("cannot pronounce normalized number word {w:?}")))
         })
         .collect::<Result<Vec<_>>>()
         .map(|words| words.join(" "))
+}
+
+fn next_vowel(phones: &str, previous: Option<bool>) -> Option<bool> {
+    for ch in phones.chars() {
+        if ";:,.!?\u{2014}\u{2026}".contains(ch) {
+            return None;
+        }
+        if "AIOQWYaiu\u{e6}\u{251}\u{252}\u{254}\u{259}\u{25b}\u{25c}\u{26a}\u{28a}\u{28c}\u{1d7b}"
+            .contains(ch)
+        {
+            return Some(true);
+        }
+        if "bdfhjklmnpstvwz\u{f0}\u{14b}\u{261}\u{279}\u{27e}\u{283}\u{292}\u{2a4}\u{2a7}\u{3b8}"
+            .contains(ch)
+        {
+            return Some(false);
+        }
+    }
+    // Quotes and parentheses do not interrupt the following sound's context.
+    previous
+}
+
+fn word_stress(word: &str, lexicon: &Lexicon) -> Option<f64> {
+    if word == word.to_lowercase() {
+        None
+    } else if word == word.to_uppercase() {
+        Some(lexicon.cap_stresses.1)
+    } else {
+        Some(lexicon.cap_stresses.0)
+    }
+}
+
+fn pronounce_compound(
+    word: &str,
+    tag: &str,
+    lexicon: &Lexicon,
+    future: &TokenContext,
+) -> Option<String> {
+    let parts: Vec<_> = word.split('-').collect();
+    if parts.len() > MAX_PHONEME_CHARS
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || !p.chars().all(|c| c.is_ascii_alphabetic()))
+    {
+        return None;
+    }
+    let mut phones = Vec::new();
+    let mut context = future.clone();
+    let mut right = parts.len();
+    while right > 0 {
+        // Resolve the longest dictionary span from the right, as Misaki does.
+        // This preserves lexical compound stress, such as the entry "one-two".
+        let mut matched = None;
+        for left in 0..right {
+            let span = parts[left..right].join("-");
+            if let Some((ps, _)) =
+                lexicon.get_word(&span, tag, word_stress(&span, lexicon), Some(&context))
+            {
+                matched = Some((left, span, ps));
+                break;
+            }
+        }
+        let (left, span, ps) = matched.or_else(|| {
+            let part = parts[right - 1];
+            lexicon
+                .get_nnp(part)
+                .map(|(ps, _)| (right - 1, part.into(), ps))
+        })?;
+        context.future_vowel = next_vowel(&ps, context.future_vowel);
+        context.future_to = span.eq_ignore_ascii_case("to");
+        phones.push((span, ps));
+        right = left;
+    }
+    phones.reverse();
+    // Misaki's compound resolver demotes the weaker half when most parts
+    // carry primary stress. Weight ties retain their left-to-right order.
+    if phones.len() == 2 && phones[0].0.len() == 1 {
+        phones[1].1 = lexicon.apply_stress(&phones[1].1, Some(-0.5));
+    } else if phones.iter().filter(|(_, p)| p.contains('\u{2c8}')).count()
+        > phones.len().div_ceil(2)
+    {
+        let mut weights: Vec<_> = phones
+            .iter()
+            .enumerate()
+            .map(|(i, (_, p))| {
+                let weight: usize = p
+                    .chars()
+                    .map(|c| {
+                        if "AIOQWY\u{2a4}\u{2a7}".contains(c) {
+                            2
+                        } else {
+                            1
+                        }
+                    })
+                    .sum();
+                ((p.contains('\u{2c8}'), weight, i), i)
+            })
+            .collect();
+        weights.sort_unstable();
+        for (_, i) in weights.into_iter().take(phones.len() / 2) {
+            phones[i].1 = lexicon.apply_stress(&phones[i].1, Some(-0.5));
+        }
+    }
+    Some(phones.into_iter().map(|(_, p)| p).collect())
 }
 
 fn correct_context_tags(tokens: &mut [normalize::Token], lexicon: &Lexicon) {
@@ -349,6 +476,7 @@ fn chunk(
     let mut start = 0;
     let mut phones = String::new();
     let mut count = 0;
+    let mut sentence_has_end = false;
     for (i, token) in tokens.iter().enumerate() {
         let gap = if i > start && tokens[i - 1].end < token.start {
             " "
@@ -361,24 +489,25 @@ fn chunk(
             start = i;
             phones.clear();
             count = 0;
+            sentence_has_end = false;
         } else {
             phones.push_str(gap);
             count += gap.len();
         }
         phones.push_str(&token.phones);
         count += token.phones.chars().count();
-        let next_closer = tokens
-            .get(i + 1)
-            .is_some_and(|t| matches!(t.word.as_str(), "\"" | ")"));
-        let sentence_end = matches!(token.word.as_str(), "." | "!" | "?") && !next_closer;
-        let after_closer = matches!(token.word.as_str(), "\"" | ")")
-            && i > start
-            && matches!(tokens[i - 1].word.as_str(), "." | "!" | "?");
-        if sentence_end || after_closer {
+        sentence_has_end |= matches!(token.word.as_str(), "." | "!" | "?");
+        // Keep an adjacent terminal run and all closing delimiters attached
+        // so synthesis never receives a standalone punctuation fragment.
+        let continuing = tokens.get(i + 1).is_some_and(|next| {
+            token.end == next.start && matches!(next.word.as_str(), "." | "!" | "?" | ")" | "\"")
+        });
+        if sentence_has_end && !continuing {
             emit_segment(text, tokens, start, i + 1, &phones, vocab, &mut segments)?;
             start = i + 1;
             phones.clear();
             count = 0;
+            sentence_has_end = false;
         }
     }
     if start < tokens.len() {

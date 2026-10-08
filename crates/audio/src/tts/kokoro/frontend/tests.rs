@@ -150,3 +150,69 @@ fn frontend_context_uses_sounds_and_semantic_pos() {
     assert!(joined("The bass guitar plays.").contains("b\u{2c8}As"));
     assert_ne!(joined("the record"), joined("Please record"));
 }
+
+#[test]
+fn frontend_plain_text_independent_regressions() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../testdata/frontend-contract.json")).unwrap();
+    let frontend = EnglishFrontend::new();
+    let vocab = vocab();
+    let mut failures = Vec::new();
+    for case in fixture["results"].as_array().unwrap() {
+        let text = case["text"].as_str().unwrap();
+        let expected = case["phonemes"].as_str().unwrap();
+        match frontend.prepare(&SynthesisRequest::new(text), &vocab) {
+            Ok(segments) => {
+                let actual = segments
+                    .iter()
+                    .map(|s| s.phonemes())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if actual != expected {
+                    failures.push(format!("{text:?}: expected {expected:?}, got {actual:?}"));
+                }
+            }
+            Err(error) => failures.push(format!("{text:?}: unexpected {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn frontend_terminal_punctuation_stays_with_sentence() {
+    let frontend = EnglishFrontend::new();
+    for (text, expected) in [
+        ("Hello?! Next.", vec!["Hello?!", "Next."]),
+        ("Hello... Next.", vec!["Hello...", "Next."]),
+        ("Hello!\" Next.", vec!["Hello!\"", "Next."]),
+        (
+            "He said (\"Hello!\"). Next.",
+            vec!["He said (\"Hello!\").", "Next."],
+        ),
+    ] {
+        let segments = frontend
+            .prepare(&SynthesisRequest::new(text), &vocab())
+            .unwrap();
+        assert_eq!(
+            segments.iter().map(|s| s.text()).collect::<Vec<_>>(),
+            expected,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn frontend_malformed_decimal_returns_error() {
+    let error = EnglishFrontend::new()
+        .prepare(&SynthesisRequest::new("1.2,345"), &vocab())
+        .unwrap_err();
+    assert!(matches!(error, SpeechError::Input { .. }));
+}
+
+#[test]
+fn frontend_spelling_refuses_to_drop_nonletters() {
+    let error = EnglishFrontend::new()
+        .prepare(&SynthesisRequest::new("qzx'wv"), &vocab())
+        .unwrap_err();
+    assert!(matches!(error, SpeechError::Unsupported { .. }));
+}

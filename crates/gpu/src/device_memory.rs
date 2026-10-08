@@ -44,3 +44,62 @@ pub fn recommended_max_working_set() -> Option<(u64, String)> {
         device.name().to_string(),
     ))
 }
+
+// Same TASK_VM_INFO prefix as the benchmark oracle, including CPU residency.
+#[repr(C)]
+#[derive(Default)]
+struct TaskVmInfo {
+    virtual_size: u64,
+    region_count: i32,
+    page_size: i32,
+    resident_size: u64,
+    resident_size_peak: u64,
+    device: u64,
+    device_peak: u64,
+    internal: u64,
+    internal_peak: u64,
+    external: u64,
+    external_peak: u64,
+    reusable: u64,
+    reusable_peak: u64,
+    purgeable_volatile_pmap: u64,
+    purgeable_volatile_resident: u64,
+    purgeable_volatile_virtual: u64,
+    compressed: u64,
+    compressed_peak: u64,
+    compressed_lifetime: u64,
+    phys_footprint: u64,
+}
+
+const TASK_VM_INFO: u32 = 22;
+const KERN_SUCCESS: i32 = 0;
+extern "C" {
+    static mach_task_self_: u32;
+    fn task_info(task: u32, flavor: u32, info: *mut i32, count: *mut u32) -> i32;
+}
+/// Current process physical footprint, including other resident model families.
+pub fn process_footprint() -> Option<u64> {
+    let mut info = TaskVmInfo::default();
+    let mut count = (std::mem::size_of::<TaskVmInfo>() / std::mem::size_of::<i32>()) as u32;
+    let kr = unsafe {
+        task_info(
+            mach_task_self_,
+            TASK_VM_INFO,
+            (&mut info as *mut TaskVmInfo).cast(),
+            &mut count,
+        )
+    };
+    if kr == KERN_SUCCESS {
+        Some(info.phys_footprint)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn process_memory_admission_probe_reports_a_live_footprint() {
+        assert!(super::process_footprint().is_some_and(|bytes| bytes > 0));
+    }
+}

@@ -20,7 +20,10 @@ use std::path::Path;
 use audio::stt::qwen3_asr::encoder::AudioEncoder;
 use audio::stt::qwen3_asr::frontend::compute_features;
 use audio::stt::qwen3_asr::Qwen3Config;
-use audio::stt::qwen3_asr::{load_tokenizer, prompt_token_ids, transcript_from_tokens};
+use audio::stt::qwen3_asr::{
+    compute_selected_logprob, extract_language, load_tokenizer, logprob_summary, prompt_token_ids,
+    Qwen3AsrTranscription,
+};
 use gpu::{
     autorelease_pool, encode_attention_decode, encode_dequant_int8_gemv_resident,
     encode_residual_add, encode_rms_norm_bf16w, encode_rms_norm_bf16w_perhead,
@@ -656,6 +659,20 @@ impl Qwen3AsrMetalEngine {
         language: Option<&str>,
         max_tokens: usize,
     ) -> Result<String, String> {
+        self.transcribe_with_details(samples, language, max_tokens, &|| false)
+            .map(|result| result.text)
+    }
+    /// Preserves detected language and confidence; cancellation is checked per prefill/decode row.
+    pub fn transcribe_with_details(
+        &mut self,
+        samples: &[f32],
+        language: Option<&str>,
+        max_tokens: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Qwen3AsrTranscription, String> {
+        if cancelled() {
+            return Err("audio job cancelled".into());
+        }
         if max_tokens == 0 {
             return Err("Qwen3-ASR max_tokens must be positive".into());
         }
@@ -700,8 +717,13 @@ impl Qwen3AsrMetalEngine {
 
         let mut generated: Vec<u32> = Vec::new();
         let mut next: Option<u32> = None;
+        let mut next_logprob = 0.0;
+        let mut token_logprobs = Vec::new();
         let mut prefill_started: Option<std::time::Instant> = None;
         for (position, &token_id) in token_ids.iter().enumerate() {
+            if cancelled() {
+                return Err("audio job cancelled".into());
+            }
             let row = if token_id == self.config.audio_token_id {
                 let frame = audio_positions
                     .iter()
@@ -719,11 +741,15 @@ impl Qwen3AsrMetalEngine {
             let last = position + 1 == prompt_rows;
             if last {
                 prefill_started.get_or_insert(std::time::Instant::now());
-                next = Some(Self::argmax(
-                    &self
-                        .step(&row, position, true)?
-                        .expect("final prefill row carries logits"),
-                ));
+                let logits = self
+                    .step(&row, position, true)?
+                    .expect("final prefill row carries logits");
+                let token = Self::argmax(&logits);
+                next_logprob = compute_selected_logprob(
+                    &logits.iter().map(|v| v.to_f32()).collect::<Vec<_>>(),
+                    token,
+                );
+                next = Some(token);
             } else {
                 prefill_started.get_or_insert(std::time::Instant::now());
                 self.step(&row, position, false)?;
@@ -734,6 +760,9 @@ impl Qwen3AsrMetalEngine {
             .unwrap_or(0.0);
         let decode_started = std::time::Instant::now();
         for _ in 0..max_tokens {
+            if cancelled() {
+                return Err("audio job cancelled".into());
+            }
             let token = next.take().ok_or("Qwen3-ASR Metal lost the greedy token")?;
             if stop_ids.contains(&token)
                 || (stop_ids.is_empty() && matches!(token, 151_645 | 151_643))
@@ -741,16 +770,21 @@ impl Qwen3AsrMetalEngine {
                 break;
             }
             generated.push(token);
+            token_logprobs.push(next_logprob);
             if generated.len() == max_tokens {
                 break;
             }
             let position = prompt_rows + generated.len() - 1;
             let row = self.embed_row_bytes(token);
-            next = Some(Self::argmax(
-                &self
-                    .step(&row, position, true)?
-                    .expect("decode step carries logits"),
-            ));
+            let logits = self
+                .step(&row, position, true)?
+                .expect("decode step carries logits");
+            let token = Self::argmax(&logits);
+            next_logprob = compute_selected_logprob(
+                &logits.iter().map(|v| v.to_f32()).collect::<Vec<_>>(),
+                token,
+            );
+            next = Some(token);
         }
         if profile {
             eprintln!(
@@ -760,8 +794,28 @@ impl Qwen3AsrMetalEngine {
                 generated.len()
             );
         }
-        transcript_from_tokens(&self.tokenizer, &generated, language)
-            .map_err(|error| error.to_string())
+        let decoded = self
+            .tokenizer
+            .decode(&generated, false)
+            .map_err(|e| e.to_string())?;
+        let reported_language = language
+            .map(str::to_owned)
+            .or_else(|| audio::stt::qwen3_asr::reported_language(&decoded));
+        let (language, text) = match language {
+            Some(language) => (language.to_string(), decoded.trim().to_string()),
+            None => extract_language(&decoded),
+        };
+        let (avg_logprob, min_logprob) = logprob_summary(&token_logprobs);
+        Ok(Qwen3AsrTranscription {
+            text,
+            language,
+            reported_language,
+            token_logprobs,
+            avg_logprob,
+            min_logprob,
+            prompt_tokens: prompt_rows,
+            generation_tokens: generated.len(),
+        })
     }
 }
 

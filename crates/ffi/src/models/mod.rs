@@ -17,6 +17,7 @@ mod control_vector;
 mod fit;
 mod image_install;
 mod install;
+pub(crate) use install::ActiveInstall;
 mod probe;
 
 pub(crate) use catalog::{

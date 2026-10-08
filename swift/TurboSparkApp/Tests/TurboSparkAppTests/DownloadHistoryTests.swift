@@ -154,4 +154,23 @@ final class DownloadHistoryTests: XCTestCase {
         XCTAssertEqual(restored.downloadedBytes, 0)
         XCTAssertNil(restored.totalBytes)
     }
+
+    func testAudioHistoryPreservesPinnedIdentityAfterVaultReopen() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let identity = AudioProfileIdentity(task: .music, alias: "audio-fixture", repository: "private/audio",
+                                            revision: String(repeating: "a", count: 40),
+                                            assetFingerprint: String(repeating: "b", count: 64))
+        let firstVault = try vault(at: root)
+        let request = ModelDownload.Request.audio(identity: identity)
+        try ModelDownloadHistoryStore(repository: ProfileRepository(store: firstVault))
+            .save([ModelDownload(request: request, status: .paused)])
+        firstVault.lockVault()
+        let secondVault = try vault(at: root)
+        defer { secondVault.lockVault() }
+        let row = try XCTUnwrap(ModelDownloadHistoryStore(repository: ProfileRepository(store: secondVault)).load().first)
+        XCTAssertEqual(row.request, request)
+        XCTAssertEqual(row.status, .interrupted)
+        XCTAssertEqual(row.request.queueKey, request.queueKey)
+    }
 }

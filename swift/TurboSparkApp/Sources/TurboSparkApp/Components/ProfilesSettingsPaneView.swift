@@ -713,6 +713,7 @@ struct ProfilesSettingsPaneView: View {
         case "chats": Text("Chat history", bundle: .module)
         case "generated-images": Text("Generated images", bundle: .module)
         case "attachments": Text("Attachments", bundle: .module)
+        case "audio": Text("Audio", bundle: .module)
         case "projects": Text("Projects", bundle: .module)
         case "models": Text("Model favorites and scan paths", bundle: .module)
         case "mcp": Text("MCP servers and marketplaces", bundle: .module)

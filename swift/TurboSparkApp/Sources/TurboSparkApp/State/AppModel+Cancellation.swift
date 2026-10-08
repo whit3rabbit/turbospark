@@ -140,6 +140,7 @@ extension AppModel {
     /// tool already in flight finishes, and what Stop guarantees is that no
     /// FURTHER model turn or tool call is started.
     public func cancel() {
+        if audioSummaryInFlight { audioWorkspace.cancel(); return }
         guard canCancel else { return }
         if imageGenerationTask != nil {
             isCancellationPending = true

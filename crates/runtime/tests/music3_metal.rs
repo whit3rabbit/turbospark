@@ -279,3 +279,42 @@ fn real_music3_native_checkpoint_matches_mlx() {
     assert_eq!(request["wave_dtype"], "bfloat16");
     native_gate(&model, &reference, false);
 }
+
+#[test]
+fn music3_cancellation_during_compute_resets_for_the_next_request() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let runner = Music3Runner::open_with_precision(
+        &fixture("converted_plain"),
+        audio::music::minimax_music3::Music3Precision::Float32,
+    )
+    .unwrap();
+    let flag = Arc::new(AtomicBool::new(false));
+    let cancel = flag.clone();
+    let observed = Arc::new(AtomicBool::new(false));
+    let saw = observed.clone();
+    runner.set_trace_observer(move |_| {
+        saw.store(true, Ordering::Release);
+        cancel.store(true, Ordering::Release);
+    });
+    let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+    request.duration_seconds = Some(0.12);
+    request.steps = Some(1);
+    request.seed = Some(7);
+    let error = runner
+        .generate_text_cancellable(&request, flag)
+        .unwrap_err();
+    assert!(
+        observed.load(Ordering::Acquire),
+        "cancellation must fire during native execution"
+    );
+    assert!(error.to_string().contains("cancelled"));
+    runner.clear_trace_observer();
+    let fresh = runner
+        .generate_text_cancellable(&request, Arc::new(AtomicBool::new(false)))
+        .unwrap();
+    assert!(!fresh.waveform.is_empty());
+    assert!(fresh.waveform.iter().all(|v| v.is_finite()));
+}

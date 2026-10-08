@@ -134,6 +134,15 @@ final class MLXImageGenerationSession: ImageGenerationSession, @unchecked Sendab
             let token = UUID()
             let task = Task.detached(priority: .userInitiated) {
                 do {
+                    // Hold the native permit through producer completion, including
+                    // cancellation drain, so served audio/text cannot overlap MLX.
+                    var permit: NativeHeavyWorkPermit?
+                    while permit == nil {
+                        try Task.checkCancellation()
+                        permit = try NativeHeavyWorkPermit.tryAcquire()
+                        if permit == nil { try await Task.sleep(for: .milliseconds(50)) }
+                    }
+                    defer { permit?.release() }
                     let modelSpec = try sourcePath.map {
                         try MLXImageModelSnapshot.prepare(
                             sourcePath: $0,

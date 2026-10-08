@@ -20,6 +20,17 @@ import OpenKind
 @MainActor
 public final class AppModel: ObservableObject {
     /// Currently active navigation section in the main window.
+    var audioSummaryInFlight = false
+    lazy var audioWorkspace: AudioWorkspaceController = {
+        let workspace = AudioWorkspaceController()
+        workspace.installHandler = { [weak self] profile in self?.enqueueAudioDownload(profile: profile) ?? false }
+        workspace.summaryAvailable = { [weak self] in self?.canSummarizeAudio == true }
+        workspace.summaryHandler = { [weak self] item in
+            guard let self else { throw CancellationError() }
+            return try await self.summarizeAudioTranscript(item)
+        }
+        return workspace
+    }()
     @Published public var activeSection: AppNavigationSection = .chat
 
     /// Attachment currently shown in the right-hand preview pane, if any.
@@ -162,6 +173,9 @@ public final class AppModel: ObservableObject {
     /// one session sharing a machine is not something to write to disk by
     /// default.
     @Published public var serverAPIKeyInput: String = ""
+    /// True when the launch-time Keychain read failed (locked or denied): the
+    /// empty field then means "unknown", so persist must not delete the item.
+    var serverKeyLoadFailed = false
     /// The port to ask for, or 0 to let the OS choose.
     ///
     /// 0 is the default because nothing needs a fixed one to work: the pane
@@ -173,9 +187,6 @@ public final class AppModel: ObservableObject {
     @Published public var serverPortIsValid = true
     @Published public var serverFavorites: [ServerFavorite] = []
     @Published public var serverLive = ServerLiveHistory()
-    /// True when the launch-time Keychain read failed (locked or denied): the
-    /// empty field then means "unknown", so persist must not delete the item.
-    var serverKeyLoadFailed = false
     @Published public var serverPinnedPort: UInt16 = 0
     /// Optional embedding model (.safetensors directory or alias) attached to the server.
     @Published public var serverEmbeddingModelInput: String = ""

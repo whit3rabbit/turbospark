@@ -1068,7 +1068,7 @@ fn real_model_metal_matches_cpu_transcript() {
         .transcribe(&pcm, Some("en"))
         .expect("cpu transcribe");
     let metal_trans = runner
-        .transcribe_metal(&mut engine, &pcm, Some("en"))
+        .transcribe_metal(&mut engine, &pcm, Some("en"), &|| false)
         .expect("metal transcribe");
     let cpu_text: Vec<&str> = cpu_trans.segments.iter().map(|s| s.text.as_str()).collect();
     let metal_text: Vec<&str> = metal_trans

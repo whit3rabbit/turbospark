@@ -27,6 +27,14 @@ extension AppModel {
             && !isModelDownloadPending(request)
     }
 
+    @discardableResult
+    func enqueueAudioDownload(profile: AudioProfile) -> Bool {
+        guard !profile.identity.repository.isEmpty,
+              Self.isSafeInstallAlias(profile.identity.alias),
+              !isModelAlreadyInstalled(.audio(identity: profile.identity)) else { return false }
+        return enqueueModelDownload(.audio(identity: profile.identity))
+    }
+
     /// Adds one request to the shared FIFO. Main-actor serialization and the
     /// queue-key check make repeated button clicks idempotent.
     @discardableResult
@@ -75,6 +83,101 @@ extension AppModel {
                 repo: repo, alias: alias, file: file, sidecarRepo: sidecarRepo)
         case .image(let alias):
             startImageModelInstall(alias: alias)
+        case .audio(let identity):
+            startAudioModelInstall(identity: identity)
+        }
+    }
+
+    /// The native transfer owns the shared install slot until its blocking call exits.
+    func startAudioModelInstall(
+        identity: AudioProfileIdentity,
+        install: @escaping @Sendable (AudioProfileIdentity, @escaping @Sendable (AudioDownloadProgress) -> Void) throws -> Void = { identity, progress in
+            _ = try AudioCatalog.install(identity, progress: progress)
+        }
+    ) {
+        Self.modelInstallOwner = self
+        installingAlias = identity.alias
+        installEpoch += 1
+        let myEpoch = installEpoch
+        let downloadID = activeModelDownloadID
+        let audioEpoch = audioWorkspace.epoch
+        isInstallingModel = true
+        audioWorkspace.isInstalling = true
+        audioWorkspace.status = String(localized: "Downloading audio model", bundle: .module)
+        installStageText = audioWorkspace.status
+        installProgressFraction = nil
+        installDownloadedBytes = nil
+        installTotalBytes = nil
+        installETAText = nil
+        let startedAt = Date()
+
+        installTask = Task {
+            // Cancel may arrive before the native worker registers its control handle.
+            let cancellationMonitor = Task { @MainActor in
+                while !Task.isCancelled {
+                    guard self.installEpoch == myEpoch else { return }
+                    if self.isCancellingModelInstall || self.modelDownloadsShuttingDown {
+                        TurboSparkCatalog.cancelInstall()
+                    }
+                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                }
+            }
+            defer {
+                cancellationMonitor.cancel()
+                if Self.modelInstallOwner === self { Self.modelInstallOwner = nil }
+                if self.installEpoch == myEpoch {
+                    self.installTask = nil
+                    self.isInstallingModel = false
+                    self.installingAlias = nil
+                    self.installStageText = nil
+                    self.installProgressFraction = nil
+                    self.installDownloadedBytes = nil
+                    self.installTotalBytes = nil
+                    self.installETAText = nil
+                    if self.audioWorkspace.valid(audioEpoch) {
+                        self.audioWorkspace.isInstalling = false
+                        self.audioWorkspace.progress = nil
+                    }
+                }
+                self.startNextModelDownloadIfPossible()
+            }
+            do {
+                try await Task.detached {
+                    try install(identity) { [weak self] progress in
+                        Task { @MainActor in
+                            guard let self, self.installEpoch == myEpoch,
+                                  self.activeModelDownloadID == downloadID,
+                                  !self.modelDownloadsShuttingDown,
+                                  self.audioWorkspace.valid(audioEpoch) else { return }
+                            if self.isCancellingModelInstall {
+                                TurboSparkCatalog.cancelInstall()
+                                return
+                            }
+                            self.recordModelDownloadProgress(done: progress.completedBytes, total: progress.totalBytes)
+                            self.installETAText = self.isInstallPaused ? nil : Self.installETA(
+                                done: self.installDownloadedBytes ?? 0, total: progress.totalBytes,
+                                elapsed: Date().timeIntervalSince(startedAt) - self.installPausedDuration)
+                            self.audioWorkspace.progress = self.installProgressFraction
+                        }
+                    }
+                }.value
+                guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown,
+                      self.audioWorkspace.valid(audioEpoch) else { return }
+                self.setModelDownloadStatus(.completed)
+                self.audioWorkspace.refreshModels()
+                self.audioWorkspace.status = String(localized: "Audio model installed", bundle: .module)
+                self.showToast(String(localized: "Audio model installed", bundle: .module), style: .success)
+            } catch {
+                guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown,
+                      self.audioWorkspace.valid(audioEpoch) else { return }
+                if !self.isCancellingModelInstall {
+                    self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
+                    self.audioWorkspace.error = error.localizedDescription
+                    self.audioWorkspace.status = error.localizedDescription
+                }
+            }
+            guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown else { return }
+            self.finishModelInstallCancellation()
         }
     }
 
@@ -188,6 +291,8 @@ extension AppModel {
             return installed.contains { $0.alias == alias }
         case .image(let alias):
             return imageModels.contains { $0.alias == alias }
+        case .audio(let identity):
+            return audioWorkspace.installedPaths[identity.alias] != nil
         }
     }
 
@@ -200,6 +305,8 @@ extension AppModel {
             installRepo(repo: repo, alias: alias, file: file, sidecarRepo: sidecarRepo)
         case .image(let alias):
             enqueueModelDownload(.image(alias: alias))
+        case .audio(let identity):
+            enqueueModelDownload(.audio(identity: identity))
         }
     }
 

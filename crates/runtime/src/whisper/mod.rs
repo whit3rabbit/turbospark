@@ -330,6 +330,18 @@ impl WhisperRunner {
         pcm: &[f32],
         language: Option<&str>,
     ) -> Result<WhisperTranscription, String> {
+        self.transcribe_cancellable(pcm, language, &|| false)
+    }
+
+    pub fn transcribe_cancellable(
+        &self,
+        pcm: &[f32],
+        language: Option<&str>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<WhisperTranscription, String> {
+        if cancelled() {
+            return Err("audio job cancelled".into());
+        }
         if pcm.is_empty() {
             return Err("pcm is empty".to_string());
         }
@@ -343,7 +355,7 @@ impl WhisperRunner {
         }
         if let Some(engine) = &self.metal {
             let mut engine = engine.lock().expect("whisper Metal engine lock");
-            return self.transcribe_metal(&mut engine, pcm, language);
+            return self.transcribe_metal(&mut engine, pcm, language, cancelled);
         }
         let n_mels = self.config.n_mels;
         let mut segments: Vec<WhisperSegment> = Vec::new();
@@ -351,6 +363,9 @@ impl WhisperRunner {
         let mut window_start = 0usize;
 
         while window_start < pcm.len() {
+            if cancelled() {
+                return Err("audio job cancelled".into());
+            }
             let window_len = (pcm.len() - window_start).min(WHISPER_WINDOW_SAMPLES);
             // Zero-pad a tail window to the full 30 seconds, the way the
             // reference pads short audio.
@@ -379,7 +394,7 @@ impl WhisperRunner {
 
             let prompt = decode::build_prompt(&self.tokens, language_token);
             let decoder = WindowDecoder::new(self, &encoder_out, seq, &prompt)?;
-            let decoded = decoder.decode()?;
+            let decoded = decoder.decode_cancellable(cancelled)?;
 
             // The segment covers the window's exclusive region: from this
             // window's start to the next window's start, or the full real
@@ -432,6 +447,7 @@ impl WhisperRunner {
         engine: &mut metal::WhisperMetalEngine,
         pcm: &[f32],
         language: Option<&str>,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<WhisperTranscription, String> {
         let n_mels = self.config.n_mels;
         let mut segments: Vec<WhisperSegment> = Vec::new();
@@ -439,6 +455,9 @@ impl WhisperRunner {
         let mut window_start = 0usize;
 
         while window_start < pcm.len() {
+            if cancelled() {
+                return Err("audio job cancelled".into());
+            }
             let window_len = (pcm.len() - window_start).min(WHISPER_WINDOW_SAMPLES);
             let mut window = vec![0.0f32; WHISPER_WINDOW_SAMPLES];
             window[..window_len].copy_from_slice(&pcm[window_start..window_start + window_len]);
@@ -490,7 +509,7 @@ impl WhisperRunner {
                 self.tokens,
                 &prompt,
             )?;
-            let decoded = decoder.decode()?;
+            let decoded = decoder.decode_cancellable(cancelled)?;
             if profile {
                 let decode_ms = decode_started.elapsed().as_secs_f64() * 1e3;
                 eprintln!(

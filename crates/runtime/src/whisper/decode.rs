@@ -187,7 +187,13 @@ impl<'a> WindowDecoder<'a> {
     /// Greedy decode until `<|endoftext|>`, the token budget, or the
     /// repetition limit. Returns the emitted text tokens (specials and the
     /// eot excluded).
-    pub fn decode(mut self) -> Result<DecodedWindow, String> {
+    pub fn decode(self) -> Result<DecodedWindow, String> {
+        self.decode_cancellable(&|| false)
+    }
+    pub fn decode_cancellable(
+        mut self,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<DecodedWindow, String> {
         let tokens_cfg = self.runner.tokens;
         let vocab = self.runner.config.vocab_size;
         let budget = self
@@ -198,6 +204,9 @@ impl<'a> WindowDecoder<'a> {
             .min(440);
 
         let stop = loop {
+            if cancelled() {
+                return Err("audio job cancelled".into());
+            }
             if self.emitted.len() >= budget {
                 break StopReason::TokenBudget;
             }

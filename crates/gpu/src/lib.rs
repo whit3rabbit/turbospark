@@ -256,7 +256,7 @@ pub use dequant_q8_0_gemv::{
     Q8_0_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
-pub use device_memory::recommended_max_working_set;
+pub use device_memory::{process_footprint, recommended_max_working_set};
 #[cfg(target_os = "macos")]
 pub use dflash_conv::{
     encode_dflash_copy_rows, encode_dflash_grouped_conv, DFLASH_GROUP_SIZE, DFLASH_TAPS,

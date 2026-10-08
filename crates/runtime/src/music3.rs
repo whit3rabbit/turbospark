@@ -13,6 +13,24 @@ use gpu::{Music3DType, Music3Device, Music3Encoding, Music3Weight};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+type Cancellation = Rc<RefCell<Option<Arc<AtomicBool>>>>;
+fn checkpoint(cancel: &Cancellation) -> Result<()> {
+    if cancel
+        .borrow()
+        .as_ref()
+        .is_some_and(|flag| flag.load(Ordering::Acquire))
+    {
+        Err(SpeechError::Input {
+            why: "audio job cancelled".into(),
+        })
+    } else {
+        Ok(())
+    }
+}
 
 fn device_error(error: gpu::GpuError) -> SpeechError {
     SpeechError::Unsupported {
@@ -30,6 +48,7 @@ type Observer = Rc<RefCell<Option<Box<dyn FnMut(Music3Stage<'_>)>>>>;
 struct Backend {
     device: Music3Device,
     observer: Observer,
+    cancellation: Cancellation,
 }
 fn dtype(d: DType) -> Music3DType {
     match d {
@@ -38,7 +57,7 @@ fn dtype(d: DType) -> Music3DType {
         DType::Bf16 => Music3DType::Bf16,
     }
 }
-struct Weight(Music3Weight);
+struct Weight(Music3Weight, Cancellation);
 impl ComputeBackend for Backend {
     fn load_weight(&self, data: WeightData<'_>) -> Result<Rc<dyn DeviceWeight>> {
         let encoding = match data.encoding {
@@ -66,7 +85,7 @@ impl ComputeBackend for Backend {
                 name: data.name.into(),
                 why: error.to_string(),
             })?;
-        Ok(Rc::new(Weight(weight)))
+        Ok(Rc::new(Weight(weight, self.cancellation.clone())))
     }
     fn attention(
         &self,
@@ -76,6 +95,7 @@ impl ComputeBackend for Backend {
         s: AttentionShape,
         d: DType,
     ) -> Result<Vec<f32>> {
+        checkpoint(&self.cancellation)?;
         self.device
             .attention_typed(
                 q,
@@ -103,6 +123,7 @@ impl ComputeBackend for Backend {
         eps: f32,
         d: DType,
     ) -> Result<Vec<f32>> {
+        checkpoint(&self.cancellation)?;
         self.device
             .rms_norm(x, w, rows, cols, eps, dtype(d))
             .map_err(device_error)
@@ -117,11 +138,13 @@ impl ComputeBackend for Backend {
         eps: f32,
         d: DType,
     ) -> Result<Vec<f32>> {
+        checkpoint(&self.cancellation)?;
         self.device
             .layer_norm(x, w, bias, rows, cols, eps, dtype(d))
             .map_err(device_error)
     }
     fn rope(&self, x: &[f32], s: RopeShape, d: DType) -> Result<Vec<f32>> {
+        checkpoint(&self.cancellation)?;
         self.device
             .rope(
                 x,
@@ -136,11 +159,13 @@ impl ComputeBackend for Backend {
             .map_err(device_error)
     }
     fn normal_from_uniform(&self, x: &[f32], d: DType) -> Result<Vec<f32>> {
+        checkpoint(&self.cancellation)?;
         self.device
             .normal_from_uniform(x, dtype(d))
             .map_err(device_error)
     }
     fn rotary_tables(&self, seq: usize, dim: usize, theta: f32) -> Result<(Vec<f32>, Vec<f32>)> {
+        checkpoint(&self.cancellation)?;
         self.device
             .rotary_tables(seq, dim, theta)
             .map_err(device_error)
@@ -153,6 +178,7 @@ impl ComputeBackend for Backend {
         frames: usize,
         d: DType,
     ) -> Result<Vec<f32>> {
+        checkpoint(&self.cancellation)?;
         self.device
             .snake(x, alpha, channels, frames, dtype(d))
             .map_err(device_error)
@@ -178,11 +204,13 @@ impl DeviceWeight for Weight {
         out: usize,
         d: DType,
     ) -> Result<Vec<f32>> {
+        checkpoint(&self.1)?;
         self.0
             .linear_typed(input, bias, rows, inn, out, dtype(d))
             .map_err(device_error)
     }
     fn embedding(&self, ids: &[i32], width: usize) -> Result<Vec<f32>> {
+        checkpoint(&self.1)?;
         self.0.embedding(ids, width).map_err(device_error)
     }
     fn convolution(
@@ -192,6 +220,7 @@ impl DeviceWeight for Weight {
         s: ConvShape,
         d: DType,
     ) -> Result<Vec<f32>> {
+        checkpoint(&self.1)?;
         self.0
             .convolution_typed(
                 input,
@@ -215,6 +244,7 @@ pub struct Music3Runner {
     model: Model,
     device: Music3Device,
     observer: Observer,
+    cancellation: Cancellation,
 }
 impl Music3Runner {
     pub fn open(path: &Path) -> Result<Self> {
@@ -223,15 +253,18 @@ impl Music3Runner {
     pub fn open_with_precision(path: &Path, precision: Music3Precision) -> Result<Self> {
         let device = Music3Device::new().map_err(device_error)?;
         let observer = Rc::new(RefCell::new(None));
+        let cancellation = Rc::new(RefCell::new(None));
         let backend = Rc::new(Backend {
             device: device.clone(),
             observer: observer.clone(),
+            cancellation: cancellation.clone(),
         });
         let model = Model::load_converted_with_backend_and_precision(path, backend, precision)?;
         Ok(Self {
             model,
             device,
             observer,
+            cancellation,
         })
     }
     pub fn set_trace_observer(&self, observer: impl FnMut(Music3Stage<'_>) + 'static) {
@@ -245,6 +278,23 @@ impl Music3Runner {
     }
     pub fn resident_weight_bytes(&self) -> usize {
         self.device.resident_weight_bytes()
+    }
+    /// Stops at a native compute boundary; the caller retains its permit until return.
+    pub fn generate_text_cancellable(
+        &self,
+        request: &TextGenerateRequest,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<Generation> {
+        *self.cancellation.borrow_mut() = Some(cancel);
+        struct Reset(Cancellation);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                self.0.borrow_mut().take();
+            }
+        }
+        let _reset = Reset(self.cancellation.clone());
+        checkpoint(&self.cancellation)?;
+        self.model.generate_text(request)
     }
     pub fn generate_text(&self, request: &TextGenerateRequest) -> Result<Generation> {
         self.model.generate_text(request)

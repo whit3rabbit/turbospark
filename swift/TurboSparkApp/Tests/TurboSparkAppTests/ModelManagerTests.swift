@@ -357,18 +357,20 @@ final class ModelManagerTests: XCTestCase {
 
     func testAppNavigationSectionAllCases() {
         let sections = AppModel.AppNavigationSection.allCases
-        XCTAssertEqual(sections.count, 6)
+        XCTAssertEqual(sections.count, 7)
         XCTAssertTrue(sections.contains(.chat))
         XCTAssertTrue(sections.contains(.images))
         XCTAssertTrue(sections.contains(.files))
         XCTAssertTrue(sections.contains(.modelManager))
         XCTAssertTrue(sections.contains(.modelHub))
         XCTAssertTrue(sections.contains(.server))
+        XCTAssertTrue(sections.contains(.audio))
 
         XCTAssertEqual(AppModel.AppNavigationSection.images.shortcutKey, "2")
         XCTAssertEqual(AppModel.AppNavigationSection.modelManager.shortcutKey, "4")
         XCTAssertEqual(AppModel.AppNavigationSection.modelHub.shortcutKey, "5")
         XCTAssertEqual(AppModel.AppNavigationSection.server.shortcutKey, "6")
+        XCTAssertEqual(AppModel.AppNavigationSection.audio.shortcutKey, "7")
     }
 
     /// The rail draws its hover tooltip from `title` and `shortcutKey` for

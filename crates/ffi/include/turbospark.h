@@ -1175,6 +1175,41 @@ int32_t ts_daemon_start(const char *args_json);
  */
 int32_t ts_daemon_restart(const char *args_json);
 
+/* Native Audio: opaque worker-owned models, independent cancellable jobs.
+ * All strings returned through char** use ts_string_free. No call may race
+ * close. Session close refuses while jobs exist. Job run blocks until the
+ * native worker stops; cancellation does not release residency early.
+ * Progress/PCM callback memory is borrowed for that callback only.
+ */
+/* External MLX hosts only: never hold this around a Rust generation call,
+ * which acquires the same non-reentrant permit. Success with NULL means busy.
+ * Release once, after all asynchronous device work has completed. */
+typedef struct TsHeavyWorkPermit TsHeavyWorkPermit;
+int ts_heavy_work_try_acquire(TsHeavyWorkPermit **out);
+int ts_heavy_work_release(TsHeavyWorkPermit *permit);
+typedef struct TsAudioSession TsAudioSession;
+typedef struct TsAudioJob TsAudioJob;
+typedef void (*TsAudioCallback)(void *userdata, int kind, const char *json,
+                               size_t json_len, const float *pcm, size_t count);
+int ts_audio_catalog_json(char **out);
+int ts_audio_capabilities_json(char **out);
+int ts_audio_installed_json(char **out);
+int ts_audio_resolve(const char *identity_json, char **out);
+int ts_audio_delete(const char *identity_json);
+int ts_audio_adopt(const char *identity_json, char **out);
+int ts_audio_install(const char *identity_json, TsInstallCallback cb, void *userdata, char **out);
+/* options: task, allow_portable (false), allow_experimental_metal (false),
+   optional expected_family. A mismatch refuses the loaded model. */
+int ts_audio_session_open(const char *path, const char *options_json, TsAudioSession **out);
+int ts_audio_session_close(TsAudioSession *session);
+int ts_audio_session_cancel(const TsAudioSession *session);
+int ts_audio_job_open(const TsAudioSession *session, const char *request_json, TsAudioJob **out);
+int ts_audio_job_append(const TsAudioJob *job, const float *pcm, size_t count);
+int ts_audio_job_run(const TsAudioJob *job, TsAudioCallback cb, void *userdata, char **out);
+int ts_audio_job_cancel(const TsAudioJob *job);
+int ts_audio_job_status_json(const TsAudioJob *job, char **out);
+int ts_audio_job_close(TsAudioJob *job);
+
 #ifdef __cplusplus
 }
 #endif

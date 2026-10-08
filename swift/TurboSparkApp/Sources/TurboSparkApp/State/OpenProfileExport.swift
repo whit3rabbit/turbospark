@@ -18,6 +18,8 @@ public struct ProfileExportSnapshot: Sendable {
     public var settingsFiles: [String: Data]
     public var chatFiles: [MemoryFile]
     public var memoryFiles: [MemoryFile]
+    var audioItems: [AudioLibraryItem] = []
+    var audioPreferences: AudioWorkspacePreferences? = nil
 }
 
 enum OpenProfileExport {
@@ -49,6 +51,7 @@ enum OpenProfileExport {
         .init(id: "chats"),
         .init(id: "generated-images"),
         .init(id: "attachments"),
+        .init(id: "audio"),
         .init(id: "projects"),
         .init(id: "memory"),
     ]
@@ -85,7 +88,7 @@ enum OpenProfileExport {
             compactEncoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
 
             let assetRows = try buildAssetIndex(
-                chats: snapshot.chats, included: included, store: assets)
+                chats: snapshot.chats, audio: snapshot.audioItems, included: included, store: assets)
             let assetPathByReference = Dictionary(
                 uniqueKeysWithValues: assetRows.map { ($0.managedReference, $0.exportedPath) })
 
@@ -112,6 +115,24 @@ enum OpenProfileExport {
                     } else if let sourceURL = file.sourceURL {
                         checksums.append(try zip.add(path: file.archivePath, fileURL: sourceURL))
                     }
+                }
+            }
+            if included.contains("audio") {
+                for original in snapshot.audioItems {
+                    var item = original
+                    item.localModelBookmark = nil
+                    for index in item.clips.indices {
+                        guard let path = assetPathByReference[item.clips[index].assetReference] else {
+                            throw ManagedAssetStore.AssetError.missing
+                        }
+                        item.clips[index].assetReference = "../../" + path
+                    }
+                    checksums.append(try zip.add(
+                        path: "audio/projects/\(item.id.uuidString.lowercased()).json", data: encoder.encode(item)))
+                }
+                if var preferences = snapshot.audioPreferences {
+                    preferences.localModels = [:]
+                    checksums.append(try zip.add(path: "audio/preferences.json", data: encoder.encode(preferences)))
                 }
             }
             if included.contains("projects") {
@@ -170,6 +191,7 @@ enum OpenProfileExport {
 
     private static func buildAssetIndex(
         chats: [AppChat],
+        audio: [AudioLibraryItem],
         included: Set<String>,
         store: ManagedAssetStore
     ) throws -> [AssetIndexRow] {
@@ -197,9 +219,10 @@ enum OpenProfileExport {
         if !included.contains("generated-images") { generated.removeAll() }
         if !included.contains("attachments") { attachments.removeAll() }
         attachments.subtract(generated)
+        let audioReferences = included.contains("audio") ? Set(audio.flatMap(\.assetReferences)).subtracting(generated).subtracting(attachments) : []
         var rows: [AssetIndexRow] = []
         for (category, references) in [
-            ("generated-images", generated), ("attachments", attachments),
+            ("generated-images", generated), ("attachments", attachments), ("audio", audioReferences),
         ] {
             for reference in references.sorted() {
                 guard let descriptor = try store.descriptor(for: reference) else { continue }
@@ -316,6 +339,8 @@ extension AppModel {
             projects: AppProjectArchive(selectedProjectID: selectedProjectID, projects: projects),
             settingsFiles: settingsFiles,
             chatFiles: chatFiles.sorted { $0.archivePath < $1.archivePath },
-            memoryFiles: memoryFiles.sorted { $0.archivePath < $1.archivePath })
+            memoryFiles: memoryFiles.sorted { $0.archivePath < $1.archivePath },
+            audioItems: try AudioLibraryStore().load(),
+            audioPreferences: try AudioLibraryStore().preferences())
     }
 }

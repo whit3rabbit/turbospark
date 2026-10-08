@@ -638,7 +638,10 @@ impl Lexicon {
 
         // Handle possessive forms
         if current_word.ends_with("s'")
-            && self.is_known(&current_word[..current_word.len() - 2], tag)
+            && self.is_known(
+                &format!("{}'s", &current_word[..current_word.len() - 2]),
+                tag,
+            )
         {
             return self.lookup(
                 &format!("{}'s", &current_word[..current_word.len() - 2]),
@@ -647,10 +650,10 @@ impl Lexicon {
                 ctx,
             );
         }
-        if current_word.ends_with("'")
-            && self.is_known(&current_word[..current_word.len() - 1], tag)
-        {
-            return self.lookup(&current_word[..current_word.len() - 1], tag, stress, ctx);
+        if current_word.ends_with("'") {
+            // A plural possessive can need inflection even when its singular
+            // is the only dictionary entry, such as dogs' derived from dog.
+            return self.get_word(&current_word[..current_word.len() - 1], tag, stress, ctx);
         }
 
         // Try stemming

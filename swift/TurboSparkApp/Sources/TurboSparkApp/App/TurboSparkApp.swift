@@ -298,6 +298,17 @@ struct TurboSparkModelCommands: Commands {
                     Text("API", bundle: .module)
                 }
                 .keyboardShortcut("6", modifiers: .command)
+                Button {
+                    model.activeSection = .audio
+                } label: {
+                    Text("Audio", bundle: .module)
+                }
+                .keyboardShortcut("7", modifiers: .command)
+                Menu {
+                    AudioDestinationMenu(model: model)
+                } label: {
+                    Text("Audio tasks", bundle: .module)
+                }
 
                 Divider()
 

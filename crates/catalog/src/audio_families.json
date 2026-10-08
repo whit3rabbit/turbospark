@@ -1,0 +1,739 @@
+[
+  {
+    "family": "stt/canary",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "transcribe_with_options",
+      "decode",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/canary/mod.rs",
+    "evidence": "crates/audio/src/stt/canary/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/cohere_asr",
+    "task": "speech_to_text",
+    "operations": [],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "Detection and explicit refusal only; no runnable decode implementation",
+    "source": "crates/audio/src/stt/cohere_asr/mod.rs",
+    "evidence": "crates/audio/src/stt/cohere_asr/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/fireredasr2",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "transcribe_with_options"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/fireredasr2/mod.rs",
+    "evidence": "crates/audio/src/stt/fireredasr2/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/fun_asr_nano",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/fun_asr_nano/mod.rs",
+    "evidence": "crates/audio/src/stt/fun_asr_nano/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/glmasr",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/glmasr/mod.rs",
+    "evidence": "crates/audio/src/stt/glmasr/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/granite_speech",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/granite_speech/mod.rs",
+    "evidence": "crates/audio/src/stt/granite_speech/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/granite_speech5_ctc",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/granite_speech5_ctc/mod.rs",
+    "evidence": "crates/audio/src/stt/granite_speech5_ctc/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/granite_speech_nar",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/granite_speech_nar/mod.rs",
+    "evidence": "crates/audio/src/stt/granite_speech_nar/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/higgs_audio_3",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "transcribe_with_options",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/higgs_audio_3/mod.rs",
+    "evidence": "crates/audio/src/stt/higgs_audio_3/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/lasr_ctc",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/lasr_ctc/mod.rs",
+    "evidence": "crates/audio/src/stt/lasr_ctc/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/mega_asr",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "transcribe_with_options",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/mega_asr/mod.rs",
+    "evidence": "crates/audio/src/stt/mega_asr/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/mms",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/mms/mod.rs",
+    "evidence": "crates/audio/src/stt/mms/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/moonshine",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "encode",
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/moonshine/mod.rs",
+    "evidence": "crates/audio/src/stt/moonshine/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/moss_music",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/moss_music/mod.rs",
+    "evidence": "crates/audio/src/stt/moss_music/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/moss_transcribe_diarize",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "transcribe_with_options",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/moss_transcribe_diarize/mod.rs",
+    "evidence": "crates/audio/src/stt/moss_transcribe_diarize/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/nemo",
+    "task": "speech_to_text",
+    "operations": [],
+    "backend": "unavailable",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/stt/nemo/mod.rs",
+    "evidence": "crates/audio/src/stt/nemo/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/nemotron_asr",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/nemotron_asr/mod.rs",
+    "evidence": "crates/audio/src/stt/nemotron_asr/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/parakeet",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/parakeet/mod.rs",
+    "evidence": "crates/audio/src/stt/parakeet/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/phonon",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "transcribe_with_options"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/phonon/mod.rs",
+    "evidence": "crates/audio/src/stt/phonon/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/qwen2_audio",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "encode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/qwen2_audio/mod.rs",
+    "evidence": "crates/audio/src/stt/qwen2_audio/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/qwen3_asr",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "transcribe_with_options",
+      "transcribe_with_details",
+      "forward"
+    ],
+    "backend": "experimental_metal_or_portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "Packed Metal text decoder is explicit opt-in; audio encoder remains CPU; portable execution is a separate opt-in",
+    "source": "crates/audio/src/stt/qwen3_asr/mod.rs",
+    "evidence": "crates/audio/src/stt/qwen3_asr/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/qwen3_forced_aligner",
+    "task": "alignment",
+    "operations": [
+      "align",
+      "align_with_language"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/qwen3_forced_aligner/mod.rs",
+    "evidence": "crates/audio/src/stt/qwen3_forced_aligner/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/sensevoice",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "transcribe_with_options"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/sensevoice/mod.rs",
+    "evidence": "crates/audio/src/stt/sensevoice/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/vibevoice_asr",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/vibevoice_asr/mod.rs",
+    "evidence": "crates/audio/src/stt/vibevoice_asr/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/voxtral",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/voxtral/mod.rs",
+    "evidence": "crates/audio/src/stt/voxtral/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/voxtral_realtime",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/voxtral_realtime/mod.rs",
+    "evidence": "crates/audio/src/stt/voxtral_realtime/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/wav2vec",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/wav2vec/mod.rs",
+    "evidence": "crates/audio/src/stt/wav2vec/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/whisper",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe",
+      "encode"
+    ],
+    "backend": "metal",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/audio/src/stt/whisper/mod.rs",
+    "evidence": "crates/audio/src/stt/whisper/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "tts/kokoro",
+    "task": "text_to_speech",
+    "operations": [
+      "synthesize"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "Portable synthesis is callable only with explicit diagnostic opt-in; Metal synthesis is not implemented",
+    "source": "crates/audio/src/tts/kokoro/mod.rs",
+    "evidence": "crates/audio/src/tts/kokoro/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "music/minimax_music3",
+    "task": "music",
+    "operations": [
+      "generate_text"
+    ],
+    "backend": "metal",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/audio/src/music/minimax_music3/mod.rs",
+    "evidence": "crates/audio/src/music/minimax_music3/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "sts/deepfilternet",
+    "task": "enhancement",
+    "operations": [
+      "enhance"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/sts/deepfilternet/mod.rs",
+    "evidence": "crates/audio/src/sts/deepfilternet/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "sts/dialogue_sidon",
+    "task": "separation",
+    "operations": [
+      "extract_features",
+      "normalize_chunk",
+      "conditioning",
+      "sample_latents",
+      "decode_latents"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "Source implementation is in progress; no complete separation entry point, native adapter or checkpoint qualification is available",
+    "source": "crates/audio/src/sts/dialogue_sidon/mod.rs",
+    "evidence": "Concurrent source addition; latest app rebuild encountered compile errors; no fixture, checkpoint or native Metal gate run by this integration"
+  },
+  {
+    "family": "sts/mel_roformer",
+    "task": "separation",
+    "operations": [
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/sts/mel_roformer/mod.rs",
+    "evidence": "crates/audio/src/sts/mel_roformer/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "sts/mossformer2_se",
+    "task": "enhancement",
+    "operations": [
+      "enhance",
+      "enhance_with_mode",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/sts/mossformer2_se/mod.rs",
+    "evidence": "crates/audio/src/sts/mossformer2_se/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "sts/sam_audio",
+    "task": "enhancement",
+    "operations": [
+      "separate",
+      "encode_text",
+      "audio_features",
+      "velocity"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/sts/sam_audio/mod.rs",
+    "evidence": "Concurrent source addition; no checkpoint or fixture gate run by this integration"
+  },
+  {
+    "family": "vad/nemotron_diarization",
+    "task": "diarization",
+    "operations": [
+      "generate_stream",
+      "feed"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/vad/nemotron_diarization/mod.rs",
+    "evidence": "crates/audio/src/vad/nemotron_diarization/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "vad/silero_vad",
+    "task": "speech_detection",
+    "operations": [
+      "detect",
+      "timestamps",
+      "feed"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/vad/silero_vad/mod.rs",
+    "evidence": "crates/audio/src/vad/silero_vad/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "vad/sortformer",
+    "task": "diarization",
+    "operations": [
+      "generate_stream",
+      "feed",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/vad/sortformer/mod.rs",
+    "evidence": "crates/audio/src/vad/sortformer/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/bigvgan",
+    "task": "codec",
+    "operations": [
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/bigvgan/mod.rs",
+    "evidence": "crates/audio/src/codec/bigvgan/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/dacvae",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/dacvae/mod.rs",
+    "evidence": "crates/audio/src/codec/dacvae/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/descript",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode_codes",
+      "compress",
+      "decompress"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/descript/mod.rs",
+    "evidence": "crates/audio/src/codec/descript/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/ecapa_tdnn",
+    "task": "codec",
+    "operations": [
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/ecapa_tdnn/mod.rs",
+    "evidence": "crates/audio/src/codec/ecapa_tdnn/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/encodec",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode_codes"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/encodec/mod.rs",
+    "evidence": "crates/audio/src/codec/encodec/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/fish_s1_dac",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/fish_s1_dac/mod.rs",
+    "evidence": "crates/audio/src/codec/fish_s1_dac/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/higgs_audio",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode",
+      "decode_tokens",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/higgs_audio/mod.rs",
+    "evidence": "crates/audio/src/codec/higgs_audio/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/mimi",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/mimi/mod.rs",
+    "evidence": "crates/audio/src/codec/mimi/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/mimo_audio_tokenizer",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/mimo_audio_tokenizer/mod.rs",
+    "evidence": "crates/audio/src/codec/mimo_audio_tokenizer/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/moss_audio_tokenizer",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/moss_audio_tokenizer/mod.rs",
+    "evidence": "crates/audio/src/codec/moss_audio_tokenizer/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/nemotron_voicechat",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/nemotron_voicechat/mod.rs",
+    "evidence": "crates/audio/src/codec/nemotron_voicechat/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/s3",
+    "task": "codec",
+    "operations": [
+      "quantize",
+      "dequantize"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/s3/mod.rs",
+    "evidence": "crates/audio/src/codec/s3/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/snac",
+    "task": "codec",
+    "operations": [
+      "encode",
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/snac/mod.rs",
+    "evidence": "crates/audio/src/codec/snac/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/stepaudio2",
+    "task": "codec",
+    "operations": [
+      "decode",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/stepaudio2/mod.rs",
+    "evidence": "crates/audio/src/codec/stepaudio2/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "codec/vocos",
+    "task": "codec",
+    "operations": [
+      "decode"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": true,
+    "unavailable_reason": "Codec or numerical component requires a task-specific native adapter",
+    "source": "crates/audio/src/codec/vocos/mod.rs",
+    "evidence": "crates/audio/src/codec/vocos/README.md; historical evidence only, not rerun by capability discovery"
+  }
+]

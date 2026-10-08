@@ -18,6 +18,7 @@ use crate::quant::QuantScheme;
 use crate::{Result, SpeechError};
 
 pub use config::Qwen3Config;
+pub use decoder::compute_selected_logprob;
 
 pub mod checkpoint;
 pub mod config;
@@ -46,6 +47,8 @@ pub const QWEN3_ASR_06B_8BIT: Qwen3AsrProfile = Qwen3AsrProfile {
 pub struct Qwen3AsrTranscription {
     pub text: String,
     pub language: String,
+    /// Explicitly selected or emitted language; absent when legacy extraction falls back.
+    pub reported_language: Option<String>,
     pub token_logprobs: Vec<f32>,
     pub avg_logprob: Option<f32>,
     pub min_logprob: Option<f32>,
@@ -236,6 +239,9 @@ impl Qwen3Asr {
         Ok(Qwen3AsrTranscription {
             text,
             language: detected_lang,
+            reported_language: language
+                .map(str::to_owned)
+                .or_else(|| reported_language(&decoded)),
             token_logprobs,
             avg_logprob,
             min_logprob,
@@ -264,6 +270,23 @@ pub fn extract_language(text: &str) -> (String, String) {
         }
     }
     ("English".to_owned(), text.trim().to_owned())
+}
+
+/// Returns only a language actually present in model metadata, with no default.
+pub fn reported_language(text: &str) -> Option<String> {
+    let (metadata, _) = text.trim().split_once("<asr_text>")?;
+    metadata.lines().find_map(|line| {
+        let line = line.trim();
+        if !line.to_ascii_lowercase().starts_with("language ") {
+            return None;
+        }
+        let language = line["language ".len()..].trim();
+        if language.is_empty() || language.eq_ignore_ascii_case("none") {
+            None
+        } else {
+            Some(language.to_owned())
+        }
+    })
 }
 
 /// Computes average and minimum log probability across a sequence of token log probabilities.

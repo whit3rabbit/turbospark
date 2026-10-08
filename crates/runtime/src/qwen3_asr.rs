@@ -34,30 +34,41 @@ impl Qwen3AsrRunner {
         Ok(Self { model })
     }
 
+    /// Preserve language and token confidence for the additive audio API.
+    pub fn transcribe_with_details(
+        &self,
+        samples: &[f32],
+        language: Option<&str>,
+    ) -> Result<audio::stt::qwen3_asr::Qwen3AsrTranscription, String> {
+        self.model
+            .transcribe_with_details(samples, language, 512)
+            .map_err(|e| e.to_string())
+    }
+
     /// Transcribes mono 16 kHz PCM. Qwen3-ASR has no alignment output, so
     /// the session contract returns one clip-level segment covering the
     /// whole buffer, with no word-level timing claim. `language` is
     /// `None`/`"auto"` for the model's default detection or a supported
-    /// code such as `"en"`; the transcription reports the requested code
-    /// or an empty string when none was requested.
+    /// language name such as `"English"`; the transcription preserves the
+    /// language reported by the decoder.
     pub fn transcribe(
         &self,
         samples: &[f32],
         language: Option<&str>,
     ) -> Result<WhisperTranscription, String> {
         let requested = language.filter(|code| !code.is_empty() && *code != "auto");
-        let text = self
+        let details = self
             .model
-            .transcribe_with_options(samples, requested, 512)
+            .transcribe_with_details(samples, requested, 512)
             .map_err(|error| error.to_string())?;
         Ok(WhisperTranscription {
             segments: vec![WhisperSegment {
                 index: 0,
                 start_seconds: 0.0,
                 end_seconds: samples.len() as f64 / 16_000.0,
-                text,
+                text: details.text,
             }],
-            language: requested.unwrap_or_default().to_string(),
+            language: details.language,
         })
     }
 }

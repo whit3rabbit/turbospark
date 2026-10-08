@@ -19,6 +19,8 @@ pub use crate::vad;
 
 // Re-exports preserving flat module paths for backwards compatibility
 pub use crate::sts::deepfilternet;
+pub use crate::sts::dialogue_sidon;
+pub use crate::sts::mossformer2_se;
 pub use crate::stt::moonshine;
 pub use crate::stt::whisper;
 pub use crate::tts::kokoro;

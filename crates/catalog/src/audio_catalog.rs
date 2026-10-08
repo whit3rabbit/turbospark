@@ -13,6 +13,13 @@ pub enum AudioTask {
     SpeechToText,
     TextToSpeech,
     Music,
+    Enhancement,
+    Separation,
+    Alignment,
+    Diarization,
+    SpeechDetection,
+    Codec,
+    LanguageIdentification,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +75,18 @@ pub struct AudioCapabilities {
     pub voices: Vec<String>,
     pub max_input_seconds: Option<u32>,
     pub supports_lyrics: bool,
+    #[serde(default)]
+    pub operations: Vec<String>,
+    #[serde(default)]
+    pub timing: Option<String>,
+    #[serde(default)]
+    pub backend: String,
+    #[serde(default)]
+    pub cancellation: String,
+    #[serde(default)]
+    pub can_run: bool,
+    #[serde(default)]
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,7 +159,22 @@ struct ManifestProfile {
     alias: String,
     assets: Vec<AudioAsset>,
     source: Option<ManifestSource>,
+    metadata: Option<ProfileMetadata>,
     frontend: Option<AudioFrontendProvenance>,
+}
+/// Explicit profile metadata lets pinned manifests grow without a profile-count switch.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileMetadata {
+    task: AudioTask,
+    family: String,
+    display_name: String,
+    required_files: Vec<String>,
+    sample_rate: u32,
+    channels: u32,
+    languages: Vec<String>,
+    voices: Vec<String>,
+    max_input_seconds: Option<u32>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -164,6 +198,13 @@ impl AudioTask {
             Self::SpeechToText => "speech_to_text",
             Self::TextToSpeech => "text_to_speech",
             Self::Music => "music",
+            Self::Enhancement => "enhancement",
+            Self::Separation => "separation",
+            Self::Alignment => "alignment",
+            Self::Diarization => "diarization",
+            Self::SpeechDetection => "speech_detection",
+            Self::Codec => "codec",
+            Self::LanguageIdentification => "language_identification",
         }
     }
 }
@@ -176,12 +217,20 @@ impl AudioCatalog {
     fn from_manifest(json: &str) -> Result<Self, String> {
         let manifest: AssetManifest =
             serde_json::from_str(json).map_err(|e| format!("invalid audio asset manifest: {e}"))?;
-        if manifest.schema_version != 1 || manifest.profiles.len() != 3 {
-            return Err("audio manifest must have schema 1 and exactly three profiles".into());
+        if manifest.schema_version != 1 || manifest.profiles.is_empty() {
+            return Err("audio manifest must have schema 1 and at least one profile".into());
         }
         let mut entries = Vec::new();
         let mut aliases = std::collections::HashSet::new();
         for row in manifest.profiles {
+            if row.alias.is_empty()
+                || !row
+                    .alias
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            {
+                return Err("audio profile alias must be a plain lowercase catalog name".into());
+            }
             if !aliases.insert(row.alias.clone()) {
                 return Err(format!("duplicate audio alias {:?}", row.alias));
             }
@@ -207,8 +256,8 @@ impl AudioCatalog {
                         AudioTask::SpeechToText,
                         speech.model_id,
                         speech.revision,
-                        speech.format.speech_family().as_str(),
-                        "Whisper Base",
+                        speech.format.speech_family().as_str().to_string(),
+                        "Whisper Base".to_string(),
                         speech.required_files,
                         16000,
                         1,
@@ -217,6 +266,7 @@ impl AudioCatalog {
                             voices: vec![],
                             max_input_seconds: Some(1800),
                             supports_lyrics: false,
+                            ..profile_capabilities("whisper")
                         },
                         AudioReadiness::ImplementedUnqualified,
                     )
@@ -232,8 +282,8 @@ impl AudioCatalog {
                         AudioTask::TextToSpeech,
                         source.repository,
                         source.revision,
-                        "kokoro",
-                        "Kokoro 82M BF16",
+                        "kokoro".to_string(),
+                        "Kokoro 82M BF16".to_string(),
                         vec![
                             "README.md".into(),
                             "config.json".into(),
@@ -247,6 +297,7 @@ impl AudioCatalog {
                             voices: vec!["af_heart".into()],
                             max_input_seconds: None,
                             supports_lyrics: false,
+                            ..profile_capabilities("kokoro")
                         },
                         AudioReadiness::RuntimePending,
                     )
@@ -260,8 +311,8 @@ impl AudioCatalog {
                         AudioTask::Music,
                         music.model_id,
                         music.revision,
-                        "minimax_music3",
-                        "MiniMax Music 3 4-bit",
+                        "minimax_music3".to_string(),
+                        "MiniMax Music 3 4-bit".to_string(),
                         music.required_files,
                         44100,
                         2,
@@ -270,11 +321,46 @@ impl AudioCatalog {
                             voices: vec![],
                             max_input_seconds: Some(360),
                             supports_lyrics: true,
+                            ..profile_capabilities("minimax_music3")
                         },
+                        AudioReadiness::ImplementedUnqualified,
+                    )
+                }
+                alias => {
+                    let metadata = row.metadata.ok_or_else(|| {
+                        format!("audio profile {alias:?} needs explicit metadata")
+                    })?;
+                    let source = row
+                        .source
+                        .ok_or("audio profile needs an immutable source")?;
+                    if metadata.family.is_empty()
+                        || metadata.display_name.is_empty()
+                        || metadata.sample_rate == 0
+                        || !(1..=2).contains(&metadata.channels)
+                        || metadata.required_files.is_empty()
+                    {
+                        return Err("invalid audio profile metadata".into());
+                    }
+                    let mut capabilities = profile_capabilities(&metadata.family);
+                    capabilities.languages = metadata.languages;
+                    capabilities.voices = metadata.voices;
+                    capabilities.max_input_seconds = metadata.max_input_seconds;
+                    // New profiles stay closed until a specific runtime adapter is reviewed.
+                    capabilities.can_run = false;
+                    capabilities.unavailable_reason = Some("This pinned profile has not been integrated and qualified for native execution".into());
+                    (
+                        metadata.task,
+                        source.repository,
+                        source.revision,
+                        metadata.family,
+                        metadata.display_name,
+                        metadata.required_files,
+                        metadata.sample_rate,
+                        metadata.channels,
+                        capabilities,
                         AudioReadiness::RuntimePending,
                     )
                 }
-                alias => return Err(format!("unapproved audio profile {alias:?}")),
             };
             if !immutable_revision(&revision) {
                 return Err(format!("{} does not have an immutable revision", row.alias));
@@ -303,6 +389,7 @@ impl AudioCatalog {
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
+                _ => (weight_bytes.saturating_mul(4),"estimate: runtime admission pending"),
             };
             let identity = AudioProfileIdentity {
                 task,
@@ -311,7 +398,14 @@ impl AudioCatalog {
                 revision,
                 asset_fingerprint: asset_fingerprint(&row.assets, &row.frontend)?,
             };
-            entries.push(AudioProfile {identity,family:family.into(),display_name:display_name.into(),capabilities,pcm_format:AudioPcmFormat {sample_rate:rate,channels,interleaved:true},download_bytes,resident_memory_bytes,resident_memory_evidence:resident_memory_evidence.into(),readiness,evidence:vec!["Immutable source asset plan; runtime/reference and measured resident gates remain unqualified".into()],assets:row.assets,frontend:row.frontend});
+            entries.push(AudioProfile {
+                identity, family, display_name, capabilities,
+                pcm_format: AudioPcmFormat { sample_rate: rate, channels, interleaved: true },
+                download_bytes, resident_memory_bytes,
+                resident_memory_evidence: resident_memory_evidence.into(), readiness,
+                evidence: vec!["Immutable source asset plan; runtime/reference and measured resident gates remain unqualified".into()],
+                assets: row.assets, frontend: row.frontend,
+            });
         }
         Ok(Self { entries })
     }
@@ -709,6 +803,27 @@ fn delete_managed_audio_path(
     Ok(())
 }
 
+fn profile_capabilities(family: &str) -> AudioCapabilities {
+    let (operation,backend,cancellation,can_run,reason,timing) = match family {
+        "whisper" => ("transcribe","metal","decode_step",true,None,Some("window")),
+        "kokoro" => ("synthesize","portable_cpu","sentence",false,Some("Kokoro Metal runtime is pending; CPU reference is available only with explicit portable opt-in"),None),
+        "minimax_music3" => ("generate_music","metal","compute_operation",true,None,None),
+        _ => ("inspect","unavailable","unavailable",false,Some("No native workspace runtime adapter is available"),None),
+    };
+    AudioCapabilities {
+        languages: vec![],
+        voices: vec![],
+        max_input_seconds: None,
+        supports_lyrics: false,
+        operations: vec![operation.into()],
+        timing: timing.map(str::to_string),
+        backend: backend.into(),
+        cancellation: cancellation.into(),
+        can_run,
+        unavailable_reason: reason.map(str::to_string),
+    }
+}
+
 fn unqualified_status(status: &str) -> String {
     match status {
         "unverified"
@@ -779,6 +894,7 @@ fn validate_profile_record(
                     .as_deref()
                     .is_none_or(|variant| variant == "affine-4bit")
         }
+        _ => false,
     };
     if !task_matches {
         return Err(
@@ -1810,4 +1926,55 @@ mod tests {
             .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
             .is_err());
     }
+    #[test]
+    fn partial_catalog_does_not_require_exactly_three_profiles() {
+        let mut json: serde_json::Value = serde_json::from_str(ASSETS).unwrap();
+        json["profiles"].as_array_mut().unwrap().truncate(1);
+        assert_eq!(
+            AudioCatalog::from_manifest(&json.to_string())
+                .unwrap()
+                .entries()
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn discovered_components_do_not_become_runnable_profiles() {
+        let rows = family_capabilities().unwrap();
+        let unique: std::collections::HashSet<_> = rows.iter().map(|row| &row.family).collect();
+        assert_eq!(unique.len(), rows.len());
+        assert!(rows
+            .iter()
+            .filter(|row| row.component)
+            .all(|row| !row.can_run));
+        assert!(rows.iter().filter(|row| !row.can_run).all(|row| row
+            .unavailable_reason
+            .as_ref()
+            .is_some_and(|v| !v.is_empty())));
+        for empty in ["stt/cohere_asr", "stt/nemo"] {
+            assert!(rows
+                .iter()
+                .find(|row| row.family == empty)
+                .unwrap()
+                .operations
+                .is_empty());
+        }
+    }
+}
+
+/// Family discovery is separate from curated downloadable profiles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioFamilyCapability {
+    pub family: String,
+    pub task: AudioTask,
+    pub operations: Vec<String>,
+    pub backend: String,
+    pub can_run: bool,
+    pub component: bool,
+    pub unavailable_reason: Option<String>,
+    pub source: String,
+    pub evidence: String,
+}
+pub fn family_capabilities() -> Result<Vec<AudioFamilyCapability>, String> {
+    serde_json::from_str(include_str!("audio_families.json")).map_err(|e| e.to_string())
 }

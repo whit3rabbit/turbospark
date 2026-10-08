@@ -13,6 +13,7 @@ name = "turbospark_runtime"
 path = "src/lib.rs"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 foundation = { package = "turbospark-core", path = "../core", version = "0.2.0" }
 selection = { package = "turbospark-selection", path = "../selection", version = "0.2.0" }
 tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.2.0" }

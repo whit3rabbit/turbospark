@@ -389,14 +389,11 @@ pub unsafe extern "C" fn ts_server_attach_audio_model(
             None => catalog::audio_catalog::AudioCatalog::embedded()
                 .ok()
                 .and_then(|c| c.get(path).cloned())
-                .map(|profile| match profile.identity.task {
-                    catalog::audio_catalog::AudioTask::SpeechToText => {
-                        turbospark_server::AudioTask::SpeechToText
-                    }
-                    catalog::audio_catalog::AudioTask::TextToSpeech => {
-                        turbospark_server::AudioTask::TextToSpeech
-                    }
-                    catalog::audio_catalog::AudioTask::Music => turbospark_server::AudioTask::Music,
+                .and_then(|profile| match profile.identity.task {
+                    catalog::audio_catalog::AudioTask::SpeechToText => Some(turbospark_server::AudioTask::SpeechToText),
+                    catalog::audio_catalog::AudioTask::TextToSpeech => Some(turbospark_server::AudioTask::TextToSpeech),
+                    catalog::audio_catalog::AudioTask::Music => Some(turbospark_server::AudioTask::Music),
+                    _ => None,
                 })
                 .or_else(|| {
                     if catalog::speech::embedded_entry(path).is_ok() {

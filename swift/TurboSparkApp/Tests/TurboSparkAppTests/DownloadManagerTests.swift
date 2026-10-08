@@ -202,4 +202,54 @@ final class DownloadManagerTests: XCTestCase {
         model.retryModelDownload(failed)
         XCTAssertTrue(model.modelDownloads.isEmpty)
     }
+
+    func testAudioQueueIdentityIncludesTaskAndEveryPinnedField() throws {
+        func request(task: AudioTask = .speechToText, repository: String = "owner/audio",
+                     revision: String = "revision-a", fingerprint: String = "assets-a") -> ModelDownload.Request {
+            .audio(identity: AudioProfileIdentity(task: task, alias: "fixture", repository: repository,
+                                                  revision: revision, assetFingerprint: fingerprint))
+        }
+        let original = request()
+        XCTAssertEqual(original.alias, "fixture")
+        let identities = [original, request(task: .alignment), request(repository: "other/audio"),
+                          request(revision: "revision-b"), request(fingerprint: "assets-b"),
+                          .catalog(alias: "fixture"), .image(alias: "fixture")]
+        XCTAssertEqual(Set(identities.map(\.queueKey)).count, identities.count)
+        let decoded = try JSONDecoder().decode(ModelDownload.Request.self, from: JSONEncoder().encode(original))
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.queueKey, original.queueKey)
+    }
+
+    func testAudioCancellationKeepsSharedWriterUntilNativeInstallDrains() async throws {
+        let model = makeModel()
+        defer { model.stopCronScheduler(); model.audioWorkspace.shutdown() }
+        let identity = AudioProfileIdentity(task: .speechToText, alias: "audio-fixture",
+                                            repository: "owner/audio", revision: "pinned", assetFingerprint: "assets")
+        let entered = expectation(description: "native audio writer entered")
+        let release = DispatchSemaphore(value: 0)
+        var next: [ModelDownload.Request] = []
+        model.modelDownloadStartOverride = { next.append($0) }
+        model.beginModelDownload(.audio(identity: identity))
+        model.startAudioModelInstall(identity: identity) { _, _ in
+            entered.fulfill()
+            release.wait()
+            throw NSError(domain: "cancelled-fixture", code: 1)
+        }
+        let task = model.installTask
+        await fulfillment(of: [entered], timeout: 3)
+        model.cancelInstall()
+        XCTAssertTrue(model.isInstallingModel)
+        XCTAssertTrue(model.audioWorkspace.isInstalling)
+        XCTAssertTrue(AppModel.modelInstallOwner === model)
+        XCTAssertEqual(model.modelDownloads.first?.status, .cancelling)
+        XCTAssertTrue(model.enqueueModelDownload(.image(alias: "next-image")))
+        XCTAssertTrue(next.isEmpty, "an image install must wait for the cancelled audio writer to exit")
+        release.signal()
+        await task?.value
+        XCTAssertFalse(model.audioWorkspace.isInstalling)
+        XCTAssertFalse(model.isInstallingModel)
+        XCTAssertNil(AppModel.modelInstallOwner)
+        XCTAssertEqual(model.modelDownloads.first(where: { $0.request == .audio(identity: identity) })?.status, .cancelled)
+        XCTAssertEqual(next, [.image(alias: "next-image")])
+    }
 }
