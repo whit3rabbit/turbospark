@@ -57,6 +57,299 @@ pub const GRANITE_4_0_1B_SPEECH: GraniteSpeechProfile = GraniteSpeechProfile {
     revision: "bd87ab862416353633ea431fe49b1614003623c5",
 };
 
+/// Pinned profile for the Granite Speech 4.1 2B Plus checkpoint.
+pub const GRANITE_SPEECH_4_1_2B_PLUS: GraniteSpeechProfile = GraniteSpeechProfile {
+    name: "Granite Speech 4.1 2B Plus",
+    repository: "ibm-granite/granite-speech-4.1-2b-plus",
+    revision: "a7593c7d6cf6eb792fffa7b9f33fe640307f59d5",
+};
+
+/// Default system prompt verbatim from the granite-speech-4.1-2b-plus model card.
+pub const PLUS_SYSTEM_PROMPT: &str =
+    "Knowledge Cutoff Date: April 2024.\nToday's Date: December 19, 2024.\nYou are Granite, developed by IBM. You are a helpful AI assistant";
+
+/// Task prompt for plain ASR.
+pub const ASR_TASK_PROMPT: &str = "can you transcribe the speech into a written format?";
+
+/// Task prompt for speaker-attributed transcription.
+pub const SAA_TASK_PROMPT: &str =
+    "Speaker attribution: Transcribe and denote who is speaking by adding [Speaker 1]: and [Speaker 2]: tags before speaker turns.";
+
+/// Task prompt for word-level timestamped transcription.
+pub const TIMESTAMPS_TASK_PROMPT: &str =
+    "Timestamps: Transcribe the speech. After each word, add a timestamp tag showing the end time in centiseconds, e.g. hello [T:45] world [T:82]";
+
+/// Supported Granite Speech transcription tasks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GraniteSpeechTask {
+    #[default]
+    Asr,
+    Saa,
+    Timestamps,
+}
+
+impl GraniteSpeechTask {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Asr => "asr",
+            Self::Saa => "saa",
+            Self::Timestamps => "timestamps",
+        }
+    }
+}
+
+/// A word-level timestamp within a transcription segment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WordTimestamp {
+    pub word: String,
+    pub start: f32,
+    pub end: f32,
+}
+
+/// A parsed segment from a rich Granite Speech transcription (SAA or timestamps).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraniteSpeechSegment {
+    pub speaker_id: Option<usize>,
+    pub text: String,
+    pub start: Option<f32>,
+    pub end: Option<f32>,
+    pub words: Vec<WordTimestamp>,
+}
+
+/// Options for configuring a Granite Speech transcription run.
+#[derive(Debug, Clone, Default)]
+pub struct GraniteSpeechOptions<'a> {
+    pub task: GraniteSpeechTask,
+    pub prompt: Option<&'a str>,
+    pub language: Option<&'a str>,
+    pub system_prompt: Option<&'a str>,
+    pub hotwords: &'a [&'a str],
+    pub word_timestamps: bool,
+    pub max_tokens: usize,
+}
+
+/// Resolves the prompt for a given task and optional prompt or target language.
+pub fn resolve_prompt(
+    task: GraniteSpeechTask,
+    prompt: Option<&str>,
+    language: Option<&str>,
+) -> Result<String> {
+    if let Some(user_prompt) = prompt {
+        if task != GraniteSpeechTask::Asr {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "prompt cannot override task={:?}. Use hotwords for contextual biasing, or task=Asr for custom prompt",
+                    task.as_str()
+                ),
+            });
+        }
+        return Ok(user_prompt.to_owned());
+    }
+    match task {
+        GraniteSpeechTask::Asr => {
+            if let Some(lang) = language {
+                Ok(translation_prompt(lang))
+            } else {
+                Ok(DEFAULT_ASR_PROMPT.to_owned())
+            }
+        }
+        GraniteSpeechTask::Saa => Ok(SAA_TASK_PROMPT.to_owned()),
+        GraniteSpeechTask::Timestamps => Ok(TIMESTAMPS_TASK_PROMPT.to_owned()),
+    }
+}
+
+/// Appends a keyword biasing clause if hotwords are provided.
+pub fn append_keywords(prompt: &str, hotwords: &[&str]) -> String {
+    if hotwords.is_empty() {
+        prompt.to_owned()
+    } else {
+        format!("{prompt} Keywords: {}", hotwords.join(", "))
+    }
+}
+
+/// Parses speaker-attribution tags (`[Speaker N]: {text}`).
+pub fn parse_saa(text: &str) -> Result<Vec<GraniteSpeechSegment>> {
+    let mut tag_positions = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        if text[i..].starts_with("[Speaker ") {
+            let start = i;
+            if let Some(close) = text[i..].find("]:") {
+                let num_str = text[i + "[Speaker ".len()..i + close].trim();
+                if let Ok(spk_id) = num_str.parse::<usize>() {
+                    let end = i + close + "]:".len();
+                    tag_positions.push((start, end, spk_id));
+                    i = end;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    if tag_positions.is_empty() {
+        return Err(SpeechError::Input {
+            why: "Granite speaker-attribution mode produced no [Speaker N]: tags. The model may have fallen back to plain ASR.".into(),
+        });
+    }
+
+    if !text[..tag_positions[0].0].trim().is_empty() {
+        return Err(SpeechError::Input {
+            why:
+                "Granite SAA output begins with unattributed text before the first [Speaker N]: tag"
+                    .into(),
+        });
+    }
+
+    let mut seen_speakers = Vec::new();
+    let mut segments = Vec::new();
+    for (idx, &(_start, end, speaker_id)) in tag_positions.iter().enumerate() {
+        let body_end = if idx + 1 < tag_positions.len() {
+            tag_positions[idx + 1].0
+        } else {
+            text.len()
+        };
+        let body = text[end..body_end].trim();
+        if body.is_empty() {
+            return Err(SpeechError::Input {
+                why: format!("[Speaker {speaker_id}]: has no associated transcript text"),
+            });
+        }
+        if !seen_speakers.contains(&speaker_id) {
+            let expected = seen_speakers.len() + 1;
+            if speaker_id != expected {
+                return Err(SpeechError::Input {
+                    why: format!(
+                        "SAA speakers must be introduced in order: expected Speaker {expected}, got Speaker {speaker_id}"
+                    ),
+                });
+            }
+            seen_speakers.push(speaker_id);
+        }
+        segments.push(GraniteSpeechSegment {
+            speaker_id: Some(speaker_id),
+            text: body.to_owned(),
+            start: None,
+            end: None,
+            words: Vec::new(),
+        });
+    }
+
+    Ok(segments)
+}
+
+fn resolve_timestamp_centiseconds(val: usize, prev: Option<usize>) -> Result<usize> {
+    if val >= 1000 {
+        if let Some(p) = prev {
+            if val < p {
+                return Err(SpeechError::Input {
+                    why: format!(
+                        "Absolute Granite timestamp moved backwards: {val} < {p} centiseconds."
+                    ),
+                });
+            }
+        }
+        return Ok(val);
+    }
+    match prev {
+        None => Ok(val),
+        Some(p) => {
+            let mut current = (p / 1000) * 1000 + val;
+            while current < p {
+                current += 1000;
+            }
+            Ok(current)
+        }
+    }
+}
+
+/// Parses word-timestamp sequences (`{word} [T:{centiseconds}]`).
+pub fn parse_timestamps(text: &str) -> Result<Vec<GraniteSpeechSegment>> {
+    let mut parts = Vec::new();
+    let mut i = 0;
+    let mut last_end = 0;
+    while i < text.len() {
+        if text[i..].starts_with("[T:") {
+            let tag_start = i;
+            if let Some(close) = text[i..].find(']') {
+                let num_str = text[i + "[T:".len()..i + close].trim();
+                if let Ok(cs) = num_str.parse::<usize>() {
+                    let tag_end = i + close + 1;
+                    let token = text[last_end..tag_start].trim();
+                    parts.push((token, cs));
+                    last_end = tag_end;
+                    i = tag_end;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    if parts.is_empty() {
+        return Err(SpeechError::Input {
+            why: "Granite timestamp mode produced no [T:N] tags. The model may have fallen back to plain ASR.".into(),
+        });
+    }
+    let trailing = text[last_end..].trim();
+    if !trailing.is_empty() {
+        return Err(SpeechError::Input {
+            why: format!(
+                "Granite timestamp output ends with content lacking a [T:N] tag: {trailing:?}."
+            ),
+        });
+    }
+
+    let mut words = Vec::new();
+    let mut cursor = 0.0f32;
+    let mut prev_cs: Option<usize> = None;
+
+    for (token, raw_cs) in parts {
+        if token.is_empty() {
+            return Err(SpeechError::Input {
+                why: format!("[T:{raw_cs}] has no preceding word or '_' marker."),
+            });
+        }
+        if token != "_" && token.split_whitespace().count() != 1 {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "Expected exactly one word or '_' before each timestamp tag, got {token:?}."
+                ),
+            });
+        }
+        let cs = resolve_timestamp_centiseconds(raw_cs, prev_cs)?;
+        let end = cs as f32 / 100.0;
+        if token != "_" {
+            words.push(WordTimestamp {
+                word: token.to_owned(),
+                start: cursor,
+                end,
+            });
+        }
+        cursor = end;
+        prev_cs = Some(cs);
+    }
+
+    if words.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let start = words.first().map(|w| w.start);
+    let end = words.last().map(|w| w.end);
+    let full_text = words
+        .iter()
+        .map(|w| w.word.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok(vec![GraniteSpeechSegment {
+        speaker_id: None,
+        text: full_text,
+        start,
+        end,
+        words,
+    }])
+}
+
 /// Upstream `LANGUAGE_CODES`: the language names the translation prompt
 /// expands for the six verified codes.
 pub const LANGUAGE_CODES: [(&str, &str); 6] = [
@@ -122,10 +415,11 @@ pub struct TranscribeStages {
     pub generated_token_ids: Vec<u32>,
 }
 
-/// Transcription result with token counts.
+/// Transcription result with token counts and optional segments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraniteSpeechTranscription {
     pub text: String,
+    pub segments: Vec<GraniteSpeechSegment>,
     pub prompt_tokens: usize,
     pub generation_tokens: usize,
     pub audio_rows: usize,
@@ -209,7 +503,11 @@ impl GraniteSpeech {
     }
 
     pub fn profile(&self) -> GraniteSpeechProfile {
-        GRANITE_4_0_1B_SPEECH
+        if self.config.is_plus() {
+            GRANITE_SPEECH_4_1_2B_PLUS
+        } else {
+            GRANITE_4_0_1B_SPEECH
+        }
     }
 
     pub fn config(&self) -> &GraniteSpeechConfig {
@@ -231,7 +529,69 @@ impl GraniteSpeech {
         prompt: Option<&str>,
         max_tokens: usize,
     ) -> Result<GraniteSpeechTranscription> {
-        self.transcribe_impl(samples, prompt, max_tokens, None)
+        self.transcribe_options(
+            samples,
+            &GraniteSpeechOptions {
+                prompt,
+                max_tokens,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Transcribes with a specific task (ASR, SAA, or Timestamps).
+    pub fn transcribe_with_task(
+        &self,
+        samples: &[f32],
+        task: GraniteSpeechTask,
+        max_tokens: usize,
+    ) -> Result<GraniteSpeechTranscription> {
+        self.transcribe_options(
+            samples,
+            &GraniteSpeechOptions {
+                task,
+                max_tokens,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Transcribes with full options (task, prompt, language, system_prompt, hotwords, word_timestamps).
+    pub fn transcribe_options(
+        &self,
+        samples: &[f32],
+        options: &GraniteSpeechOptions<'_>,
+    ) -> Result<GraniteSpeechTranscription> {
+        let task = if options.word_timestamps && options.task == GraniteSpeechTask::Asr {
+            GraniteSpeechTask::Timestamps
+        } else {
+            options.task
+        };
+        let mut prompt = resolve_prompt(task, options.prompt, options.language)?;
+        if !options.hotwords.is_empty() {
+            prompt = append_keywords(&prompt, options.hotwords);
+        }
+        let system_prompt = if self.config.is_plus() {
+            Some(options.system_prompt.unwrap_or(PLUS_SYSTEM_PROMPT))
+        } else {
+            options.system_prompt
+        };
+        let max_tokens = if options.max_tokens == 0 {
+            256
+        } else {
+            options.max_tokens
+        };
+
+        let mut res =
+            self.transcribe_impl(samples, Some(&prompt), system_prompt, max_tokens, None)?;
+
+        res.segments = match task {
+            GraniteSpeechTask::Asr => Vec::new(),
+            GraniteSpeechTask::Saa => parse_saa(&res.text)?,
+            GraniteSpeechTask::Timestamps => parse_timestamps(&res.text)?,
+        };
+
+        Ok(res)
     }
 
     /// The reference `Model.generate` for ASR: frontend, encoder,
@@ -242,6 +602,7 @@ impl GraniteSpeech {
         &self,
         samples: &[f32],
         prompt: Option<&str>,
+        system_prompt: Option<&str>,
         max_tokens: usize,
         mut stages: Option<&mut TranscribeStages>,
     ) -> Result<GraniteSpeechTranscription> {
@@ -269,7 +630,7 @@ impl GraniteSpeech {
         let encoded = self.encoder.forward(&features, rows)?;
         // The encoder plane is [rows, encoder hidden_dim]; the text hidden
         // size only applies after the projector.
-        let encoder_width = self.config.encoder.hidden_dim;
+        let encoder_width = self.config.encoded_feature_dim();
         let encoder_rows = encoded.len() / encoder_width;
         if let Some(stages) = stages.as_deref_mut() {
             stages.encoder_output = Some(witness(
@@ -294,7 +655,7 @@ impl GraniteSpeech {
             ));
         }
 
-        let prompt_ids = self.prompt_token_ids(audio_rows, prompt)?;
+        let prompt_ids = self.prompt_token_ids(audio_rows, prompt, system_prompt)?;
         let audio_id = self.config.audio_token_index;
         let (prefix_end, _) = prompt_ids
             .iter()
@@ -366,6 +727,7 @@ impl GraniteSpeech {
                 })?;
         Ok(GraniteSpeechTranscription {
             text: decoded,
+            segments: Vec::new(),
             prompt_tokens: rows,
             generation_tokens: generated.len(),
             audio_rows,
@@ -374,29 +736,51 @@ impl GraniteSpeech {
 
     /// Builds the prompt token ids as the reference `_build_prompt` does:
     /// the static chat-template expansion of one user turn whose content is
-    /// one `<|audio|>` per audio embedding followed by the prompt text. The
-    /// pinned GPT2 BPE tokenizer has no post-processor and adds no special
-    /// tokens, so the whole-string encode equals the piecewise encode
-    /// around the `<|audio|>` spans. One divergence needs a second split:
-    /// the shipped tokenizer.json carries a newer pre-tokenizer whose
-    /// punctuation branch absorbs a trailing LF, while the transformers
-    /// reference repairs the pre-tokenizer to the canonical GPT2 pattern at
-    /// load and keeps `?` and LF separate. Encoding the prompt text and the
-    /// LF + ` ASSISTANT:` tail as separate pieces reproduces the reference
-    /// ids with the un-repaired library (pinned by the fixture tests).
-    fn prompt_token_ids(&self, audio_rows: usize, prompt: Option<&str>) -> Result<Vec<i32>> {
+    /// one `<|audio|>` per audio embedding followed by the prompt text.
+    fn prompt_token_ids(
+        &self,
+        audio_rows: usize,
+        prompt: Option<&str>,
+        system_prompt: Option<&str>,
+    ) -> Result<Vec<i32>> {
         let prompt = match prompt {
             Some(text) if !text.trim().is_empty() => text,
             _ => DEFAULT_ASR_PROMPT,
         };
-        let mut ids = encode_ids(&self.tokenizer, "USER: ")?;
-        ids.extend(std::iter::repeat_n(
-            self.config.audio_token_index,
-            audio_rows,
-        ));
-        ids.extend(encode_ids(&self.tokenizer, prompt)?);
-        ids.extend(encode_ids(&self.tokenizer, "\n ASSISTANT:")?);
-        Ok(ids)
+
+        if self.config.is_plus() {
+            let mut ids = Vec::new();
+            if let Some(sys) = system_prompt {
+                ids.extend(encode_ids(
+                    &self.tokenizer,
+                    &format!("<|start_of_role|>system<|end_of_role|>{sys}<|end_of_text|>\n"),
+                )?);
+            }
+            ids.extend(encode_ids(
+                &self.tokenizer,
+                "<|start_of_role|>user<|end_of_role|>",
+            )?);
+            ids.extend(std::iter::repeat_n(
+                self.config.audio_token_index,
+                audio_rows,
+            ));
+            let user_text = format!(" {}", prompt.trim_start());
+            ids.extend(encode_ids(&self.tokenizer, &user_text)?);
+            ids.extend(encode_ids(
+                &self.tokenizer,
+                "<|end_of_text|>\n<|start_of_role|>assistant<|end_of_role|>",
+            )?);
+            Ok(ids)
+        } else {
+            let mut ids = encode_ids(&self.tokenizer, "USER: ")?;
+            ids.extend(std::iter::repeat_n(
+                self.config.audio_token_index,
+                audio_rows,
+            ));
+            ids.extend(encode_ids(&self.tokenizer, prompt)?);
+            ids.extend(encode_ids(&self.tokenizer, "\n ASSISTANT:")?);
+            Ok(ids)
+        }
     }
 }
 
@@ -712,7 +1096,7 @@ mod tests {
         let mut stages = super::TranscribeStages::default();
         let started = std::time::Instant::now();
         let output = model
-            .transcribe_impl(&samples, None, 256, Some(&mut stages))
+            .transcribe_impl(&samples, None, None, 256, Some(&mut stages))
             .expect("checkpoint transcribes");
         let elapsed = started.elapsed().as_secs_f64();
         let fixture = fixture();
@@ -831,5 +1215,96 @@ mod tests {
              {elapsed:.1}s",
             output.prompt_tokens, output.generation_tokens
         );
+    }
+
+    #[test]
+    fn resolve_prompt_supports_all_modes() {
+        assert_eq!(
+            super::resolve_prompt(super::GraniteSpeechTask::Asr, None, None).unwrap(),
+            super::DEFAULT_ASR_PROMPT
+        );
+        assert_eq!(
+            super::resolve_prompt(super::GraniteSpeechTask::Asr, Some("custom prompt"), None)
+                .unwrap(),
+            "custom prompt"
+        );
+        assert_eq!(
+            super::resolve_prompt(super::GraniteSpeechTask::Asr, None, Some("fr")).unwrap(),
+            "Translate the speech to French."
+        );
+        assert_eq!(
+            super::resolve_prompt(super::GraniteSpeechTask::Saa, None, None).unwrap(),
+            super::SAA_TASK_PROMPT
+        );
+        assert_eq!(
+            super::resolve_prompt(super::GraniteSpeechTask::Timestamps, None, None).unwrap(),
+            super::TIMESTAMPS_TASK_PROMPT
+        );
+        assert!(
+            super::resolve_prompt(super::GraniteSpeechTask::Saa, Some("custom"), None).is_err()
+        );
+        assert!(
+            super::resolve_prompt(super::GraniteSpeechTask::Timestamps, Some("custom"), None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn append_keywords_formats_clause() {
+        assert_eq!(super::append_keywords("hello", &[]), "hello");
+        assert_eq!(
+            super::append_keywords("hello", &["ACME", "TurboSpark"]),
+            "hello Keywords: ACME, TurboSpark"
+        );
+    }
+
+    #[test]
+    fn parse_saa_parses_sequential_speakers() {
+        let text =
+            "[Speaker 1]: Hello there! [Speaker 2]: Hi, how are you? [Speaker 1]: Doing well.";
+        let segments = super::parse_saa(text).expect("parses saa");
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].speaker_id, Some(1));
+        assert_eq!(segments[0].text, "Hello there!");
+        assert_eq!(segments[1].speaker_id, Some(2));
+        assert_eq!(segments[1].text, "Hi, how are you?");
+        assert_eq!(segments[2].speaker_id, Some(1));
+        assert_eq!(segments[2].text, "Doing well.");
+    }
+
+    #[test]
+    fn parse_saa_rejects_unattributed_prefix_or_bad_order() {
+        let bad_prefix = "Welcome! [Speaker 1]: Hello";
+        assert!(super::parse_saa(bad_prefix).is_err());
+
+        let bad_order = "[Speaker 2]: Hello";
+        assert!(super::parse_saa(bad_order).is_err());
+
+        let missing_tags = "Just regular transcript without speaker tags";
+        assert!(super::parse_saa(missing_tags).is_err());
+    }
+
+    #[test]
+    fn parse_timestamps_parses_centiseconds_and_handles_wraparound() {
+        let text = "hello [T:45] world [T:82] _ [T:120] again [T:150]";
+        let segments = super::parse_timestamps(text).expect("parses timestamps");
+        assert_eq!(segments.len(), 1);
+        let seg = &segments[0];
+        assert_eq!(seg.text, "hello world again");
+        assert_eq!(seg.words.len(), 3);
+        assert_eq!(seg.words[0].word, "hello");
+        assert_eq!(seg.words[0].start, 0.0);
+        assert_eq!(seg.words[0].end, 0.45);
+        assert_eq!(seg.words[1].word, "world");
+        assert_eq!(seg.words[1].start, 0.45);
+        assert_eq!(seg.words[1].end, 0.82);
+        assert_eq!(seg.words[2].word, "again");
+        assert_eq!(seg.words[2].start, 1.20);
+        assert_eq!(seg.words[2].end, 1.50);
+
+        // Modulo 1000 wraparound
+        let wrap_text = "start [T:990] wrapped [T:10]";
+        let wrap_seg = super::parse_timestamps(wrap_text).expect("parses wrapped");
+        assert_eq!(wrap_seg[0].words[1].end, 10.10);
     }
 }

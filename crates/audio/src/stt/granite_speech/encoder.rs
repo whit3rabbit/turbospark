@@ -534,6 +534,10 @@ impl GraniteSpeechEncoder {
             });
         }
         let mut x = self.input_linear.forward(features, rows);
+        let mut exported = Vec::new();
+        if self.config.cat_hidden_layers.contains(&0) {
+            exported.push(x.clone());
+        }
         for (index, layer) in self.layers.iter().enumerate() {
             x = layer.forward(&x, rows)?;
             // Reference midpoint self-conditioning after layer
@@ -551,8 +555,29 @@ impl GraniteSpeechEncoder {
                     *value += add;
                 }
             }
+            // Export after the mid-layer CTC injection: matches reference where
+            // state exported for that layer carries the injection.
+            if self.config.cat_hidden_layers.contains(&(index + 1)) {
+                exported.push(x.clone());
+            }
         }
-        Ok(x)
+        if !exported.is_empty() {
+            let feature_width = (exported.len() + 1) * self.config.hidden_dim;
+            let mut concatenated = Vec::with_capacity(rows * feature_width);
+            for r in 0..rows {
+                for exp in &exported {
+                    concatenated.extend_from_slice(
+                        &exp[r * self.config.hidden_dim..(r + 1) * self.config.hidden_dim],
+                    );
+                }
+                concatenated.extend_from_slice(
+                    &x[r * self.config.hidden_dim..(r + 1) * self.config.hidden_dim],
+                );
+            }
+            Ok(concatenated)
+        } else {
+            Ok(x)
+        }
     }
 }
 

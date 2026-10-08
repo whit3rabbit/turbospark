@@ -25,6 +25,10 @@ pub struct EncoderConfig {
     pub max_pos_emb: usize,
     pub conv_kernel_size: usize,
     pub conv_expansion_factor: usize,
+    /// 1-based Conformer block indices whose outputs are concatenated onto
+    /// the final layer output (0 = post input_linear). granite-speech-4.1-2b-plus
+    /// uses [3]; None/empty for 4.0 and 4.1.
+    pub cat_hidden_layers: Vec<usize>,
 }
 
 /// QFormer projector geometry (`projector_config`, mirroring the reference
@@ -61,6 +65,7 @@ pub struct TextConfig {
 /// The full model config (`ModelConfig`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraniteSpeechConfig {
+    pub model_type: String,
     pub encoder: EncoderConfig,
     pub projector: ProjectorConfig,
     pub text: TextConfig,
@@ -105,6 +110,16 @@ fn finite(value: &Value, field: &str) -> Result<f32> {
 
 impl EncoderConfig {
     fn from_value(value: &Value) -> Result<Self> {
+        let cat_hidden_layers = value
+            .get("cat_hidden_layers")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_u64)
+                    .map(|n| n as usize)
+                    .collect()
+            })
+            .unwrap_or_default();
         let config = Self {
             input_dim: positive(value, "input_dim")?,
             num_layers: positive(value, "num_layers")?,
@@ -117,7 +132,16 @@ impl EncoderConfig {
             max_pos_emb: positive(value, "max_pos_emb")?,
             conv_kernel_size: positive(value, "conv_kernel_size")?,
             conv_expansion_factor: positive(value, "conv_expansion_factor")?,
+            cat_hidden_layers,
         };
+        for &idx in &config.cat_hidden_layers {
+            if idx > config.num_layers {
+                return Err(bad(
+                    "encoder_config.cat_hidden_layers",
+                    format!("layer index {idx} exceeds num_layers {}", config.num_layers),
+                ));
+            }
+        }
         if config.hidden_dim % config.num_heads != 0
             || config.hidden_dim != config.num_heads * config.dim_head
         {
@@ -252,8 +276,16 @@ impl TextConfig {
 impl GraniteSpeechConfig {
     /// Parses the pinned checkpoint's `config.json`.
     pub fn from_json(root: &Value) -> Result<Self> {
-        if root.get("model_type").and_then(Value::as_str) != Some("granite_speech") {
-            return Err(bad("model_type", "expected granite_speech"));
+        let model_type = root
+            .get("model_type")
+            .and_then(Value::as_str)
+            .unwrap_or("granite_speech")
+            .to_string();
+        if model_type != "granite_speech" && model_type != "granite_speech_plus" {
+            return Err(bad(
+                "model_type",
+                "expected granite_speech or granite_speech_plus",
+            ));
         }
         if root.get("quantization_config").is_some() {
             return Err(SpeechError::Unsupported {
@@ -275,6 +307,16 @@ impl GraniteSpeechConfig {
             root.get("projector_config")
                 .ok_or_else(|| bad("projector_config", "missing from config.json"))?,
         )?;
+        let expected_proj_dim = (1 + encoder.cat_hidden_layers.len()) * encoder.hidden_dim;
+        if projector.encoder_hidden_size != expected_proj_dim {
+            return Err(bad(
+                "projector_config.encoder_hidden_size",
+                format!(
+                    "expected {expected_proj_dim} (matching encoder output), got {}",
+                    projector.encoder_hidden_size
+                ),
+            ));
+        }
         let text = TextConfig::from_value(
             root.get("text_config")
                 .ok_or_else(|| bad("text_config", "missing from config.json"))?,
@@ -302,6 +344,7 @@ impl GraniteSpeechConfig {
             });
         }
         Ok(Self {
+            model_type,
             encoder,
             projector,
             text,
@@ -309,6 +352,19 @@ impl GraniteSpeechConfig {
             downsample_rate,
             window_size,
         })
+    }
+
+    /// Whether this config represents the Granite Speech Plus variant
+    /// (either by explicit model_type or by presence of cat_hidden_layers).
+    pub fn is_plus(&self) -> bool {
+        self.model_type == "granite_speech_plus" || !self.encoder.cat_hidden_layers.is_empty()
+    }
+
+    /// The feature dimension output by the encoder before the projector.
+    /// For standard Granite Speech (no cat_hidden_layers), this is encoder.hidden_dim.
+    /// For Plus (cat_hidden_layers), each exported layer adds encoder.hidden_dim.
+    pub fn encoded_feature_dim(&self) -> usize {
+        (1 + self.encoder.cat_hidden_layers.len()) * self.encoder.hidden_dim
     }
 
     /// Audio placeholder rows per encoder window
@@ -404,6 +460,20 @@ mod tests {
         assert_eq!(config.num_queries(), 3);
         assert_eq!(config.audio_token_count(140), 30);
         assert_eq!(config.audio_token_count(1), 3);
+        assert!(!config.is_plus());
+        assert_eq!(config.encoded_feature_dim(), 1024);
+    }
+
+    #[test]
+    fn parses_granite_speech_plus_config() {
+        let mut root = pinned_root();
+        root["model_type"] = json!("granite_speech_plus");
+        root["encoder_config"]["cat_hidden_layers"] = json!([3]);
+        root["projector_config"]["encoder_hidden_size"] = json!(2048);
+        let config = GraniteSpeechConfig::from_json(&root).unwrap();
+        assert!(config.is_plus());
+        assert_eq!(config.encoder.cat_hidden_layers, vec![3]);
+        assert_eq!(config.encoded_feature_dim(), 2048);
     }
 
     #[test]
