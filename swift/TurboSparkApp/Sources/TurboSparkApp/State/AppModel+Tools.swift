@@ -232,7 +232,8 @@ extension AppModel {
         for project: AppProject?,
         userPrompt: String = "",
         availableTools: TurnAvailableTools? = nil,
-        recalledClaims: [MemoryClaim] = []
+        recalledClaims: [MemoryClaim] = [],
+        nativeToolCalling: Bool = false
     ) -> [(section: SystemPromptSection, content: String)] {
         var sections: [(section: SystemPromptSection, content: String)] = []
 
@@ -318,7 +319,8 @@ extension AppModel {
             contextTokens: contextBudget,
             availableAgents: availableAgents,
             webToolsEnabled: webSearchEnabled,
-            availableTools: availableTools)
+            availableTools: availableTools,
+            nativeToolCalling: nativeToolCalling)
         sections.append((.tools, toolsPrompt))
 
         if !activeMcpServers.isEmpty {
@@ -355,11 +357,12 @@ extension AppModel {
     public func buildSystemPrompt(
         for project: AppProject?, userPrompt: String = "",
         availableTools: TurnAvailableTools? = nil,
-        recalledClaims: [MemoryClaim] = []
+        recalledClaims: [MemoryClaim] = [],
+        nativeToolCalling: Bool = false
     ) -> String {
         buildSystemPromptSections(
             for: project, userPrompt: userPrompt, availableTools: availableTools,
-            recalledClaims: recalledClaims)
+            recalledClaims: recalledClaims, nativeToolCalling: nativeToolCalling)
             .map(\.content)
             .joined(separator: "\n\n")
     }

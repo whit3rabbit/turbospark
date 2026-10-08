@@ -1,10 +1,17 @@
 import Foundation
+import TurboSpark
 
 public enum AudioWorkspacePage: String, Codable, CaseIterable, Identifiable, Sendable {
     case library, record, transcribe, voiceover, music, cleanup, advanced
     public var id: String { rawValue }
     static let destinations: [Self] = [.music, .transcribe, .voiceover]
-    static let tools: [Self] = [.record, .cleanup, .advanced]
+    /// Clean Up only appears when the runtime can open at least one of its
+    /// tasks; otherwise the page would offer controls whose every run is
+    /// refused at session open (`AudioTask.isRunnable`).
+    static var tools: [Self] {
+        let cleanupRuns = AudioTask.enhancement.isRunnable || AudioTask.separation.isRunnable
+        return [.record, .cleanup, .advanced].filter { $0 != .cleanup || cleanupRuns }
+    }
     var title: String {
         switch self {
         case .library: return "Library"

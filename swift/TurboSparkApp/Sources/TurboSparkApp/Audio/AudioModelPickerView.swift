@@ -6,6 +6,8 @@ struct AudioModelPickerView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var controller: AudioWorkspaceController
 
+    @State private var confirmingDelete = false
+
     private var download: ModelDownload? {
         controller.selectedProfile.flatMap { model.audioDownload(for: $0) }
     }
@@ -56,12 +58,57 @@ struct AudioModelPickerView: View {
                     Label { Text("Experimental model", bundle: .module) } icon: { Image(systemName: "flask") }
                         .themedFont(.small).foregroundStyle(.appSecondary)
                 }
+                installManagement(profile)
                 modelDetails(profile)
             } else if !controller.isRefreshingModels && controller.modelCatalogError == nil {
                 Text("Choose a model", bundle: .module).foregroundStyle(.appSecondary)
             }
         }
         .themedFont(.small)
+        .confirmationDialog(
+            Text("Delete Model", bundle: .module), isPresented: $confirmingDelete
+        ) {
+            Button(role: .destructive) { controller.deleteSelectedModel() } label: {
+                Text("Delete Model", bundle: .module)
+            }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+        } message: {
+            if let name = controller.selectedProfile?.displayName { Text(name) }
+        }
+    }
+
+    /// Adopt an install the receipt store does not know yet, delete a managed
+    /// one, and list installs that exist but cannot be used.
+    @ViewBuilder
+    private func installManagement(_ profile: AudioProfile) -> some View {
+        if controller.selectedAdoptable != nil {
+            Button { controller.adoptSelectedModel() } label: {
+                Label { Text("Adopt existing install", bundle: .module) }
+                    icon: { Image(systemName: "checkmark.seal") }
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).controlSize(.large)
+            .disabled(controller.isManagingInstall || controller.isBusy)
+        }
+        if controller.canDeleteSelectedModel {
+            Button(role: .destructive) { confirmingDelete = true } label: {
+                Label { Text("Delete Model", bundle: .module) } icon: { Image(systemName: "trash") }
+            }
+            .buttonStyle(.borderless)
+        }
+        if !controller.incompatibleInstalls.isEmpty {
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(controller.incompatibleInstalls, id: \.record.alias) { row in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.record.alias).themedFont(.small, weight: .medium)
+                            Text(row.error).themedFont(.tiny).foregroundStyle(.appSecondary)
+                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }.padding(.top, 8)
+            } label: { Text("Installs that need attention", bundle: .module) }
+        }
     }
 
     private func modelSummary(_ profile: AudioProfile) -> some View {

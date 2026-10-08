@@ -206,29 +206,22 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         return false
     }
 
-    /// Pure mirror of `model_io::rht_supported` + `model_io::layer_is_quantized`'s
-    /// "does any layer qualify" check, taking the same three facts those
-    /// Rust functions take. Kept in exact correspondence with them --
-    /// `docs/TRUBOQUANT.md` is the doc anchor on the Rust side.
+    /// Whether `kvBits` would be accepted for an install with these facts.
     ///
-    /// `rht_supported`: `fullHeadDim` must be a power of two in 32...512.
-    /// `layer_is_quantized`'s eligibility rule: every layer counts when the
-    /// stack is two layers deep or fewer; otherwise every FULL-ATTENTION
-    /// layer (`mask == 1`) counts except the last one. `false` on any input
-    /// this cannot read -- refusing to default ON is the safe direction
-    /// when the answer is unknown, matching every other `nil`-means-unknown
-    /// field on this descriptor (U3).
+    /// **ANSWERED BY THE ENGINE, NOT RESTATED HERE.** This was a Swift copy of
+    /// `model_io::rht_supported` + `layer_is_quantized`; it now asks
+    /// `TurboSparkCapabilities.kvQuantSupported`, which calls the rule
+    /// `ts_session_open` itself applies, so the two cannot disagree.
+    /// `false` on any input this cannot read -- refusing to default ON is the
+    /// safe direction when the answer is unknown, matching every other
+    /// `nil`-means-unknown field on this descriptor (U3).
     static func kvQuantEligible(
         fullHeadDim: Int?, fullAttentionLayerMask: [Int]?, numLayers: Int?
     ) -> Bool {
-        guard let fullHeadDim, fullHeadDim >= 32, fullHeadDim <= 512,
-              fullHeadDim & (fullHeadDim - 1) == 0
+        guard let fullHeadDim, let numLayers, numLayers > 0, let mask = fullAttentionLayerMask
         else { return false }
-        guard let numLayers, numLayers > 0, let mask = fullAttentionLayerMask
-        else { return false }
-        return mask.enumerated().contains { layer, value in
-            value == 1 && (numLayers <= 2 || layer + 1 < numLayers)
-        }
+        return TurboSparkCapabilities.kvQuantSupported(
+            fullHeadDim: fullHeadDim, layerMask: mask, numLayers: numLayers)
     }
 
     /// The same check for a caller with only a path in hand (no
@@ -250,26 +243,6 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     }
 
     // MARK: - Resolution
-
-    /// Family strings whose decode flow dispatches the steering edit.
-    ///
-    /// **THE EXACT SET FROM `crates/runtime/src/steering.rs:family_dispatches_steering`,
-    /// spelled with `ModelFamily::as_str`'s own strings** (note the camelCase
-    /// in `gptOss` and `museGlimmer`, which is what `installed.json` really
-    /// carries). Matched against the scanner-assigned `family`, never against
-    /// the free-text alias.
-    ///
-    /// The two families deliberately absent: `deepseekV4Flash` has no decode
-    /// flow at all, and `qwen4exp`'s residual is several streams wide, so the
-    /// boundary the edit would sit on is a different shape and has not been
-    /// decided. Requesting steering on either is refused at open BY NAME.
-    private static let steeringFamilies: Set<String> = [
-        "gemma4", "qwen36", "qwen35", "llama", "qwen3moe", "qwen3", "qwen2",
-        "minimax_m2", "gptOss", "museGlimmer", "spark2_5",
-        // The llama flow's dense arm at different shapes; mirrors
-        // `family_dispatches_steering`.
-        "qwen3_vl",
-    ]
 
     /// - Parameter sessionInfo: the OPEN session's own report, when this
     ///   model is the one loaded. Authoritative for the two capability fields
@@ -430,7 +403,7 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         // The engine's answer wins whenever there is one. Before that, the
         // family table below is the estimate.
         let isSteeringReady =
-            sessionInfo?.steering.supported ?? Self.steeringFamilies.contains(family)
+            sessionInfo?.steering.supported ?? TurboSparkCapabilities.family(family).steeringSupported
 
         let hasLinearAttention = lAlias.contains("qwen36") || lFamily == "qwen36" || lFamily == "qwen4exp"
         let supportsChunkedPrefill = lAlias.contains("gemma") || lFamily.contains("gemma") || lFamily.contains("llama") || lAlias.contains("mistral") || lFamily == "qwen4exp"

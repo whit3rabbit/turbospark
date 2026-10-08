@@ -86,13 +86,16 @@ extension AppModel {
         let turnMediaCapability = AppToolMediaCapability(
             supportsImageBearingToolResults: session.info.vision.active,
             maximumPixelCount: session.info.vision.maxPixels)
-        let turnAvailableTools = AppToolCatalog.captureTurnAvailableTools(
-            for: turnProject,
-            globalMcpServers: globalMcpServers,
-            contextTokens: maxContextTokens > 0 ? maxContextTokens : nil,
-            webToolsEnabled: webSearchEnabled,
-            browserAvailability: browserToolAvailability(mediaCapability: turnMediaCapability))
+        let turnAvailableTools = captureTurnTools(project: turnProject, session: session)
         let turnAllowsToolCalls = interactionMode == .projects && turnProject != nil
+        // **THE NATIVE LANE IS DECIDED ONCE PER TURN** (`AppModel+NativeToolCalling`).
+        // When on, the engine renders the offered tools' full definitions and
+        // parses the checkpoint's own call markup; the prompt does not also
+        // describe them. An empty offer is the text lane, so a turn with no
+        // tools reads exactly as it always did.
+        let nativeToolSpecs = nativeToolLane(project: turnProject)
+            ? Self.nativeToolSpecs(from: turnAvailableTools) : []
+        let nativeLane = !nativeToolSpecs.isEmpty
 
         generationEpoch += 1
         let myEpoch = generationEpoch
@@ -131,6 +134,7 @@ extension AppModel {
         // `UInt32` conversion this read used to do by hand (state#35).
         var options = samplingOptions(chatID: chatID)
         options.reasoning = turnReasoning
+        options.tools = nativeToolSpecs
         let requestedNewTokens = options.maxNewTokens
         let continuationEnabled = autoContinuationEnabled
 
@@ -158,7 +162,8 @@ extension AppModel {
                     rawHistoryProjection = self.buildAppendOnlyHistoryProjection(
                         chatIndex: chatIndex, project: turnProject,
                         availableTools: turnAvailableTools,
-                        reasoning: turnReasoning, mediaCapability: turnMediaCapability)
+                        reasoning: turnReasoning, mediaCapability: turnMediaCapability,
+                        nativeToolLane: nativeLane)
                 }
                 // **AUTO-COMPACTION, BEFORE THE FIT.** Near the window the
                 // choice used to be the no-room error below or `fitWindow`'s
@@ -183,13 +188,14 @@ extension AppModel {
                     turnHistoryProjection = self.buildAppendOnlyHistoryProjection(
                         chatIndex: currentChatIndex, project: turnProject,
                         availableTools: turnAvailableTools, reasoning: turnReasoning,
-                        mediaCapability: turnMediaCapability)
+                        mediaCapability: turnMediaCapability, nativeToolLane: nativeLane)
 
                     let compacted = await self.runAutoCompactionIfNeeded(
                         chatID: turnChatID, project: turnProject,
                         rawHistory: turnHistoryProjection.messages,
                         maxContext: session.info.maxContext,
-                        reservedForNew: requestedNewTokens, reasoning: turnReasoning)
+                        reservedForNew: requestedNewTokens, reasoning: turnReasoning,
+                        tools: nativeToolSpecs)
                     if compacted {
                         // The boundary moved; assemble again from it rather
                         // than reuse a history built against the old one.
@@ -200,7 +206,7 @@ extension AppModel {
                         turnHistoryProjection = self.buildAppendOnlyHistoryProjection(
                             chatIndex: refreshed, project: turnProject,
                             availableTools: turnAvailableTools, reasoning: turnReasoning,
-                            mediaCapability: turnMediaCapability)
+                            mediaCapability: turnMediaCapability, nativeToolLane: nativeLane)
                     }
                 }
                 // **THE PROMPT BUDGET IS THE WINDOW MINUS WHAT GENERATION
@@ -218,7 +224,8 @@ extension AppModel {
                     chatID: turnChatID,
                     history: turnHistoryProjection,
                     countTokens: { messages in
-                        try await session.countTokens(messages, reasoning: turnReasoning)
+                        try await session.countTokens(
+                            messages, reasoning: turnReasoning, tools: nativeToolSpecs)
                     },
                     fitWindow: { messages in
                         await self.fitRequestHistoryPreservingInstructionPins(
@@ -227,7 +234,8 @@ extension AppModel {
                             chatID: turnChatID,
                             maxTokens: promptBudget,
                             session: session,
-                            reasoning: turnReasoning)
+                            reasoning: turnReasoning,
+                            tools: nativeToolSpecs)
                     })
                 let fittedInstructionPinBlockIndex: Int?
                 if let projectionIndex = turnHistoryProjection.instructionPinBlockIndex,
@@ -258,6 +266,9 @@ extension AppModel {
                             + "context window.",
                         style: .warning)
                 }
+                // Calls the engine parsed, across every segment of the turn
+                // (a continuation after the output limit is a new request).
+                var nativeToolCalls: [GenerationToolCall] = []
                 let completed = try await AppStreamRecovery.generateUntilComplete(
                     baseMessages: fitted.retained,
                     options: options,
@@ -272,7 +283,8 @@ extension AppModel {
                             chatID: turnChatID,
                             maxTokens: continuationPromptBudget,
                             session: session,
-                            reasoning: turnReasoning)
+                            reasoning: turnReasoning,
+                            tools: nativeToolSpecs)
                         guard continuationFit.hasRoomForGeneration else {
                             throw ContinuationGenerationError.continuationContextDoesNotFit
                         }
@@ -320,9 +332,15 @@ extension AppModel {
                             if let start = self.decodeStartTime {
                                 self.liveElapsedDecodeSeconds = Date().timeIntervalSince(start)
                             }
-                        case .toolCall, .stopped:
-                            // The binding does not offer tools yet. `.stopped`
-                            // precedes the result that ends this segment.
+                        case .toolCall(let call):
+                            // Collected, not acted on here: the call joins the
+                            // ordinary validation and permission path once the
+                            // turn is complete, exactly where a call parsed
+                            // from text would. Its markup never reaches
+                            // `.content`, so the reply stays prose.
+                            nativeToolCalls.append(call)
+                        case .stopped:
+                            // Precedes the result that ends this segment.
                             break
                         case .finished(let result):
                             self.phase = .idle
@@ -371,7 +389,8 @@ extension AppModel {
                     availableTools: turnAvailableTools,
                     forgeGuardrailsEnabled: self.forgeGuardrailsEnabled(for: turnProject),
                     allowsParsing: turnAllowsToolCalls,
-                    projectURL: turnProject?.rootDirectoryURL)
+                    projectURL: turnProject?.rootDirectoryURL,
+                    nativeCalls: nativeToolCalls)
                 if !dispatchGate.refusals.isEmpty {
                     self.showToast(
                         dispatchGate.refusals

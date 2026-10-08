@@ -102,7 +102,9 @@ extension AppModel {
                     role: .user,
                     content: task.content,
                     images: task.imagePaths.map {
-                        ChatImage.path(AppStorageRoot.resolveStoredPath($0))
+                        ChatImage.path(
+                                EngineImageTranscoder.enginePath(
+                                    for: AppStorageRoot.resolveStoredPath($0)))
                     }))
         }
 

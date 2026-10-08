@@ -238326,6 +238326,661 @@
           }
         }
       }
+    },
+    "Adopt existing install": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تبنّي التثبيت الحالي"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vorhandene Installation übernehmen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adopt existing install"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adoptar instalación existente"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adopter l'installation existante"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אמץ את ההתקנה הקיימת"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मौजूदा इंस्टॉल अपनाएं"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ambil alih instalasi yang ada"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adotta installazione esistente"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既存のインストールを引き継ぐ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기존 설치 가져오기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bestaande installatie overnemen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przejmij istniejącą instalację"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adotar instalação existente"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Принять существующую установку"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta över befintlig installation"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mevcut kurulumu devral"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Прийняти наявне встановлення"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiếp nhận bản cài đặt hiện có"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接管现有安装"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接管現有安裝"
+          }
+        }
+      }
+    },
+    "Installs that need attention": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تثبيتات تحتاج إلى انتباه"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installationen, die Aufmerksamkeit brauchen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installs that need attention"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalaciones que requieren atención"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installations nécessitant votre attention"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "התקנות שדורשות תשומת לב"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ध्यान देने योग्य इंस्टॉल"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalasi yang perlu diperhatikan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installazioni che richiedono attenzione"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認が必要なインストール"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "확인이 필요한 설치"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installaties die aandacht nodig hebben"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalacje wymagające uwagi"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalações que precisam de atenção"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Установки, требующие внимания"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installationer som behöver åtgärdas"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dikkat gerektiren kurulumlar"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Встановлення, що потребують уваги"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Các bản cài đặt cần chú ý"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要处理的安装"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要處理的安裝"
+          }
+        }
+      }
+    },
+    "Model deleted": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم حذف النموذج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modell gelöscht"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model deleted"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelo eliminado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modèle supprimé"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המודל נמחק"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल हटा दिया गया"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model dihapus"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modello eliminato"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルを削除しました"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델이 삭제되었습니다"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model verwijderd"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model usunięty"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelo excluído"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель удалена"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modellen har raderats"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model silindi"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель видалено"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đã xóa mô hình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型已删除"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型已刪除"
+          }
+        }
+      }
+    },
+    "Use the model's native tool calling": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استخدام استدعاء الأدوات الأصلي للنموذج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Native Werkzeugaufrufe des Modells verwenden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use the model's native tool calling"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usar la llamada nativa de herramientas del modelo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utiliser l'appel d'outils natif du modèle"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "השתמש בקריאת הכלים המובנית של המודל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल की नेटिव टूल कॉलिंग का उपयोग करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gunakan pemanggilan alat bawaan model"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa la chiamata nativa degli strumenti del modello"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル標準のツール呼び出しを使用"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델의 기본 도구 호출 사용"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Native toolaanroepen van het model gebruiken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Używaj natywnego wywoływania narzędzi modelu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usar a chamada nativa de ferramentas do modelo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать встроенный вызов инструментов модели"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Använd modellens inbyggda verktygsanrop"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelin yerel araç çağırmasını kullan"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Використовувати вбудований виклик інструментів моделі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dùng cách gọi công cụ gốc của mô hình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用模型原生工具调用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用模型原生工具呼叫"
+          }
+        }
+      }
+    },
+    "When the loaded model supports it, tools are rendered by its own chat template and calls are read by the engine, instead of being described in the system prompt. Turn this off to keep the prompt-described format.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "عندما يدعم النموذج المحمّل ذلك، تُعرض الأدوات بواسطة قالب المحادثة الخاص به ويقرأ المحرك الاستدعاءات بدلاً من وصفها في موجّه النظام. أوقف هذا الخيار للإبقاء على التنسيق الموصوف في الموجّه."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wenn das geladene Modell es unterstützt, werden Werkzeuge von dessen eigener Chat-Vorlage dargestellt und Aufrufe vom Motor gelesen, statt im System-Prompt beschrieben zu werden. Deaktivieren, um das im Prompt beschriebene Format beizubehalten."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When the loaded model supports it, tools are rendered by its own chat template and calls are read by the engine, instead of being described in the system prompt. Turn this off to keep the prompt-described format."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Si el modelo cargado lo admite, las herramientas las presenta su propia plantilla de chat y el motor lee las llamadas, en lugar de describirlas en el prompt del sistema. Desactívalo para mantener el formato descrito en el prompt."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Si le modèle chargé le prend en charge, les outils sont présentés par son propre modèle de conversation et les appels sont lus par le moteur, au lieu d'être décrits dans le prompt système. Désactivez cette option pour conserver le format décrit dans le prompt."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "כשהמודל הטעון תומך בכך, הכלים מוצגים על ידי תבנית השיחה שלו והקריאות נקראות על ידי המנוע, במקום להיות מתוארות בהנחיית המערכת. כבה כדי לשמור על הפורמט המתואר בהנחיה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यदि लोड किया गया मॉडल इसे समर्थन देता है, तो टूल उसके अपने चैट टेम्पलेट द्वारा दिखाए जाते हैं और कॉल को सिस्टम प्रॉम्प्ट में वर्णित करने के बजाय इंजन पढ़ता है। प्रॉम्प्ट में वर्णित प्रारूप रखने के लिए इसे बंद करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jika model yang dimuat mendukungnya, alat ditampilkan oleh templat obrolannya sendiri dan panggilan dibaca oleh mesin, bukan dijelaskan dalam prompt sistem. Matikan untuk mempertahankan format yang dijelaskan di prompt."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se il modello caricato lo supporta, gli strumenti vengono resi dal suo modello di chat e le chiamate sono lette dal motore, invece di essere descritte nel prompt di sistema. Disattiva per mantenere il formato descritto nel prompt."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "読み込んだモデルが対応している場合、ツールはモデル自身のチャットテンプレートで提示され、呼び出しはシステムプロンプトでの説明ではなくエンジンが読み取ります。オフにすると、プロンプトで説明する形式を使い続けます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "불러온 모델이 지원하면 도구는 모델 자체의 채팅 템플릿으로 표시되고, 호출은 시스템 프롬프트의 설명 대신 엔진이 읽습니다. 끄면 프롬프트로 설명하는 형식을 유지합니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Als het geladen model dit ondersteunt, worden tools weergegeven door de eigen chatsjabloon en worden aanroepen door de engine gelezen, in plaats van beschreven in de systeemprompt. Zet dit uit om het in de prompt beschreven formaat te behouden."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jeśli załadowany model to obsługuje, narzędzia są prezentowane przez jego własny szablon czatu, a wywołania odczytuje silnik, zamiast opisywać je w prompcie systemowym. Wyłącz, aby zachować format opisany w prompcie."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quando o modelo carregado oferece suporte, as ferramentas são renderizadas pelo próprio modelo de chat e as chamadas são lidas pelo motor, em vez de descritas no prompt do sistema. Desative para manter o formato descrito no prompt."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если загруженная модель это поддерживает, инструменты отображаются её собственным шаблоном чата, а вызовы считывает движок, вместо описания в системном промпте. Отключите, чтобы сохранить формат, описанный в промпте."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Om den laddade modellen stöder det visas verktygen av dess egen chattmall och anrop läses av motorn, i stället för att beskrivas i systemprompten. Stäng av för att behålla formatet som beskrivs i prompten."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yüklü model destekliyorsa araçlar kendi sohbet şablonuyla sunulur ve çağrıları sistem isteminde tarif etmek yerine motor okur. İstemde tarif edilen biçimi korumak için kapatın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Якщо завантажена модель це підтримує, інструменти подаються її власним шаблоном чату, а виклики зчитує рушій, замість опису в системному промпті. Вимкніть, щоб зберегти формат, описаний у промпті."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nếu mô hình đã tải hỗ trợ, các công cụ được hiển thị bằng mẫu trò chuyện của chính nó và lệnh gọi do động cơ đọc, thay vì mô tả trong lời nhắc hệ thống. Tắt để giữ định dạng được mô tả trong lời nhắc."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果已加载的模型支持，工具将由其自带的聊天模板呈现，调用由引擎读取，而不是在系统提示中描述。关闭后将保留在提示中描述的格式。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果已載入的模型支援，工具將由其自帶的聊天範本呈現，呼叫由引擎讀取，而不是在系統提示中描述。關閉後將保留在提示中描述的格式。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

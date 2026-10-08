@@ -88,10 +88,23 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
     /// and objects as what they were. Never persisted and never part of
     /// equality: `arguments` stays the single value everything else reads.
     public var typedArguments: TransientTypedArguments?
+    /// The id this call carries when it came from the engine's native tool
+    /// calling (`GenerationToolCall.id`, made unique per call), and the same id
+    /// the matching `tool` message carries on replay. Nil on every call parsed
+    /// out of text, which covers every archive written before native calling.
+    /// Its presence is also the marker that says HOW the row is replayed:
+    /// native rows go back as an assistant `toolCalls` entry plus an id-matched
+    /// `tool` message, text rows as the text they were.
+    public var nativeCallID: String?
+    /// The model's arguments as the JSON text the engine parsed them to,
+    /// types intact (`arguments` flattens everything to strings). Kept so a
+    /// native call can be replayed to the template as what the model sent.
+    public var nativeArgumentsJSON: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, approvalID, name, arguments, rawInvocation, status, category
         case riskAssessment, autoApprovedBy, createdAt
+        case nativeCallID, nativeArgumentsJSON
     }
 
     public init(
@@ -105,9 +118,13 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         riskAssessment: ToolRiskAssessment? = nil,
         autoApprovedBy: String? = nil,
         createdAt: Date = Date(),
-        typedArguments: TransientTypedArguments? = nil
+        typedArguments: TransientTypedArguments? = nil,
+        nativeCallID: String? = nil,
+        nativeArgumentsJSON: String? = nil
     ) {
         self.typedArguments = typedArguments
+        self.nativeCallID = nativeCallID
+        self.nativeArgumentsJSON = nativeArgumentsJSON
         self.id = id
         self.approvalID = approvalID
         self.name = name
@@ -143,6 +160,8 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         riskAssessment = try container.decodeIfPresent(ToolRiskAssessment.self, forKey: .riskAssessment)
         autoApprovedBy = try container.decodeIfPresent(String.self, forKey: .autoApprovedBy)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        nativeCallID = try container.decodeIfPresent(String.self, forKey: .nativeCallID)
+        nativeArgumentsJSON = try container.decodeIfPresent(String.self, forKey: .nativeArgumentsJSON)
     }
 
     /// Single line summary of call arguments for display.

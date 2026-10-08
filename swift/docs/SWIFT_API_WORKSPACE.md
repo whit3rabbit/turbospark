@@ -8,7 +8,7 @@ controls. Console and traffic tools remain available from the workspace.
 
 Text keeps the existing chat and completion server controls on the TurboSpark
 listener, including `/v1/chat/completions`. Image attaches
-one installed Z-Image or Qwen-Image model to the same TurboSpark listener,
+one installed Z-Image MLX model (the only family the app generates with) to the same TurboSpark listener,
 address, and key. Its test sends `POST /v1/images/generations` through HTTP,
 renders the PNG in memory, and saves to the gallery only on request.
 

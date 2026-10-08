@@ -185,17 +185,39 @@ struct AudioWorkspaceView: View {
     private var operationPicker: some View {
         Picker(selection: Binding(get: { controller.recipe.task }, set: controller.selectTask)) {
             if controller.page == .cleanup {
-                Text("Enhance speech", bundle: .module).tag(AudioTask.enhancement.rawValue)
-                Text("Separate stems", bundle: .module).tag(AudioTask.separation.rawValue)
+                if AudioTask.enhancement.isRunnable {
+                    Text("Enhance speech", bundle: .module).tag(AudioTask.enhancement.rawValue)
+                }
+                if AudioTask.separation.isRunnable {
+                    Text("Separate stems", bundle: .module).tag(AudioTask.separation.rawValue)
+                }
             } else {
-                Text("Transcribe", bundle: .module).tag(AudioTask.speechToText.rawValue)
-                Text("Voiceover", bundle: .module).tag(AudioTask.textToSpeech.rawValue)
-                Text("Music", bundle: .module).tag(AudioTask.music.rawValue)
-                Text("Speech detection", bundle: .module).tag(AudioTask.speechDetection.rawValue)
-                Text("Alignment", bundle: .module).tag(AudioTask.alignment.rawValue)
-                Text("Speaker diarization", bundle: .module).tag(AudioTask.diarization.rawValue)
-                Text("Codec", bundle: .module).tag(AudioTask.codec.rawValue)
-                Text("Language identification", bundle: .module).tag(AudioTask.languageIdentification.rawValue)
+                // Only tasks the runtime can open. Offering the rest produced
+                // a picker whose every choice failed at session open.
+                if AudioTask.speechToText.isRunnable {
+                    Text("Transcribe", bundle: .module).tag(AudioTask.speechToText.rawValue)
+                }
+                if AudioTask.textToSpeech.isRunnable {
+                    Text("Voiceover", bundle: .module).tag(AudioTask.textToSpeech.rawValue)
+                }
+                if AudioTask.music.isRunnable {
+                    Text("Music", bundle: .module).tag(AudioTask.music.rawValue)
+                }
+                if AudioTask.speechDetection.isRunnable {
+                    Text("Speech detection", bundle: .module).tag(AudioTask.speechDetection.rawValue)
+                }
+                if AudioTask.alignment.isRunnable {
+                    Text("Alignment", bundle: .module).tag(AudioTask.alignment.rawValue)
+                }
+                if AudioTask.diarization.isRunnable {
+                    Text("Speaker diarization", bundle: .module).tag(AudioTask.diarization.rawValue)
+                }
+                if AudioTask.codec.isRunnable {
+                    Text("Codec", bundle: .module).tag(AudioTask.codec.rawValue)
+                }
+                if AudioTask.languageIdentification.isRunnable {
+                    Text("Language identification", bundle: .module).tag(AudioTask.languageIdentification.rawValue)
+                }
             }
         } label: { Text("Operation", bundle: .module) }
         .disabled(controller.isBusy)

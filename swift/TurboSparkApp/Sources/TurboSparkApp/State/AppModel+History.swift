@@ -43,18 +43,20 @@ extension AppModel {
 
     func buildAppendOnlyHistory(
         chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil,
-        mediaCapability: AppToolMediaCapability = .textOnly
+        mediaCapability: AppToolMediaCapability = .textOnly,
+        nativeToolLane: Bool = false
     ) -> [ChatMessage] {
         buildAppendOnlyHistoryProjection(
             chatIndex: chatIndex, project: project, availableTools: availableTools,
-            mediaCapability: mediaCapability).messages
+            mediaCapability: mediaCapability, nativeToolLane: nativeToolLane).messages
     }
 
     /// Assembles the same prompt messages while retaining each transcript row's identity.
     func buildAppendOnlyHistoryProjection(
         chatIndex: Int, project: AppProject?, availableTools: TurnAvailableTools? = nil,
         reasoning: GenerateOptions.Reasoning? = nil,
-        mediaCapability: AppToolMediaCapability = .textOnly
+        mediaCapability: AppToolMediaCapability = .textOnly,
+        nativeToolLane: Bool = false
     ) -> AppChatHistoryProjection {
         var history: [ChatMessage] = []
         var sourceRowIndexByMessage: [Int?] = []
@@ -67,7 +69,8 @@ extension AppModel {
             for: project,
             userPrompt: resolvedUserSystemPrompt(chatIndex: chatIndex),
             availableTools: availableTools,
-            recalledClaims: memoryRecall(for: chats[chatIndex].id, project: project))
+            recalledClaims: memoryRecall(for: chats[chatIndex].id, project: project),
+            nativeToolCalling: nativeToolLane)
         if !systemContent.isEmpty {
             append(ChatMessage(role: .system, content: systemContent), sourceRowIndex: nil)
         }
@@ -98,51 +101,15 @@ extension AppModel {
             guard !msg.content.isEmpty || !msg.imagePaths.isEmpty || carriesToolTurn else {
                 continue
             }
-            if !msg.content.isEmpty || !msg.imagePaths.isEmpty {
-                // **AN UNFINISHED TURN IS MARKED AS ONE** (state#65).
-                // `finishCancelled` persists whatever the turn produced
-                // before it stopped, with `stopReason` recording WHY -- and
-                // nothing read it, so a reply truncated by an engine error or
-                // by the user pressing Stop was replayed on the next step as
-                // a completed assistant turn. The model then built on half a
-                // sentence as though it had meant to stop there.
-                let content = Self.truncationNote(for: msg).map { "\(msg.content)\n\n\($0)" }
-                    ?? msg.content
-                append(
-                    ChatMessage(
-                        role: msg.role,
-                        content: content,
-                        images: msg.imagePaths.map {
-                            ChatImage.path(AppStorageRoot.resolveStoredPath($0))
-                        }),
-                    sourceRowIndex: rowIndex)
-            }
-            // **A TOOL RESULT GOES BACK AS `.tool`, NOT AS `.system`**
-            // (state#32). `ChatMessage.Role.tool` exists and the FFI maps it.
-            // A mid-history `.system` message is REFUSED outright by the
-            // Gemma, ChatML and DeepSeek fallback renderers ("system message
-            // must be first") and by several real Jinja templates that
-            // require alternating roles -- and `fit_window` prices a failing
-            // render at `u64::MAX`, so it drops turns until the history stops
-            // failing rather than reporting anything. The run silently loses
-            // its own history, or errors at step 2 with a message naming
-            // neither cause.
-            for res in msg.toolResults {
-                let tag = res.isError ? "tool_error" : "tool_response"
-                let media = AppToolMediaHistoryAdapter.project(
-                    res.mediaReferences,
-                    capability: mediaCapability,
-                    materialize: { try ManagedAssetStore.shared.materializedURL(for: $0) })
-                var resultText = res.modelOutput
-                if media.omittedReferenceCount > 0 {
-                    resultText += "\n[The image result is unavailable to this model.]"
-                }
-                append(
-                    ChatMessage(
-                        role: .tool,
-                        content: "<\(tag)>\n\(resultText)\n</\(tag)>",
-                        images: media.images),
-                    sourceRowIndex: rowIndex)
+            // The row's messages come from one helper shared with the token
+            // estimate (`historyMessages`), so the prompt and the meter cannot
+            // describe different conversations. The comments on why a tool
+            // result goes back as `.tool` and why an unfinished turn is marked
+            // live there with the code they explain.
+            for message in Self.historyMessages(
+                for: msg, nativeLane: nativeToolLane, mediaCapability: mediaCapability)
+            {
+                append(message, sourceRowIndex: rowIndex)
             }
         }
         // **SYSTEM REMINDERS ARE ASSEMBLY-TIME, NEVER STORED** (see
@@ -215,16 +182,27 @@ extension AppModel {
     /// `buildAppendOnlyHistory` were already kept on one path: the meter and
     /// the breakdown cannot be allowed to describe different conversations.
     func buildEstimateParts() -> (
-        history: [ChatMessage], pieces: [ContextUsagePiece], attachmentTokens: Int
+        history: [ChatMessage], pieces: [ContextUsagePiece], attachmentTokens: Int,
+        tools: [ToolSpec]
     ) {
         var history: [ChatMessage] = []
         var pieces: [ContextUsagePiece] = []
+        let estimateProject = turnProject(chatID: selectedChatID)
+        // The same decision the turn makes, from the same capture, so the
+        // meter prices the tools the turn will actually send.
+        let nativeSpecs: [ToolSpec] = {
+            guard let session, nativeToolLane(project: estimateProject) else { return [] }
+            return Self.nativeToolSpecs(
+                from: captureTurnTools(project: estimateProject, session: session))
+        }()
+        let nativeLane = !nativeSpecs.isEmpty
         let sections = buildSystemPromptSections(
-            for: turnProject(chatID: selectedChatID),
+            for: estimateProject,
             // BY CHAT rather than by index: `selectedChat` falls back to the
             // transient draft, which is not in `chats` and has no index.
             userPrompt: resolvedUserSystemPrompt(chat: selectedChat),
-            recalledClaims: memoryRecall(for: selectedChatID, project: turnProject(chatID: selectedChatID)))
+            recalledClaims: memoryRecall(for: selectedChatID, project: estimateProject),
+            nativeToolCalling: nativeLane)
         let systemContent = sections.map(\.content).joined(separator: "\n\n")
         if !systemContent.isEmpty {
             history.append(ChatMessage(role: .system, content: systemContent))
@@ -257,6 +235,18 @@ extension AppModel {
         if !toolsPiece.isEmpty {
             pieces.append(ContextUsagePiece(kind: .tools, label: "Tools & skills", content: toolsPiece))
         }
+        if nativeLane,
+            let definitions = try? JSONEncoder().encode(nativeSpecs)
+        {
+            // Rendered into the prompt by the checkpoint's template rather than
+            // written by the app, so this is the definitions' JSON as the best
+            // available stand-in for that slice; the exact total comes from the
+            // engine's tool-aware count.
+            pieces.append(
+                ContextUsagePiece(
+                    kind: .tools, label: "Tool definitions",
+                    content: String(decoding: definitions, as: UTF8.self)))
+        }
         let mcpPiece = joined([.mcpServers])
         if !mcpPiece.isEmpty {
             pieces.append(ContextUsagePiece(kind: .tools, label: "MCP servers", content: mcpPiece))
@@ -282,33 +272,14 @@ extension AppModel {
             if rowIndex < compaction.boundary { continue }
             let carriesToolTurn = !msg.toolResults.isEmpty || !msg.toolCalls.isEmpty
             guard !msg.content.isEmpty || !msg.imagePaths.isEmpty || carriesToolTurn else { continue }
-            if !msg.content.isEmpty || !msg.imagePaths.isEmpty {
-                let content = Self.truncationNote(for: msg).map { "\(msg.content)\n\n\($0)" }
-                    ?? msg.content
-                history.append(
-                    ChatMessage(
-                        role: msg.role,
-                        content: content,
-                        images: msg.imagePaths.map {
-                            ChatImage.path(AppStorageRoot.resolveStoredPath($0))
-                        }))
-            }
             if !msg.content.isEmpty {
                 conversationParts.append(msg.content)
             }
-            for result in msg.toolResults {
-                let tag = result.isError ? "tool_error" : "tool_response"
-                let media = AppToolMediaHistoryAdapter.project(
-                    result.mediaReferences,
-                    capability: contextMediaCapability,
-                    materialize: { try ManagedAssetStore.shared.materializedURL(for: $0) })
-                var resultText = result.modelOutput
-                if media.omittedReferenceCount > 0 {
-                    resultText += "\n[The image result is unavailable to this model.]"
-                }
-                let content = "<\(tag)>\n\(resultText)\n</\(tag)>"
-                history.append(ChatMessage(role: .tool, content: content, images: media.images))
-                conversationParts.append(content)
+            for message in Self.historyMessages(
+                for: msg, nativeLane: nativeLane, mediaCapability: contextMediaCapability)
+            {
+                history.append(message)
+                if message.role == .tool { conversationParts.append(message.content) }
             }
         }
         let conversationPiece = conversationParts.joined(separator: "\n\n")
@@ -341,7 +312,7 @@ extension AppModel {
         // is all a render emits), so they are approximated at the same
         // characters-per-token the headline has always used for them.
         let attachmentCharacters = promptAttachments.reduce(0) { $0 + $1.characterCount }
-        return (history, pieces, attachmentCharacters / 4)
+        return (history, pieces, attachmentCharacters / 4, nativeSpecs)
     }
 
     public func updateTokenEstimate() {
@@ -368,7 +339,9 @@ extension AppModel {
             // memory search, which grew input lag with conversation length.
             let parts = self.buildEstimateParts()
             var exact: Int?
-            if let count = try? await session.countTokens(parts.history, reasoning: self.reasoning) {
+            if let count = try? await session.countTokens(
+                parts.history, reasoning: self.reasoning, tools: parts.tools)
+            {
                 if !Task.isCancelled {
                     self.estimatedPromptTokens = count
                 }

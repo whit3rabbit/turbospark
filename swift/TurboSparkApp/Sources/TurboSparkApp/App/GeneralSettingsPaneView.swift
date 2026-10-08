@@ -281,6 +281,17 @@ struct GeneralSettingsPaneView: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
 
+            Toggle(isOn: controls.nativeToolCallingEnabled) {
+                Text("Use the model's native tool calling", bundle: .module)
+            }
+            .settingsControl("Use the model's native tool calling", pane: .general, timing: .nextTurn)
+            Text(
+                "When the loaded model supports it, tools are rendered by its own chat template and calls are read by the engine, instead of being described in the system prompt. Turn this off to keep the prompt-described format.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+
             Toggle(isOn: controls.instructionPinningEnabled) {
                 Text("Include pinned instructions in model requests", bundle: .module)
             }
@@ -350,6 +361,7 @@ struct GeneralSettingsPaneView: View {
 struct ChatRuntimeSettingsBindings {
     let microcompactEnabled: Binding<Bool>
     let autoContinuationEnabled: Binding<Bool>
+    let nativeToolCallingEnabled: Binding<Bool>
     let instructionPinningEnabled: Binding<Bool>
     let microcompactMinimumSavingsTokens: Binding<Int>
     let instructionPinTokenCeiling: Binding<Int>
@@ -366,6 +378,13 @@ struct ChatRuntimeSettingsBindings {
             get: { model.autoContinuationEnabled },
             set: { value in
                 model.autoContinuationEnabled = value
+                model.persistSettingsDebounced()
+            }
+        )
+        nativeToolCallingEnabled = Binding(
+            get: { model.nativeToolCallingEnabled },
+            set: { value in
+                model.nativeToolCallingEnabled = value
                 model.persistSettingsDebounced()
             }
         )

@@ -108,7 +108,8 @@ extension AppModel {
 
     func fitRequestHistoryPreservingInstructionPins(
         _ messages: [ChatMessage], injectedBlockIndex: Int?, chatID: UUID, maxTokens: UInt32,
-        session: TurboSparkSession, reasoning: GenerateOptions.Reasoning
+        session: TurboSparkSession, reasoning: GenerateOptions.Reasoning,
+        tools: [ToolSpec] = []
     ) async -> AppChatInstructionPin.FitOutcome {
         let compaction = compactionState(chatID: chatID)
         let outcome = cachedInstructionPinningOutcome(
@@ -123,13 +124,15 @@ extension AppModel {
             injectedBlockIndex: injectedBlockIndex,
             pinnedBlock: pinnedBlock,
             maximumTokens: Int(maxTokens),
+            // Both measure the offered tool definitions too (empty on the text
+            // lane): they sit in the same prompt as the messages.
             countTokens: { request in
-                try? await session.countTokens(request, reasoning: reasoning)
+                try? await session.countTokens(request, reasoning: reasoning, tools: tools)
             },
             fitWindow: { request, limit in
                 guard let limit = UInt32(exactly: limit),
                     let fitted = try? await session.fitWindow(
-                        request, maxTokens: limit, reasoning: reasoning)
+                        request, maxTokens: limit, reasoning: reasoning, tools: tools)
                 else { return nil }
                 return AppChatInstructionPin.FitCandidate(
                     retained: fitted.retained,

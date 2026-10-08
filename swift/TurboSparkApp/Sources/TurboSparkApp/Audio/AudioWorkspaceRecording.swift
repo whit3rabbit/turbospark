@@ -241,7 +241,7 @@ extension AudioWorkspaceController {
                 self.transcriptBacklog = max(0, Int((self.draftRequestedThrough - through) / 15))
             } catch {
                 guard self.valid(token) else { return }
-                if !Task.isCancelled && error.localizedDescription.contains("audio device is busy") {
+                if !Task.isCancelled && Self.isDeviceBusy(error) {
                     // Capture keeps writing while another workload owns the device.
                     self.nextDraftAttemptAt = Date().addingTimeInterval(2)
                     self.status = error.localizedDescription
@@ -275,7 +275,7 @@ extension AudioWorkspaceController {
                 self.transcriptBacklog = 0
             } catch {
                 guard self.valid(token) else { return }
-                if !Task.isCancelled && error.localizedDescription.contains("audio device is busy") {
+                if !Task.isCancelled && Self.isDeviceBusy(error) {
                     self.pendingRefinementIDs.insert(id, at: 0)
                     self.nextDraftAttemptAt = Date().addingTimeInterval(2)
                     self.status = error.localizedDescription

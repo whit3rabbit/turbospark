@@ -325,6 +325,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var microcompactEnabled: Bool
     /// Whether output-limit responses may continue automatically.
     public var autoContinuationEnabled: Bool
+    /// Offer tools through the engine's native tool calling when the loaded
+    /// checkpoint supports it. Off keeps the prompt-described text lane.
+    public var nativeToolCallingEnabled: Bool
     /// Whether pinned standing instructions may be injected into requests.
     public var instructionPinningEnabled: Bool
     /// Minimum token savings required before microcompact changes a request.
@@ -482,6 +485,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         compactionKeepRecentTurns: Int = 2,
         microcompactEnabled: Bool = true,
         autoContinuationEnabled: Bool = true,
+        nativeToolCallingEnabled: Bool = true,
         instructionPinningEnabled: Bool = true,
         microcompactMinimumSavingsTokens: Int = 512,
         instructionPinTokenCeiling: Int = 512,
@@ -561,6 +565,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.compactionKeepRecentTurns = compactionKeepRecentTurns
         self.microcompactEnabled = microcompactEnabled
         self.autoContinuationEnabled = autoContinuationEnabled
+        self.nativeToolCallingEnabled = nativeToolCallingEnabled
         self.instructionPinningEnabled = instructionPinningEnabled
         self.microcompactMinimumSavingsTokens = microcompactMinimumSavingsTokens
         self.instructionPinTokenCeiling = instructionPinTokenCeiling
@@ -699,6 +704,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .microcompactEnabled, fallback: true)
         self.autoContinuationEnabled = c.decodeLenient(
             Bool.self, forKey: .autoContinuationEnabled, fallback: true)
+        self.nativeToolCallingEnabled = c.decodeLenient(
+            Bool.self, forKey: .nativeToolCallingEnabled, fallback: true)
         self.instructionPinningEnabled = c.decodeLenient(
             Bool.self, forKey: .instructionPinningEnabled, fallback: true)
         self.microcompactMinimumSavingsTokens = c.decodeLenient(

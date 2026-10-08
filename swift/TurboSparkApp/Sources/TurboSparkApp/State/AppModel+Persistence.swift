@@ -112,6 +112,7 @@ extension AppModel {
             settings.compactionKeepRecentTurns)
         self.microcompactEnabled = settings.microcompactEnabled
         self.autoContinuationEnabled = settings.autoContinuationEnabled
+        self.nativeToolCallingEnabled = settings.nativeToolCallingEnabled
         self.instructionPinningEnabled = settings.instructionPinningEnabled
         self.microcompactMinimumSavingsTokens = settings.microcompactMinimumSavingsTokens
         self.instructionPinTokenCeiling = settings.instructionPinTokenCeiling
@@ -246,6 +247,7 @@ extension AppModel {
             compactionKeepRecentTurns: compactionKeepRecentTurns,
             microcompactEnabled: microcompactEnabled,
             autoContinuationEnabled: autoContinuationEnabled,
+            nativeToolCallingEnabled: nativeToolCallingEnabled,
             instructionPinningEnabled: instructionPinningEnabled,
             microcompactMinimumSavingsTokens: microcompactMinimumSavingsTokens,
             instructionPinTokenCeiling: instructionPinTokenCeiling,

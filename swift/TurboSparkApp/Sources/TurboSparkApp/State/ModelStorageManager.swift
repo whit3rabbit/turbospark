@@ -71,7 +71,8 @@ public enum ModelStorageManager {
         (defaultTurboSparkStoreRoot as NSString).appendingPathComponent("models/image")
     }
 
-    /// Reserved storage directory for future audio transcription models.
+    /// Storage directory for managed audio models (speech-to-text, text-to-speech,
+    /// music), installed and verified through `AudioCatalog`.
     public static var defaultTurboSparkAudioModelsDirectory: String {
         (defaultTurboSparkStoreRoot as NSString).appendingPathComponent("models/audio")
     }

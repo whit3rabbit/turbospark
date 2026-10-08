@@ -1,4 +1,5 @@
 import Foundation
+import TurboSpark
 
 enum ToolCallStreamState {
     case completed
@@ -79,13 +80,23 @@ enum ToolCallDispatchGate {
         availableTools: TurnAvailableTools,
         forgeGuardrailsEnabled: Bool,
         allowsParsing: Bool = true,
-        projectURL: URL? = nil
+        projectURL: URL? = nil,
+        nativeCalls: [GenerationToolCall] = []
     ) -> ToolCallDispatchGateResult {
         guard allowsParsing else {
             return ToolCallDispatchGateResult(
                 dispatchableCalls: [], refusals: [], preservedContent: content, retryNudge: nil)
         }
-        let candidates = ToolCallParser.parseCandidates(from: content, projectURL: projectURL)
+        // **WHEN THE ENGINE PARSED CALLS, THOSE ARE THE CANDIDATES, AND THE
+        // REPLY TEXT IS PROSE.** The splitter takes the call markup out of the
+        // reply, so there is nothing left to read, and running the text arms
+        // (or the Forge inspector, which looks for calls in prose) over it
+        // could only find a second copy of something already handled. The
+        // validation below is unchanged and applies to both.
+        let usesNativeCalls = !nativeCalls.isEmpty
+        let candidates = usesNativeCalls
+            ? ToolCallParser.nativeCandidates(from: nativeCalls, projectURL: projectURL)
+            : ToolCallParser.parseCandidates(from: content, projectURL: projectURL)
         guard streamState == .completed else {
             return ToolCallDispatchGateResult(
                 dispatchableCalls: [], refusals: [], preservedContent: content, retryNudge: nil)
@@ -122,7 +133,7 @@ enum ToolCallDispatchGate {
 
         let preservedContent = removing(refusedRanges, from: content)
 
-        guard forgeGuardrailsEnabled else {
+        guard forgeGuardrailsEnabled, !usesNativeCalls else {
             return ToolCallDispatchGateResult(
                 dispatchableCalls: dispatchableCalls,
                 refusals: refusals,

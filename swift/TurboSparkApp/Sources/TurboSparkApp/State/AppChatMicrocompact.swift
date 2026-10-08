@@ -42,7 +42,7 @@ enum AppChatMicrocompact {
             guard history.messages[messageIndex].role == .tool,
                   let sourceRowIndex = history.sourceRowIndexByMessage[messageIndex],
                   sourceRowIndex < cutoff,
-                  let compactedContent = compactedToolContent(history.messages[messageIndex].content)
+                  let compactedContent = compactedToolContent(history.messages[messageIndex])
             else {
                 continue
             }
@@ -81,7 +81,20 @@ enum AppChatMicrocompact {
             estimatedTokensSaved: savings)
     }
 
-    private static func compactedToolContent(_ content: String) -> String? {
+    /// What an old tool result is replaced with, or nil to leave it.
+    ///
+    /// **A NATIVE RESULT IS SENT BARE.** The checkpoint's template wraps a
+    /// tool message itself, so the app does not add `<tool_response>`; the
+    /// tag test below would never match one, and old native results would
+    /// stay in the prompt forever. What marks them is the call id they carry.
+    /// The id, the tool name and the message's role are untouched either way:
+    /// only the body is replaced, so the template can still pair the (now
+    /// short) result with the call that produced it.
+    private static func compactedToolContent(_ message: ChatMessage) -> String? {
+        if message.toolCallId != nil {
+            return message.content == placeholder ? nil : placeholder
+        }
+        let content = message.content
         for tag in ["tool_response", "tool_error"] {
             let opening = "<\(tag)>\n"
             let closing = "\n</\(tag)>"

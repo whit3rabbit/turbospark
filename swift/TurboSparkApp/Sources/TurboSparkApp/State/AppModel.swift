@@ -262,6 +262,9 @@ public final class AppModel: ObservableObject {
     @Published public var microcompactEnabled: Bool = true
     /// Whether output-limit responses may continue automatically.
     @Published public var autoContinuationEnabled: Bool = true
+    /// Offer tools through the engine's native tool calling when the loaded
+    /// checkpoint supports it, instead of describing them in the prompt.
+    @Published public var nativeToolCallingEnabled: Bool = true
     /// Whether pinned standing instructions may be injected into requests.
     @Published public var instructionPinningEnabled: Bool = true
     /// Minimum token savings required before microcompact changes a request.

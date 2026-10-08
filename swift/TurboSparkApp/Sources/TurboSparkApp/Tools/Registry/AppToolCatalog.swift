@@ -290,30 +290,36 @@ public enum AppToolCatalog {
         availableAgents: [(name: String, whenToUse: String)] = [],
         webToolsEnabled: Bool = true,
         availableTools: TurnAvailableTools? = nil,
-        browserAvailability: BrowserToolAvailability = .disabled
+        browserAvailability: BrowserToolAvailability = .disabled,
+        nativeToolCalling: Bool = false
     ) -> String {
         let active = availableTools?.promptDefinitions ?? tools(
             for: agentType, projectURL: projectURL, contextTokens: contextTokens,
             webToolsEnabled: webToolsEnabled,
             browserAvailability: browserAvailability)
         var lines: [String] = []
-        lines.append("## Available Tools")
-        lines.append("You have access to the following developer tools formatted in OpenAI function calling style:")
-        for tool in active {
-            lines.append("- `\(tool.function.name)`: \(tool.function.description)")
+        if !nativeToolCalling {
+            lines.append("## Available Tools")
+            lines.append("You have access to the following developer tools formatted in OpenAI function calling style:")
+            for tool in active {
+                lines.append("- `\(tool.function.name)`: \(tool.function.description)")
+            }
+            lines.append("")
+            lines.append("To invoke a tool, output a tool call block:")
+            lines.append("<tool_call>")
+            lines.append("<name>tool_name</name>")
+            lines.append("<arguments>{\"key\": \"value\"}</arguments>")
+            lines.append("</tool_call>")
+            lines.append("")
+            lines.append("Or using JSON format:")
+            lines.append("```tool_call")
+            lines.append("{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}")
+            lines.append("```")
+            lines.append("")
         }
-        lines.append("")
-        lines.append("To invoke a tool, output a tool call block:")
-        lines.append("<tool_call>")
-        lines.append("<name>tool_name</name>")
-        lines.append("<arguments>{\"key\": \"value\"}</arguments>")
-        lines.append("</tool_call>")
-        lines.append("")
-        lines.append("Or using JSON format:")
-        lines.append("```tool_call")
-        lines.append("{\"name\": \"tool_name\", \"arguments\": {\"key\": \"value\"}}")
-        lines.append("```")
-        lines.append("")
+        // In the native lane the tools are not described here at all: the
+        // checkpoint's template renders their full definitions, and teaching a
+        // second calling format beside it would give the model two.
         lines.append("## Task & Progress Tracking")
         lines.append("For multi-step or non-trivial tasks (3+ steps), proactively use `TodoWrite` to organize your plan, track progress, and update status in real-time. Mark a task as `in_progress` BEFORE working on it and `completed` IMMEDIATELY upon finishing.")
         lines.append("")
@@ -338,7 +344,11 @@ public enum AppToolCatalog {
             }
             lines.append("</untrusted_agent_metadata>")
         }
-        lines.append("You may issue several `agent` calls in ONE reply (one tool call block each); they run concurrently and every one returns its own result. Other tools remain one call per turn.")
+        if nativeToolCalling {
+            lines.append("You may issue several `agent` calls in ONE reply; they run concurrently and every one returns its own result. Other tools remain one call per turn.")
+        } else {
+            lines.append("You may issue several `agent` calls in ONE reply (one tool call block each); they run concurrently and every one returns its own result. Other tools remain one call per turn.")
+        }
         lines.append("Set `\"run_in_background\": \"true\"` to launch without waiting: you get a task id at once and a `<task-notification>` message later when it finishes. Cancel one with `stop_agent`.")
         return lines.joined(separator: "\n")
     }
@@ -384,7 +394,8 @@ public enum AppToolCatalog {
         availableAgents: [(name: String, whenToUse: String)] = [],
         webToolsEnabled: Bool = true,
         availableTools: TurnAvailableTools? = nil,
-        browserAvailability: BrowserToolAvailability = .disabled
+        browserAvailability: BrowserToolAvailability = .disabled,
+        nativeToolCalling: Bool = false
     ) -> String {
         let base = systemPromptAddendum(
             for: agentType,
@@ -393,7 +404,8 @@ public enum AppToolCatalog {
             availableAgents: availableAgents,
             webToolsEnabled: webToolsEnabled,
             availableTools: availableTools,
-            browserAvailability: browserAvailability)
+            browserAvailability: browserAvailability,
+            nativeToolCalling: nativeToolCalling)
         let deferred = availableTools?.deferredMcpTools ?? ToolSearchCatalog.descriptors(
             servers: mcpServers, permissions: project?.permissions)
         guard !deferred.isEmpty else { return base }

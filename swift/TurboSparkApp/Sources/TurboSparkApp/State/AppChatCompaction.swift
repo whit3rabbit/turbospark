@@ -499,12 +499,13 @@ extension AppModel {
     /// message. Compaction must never be a new way for a turn to die.
     func runAutoCompactionIfNeeded(
         chatID: UUID, project: AppProject?, rawHistory: [ChatMessage],
-        maxContext: UInt32, reservedForNew: UInt32, reasoning: GenerateOptions.Reasoning
+        maxContext: UInt32, reservedForNew: UInt32, reasoning: GenerateOptions.Reasoning,
+        tools: [ToolSpec] = []
     ) async -> Bool {
         guard autoCompactEnabled else { return false }
         let measured: Int?
         if let session {
-            measured = try? await session.countTokens(rawHistory, reasoning: reasoning)
+            measured = try? await session.countTokens(rawHistory, reasoning: reasoning, tools: tools)
         } else if let compactionTokenCountOverride {
             measured = await compactionTokenCountOverride(rawHistory, reasoning)
         } else {

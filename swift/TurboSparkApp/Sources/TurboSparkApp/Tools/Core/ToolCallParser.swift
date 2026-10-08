@@ -1,4 +1,5 @@
 import Foundation
+import TurboSpark
 
 /// The one reader of a model's proposed tool calls.
 ///
@@ -198,6 +199,56 @@ public enum ToolCallParser {
                 refusal: nil))
         }
         return candidates
+    }
+
+    /// Candidates for calls the ENGINE already parsed (`GenerationToolCall`),
+    /// shaped exactly like the ones read out of text so they go through the
+    /// same schema validation, permission engine and executors.
+    ///
+    /// The engine only reports a call to a function that was offered, in the
+    /// checkpoint's own markup, so most of what the text arms defend against
+    /// cannot happen here. What can: arguments that are not a JSON object
+    /// (refused as malformed, like a text call), and a call that fails the
+    /// offered schema (refused by `TurnAvailableTools.validate`, downstream).
+    ///
+    /// - Parameter makeID: how the call's persisted `nativeCallID` is minted.
+    ///   The engine's own ids restart at `toolu_0` every turn, which is
+    ///   harmless within one turn but would repeat across a long chat.
+    static func nativeCandidates(
+        from calls: [GenerationToolCall],
+        projectURL: URL? = nil,
+        makeID: (UUID) -> String = { "toolu_" + $0.uuidString.prefix(8).lowercased() }
+    ) -> [Candidate] {
+        calls.map { engineCall in
+            let argumentsText = engineCall.argumentsJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+            // No arguments at all is a legal call to a no-parameter tool.
+            let json = argumentsText.isEmpty ? "{}" : argumentsText
+            guard !engineCall.name.isEmpty,
+                  let data = json.data(using: .utf8),
+                  (try? JSONSerialization.jsonObject(with: data)) is [String: Any]
+            else {
+                return malformedCandidate(sourceRange: NSRange(location: 0, length: 0))
+            }
+            var call = makeCall(
+                name: engineCall.name,
+                arguments: parseJSONArguments(json),
+                raw: nativeInvocationText(name: engineCall.name, argumentsJSON: json),
+                projectURL: projectURL)
+            call.nativeCallID = makeID(call.id)
+            call.nativeArgumentsJSON = json
+            return Candidate(
+                call: call,
+                argumentsJSON: json,
+                sourceRange: NSRange(location: 0, length: 0),
+                refusal: nil)
+        }
+    }
+
+    /// The call in the app's own text form. A native call has no text in the
+    /// reply (the engine takes the markup out), so this is what the transcript
+    /// and a text-lane replay show for it.
+    static func nativeInvocationText(name: String, argumentsJSON: String) -> String {
+        "<tool_call>\n<name>\(name)</name>\n<arguments>\(argumentsJSON)</arguments>\n</tool_call>"
     }
 
     private static func malformedCandidate(sourceRange: NSRange) -> Candidate {

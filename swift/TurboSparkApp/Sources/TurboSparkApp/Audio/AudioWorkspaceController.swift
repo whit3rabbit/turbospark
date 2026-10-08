@@ -19,6 +19,14 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var profiles: [AudioProfile] = []
     @Published var isRefreshingModels = false
     @Published var modelCatalogError: String?
+    /// Installs the receipt store does not recognise yet but whose identity
+    /// matches a pinned profile (for example a music model pulled by the CLI,
+    /// which writes no receipt). Adopting one verifies it and makes it usable.
+    @Published var needsAdoption: [AudioLegacyInstall] = []
+    /// Installs that exist on disk but cannot be used as they are, with the
+    /// engine's reason. Shown so a broken install is visible, not just absent.
+    @Published var incompatibleInstalls: [AudioIncompatibleInstall] = []
+    @Published var isManagingInstall = false
     @Published var familyCapabilities: [AudioFamilyCapability] = []
     @Published var search = ""
     @Published var isBusy = false
@@ -102,6 +110,12 @@ final class AudioWorkspaceController: ObservableObject {
         do {
             preferences = try library.preferences()
             recipe = preferences.recipe; page = preferences.page
+            // A saved page or task from a build that offered controls the
+            // runtime cannot open would restore into a dead end.
+            if !AudioWorkspacePage.tools.contains(page), page == .cleanup { page = .library }
+            if AudioTask(rawValue: recipe.task)?.isRunnable == false {
+                recipe.task = AudioTask.speechToText.rawValue
+            }
             items = try library.load()
             try library.collectUnusedAssets()
             for index in items.indices where items[index].recoverInterrupted() { try library.save(items[index]) }
@@ -422,6 +436,8 @@ final class AudioWorkspaceController: ObservableObject {
                 self.familyCapabilities = capabilities
                 self.profiles = profiles
                 self.installedPaths = Dictionary(installed.installed.map { ($0.alias, $0.path) }, uniquingKeysWith: { first, _ in first })
+                self.needsAdoption = installed.needsAdoption
+                self.incompatibleInstalls = installed.incompatible
                 self.restoreModelSelection()
                 self.normalizeModelOptions()
             case .failure(let error): self.modelCatalogError = error.localizedDescription
@@ -474,16 +490,24 @@ final class AudioWorkspaceController: ObservableObject {
         let token = epoch
         do {
             let opening = AudioModelOpening()
+            opening.onProgress = { [weak self] fraction in
+                Task { @MainActor in
+                    guard let self, self.opening != nil else { return }
+                    self.status = String(localized: "Verifying", bundle: .module)
+                    self.progress = fraction
+                }
+            }
             self.opening = opening
             let opened = try await Task.detached { try opening.open(path: path, task: profile.identity.task, portable: portable, experimentalMetal: experimentalMetal, expectedFamily: profile.family) }.value
             self.opening = nil
+            self.progress = nil
             guard valid(token), !Task.isCancelled else {
                 await Task.detached { opened.close() }.value
                 throw CancellationError()
             }
             session = opened; sessionKey = key; modelAccessURL = url
             return opened
-        } catch { opening = nil; url?.stopAccessingSecurityScopedResource(); throw error }
+        } catch { opening = nil; progress = nil; url?.stopAccessingSecurityScopedResource(); throw error }
     }
     func scheduleUnload() {
         idleTask?.cancel()
@@ -496,7 +520,7 @@ final class AudioWorkspaceController: ObservableObject {
             oldAccess?.stopAccessingSecurityScopedResource()
         }
     }
-    func cancel() { jobTask?.cancel(); session?.cancel() }
+    func cancel() { jobTask?.cancel(); session?.cancel(); opening?.cancelOpen() }
     func shutdown() {
         guard !isShutDown else { return }
         preferencesTask?.cancel()
@@ -533,12 +557,34 @@ final class AudioModelOpening: @unchecked Sendable {
     private let finished = DispatchGroup()
     private var stopped = false
     private var opened: AudioSession?
+    /// Stops the byte verification an open of a managed model starts with. A
+    /// multi-gigabyte model used to make Stop and shutdown wait it out.
+    private let token = try? AudioOpenToken()
+    /// Fraction (0...1) of the verification done, called on the opening thread.
+    var onProgress: (@Sendable (Double) -> Void)?
     init() { finished.enter() }
+    /// Stops an open in flight. Safe from any thread; does not wait.
+    func cancelOpen() { token?.cancel() }
     func open(path: String, task: AudioTask, portable: Bool, experimentalMetal: Bool, expectedFamily: String) throws -> AudioSession {
         defer { finished.leave() }
         lock.lock(); let cancelled = stopped; lock.unlock()
         guard !cancelled else { throw CancellationError() }
-        let session = try AudioSession(modelPath: path, task: task, allowPortable: portable, allowExperimentalMetal: experimentalMetal, expectedFamily: expectedFamily)
+        let report = onProgress
+        let session: AudioSession
+        do {
+            session = try AudioSession(
+                modelPath: path, task: task, allowPortable: portable,
+                allowExperimentalMetal: experimentalMetal, expectedFamily: expectedFamily,
+                openToken: token,
+                onProgress: { update in
+                    guard let total = update.total, total > 0 else { return }
+                    report?(min(1, Double(update.completed) / Double(total)))
+                })
+        } catch let error as TurboSparkError where error.code == .cancelled {
+            // The caller's own stop, which every caller of this already treats
+            // as a cancellation rather than a failure to show.
+            throw CancellationError()
+        }
         lock.lock(); let close = stopped
         if !close { opened = session }
         lock.unlock()
@@ -547,6 +593,9 @@ final class AudioModelOpening: @unchecked Sendable {
     }
     func stopAndDrain() {
         lock.lock(); stopped = true; lock.unlock()
+        // Before waiting: an open inside its verification now ends within a
+        // chunk of hashing instead of after the whole model.
+        token?.cancel()
         finished.wait()
         lock.lock(); let session = opened; opened = nil; lock.unlock()
         session?.close()
