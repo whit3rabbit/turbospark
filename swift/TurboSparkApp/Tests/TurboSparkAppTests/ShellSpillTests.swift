@@ -28,6 +28,12 @@ final class ShellSpillTests: XCTestCase {
 
     // MARK: - under the cap: compaction only
 
+    func testTheSpillRootIsInsideTheProfileStoreNotAMachineWideFolder() {
+        let root = ShellOutputFormatting.spillRootURL.standardizedFileURL.path
+        let store = AppStorageRoot.directory.standardizedFileURL.path
+        XCTAssertTrue(root.hasPrefix(store + "/"), "\(root) should live under \(store)")
+    }
+
     func testUnderTheCapNothingIsWrittenAndTextIsUnchanged() {
         let root = ShellOutputFormatting.spillRootURL
         let before = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []

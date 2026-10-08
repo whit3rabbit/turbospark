@@ -8,9 +8,12 @@ public actor FileSnapshotStore {
     private var snapshots: [String: String] = [:]
     /// Rollback backup cache for undo_edit capability.
     private var backups: [String: String] = [:]
+    private var backupExpectedHash: [String: String] = [:]
+    private var backupAwaitingPostEdit: Set<String> = []
     /// Insertion order, oldest first, so the map can be trimmed without
     /// hashing timestamps into every entry.
     private var insertionOrder: [String] = []
+    private var backupOrder: [String] = []
 
     /// Largest number of tracked files. Every file the model reads or writes
     /// adds one entry and nothing ever removed them: `reset()` had no callers
@@ -23,7 +26,48 @@ public actor FileSnapshotStore {
 
     /// Records pre-modification file content for undo_edit rollback.
     public func recordBackup(url: URL, content: String) {
-        backups[url.standardizedFileURL.path] = content
+        let path = url.standardizedFileURL.path
+        // Each backup is a file's whole prior content (up to the read limit),
+        // so the map is capped like the snapshots, oldest first.
+        if backups[path] == nil {
+            backupOrder.append(path)
+        }
+        backups[path] = content
+        while backupOrder.count > Self.maximumTrackedFiles {
+            let oldest = backupOrder.removeFirst()
+            backups[oldest] = nil
+            backupExpectedHash[oldest] = nil
+            backupAwaitingPostEdit.remove(oldest)
+        }
+        // The next snapshot recorded for this path is the edit's own
+        // post-write hash; undo only applies while the file still matches it.
+        backupExpectedHash[path] = nil
+        backupAwaitingPostEdit.insert(path)
+    }
+
+    /// True when the file on disk is still exactly what the edit that made
+    /// the backup left behind. False after a later write or an outside edit,
+    /// when restoring the single-slot backup would silently discard them.
+    public func backupMatchesCurrent(url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        guard let expected = backupExpectedHash[path],
+            let data = try? Data(contentsOf: url)
+        else { return false }
+        return Self.hash(data) == expected
+    }
+
+    /// Drops the backup after a successful restore, so a second undo cannot
+    /// re-apply it.
+    public func discardBackup(url: URL) {
+        let path = url.standardizedFileURL.path
+        backups[path] = nil
+        backupExpectedHash[path] = nil
+        backupAwaitingPostEdit.remove(path)
+        backupOrder.removeAll { $0 == path }
+    }
+
+    private static func hash(_ data: Data) -> String {
+        SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
     }
 
     /// Retrieves pre-modification file content for undo_edit rollback.
@@ -43,6 +87,11 @@ public actor FileSnapshotStore {
         record(path: url.standardizedFileURL.path, data: Data(content.utf8))
     }
 
+    /// Records the hash of the exact bytes read from disk.
+    public func recordSnapshot(url: URL, data: Data) {
+        record(path: url.standardizedFileURL.path, data: data)
+    }
+
     /// Records the content hash of a file at the given URL, reading it.
     ///
     /// For callers that do not already hold the content. Prefer the overload
@@ -58,6 +107,9 @@ public actor FileSnapshotStore {
             insertionOrder.append(path)
         }
         snapshots[path] = hashString
+        if backupAwaitingPostEdit.remove(path) != nil {
+            backupExpectedHash[path] = hashString
+        }
 
         while insertionOrder.count > Self.maximumTrackedFiles {
             let oldest = insertionOrder.removeFirst()
@@ -105,7 +157,15 @@ public actor FileSnapshotStore {
     public func reset() {
         snapshots.removeAll()
         insertionOrder.removeAll()
+        // Backups hold whole file contents and must not outlive the project.
+        backups.removeAll()
+        backupExpectedHash.removeAll()
+        backupAwaitingPostEdit.removeAll()
+        backupOrder.removeAll()
     }
+
+    /// Number of undo backups held. For tests and diagnostics.
+    public var backupCount: Int { backups.count }
 
     /// How many files are currently tracked. For tests and diagnostics.
     public var trackedFileCount: Int { snapshots.count }

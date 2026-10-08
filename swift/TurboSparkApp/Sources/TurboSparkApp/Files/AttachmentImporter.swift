@@ -151,7 +151,7 @@ enum AttachmentImporter {
             allowDuringSubmission: allowDuringSubmission)
     }
 
-    private nonisolated static func collectFolderURLs(
+    nonisolated static func collectFolderURLs(
         from folderURL: URL,
         maxFiles: Int
     ) -> [URL] {
@@ -218,12 +218,8 @@ enum AttachmentImporter {
             let containsSkippedRawAncestor = rawRelativeComponents.dropLast().contains {
                 skipDirectoryNames.contains($0)
             }
-            let containsSkippedPathComponent = fileURL.pathComponents.dropFirst().contains {
-                skipDirectoryNames.contains($0)
-            }
             let isSkippedDirectory = isDirectory && skipDirectoryNames.contains(fileURL.lastPathComponent)
-            if containsSkippedDirectory || containsSkippedRawAncestor
-                || containsSkippedPathComponent || isSkippedDirectory
+            if containsSkippedDirectory || containsSkippedRawAncestor || isSkippedDirectory
             {
                 if isDirectory { enumerator.skipDescendants() }
                 continue
@@ -256,6 +252,20 @@ enum AttachmentImporter {
                 continue
             }
 
+            // A symlink to a directory reports isDirectory == false, so it
+            // lands here. Recording its target as visited would hide the real
+            // directory's whole subtree when the link is enumerated first.
+            if isSymlink {
+                var targetIsDir: ObjCBool = false
+                if fileManager.fileExists(atPath: canonical.path, isDirectory: &targetIsDir),
+                    targetIsDir.boolValue
+                {
+                    // Not skipDescendants: on a non-directory it would skip the
+                    // rest of the parent directory.
+                    continue
+                }
+            }
+
             // Regular file check
             if visitedCanonicalPaths.contains(canonical.path) {
                 continue
@@ -266,11 +276,21 @@ enum AttachmentImporter {
                 continue
             }
 
+            // A folder import must not attach what a direct mention of the
+            // same file would refuse (credentials, keys).
+            if ToolRiskClassifier.isSensitivePath(fileURL.path)
+                || ToolRiskClassifier.isSensitivePath(canonical.path)
+            {
+                continue
+            }
+
             let ext = fileURL.pathExtension.lowercased()
             if supportedExtensions.contains(ext) {
                 let fileSize = Int64(resourceValues?.fileSize ?? 0)
+                // Skip just this file: one oversized file must not end the
+                // walk and silently drop every file after it.
                 if totalBytes + fileSize > maxTotalBytes && !results.isEmpty {
-                    break
+                    continue
                 }
                 totalBytes += fileSize
                 results.append(fileURL)

@@ -17,7 +17,7 @@ public enum CodeSearchToolDefinitions {
                 "query": .string(description: "Technical search query (e.g. 'Swift CheckedContinuation usage', 'React 19 useActionState')."),
                 "tokens_num": .integer(description: "Optional maximum context tokens to return (default: 5000, max: 20000)."),
                 "framework": .string(description: "Optional framework or language hint (e.g. 'swift', 'rust', 'react', 'python')."),
-                "provider": .string(description: "Optional search provider ('auto', 'tavily', 'exa', 'brave'). Default is 'auto'.")
+                "provider": .string(description: "Optional search provider ('auto', 'tavily', 'exa', 'parallel'). Default is 'auto'.")
             ],
             required: ["query"]
         )

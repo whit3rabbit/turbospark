@@ -57,35 +57,75 @@ enum MarketplaceGit {
         timeoutSeconds: TimeInterval = defaultTimeoutSeconds
     ) async throws {
         let fileManager = FileManager.default
-        let alreadyCloned = fileManager.fileExists(
+        let cleanRef = ref?.trimmingCharacters(in: .whitespaces).nonEmptyOrNil
+        let sparse = (sparsePaths ?? []).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let stamp = stampText(url: url, ref: cleanRef, sparse: sparse)
+        let stampURL = targetDir.appendingPathComponent(".git/turbospark-clone-stamp")
+        var alreadyCloned = fileManager.fileExists(
             atPath: targetDir.appendingPathComponent(".git").path)
 
+        // **A `.git` IS NOT A HEALTHY CLONE.** The stamp is written only after
+        // the clone (and any sparse checkout) fully succeeded and records
+        // what it was made from. A missing or different stamp means an
+        // interrupted sparse checkout, or a ref/sparse change: start over.
+        if alreadyCloned,
+            (try? String(contentsOf: stampURL, encoding: .utf8)) != stamp
+        {
+            try fileManager.removeItem(at: targetDir)
+            alreadyCloned = false
+        }
+
         if alreadyCloned {
-            try await run(
-                step: "pull",
-                arguments: ["pull", "--quiet", "--ff-only"],
-                currentDirectory: targetDir,
-                timeoutSeconds: timeoutSeconds)
+            if let cleanRef {
+                // `pull --ff-only` fails permanently on a detached HEAD (a
+                // tag pin). Fetch the ref and move to it instead; this works
+                // for branches and tags alike.
+                try await run(
+                    step: "fetch",
+                    arguments: ["fetch", "--quiet", "--depth", "1", "origin", cleanRef],
+                    currentDirectory: targetDir,
+                    timeoutSeconds: timeoutSeconds)
+                try await run(
+                    step: "checkout",
+                    arguments: ["checkout", "--quiet", "--force", "FETCH_HEAD"],
+                    currentDirectory: targetDir,
+                    timeoutSeconds: timeoutSeconds)
+            } else {
+                try await run(
+                    step: "pull",
+                    arguments: ["pull", "--quiet", "--ff-only"],
+                    currentDirectory: targetDir,
+                    timeoutSeconds: timeoutSeconds)
+            }
             return
         }
 
+        guard !url.trimmingCharacters(in: .whitespaces).hasPrefix("-") else {
+            throw Failure(
+                step: "clone", exitCode: -1,
+                stderr: "The repository address may not start with '-'.", timedOut: false)
+        }
         try fileManager.createDirectory(at: targetDir, withIntermediateDirectories: true)
 
-        let sparse = (sparsePaths ?? []).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         var arguments = ["clone", "--depth", "1"]
         if !sparse.isEmpty {
             arguments.append(contentsOf: ["--filter=blob:none", "--no-checkout"])
         }
-        if let ref, !ref.trimmingCharacters(in: .whitespaces).isEmpty {
-            arguments.append(contentsOf: ["--branch", ref])
+        if let cleanRef {
+            arguments.append(contentsOf: ["--branch", cleanRef])
         }
-        arguments.append(contentsOf: [url, targetDir.path])
+        // `--` so a manifest-supplied url beginning with "-" is a positional,
+        // never an option such as --upload-pack.
+        arguments.append(contentsOf: ["--", url, targetDir.path])
 
         try await run(
             step: "clone", arguments: arguments, currentDirectory: nil,
             timeoutSeconds: timeoutSeconds)
 
-        guard !sparse.isEmpty else { return }
+        guard !sparse.isEmpty else {
+            try? stamp.write(to: stampURL, atomically: true, encoding: .utf8)
+            return
+        }
 
         try await run(
             step: "sparse-checkout",
@@ -97,6 +137,12 @@ enum MarketplaceGit {
             arguments: ["checkout", "HEAD"],
             currentDirectory: targetDir,
             timeoutSeconds: timeoutSeconds)
+        try? stamp.write(to: stampURL, atomically: true, encoding: .utf8)
+    }
+
+    /// What a cache clone was made from. Internal for tests.
+    static func stampText(url: String, ref: String?, sparse: [String]) -> String {
+        ([url, ref ?? "", sparse.sorted().joined(separator: ",")]).joined(separator: "\n")
     }
 
     /// A directory name safe to use for `url`'s clone cache.
@@ -141,4 +187,8 @@ enum MarketplaceGit {
         environment["GIT_OPTIONAL_LOCKS"] = "0"
         return environment
     }
+}
+
+private extension String {
+    var nonEmptyOrNil: String? { isEmpty ? nil : self }
 }

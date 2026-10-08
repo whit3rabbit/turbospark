@@ -121,6 +121,9 @@ final class BackgroundShellManager: @unchecked Sendable {
     /// Finished records kept per chat for later retrieval; the oldest fall
     /// off the end.
     static let maxFinishedRecordsPerChat = 50
+    /// Finished records kept across ALL chats. The per-chat cap alone scales
+    /// with the number of chats, and every record pins an output buffer.
+    static let maxFinishedRecordsTotal = 200
 
     private let lock = NSLock()
     private var records: [String: BackgroundShellRecord] = [:]
@@ -233,6 +236,11 @@ final class BackgroundShellManager: @unchecked Sendable {
                         if chunk.isEmpty { break }
                         buffer.append(chunk)
                     }
+                    // This thread is the handle's only reader, so closing at
+                    // EOF is race-free. Without it a finished record pinned
+                    // two pipe descriptors for as long as the record lived,
+                    // and a few busy chats exhausted the process fd limit.
+                    try? handle.close()
                 }
             }
         } catch {
@@ -312,7 +320,15 @@ final class BackgroundShellManager: @unchecked Sendable {
     func kill(_ record: BackgroundShellRecord) -> Bool {
         guard record.state == .running else { return false }
         record.markKilled()
-        ProcessExecutor.terminateAndReap(record.process)
+        // The record is already `.killed` and the UI is told now; the
+        // SIGTERM/SIGKILL ladder can block ~3 s on a child with a slow
+        // graceful shutdown, so it runs off the caller's thread (the main
+        // actor for the kill UI, N x 3 s when a chat with N shells is
+        // deleted), exactly as `killAll()` does.
+        let process = record.process
+        DispatchQueue.global(qos: .userInitiated).async {
+            ProcessExecutor.terminateAndReap(process)
+        }
         notifyChanged()
         return true
     }
@@ -399,6 +415,22 @@ final class BackgroundShellManager: @unchecked Sendable {
             doomed.formUnion(oldest.map { $0.id })
         }
         for id in doomed { records.removeValue(forKey: id) }
+        let remaining = records.values.filter { $0.state != .running }
+        if remaining.count > Self.maxFinishedRecordsTotal {
+            let oldest = remaining.sorted { $0.startedAt < $1.startedAt }
+                .prefix(remaining.count - Self.maxFinishedRecordsTotal)
+            for record in oldest { records.removeValue(forKey: record.id) }
+        }
+    }
+
+    /// Drops every finished record a deleted chat left behind. Its ids can
+    /// no longer be resolved from anywhere (records are chat-scoped), so
+    /// keeping them only pins their output buffers.
+    func forgetFinishedRecords(chatID: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        for (id, record) in records where record.chatID == chatID && record.state != .running {
+            records.removeValue(forKey: id)
+        }
     }
 
     /// Test seam: clears every record. Running shells are killed first so a

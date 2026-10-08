@@ -183,7 +183,9 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
             category: .automation
         )
         let goalResult = await AppToolRegistry.execute(call: goalCall, in: project)
-        XCTAssertFalse(goalResult.isError, "propose_goal should succeed: \(goalResult.output)")
+        // No goal wiring exists, so success would be fabricated.
+        XCTAssertTrue(goalResult.isError, "propose_goal must not report a goal it did not create")
+        XCTAssertTrue(goalResult.output.contains("not implemented"))
         XCTAssertTrue(goalResult.output.contains("Refactor all network clients"))
 
         let feedbackCall = AppToolCall(
@@ -194,8 +196,8 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
             category: .automation
         )
         let feedbackResult = await AppToolRegistry.execute(call: feedbackCall, in: project)
-        XCTAssertFalse(feedbackResult.isError, "send_feedback should succeed: \(feedbackResult.output)")
-        XCTAssertTrue(feedbackResult.output.contains("The proposal looks great"))
+        XCTAssertTrue(feedbackResult.isError, "send_feedback must not claim feedback was recorded")
+        XCTAssertTrue(feedbackResult.output.contains("nothing was recorded"))
     }
 
     // MARK: - todo_write / todowrite
@@ -207,10 +209,10 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
         for alias in ["todo_write", "todowrite"] {
             let call = AppToolCall(
                 name: alias,
+                // A real payload: a missing or unparseable `todos` is refused
+                // so it can no longer silently clear the list.
                 arguments: [
-                    "action": "create",
-                    "title": "Write unit tests",
-                    "status": "pending"
+                    "todos": "[{\"content\": \"Write unit tests\", \"status\": \"pending\"}]"
                 ],
                 category: .automation
             )

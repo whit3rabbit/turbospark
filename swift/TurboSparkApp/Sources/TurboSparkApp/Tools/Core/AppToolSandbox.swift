@@ -152,6 +152,12 @@ public enum AppToolSandbox {
         if a == 172 && (16...31).contains(b) { return true }
         if a == 192 && b == 168 { return true }
         if a == 100 && (64...127).contains(b) { return true }  // CGNAT
+        // 192.0.0.0/24 (IETF protocol assignments), 198.18.0.0/15
+        // (benchmarking) and 224.0.0.0/3 (multicast, reserved, broadcast) are
+        // never a public web server, and some are reachable on a LAN.
+        if a == 192 && b == 0 && ((packed >> 8) & 0xFF) == 0 { return true }
+        if a == 198 && (18...19).contains(b) { return true }
+        if a >= 224 { return true }
         return false
     }
 
@@ -170,6 +176,7 @@ public enum AppToolSandbox {
 
         if bytes.dropLast().allSatisfy({ $0 == 0 }) && bytes.last! <= 1 { return true }  // :: and ::1
         if bytes[0] & 0xFE == 0xFC { return true }  // fc00::/7 unique-local
+        if bytes[0] == 0xFF { return true }  // ff00::/8 multicast
         if bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80 { return true }  // fe80::/10 link-local
         // ::ffff:a.b.c.d (mapped) and ::a.b.c.d (deprecated compatible).
         if bytes[0..<10].allSatisfy({ $0 == 0 })

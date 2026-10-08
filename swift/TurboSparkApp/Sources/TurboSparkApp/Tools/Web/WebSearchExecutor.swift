@@ -255,7 +255,49 @@ public enum WebSearchExecutor {
         }
 
         let rawResponse = String(decoding: data, as: UTF8.self)
+        // Exa reports rate limits and quota as HTTP 200 carrying an MCP error.
+        // Parsed as results that is an empty set, which the model reads as
+        // "nothing exists" and which also skips the auto-mode Parallel fallback.
+        if let failure = exaErrorMessage(in: rawResponse) {
+            throw NSError(
+                domain: "TurboSparkWebSearch", code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "Exa search failed: \(failure)"])
+        }
         return parseExaPayload(rawResponse)
+    }
+
+    /// The error text when an Exa MCP response (plain JSON or SSE `data:` lines)
+    /// carries a JSON-RPC `error` or a tool result with `isError == true`.
+    static func exaErrorMessage(in raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var documents: [String] = []
+        if trimmed.hasPrefix("{") {
+            documents = [trimmed]
+        } else {
+            for line in trimmed.components(separatedBy: "\n") {
+                let stripped = line.trimmingCharacters(in: .whitespaces)
+                if stripped.hasPrefix("data:") {
+                    documents.append(stripped.dropFirst(5).trimmingCharacters(in: .whitespaces))
+                }
+            }
+        }
+        for document in documents {
+            guard let data = document.data(using: .utf8),
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            if let error = json["error"] {
+                if let dict = error as? [String: Any], let message = dict["message"] as? String {
+                    return message
+                }
+                return "\(error)"
+            }
+            if let result = json["result"] as? [String: Any], result["isError"] as? Bool == true {
+                let texts = (result["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }
+                let joined = texts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                return joined.isEmpty ? "tool reported an error" : String(joined.prefix(300))
+            }
+        }
+        return nil
     }
 
     public static func parseExaPayload(_ raw: String) -> [WebSearchResultItem] {

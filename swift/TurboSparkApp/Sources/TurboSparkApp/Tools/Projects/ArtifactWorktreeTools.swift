@@ -293,6 +293,7 @@ public enum ArtifactWorktreeDefinitions {
         parameters: .object(
             properties: [
                 "action": .string(description: "'keep' to retain worktree, 'remove' to clean up."),
+                "path": .string(description: "Path of the worktree to remove (required when action is 'remove')."),
                 "discard_changes": .boolean(description: "Discard uncommitted changes if removing.")
             ],
             required: ["action"]

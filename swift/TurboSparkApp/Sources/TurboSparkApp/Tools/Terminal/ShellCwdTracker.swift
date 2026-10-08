@@ -9,7 +9,9 @@ import Foundation
 /// ninja` in one call is invisible to the next and the model must re-derive
 /// absolute paths every turn.
 ///
-/// The tracker is process-lifetime state keyed by project root; it is
+/// The tracker is process-lifetime state keyed by (chat, project root), so a
+/// second chat on the same project does not inherit the first one's `cd`
+/// (a relative `rm -r build` would run in the wrong directory); it is
 /// deliberately NOT persisted into the chat archive, since a saved cwd path
 /// is meaningless after the project moves.
 final class ShellCwdTracker: @unchecked Sendable {
@@ -22,9 +24,9 @@ final class ShellCwdTracker: @unchecked Sendable {
     /// cwd when it still exists on disk, the root otherwise. A deleted
     /// directory must not poison every later call, so the check is a real
     /// stat and not trust in the remembered value.
-    func startDirectory(for root: URL) -> URL {
+    func startDirectory(for root: URL, chatID: UUID? = nil) -> URL {
         lock.lock(); defer { lock.unlock() }
-        guard let remembered = cwdByRoot[root.path] else { return root }
+        guard let remembered = cwdByRoot[Self.key(root: root, chatID: chatID)] else { return root }
         var isDir: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: remembered, isDirectory: &isDir)
         guard exists, isDir.boolValue else { return root }
@@ -37,17 +39,22 @@ final class ShellCwdTracker: @unchecked Sendable {
     /// Claude Code's "Shell cwd was reset" behavior. A `cd /tmp` that were
     /// allowed to persist would silently widen every later call's reach
     /// outside the directory the user attached.
-    func record(finalDirectory rawPath: String, root: URL) -> String? {
+    func record(finalDirectory rawPath: String, root: URL, chatID: UUID? = nil) -> String? {
         let finalPath = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !finalPath.isEmpty else { return nil }
         lock.lock(); defer { lock.unlock() }
+        let key = Self.key(root: root, chatID: chatID)
         if Self.isInside(finalPath, root: root.path) {
-            cwdByRoot[root.path] = finalPath
+            cwdByRoot[key] = finalPath
             return nil
         }
-        cwdByRoot[root.path] = root.path
+        cwdByRoot[key] = root.path
         return "Shell cwd was reset to \(root.path): a command may not leave the "
             + "project directory's working state."
+    }
+
+    private static func key(root: URL, chatID: UUID?) -> String {
+        "\(chatID?.uuidString ?? "-")|\(root.path)"
     }
 
     /// `pwd -P` yields physical paths, so both sides resolve symlinks before

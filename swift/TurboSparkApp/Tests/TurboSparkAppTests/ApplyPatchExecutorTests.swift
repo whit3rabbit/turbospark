@@ -167,4 +167,73 @@ final class ApplyPatchExecutorTests: XCTestCase {
         let contents = try String(contentsOf: created, encoding: .utf8)
         XCTAssertEqual(contents, "hello\nworld")
     }
+
+    // MARK: - Data integrity: atomic multi-file apply and line endings
+
+    func testMultiFilePatchWithStaleLaterFileLeavesEarlierFilesUntouched() async throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent("one.txt")
+        let second = root.appendingPathComponent("two.txt")
+        try "a\nb\nc".write(to: first, atomically: true, encoding: .utf8)
+        try "x\ny\nz".write(to: second, atomically: true, encoding: .utf8)
+
+        let patch = """
+        diff --git a/one.txt b/one.txt
+        --- a/one.txt
+        +++ b/one.txt
+        @@ -1,3 +1,3 @@
+         a
+        -b
+        +B
+         c
+        diff --git a/two.txt b/two.txt
+        --- a/two.txt
+        +++ b/two.txt
+        @@ -1,3 +1,3 @@
+         x
+        -STALE
+        +Y
+         z
+        """
+        do {
+            _ = try await ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
+            XCTFail("stale second file must fail the patch")
+        } catch {}
+        XCTAssertEqual(try String(contentsOf: first, encoding: .utf8), "a\nb\nc")
+        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "x\ny\nz")
+    }
+
+    func testCRLFFileKeepsCRLFAndInsertionOnlyHunkLandsOnTheRightLine() async throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("crlf.txt")
+        try "a\r\nb\r\nc".write(to: url, atomically: true, encoding: .utf8)
+        let patch = """
+        diff --git a/crlf.txt b/crlf.txt
+        --- a/crlf.txt
+        +++ b/crlf.txt
+        @@ -1,0 +2,1 @@
+        +x
+        """
+        _ = try await ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "a\r\nx\r\nb\r\nc")
+    }
+
+    func testFormFeedInLFFileSurvivesPatch() async throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("ff.txt")
+        try "a\n\u{0C}\nb".write(to: url, atomically: true, encoding: .utf8)
+        let patch = """
+        diff --git a/ff.txt b/ff.txt
+        --- a/ff.txt
+        +++ b/ff.txt
+        @@ -3,1 +3,1 @@
+        -b
+        +B
+        """
+        _ = try await ApplyPatchExecutor.apply(patchText: patch, rootURL: root)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "a\n\u{0C}\nB")
+    }
 }

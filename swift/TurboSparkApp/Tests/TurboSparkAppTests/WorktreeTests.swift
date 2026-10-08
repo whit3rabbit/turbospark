@@ -256,4 +256,25 @@ final class WorktreeTests: XCTestCase {
         worktree.comparisonMode = .commit(hash: "123", summary: "test")
         XCTAssertEqual(worktree.scopedFiles.map(\.relativePath), ["commit.swift"])
     }
+
+    @MainActor
+    func testDefaultModeIsUncommittedAndRepoSwitchResetsComparisonState() throws {
+        let worktree = WorktreeModel(rootDirectoryPath: "")
+        XCTAssertEqual(worktree.comparisonMode, .uncommitted)
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wt-switch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        worktree.comparisonMode = .againstBranch("develop")
+        worktree.branchComparisonFiles = [WorktreeFileChange(relativePath: "a.swift", status: .modified)]
+        worktree.selectedCommitFiles = [WorktreeFileChange(relativePath: "b.swift", status: .modified)]
+        worktree.updateRoot(path: dir.path)
+
+        XCTAssertEqual(worktree.comparisonMode, .uncommitted)
+        XCTAssertTrue(worktree.branchComparisonFiles.isEmpty)
+        XCTAssertTrue(worktree.selectedCommitFiles.isEmpty)
+        XCTAssertNil(worktree.selectedTimelineCommit)
+    }
 }

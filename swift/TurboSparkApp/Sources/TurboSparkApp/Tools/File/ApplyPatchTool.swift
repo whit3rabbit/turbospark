@@ -84,7 +84,7 @@ public struct ApplyPatchOutput: Codable, Sendable, Equatable {
 public enum ApplyPatchToolDefinitions {
     public static let applyPatch = OpenAITool.function(
         name: "apply_patch",
-        description: "Apply a patch containing unified diff, add, update, or delete file operations sequentially across the workspace.",
+        description: "Apply a unified diff (`--- a/path` / `+++ b/path` headers; `/dev/null` adds or deletes a file) across the workspace. The `*** Begin Patch` format is not supported.",
         parameters: .object(
             properties: [
                 "patch_text": .string(

@@ -131,6 +131,7 @@ enum ProcessExecutor {
         // `terminateAndReap` is what makes it exit. The `DispatchGroup` is
         // what lets the caller know both are done before it reads the text.
         let readers = DispatchGroup()
+        let stopReaders = StopFlag()
         for (handle, buffer) in [
             (stdoutPipe.fileHandleForReading, stdoutBuffer),
             (stderrPipe.fileHandleForReading, stderrBuffer),
@@ -141,17 +142,25 @@ enum ProcessExecutor {
                 // Chunked, NOT `readDataToEndOfFile()`: that accumulates the
                 // whole stream in memory before returning, which would defeat
                 // `outputCapBytes` on a runaway command -- the cap can only
-                // bound what it is shown a piece at a time. `availableData`
-                // blocks until there is data or EOF, and returns empty at EOF.
-                while true {
-                    let chunk = handle.availableData
-                    if chunk.isEmpty { break }
-                    buffer.append(chunk)
-                }
+                // bound what it is shown a piece at a time.
+                //
+                // **POLLED, NOT BLOCKED**: a plain `availableData` read parks
+                // this thread until EOF, and a command that backgrounds a
+                // child with `&` hands the child the write end, so EOF never
+                // comes. Two utility threads then stayed blocked for the life
+                // of that child on every such call. Polling with a short
+                // timeout lets `stopReaders` release them once the caller's
+                // post-exit wait gives up.
+                Self.drain(handle, into: buffer, stop: stopReaders)
+                // This thread was the handle's only reader, so closing here
+                // is race-free and releases the descriptor.
+                try? handle.close()
             }
         }
 
         try process.run()
+        registerLive(process)
+        defer { unregisterLive(process) }
 
         // Feed stdin off the calling task: a full pipe buffer would otherwise
         // block this write until the child drains it, which is exactly the
@@ -210,6 +219,9 @@ enum ProcessExecutor {
         // process. Two seconds is long past when a dead child's buffered
         // output has arrived.
         await waitForReaders(readers, timeoutSeconds: 2.0)
+        // Harmless when both already hit EOF; otherwise a surviving
+        // descendant holds the pipe and the readers must let go.
+        stopReaders.set()
 
         let exitCode = process.isRunning ? -1 : process.terminationStatus
         if cancelled { throw CancellationError() }
@@ -331,6 +343,73 @@ enum ProcessExecutor {
             kill(descendant, SIGKILL)
         }
         kill(pid, SIGKILL)
+    }
+
+    /// Set once the caller stops caring about further output.
+    private final class StopFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set() { lock.lock(); value = true; lock.unlock() }
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
+    }
+
+    /// Drains `handle` into `buffer` until EOF, a read error, or `stop`.
+    private static func drain(
+        _ handle: FileHandle, into buffer: CappedOutputBuffer, stop: StopFlag
+    ) {
+        let fd = handle.fileDescriptor
+        var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+        while !stop.isSet {
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&pfd, 1, 100)
+            if ready < 0 {
+                if errno == EINTR { continue }
+                return
+            }
+            if ready == 0 { continue }
+            let count = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+            if count > 0 {
+                buffer.append(Data(chunk[0..<count]))
+            } else if count == 0 {
+                return
+            } else if errno != EINTR && errno != EAGAIN {
+                return
+            }
+        }
+    }
+
+    // MARK: - Live child registry
+
+    /// Children of `run` that have started and not yet been reaped. App quit
+    /// kills their trees: a foreground `npm run dev`, a long `pytest` or a
+    /// running hook would otherwise be reparented to launchd and keep running
+    /// with no timeout (the deadline lived in this process).
+    private static let liveLock = NSLock()
+    private static var liveChildren: [pid_t: Process] = [:]
+
+    private static func registerLive(_ process: Process) {
+        liveLock.lock(); defer { liveLock.unlock() }
+        liveChildren[process.processIdentifier] = process
+    }
+
+    private static func unregisterLive(_ process: Process) {
+        liveLock.lock(); defer { liveLock.unlock() }
+        liveChildren.removeValue(forKey: process.processIdentifier)
+    }
+
+    /// Number of tracked live children (test seam).
+    static var liveChildCount: Int {
+        liveLock.lock(); defer { liveLock.unlock() }
+        return liveChildren.count
+    }
+
+    /// Shutdown sweep: SIGKILL every tracked child's tree, no grace period,
+    /// like `killTreeNow` for background shells.
+    static func killAllLiveChildrenNow() {
+        liveLock.lock()
+        let pids = Array(liveChildren.keys)
+        liveLock.unlock()
+        for pid in pids { killTreeNow(pid) }
     }
 
     /// Asynchronously waits for `group` to complete, or until `timeoutSeconds`

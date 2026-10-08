@@ -20,7 +20,9 @@ public enum SnipExecutor {
             )
         }
 
-        let content = try String(contentsOf: targetURL, encoding: .utf8)
+        // Same size ceiling as FileRead: a multi-GB log must be refused before
+        // it is loaded (and copied again as lines), not after.
+        let content = try AppFileReadLimits.readTextFile(at: targetURL, describing: relPath)
         let lines = content.components(separatedBy: "\n")
         let totalLines = lines.count
 

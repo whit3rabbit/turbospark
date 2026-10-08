@@ -8,6 +8,10 @@ public enum HttpRequestExecutor {
     public static let defaultTimeoutSeconds: Int = 30
     public static let maxTimeoutSeconds: Int = 120
     public static let maxResponseBytes: Int = 5 * 1024 * 1024 // 5 MB
+    /// Character cap on the rendered body, applied beside the 150-line cap:
+    /// a minified one-line JSON payload is one line and would pass the line
+    /// cap whole.
+    static let maxOutputCharacters = 200_000
 
     /// Executes an HTTP request and returns formatted response text.
     public static func execute(
@@ -139,7 +143,8 @@ public enum HttpRequestExecutor {
             durationMs: elapsedMs,
             bytes: data.count,
             headers: responseHeaders,
-            body: AppToolRegistry.compactOutput(formattedBody, maxLines: 150)
+            body: AppToolRegistry.compactOutput(
+                String(formattedBody.prefix(maxOutputCharacters)), maxLines: 150)
         )
         return output.formatResponse()
     }
@@ -151,12 +156,13 @@ public enum HttpRequestExecutor {
         _ request: URLRequest,
         configuration: URLSessionConfiguration,
         customSession: URLSession?,
-        validate: (URL) throws -> Void = HttpRequestDestinationValidator.validate
+        validate: (URL) throws -> Void = HttpRequestDestinationValidator.validate,
+        validateConnectedAddress: ((String) throws -> Void)? = HttpRequestExecutor.refuseConnectedPrivateAddress
     ) async throws -> (Data, URLResponse) {
         // Injected sessions are test transports. Production redirects are
         // stopped and replayed only after validating the new destination.
         if let customSession {
-            let result = try await customSession.data(for: request)
+            let result = try await boundedData(for: request, session: customSession, delegate: nil)
             if let finalURL = result.1.url {
                 try validate(finalURL)
             }
@@ -164,6 +170,9 @@ public enum HttpRequestExecutor {
         }
 
         let session = URLSession(configuration: configuration)
+        // A per-call session keeps its connection pool and queues alive until
+        // invalidated; release it once the request chain is done.
+        defer { session.finishTasksAndInvalidate() }
         var nextRequest: URLRequest? = request
         for _ in 0..<10 {
             guard let currentRequest = nextRequest, let currentURL = currentRequest.url else {
@@ -172,7 +181,19 @@ public enum HttpRequestExecutor {
             try validate(currentURL)
 
             let redirect = HttpRequestRedirectDelegate()
-            let result = try await session.data(for: currentRequest, delegate: redirect)
+            let result = try await boundedData(for: currentRequest, session: session, delegate: redirect)
+            // **THE REBINDING CHECK.** `validate` resolved the host once and
+            // URLSession resolved it again to connect, so a DNS answer that
+            // changed between the two (rebinding) reaches here connected to
+            // an address the validator never saw. Foundation offers no hook
+            // to pin the connection to the validated address (an IP-literal
+            // URL would drop SNI and break TLS on shared hosts), so the
+            // address the socket REALLY used is checked here and the
+            // response is discarded unseen. This runs before the redirect
+            // branch so a 3xx from a rebound host is not followed either.
+            if let validateConnectedAddress {
+                try redirect.checkConnectedAddresses(validateConnectedAddress)
+            }
             if let redirectedRequest = redirect.takeRedirect() {
                 nextRequest = redirectedRequest
                 continue
@@ -183,6 +204,50 @@ public enum HttpRequestExecutor {
             return result
         }
         throw requestError(7, "Too many HTTP redirects (maximum 10).")
+    }
+
+    /// Reads a response body with a hard byte cap. `session.data(for:)`
+    /// buffers the WHOLE body before returning, so the declared 5 MB limit
+    /// was never enforced: a multi-hundred-MB download was held in memory
+    /// (several times over once decoded and pretty-printed) for the whole
+    /// timeout. A declared length over the cap is refused before any body is
+    /// read, and a stream that overruns it is abandoned (which cancels the
+    /// task) as soon as the cap is crossed.
+    static func boundedData(
+        for request: URLRequest,
+        session: URLSession,
+        delegate: (any URLSessionTaskDelegate)?,
+        maxBytes: Int = HttpRequestExecutor.maxResponseBytes
+    ) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await session.bytes(for: request, delegate: delegate)
+        let declared = response.expectedContentLength
+        if declared > Int64(maxBytes) {
+            throw responseTooLarge(maxBytes)
+        }
+        var data = Data()
+        data.reserveCapacity(declared > 0 ? Int(declared) : 0)
+        for try await byte in bytes {
+            if data.count >= maxBytes { throw responseTooLarge(maxBytes) }
+            data.append(byte)
+        }
+        return (data, response)
+    }
+
+    private static func responseTooLarge(_ maxBytes: Int) -> NSError {
+        requestError(8, "Response too large (exceeds \(maxBytes) byte limit).")
+    }
+
+    /// Default connected-address policy: the same private/metadata test the
+    /// pre-flight validator applies to resolved addresses.
+    static func refuseConnectedPrivateAddress(_ address: String) throws {
+        // An empty address is a network load that reported no peer: it
+        // cannot be shown to be public, so it is refused like a private one.
+        if address.isEmpty || AppToolSandbox.isPrivateOrMetadataHost(address) {
+            throw requestError(
+                3,
+                "The connection went to a private or metadata address ('\(address)'). "
+                    + "The response was discarded (possible DNS rebinding).")
+        }
     }
 
     private static func requestError(_ code: Int, _ message: String) -> NSError {
@@ -209,6 +274,37 @@ final class HttpRequestRedirectDelegate: NSObject, URLSessionTaskDelegate, @unch
         redirectedRequest = request
         lock.unlock()
         completionHandler(nil)
+    }
+
+    /// Remote addresses of the connections this task really opened, one per
+    /// network transaction (a proxied hop reports the proxy, which is the
+    /// user's own configured endpoint, so it is skipped; cache hits opened
+    /// no connection).
+    private var connectedAddresses: [String?] = []
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didFinishCollecting metrics: URLSessionTaskMetrics
+    ) {
+        let addresses = metrics.transactionMetrics
+            .filter { $0.resourceFetchType == .networkLoad && !$0.isProxyConnection }
+            .map { $0.remoteAddress }
+        lock.lock()
+        connectedAddresses.append(contentsOf: addresses)
+        lock.unlock()
+    }
+
+    /// Throws for the first connected address `check` refuses. A network
+    /// transaction with NO reported address is refused too: it cannot be
+    /// shown to be public.
+    func checkConnectedAddresses(_ check: (String) throws -> Void) throws {
+        lock.lock()
+        let addresses = connectedAddresses
+        lock.unlock()
+        for address in addresses {
+            try check(address ?? "")
+        }
     }
 
     func takeRedirect() -> URLRequest? {

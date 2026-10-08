@@ -101,8 +101,9 @@ final class WorkspaceAndNetworkGateTests: XCTestCase {
     /// projectless chat useless.
     func testRootlessToolsStillWorkWithoutAProject() async {
         for name in ["todowrite"] {
+            // "[]" is the explicit clear; an empty argument map is now refused.
             let call = AppToolCall(
-                name: name, arguments: [:],
+                name: name, arguments: ["todos": "[]"],
                 category: AppToolRegistry.category(for: name))
             let result = await AppToolRegistry.execute(call: call, in: nil)
             XCTAssertFalse(

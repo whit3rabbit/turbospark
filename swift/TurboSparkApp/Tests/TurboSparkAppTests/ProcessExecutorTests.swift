@@ -391,7 +391,9 @@ final class RunCommandToolTests: XCTestCase {
 
     func testModelTimeoutIsClampedToTheMaximum() {
         XCTAssertEqual(ShellCommandRunner.clampedTimeoutSeconds(timeoutMs: nil), 120)
-        XCTAssertEqual(ShellCommandRunner.clampedTimeoutSeconds(timeoutMs: 300), 0.3)
+        // Below one second is almost certainly seconds passed as milliseconds.
+        XCTAssertEqual(ShellCommandRunner.clampedTimeoutSeconds(timeoutMs: 300), 1)
+        XCTAssertEqual(ShellCommandRunner.clampedTimeoutSeconds(timeoutMs: 2500), 2.5)
         XCTAssertEqual(
             ShellCommandRunner.clampedTimeoutSeconds(timeoutMs: 3_600_000), 600,
             "an hour, in milliseconds, must clamp to the 600s ceiling")

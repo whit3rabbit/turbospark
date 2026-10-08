@@ -20,12 +20,16 @@ enum ShellCommandRunner {
     /// stops a misread unit (`timeout: 3600000`, meaning milliseconds, read
     /// as a patient hour) from holding one tool call open that long.
     static let maxTimeoutSeconds: TimeInterval = 600
+    static let minTimeoutSeconds: TimeInterval = 1
 
     static var defaultTimeoutSeconds: TimeInterval { ProcessExecutor.defaultTimeoutSeconds }
 
     static func clampedTimeoutSeconds(timeoutMs: Int?) -> TimeInterval {
         guard let timeoutMs, timeoutMs > 0 else { return defaultTimeoutSeconds }
-        return min(TimeInterval(timeoutMs) / 1000.0, maxTimeoutSeconds)
+        // Floor of one second: a model that passes seconds where milliseconds
+        // are expected (`timeout: 120`) would otherwise kill the command after
+        // 0.12 s, possibly mid-write (a stale .git/index.lock).
+        return min(max(TimeInterval(timeoutMs) / 1000.0, minTimeoutSeconds), maxTimeoutSeconds)
     }
 
     /// The command actually run: the user's command verbatim, then a
@@ -68,7 +72,7 @@ enum ShellCommandRunner {
         description: String? = nil,
         chatID: UUID? = nil
     ) async throws -> ToolOutput {
-        let startDirectory = ShellCwdTracker.shared.startDirectory(for: rootURL)
+        let startDirectory = ShellCwdTracker.shared.startDirectory(for: rootURL, chatID: chatID)
         let environment = ShellOutputFormatting.shellEnvironment()
 
         if runInBackground {
@@ -79,7 +83,7 @@ enum ShellCommandRunner {
         }
         return try await runForeground(
             command: command, startDirectory: startDirectory, rootURL: rootURL,
-            environment: environment, timeoutMs: timeoutMs)
+            environment: environment, timeoutMs: timeoutMs, chatID: chatID)
     }
 
     // MARK: - Foreground
@@ -89,7 +93,8 @@ enum ShellCommandRunner {
         startDirectory: URL,
         rootURL: URL,
         environment: [String: String],
-        timeoutMs: Int?
+        timeoutMs: Int?,
+        chatID: UUID?
     ) async throws -> ToolOutput {
         let timeoutSeconds = clampedTimeoutSeconds(timeoutMs: timeoutMs)
         let captureFile = NSTemporaryDirectory() + "turbospark-cwd-\(UUID().uuidString)"
@@ -110,7 +115,8 @@ enum ShellCommandRunner {
         // Where did the shell end up? Read before the deferred delete; a
         // failed read just skips the cwd update.
         if let finalCwd = try? String(contentsOfFile: captureFile, encoding: .utf8),
-           let note = ShellCwdTracker.shared.record(finalDirectory: finalCwd, root: rootURL) {
+           let note = ShellCwdTracker.shared.record(
+            finalDirectory: finalCwd, root: rootURL, chatID: chatID) {
             notes.append(note)
         }
 

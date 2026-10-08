@@ -63,8 +63,9 @@ final class ProjectFileIndex {
 
     // MARK: - Walk
 
-    /// Hidden files ARE offered (`.env`, `.github` are exactly the kind of
-    /// thing a mention is for); the skip list is what keeps the walk sane.
+    /// Hidden files ARE offered (`.github` is exactly the kind of thing a
+    /// mention is for); the skip list keeps the walk sane, and paths the
+    /// sensitive-file classifier refuses (`.env*`, keys) are left out.
     nonisolated static func scan(root: URL, maxEntries: Int, maxDepth: Int) -> [ProjectFileEntry] {
         let fileManager = FileManager.default
         var isDir: ObjCBool = false
@@ -91,17 +92,24 @@ final class ProjectFileIndex {
                 enumerator.skipDescendants()
                 continue
             }
-            guard !visitedCanonicalPaths.contains(canonical.path) else {
-                if (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-                    enumerator.skipDescendants()
-                }
-                continue
-            }
-            visitedCanonicalPaths.insert(canonical.path)
-
             let values = try? itemURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             let isSymlink = values?.isSymbolicLink ?? false
             let isDirectory = values?.isDirectory ?? itemURL.hasDirectoryPath
+
+            // Symlinks are skipped BEFORE their target is recorded as visited.
+            // Marking it first would hide the real directory's whole subtree
+            // whenever the link is enumerated earlier. (`isDirectory` is false
+            // for a link itself, so test `isSymlink` alone; the real target is
+            // reached through its own path and a contained link adds nothing.)
+            // (No skipDescendants here: on a non-directory it skips the REST of
+            // the parent directory, and the enumerator never follows links.)
+            if isSymlink { continue }
+
+            guard !visitedCanonicalPaths.contains(canonical.path) else {
+                if isDirectory { enumerator.skipDescendants() }
+                continue
+            }
+            visitedCanonicalPaths.insert(canonical.path)
 
             if isDirectory {
                 // Symlinked directories are never descended into.
@@ -121,6 +129,13 @@ final class ProjectFileIndex {
             }
 
             guard canonical.path.hasPrefix(canonicalRoot.path + "/") else { continue }
+            // Do not offer what the resolver refuses (`@.env` would pick a
+            // chip that silently attaches nothing).
+            if ToolRiskClassifier.isSensitivePath(itemURL.path)
+                || ToolRiskClassifier.isSensitivePath(canonical.path)
+            {
+                continue
+            }
             results.append(
                 ProjectFileEntry(
                     relativePath: String(canonical.path.dropFirst(canonicalRoot.path.count + 1)),

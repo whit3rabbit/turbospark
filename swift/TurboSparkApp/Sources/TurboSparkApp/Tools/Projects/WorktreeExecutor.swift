@@ -21,15 +21,24 @@ public enum WorktreeExecutor {
         }
 
         let errOutput = [res.stdout, res.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
-        guard res.exitCode == 0 || FileManager.default.fileExists(atPath: worktreeURL.path) else {
+        // Only a clean exit counts. An existing directory proves nothing: any
+        // pre-existing folder makes both `worktree add` calls fail, and a
+        // killed first attempt leaves a half-populated one.
+        guard res.exitCode == 0 else {
+            let reason = res.timedOut ? "timed out before the checkout finished; " : ""
             throw NSError(
                 domain: "TurboSparkTool",
                 code: 70,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create git worktree: \(errOutput)"]
+                userInfo: [NSLocalizedDescriptionKey: "Failed to create git worktree: \(reason)\(errOutput)"]
             )
         }
 
-        return "Entered worktree at '\(worktreeDirName)' on branch '\(branchName)'."
+        // The tool root does NOT move: file and shell tools keep operating on
+        // the original checkout. Claiming "entered" led the model to run
+        // destructive experiments believing it was isolated.
+        return "Created git worktree at '\(worktreeDirName)' on branch '\(branchName)'. "
+            + "The working root is UNCHANGED: file and shell tools still act on the main checkout. "
+            + "To work inside the worktree, use paths under '\(worktreeDirName)/' explicitly."
     }
 
     public static func exit(arguments: [String: String], rootURL: URL) async throws -> String {
@@ -40,7 +49,8 @@ public enum WorktreeExecutor {
             if let path {
                 let worktreeURL = try AppToolRegistry.resolveSecurePath(relPath: path, rootURL: rootURL)
                 var gitArguments = ["worktree", "remove"]
-                if arguments["discard_changes"]?.lowercased() == "true" {
+                // The dispatch gate flattens JSON true to "1".
+                if ["true", "1"].contains(arguments["discard_changes"]?.lowercased() ?? "") {
                     gitArguments.append("--force")
                 }
                 gitArguments.append(worktreeURL.path)
@@ -55,11 +65,17 @@ public enum WorktreeExecutor {
                 }
                 return "Exited and removed git worktree at '\(path)'."
             } else {
-                return "Exited git worktree and returned to main repository root."
+                // Nothing tracks which worktree EnterWorktree made, so a remove
+                // without a path used to do nothing and still report cleanup.
+                throw toolError(
+                    code: 73,
+                    message: "ExitWorktree action=remove needs a `path` naming the worktree to remove; nothing was removed",
+                    output: "")
             }
         }
 
-        return "Exited git worktree (preserved at '\(path ?? "active worktree")') and returned to main repository root."
+        return "The worktree (\(path ?? "path not given")) was left in place and not removed. "
+            + "The working root was never changed by EnterWorktree, so there is nothing to return from."
     }
 
     private static func runGit(arguments: [String], rootURL: URL) async throws -> ProcessExecutor.Output {

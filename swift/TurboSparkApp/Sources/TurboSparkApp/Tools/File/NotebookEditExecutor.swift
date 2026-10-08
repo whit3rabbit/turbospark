@@ -45,95 +45,88 @@ public enum NotebookEditExecutor {
         var modified = false
         var oldContent: String?
 
+        func fail(_ message: String) -> NSError {
+            NSError(domain: "TurboSparkTool", code: 40, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        // Resolves a cell by id, accepting the `cell-N` index spelling for
+        // notebooks (nbformat < 4.5) whose cells carry no ids.
+        func indexOfCell(id: String) -> Int? {
+            if let idx = cells.firstIndex(where: { ($0["id"] as? String) == id }) { return idx }
+            if id.hasPrefix("cell-"), let n = Int(id.dropFirst(5)), n >= 0, n < cells.count { return n }
+            return nil
+        }
+        func freshCellID() -> String {
+            let existing = Set(cells.compactMap { $0["id"] as? String })
+            while true {
+                let candidate = String(UUID().uuidString.prefix(8)).lowercased()
+                if !existing.contains(candidate) { return candidate }
+            }
+        }
+        // Replace and delete must be told WHICH cell. Defaulting to the first
+        // (replace) or last (delete) cell silently destroyed work, and an id
+        // that matched nothing used to append a duplicate cell and report
+        // success.
+        func requireTargetIndex() throws -> Int {
+            if let cellId {
+                guard let idx = indexOfCell(id: cellId) else {
+                    throw fail("No cell with id '\(cellId)' in '\(relPath)' (total cells: \(cells.count)).")
+                }
+                return idx
+            }
+            if let idx = cellIndex {
+                guard idx >= 0 && idx < cells.count else {
+                    throw fail("Cell index \(idx) is out of bounds (total cells: \(cells.count)).")
+                }
+                return idx
+            }
+            throw fail("\(editMode) needs `cell_id` or `cell_index` to say which cell to change.")
+        }
+
         if editMode.lowercased() == "insert" {
             var newCell: [String: Any] = [
                 "cell_type": cellType,
                 "metadata": [String: Any](),
-                "source": sourceLines
+                "source": sourceLines,
+                // Never reuse the anchor's id: duplicate ids made later edits
+                // by id hit the wrong cell.
+                "id": freshCellID()
             ]
-            if let cellId {
-                newCell["id"] = cellId
-            } else {
-                newCell["id"] = UUID().uuidString.prefix(8).lowercased()
-            }
             if cellType == "code" {
                 newCell["execution_count"] = NSNull()
                 newCell["outputs"] = [Any]()
             }
-            if let idx = cellIndex, idx >= 0 && idx <= cells.count {
+            if let cellId {
+                // Claude Code meaning: insert AFTER the cell with this id.
+                guard let anchor = indexOfCell(id: cellId) else {
+                    throw fail("No cell with id '\(cellId)' in '\(relPath)' to insert after (total cells: \(cells.count)).")
+                }
+                cells.insert(newCell, at: anchor + 1)
+            } else if let idx = cellIndex, idx >= 0 && idx <= cells.count {
                 cells.insert(newCell, at: idx)
             } else {
                 cells.append(newCell)
             }
             modified = true
         } else if editMode.lowercased() == "delete" {
-            if let cellId {
-                if let idx = cells.firstIndex(where: { ($0["id"] as? String) == cellId }) {
-                    cells.remove(at: idx)
-                    modified = true
-                }
-            } else if let idx = cellIndex {
-                guard idx >= 0 && idx < cells.count else {
-                    throw NSError(
-                        domain: "TurboSparkTool",
-                        code: 40,
-                        userInfo: [NSLocalizedDescriptionKey: "Cell index \(idx) is out of bounds (total cells: \(cells.count))."]
-                    )
-                }
-                cells.remove(at: idx)
-                modified = true
-            } else if !cells.isEmpty {
-                cells.removeLast()
-                modified = true
-            }
+            cells.remove(at: try requireTargetIndex())
+            modified = true
         } else {
             // Replace mode
-            var targetIndex: Int?
-            if let cellId {
-                targetIndex = cells.firstIndex(where: { ($0["id"] as? String) == cellId })
-            } else if let idx = cellIndex {
-                guard idx >= 0 && idx < cells.count else {
-                    throw NSError(
-                        domain: "TurboSparkTool",
-                        code: 40,
-                        userInfo: [NSLocalizedDescriptionKey: "Cell index \(idx) is out of bounds (total cells: \(cells.count))."]
-                    )
-                }
-                targetIndex = idx
-            } else if !cells.isEmpty {
-                targetIndex = 0
+            let idx = try requireTargetIndex()
+            var cell = cells[idx]
+            if let prevSource = cell["source"] as? [String] {
+                oldContent = prevSource.joined()
+            } else if let prevSourceStr = cell["source"] as? String {
+                oldContent = prevSourceStr
             }
-
-            if let idx = targetIndex, idx < cells.count {
-                var cell = cells[idx]
-                if let prevSource = cell["source"] as? [String] {
-                    oldContent = prevSource.joined()
-                } else if let prevSourceStr = cell["source"] as? String {
-                    oldContent = prevSourceStr
-                }
-                cell["source"] = sourceLines
-                cell["cell_type"] = cellType
-                if cellType == "code" {
-                    cell["outputs"] = [Any]()
-                    cell["execution_count"] = NSNull()
-                }
-                cells[idx] = cell
-                modified = true
-            } else {
-                // If not found, append cell
-                var newCell: [String: Any] = [
-                    "cell_type": cellType,
-                    "metadata": [String: Any](),
-                    "source": sourceLines,
-                    "id": cellId ?? UUID().uuidString.prefix(8).lowercased()
-                ]
-                if cellType == "code" {
-                    newCell["execution_count"] = NSNull()
-                    newCell["outputs"] = [Any]()
-                }
-                cells.append(newCell)
-                modified = true
+            cell["source"] = sourceLines
+            cell["cell_type"] = cellType
+            if cellType == "code" {
+                cell["outputs"] = [Any]()
+                cell["execution_count"] = NSNull()
             }
+            cells[idx] = cell
+            modified = true
         }
 
         guard modified else {

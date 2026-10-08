@@ -78,7 +78,7 @@ final class ExtendedToolExecutionTests: XCTestCase {
 
         let callGoal = AppToolCall(name: "ProposeGoal", arguments: ["condition": "Build passes with 0 errors"], category: .automation)
         let resGoal = await AppToolRegistry.execute(call: callGoal, in: project)
-        XCTAssertFalse(resGoal.isError)
+        XCTAssertTrue(resGoal.isError, "ProposeGoal creates no goal, so it must not report success")
         XCTAssertTrue(resGoal.output.contains("Build passes with 0 errors"))
     }
 

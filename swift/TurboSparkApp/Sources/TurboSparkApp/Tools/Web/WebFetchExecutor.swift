@@ -50,9 +50,16 @@ public enum WebFetchExecutor {
         format: String = "markdown",
         timeout: Int? = nil,
         customSession: URLSession? = nil,
-        destinationValidator injectedValidator: ((URL) throws -> Void)? = nil
+        destinationValidator injectedValidator: ((URL) throws -> Void)? = nil,
+        connectedAddressValidator injectedConnected: ((String) throws -> Void)? = nil
     ) async throws -> String {
         let destinationValidator = injectedValidator ?? { try HttpRequestDestinationValidator.validate($0) }
+        // Production (no injected destination validator) always checks the
+        // address the socket really connected to. A test that injects a
+        // validator to reach a loopback fixture opts out unless it injects
+        // its own connected-address check, which is how rebinding is tested.
+        let connectedValidator: ((String) throws -> Void)? = injectedConnected
+            ?? (injectedValidator == nil ? HttpRequestExecutor.refuseConnectedPrivateAddress : nil)
         let trimmedUrl = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmedUrl), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             throw NSError(
@@ -96,7 +103,8 @@ public enum WebFetchExecutor {
         var (data, response) = try await HttpRequestExecutor.performRequest(
             createRequest(userAgent: browserUserAgent),
             configuration: sessionConfig, customSession: customSession,
-            validate: destinationValidator)
+            validate: destinationValidator,
+            validateConnectedAddress: connectedValidator)
         var httpResponse = response as? HTTPURLResponse
 
         // Cloudflare challenge fallback retry
@@ -108,7 +116,8 @@ public enum WebFetchExecutor {
                 // be a way around the redirect checks.
                 if let (retryData, retryResp) = try? await HttpRequestExecutor.performRequest(
                     retryReq, configuration: sessionConfig, customSession: customSession,
-                    validate: destinationValidator),
+                    validate: destinationValidator,
+                    validateConnectedAddress: connectedValidator),
                    let retryHttp = retryResp as? HTTPURLResponse,
                    (200...299).contains(retryHttp.statusCode) {
                     data = retryData
@@ -195,7 +204,6 @@ public enum WebFetchExecutor {
     public static func decodeHTMLEntities(_ text: String) -> String {
         var result = text
             .replacingOccurrences(of: "&nbsp;", with: " ")
-            .replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: "&quot;", with: "\"")
@@ -234,7 +242,9 @@ public enum WebFetchExecutor {
             }
         }
 
-        return result
+        // `&amp;` goes LAST so a doubly escaped sequence such as `&amp;lt;`
+        // decodes once to the text `&lt;` instead of all the way to `<`.
+        return result.replacingOccurrences(of: "&amp;", with: "&")
     }
 
     // MARK: - Plain Text Extraction

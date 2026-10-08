@@ -45,15 +45,13 @@ enum ShellOutputFormatting {
     /// accumulate gigabytes of logs the model will never re-read.
     static let maximumSpillFiles = 20
 
-    /// The directory spilled output is written under, inside the app's
-    /// Application Support. Created on demand.
+    /// The directory spilled output is written under: inside the CURRENT
+    /// profile's store root, not a machine-wide folder. A shared directory let
+    /// a chat in profile B (or a different project) `ls` and `read_file`
+    /// command output that profile A's chat spilled, including any token the
+    /// output contained. Created on demand.
     static var spillRootURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first
-            ?? FileManager.default.temporaryDirectory
-        return base
-            .appendingPathComponent("TurboSpark", isDirectory: true)
-            .appendingPathComponent("spill", isDirectory: true)
+        AppStorageRoot.directory.appendingPathComponent("spill", isDirectory: true)
     }
 
     /// Whether `url` lives under the spill root. This is the predicate the
@@ -163,8 +161,38 @@ enum ShellOutputFormatting {
     /// (Claude Code reference: `commandSemantics.ts`). The head word is
     /// matched rather than the whole line, so `grep -r foo .` qualifies but
     /// `echo grep` does not.
+    /// True when `command` chains or pipes (`&&`, `||`, `;`, `|`, `&`, newline)
+    /// outside quotes. A quoted `;` or `$` in a grep pattern does not count.
+    static func hasUnquotedCompoundOperator(_ command: String) -> Bool {
+        var quote: Character?
+        var escaped = false
+        let chars = Array(command)
+        for (i, ch) in chars.enumerated() {
+            if escaped { escaped = false; continue }
+            if ch == "\\" && quote != "'" { escaped = true; continue }
+            if let q = quote {
+                if ch == q { quote = nil }
+                continue
+            }
+            if ch == "'" || ch == "\"" { quote = ch; continue }
+            if ch == "&" {
+                // `2>&1` and `&>file` are redirections, not a chain.
+                let prev: Character? = i > 0 ? chars[i - 1] : nil
+                let next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
+                if prev == ">" || next == ">" { continue }
+                return true
+            }
+            if ch == "|" || ch == ";" || ch == "\n" || ch == "`" { return true }
+        }
+        return false
+    }
+
     static func benignExitNote(command: String, exitCode: Int32) -> String? {
         guard exitCode == 1 else { return nil }
+        // Only a lone invocation's exit 1 means "no match / differs / false".
+        // In `test -f x && swift build` the 1 can come from the build, and
+        // calling that a false condition reports a failed build as success.
+        guard !hasUnquotedCompoundOperator(command) else { return nil }
         let head = command.trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .whitespacesAndNewlines).first?
             .lowercased() ?? ""

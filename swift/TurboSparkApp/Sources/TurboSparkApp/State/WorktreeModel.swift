@@ -191,7 +191,10 @@ public final class WorktreeModel: ObservableObject {
 
     // Claude Code-style expansion, comparison, and view options
     @Published public var activeTab: WorktreeTabMode = .changes
-    @Published public var comparisonMode: WorktreeComparisonMode = .againstBranch("main")
+    // .uncommitted, not .againstBranch("main"): a repo whose default branch is
+    // master (or anything else) made both branch diffs exit 128 and the pane
+    // showed every line of a modified file as added.
+    @Published public var comparisonMode: WorktreeComparisonMode = .uncommitted
     @Published public var availableBranches: [String] = []
     @Published public var recentCommits: [WorktreeCommit] = []
     @Published public var worktrees: [GitWorktreeInfo] = []
@@ -211,6 +214,10 @@ public final class WorktreeModel: ObservableObject {
     /// Held so `loadDiff` can cancel its predecessor: an unstored `Task`'s
     /// `Task.isCancelled` is never true, which is what let two diffs race.
     private var diffTask: Task<Void, Never>?
+    /// Same reason as `diffTask`: a slower earlier commit or branch query
+    /// must not land over a later selection.
+    private var commitFilesTask: Task<Void, Never>?
+    private var branchFilesTask: Task<Void, Never>?
     /// Bumped per `refresh()`. A cancelled predecessor's `defer` still runs,
     /// so ownership of `isRefreshing` is decided by this rather than by which
     /// task happens to finish last.
@@ -235,7 +242,25 @@ public final class WorktreeModel: ObservableObject {
             ? "" : PathContainment.canonical(URL(fileURLWithPath: path)).path
         guard canonical != rootDirectoryPath else { return }
         rootDirectoryPath = canonical
+        resetComparisonState()
         refresh()
+    }
+
+    /// Drops everything scoped to the previous repository. A branch name,
+    /// commit hash or file list from repo A run inside repo B fails or reads
+    /// B's same-named file through the untracked fallback.
+    func resetComparisonState() {
+        comparisonMode = .uncommitted
+        branchComparisonFiles = []
+        selectedCommitFiles = []
+        selectedTimelineCommit = nil
+        selectedFilePath = nil
+        selectedFileDiff = nil
+        isLoadingDiff = false
+        diffTask?.cancel()
+        commitFilesTask?.cancel()
+        isLoadingCommitFiles = false
+        branchFilesTask?.cancel()
     }
 
     /// Asynchronously refreshes git branch, porcelain status, and line change stats.
@@ -320,10 +345,11 @@ public final class WorktreeModel: ObservableObject {
         selectedCommitFiles = []
         let path = rootDirectoryPath
         let hash = commit.hash
-        Task { [weak self] in
+        commitFilesTask?.cancel()
+        commitFilesTask = Task { [weak self] in
             guard let self = self else { return }
             let files = await Self.queryCommitFiles(rootPath: path, hash: hash)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.selectedTimelineCommit?.hash == hash else { return }
             self.selectedCommitFiles = files
             self.isLoadingCommitFiles = false
             if let first = files.first {
@@ -337,6 +363,8 @@ public final class WorktreeModel: ObservableObject {
     /// would query the stale commit's diff instead of the mode the list is
     /// showing.
     public func deselectTimelineCommit() {
+        commitFilesTask?.cancel()
+        isLoadingCommitFiles = false
         selectedTimelineCommit = nil
         selectedCommitFiles = []
         if case .commit = comparisonMode {
@@ -347,7 +375,8 @@ public final class WorktreeModel: ObservableObject {
     /// Loads files modified between the current branch and a base branch.
     public func loadBranchComparisonFiles(baseBranch: String) {
         let path = rootDirectoryPath
-        Task { [weak self] in
+        branchFilesTask?.cancel()
+        branchFilesTask = Task { [weak self] in
             guard let self = self else { return }
             let files = await Self.queryBranchDiffFiles(rootPath: path, baseBranch: baseBranch)
             guard !Task.isCancelled else { return }
@@ -366,6 +395,9 @@ public final class WorktreeModel: ObservableObject {
         guard !rootDirectoryPath.isEmpty else { return (false, "No repository root") }
         let (exitCode, stderr) = await Self.runGitCheckout(rootPath: rootDirectoryPath, branch: branchName)
         if exitCode == 0 {
+            // The checked-out branch changes what every branch/commit
+            // comparison means.
+            resetComparisonState()
             refresh()
             return (true, nil)
         } else {
