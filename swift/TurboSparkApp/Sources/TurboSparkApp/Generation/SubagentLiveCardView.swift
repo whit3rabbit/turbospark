@@ -170,7 +170,10 @@ struct SubagentLiveCardView: View {
     /// The tail of the streamed text, so a long subagent turn shows its
     /// current end rather than its beginning.
     private var streamedTail: String {
-        guard state.streamedText.count > 4_000 else { return state.streamedText }
+        // utf8.count is O(1); only pay the grapheme walk when it could matter.
+        guard state.streamedText.utf8.count > 4_000, state.streamedText.count > 4_000 else {
+            return state.streamedText
+        }
         return String(state.streamedText.suffix(4_000))
     }
 }

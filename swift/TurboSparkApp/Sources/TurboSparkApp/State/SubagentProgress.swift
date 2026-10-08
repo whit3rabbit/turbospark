@@ -131,7 +131,8 @@ public final class SubagentRunState: ObservableObject, Identifiable {
             // Only a tail is ever shown (the card renders the last 4k), so
             // keep a bounded window: the full text made every render
             // re-count a string that grows for the whole run.
-            if streamedText.count > Self.streamedTextLimit {
+            if streamedText.utf8.count > Self.streamedTextLimit,
+               streamedText.count > Self.streamedTextLimit {
                 streamedText = String(streamedText.suffix(Self.streamedTextLimit))
             }
         case .toolStarted(let name, let summary):

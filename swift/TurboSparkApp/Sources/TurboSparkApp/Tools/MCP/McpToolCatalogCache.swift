@@ -68,6 +68,9 @@ public final class McpToolCatalogCache: @unchecked Sendable {
         let key = McpServerConfig.normalizedName(serverName)
         entries.removeValue(forKey: key)
         inFlight.removeValue(forKey: key)
+        // Removal, rename and disable all land here: the persistent session
+        // for that server must not keep running under a config that is gone.
+        Task { await McpClientEngine.shared.invalidateSessions(serverName: serverName) }
     }
 
     public func removeAll() {

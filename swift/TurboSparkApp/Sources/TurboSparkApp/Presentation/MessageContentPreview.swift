@@ -41,8 +41,13 @@ enum MessageContentPreview {
         tailLimit: Int = tailLimit,
         includesTail: Bool = true
     ) -> Preview? {
-        guard text.count > collapseThreshold else { return nil }
-        let hiddenCharacterCount = text.count - headLimit - (includesTail ? tailLimit : 0)
+        // `utf8.count` is O(1) on native strings and never smaller than the
+        // Character count, so a short message (nearly all of them) skips the
+        // O(n) grapheme walk that `count` costs on every body evaluation.
+        guard text.utf8.count > collapseThreshold else { return nil }
+        let characterCount = text.count
+        guard characterCount > collapseThreshold else { return nil }
+        let hiddenCharacterCount = characterCount - headLimit - (includesTail ? tailLimit : 0)
         let marker = String(
             localized: "[... \(hiddenCharacterCount) characters hidden ...]",
             bundle: .module)

@@ -16,6 +16,7 @@ struct StatusBarView: View {
 
     /// Historical ring buffers for live sparkline graphs (up to 16 data points).
     @State private var throughputHistory: [Double] = []
+    @State private var sampleGate = SampleRateGate()
 
 
     var body: some View {
@@ -61,7 +62,12 @@ struct StatusBarView: View {
                 refreshMetrics()
             }
         }
-        .onChange(of: model.liveTokenCount) { refreshMetrics() }
+        // Per token this only feeds the throughput sparkline, rate-limited.
+        // The telemetry FFI/JSON round trip stays on the 2 s timer: thermal
+        // and memory pressure move on a scale of seconds, not per token.
+        .onChange(of: model.liveTokenCount) {
+            if sampleGate.admit(now: Date()) { appendThroughputSample() }
+        }
     }
 
     private var barDivider: some View {
@@ -101,10 +107,14 @@ struct StatusBarView: View {
     }
 
     private func refreshMetrics() {
+        _ = sampleGate.admit(now: Date(), minInterval: 0)
+        appendThroughputSample()
+        model.refreshTelemetry()
+    }
+
+    private func appendThroughputSample() {
         let rate = model.phase == .decode ? model.liveTokensPerSecond : (model.diagnostics?.tokensPerSecond ?? 0.0)
         appendSample(rate, to: &throughputHistory)
-
-        model.refreshTelemetry()
     }
 
     private func appendSample(_ value: Double, to array: inout [Double], maxCount: Int = 16) {
@@ -377,5 +387,21 @@ private struct MeterBar: View {
         }
         .frame(height: 4)
         .accessibilityHidden(true)
+    }
+}
+
+/// Admits at most one sample per `minInterval`, so a per-token trigger yields
+/// a sparkline on a real time base (about 2 samples a second) instead of one
+/// point per token.
+struct SampleRateGate {
+    private var lastAdmitted: Date?
+    static let defaultInterval: TimeInterval = 0.5
+
+    /// Returns true (and records `now`) when enough time passed since the
+    /// last admitted sample.
+    mutating func admit(now: Date, minInterval: TimeInterval = SampleRateGate.defaultInterval) -> Bool {
+        if let lastAdmitted, now.timeIntervalSince(lastAdmitted) < minInterval { return false }
+        lastAdmitted = now
+        return true
     }
 }

@@ -93,6 +93,8 @@ extension AppModel {
         BackgroundShellManager.shared.killAllForShutdown()
         // Foreground tool, hook and bang-command trees too (ProcessExecutor).
         ProcessExecutor.killAllLiveChildrenNow()
+        // Persistent MCP stdio servers outlive any single tool call.
+        McpClientEngine.killAllSessionProcessesNow()
     }
 
     /// First line of the command, whitespace-trimmed and capped, for the

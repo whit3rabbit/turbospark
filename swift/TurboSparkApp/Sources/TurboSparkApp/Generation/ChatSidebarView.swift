@@ -323,7 +323,13 @@ struct ChatSidebarView: View {
     private var chatList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 3) {
-                if filteredHistoryChats.isEmpty {
+                // Sorted, filtered and bucketed ONCE per body. This used to
+                // re-run (with a sort and a vault-aware transcript check
+                // each) for every mention below, and the body re-runs per
+                // streamed token.
+                let layout = ChatSidebarLayout.make(
+                    sortedHistory: historyChats, searchText: searchText)
+                if layout.isEmpty {
                     VStack(spacing: 6) {
                         Image(systemName: "bubble.left.and.bubble.right")
                             .font(theme.ui(.title2))
@@ -344,14 +350,12 @@ struct ChatSidebarView: View {
                     .padding(.horizontal, 12)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("No chats yet. Start a conversation to see history here.")
-                } else if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                } else if !layout.isSearching {
                     // The qwen-code session grouping: time-bucket headers
                     // over the recency-sorted list. Suppressed while a
                     // search filter is active -- the matches are what
                     // matters then, not when they happened.
-                    let pinned = filteredHistoryChats.filter(\.isPinned)
-                    let unpinned = filteredHistoryChats.filter { !$0.isPinned }
-                    ForEach(pinned) { chat in
+                    ForEach(layout.pinned) { chat in
                         ChatSidebarChatRowView(
                             model: model,
                             chat: chat,
@@ -361,7 +365,7 @@ struct ChatSidebarView: View {
                             chatForSystemPrompt: $chatForSystemPrompt
                         )
                     }
-                    ForEach(dateGroupedChats(approach: unpinned), id: \.bucket) { group in
+                    ForEach(layout.groups, id: \.bucket) { group in
                         Text(group.bucket.label)
                             .font(theme.ui(.tiny, weight: .semibold))
                             .foregroundStyle(.appSecondary)
@@ -380,7 +384,7 @@ struct ChatSidebarView: View {
                         }
                     }
                 } else {
-                    ForEach(filteredHistoryChats) { chat in
+                    ForEach(layout.matches) { chat in
                         ChatSidebarChatRowView(
                             model: model,
                             chat: chat,
@@ -404,7 +408,8 @@ struct ChatSidebarView: View {
     /// Restore and Delete.
     @ViewBuilder
     private var archivedSection: some View {
-        let archived = AppChat.sortedForSidebar(model.archivedChats)
+        // `archivedChats` is already in sidebar order.
+        let archived = model.archivedChats
         if !archived.isEmpty {
             DisclosureGroup {
                 ForEach(archived) { chat in
@@ -461,31 +466,6 @@ struct ChatSidebarView: View {
         // Pinned first, recency inside each group -- `AppChat`'s one
         // ordering, shared with the projects view and prev/next navigation.
         AppChat.sortedForSidebar(model.filteredChats)
-    }
-
-    private var filteredHistoryChats: [AppChat] {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return historyChats }
-        return historyChats.filter {
-            $0.title.localizedCaseInsensitiveContains(trimmed) ||
-            $0.preview.localizedCaseInsensitiveContains(trimmed)
-        }
-    }
-
-    private struct DateGroup {
-        let bucket: ChatDateBucket
-        let chats: [AppChat]
-    }
-
-    /// Buckets the recency-sorted chats, keeping the sort inside each
-    /// bucket and dropping empty buckets.
-    private func dateGroupedChats(approach chats: [AppChat]) -> [DateGroup] {
-        ChatDateBucket.allCases.compactMap { bucket in
-            let inBucket = chats.filter {
-                ChatDateBucket.bucket(for: $0.updatedAt) == bucket
-            }
-            return inBucket.isEmpty ? nil : DateGroup(bucket: bucket, chats: inBucket)
-        }
     }
 
     private var renameAlertPresented: Binding<Bool> {

@@ -40,6 +40,50 @@ enum ChatDateBucket: String, CaseIterable {
     }
 }
 
+/// The sidebar list, derived once from the already-sorted history. Pure so the
+/// view can build it once per body and tests can pin the grouping.
+struct ChatSidebarLayout {
+    struct Group {
+        let bucket: ChatDateBucket
+        let chats: [AppChat]
+    }
+
+    /// True while a non-blank search is active: `matches` is the flat result
+    /// and the pinned/date grouping is suppressed.
+    let isSearching: Bool
+    let matches: [AppChat]
+    let pinned: [AppChat]
+    let groups: [Group]
+
+    var isEmpty: Bool { isSearching ? matches.isEmpty : (pinned.isEmpty && groups.isEmpty) }
+
+    /// `sortedHistory` must already be in `AppChat.sortedForSidebar` order;
+    /// that order is kept inside the pinned list and every bucket.
+    static func make(sortedHistory: [AppChat], searchText: String, now: Date = Date()) -> ChatSidebarLayout {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            let hits = sortedHistory.filter {
+                $0.title.localizedCaseInsensitiveContains(trimmed)
+                    || $0.preview.localizedCaseInsensitiveContains(trimmed)
+            }
+            return ChatSidebarLayout(isSearching: true, matches: hits, pinned: [], groups: [])
+        }
+        var pinned: [AppChat] = []
+        var byBucket: [ChatDateBucket: [AppChat]] = [:]
+        for chat in sortedHistory {
+            if chat.isPinned {
+                pinned.append(chat)
+            } else {
+                byBucket[ChatDateBucket.bucket(for: chat.updatedAt, now: now), default: []].append(chat)
+            }
+        }
+        let groups = ChatDateBucket.allCases.compactMap { bucket in
+            byBucket[bucket].map { Group(bucket: bucket, chats: $0) }
+        }
+        return ChatSidebarLayout(isSearching: false, matches: [], pinned: pinned, groups: groups)
+    }
+}
+
 /// The six-preset palette qwen-code's `workspaceColor` cycles through, in
 /// its order. The pick is a hash of the project's stable id, not its name:
 /// a rename must not repaint a project the user has already learned.

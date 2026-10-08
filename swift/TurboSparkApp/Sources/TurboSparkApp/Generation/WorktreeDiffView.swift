@@ -30,6 +30,25 @@ public enum DiffBlock: Identifiable, Sendable {
     }
 }
 
+/// Remembers the last parsed diff. The view body re-runs on every publish of
+/// the worktree model or its parents (per streamed token while the inspector
+/// is open), and a large diff such as a lockfile took a full reparse each
+/// time. Keyed on the raw text: equal text means equal blocks.
+@MainActor
+final class DiffBlockCache {
+    private var cachedDiff: String?
+    private var cachedBlocks: [DiffBlock] = []
+    private(set) var parseCount = 0
+
+    func blocks(for diff: String) -> [DiffBlock] {
+        if let cachedDiff, cachedDiff == diff { return cachedBlocks }
+        cachedBlocks = WorktreeDiffView.parseDiff(diff)
+        cachedDiff = diff
+        parseCount += 1
+        return cachedBlocks
+    }
+}
+
 /// Rich Git diff viewer displaying collapsible context lines, hunk headers, and line numbers.
 @MainActor
 public struct WorktreeDiffView: View {
@@ -41,6 +60,7 @@ public struct WorktreeDiffView: View {
 
     @State private var expandedBlocks: Set<Int> = []
     @State private var copied: Bool = false
+    @State private var blockCache = DiffBlockCache()
 
     public init(
         worktree: WorktreeModel,
@@ -138,7 +158,7 @@ public struct WorktreeDiffView: View {
     }
 
     private var diffContent: some View {
-        let blocks = parseDiff(diff)
+        let blocks = blockCache.blocks(for: diff)
         return ScrollView([.vertical, .horizontal], showsIndicators: true) {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(blocks) { block in
@@ -236,7 +256,7 @@ public struct WorktreeDiffView: View {
     }
 
     /// Parses unified diff string into blocks with folded context groups for clean display.
-    private func parseDiff(_ raw: String) -> [DiffBlock] {
+    nonisolated static func parseDiff(_ raw: String) -> [DiffBlock] {
         var rawLines = raw.components(separatedBy: .newlines)
         if let firstHunkIndex = rawLines.firstIndex(where: { $0.hasPrefix("@@") }) {
             rawLines = Array(rawLines[firstHunkIndex...])
@@ -250,7 +270,7 @@ public struct WorktreeDiffView: View {
         for text in rawLines {
             lineIndex += 1
             if text.hasPrefix("@@") {
-                let (oldStart, newStart) = parseHunkHeader(text)
+                let (oldStart, newStart) = Self.parseHunkHeader(text)
                 currentOldLine = oldStart
                 currentNewLine = newStart
                 parsedLines.append(
@@ -345,7 +365,7 @@ public struct WorktreeDiffView: View {
         return blocks
     }
 
-    private func parseHunkHeader(_ text: String) -> (Int, Int) {
+    nonisolated static func parseHunkHeader(_ text: String) -> (Int, Int) {
         // Only the span between the two @@ markers carries counts. Scanning
         // the whole line reads git's trailing function-context hint too, and
         // a hunk like "@@ -10,7 +10,8 @@ x = -5" would overwrite oldStart

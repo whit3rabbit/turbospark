@@ -3,10 +3,26 @@ import Foundation
 /// Thread-safe newline-delimited buffer fed from a `readabilityHandler`
 /// callback, which fires on an arbitrary GCD thread rather than the actor
 /// that owns the transport.
-private final class LineBuffer: @unchecked Sendable {
+final class LineBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var pending = Data()
     private var completeLines: [Data] = []
+    private var closed = false
+
+    /// Wakes a persistent session's reader task. Set before the child is
+    /// spawned and called outside the lock, from the GCD handler thread.
+    var onActivity: (@Sendable () -> Void)?
+
+    /// True once the child's stdout reached EOF, so no further line can arrive.
+    var isClosed: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return closed
+    }
+
+    func markClosed() {
+        lock.lock(); closed = true; lock.unlock()
+        onActivity?()
+    }
 
     /// Appends a chunk and splits out every complete (`\n`-terminated) line
     /// currently available, not just the first one -- a single `availableData`
@@ -19,6 +35,7 @@ private final class LineBuffer: @unchecked Sendable {
             completeLines.append(pending.subdata(in: 0..<idx))
             pending.removeSubrange(0...idx)
         }
+        onActivity?()
     }
 
     func popLine() -> Data? {
@@ -31,7 +48,7 @@ private final class LineBuffer: @unchecked Sendable {
 /// Capped tail of a child's stderr, so a server that dies at startup (missing
 /// API key, bad args, `env: node: No such file`) can be reported with its own
 /// message instead of a generic timeout.
-private final class StderrTail: @unchecked Sendable {
+final class StderrTail: @unchecked Sendable {
     private let lock = NSLock()
     private var bytes = Data()
     private static let cap = 4096
@@ -53,7 +70,20 @@ private final class StderrTail: @unchecked Sendable {
 public actor McpClientEngine {
     public static let shared = McpClientEngine()
 
-    public init() {}
+    private var sessions: [McpSessionKey: McpStdioSession] = [:]
+    private let idleTimeout: TimeInterval
+    private let clock: any McpSessionClock
+
+    public init() {
+        self.idleTimeout = 300
+        self.clock = SystemMcpSessionClock()
+    }
+
+    /// Test seam: a short idle timeout and a manual clock.
+    init(idleTimeout: TimeInterval, clock: any McpSessionClock) {
+        self.idleTimeout = idleTimeout
+        self.clock = clock
+    }
 
     /// Discovers available tools by spawning the server, completing the MCP handshake, and querying `tools/list`.
     public func discoverTools(for config: McpServerConfig, workingDirectory: URL? = nil, timeoutSeconds: TimeInterval = 10.0) async throws -> [McpDiscoveredTool] {
@@ -119,14 +149,16 @@ public actor McpClientEngine {
     /// stdout: a server that writes more than one pipe buffer (~64KB) of
     /// diagnostics with nobody reading it blocks on its own `write()` call,
     /// which hangs every subsequent call to this server, not just discovery.
-    private func spawnStdioServer(
+    static func spawnStdioServer(
         serverName: String,
         command: String,
         args: [String],
         env: [String: String],
         envPassthrough: [String],
         workingDirectory: URL?,
-        errorCode: Int
+        errorCode: Int,
+        stdoutBuffer: LineBuffer = LineBuffer(),
+        onTermination: (@Sendable () -> Void)? = nil
     ) throws -> (process: Process, stdinPipe: Pipe, stdoutBuffer: LineBuffer, stderrTail: StderrTail) {
         let process = Process()
         // An unresolvable command is refused by name here rather than handed
@@ -164,11 +196,11 @@ public actor McpClientEngine {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        let stdoutBuffer = LineBuffer()
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
             if chunk.isEmpty {
                 handle.readabilityHandler = nil
+                stdoutBuffer.markClosed()
             } else {
                 stdoutBuffer.append(chunk)
             }
@@ -181,6 +213,10 @@ public actor McpClientEngine {
             } else {
                 stderrTail.append(chunk)
             }
+        }
+
+        if let onTermination {
+            process.terminationHandler = { _ in onTermination() }
         }
 
         do {
@@ -201,7 +237,7 @@ public actor McpClientEngine {
         workingDirectory: URL?,
         timeoutSeconds: TimeInterval
     ) async throws -> [McpDiscoveredTool] {
-        let (process, stdinPipe, stdoutBuffer, stderrTail) = try spawnStdioServer(
+        let (process, stdinPipe, stdoutBuffer, stderrTail) = try Self.spawnStdioServer(
             serverName: serverName, command: command, args: args, env: env,
             envPassthrough: envPassthrough,
             workingDirectory: workingDirectory, errorCode: 1
@@ -314,6 +350,9 @@ public actor McpClientEngine {
                 "MCP server '\(serverName)' rejected \(step): \(String(message.prefix(300)))"])
     }
 
+    /// Runs `tools/call` over a persistent per-server session (see
+    /// `McpStdioSession`). The handshake is paid once per session instead of
+    /// once per call.
     private func callToolViaStdio(
         serverName: String,
         command: String,
@@ -325,59 +364,36 @@ public actor McpClientEngine {
         workingDirectory: URL?,
         timeoutSeconds: TimeInterval
     ) async throws -> String {
-        let (process, stdinPipe, stdoutBuffer, stderrTail) = try spawnStdioServer(
+        let key = McpSessionKey(
             serverName: serverName, command: command, args: args, env: env,
-            envPassthrough: envPassthrough,
-            workingDirectory: workingDirectory, errorCode: 2
-        )
-
-        defer {
-            // **SIGTERM IS A REQUEST** (state#61). A third-party server
-            // binary that traps or ignores it simply kept running, one orphan
-            // per tool call, holding its own child processes and sockets for
-            // the life of the app. `ProcessExecutor.terminateAndReap`
-            // escalates to SIGKILL after 2 s and is what every other spawn
-            // site here already uses.
-            if process.isRunning {
-                ProcessExecutor.terminateAndReap(process)
+            envPassthrough: envPassthrough, workingDirectory: workingDirectory?.path)
+        // One retry, and only for a session that was already dead BEFORE the
+        // request was written (idle teardown, crash between calls). A request
+        // that reached the server is never replayed: the tool may have had
+        // side effects.
+        for attempt in 0..<2 {
+            let session = session(for: key, workingDirectory: workingDirectory)
+            do {
+                try await session.ensureStarted(timeoutSeconds: timeoutSeconds)
+                let data = try await session.request(
+                    method: "tools/call",
+                    params: ["name": toolName, "arguments": arguments],
+                    timeoutSeconds: timeoutSeconds)
+                guard let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    throw NSError(domain: "McpClientEngine", code: 3, userInfo: [
+                        NSLocalizedDescriptionKey: "MCP server '\(serverName)' sent an unreadable response."])
+                }
+                return try Self.toolCallOutput(from: response)
+            } catch McpSessionError.closedBeforeSend where attempt == 0 {
+                continue
             }
         }
+        throw NSError(domain: "McpClientEngine", code: 7, userInfo: [
+            NSLocalizedDescriptionKey: "MCP server '\(serverName)' could not be restarted."])
+    }
 
-        // Initialize handshake
-        let initRequest: [String: Any] = [
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": [
-                "protocolVersion": "2024-11-05",
-                "capabilities": ["tools": [:] as [String: Any]],
-                "clientInfo": ["name": "TurboSpark", "version": "1.0.0"]
-            ]
-        ]
-        try sendJsonRpc(initRequest, to: stdinPipe)
-        _ = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: 1, timeoutSeconds: timeoutSeconds, process: process, stderrTail: stderrTail, serverName: serverName)
-
-        let initializedNotification: [String: Any] = [
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-            "params": [:] as [String: Any]
-        ]
-        try sendJsonRpc(initializedNotification, to: stdinPipe)
-
-        // Call tool
-        let callRequest: [String: Any] = [
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/call",
-            "params": [
-                "name": toolName,
-                "arguments": arguments
-            ]
-        ]
-        try sendJsonRpc(callRequest, to: stdinPipe)
-
-        let callResponse = try await readJsonRpcResponse(from: stdoutBuffer, expectedId: 2, timeoutSeconds: timeoutSeconds, process: process, stderrTail: stderrTail, serverName: serverName)
-
+    /// Maps a `tools/call` JSON-RPC response to the tool's text output.
+    static func toolCallOutput(from callResponse: [String: Any]) throws -> String {
         if let errorDict = callResponse["error"] as? [String: Any],
            let errorMsg = errorDict["message"] as? String {
             throw NSError(domain: "McpClientEngine", code: 3, userInfo: [NSLocalizedDescriptionKey: "MCP Tool error: \(errorMsg)"])
@@ -408,6 +424,49 @@ public actor McpClientEngine {
         }
 
         return "Executed successfully."
+    }
+
+    // MARK: - Persistent sessions
+
+    /// Returns the live session for `key`, creating one (not yet spawned) when
+    /// none exists or the old one died. Sessions for the same server name with
+    /// a different config or working directory are retired: they finish their
+    /// in-flight calls and then exit, so a config edit or project switch never
+    /// keeps talking to the old process.
+    private func session(for key: McpSessionKey, workingDirectory: URL?) -> McpStdioSession {
+        if let existing = sessions[key], !existing.isClosed { return existing }
+        for (otherKey, other) in sessions where otherKey.normalizedName == key.normalizedName {
+            sessions.removeValue(forKey: otherKey)
+            Task { await other.retire() }
+        }
+        let created = McpStdioSession(key: key, workingDirectory: workingDirectory,
+                                      idleTimeout: idleTimeout, clock: clock)
+        sessions[key] = created
+        return created
+    }
+
+    /// Closes every session of `serverName` (config removed, renamed or
+    /// disabled). In-flight calls fail with a "session closed" error.
+    public func invalidateSessions(serverName: String) async {
+        let normalized = McpServerConfig.normalizedName(serverName)
+        let doomed = sessions.filter { $0.key.normalizedName == normalized }
+        for (key, _) in doomed { sessions.removeValue(forKey: key) }
+        for (_, session) in doomed { await session.close(reason: "the server configuration changed") }
+    }
+
+    public func shutdownAllSessions() async {
+        let all = sessions
+        sessions.removeAll()
+        for (_, session) in all { await session.close(reason: "the app is shutting down") }
+    }
+
+    /// Number of tracked sessions (test seam).
+    var sessionCount: Int { sessions.values.filter { !$0.isClosed }.count }
+
+    /// Synchronous quit-time sweep, usable from non-async shutdown code: kills
+    /// every session child's process tree without a grace period.
+    nonisolated static func killAllSessionProcessesNow() {
+        McpSessionProcessRegistry.killAllNow()
     }
 
     // MARK: - SSE Transport (Remote)
