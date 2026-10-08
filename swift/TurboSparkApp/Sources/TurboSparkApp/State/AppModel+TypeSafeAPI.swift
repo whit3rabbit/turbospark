@@ -40,9 +40,24 @@ extension AppModel {
             typeSafeHealth = "Running"
             await refreshTypeSafeModels()
         } catch {
-            typeSafeError = error.localizedDescription
+            typeSafeError = Self.typeSafeStartFailureMessage(error, port: url.port)
             typeSafeHealth = "Stopped"
         }
+    }
+
+    /// `OpenKind.ServerError` bridges to "The operation couldn't be completed.
+    /// (OpenKind.ServerError error 1.)", which names nothing. The commonest
+    /// cause is a previous openkindd that outlived the app (crash, force-quit)
+    /// and still holds the port, so say that.
+    static func typeSafeStartFailureMessage(_ error: Error, port: Int?) -> String {
+        let description = error.localizedDescription
+        guard String(reflecting: type(of: error)).contains("ServerError")
+            || description.contains("ServerError")
+        else { return description }
+        let where_ = port.map { "127.0.0.1:\($0)" } ?? "the configured address"
+        return "openkindd could not start on \(where_). The port may already be in use, "
+            + "possibly by an openkindd left running by a previous session: quit it "
+            + "(Activity Monitor or `pkill openkindd`) or choose another port."
     }
 
     public func stopTypeSafeServer() async {
@@ -59,10 +74,17 @@ extension AppModel {
         guard let service = typeSafeServer else { return }
         do {
             let health = try await service.client.health()
+            // A Stop (or restart) that landed while the poll was in flight
+            // owns the status now; writing it back would resurrect a dead
+            // server's health or error.
+            guard typeSafeServer === service, !Task.isCancelled else { return }
             typeSafeHealth = health.data.status
-            typeSafeModels = (try await service.client.listLocalModels()).data.models
+            let models = (try await service.client.listLocalModels()).data.models
+            guard typeSafeServer === service, !Task.isCancelled else { return }
+            typeSafeModels = models
             typeSafeError = nil
         } catch {
+            guard typeSafeServer === service, !Task.isCancelled else { return }
             typeSafeError = error.localizedDescription
             typeSafeHealth = "Error"
         }

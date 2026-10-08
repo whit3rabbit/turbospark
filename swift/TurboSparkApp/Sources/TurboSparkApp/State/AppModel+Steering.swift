@@ -65,10 +65,13 @@ extension AppModel {
 
     /// The selected preset's shape against the selected install's.
     public var steeringCompatibility: AppSteeringPolicy.Compatibility {
-        AppSteeringPolicy.compatibility(
+        // One descriptor resolve, not one per field (the manifest read behind
+        // it is memoized by ManifestFactsCache).
+        let descriptor = selected.map { ModelFeatureDescriptor.resolve(installedModel: $0) }
+        return AppSteeringPolicy.compatibility(
             preset: resolvedSteeringPreset,
-            modelHidden: selectedModelHiddenSize,
-            modelLayers: selectedModelLayerCount
+            modelHidden: descriptor?.hiddenSize,
+            modelLayers: descriptor?.layerCount
         )
     }
 
@@ -184,7 +187,9 @@ extension AppModel {
     /// .controlVectorInfo`), so this app never reimplements the GGUF layout
     /// and cannot disagree with what the open will make of the same file.
     /// Milliseconds: a vector is around 1.3 MB and no model is involved.
-    public static func readingVectorShape(into preset: AppSteeringPreset) -> (
+    public static func readingVectorShape(
+        into preset: AppSteeringPreset, applyDeclaredMode: Bool = true
+    ) -> (
         preset: AppSteeringPreset, info: ControlVectorInfo?, error: String?
     ) {
         var updated = preset
@@ -201,7 +206,7 @@ extension AppModel {
             // The file's own declared mode is used only when the preset is
             // still at its default, so re-reading a vector never overwrites a
             // mode the operator chose.
-            if let declared = info.declaredMode,
+            if applyDeclaredMode, let declared = info.declaredMode,
                 let mode = AppSteeringModeOption(rawValue: declared),
                 preset.mode == .ablate
             {

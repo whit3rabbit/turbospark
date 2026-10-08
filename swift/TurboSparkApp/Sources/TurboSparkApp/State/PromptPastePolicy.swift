@@ -66,11 +66,23 @@ enum PromptPastePolicy {
         while prefix < shared && oldBytes[prefix] == newBytes[prefix] {
             prefix += 1
         }
+        // Equal bytes can still be the shared lead byte of two DIFFERENT
+        // multibyte characters (U+0438 vs U+0430 share D0). Back off to a
+        // scalar boundary so neither the draft nor the paste is cut inside
+        // a character.
+        while prefix > 0 && prefix < newBytes.count && (newBytes[prefix] & 0xC0) == 0x80 {
+            prefix -= 1
+        }
         var suffix = 0
         while suffix < shared - prefix
             && oldBytes[oldBytes.count - 1 - suffix] == newBytes[newBytes.count - 1 - suffix]
         {
             suffix += 1
+        }
+        // Same for the tail: a shared trailing byte may belong to different
+        // characters, so shrink until the suffix starts on a scalar boundary.
+        while suffix > 0 && (newBytes[newBytes.count - suffix] & 0xC0) == 0x80 {
+            suffix -= 1
         }
 
         let insertedByteCount = newBytes.count - prefix - suffix

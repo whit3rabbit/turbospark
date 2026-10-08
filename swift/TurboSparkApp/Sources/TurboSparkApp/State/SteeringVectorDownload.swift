@@ -218,6 +218,10 @@ enum SteeringVectorDownloader {
                 completion: { continuation.resume(with: $0) })
             let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
             session.dataTask(with: request).resume()
+            // The session retains its delegate until invalidated; without
+            // this each download leaked the session and its connection pool.
+            // Tasks already started run to completion.
+            session.finishTasksAndInvalidate()
         }
 
         let info: ControlVectorInfo

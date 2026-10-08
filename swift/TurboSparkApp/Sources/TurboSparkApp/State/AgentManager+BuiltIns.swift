@@ -213,10 +213,21 @@ extension AgentManager {
                     + "correctness and code quality: bugs, edge cases, performance, and security hazards, "
                     + "ordered by severity.",
                 systemPrompt: Self.reviewerPrompt,
+                // Same allowlist and deny set as explore/plan: a deny list
+                // alone left multiedit, notebook_edit and agent spawning open
+                // (a write-capable general-purpose child) under Auto presets.
+                tools: ["FileRead", "Glob", "Grep", "grep_search", "Bash", "WebFetch", "WebSearch"],
                 disallowedTools: [
                     "write_file", "save_file", "filewrite", "write",
                     "edit_file", "fileedit", "edit",
-                    "apply_patch", "applypatch"
+                    "apply_patch", "applypatch",
+                    "notebook_edit", "notebookedit",
+                    "agent", "subagent", "task",
+                    "enter_plan_mode", "enterplanmode",
+                    "exit_plan_mode", "exitplanmode",
+                    "todowrite", "todo_write",
+                    "enter_worktree", "enterworktree",
+                    "exit_worktree", "exitworktree"
                 ],
                 maxTurns: 4,
                 sourceAgent: .turboSpark,

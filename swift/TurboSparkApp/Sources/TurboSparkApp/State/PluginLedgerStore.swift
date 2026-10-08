@@ -80,6 +80,11 @@ public final class PluginLedgerStore: @unchecked Sendable {
     public func load() -> InstalledPluginLedger {
         lock.lock()
         defer { lock.unlock() }
+        return loadLocked()
+    }
+
+    /// `load()` without taking the lock, for callers already holding it.
+    private func loadLocked() -> InstalledPluginLedger {
         // Dates decode with the SAME strategy save writes (iso8601); a
         // mismatch here made every read of a written ledger decode empty.
         let decoder = JSONDecoder()
@@ -97,6 +102,10 @@ public final class PluginLedgerStore: @unchecked Sendable {
     public func saveChecked(_ ledger: InstalledPluginLedger) throws {
         lock.lock()
         defer { lock.unlock() }
+        try saveCheckedLocked(ledger)
+    }
+
+    private func saveCheckedLocked(_ ledger: InstalledPluginLedger) throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -110,14 +119,19 @@ public final class PluginLedgerStore: @unchecked Sendable {
     }
 
     public func upsertRecordChecked(_ record: InstalledPluginRecord, for pluginID: String) throws {
-        var ledger = load()
+        // The whole read-modify-write is one critical section: two installs
+        // finishing together otherwise both load the same ledger and the
+        // second save drops the first record.
+        lock.lock()
+        defer { lock.unlock() }
+        var ledger = loadLocked()
         var list = ledger.plugins[pluginID] ?? []
         list.removeAll {
             $0.scope == record.scope && $0.projectPath == record.projectPath
         }
         list.append(record)
         ledger.plugins[pluginID] = list
-        try saveChecked(ledger)
+        try saveCheckedLocked(ledger)
     }
 
     /// Removes the records matching a scope (and project, for project
@@ -126,7 +140,9 @@ public final class PluginLedgerStore: @unchecked Sendable {
     public func removeRecords(
         pluginID: String, scope: String, projectPath: String? = nil
     ) -> Bool {
-        var ledger = load()
+        lock.lock()
+        defer { lock.unlock() }
+        var ledger = loadLocked()
         guard var list = ledger.plugins[pluginID] else { return false }
         let before = list.count
         list.removeAll { record in
@@ -142,7 +158,7 @@ public final class PluginLedgerStore: @unchecked Sendable {
         } else {
             ledger.plugins[pluginID] = list
         }
-        save(ledger)
+        try? saveCheckedLocked(ledger)
         return true
     }
 

@@ -22,6 +22,12 @@ extension AppModel {
     /// constant time.
     func processLargePaste(previous: String, current: String) {
         guard promptWriteSuppressionDepth == 0, !current.isEmpty else { return }
+        // onChange lands after writePromptTextDirectly returned, so the depth
+        // is already 0 here: recognize the programmatic value itself.
+        if let written = lastProgrammaticPromptWrite {
+            lastProgrammaticPromptWrite = nil
+            if current == written { return }
+        }
         guard let split = PromptPastePolicy.splitPaste(previous: previous, current: current)
         else { return }
 
@@ -107,6 +113,7 @@ extension AppModel {
     public func writePromptTextDirectly(_ newValue: String) {
         promptWriteSuppressionDepth += 1
         defer { promptWriteSuppressionDepth -= 1 }
+        lastProgrammaticPromptWrite = newValue
         promptText = newValue
     }
 }

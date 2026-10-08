@@ -177,7 +177,11 @@ extension AppModel {
 
     public func cancelImageGeneration() {
         isCancellationPending = true
-        imageSession?.cancel()
+        // The shared session may be running a SERVED api job while this job
+        // still waits for the permit; cancelling it would kill that request
+        // and leave its HTTP client hanging. Only cancel it once this job
+        // actually owns the pipeline.
+        if imageJobHoldsPermit { imageSession?.cancel() }
         imageGenerationTask?.cancel()
     }
 
@@ -262,6 +266,7 @@ extension AppModel {
                 return
             }
             var usedSession: (any ImageGenerationSession)?
+            self.imageJobHoldsPermit = true
             do {
                 try Task.checkCancellation()
                 guard let selected = self.selectedImageModel,
@@ -300,6 +305,9 @@ extension AppModel {
                             throw CancellationError()
                         }
                     }
+                    // A cancelled stream ends quietly; report that as a
+                    // cancellation, not as "No image was returned".
+                    if !saved { try Task.checkCancellation() }
                     guard saved else {
                         throw TurboSparkError(code: .generate, message: "No image was returned")
                     }
@@ -321,6 +329,7 @@ extension AppModel {
             // Hold the permit (and the UI's generating gate) until it has
             // really stopped, or the next job runs on the same pipeline.
             await usedSession?.waitUntilIdle()
+            self.imageJobHoldsPermit = false
             self.generating = false
             self.isCancellationPending = false
             self.imageGenerationTask = nil

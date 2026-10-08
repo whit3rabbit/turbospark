@@ -243,7 +243,7 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
             guard let url = URL(string: urlStr) else {
                 throw NSError(domain: "SkillMarketplace", code: 3, userInfo: [NSLocalizedDescriptionKey: "Invalid download URL: \(urlStr)"])
             }
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let data = try await Self.downloadSkillFile(from: url)
             let destFile = targetSkillDir.appendingPathComponent("SKILL.md")
             try data.write(to: destFile, options: .atomic)
             installedMdURL = destFile
@@ -256,7 +256,7 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
             guard let url = URL(string: rawURLString) else {
                 throw NSError(domain: "SkillMarketplace", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid GitHub URL"])
             }
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let data = try await Self.downloadSkillFile(from: url)
             let destFile = targetSkillDir.appendingPathComponent("SKILL.md")
             try data.write(to: destFile, options: .atomic)
             installedMdURL = destFile
@@ -267,7 +267,7 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
             let sparseP = sparse ?? (path != nil ? [path!] : nil)
             try await cloneOrPullGit(
                 url: urlStr, targetDir: tempGitDir, ref: ref, sparsePaths: sparseP)
-            let sourceFolder = path != nil ? tempGitDir.appendingPathComponent(path!) : tempGitDir
+            let sourceFolder = try Self.confinedGitSkillSource(path: path, checkout: tempGitDir)
             try copyDirectoryContents(from: sourceFolder, to: targetSkillDir)
             installedMdURL = targetSkillDir.appendingPathComponent("SKILL.md")
 
@@ -297,13 +297,50 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
                 projectPath: targetScope.projectRootURL?.standardizedFileURL.path,
                 installPath: destination.path, version: entry.version, gitCommitSha: nil))
         } catch {
-            if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
+            // try? on the removal: if it throws, the previous copy must still
+            // be restored or the user's installed skill is lost with staging.
+            if fileManager.fileExists(atPath: destination.path) { try? fileManager.removeItem(at: destination) }
             if replacing { try fileManager.moveItem(at: previous, to: destination) }
             throw error
         }
 
         SkillManager.shared.invalidateResolutionCache()
         return parsedSkill
+    }
+
+    /// The folder inside a cloned skill repo that the catalog entry selects.
+    /// Catalog metadata is remote and untrusted: `../../..` or a symlink must
+    /// not make the installer copy local files (into a project that may be
+    /// committed). Same containment rule the plugin installer applies.
+    static func confinedGitSkillSource(path: String?, checkout: URL) throws -> URL {
+        guard let path, !path.isEmpty else { return checkout }
+        let candidate = checkout.appendingPathComponent(path)
+        guard PathContainment.isContained(candidate, in: checkout) else {
+            throw NSError(
+                domain: "SkillMarketplace", code: 10,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "The skill path must remain inside the marketplace repository."])
+        }
+        return candidate
+    }
+
+    /// Downloads one SKILL.md, refusing a non-2xx response. A 404 body such as
+    /// "404: Not Found" used to be written as SKILL.md and swapped over the
+    /// installed copy, local edits included.
+    static func downloadSkillFile(from url: URL) async throws -> Data {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw NSError(
+                domain: "SkillMarketplace", code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "Download failed with HTTP status \(code)."])
+        }
+        guard data.count <= 2 * 1024 * 1024 else {
+            throw NSError(
+                domain: "SkillMarketplace", code: 9,
+                userInfo: [NSLocalizedDescriptionKey: "The skill file is larger than 2 MB."])
+        }
+        return data
     }
 
     private func copyDirectoryContents(from source: URL, to destination: URL) throws {

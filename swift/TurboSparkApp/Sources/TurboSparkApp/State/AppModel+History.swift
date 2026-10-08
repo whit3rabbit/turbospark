@@ -350,7 +350,6 @@ extension AppModel {
             contextUsageSummary = nil
             return
         }
-        let parts = buildEstimateParts()
 
         // **DEBOUNCED, AND SKIPPED WHILE GENERATING.** `promptText`'s setter
         // calls this on every keystroke, and `countTokens` dispatches onto
@@ -364,6 +363,10 @@ extension AppModel {
         tokenEstimateTask = Task {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
+            // Built after the debounce, not per keystroke: the build walks the
+            // whole transcript, queries the DB per media reference and runs
+            // memory search, which grew input lag with conversation length.
+            let parts = self.buildEstimateParts()
             var exact: Int?
             if let count = try? await session.countTokens(parts.history, reasoning: self.reasoning) {
                 if !Task.isCancelled {

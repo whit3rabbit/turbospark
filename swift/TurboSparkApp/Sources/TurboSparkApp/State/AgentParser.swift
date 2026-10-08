@@ -189,7 +189,14 @@ public enum AgentParser {
     /// Single-line fields have newlines folded away, because the
     /// frontmatter reader is line-oriented -- a value carrying a newline
     /// would re-enter the parser as `key: value` lines.
-    public static func serializeAgent(_ agent: AppAgentDefinition) -> String {
+    ///
+    /// `originalText` is the file being rewritten, when there is one. Its
+    /// frontmatter keys this parser does not model (`color`, `permissionMode`,
+    /// `hooks`, `skills` from another tool) are carried over verbatim, with
+    /// their indented continuation lines, instead of being deleted.
+    public static func serializeAgent(
+        _ agent: AppAgentDefinition, preservingFrontmatterOf originalText: String? = nil
+    ) -> String {
         func singleLine(_ value: String) -> String {
             value.replacingOccurrences(of: "\r\n", with: " ")
                 .replacingOccurrences(of: "\n", with: " ")
@@ -226,11 +233,52 @@ public enum AgentParser {
                 lines.append("  - \(tool)")
             }
         }
+        // Dropping this flag silently turns an isolated agent into one that
+        // receives the full project instructions.
+        if agent.omitsProjectInstructions {
+            lines.append("omit_claude_md: true")
+        }
+        if let originalText {
+            lines.append(contentsOf: unmodeledFrontmatterLines(in: originalText))
+        }
         lines.append("---")
         lines.append("")
         lines.append(agent.systemPrompt)
         lines.append("")
         return lines.joined(separator: "\n")
+    }
+
+    /// Keys `serializeAgent` writes or `parseMarkdownContent` reads. Anything
+    /// else in an existing file is someone else's data and is preserved.
+    private static let modeledFrontmatterKeys: Set<String> = [
+        "name", "display_name", "displayname", "title", "description", "when_to_use",
+        "whentouse", "model", "max_turns", "maxturns", "tools", "disallowed_tools",
+        "disallowedtools", "omit_claude_md", "omitclaudemd", "omits_project_instructions",
+        "omitsprojectinstructions", "prompt",
+    ]
+
+    /// Top-level frontmatter entries of `text` whose key is not modeled,
+    /// each with its indented continuation lines.
+    static func unmodeledFrontmatterLines(in text: String) -> [String] {
+        guard let frontmatter = extractFrontmatterAndBody(from: text).frontmatter else { return [] }
+        var kept: [String] = []
+        var keeping = false
+        for line in frontmatter.components(separatedBy: "\n") {
+            let isContinuation = line.hasPrefix(" ") || line.hasPrefix("\t")
+                || line.trimmingCharacters(in: .whitespaces).isEmpty
+            if isContinuation {
+                if keeping { kept.append(line) }
+                continue
+            }
+            if let colon = line.firstIndex(of: ":") {
+                let key = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+                keeping = !modeledFrontmatterKeys.contains(key)
+            } else {
+                keeping = false
+            }
+            if keeping { kept.append(line) }
+        }
+        return kept
     }
 
     // MARK: - Frontmatter Extraction Helpers

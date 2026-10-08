@@ -229,6 +229,9 @@ public final class AgentManager: @unchecked Sendable {
     /// `agent` tool's two `findAgent` calls race every settings-pane write.
     private let cacheLock = NSLock()
     private var resolutionCache: (key: String, result: AgentResolution)?
+    // Bumped by every invalidation. A compute that started before a bump
+    // must not store its result: it read the pre-invalidation inputs.
+    private var cacheGeneration = 0
 
     /// One resolution: the agents to offer, and the project files refused.
     struct AgentResolution {
@@ -254,6 +257,7 @@ public final class AgentManager: @unchecked Sendable {
     public func invalidateResolutionCache() {
         cacheLock.lock()
         resolutionCache = nil
+        cacheGeneration &+= 1
         cacheLock.unlock()
     }
 
@@ -275,6 +279,7 @@ public final class AgentManager: @unchecked Sendable {
         let key = projectURL?.standardizedFileURL.path ?? ""
         cacheLock.lock()
         let cached = resolutionCache
+        let generation = cacheGeneration
         cacheLock.unlock()
         if let cached, cached.key == key {
             return cached.result
@@ -282,7 +287,7 @@ public final class AgentManager: @unchecked Sendable {
         // Computed outside the lock; see `SkillManager`'s twin for why.
         let result = computeResolution(projectURL: projectURL)
         cacheLock.lock()
-        resolutionCache = (key, result)
+        if generation == cacheGeneration { resolutionCache = (key, result) }
         cacheLock.unlock()
         return result
     }

@@ -2,6 +2,46 @@ import AppKit
 import Foundation
 import TurboSpark
 
+/// The relocated model store root, kept at MACHINE level.
+///
+/// The store itself is shared by every profile, so its location cannot live in
+/// one profile's settings.json: after moving it from profile Work, profile
+/// Default would see an empty store and send new installs back to the old
+/// root. The per-profile value is still written and still honored when no
+/// machine record exists yet (the migration for existing installs).
+enum ModelStoreRootRecord {
+    static var url: URL {
+        AppStorageRoot.machineRoot.appendingPathComponent("model_store_root.txt")
+    }
+
+    static func load() -> String? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    @discardableResult
+    static func save(_ root: String) -> Bool {
+        let trimmed = root.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            try trimmed.write(to: url, atomically: true, encoding: .utf8)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// The root to apply at launch. The machine record wins; otherwise the
+    /// profile's own value is used and promoted to the machine record.
+    static func resolve(profileValue: String) -> String {
+        if let machine = load() { return machine }
+        let trimmed = profileValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { save(trimmed) }
+        return trimmed
+    }
+}
+
 /// Discovers, validates, and indexes local model storage directories, including
 /// the primary TurboSpark text store (~/.turbospark/models/text), LM Studio (~/.lmstudio/models),
 /// and custom external scan folders without copying weight files.

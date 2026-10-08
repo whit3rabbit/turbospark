@@ -56,6 +56,16 @@ extension SkillManager {
             throw NSError(domain: "TurboSparkSkill", code: 4, userInfo: [NSLocalizedDescriptionKey: "Skills contributed by a plugin are owned by that plugin and cannot be created here. Edit the plugin's own files or create the skill in user or project scope."])
         }
 
+        // "Deploy" and "deploy" sanitize to the same directory. Creating must
+        // never atomically replace an existing skill's instructions.
+        if fileManager.fileExists(atPath: targetDir.appendingPathComponent("SKILL.md").path) {
+            throw NSError(
+                domain: "TurboSparkSkill", code: 5,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "A skill named '\(sanitizedName)' already exists in this scope. Edit it or choose another name."
+                ])
+        }
         try fileManager.createDirectory(at: targetDir, withIntermediateDirectories: true)
         let skillMdURL = targetDir.appendingPathComponent("SKILL.md")
 
@@ -85,8 +95,9 @@ extension SkillManager {
     /// Saves modifications to an existing skill on disk.
     public func saveSkill(_ skill: AppSkill) throws {
         try requireOwnedSkill(skill)
-        let serialized = SkillParser.serializeSkill(skill)
         let targetURL = skill.sourceURL
+        let original = try? String(contentsOf: targetURL, encoding: .utf8)
+        let serialized = SkillParser.serializeSkill(skill, preservingFrontmatterOf: original)
         let targetDir = targetURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: targetDir, withIntermediateDirectories: true)
         try serialized.write(to: targetURL, atomically: true, encoding: .utf8)

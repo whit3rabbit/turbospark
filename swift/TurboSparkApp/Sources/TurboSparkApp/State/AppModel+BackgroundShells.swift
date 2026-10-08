@@ -74,6 +74,9 @@ extension AppModel {
         for record in BackgroundShellManager.shared.runningRecords(chatID: chatID) {
             BackgroundShellManager.shared.kill(record)
         }
+        // The chat is gone, so no finished record (a shell just killed above
+        // counts) can be read again; each still pins an output buffer.
+        BackgroundShellManager.shared.forgetFinishedRecords(chatID: chatID)
     }
 
     /// Everything background that must not outlive the process. Called from
@@ -88,6 +91,8 @@ extension AppModel {
         }
         backgroundAgentTasks.removeAll()
         BackgroundShellManager.shared.killAllForShutdown()
+        // Foreground tool, hook and bang-command trees too (ProcessExecutor).
+        ProcessExecutor.killAllLiveChildrenNow()
     }
 
     /// First line of the command, whitespace-trimmed and capped, for the

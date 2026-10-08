@@ -73,7 +73,9 @@ extension AppModel {
         return (mutation, result, stopReason)
     }
 
-    private func applyPostToolUse(
+    /// Shared with the agent batch path so hook feedback lands in
+    /// `archivalOutput` identically on both routes.
+    func applyPostToolUse(
         to initial: AppToolResult, call: AppToolCall, chatID: UUID, project: AppProject?
     ) async -> (result: AppToolResult, stopReason: String?) {
         var result = initial
@@ -140,11 +142,28 @@ extension AppModel {
     /// of redraws and estimate refreshes.
     func prepareToolOutputProjectionsForPrompt(chatID: UUID) {
         guard observationPackEnabled else { return }
+        // mutateTurnMessages persists the whole chat (and decrypts/encrypts
+        // for ghost chats) even when the closure changes nothing, so bail out
+        // first when every archived result is already settled.
+        let needsWork = turnMessages(for: chatID).contains { message in
+            message.toolResults.contains { $0.observation != nil && !ToolOutputProjection.isSettled($0) }
+        }
+        guard needsWork else { return }
         mutateTurnMessages(for: chatID) { messages in
             for messageIndex in messages.indices {
                 for resultIndex in messages[messageIndex].toolResults.indices {
                     guard let reference = messages[messageIndex].toolResults[resultIndex].observation else { continue }
                     var result = messages[messageIndex].toolResults[resultIndex]
+                    if ToolOutputProjection.isSettled(result) { continue }
+                    // A verified local reduction IS the projection the model
+                    // should see. Re-projecting here replaced it with the
+                    // full text and later head/tail, so the paid-for
+                    // reduction never reached a prompt. (It is not archived,
+                    // so after a relaunch this falls through to the normal
+                    // full -> head/tail path.)
+                    if result.efficiency?.verifiedReduction == true, result.promptProjection != nil {
+                        continue
+                    }
                     guard result.fullPromptSendCount < ToolOutputProjection.fullSendLimit else {
                         if let bytes = self.observationBytes(reference, chatID: chatID) {
                             result.promptProjection = ToolOutputProjection.headTail(bytes, reference: reference)

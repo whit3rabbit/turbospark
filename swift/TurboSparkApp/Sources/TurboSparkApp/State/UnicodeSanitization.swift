@@ -96,7 +96,14 @@ extension String {
     /// tag characters U+E0000-E007F, and private use planes 15-16).
     var hasInvisibleCharacters: Bool {
         for scalar in unicodeScalars {
-            if scalar.properties.isDefaultIgnorableCodePoint { return true }
+            // Exactly the classes the sanitizer strips (Cf, Co, Cn). The
+            // broader Default_Ignorable set also holds variation selectors
+            // such as VS16 (U+FE0F) that every emoji picker inserts, and a
+            // false positive there sends the whole prompt through NFKC.
+            switch scalar.properties.generalCategory {
+            case .format, .privateUse, .unassigned: return true
+            default: break
+            }
             switch scalar.value {
             case 0x200B...0x200F, 0x202A...0x202E, 0x2066...0x2069,
                 0xFEFF, 0xE000...0xF8FF, 0xE0000...0xE007F, 0xF0000...0x10FFFF:

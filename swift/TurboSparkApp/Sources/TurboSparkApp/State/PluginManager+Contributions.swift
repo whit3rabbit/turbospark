@@ -248,7 +248,8 @@ extension PluginManager {
             let rootMcpJSON = PathContainment.resolvedIfContained(
                 rootMcpJSON, in: plugin.directoryURL) {
             raw.append(contentsOf: ProjectMcpDetector.parseConfigFile(
-                at: rootMcpJSON, rootURL: plugin.directoryURL))
+                at: rootMcpJSON, rootURL: plugin.directoryURL,
+                urlTransform: Self.pluginExpander(context)))
         }
         for relative in plugin.manifest.mcpServerFilePaths {
             let fileURL = plugin.directoryURL.appendingPathComponent(relative)
@@ -257,7 +258,8 @@ extension PluginManager {
                     fileURL, in: plugin.directoryURL)
             else { continue }
             raw.append(contentsOf: ProjectMcpDetector.parseConfigFile(
-                at: fileURL, rootURL: plugin.directoryURL))
+                at: fileURL, rootURL: plugin.directoryURL,
+                urlTransform: Self.pluginExpander(context)))
         }
         if let inline = plugin.manifest.inlineMcpServersJSON,
             let dict = try? JSONSerialization.jsonObject(with: inline) as? [String: Any] {
@@ -265,7 +267,8 @@ extension PluginManager {
             if let wrapped {
                 raw.append(contentsOf: ProjectMcpDetector.parseConfigData(
                     wrapped, sourcePath: plugin.directoryURL.path,
-                    sourceLabel: "plugin manifest", rootURL: plugin.directoryURL))
+                    sourceLabel: "plugin manifest", rootURL: plugin.directoryURL,
+                    urlTransform: Self.pluginExpander(context)))
             }
         }
 
@@ -280,11 +283,8 @@ extension PluginManager {
         }
     }
 
-    private func expandingPluginVariables(
-        in config: McpServerConfig, context: ExpansionContext
-    ) -> McpServerConfig {
-        var updated = config
-        func expand(_ input: String) -> String {
+    static func pluginExpander(_ context: ExpansionContext) -> (String) -> String {
+        { input in
             PluginVariableExpander.expand(
                 input, pluginRoot: context.root, pluginData: context.data,
                 optionValue: context.optionValue, sensitiveKeys: context.sensitiveKeys,
@@ -292,6 +292,13 @@ extension PluginManager {
                 // users, the same reasoning the hook runner uses (state#60).
                 preserveSensitive: true)
         }
+    }
+
+    private func expandingPluginVariables(
+        in config: McpServerConfig, context: ExpansionContext
+    ) -> McpServerConfig {
+        var updated = config
+        let expand = Self.pluginExpander(context)
         switch updated.transport {
         case .stdio(let command, let args, let env, let cwd, let passthrough):
             updated.transport = .stdio(

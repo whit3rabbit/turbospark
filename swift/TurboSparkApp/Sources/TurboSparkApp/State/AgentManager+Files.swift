@@ -194,7 +194,8 @@ extension AgentManager {
         }
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let serialized = AgentParser.serializeAgent(agent)
+        let original = try? String(contentsOf: fileURL, encoding: .utf8)
+        let serialized = AgentParser.serializeAgent(agent, preservingFrontmatterOf: original)
         try serialized.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 

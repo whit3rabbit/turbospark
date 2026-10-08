@@ -66,7 +66,7 @@ extension AppModel {
         stopHookReentryCount += 1
         let reason = verdict.blockReason ?? "A Stop hook requested the turn continue."
         mutateTurnMessages(for: chatID) {
-            $0.append(AppChatMessage(role: .user, content: reason))
+            $0.append(AppChatMessage(role: .user, content: reason, isSynthetic: true))
         }
         continueAgentLoop(step: resumeStep, chatID: chatID)
         return true
@@ -256,10 +256,12 @@ extension AppModel {
             if validationHook.behavior == .ask || policyAsks {
                 validationNeedsApproval = true
                 let mutationRisk = call.riskAssessment
-                    ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+                    ?? ToolRiskClassifier.assessRisk(
+                    name: call.name, arguments: call.arguments, projectURL: project?.rootDirectoryURL)
                 let validationRisk = validationCall.riskAssessment
                     ?? ToolRiskClassifier.assessRisk(
-                        name: validationCall.name, arguments: validationCall.arguments)
+                        name: validationCall.name, arguments: validationCall.arguments,
+                        projectURL: project?.rootDirectoryURL)
                 let level: ToolRiskLevel = mutationRisk.level == .high || validationRisk.level == .high
                     ? .high : (mutationRisk.level == .low || validationRisk.level == .low ? .low : .safe)
                 call.riskAssessment = ToolRiskAssessment(
@@ -290,7 +292,8 @@ extension AppModel {
             decision = baseDecision
         } else if validationNeedsApproval {
             let assessment = call.riskAssessment
-                ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+                ?? ToolRiskClassifier.assessRisk(
+                    name: call.name, arguments: call.arguments, projectURL: project?.rootDirectoryURL)
             decision = .ask(
                 assessment: assessment,
                 reason: "The mutation and its validation command require one compound approval.")
@@ -326,7 +329,8 @@ extension AppModel {
         if hookDecision.behavior == .ask {
             var pending = call
             pending.status = .pendingApproval
-            let baseAssessment = call.riskAssessment ?? ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments)
+            let baseAssessment = call.riskAssessment ?? ToolRiskClassifier.assessRisk(
+                    name: call.name, arguments: call.arguments, projectURL: project?.rootDirectoryURL)
             let hookReason = hookDecision.reason ?? "A PreToolUse hook requested confirmation before this call runs."
             pending.riskAssessment = ToolRiskAssessment(
                 level: baseAssessment.level,
@@ -627,6 +631,7 @@ extension AppModel {
         // same split the single path makes.
         var denied: [(call: AppToolCall, reason: String, fromEngine: Bool)] = []
         var updatedCalls: [AppToolCall] = []
+        var hookAskedIDs = Set<UUID>()
 
         for call in calls {
             let hookDecision = await evaluatePreToolUseHooks(
@@ -658,13 +663,37 @@ extension AppModel {
                 call: updated, project: project, sessionApproved: sessionApproved,
                 fallbackMode: activePermissionMode, globalServers: globalMcpServers,
                 browserContext: browserPermissionContext(for: updated, project: project))
+            // A PreToolUse `ask` is a request for confirmation that the engine's
+            // `.allow` (Auto preset, "always allow") must not erase: the single
+            // path parks a card for it, so the batch does too. The engine's
+            // refusal still wins over a hook that merely asked (state#78).
+            let hookReason = hookDecision.reason
+                ?? "A PreToolUse hook requested confirmation before this call runs."
+            func withHookReason(_ base: ToolRiskAssessment) -> ToolRiskAssessment {
+                ToolRiskAssessment(
+                    level: base.level, category: base.category,
+                    reasons: base.reasons + [hookReason], hardGated: base.hardGated)
+            }
             switch decision {
             case .deny(let reason):
                 denied.append((updated, reason, true))
             case .ask(let assessment, _):
-                asked.append((updated, assessment))
+                if hookDecision.behavior == .ask {
+                    hookAskedIDs.insert(updated.id)
+                    asked.append((updated, withHookReason(assessment)))
+                } else {
+                    asked.append((updated, assessment))
+                }
             case .allow:
-                prepared.append(updated)
+                if hookDecision.behavior == .ask {
+                    hookAskedIDs.insert(updated.id)
+                    asked.append((updated, withHookReason(
+                        ToolRiskClassifier.assessRisk(
+                            name: updated.name, arguments: updated.arguments,
+                            projectURL: project?.rootDirectoryURL))))
+                } else {
+                    prepared.append(updated)
+                }
             }
         }
 
@@ -681,6 +710,31 @@ extension AppModel {
         var batchClassifierNotice: String?
         var routedAsked: [(call: AppToolCall, assessment: ToolRiskAssessment)] = []
         for entry in asked {
+            // A hook's own ask goes straight to the card, as on the single
+            // path: the classifier must not auto-answer a hook's confirmation.
+            if hookAskedIDs.contains(entry.call.id) {
+                routedAsked.append(entry)
+                continue
+            }
+            // `PermissionRequest` fires exactly where the card would show, so
+            // a hook can resolve allow/deny here too (the single path does).
+            let permVerdict = await evaluatePermissionRequest(
+                toolName: entry.call.name, toolArguments: entry.call.arguments,
+                chatID: chatID, project: project)
+            if permVerdict.preventContinuation {
+                denied.append((entry.call, permVerdict.continuationStopReason
+                    ?? "A PermissionRequest hook stopped the turn.", false))
+                continue
+            }
+            if permVerdict.permissionDecision == .deny {
+                denied.append((entry.call, permVerdict.permissionReason
+                    ?? "Denied by PermissionRequest hook", false))
+                continue
+            }
+            if permVerdict.permissionDecision == .allow {
+                prepared.append(entry.call)
+                continue
+            }
             let outcome = await resolveAskUnderAgentMode(
                 entry.call, assessment: entry.assessment, chatID: chatID, project: project)
             switch outcome {
@@ -802,6 +856,9 @@ extension AppModel {
     ) async {
         var outcomesByID: [UUID: (call: AppToolCall, result: AppToolResult)] = [:]
         let webToolsEnabled = webSearchEnabled
+        // A batch's children are evaluated here, so they need the chat's mode
+        // (which matters when there is no project to carry one).
+        let fallbackMode = activePermissionMode
         await withTaskGroup(of: (AppToolCall, AppToolResult).self) { group in
             for call in calls {
                 var running = call
@@ -809,7 +866,7 @@ extension AppModel {
                 group.addTask {
                     let result = await AppToolRegistry.execute(
                         call: running, in: project, chatID: chatID,
-                        webToolsEnabled: webToolsEnabled)
+                        webToolsEnabled: webToolsEnabled, fallbackMode: fallbackMode)
                     return (running, result)
                 }
             }
@@ -823,23 +880,16 @@ extension AppModel {
         var stopReason: String?
         for (var call, var executedResult) in ordered {
             call.status = executedResult.isError ? .failed : .completed
-            let postVerdict = await dispatchPostToolUseVerdict(
-                toolName: call.name, toolArguments: call.arguments,
-                toolOutput: executedResult.output,
-                toolDurationSeconds: executedResult.durationSeconds,
-                isError: executedResult.isError, chatID: chatID, project: project)
-            if let note = postVerdict.blockReason ?? postVerdict.feedbackMessage, !note.isEmpty {
-                executedResult.output += "\n\n<hook_feedback>\n\(note)\n</hook_feedback>"
-            }
-            if let ctx = postVerdict.additionalContext, !ctx.isEmpty {
-                executedResult.output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
-            }
+            // Same post-processing as executeApprovedTool (hook fold into
+            // output and archivalOutput, then archive/projection) so a large
+            // `agent` report is not pasted verbatim into every later prompt.
             if stopReason == nil {
                 stopReason = executedResult.continuationStopReason
             }
-            if postVerdict.preventContinuation, stopReason == nil {
-                stopReason = postVerdict.continuationStopReason
-            }
+            let post = await applyPostToolUse(
+                to: executedResult, call: call, chatID: chatID, project: project)
+            executedResult = archiveToolObservation(post.result, chatID: chatID)
+            if stopReason == nil { stopReason = post.stopReason }
             executedResults.append(executedResult)
             outcomesByID[call.id] = (call, executedResult)
         }

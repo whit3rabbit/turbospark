@@ -28,10 +28,12 @@ extension AppModel {
     /// user or project scope (the agent-side twin of `importSkill`).
     @discardableResult
     public func importAgent(
-        from sourceURL: URL, targetScope: AppAgentScope
+        from sourceURL: URL, targetScope: AppAgentScope, projectRootURL: URL? = nil
     ) -> Result<AppAgentDefinition, Error> {
         do {
-            let projectURL = targetScope == .project ? selectedProject?.rootDirectoryURL : nil
+            // An explicit root wins: the import sheet validated its rows against
+            // its own project, which need not be the selected chat's project.
+            let projectURL = targetScope == .project ? (projectRootURL ?? selectedProject?.rootDirectoryURL) : nil
             let agent = try AgentManager.shared.importAgent(
                 from: sourceURL, scope: targetScope, projectRootURL: projectURL)
             reloadAgents()
@@ -297,13 +299,9 @@ extension AppModel {
             defer {
                 // Guarded for the same reason an ordinary turn's tail is: a
                 // newer turn may already have claimed this state.
-                if self.generationEpoch == myEpoch {
-                    self.generating = false
-                    self.phase = .idle
-                    self.isCancellationPending = false
-                    self.outputText = ""
-                    self.runTask = nil
-                }
+                if self.generationEpoch == myEpoch { self.outputText = "" }
+                // Shared tail: queued prompt first, then parked notifications.
+                self.finishTurnTail(myEpoch: myEpoch, turnChatID: turnChatID, session: self.session)
                 self.liveSubagentRuns.removeValue(forKey: runKey)
             }
             let result = await SubagentRunner.run(

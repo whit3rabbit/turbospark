@@ -450,21 +450,10 @@ extension AppModel {
 
         toolExecutionTask = Task {
             defer {
-                if self.generationEpoch == myEpoch {
-                    self.generating = false
-                    // **AND THE CANCEL FLAG WITH IT** (state#99). Stop during
-                    // an approved tool sets `isCancellationPending`, the tool
-                    // runs to completion (cancellation is cooperative), and
-                    // `continueAgentLoop` correctly refuses the next turn --
-                    // but nothing then cleared the flag, because the tail
-                    // that does is `executeGenerationTurn`'s and no further
-                    // turn ever started. It stayed latched: `canCancel` false
-                    // and every later `continueAgentLoop` refused, for the
-                    // life of the process. Same pairing that tail uses, and
-                    // the same epoch guard.
-                    self.isCancellationPending = false
-                    self.drainPendingTaskNotificationsIfIdle(chatID: chatID)
-                }
+                // Shared tail (epoch guard, flags, phase, queue drains) so
+                // this path cannot drift from executeGenerationTurn's again.
+                // state#99: the cancel flag must be cleared here too.
+                self.finishTurnTail(myEpoch: myEpoch, turnChatID: chatID, session: self.session)
                 self.toolExecutionTask = nil
             }
             if alwaysAllowSession {
@@ -565,21 +554,10 @@ extension AppModel {
 
         toolExecutionTask = Task {
             defer {
-                if self.generationEpoch == myEpoch {
-                    self.generating = false
-                    // **AND THE CANCEL FLAG WITH IT** (state#99). Stop during
-                    // an approved tool sets `isCancellationPending`, the tool
-                    // runs to completion (cancellation is cooperative), and
-                    // `continueAgentLoop` correctly refuses the next turn --
-                    // but nothing then cleared the flag, because the tail
-                    // that does is `executeGenerationTurn`'s and no further
-                    // turn ever started. It stayed latched: `canCancel` false
-                    // and every later `continueAgentLoop` refused, for the
-                    // life of the process. Same pairing that tail uses, and
-                    // the same epoch guard.
-                    self.isCancellationPending = false
-                    self.drainPendingTaskNotificationsIfIdle(chatID: chatID)
-                }
+                // Shared tail (epoch guard, flags, phase, queue drains) so
+                // this path cannot drift from executeGenerationTurn's again.
+                // state#99: the cancel flag must be cleared here too.
+                self.finishTurnTail(myEpoch: myEpoch, turnChatID: chatID, session: self.session)
                 self.toolExecutionTask = nil
             }
             // Claude Code's `PermissionDenied` contract: configured hooks
@@ -630,12 +608,23 @@ extension AppModel {
             // `[call]` here erased those, so the model was never told what
             // happened to them and reissued them on the next step.
             mutateTurnMessages(for: targetID) { messages in
-                let others = messages[msgIndex].toolCalls.filter { $0.id != call.id }
-                let otherResults = messages[msgIndex].toolResults.filter {
-                    $0.callID != call.id
+                // Keep the model's emission order: prepending reversed a
+                // parked batch and reordered the history (and its prefix
+                // cache) the next step is built from.
+                if let callIndex = messages[msgIndex].toolCalls.firstIndex(where: { $0.id == call.id }) {
+                    messages[msgIndex].toolCalls[callIndex] = call
+                } else {
+                    messages[msgIndex].toolCalls.insert(call, at: 0)
                 }
-                messages[msgIndex].toolCalls = [call] + others
-                messages[msgIndex].toolResults = [result] + otherResults
+                if let resultIndex = messages[msgIndex].toolResults.firstIndex(where: { $0.callID == call.id }) {
+                    messages[msgIndex].toolResults[resultIndex] = result
+                } else {
+                    // Results land at the call's position among the results
+                    // already recorded, clamped when earlier calls have none.
+                    let callPosition = messages[msgIndex].toolCalls.firstIndex(where: { $0.id == call.id }) ?? 0
+                    let insertAt = min(callPosition, messages[msgIndex].toolResults.count)
+                    messages[msgIndex].toolResults.insert(result, at: insertAt)
+                }
             }
         } else {
             let turn = AppChatMessage(

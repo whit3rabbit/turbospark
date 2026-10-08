@@ -82,4 +82,12 @@ final class UnicodeSanitizationTests: XCTestCase {
         XCTAssertFalse("你好，世界！".hasInvisibleCharacters)
         XCTAssertFalse("plain ascii".hasInvisibleCharacters)
     }
+
+    func testEmojiVariationSelectorDoesNotTriggerNFKC() {
+        // VS16 is Default_Ignorable but not Cf/Co/Cn; the fullwidth comma
+        // and trademark sign next to it must survive untouched.
+        let text = "\u{2764}\u{FE0F}\u{FF0C}\u{FF01} mc\u{00B2} \u{2122}"
+        XCTAssertFalse(text.hasInvisibleCharacters)
+        XCTAssertEqual(UnicodeSanitization.sanitize(text), text)
+    }
 }

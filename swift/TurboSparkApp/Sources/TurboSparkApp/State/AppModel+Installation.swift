@@ -48,7 +48,7 @@ extension AppModel {
             refusedBecause: nil,
             verdict: row.verdict,
             installBytes: row.installBytes,
-            freeDiskBytes: ModelInstallGate.freeSpace(at: AppStorageRoot.directory))
+            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore())
         return decision.isBlocked ? decision.reason : nil
     }
 
@@ -188,6 +188,17 @@ extension AppModel {
         }
     }
 
+    /// An alias becomes a file name under the managed store, so it must be
+    /// one plain path component: "Qwen/Qwen3-8B" would nest, and "../x" or
+    /// "/tmp/x" would install outside the store, where relocation and
+    /// deletion never look.
+    nonisolated static func isSafeInstallAlias(_ alias: String) -> Bool {
+        guard !alias.isEmpty, alias != ".", alias != ".." else { return false }
+        return alias.unicodeScalars.allSatisfy {
+            ($0.value < 128) && (CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0))
+        }
+    }
+
     /// Initiates download and packaging of an arbitrary Hugging Face GGUF repository.
     public func installRepo(
         repo: String,
@@ -197,7 +208,8 @@ extension AppModel {
     ) {
         let trimmedRepo = repo.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedRepo.isEmpty, !trimmedAlias.isEmpty else { return }
+        guard !trimmedRepo.isEmpty, !trimmedAlias.isEmpty,
+              Self.isSafeInstallAlias(trimmedAlias) else { return }
         enqueueModelDownload(.repository(
             repo: trimmedRepo, alias: trimmedAlias, file: file, sidecarRepo: sidecarRepo))
     }

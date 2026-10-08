@@ -112,6 +112,9 @@ public final class SubagentRunState: ObservableObject, Identifiable {
         self.promptHead = promptHead
     }
 
+    /// Characters of streamed text kept (the card shows the last 4_000).
+    static let streamedTextLimit = 8_000
+
     /// Applies one event. Shared by every host surface so the two dicts in
     /// `AppModel` cannot drift apart in what they record.
     public func apply(_ event: SubagentProgressEvent) {
@@ -125,6 +128,12 @@ public final class SubagentRunState: ObservableObject, Identifiable {
             turns = number
         case .content(let chunk):
             streamedText += chunk
+            // Only a tail is ever shown (the card renders the last 4k), so
+            // keep a bounded window: the full text made every render
+            // re-count a string that grows for the whole run.
+            if streamedText.count > Self.streamedTextLimit {
+                streamedText = String(streamedText.suffix(Self.streamedTextLimit))
+            }
         case .toolStarted(let name, let summary):
             toolRows.append(SubagentToolRow(name: name, summary: summary, isError: false, isRunning: true))
         case .toolFinished(let name, let summary, let isError):

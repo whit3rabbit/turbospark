@@ -635,4 +635,34 @@ final class SkillSystemTests: XCTestCase {
         let expectedFile = tempDirURL.appendingPathComponent(".turbospark/skills/auto-gen-skill/SKILL.md")
         XCTAssertTrue(FileManager.default.fileExists(atPath: expectedFile.path))
     }
+
+    func testProposeSkillsNeverOverwritesAnExistingSkill() throws {
+        let args = [
+            "name": "keep-me",
+            "description": "d",
+            "skillMd": "ORIGINAL",
+        ]
+        _ = try ProposeSkillsExecutor.execute(arguments: args, projectRootURL: tempDirURL)
+        var injected = args
+        injected["skillMd"] = "INJECTED"
+        let result = try ProposeSkillsExecutor.execute(arguments: injected, projectRootURL: tempDirURL)
+
+        let file = tempDirURL.appendingPathComponent(".turbospark/skills/keep-me/SKILL.md")
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "ORIGINAL")
+        XCTAssertTrue(result.contains("already exists"), result)
+    }
+
+    func testUserScopeProposeSkillsIsHardGated() {
+        let user = ToolRiskClassifier.assessRisk(
+            name: "propose_skills", arguments: ["scope": "user", "name": "deploy"],
+            projectURL: tempDirURL)
+        XCTAssertEqual(user.level, .high)
+        XCTAssertEqual(user.hardGated, true)
+        let projectless = ToolRiskClassifier.assessRisk(
+            name: "propose_skills", arguments: ["name": "deploy"], projectURL: nil)
+        XCTAssertEqual(projectless.hardGated, true)
+        let project = ToolRiskClassifier.assessRisk(
+            name: "propose_skills", arguments: ["name": "deploy"], projectURL: tempDirURL)
+        XCTAssertNotEqual(project.hardGated, true)
+    }
 }

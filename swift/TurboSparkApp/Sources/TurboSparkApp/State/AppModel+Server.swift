@@ -162,6 +162,13 @@ extension AppModel {
 
     // MARK: - Lifecycle
 
+    /// A blank Host field is absent, so the engine binds its loopback default
+    /// instead of failing to parse an empty address.
+    nonisolated static func serverHostOption(from input: String) -> String? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     /// Starts an in-process HTTP server, attaching the currently open
     /// `session` when there is one.
     ///
@@ -212,7 +219,8 @@ extension AppModel {
             let sys = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
             let options = ServerOptions(
                 port: serverPinnedPort,
-                host: serverHost.trimmingCharacters(in: .whitespacesAndNewlines),
+                // An empty field means "default loopback", not a host named "".
+                host: Self.serverHostOption(from: serverHost),
                 captureText: serverCaptureText,
                 apiKey: Self.serverAPIKey(from: serverAPIKeyInput),
                 guardrails: Self.serverGuardrails(from: guardrailsMode),

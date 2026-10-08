@@ -414,11 +414,24 @@ extension AppModel {
         options.temperature = 0.2
         options.maxNewTokens = 1200
 
+        // A manual /compact runs with no turn, so nothing else would ever
+        // move the top bar off "Prefill N/M" afterwards. Remember what the
+        // phase was and put it back on every exit.
+        let phaseBeforeCompaction = phase
         phase = .prefill
         // Every exit past this point -- cancel, error, empty summary, success
         // -- must lower the flag, so a defer rather than an assignment per exit.
         isCompacting = true
-        defer { isCompacting = false }
+        defer {
+            isCompacting = false
+            if phase == .prefill {
+                phase = phaseBeforeCompaction
+                if phaseBeforeCompaction == .idle {
+                    livePrefillDone = 0
+                    livePrefillTotal = 0
+                }
+            }
+        }
         var summaryText = ""
         do {
             if let session {

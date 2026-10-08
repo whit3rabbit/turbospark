@@ -202,8 +202,13 @@ public enum SubagentRunner {
         // available-tool list below still retains the direct definitions for
         // guardrail validation and exact-name compatibility.
         if !offeredTools.deferredMcpTools.isEmpty {
-            sections.append(ToolSearchCatalog.promptListing(
-                descriptors: offeredTools.deferredMcpTools))
+            // Typed bindings only when this agent is offered `codemode`;
+            // otherwise this is the plain deferred listing.
+            sections.append(CodemodeCatalog.promptListing(
+                descriptors: offeredTools.deferredMcpTools,
+                codemodeOffered: offeredTools.definitions.contains {
+                    $0.function.name == CodemodeToolDefinitions.toolName
+                }))
         }
 
         return sections.joined(separator: "\n\n")

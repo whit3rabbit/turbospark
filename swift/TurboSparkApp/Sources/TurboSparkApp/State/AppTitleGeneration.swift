@@ -5,6 +5,8 @@ import TurboSpark
 enum AppTitleGeneration {
     static let titleCharacterLimit = 80
     static let maxNewTokens: UInt32 = 64
+    /// Longest prefix of the first message sent to the title prompt.
+    static let promptCharacterLimit = 2_000
 
     typealias Completion = ([ChatMessage], GenerateOptions) async throws -> String
 
@@ -37,7 +39,11 @@ enum AppTitleGeneration {
                 Create a short, descriptive title for this conversation.
                 Return only the title as plain text on one line. Do not add quotes or explanation.
                 """),
-            ChatMessage.user(firstUserMessage),
+            // A title needs the opening, not a pasted 30K-token file; the full
+            // text would be prefilled again just to produce a few words.
+            ChatMessage.user(firstUserMessage.count > promptCharacterLimit
+                ? String(firstUserMessage.prefix(promptCharacterLimit)) + "..."
+                : firstUserMessage),
         ]
         var options = GenerateOptions()
         options.reasoning = .off

@@ -12,8 +12,40 @@ public struct ProjectMarketplaces: Codable, Equatable, Sendable {
     }
 }
 
+/// Whether a marketplace just FETCHED for browsing may be remembered under the
+/// name its remote manifest declares. That name is attacker-controlled, so a
+/// fetch must never repoint an existing entry (a trusted "company-skills"
+/// source) at a different source; the manifest is still shown either way.
+public enum FetchedMarketplacePersistence: Equatable, Sendable {
+    case save
+    case alreadySaved
+    case nameTakenByDifferentSource
+
+    public static func decide(
+        name: String, source: MarketplaceSource, existing: [String: MarketplaceSource]
+    ) -> FetchedMarketplacePersistence {
+        guard let current = existing[name] else { return .save }
+        return current == source ? .alreadySaved : .nameTakenByDifferentSource
+    }
+}
+
 @MainActor
 extension AppModel {
+    /// Remembers a browsed marketplace unless that would overwrite another
+    /// source's entry. Never throws: a failed save must not hide the manifest.
+    @discardableResult
+    public func saveFetchedMarketplace(
+        name: String, source: MarketplaceSource, kind: MarketplaceKind, projectID: UUID?
+    ) -> FetchedMarketplacePersistence {
+        let decision = FetchedMarketplacePersistence.decide(
+            name: name, source: source,
+            existing: marketplaceSources(kind: kind, projectID: projectID))
+        if decision == .save {
+            try? saveMarketplace(name: name, source: source, kind: kind, projectID: projectID)
+        }
+        return decision
+    }
+
     public func marketplaceSources(kind: MarketplaceKind, projectID: UUID?) -> [String: MarketplaceSource] {
         let user: [String: MarketplaceSource]
         switch kind {

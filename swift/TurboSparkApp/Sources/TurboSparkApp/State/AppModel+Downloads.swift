@@ -7,7 +7,9 @@ extension AppModel {
     }
 
     var canPauseModelDownload: Bool {
-        !modelDownloadsShuttingDown && hasActiveModelDownload && !isInstallPaused
+        // Image installs have no pause signal, so the button would do nothing.
+        !modelDownloadsShuttingDown && hasActiveModelDownload && !isInstallingImageModel
+            && !isInstallPaused
             && !isCancellingModelInstall && !opening
             && modelDownloads.first(where: { $0.id == activeModelDownloadID })?.status == .running
     }
@@ -61,7 +63,7 @@ extension AppModel {
 
         let request = modelDownloads[index].request
         beginModelDownload(request)
-        if let start {
+        if let start = start ?? modelDownloadStartOverride {
             start(request)
             return
         }
@@ -168,6 +170,19 @@ extension AppModel {
     func canRetryModelDownload(_ download: ModelDownload) -> Bool {
         download.status.canRetry
             && canQueueModelDownload(download.request)
+            && !isModelAlreadyInstalled(download.request)
+    }
+
+    /// A stale Failed row outlives a later successful install of the same
+    /// alias. Retrying it would rewrite the install in place, under a
+    /// session that may have the weights mapped.
+    func isModelAlreadyInstalled(_ request: ModelDownload.Request) -> Bool {
+        switch request {
+        case .catalog(let alias), .repository(_, let alias, _, _):
+            return installed.contains { $0.alias == alias }
+        case .image(let alias):
+            return imageModels.contains { $0.alias == alias }
+        }
     }
 
     func retryModelDownload(_ download: ModelDownload) {

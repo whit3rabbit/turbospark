@@ -26,6 +26,9 @@ public final class PluginManager: @unchecked Sendable {
 
     private let lock = NSLock()
     private var resolutionCache: (key: String, result: PluginResolution)?
+    // Bumped by every invalidation. A compute that started before a bump
+    // must not store its result: it read the pre-invalidation inputs.
+    private var cacheGeneration = 0
 
     /// Whether Claude Code's own plugin root is read at all. Mirrored from
     /// `MacAppSettings.autoLoadExternalAgentContent` by `AppModel`; off by
@@ -96,6 +99,7 @@ public final class PluginManager: @unchecked Sendable {
     public func invalidateResolutionCache() {
         lock.lock()
         resolutionCache = nil
+        cacheGeneration &+= 1
         lock.unlock()
     }
 
@@ -103,13 +107,14 @@ public final class PluginManager: @unchecked Sendable {
         let key = projectURL?.standardizedFileURL.path ?? ""
         lock.lock()
         let cached = resolutionCache
+        let generation = cacheGeneration
         lock.unlock()
         if let cached, cached.key == key {
             return cached.result
         }
         let result = computeResolution(projectKey: key)
         lock.lock()
-        resolutionCache = (key, result)
+        if generation == cacheGeneration { resolutionCache = (key, result) }
         lock.unlock()
         return result
     }
@@ -148,6 +153,33 @@ public final class PluginManager: @unchecked Sendable {
             if let value = claudeMap[plugin.id] { return value }
         }
         return true
+    }
+
+    /// The ids of every enabled plugin, reading each enable store ONCE.
+    /// The settings pane used to call `isEnabled(pluginID:)` per row, which
+    /// re-read settings.json and the project archive for every row on every
+    /// render. Same cascade as `isResolvedEnabled`.
+    public func enabledPluginIDs(projectURL: URL?) -> Set<String> {
+        let plugins = resolve(projectURL: projectURL).plugins
+        let projectMap = projectURL.map(projectEnableProvider) ?? [:]
+        let userMap = userEnableProvider()
+        var claudeMap: [String: Bool]?
+        var enabled: Set<String> = []
+        for plugin in plugins {
+            if let value = projectMap[plugin.id] ?? userMap[plugin.id] {
+                if value { enabled.insert(plugin.id) }
+                continue
+            }
+            if plugin.origin == .claudeInterop {
+                if claudeMap == nil { claudeMap = claudeEnableProvider() }
+                if let value = claudeMap?[plugin.id] {
+                    if value { enabled.insert(plugin.id) }
+                    continue
+                }
+            }
+            enabled.insert(plugin.id)
+        }
+        return enabled
     }
 
     private func isResolvedEnabledID(pluginID: String, projectURL: URL?) -> Bool {
@@ -191,9 +223,17 @@ public final class PluginManager: @unchecked Sendable {
         // 3. The versioned install caches, ours then Claude Code's.
         let ourLedger = ledgerInstallPaths(root: turboSparkRoot)
         for (marketplace, _, version, url) in scopedCacheDirectories(projectKey: projectKey) {
+            // The ledger's entry name is the identity every other store
+            // (enable state, uninstall, data dir) is keyed by; a manifest
+            // that spells the name differently, or a manifest-less plugin
+            // whose directory is a version number, must not rename it.
+            let ledgerName = ourLedger[url.standardizedFileURL.path].flatMap {
+                $0.id.split(separator: "@", maxSplits: 1).first.map(String.init)
+            }
             loadPlugin(
                 at: url, origin: .marketplace, marketplaceName: marketplace,
                 fallbackVersion: ourLedger[url.standardizedFileURL.path]?.version ?? version,
+                ledgerName: ledgerName,
                 admit: admit, errors: &errors)
         }
 
@@ -235,6 +275,7 @@ public final class PluginManager: @unchecked Sendable {
         origin: PluginOriginKind,
         marketplaceName: String?,
         fallbackVersion: String? = nil,
+        ledgerName: String? = nil,
         extraDiagnostics: [String] = [],
         admit: (LoadedPlugin) -> Void,
         errors: inout [String]
@@ -260,14 +301,14 @@ public final class PluginManager: @unchecked Sendable {
             // plugin; a synthesized one names the source (Claude Code's
             // rule).
             manifest = PluginManifestParser.synthesizedManifest(
-                name: dirName, sourceDescription: url.path)
+                name: ledgerName ?? dirName, sourceDescription: url.path)
         } else {
             // Neither manifest nor conventions: not a plugin directory.
             return
         }
 
         let loaded = LoadedPlugin(
-            name: manifest.name,
+            name: ledgerName ?? manifest.name,
             manifest: manifest,
             directoryURL: url,
             origin: origin,

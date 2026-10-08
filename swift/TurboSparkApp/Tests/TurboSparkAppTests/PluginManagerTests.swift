@@ -68,6 +68,17 @@ final class PluginManagerTests: XCTestCase {
         return dir
     }
 
+    func testLedgerEntryNameWinsOverManifestName() throws {
+        let version = try makePlugin(
+            "code-review", in: root, manifest: #"{"name": "codereview"}"#, marketplace: "m")
+        try PluginLedgerStore(root: root).saveChecked(InstalledPluginLedger(plugins: [
+            "code-review@m": [InstalledPluginRecord(
+                scope: "user", installPath: version.path, version: "1.0.0")]
+        ]))
+        let plugin = manager.resolve(projectURL: nil).plugins.first
+        XCTAssertEqual(plugin?.id, "code-review@m")
+    }
+
     // MARK: - Discovery
 
     func testFlatDirectoryWithManifestIsDiscovered() throws {
@@ -165,6 +176,29 @@ final class PluginManagerTests: XCTestCase {
         // An explicit TurboSpark user setting beats Claude Code's.
         userEnable = ["interop@claude": true]
         XCTAssertTrue(manager.isEnabled(pluginID: "interop@claude", projectURL: nil))
+    }
+
+    func testEnabledPluginIDsMatchesPerPluginCascade() throws {
+        try makePlugin("a", in: root, manifest: #"{"name": "a"}"#)
+        try makePlugin("b", in: root, manifest: #"{"name": "b"}"#)
+        try makePlugin("c", in: root, manifest: #"{"name": "c"}"#)
+        try makePlugin("interop", in: claudeRoot, manifest: #"{"name": "interop"}"#)
+        try makePlugin("interop2", in: claudeRoot, manifest: #"{"name": "interop2"}"#)
+        userEnable = ["a@turbospark": false, "b@turbospark": true, "interop2@claude": true]
+        projectEnable = ["b@turbospark": false, "c@turbospark": true]
+        claudeEnable = ["interop@claude": false, "interop2@claude": false]
+        let projectURL = URL(fileURLWithPath: "/tmp/some-project")
+        for url in [nil, projectURL] {
+            let batch = manager.enabledPluginIDs(projectURL: url)
+            let expected = Set(manager.resolve(projectURL: url).plugins
+                .filter { manager.isEnabled(pluginID: $0.id, projectURL: url) }.map(\.id))
+            XCTAssertEqual(batch, expected)
+            XCTAssertFalse(expected.isEmpty)
+        }
+        XCTAssertFalse(manager.enabledPluginIDs(projectURL: nil).contains("a@turbospark"))
+        XCTAssertFalse(manager.enabledPluginIDs(projectURL: projectURL).contains("b@turbospark"))
+        XCTAssertFalse(manager.enabledPluginIDs(projectURL: nil).contains("interop@claude"))
+        XCTAssertTrue(manager.enabledPluginIDs(projectURL: nil).contains("interop2@claude"))
     }
 
     func testClaudeEnabledPluginsReadsBoolAndArrayForms() throws {

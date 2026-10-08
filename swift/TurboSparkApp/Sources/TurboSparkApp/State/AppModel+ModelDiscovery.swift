@@ -151,9 +151,17 @@ extension AppModel {
     /// happen to share one. Path is the one field that actually identifies a
     /// single file on disk.
     private func reconcileSelection() {
-        if let currentPath = selected?.path, !installed.contains(where: { $0.path == currentPath }) {
-            selected = installed.first
-        } else if selected == nil {
+        // The loaded model is never "gone" just because its row is not in
+        // `installed` yet or at all: the catalog rows land before the LM
+        // Studio / custom-folder scan merges, and a manually opened path has
+        // no row. Rebinding to `installed.first` there named and reloaded a
+        // different model than the one resident.
+        let loaded = loadedModelPath
+        if let currentPath = selected?.path {
+            if !installed.contains(where: { $0.path == currentPath }), currentPath != loaded {
+                selected = installed.first
+            }
+        } else if loaded == nil {
             selected = installed.first
         }
         if let selected {
@@ -198,7 +206,11 @@ extension AppModel {
     /// table", and a false positive costs a refused delete while a false
     /// negative deletes a served model's bytes.
     static func isAttachedToServer(model: InstalledModel, servedIDs: Set<String>) -> Bool {
+        // The FFI keys a served model by its directory name, which is what
+        // `servedModelID(for:)` returns and what `serverInfo.models` lists;
+        // alias and path stay for sessions attached by those keys.
         servedIDs.contains(model.alias) || servedIDs.contains(model.path)
+            || servedIDs.contains(servedModelID(for: model))
     }
 
     static func isCatalogTracked(model: InstalledModel, in catalogRows: [InstalledModel]) -> Bool {

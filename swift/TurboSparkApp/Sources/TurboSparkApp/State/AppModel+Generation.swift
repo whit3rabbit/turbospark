@@ -248,16 +248,7 @@ extension AppModel {
                     self.finishCancelled(chatID: turnChatID, reason: "context_overflow")
                     // Same epoch guard the tail below carries (state#10):
                     // this early exit must not clobber a newer turn either.
-                    if self.generationEpoch == myEpoch {
-                        self.generating = false
-                        self.phase = .idle
-                        self.isCancellationPending = false
-                        self.runTask = nil
-                        self.updateTokenEstimate()
-                        self.drainPendingUserMessagesIfIdle(chatID: turnChatID)
-                        self.drainPendingTaskNotificationsIfIdle(chatID: turnChatID)
-                        self.drainPendingTitleGenerationIfIdle(session: session)
-                    }
+                    self.finishTurnTail(myEpoch: myEpoch, turnChatID: turnChatID, session: session)
                     return
                 }
                 if fitted.removedTurnCount > 0 {
@@ -440,7 +431,8 @@ extension AppModel {
                             ))
                             messages.append(AppChatMessage(
                                 role: .user,
-                                content: nudge
+                                content: nudge,
+                                isSynthetic: true
                             ))
                         }
                         self.outputText = ""

@@ -61,8 +61,17 @@ extension AppModel {
             clearGoal(chatID: chatID, unrecoverable: true)
             return false
         }
-        guard let verdict = await runGoalEvaluation(chatID: chatID, condition: goal.condition)
+        guard let verdict = await runGoalEvaluation(
+            chatID: chatID, condition: goal.condition, sliceStart: sliceStart)
         else { return false }
+        // The judge can run for up to its 30 s budget. The user may have
+        // cleared (or replaced) the goal in that window; writing the stale
+        // copy back would resurrect it and `continueAgentLoop` would start an
+        // autonomous round they just stopped. Rebase on the live goal.
+        guard let live = activeGoals[chatID], Self.goalIsSame(live, as: goal) else {
+            return false
+        }
+        goal = live
         switch verdict {
         case .met(let reason):
             clearGoal(chatID: chatID)
@@ -91,6 +100,13 @@ extension AppModel {
             continueAgentLoop(step: 0, chatID: chatID)
             return true
         }
+    }
+
+    /// Whether `live` is still the goal `captured` was read from. `setAt` and
+    /// the condition identify a goal; counters and flags legitimately change
+    /// while a judge runs.
+    static func goalIsSame(_ live: ChatGoalState, as captured: ChatGoalState) -> Bool {
+        live.setAt == captured.setAt && live.condition == captured.condition
     }
 
     /// The deferral arm: background work is running, so the goal is NOT
@@ -130,7 +146,7 @@ extension AppModel {
     /// turn it starts must answer.
     private func appendGoalCheckinRow(chatID: UUID, text: String) {
         mutateTurnMessages(for: chatID) {
-            $0.append(AppChatMessage(role: .user, content: text))
+            $0.append(AppChatMessage(role: .user, content: text, isSynthetic: true))
         }
     }
 
@@ -150,10 +166,13 @@ extension AppModel {
     /// cancellation, malformed output -- returns nil, which the caller
     /// treats as TRANSIENT: the goal stays, the turn ends, the next stop
     /// re-evaluates.
-    private func runGoalEvaluation(chatID: UUID, condition: String) async -> GoalVerdict? {
+    private func runGoalEvaluation(
+        chatID: UUID, condition: String, sliceStart: Int
+    ) async -> GoalVerdict? {
         guard let session else { return nil }
         let messages = GoalEvaluator.judgeMessages(
-            condition: condition, transcript: goalTranscriptTail(chatID: chatID))
+            condition: condition,
+            transcript: goalTranscriptTail(chatID: chatID, sliceStart: sliceStart))
         var options = GenerateOptions()
         options.reasoning = .off
         options.temperature = GoalPolicy.evaluatorTemperature
@@ -188,14 +207,19 @@ extension AppModel {
     /// last evaluation (or the goal's set point), falling back to the tail
     /// when the slice is somehow empty. Rendered in the same bracketed
     /// form compaction summarizes from.
-    private func goalTranscriptTail(chatID: UUID) -> String {
-        let messages = turnMessages(for: chatID)
-        let sliceStart = min(goalEvalMessageCounts[chatID] ?? messages.count, messages.count)
-        var slice = Array(messages[sliceStart...])
-        if slice.isEmpty {
-            slice = Array(messages.suffix(GoalPolicy.evaluatorTailMessages))
-        }
-        return AppChatCompaction.renderTranscript(slice)
+    ///
+    /// `sliceStart` is the baseline read BEFORE `handleGoalAtStop` advanced
+    /// it to the current count; re-reading the dictionary here would see the
+    /// advanced value, an empty slice, and judge a fixed tail of old rows.
+    private func goalTranscriptTail(chatID: UUID, sliceStart: Int) -> String {
+        AppChatCompaction.renderTranscript(
+            Self.goalJudgeSlice(turnMessages(for: chatID), sliceStart: sliceStart))
+    }
+
+    nonisolated static func goalJudgeSlice(_ messages: [AppChatMessage], sliceStart: Int) -> [AppChatMessage] {
+        let start = min(max(sliceStart, 0), messages.count)
+        let slice = Array(messages[start...])
+        return slice.isEmpty ? Array(messages.suffix(GoalPolicy.evaluatorTailMessages)) : slice
     }
 
     // MARK: - Idle check-in timer
@@ -234,6 +258,12 @@ extension AppModel {
     private func fireGoalIdleCheckin(chatID: UUID) {
         goalIdleTimerTasks[chatID] = nil
         guard var goal = activeGoals[chatID], !goal.isPaused else { return }
+        // No model means no turn would answer the check-in row; same seam as
+        // the stop path, rather than leaving unanswered prompts behind.
+        guard session != nil else {
+            clearGoal(chatID: chatID, unrecoverable: true)
+            return
+        }
         let tasks = runningGoalTasks(chatID: chatID)
         guard canInjectTaskNotification(into: chatID) else {
             armGoalIdleTimer(chatID: chatID)

@@ -38,7 +38,21 @@ extension AppModel {
         }
         let command = String(draft.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
         let chatID = selectedChatID
-        Task {
+        // **A BANG COMMAND IS A TURN**: it holds `submitting` and lives in
+        // `submissionTask`, so Stop reaches it (ProcessExecutor honors task
+        // cancellation), a second `!` is refused above instead of running
+        // concurrently, and a prompt sent meanwhile is queued rather than
+        // starting a turn whose transcript this row would then land inside.
+        submitting = true
+        submissionTask = Task {
+            defer {
+                self.submitting = false
+                self.submissionTask = nil
+                // A Stop that reached only this command has no turn tail to
+                // clear the latch, and a latched flag greys Stop out.
+                if !self.generating { self.isCancellationPending = false }
+                self.drainPendingUserMessagesIfIdle(chatID: chatID)
+            }
             var output = ""
             do {
                 output = try await ShellCommandRunner.run(
@@ -46,9 +60,14 @@ extension AppModel {
             } catch {
                 output = "Error: \(error.localizedDescription)"
             }
+            // Stopped by the user: the partial output is not a result.
+            if Task.isCancelled {
+                showToast("Stopped \(command.prefix(48)).", style: .info)
+                return
+            }
             let trimmed = Self.boundedShellOutput(output)
             let content = "!\(command)\n\n<shell_output>\n\(trimmed.isEmpty ? "(no output)" : trimmed)\n</shell_output>"
-            mutateTurnMessages(for: chatID) { $0.append(AppChatMessage(role: .user, content: content)) }
+            mutateTurnMessages(for: chatID) { $0.append(AppChatMessage(role: .user, content: content, isSynthetic: true)) }
             updateTokenEstimate()
             let head = command.count > 48 ? String(command.prefix(48)) + "..." : command
             showToast("Ran \(head).", style: .success)

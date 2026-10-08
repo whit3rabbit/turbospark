@@ -119,6 +119,25 @@ public final class ToolObservationStore: @unchecked Sendable {
         return String(decoding: page, as: UTF8.self)
     }
 
+    /// Copies every archived observation of `source` under `destination`,
+    /// keeping observation ids, so a duplicated or branched chat can still
+    /// recall the tool output its messages refer to. Best effort per entry.
+    public func copyArchive(from source: UUID, to destination: UUID) {
+        if vaultBacked {
+            let oldPrefix = Self.recordKey(relativePath: "\(source.uuidString)/")
+            let newPrefix = Self.recordKey(relativePath: "\(destination.uuidString)/")
+            guard let rows = try? repository.rawRecords(prefix: oldPrefix) else { return }
+            for (key, data) in rows {
+                try? repository.saveRawRecord(
+                    data, key: newPrefix + key.dropFirst(oldPrefix.count))
+            }
+            return
+        }
+        let from = chatDirectory(source)
+        guard fileManager.fileExists(atPath: from.path) else { return }
+        try? fileManager.copyItem(at: from, to: chatDirectory(destination))
+    }
+
     public func delete(chatID: UUID) {
         if vaultBacked {
             let prefix = Self.recordKey(relativePath: "\(chatID.uuidString)/")
@@ -197,17 +216,13 @@ enum ToolActionFusion {
     static func targetPaths(for call: AppToolCall) -> [String] {
         let name = call.name.lowercased()
         if name == "apply_patch" || name == "applypatch" {
-            let patch = call.arguments["patch_text"] ?? call.arguments["patchText"]
-                ?? call.arguments["patch"] ?? ""
-            return patch.split(separator: "\n").compactMap { line in
-                let prefixes = ["*** Add File: ", "*** Update File: ", "*** Delete File: "]
-                let text = String(line)
-                guard let prefix = prefixes.first(where: { text.hasPrefix($0) }) else { return nil }
-                return String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
-            }
+            return patchEntries(call).map { $0.path }
         }
-        if let path = call.arguments["path"] ?? call.arguments["file_path"]
-            ?? call.arguments["filePath"] ?? call.arguments["file"] {
+        // The executor's own key list (TargetFile, AbsolutePath, ...): a call
+        // spelled that way wrote the file but found no target here, so the
+        // verification failed and the validation never ran. A conflicting
+        // pair is rejected by the executor before this point.
+        if let path = ToolArgumentResolver.filePathKeys.compactMap({ call.arguments[$0] }).first {
             return [path]
         }
         return []
@@ -232,7 +247,10 @@ enum ToolActionFusion {
             case "update":
                 guard current.exists, previous.hash != current.hash else { return false }
             default:
-                guard current.exists, previous.hash != current.hash || !previous.exists else { return false }
+                // The tool already reported success, so rewriting a file with
+                // identical bytes is a verified write, not a failure. Only a
+                // missing target is suspicious here.
+                guard current.exists else { return false }
             }
         }
         return true
@@ -259,18 +277,49 @@ enum ToolActionFusion {
     }
 
     private static func patchOperationKinds(_ call: AppToolCall) -> [String: String] {
+        var result: [String: String] = [:]
+        for entry in patchEntries(call) { result[entry.path] = entry.kind }
+        return result
+    }
+
+    /// The files an apply_patch call touches and how, read from BOTH formats.
+    /// `ApplyPatchExecutor` applies unified diffs, so those must yield
+    /// targets here too: with only the `*** Add File:` form recognized, a
+    /// unified diff plus validate_command applied fine, found no targets,
+    /// and was reported as "Validation was not run".
+    static func patchEntries(_ call: AppToolCall) -> [(path: String, kind: String)] {
         let patch = call.arguments["patch_text"] ?? call.arguments["patchText"]
             ?? call.arguments["patch"] ?? ""
-        var result: [String: String] = [:]
-        for line in patch.split(separator: "\n") {
-            let text = String(line)
-            for (prefix, kind) in [
-                ("*** Add File: ", "add"),
-                ("*** Update File: ", "update"),
-                ("*** Delete File: ", "delete"),
-            ] where text.hasPrefix(prefix) {
-                result[String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)] = kind
+        let lines = patch.components(separatedBy: "\n").map { line in
+            line.hasSuffix("\r") ? String(line.dropLast()) : line
+        }
+        var result: [(path: String, kind: String)] = []
+        let starPrefixes = [
+            ("*** Add File: ", "add"), ("*** Update File: ", "update"),
+            ("*** Delete File: ", "delete"),
+        ]
+        func stripped(_ raw: String, _ prefix: String) -> String {
+            let path = String(raw.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+            return path.hasPrefix(prefix) ? String(path.dropFirst(2)) : path
+        }
+        var index = 0
+        while index < lines.count {
+            let text = lines[index]
+            if let (prefix, kind) = starPrefixes.first(where: { text.hasPrefix($0.0) }) {
+                result.append((String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces), kind))
+            } else if text.hasPrefix("--- "), index + 1 < lines.count, lines[index + 1].hasPrefix("+++ ") {
+                let old = String(text.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+                let new = String(lines[index + 1].dropFirst(4)).trimmingCharacters(in: .whitespaces)
+                if old == "/dev/null" {
+                    result.append((stripped(lines[index + 1], "b/"), "add"))
+                } else if new == "/dev/null" {
+                    result.append((stripped(text, "a/"), "delete"))
+                } else {
+                    result.append((stripped(lines[index + 1], "b/"), "update"))
+                }
+                index += 1
             }
+            index += 1
         }
         return result
     }
@@ -286,6 +335,19 @@ enum ToolOutputProjection {
         "[Archived tool output: \(reference.byteCount) bytes, sha256 \(reference.sourceHash). "
             + "Use recall_tool_output(observation_id: \"\(reference.id.uuidString)\", "
             + "offset_bytes: 0, max_bytes: 4096) to read an exact byte range.]"
+    }
+
+    /// True when `prepareToolOutputProjectionsForPrompt` has nothing left to
+    /// do for this result: either a verified reduction already is the
+    /// projection, or the full-send budget is spent and the stored projection
+    /// is the head/tail form (it ends with the recall placeholder). Re-deriving
+    /// the head/tail from the vault bytes would reproduce the same string, so
+    /// skipping saves a vault read, a hash and a chat-archive rewrite per step.
+    static func isSettled(_ result: AppToolResult) -> Bool {
+        guard let reference = result.observation, let projection = result.promptProjection else { return false }
+        if result.efficiency?.verifiedReduction == true { return true }
+        return result.fullPromptSendCount >= fullSendLimit
+            && projection.hasSuffix(placeholder(for: reference))
     }
 
     static func headTail(_ bytes: Data, reference: ToolObservationRef) -> String {

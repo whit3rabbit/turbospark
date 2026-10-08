@@ -11,9 +11,10 @@ extension AppModel {
         liveElapsedDecodeSeconds > 0 ? Double(liveTokenCount) / liveElapsedDecodeSeconds : 0
     }
 
-    /// Peak resident process memory footprint in bytes.
+    /// CURRENT physical footprint in bytes. The readout used to show the
+    /// process-lifetime peak, so it never fell after an eject.
     public var currentProcessMemoryBytes: UInt64? {
-        TurboSparkSession.peakFootprintBytes
+        Self.currentPhysFootprintBytes()
     }
 
     /// Current process CPU usage percentage across all active threads.
@@ -104,6 +105,15 @@ extension AppModel {
             return outputText
         }
         return selectedTurnMessages.last(where: { $0.role == .assistant })?.content ?? ""
+    }
+
+    /// `!outputConversationPlainText.isEmpty` without building the string:
+    /// every message contributes a non-empty "You:/Assistant:" line, so the
+    /// transcript is empty exactly when there are no messages and no live
+    /// output. The context menu reads this on every render, and building the
+    /// whole conversation there cost a full concatenation per streamed token.
+    public var hasOutputConversationText: Bool {
+        !selectedTurnMessages.isEmpty || !outputText.isEmpty
     }
 
     /// Full plain text transcript of the active chat conversation.

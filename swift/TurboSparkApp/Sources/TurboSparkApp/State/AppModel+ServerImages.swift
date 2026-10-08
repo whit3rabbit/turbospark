@@ -6,7 +6,8 @@ extension AppModel {
     /// Call only while holding ImageJobCoordinator's permit.
     func sharedImageSession(for model: ImageInstalledModel) throws -> any ImageGenerationSession {
         if imageSessionPath != model.path || imageSession == nil {
-            imageSession?.cancel()
+            let old = imageSession
+            Task { await old?.unload() }
             imageSession = MLXImageGenerationSession(model: model)
             imageSessionPath = model.path
         }
@@ -71,7 +72,13 @@ extension AppModel {
         defer { serverImageTasks[id] = nil }
         let coordinator = ImageJobCoordinator.shared
         let acquired = await coordinator.acquire()
-        guard acquired else { return }
+        guard acquired else {
+            // Cancelled while waiting for the permit: the HTTP client must
+            // still get an answer and the pending slot must be freed.
+            try? server.completeImageRequest(
+                id: id, png: nil, error: "image generation was cancelled")
+            return
+        }
         var usedSession: (any ImageGenerationSession)?
         // Release only after the detached producer has really stopped: a
         // cancelled stream ends this request at once, but the MLX task keeps
@@ -102,6 +109,9 @@ extension AppModel {
                     case .cancelled: throw CancellationError()
                     }
                 }
+                // A cancelled stream just ends; without this it reads as
+                // "No image returned" (a failure) instead of a cancellation.
+                if output == nil { try Task.checkCancellation() }
                 return output
             } onCancel: {
                 session.cancel()
@@ -110,6 +120,11 @@ extension AppModel {
             try server.completeImageRequest(id: id, png: png)
             serverImageProgress = "Ready"
         } catch is CancellationError {
+            // Every Start must be completed exactly once, or the client waits
+            // out its own timeout and the bridge slot stays taken. A request
+            // the server already cancelled returns a harmless error here.
+            try? server.completeImageRequest(
+                id: id, png: nil, error: "image generation was cancelled")
             serverImageProgress = "Cancelled"
         } catch {
             try? server.completeImageRequest(id: id, png: nil, error: error.localizedDescription)

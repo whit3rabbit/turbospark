@@ -339,12 +339,12 @@ extension AppModel {
             let siblings = chats.filter { $0.projectID == selectedProjectID && !$0.isGhost }
             if let replacement = siblings.first {
                 selectedChatID = replacement.id
-            } else if selectedProjectID == nil {
-                selectedChatID = chats[min(index, chats.count - 1)].id
             } else {
-                // Nothing left under this project. A fresh id rather than
-                // another project's chat; `selectedChatID`'s own `didSet`
-                // builds the draft with the project stamped on it.
+                // Nothing left under this project (or, with none selected,
+                // no other normal projectless chat). A fresh id rather than
+                // another project's chat or the never-persisted ghost chat;
+                // `selectedChatID`'s own `didSet` builds the draft with the
+                // project stamped on it.
                 selectedChatID = UUID()
             }
         }
@@ -402,6 +402,11 @@ extension AppModel {
         if pendingToolCallChatID == clearedChatID {
             clearPendingToolCall()
         }
+        // A goal and queued prompts belong to the conversation just erased:
+        // left behind, the goal loop would keep judging the old condition
+        // and the idle timer would inject check-ins into the empty chat.
+        clearGoal(chatID: clearedChatID)
+        pendingUserMessages[clearedChatID] = nil
         outputText = ""
         outputReasoningText = ""
         outputPromptText = ""

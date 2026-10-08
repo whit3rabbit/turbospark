@@ -22,12 +22,19 @@ extension AppModel {
     func waitForUserAnswers(
         chatID: UUID?, items: [UserQuestionItem], toolCallID: UUID?
     ) async -> String {
-        pendingUserQuestions = PendingUserQuestions(
+        let mine = PendingUserQuestions(
             id: UUID(), chatID: chatID, toolCallID: toolCallID, items: items)
+        pendingUserQuestions = mine
         let answer = await withCheckedContinuation { continuation in
             AskUserQuestionExecutor.waitForAnswer(chatID: chatID, continuation: continuation)
         }
-        pendingUserQuestions = nil
+        // Clear only OUR card. A second AskUserQuestion for the same chat
+        // retires this call's continuation (auto-dismissed) and publishes its
+        // own card; this call resuming afterwards must not erase that newer
+        // card, which would park the second waiter with no UI.
+        if pendingUserQuestions?.id == mine.id {
+            pendingUserQuestions = nil
+        }
         return answer
     }
 

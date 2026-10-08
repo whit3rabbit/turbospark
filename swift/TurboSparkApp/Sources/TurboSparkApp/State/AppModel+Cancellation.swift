@@ -175,7 +175,13 @@ extension AppModel {
             appendToolExecutionTurn(call: stopped, result: result, chatID: chatID)
         }
         clearPendingToolCall()
-        session?.cancel()
+        // No direct `session?.cancel()`: the session is shared with background
+        // agents, /recap and memory capture, and a session-wide cancel lands
+        // on whichever of them holds the serial queue (ending a subagent as
+        // "cancelled" while the user's own queued prompt never starts).
+        // Cancelling `runTask` / `toolExecutionTask` ends the consumed stream,
+        // and `QueuedGenerationStream.Request` then cancels only the request
+        // this turn owns (in Rust if running, or before it ever starts).
         runTask?.cancel()
         toolExecutionTask?.cancel()
         toolExecutionTask = nil

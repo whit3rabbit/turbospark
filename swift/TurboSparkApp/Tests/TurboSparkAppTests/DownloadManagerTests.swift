@@ -167,4 +167,36 @@ final class DownloadManagerTests: XCTestCase {
         model.startNextModelDownloadIfPossible { started.append($0) }
         XCTAssertEqual(started, [.catalog(alias: "first"), .image(alias: "second")])
     }
+
+    func testQueuedDownloadStartsWhenGenerationEnds() {
+        let model = makeModel()
+        defer { model.stopCronScheduler() }
+        var started: [ModelDownload.Request] = []
+        model.modelDownloadStartOverride = { started.append($0) }
+        model.generating = true
+        model.modelDownloads.insert(
+            ModelDownload(request: .catalog(alias: "waiting-for-reply"), status: .queued), at: 0)
+        model.startNextModelDownloadIfPossible { _ in XCTFail("must not start while generating") }
+        XCTAssertEqual(model.modelDownloads.first?.status, .queued)
+
+        // The reply ending is the only remaining trigger.
+        model.generating = false
+        XCTAssertEqual(started, [.catalog(alias: "waiting-for-reply")])
+    }
+
+    func testRetryIsRefusedOnceTheAliasIsInstalled() {
+        let model = makeModel()
+        defer { model.stopCronScheduler() }
+        var failed = ModelDownload(request: .catalog(alias: "stale-alias"), status: .failed)
+        failed.failure = "boom"
+        XCTAssertTrue(model.canRetryModelDownload(failed))
+
+        model.installed = [
+            InstalledModel(
+                alias: "stale-alias", repo: "r/x", path: "/tmp/stale-alias.gturbo", family: "gemma4")
+        ]
+        XCTAssertFalse(model.canRetryModelDownload(failed))
+        model.retryModelDownload(failed)
+        XCTAssertTrue(model.modelDownloads.isEmpty)
+    }
 }

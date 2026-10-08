@@ -174,8 +174,12 @@ public struct AppSkillState: Codable, Equatable, Sendable {
         for (key, value) in patch {
             if case .null = value {
                 fields.removeValue(forKey: key)
-            } else if case .object(let sub) = value,
-                case .object(var existing)? = fields[key] {
+            } else if case .object(let sub) = value {
+                // Start from an empty map when the field is absent or not an
+                // object, so nulls in a first patch are stripped rather than
+                // stored (RFC 7386).
+                var existing: [String: AppJSONValue] = [:]
+                if case .object(let current)? = fields[key] { existing = current }
                 for (k, v) in sub {
                     if case .null = v { existing.removeValue(forKey: k) } else { existing[k] = v }
                 }

@@ -194,6 +194,7 @@ extension AppModel {
         var chat = AppChat(projectID: selectedProjectID)
         chat.isGhost = true
         chat.title = "Temporary Chat"
+        AppHookExecutionEngine.markGhostSession(chat.id.uuidString, isGhost: true)
         chats.insert(chat, at: 0)
         selectedChatID = chat.id
         outputText = ""
@@ -210,6 +211,7 @@ extension AppModel {
         guard !generating, !submitting, pendingToolCall == nil, let ghost = ghostChat
         else { return }
         let ghostID = ghost.id
+        AppHookExecutionEngine.markGhostSession(ghostID.uuidString, isGhost: false)
         ghostVault.wipe(for: ghostID)
         deleteChat(id: ghostID)
     }

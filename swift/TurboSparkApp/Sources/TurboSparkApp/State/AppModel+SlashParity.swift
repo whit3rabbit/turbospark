@@ -133,8 +133,19 @@ extension AppModel {
         case 0:
             showToast("No installed model matches '\(query)'.", style: .warning)
         case 1:
-            selectModel(matches[0])
-            showToast("Switched to \(matches[0].alias).", style: .success)
+            // Switching replaces the session: under a streaming reply, a
+            // pending approval card (which lowers `generating`) or a running
+            // UserPromptSubmit hook that would pull the model out from under
+            // the in-flight work.
+            guard !generating, !submitting, !opening, pendingToolCall == nil else {
+                showToast("Finish or stop the current turn before switching models.", style: .warning)
+                return
+            }
+            if selectModel(matches[0]) {
+                showToast("Switched to \(matches[0].alias).", style: .success)
+            } else {
+                showToast("\(matches[0].alias) is already loaded.", style: .info)
+            }
         default:
             let names = matches.prefix(4).map(\.alias).joined(separator: ", ")
             showToast(
@@ -249,6 +260,7 @@ extension AppModel {
             return nil
         }
         let copy = chats[index].duplicated()
+        ToolObservationStore.shared.copyArchive(from: chats[index].id, to: copy.id)
         chats.insert(copy, at: 0)
         selectedChatID = copy.id
         persistChats()
@@ -367,6 +379,7 @@ extension AppModel {
             return nil
         }
         var fork = selectedChat.duplicated()
+        ToolObservationStore.shared.copyArchive(from: selectedChat.id, to: fork.id)
         fork.title = newTitle.flatMap {
             let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : String(trimmed.prefix(80))
@@ -449,7 +462,12 @@ extension AppModel {
             do {
                 let id = try await launchBackgroundAgent(BackgroundAgentLaunch(
                     agent: agent, taskPrompt: taskPrompt, taskDescription: taskDescription,
-                    project: project, chatID: chatID, depth: 0, userSystemPrompt: ""))
+                    project: project, chatID: chatID,
+                    // Depth 1, as the registry passes for a background agent
+                    // launched from the main conversation: 0 would let the
+                    // run launch further background agents and nest one
+                    // level deeper than the cap.
+                    depth: 1, userSystemPrompt: ""))
                 showToast("Side task \(id) started in the background.", style: .success)
             } catch {
                 showToast(error.localizedDescription, style: .error)

@@ -95,7 +95,8 @@ enum CopyCommandParser {
             let blocks = fencedCodeBlocks(in: message)
             let candidates = blocks.filter { block in
                 guard let language else { return true }
-                return block.language == language
+                // The request is lowercased; fences keep the author's case.
+                return block.language?.lowercased() == language
             }
             if candidates.isEmpty {
                 let noun = language.map { "\($0) code block" } ?? "code block"

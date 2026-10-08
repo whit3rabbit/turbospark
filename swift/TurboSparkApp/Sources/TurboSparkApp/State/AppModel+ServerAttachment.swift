@@ -49,14 +49,36 @@ extension AppModel {
     /// `attachChatSession()` and is the cheap path.
     public func attachModelToServer(_ model: InstalledModel) {
         guard let server, !serverBusy else { return }
+        // The chat model is already resident: serve THAT session instead of
+        // mapping the same install a second time (doubled weights and KV, or
+        // a load-guard refusal).
+        if Self.isChatInstall(
+            modelPath: model.path, selectedPath: selected?.path, hasSession: session != nil)
+        {
+            attachChatSession()
+            return
+        }
         serverBusy = true
         Task { await performServerAttach(model, to: server) }
     }
 
     func attachServerModelAndWait(_ model: InstalledModel) async {
         guard let server, !serverBusy else { return }
+        if Self.isChatInstall(
+            modelPath: model.path, selectedPath: selected?.path, hasSession: session != nil)
+        {
+            attachChatSession()
+            return
+        }
         serverBusy = true
         await performServerAttach(model, to: server)
+    }
+
+    /// Whether `modelPath` is the install the Chat pane's live session was
+    /// opened from (`selected` is set only by a successful open). Pure so the
+    /// routing decision can be asserted without a multi-gigabyte install.
+    static func isChatInstall(modelPath: String, selectedPath: String?, hasSession: Bool) -> Bool {
+        hasSession && selectedPath == modelPath
     }
 
     private func performServerAttach(_ model: InstalledModel, to server: TurboSparkServer) async {

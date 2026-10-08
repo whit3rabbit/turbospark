@@ -53,6 +53,18 @@ final class AgentEfficiencyTests: XCTestCase {
             before: before, after: [after[0], before[1], after[2]], for: call))
     }
 
+    func testWriteWithIdenticalContentAndAlternateKeyStillVerifies() {
+        let call = AppToolCall(
+            name: "write_file",
+            arguments: ["TargetFile": "src/a.swift", "content": "same", "validate_command": "true"],
+            category: .fileWrite)
+        XCTAssertEqual(ToolActionFusion.targetPaths(for: call), ["src/a.swift"])
+        let same = [ToolActionFusion.Fingerprint(path: "src/a.swift", exists: true, hash: "h")]
+        XCTAssertTrue(ToolActionFusion.postMutationVerified(before: same, after: same, for: call))
+        let gone = [ToolActionFusion.Fingerprint(path: "src/a.swift", exists: false, hash: nil)]
+        XCTAssertFalse(ToolActionFusion.postMutationVerified(before: same, after: gone, for: call))
+    }
+
     func testFusedWriteMutatesBeforeItsValidationCommand() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -246,6 +258,68 @@ final class AgentEfficiencyTests: XCTestCase {
         let history = model.buildAppendOnlyHistory(chatIndex: 0, project: nil)
         let estimate = model.buildEstimateParts().history
         XCTAssertEqual(history.filter { $0.role == .tool }.map(\.content), estimate.filter { $0.role == .tool }.map(\.content))
+    }
+
+    func testSettledProjectionIsNotRepersistedByPromptPreparation() throws {
+        let model = AppModel()
+        var chat = AppChat(title: "settled")
+        let call = AppToolCall(name: "run_command", arguments: ["command": "build"], category: .terminal)
+        let original = AppToolResult(
+            callID: call.id, output: "shown", archivalOutput: String(repeating: "a", count: 12_000))
+        let archived = model.archiveToolObservation(original, chatID: chat.id)
+        XCTAssertFalse(ToolOutputProjection.isSettled(archived))
+        chat.messages = [AppChatMessage(
+            role: .assistant, content: "", stopReason: "tool_use", toolCalls: [call], toolResults: [archived])]
+        model.chats = [chat]
+        model.selectedChatID = chat.id
+
+        for _ in 0..<3 { model.prepareToolOutputProjectionsForPrompt(chatID: chat.id) }
+        let settled = model.chats[0].messages[0].toolResults[0]
+        XCTAssertTrue(ToolOutputProjection.isSettled(settled))
+
+        // A settled chat must not be mutated (and so re-persisted) again.
+        model.chats[0].updatedAt = Date(timeIntervalSince1970: 1)
+        model.prepareToolOutputProjectionsForPrompt(chatID: chat.id)
+        XCTAssertEqual(model.chats[0].updatedAt, Date(timeIntervalSince1970: 1))
+        XCTAssertEqual(model.chats[0].messages[0].toolResults[0].promptProjection, settled.promptProjection)
+    }
+
+    func testIsSettledRequiresSpentBudgetAndHeadTailForm() {
+        let model = AppModel()
+        let original = AppToolResult(
+            callID: UUID(), output: "shown", archivalOutput: String(repeating: "a", count: 12_000))
+        var result = model.archiveToolObservation(original, chatID: UUID())
+        let reference = try! XCTUnwrap(result.observation)
+        // Full text, budget spent: still needs the transition to head/tail.
+        result.promptProjection = String(repeating: "a", count: 12_000)
+        result.fullPromptSendCount = ToolOutputProjection.fullSendLimit
+        XCTAssertFalse(ToolOutputProjection.isSettled(result))
+        // Head/tail form but budget not spent: not settled.
+        result.promptProjection = "x" + ToolOutputProjection.placeholder(for: reference)
+        result.fullPromptSendCount = 0
+        XCTAssertFalse(ToolOutputProjection.isSettled(result))
+        result.fullPromptSendCount = ToolOutputProjection.fullSendLimit
+        XCTAssertTrue(ToolOutputProjection.isSettled(result))
+    }
+
+    func testVerifiedReductionSurvivesPromptProjectionPreparation() {
+        let model = AppModel()
+        var chat = AppChat(title: "reduced")
+        let call = AppToolCall(name: "run_command", arguments: ["command": "build"], category: .terminal)
+        let original = AppToolResult(
+            callID: call.id, output: "shown", archivalOutput: String(repeating: "a", count: 12_000))
+        var reduced = model.archiveToolObservation(original, chatID: chat.id)
+        reduced.promptProjection = "VERIFIED REDUCTION"
+        var outcome = reduced.efficiency ?? ToolEfficiencyOutcome()
+        outcome.verifiedReduction = true
+        reduced.efficiency = outcome
+        chat.messages = [AppChatMessage(
+            role: .assistant, content: "", stopReason: "tool_use", toolCalls: [call], toolResults: [reduced])]
+        model.chats = [chat]
+        model.selectedChatID = chat.id
+
+        for _ in 0..<4 { model.prepareToolOutputProjectionsForPrompt(chatID: chat.id) }
+        XCTAssertEqual(model.chats[0].messages[0].toolResults[0].promptProjection, "VERIFIED REDUCTION")
     }
 
     func testRecallToolOutputUsesTheRegistryAndTheCallingChat() async throws {

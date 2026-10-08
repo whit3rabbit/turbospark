@@ -17,6 +17,13 @@ extension AppModel {
     ///
     /// A no-op when the store already points there, which is the common case,
     /// so the ordinary single-project session pays one comparison.
+    ///
+    /// Rebinding alone is NOT atomic with the engine's read: the engine hops
+    /// to the main actor to read `hooks`, and another project's dispatch can
+    /// refresh the shared store in between, so project A's PreToolUse safety
+    /// hook would be read from project B. Every wrapper therefore also passes
+    /// `projectBoundHookDirectory`, which makes the engine take one
+    /// `dispatchSnapshot` (rebind + read in a single main-actor step).
     func rebindHookStore(to projectDirectory: String?) {
         let store = AppHookStore.shared
         guard store.lastProjectDirectory != projectDirectory || !store.didRefreshAtLeastOnce else {
@@ -72,7 +79,8 @@ extension AppModel {
             reason: reason,
             stopHookActive: stopHookActive,
             agentID: agentID,
-            agentType: agentType
+            agentType: agentType,
+            projectBoundHookDirectory: projectDir
         )
     }
 
@@ -101,7 +109,8 @@ extension AppModel {
             sessionID: chatID.uuidString,
             toolName: toolName,
             toolArguments: toolArguments,
-            workingDirectory: projectDir
+            workingDirectory: projectDir,
+            projectBoundHookDirectory: projectDir
         )
     }
 
@@ -197,7 +206,8 @@ extension AppModel {
             sessionID: chatID.uuidString,
             toolName: toolName,
             toolArguments: toolArguments,
-            workingDirectory: projectDir
+            workingDirectory: projectDir,
+            projectBoundHookDirectory: projectDir
         )
         return AppHookDecisionAggregator.aggregate(results, event: .permissionRequest)
     }
@@ -260,7 +270,7 @@ extension AppModel {
     }
 }
 
-private extension AppHookEvent {
+extension AppHookEvent {
     var carriesConversationContent: Bool {
         switch self {
         case .userPromptSubmit, .preToolUse, .postToolUse, .postToolUseFailure,

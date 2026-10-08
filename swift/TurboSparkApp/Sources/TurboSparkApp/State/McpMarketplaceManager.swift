@@ -126,6 +126,16 @@ public struct McpMarketplaceArchive: Codable, Sendable {
         self.sources = sources
     }
 
+    private enum CodingKeys: String, CodingKey { case sources }
+
+    /// One unreadable source costs that source, not every registered one.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = try c.decodeIfPresent(
+            [String: FailableDecodable<MarketplaceSource>].self, forKey: .sources) ?? [:]
+        sources = raw.compactMapValues(\.value)
+    }
+
     public static func empty() -> McpMarketplaceArchive { McpMarketplaceArchive() }
 }
 

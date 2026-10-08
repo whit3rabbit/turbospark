@@ -146,6 +146,13 @@ extension AppModel {
             return PendingUserSubmission(
                 text: first.text, attachments: [], presentation: .userSteer)
         }
+        // The submission goes through the composer, so a draft the user is
+        // typing (or files attached while an approval card was up) would be
+        // overwritten and then cleared by run(). Leave the entry queued; the
+        // next turn tail, or the user's own send, drains it.
+        guard promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            promptAttachments.isEmpty
+        else { return nil }
         let submission = PendingUserSubmission(
             text: first.text,
             attachments: first.attachments,
@@ -172,7 +179,7 @@ extension AppModel {
     func injectScheduledPrompt(_ text: String, chatID: UUID) {
         let content = UnicodeSanitization.sanitize(text)
         guard !content.isEmpty else { return }
-        mutateTurnMessages(for: chatID) { $0.append(AppChatMessage(role: .user, content: content)) }
+        mutateTurnMessages(for: chatID) { $0.append(AppChatMessage(role: .user, content: content, isSynthetic: true)) }
         executeGenerationTurn(step: 0, chatID: chatID)
     }
 
@@ -226,6 +233,11 @@ extension AppModel {
             let queue = pendingUserMessages[chatID], let entry = queue.first {
             pendingUserMessages[chatID] = Array(queue.dropFirst())
 
+            // Files the user attached to the composer mid-turn belong to
+            // their NEXT message, not to this steer: keep them aside and put
+            // them back once the steer's own attachments are read.
+            let composerAttachments =
+                chats.first(where: { $0.id == chatID })?.draftAttachments ?? []
             // Restore onto the row so mention resolution and the row-based
             // read below behave exactly as they do in `run()`.
             if let rowIndex = chats.firstIndex(where: { $0.id == chatID }) {
@@ -240,7 +252,7 @@ extension AppModel {
             }
             let attachments = chats.first(where: { $0.id == chatID })?.draftAttachments ?? []
             if let rowIndex = chats.firstIndex(where: { $0.id == chatID }) {
-                chats[rowIndex].draftAttachments = []
+                chats[rowIndex].draftAttachments = composerAttachments
             }
             let (imageDocs, textDocs) = attachments.reduce(
                 into: ([AppPromptAttachment](), [AppPromptAttachment]())

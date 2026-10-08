@@ -290,13 +290,30 @@ public final class AppModel: ObservableObject {
     /// Currently active project filter (nil = all chats).
     @Published public var selectedProjectID: UUID? = nil
     /// Working tree model for git status and diffs when a project is selected.
-    @Published public var worktree: WorktreeModel? = nil
+    @Published public var worktree: WorktreeModel? = nil {
+        didSet {
+            // RootView sizes the inspector column and the window minimum from
+            // `isExpandedSplitMode` but only observes AppModel. Forward JUST
+            // that flag (not every git refresh) so those widths update at once.
+            worktreeExpansionObserver = worktree?.$isExpandedSplitMode
+                .removeDuplicates()
+                .dropFirst()
+                .sink { [weak self] _ in self?.objectWillChange.send() }
+        }
+    }
+    private var worktreeExpansionObserver: AnyCancellable?
     /// Global application-level MCP server configurations.
     @Published public var globalMcpServers: [McpServerConfig] = []
     /// MCP servers detected in the selected project's config files that are
     /// awaiting an approve/reject decision (`AppModel+Mcp`). Drives the
     /// project approval sheet.
     @Published public var pendingMcpApprovals: [PendingMcpServerApproval] = []
+    /// Untrusted custom tools the selected project ships in its tool folders
+    /// (`AppModel+ProjectTools`). Drives the project tool approval sheet.
+    @Published public var pendingProjectToolApprovals: [ProjectToolReview] = []
+    /// Review ids rejected this session. Not persisted: a rejected tool just
+    /// stays off, and asks again next launch.
+    var rejectedProjectToolIDs: Set<String> = []
     /// Global / rootless chat permission mode (defaults to .auto / Approve for me).
     @Published public var activePermissionMode: AppPermissionMode = .auto
     /// Web search tool toggle state in the chat bar.
@@ -703,6 +720,12 @@ public final class AppModel: ObservableObject {
     /// policy cannot mistake one for a paste. Managed only by
     /// `writePromptTextDirectly` (`AppModel+Paste`); never rendered.
     public var promptWriteSuppressionDepth = 0
+    /// The last value written through `writePromptTextDirectly`. SwiftUI's
+    /// onChange fires on a later update, after the depth counter is back to
+    /// zero, so the counter alone never suppressed anything in production.
+    var lastProgrammaticPromptWrite: String?
+    /// The Settings tab a deep link asked for; consumed by `AppSettingsView`.
+    @Published var requestedSettingsTab: AppSettingsView.SettingsTab?
     /// Whether repetition penalty is enabled.
     @Published public var repetitionPenaltyEnabled: Bool = false
     /// Repetition penalty multiplier applied to generated tokens.
@@ -795,6 +818,16 @@ public final class AppModel: ObservableObject {
     var lastDownloadHistorySaveUptime: TimeInterval?
     var downloadTransferMeter = DownloadTransferMeter()
     var modelDownloadsShuttingDown = false
+    /// Test seam: replaces the native install start for triggers that cannot pass a closure.
+    var modelDownloadStartOverride: ((ModelDownload.Request) -> Void)?
+    /// True while the Images-screen job owns the ImageJobCoordinator permit.
+    var imageJobHoldsPermit = false
+    /// The path the CURRENT session was opened with. Only meaningful while
+    /// `session != nil`; read it through `loadedModelPath`.
+    var sessionModelPath: String?
+    /// Path of the model actually resident, as opposed to `selected`, which
+    /// can run ahead of it (an install finishing mid-turn, a failed open).
+    var loadedModelPath: String? { session == nil ? nil : sessionModelPath }
     // A profile may reopen before its previous model's native worker exits.
     static weak var modelInstallOwner: AppModel? {
         didSet { modelInstallOwnershipChanged.send() }
@@ -830,6 +863,11 @@ public final class AppModel: ObservableObject {
     /// by `canRun` and Stop was refused by `canCancel`, leaving a wedged hook
     /// with no exit at all and nothing for `cancel()` to cancel.
     var submissionTask: Task<Void, Never>?
+    /// The trimmed draft the in-flight submission was started from, while
+    /// `submitting` is true. The composer still holds that text until the
+    /// awaited hook finishes, so a second Return would otherwise queue the
+    /// SAME draft and send it twice.
+    var submittingDraft: String?
     var installTask: Task<Void, Never>?
     /// The off-main-actor scan of the LM Studio and custom model directories.
     /// Cancelled and restarted per `refreshModels()`, which several views call
@@ -1049,6 +1087,10 @@ public final class AppModel: ObservableObject {
 
     /// Opens the application Settings window and navigates to the requested tab.
     public func openSettings(tab: AppSettingsView.SettingsTab = .engine) {
+        // Stored as well as posted: on a fresh launch the Settings view does
+        // not exist yet, so the notification reaches no subscriber. The view
+        // consumes this value when it appears.
+        requestedSettingsTab = tab
         NotificationCenter.default.post(name: .openSettingsTab, object: tab)
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
@@ -1078,6 +1120,10 @@ public final class AppModel: ObservableObject {
 
     /// Background synchronization hook invoked when a generation turn completes.
     private func onGenerationFinished() {
+        // startNextModelDownloadIfPossible refuses while `generating`, so an
+        // install that finished mid-reply left the next queued row waiting
+        // for a trigger that never came again.
+        startNextModelDownloadIfPossible()
         if syntextIndexingEnabled,
            selectedProject?.syntextIndexEnabled == true,
            let rootURL = selectedProject?.rootDirectoryURL {

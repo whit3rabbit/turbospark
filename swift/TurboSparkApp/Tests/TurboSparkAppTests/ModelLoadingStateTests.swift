@@ -67,4 +67,26 @@ final class ModelLoadingStateTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
     }
+
+    /// The top-bar readout must follow the CURRENT footprint, not a
+    /// process-lifetime peak that never falls after an eject.
+    func testMemoryReadoutIsCurrentFootprint() {
+        let model = AppModel()
+        let current = model.currentProcessMemoryBytes
+        XCTAssertNotNil(current)
+        XCTAssertGreaterThan(current ?? 0, 0)
+        XCTAssertEqual(
+            current.map { $0 / (256 << 20) }, AppModel.currentPhysFootprintBytes().map { $0 / (256 << 20) })
+    }
+
+    /// With NO session loaded a selection that has no row is dropped as
+    /// before; keeping it only applies while that path's session is resident
+    /// (not constructible without a Metal device, see swift Gotcha 26).
+    func testSelectionWithoutRowOrSessionIsStillReconciled() {
+        let model = AppModel()
+        XCTAssertNil(model.loadedModelPath)
+        model.selected = InstalledModel(alias: "manual", repo: "", path: "/tmp/manual.gturbo", family: "")
+        model.refreshModels()
+        XCTAssertNotEqual(model.selected?.path, "/tmp/manual.gturbo")
+    }
 }

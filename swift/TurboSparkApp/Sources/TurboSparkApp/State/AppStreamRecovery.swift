@@ -605,11 +605,13 @@ enum AppStreamRecovery {
         guard (0..<maxRecoveryRetries).contains(anchor.retriesUsed) else {
             return .exhausted(limit: maxRecoveryRetries)
         }
+        // Earlier versions stay; the interrupted reply goes last.
+        let priorVersions = interrupted.alternates
         interrupted.alternates = []
         return .retry(RecoveryRetryPlan(
             attempt: anchor.retriesUsed + 1,
             transcript: Array(messages[..<anchor.retainedMessageCount]),
-            alternates: [interrupted]))
+            alternates: priorVersions + [interrupted]))
     }
 
     static func isSingleProseResponse(_ chain: [AppChatMessage]) -> Bool {
@@ -637,7 +639,7 @@ enum AppStreamRecovery {
         {
             switch prepareAnchoredRetry(anchor: recoveryAnchor, messages: messages) {
             case .retry(let plan):
-                guard let interrupted = plan.alternates.first,
+                guard let interrupted = plan.alternates.last,
                     let stagedAnchor = recoveryAnchor.recordingRetryAttempt(
                         plan.attempt,
                         interruptedMessage: interrupted)
@@ -661,10 +663,13 @@ enum AppStreamRecovery {
 
         var response = messages[promptIndex + 1]
         guard !isInterruptedResponse(response) else { return .conflict }
+        // Flatten: versions this reply already carries are kept, so a second
+        // Retry does not drop the first reply.
+        let priorVersions = response.alternates
         response.alternates = []
         return .retry(ResponseRetryPlan(
             transcript: Array(messages[...promptIndex]),
-            alternates: [response],
+            alternates: priorVersions + [response],
             recoveryAttempt: nil,
             stagedRecoveryAnchor: nil))
     }

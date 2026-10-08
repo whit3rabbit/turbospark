@@ -113,6 +113,7 @@ extension AppModel {
         // awaiting approval for the project just created.
         refreshMcpToolCatalog(for: project)
         detectProjectMcpServers(for: project)
+        refreshPendingProjectTools(for: project)
 
         // Create initial chat for this project
         createChat(projectID: project.id)
@@ -121,6 +122,25 @@ extension AppModel {
 
     /// Selects an active project or clears the project filter.
     public func selectProject(id: UUID?) {
+        guard applyProjectSelection(id: id) else { return }
+        selectFallbackChatForSelectedProject()
+    }
+
+    /// Opens a specific chat, moving the project selection to the chat's own
+    /// project first WITHOUT `selectProject`'s fallback chat selection. That
+    /// fallback would otherwise create an empty chat (firing SessionStart) or
+    /// select the newest chat and drain its parked prompt before the
+    /// requested chat is opened.
+    public func openChat(id: UUID) {
+        guard let chat = chats.first(where: { $0.id == id }), !chat.isGhost else { return }
+        if selectedProjectID != chat.projectID {
+            guard applyProjectSelection(id: chat.projectID) else { return }
+        }
+        selectChat(id: id)
+    }
+
+    /// The project switch itself. Returns false when refused mid-turn.
+    private func applyProjectSelection(id: UUID?) -> Bool {
         // **THE THREE FLAGS, NOT ONE** (state#77). The chat-side siblings
         // grew `pendingToolCall` and `submitting` (state#33, state#49) and
         // the project-side ones never did -- which is backwards, because a
@@ -128,7 +148,7 @@ extension AppModel {
         // which holds the hashes a pending `edit_file` was evaluated
         // against, so the call the user is looking at is re-checked against
         // nothing.
-        guard !generating, !submitting, pendingToolCall == nil else { return }
+        guard !generating, !submitting, pendingToolCall == nil else { return false }
         selectedProjectID = id
         // Stale-write hashes are per workspace. Carrying them across a
         // project switch means an `edit_file` in the new project can be
@@ -160,7 +180,12 @@ extension AppModel {
         // awaiting approval for the newly selected project.
         refreshMcpToolCatalog(for: selectedProject)
         detectProjectMcpServers()
+        refreshPendingProjectTools()
+        return true
+    }
 
+    private func selectFallbackChatForSelectedProject() {
+        let id = selectedProjectID
         // If the currently selected chat doesn't belong to the newly selected project, switch selection.
         // `filteredChats` already excludes ghosts and, since `selectedProjectID`
         // was just set to `id` above, is exactly this project's chat list --

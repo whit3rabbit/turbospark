@@ -145,10 +145,32 @@ extension AppModel {
                 agent: agent, taskPrompt: supplied, session: session, project: nil,
                 maxTurnsOverride: 1, samplingOptions: samplingOptions(),
                 taskDescription: "Review new memory claims")
-            guard !Task.isCancelled, result.status == "completed",
-                  let data = result.finalResponse.data(using: .utf8),
+            guard !Task.isCancelled, result.status == "completed" else {
+                succeeded = false
+                break
+            }
+            // Small local models often wrap the JSON in ```json fences or
+            // prose, so decode the outermost object rather than the raw text.
+            guard let data = Self.memoryJSONObjectData(from: result.finalResponse),
                   let extraction = try? JSONDecoder().decode(MemoryExtraction.self, from: data)
-            else { succeeded = false; break }
+            else {
+                // A completed run whose output still does not parse would
+                // re-prefill this same batch every minute forever, and the
+                // `break` it used to take also starved every later chat.
+                // Mark the batch processed (with a receipt) and move on.
+                do {
+                    try MemoryLedgerStore.shared.update { state in
+                        for message in batch {
+                            state.processedSources.insert(MemoryLedgerStore.sourceKey(
+                                chatID: chat.id, messageID: message.id, source: message.content))
+                        }
+                        state.receipts.append(MemoryRunReceipt(
+                            kind: "hourly-capture", outcome: "unparseable output; skipped",
+                            sourceIDs: []))
+                    }
+                } catch { succeeded = false; break }
+                continue
+            }
             let byID = Dictionary(uniqueKeysWithValues: batch.map { ($0.id, $0) })
             let projectScope = turnProject(chatID: chat.id)?.rootDirectoryURL.map {
                 "project:\(MemoryStore.projectKey(forProjectRoot: $0))"
@@ -179,6 +201,15 @@ extension AppModel {
         if succeeded {
             try? MemoryLedgerStore.shared.update { $0.lastHourlyRun = now }
         }
+    }
+
+    /// The outermost `{ ... }` of a model reply, as UTF-8. Tolerates code
+    /// fences and surrounding prose; nil when there is no object at all.
+    static func memoryJSONObjectData(from text: String) -> Data? {
+        guard let open = text.firstIndex(of: "{"),
+              let close = text.lastIndex(of: "}"),
+              open < close else { return nil }
+        return String(text[open...close]).data(using: .utf8)
     }
 
     private static func memoryContainsSecret(_ text: String) -> Bool {
@@ -212,10 +243,15 @@ extension AppModel {
             agent: agent, taskPrompt: source, session: session, project: nil,
             maxTurnsOverride: 1, samplingOptions: samplingOptions(),
             taskDescription: "Draft nightly memory reflection")
-        guard !Task.isCancelled, result.status == "completed",
-              let data = result.finalResponse.data(using: .utf8),
+        guard !Task.isCancelled, result.status == "completed" else { return }
+        guard let data = Self.memoryJSONObjectData(from: result.finalResponse),
               let output = try? JSONDecoder().decode(MemoryDreamOutput.self, from: data)
-        else { return }
+        else {
+            // Unparseable output would be re-run every minute all night;
+            // count today as done.
+            try? MemoryLedgerStore.shared.update { $0.lastNightlyDay = day }
+            return
+        }
         var reflection = MemoryReflection(
             prose: String(output.prose.prefix(6_000)),
             proposedGuidance: String(output.proposedGuidance.prefix(2_000)),

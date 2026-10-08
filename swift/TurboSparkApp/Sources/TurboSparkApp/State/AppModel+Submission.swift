@@ -18,6 +18,16 @@ extension AppModel {
         run(presentation: nil)
     }
 
+    /// True when the composer's draft is the very one a submission is still
+    /// awaiting its hook for, and nothing else is busy. Pure so the race has a
+    /// test: the live path needs a loaded session.
+    static func isDuplicateOfInFlightSubmission(
+        draft: String, inFlight: String?, submitting: Bool, generating: Bool,
+        hasPendingCall: Bool
+    ) -> Bool {
+        submitting && !generating && !hasPendingCall && inFlight != nil && draft == inFlight
+    }
+
     func run(presentation: MidTurnInputPresentation?) {
         let userDraft = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -90,6 +100,15 @@ extension AppModel {
         // refuses exactly as before.
         if !canRun {
             guard canQueue, session != nil else { return }
+            // A repeated Return while THIS draft's own submission is still
+            // awaiting its hook is the same keypress, not a second message.
+            if Self.isDuplicateOfInFlightSubmission(
+                draft: userDraft, inFlight: submittingDraft,
+                submitting: submitting, generating: generating,
+                hasPendingCall: pendingToolCall != nil)
+            {
+                return
+            }
             enqueueCurrentDraft(chatID: selectedChatID)
             return
         }
@@ -126,6 +145,7 @@ extension AppModel {
         // until `executeGenerationTurn`, so nothing else refuses a second
         // Return pressed while the hook is still running.
         submitting = true
+        submittingDraft = userDraft
 
         // `UserPromptSubmit` has to be awaited BEFORE the message is
         // appended to the chat, or a hook cannot actually stop the turn: by
@@ -141,6 +161,7 @@ extension AppModel {
         submissionTask = Task {
             defer {
                 self.submitting = false
+                self.submittingDraft = nil
                 self.submissionTask = nil
                 // A cancel that reached only the submission has no `runTask`
                 // tail to clear this, and a latched flag greys Stop out and

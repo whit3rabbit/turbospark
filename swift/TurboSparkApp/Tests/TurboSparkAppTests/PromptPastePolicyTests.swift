@@ -221,4 +221,33 @@ final class PromptPastePolicyTests: XCTestCase {
         XCTAssertEqual(model.promptAttachments.count, 0)
         XCTAssertEqual(model.promptText, pasted, "the paste stays inline when nothing fits")
     }
+
+    func testSplitPasteNeverCutsInsideAMultibyteCharacter() {
+        // U+0438 and U+0430 share the lead byte D0; the caret sits before
+        // the user's letter and the paste starts with a different one.
+        let pasted = "\u{0430}" + String(repeating: "x", count: Self.threshold + 10) + "\u{0430}"
+        let previous = "ab \u{0438}"
+        let current = "ab " + pasted + "\u{0438}"
+        let split = PromptPastePolicy.splitPaste(previous: previous, current: current)
+        XCTAssertEqual(split?.draft, previous)
+        XCTAssertEqual(split?.pasted, pasted)
+        XCTAssertFalse(split?.pasted.contains("\u{FFFD}") ?? true)
+    }
+
+    @MainActor
+    func testProgrammaticWriteIsNotConvertedWhenOnChangeFiresAfterTheWrapper() {
+        let model = AppModel()
+        let recalled = repeated("r", Self.threshold + 500)
+        model.writePromptTextDirectly(recalled)
+        // The wrapper has returned (depth 0), as when SwiftUI delivers onChange.
+        XCTAssertEqual(model.promptWriteSuppressionDepth, 0)
+        model.processLargePaste(previous: "", current: recalled)
+        XCTAssertEqual(model.promptAttachments.count, 0)
+        XCTAssertEqual(model.promptText, recalled)
+
+        // A genuine paste afterwards is still converted.
+        let pasted = repeated("p", Self.threshold + 500)
+        model.processLargePaste(previous: recalled, current: recalled + pasted)
+        XCTAssertEqual(model.promptAttachments.count, 1)
+    }
 }

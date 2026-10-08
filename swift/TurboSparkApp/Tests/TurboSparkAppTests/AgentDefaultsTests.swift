@@ -117,8 +117,12 @@ final class AgentDefaultsTests: XCTestCase {
         let reviewer = agents.first { $0.name == "reviewer" }
         XCTAssertEqual(
             Set(reviewer?.disallowedTools ?? []),
-            writeDenies,
+            expectedExploreDenies,
             "reviewer's deny set moved")
+        XCTAssertEqual(
+            Set(reviewer?.tools ?? []),
+            ["FileRead", "Glob", "Grep", "grep_search", "Bash", "WebFetch", "WebSearch"],
+            "reviewer must be allowlisted like explore/plan (multiedit and agent were open)")
         let generalPurpose = agents.first { $0.name == "general-purpose" }
         XCTAssertNil(generalPurpose?.disallowedTools, "general-purpose must stay unrestricted")
     }

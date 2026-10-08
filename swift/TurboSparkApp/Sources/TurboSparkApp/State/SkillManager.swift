@@ -278,6 +278,7 @@ public final class SkillManager: @unchecked Sendable {
     public func invalidateResolutionCache() {
         cacheLock.lock()
         resolutionCache = nil
+        cacheGeneration &+= 1
         cacheLock.unlock()
     }
 
@@ -297,6 +298,9 @@ public final class SkillManager: @unchecked Sendable {
     /// from its own discovery path.
     private let cacheLock = NSLock()
     private var resolutionCache: (key: String, skills: [AppSkill])?
+    // Bumped by every invalidation. A compute that started before a bump
+    // must not store its result: it read the pre-invalidation inputs.
+    private var cacheGeneration = 0
 
     /// Resolves the skills in effect, memoized per project root.
     ///
@@ -307,13 +311,14 @@ public final class SkillManager: @unchecked Sendable {
         let key = projectURL?.standardizedFileURL.path ?? ""
         cacheLock.lock()
         let cached = resolutionCache
+        let generation = cacheGeneration
         cacheLock.unlock()
         if let cached, cached.key == key {
             return cached.skills
         }
         let skills = computeEffectiveSkills(projectURL: projectURL)
         cacheLock.lock()
-        resolutionCache = (key, skills)
+        if generation == cacheGeneration { resolutionCache = (key, skills) }
         cacheLock.unlock()
         return skills
     }

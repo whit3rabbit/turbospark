@@ -12,7 +12,9 @@ extension AppModel {
     /// `selectModel`/`deleteModel` used to key off of (state#14).
     // `internal` rather than `private`: exercised directly by
     // ModelIdentityTests via `@testable import`.
-    public func selectModel(_ model: InstalledModel) {
+    /// Returns whether a load was actually started.
+    @discardableResult
+    public func selectModel(_ model: InstalledModel) -> Bool {
         // Keyed on path (state#14): two distinct rows can share an alias
         // when one is a scanned LM Studio/Custom entry, so alias equality
         // here could read "already selected" for a DIFFERENT model on disk
@@ -24,13 +26,14 @@ extension AppModel {
         // looking at, with nothing on screen to say why. The refusal is for
         // a redundant re-open, which needs a live session to be redundant.
         guard !generating, !opening,
-            !(selected?.path == model.path && session != nil)
-        else { return }
+            !(loadedModelPath == model.path)
+        else { return false }
         selected = model
         modelPathText = model.path
         Task {
             await open(model)
         }
+        return true
     }
 
     public func openModelHub() {
@@ -38,7 +41,10 @@ extension AppModel {
     }
 
     public func openChatWithModel(_ model: InstalledModel) {
-        if selected?.path != model.path {
+        // Compared against what the session was OPENED with, not `selected`:
+        // an install that finishes mid-turn selects the new row while the
+        // old model stays loaded, and "already selected" then skipped the load.
+        if loadedModelPath != model.path {
             selectModel(model)
         }
         activeSection = .chat
@@ -280,6 +286,14 @@ extension AppModel {
             return
         }
         opening = true
+        defer { opening = false }
+        await openSession(model)
+    }
+
+    /// The load itself, shared by `open(_:)` and `setModelURL(_:)` so the
+    /// steering check, reasoning clamp, server re-attach and estimate refresh
+    /// cannot drift apart again. The caller owns `opening`.
+    private func openSession(_ model: InstalledModel) async {
         error = nil
         // **DETACHED RATHER THAN MERELY DROPPED, and detached rather than
         // stopping the whole server.** `session = nil` alone leaves the OLD
@@ -289,7 +303,6 @@ extension AppModel {
         // it would take every OTHER attached model down to swap this one.
         detachChatSessionFromServer()
         session = nil
-        defer { opening = false }
 
         do {
             let options = buildOpenOptions(modelPath: model.path)
@@ -297,6 +310,7 @@ extension AppModel {
                 enabled: steeringEnabled, preset: resolvedSteeringPreset)
             session = try await TurboSparkSession(modelPath: model.path, options: options)
             loadedSteeringConfiguration = steeringConfiguration
+            sessionModelPath = model.path
             selected = model
             modelPathText = model.path
             restoreReasoningPreference(for: model)
@@ -382,44 +396,34 @@ extension AppModel {
         guard !generating, !opening else { return }
         let path = url.standardizedFileURL.path
         modelPathText = path
-        // **`selected` FOLLOWS THE PATH, OR `reconcileSelection` UNDOES THIS**
-        // (state#50). This left `selected` pointing at the PREVIOUS install,
-        // and the `refreshModels()` below then ran `reconcileSelection`,
-        // which sets `modelPathText = selected.path` -- so the field reverted
-        // to the old model's path the moment the new one finished loading.
-        // A row that matches the path is selected; anything else is a
-        // manually-opened path with no row, and nil is the honest answer.
-        selected = installed.first {
-            URL(fileURLWithPath: $0.path).standardizedFileURL.path == path
+        // A row that matches the path is used as-is; a manually opened path
+        // with no row gets a transient one, so the load goes through the same
+        // `openSession` as every catalog open (steering check, reasoning
+        // clamp, server re-attach) and `selected` names what is really
+        // loaded instead of being rebound to `installed.first`.
+        let row =
+            installed.first {
+                URL(fileURLWithPath: $0.path).standardizedFileURL.path == path
+            }
+            ?? InstalledModel(
+                alias: url.lastPathComponent, repo: "", path: path, family: "")
+        if let steeringReason = steeringOpenBlockReason(for: row) {
+            let message = "Cannot load " + row.alias + " with steering enabled: " + steeringReason
+            error = message
+            showToast(message, style: .error, duration: 8.0)
+            return
         }
-        detachChatSessionFromServer()
-        session = nil
+        // Set synchronously: the loading indicator keys off it, and it must
+        // be true the moment this returns (state#11).
         opening = true
         Task {
-            // `defer` here, inside the async work, not around this whole
-            // (synchronous) function: the previous placement fired the
-            // moment `setModelURL` returned -- immediately after spawning
-            // this Task -- so `opening` flipped back to `false` before the
-            // awaited `TurboSparkSession` init had even started, and the
-            // loading indicator never rendered (state#11).
             defer { self.opening = false }
-            do {
-                let options = self.buildOpenOptions(modelPath: path)
-                let steeringConfiguration = AppSteeringPolicy.configuration(
-                    enabled: self.steeringEnabled, preset: self.resolvedSteeringPreset)
-                self.session = try await TurboSparkSession(modelPath: path, options: options)
-                self.loadedSteeringConfiguration = steeringConfiguration
-                self.refreshModels()
-                // `refreshModels` runs `reconcileSelection`, which rewrites
-                // `modelPathText` from `selected`. With no matching row that
-                // would blank the field the user just filled in.
-                self.modelPathText = path
-                self.showToast("Opened model at \(url.lastPathComponent)", style: .success)
-            } catch {
-                let msg = "Failed to open custom model path: \(error.localizedDescription)"
-                self.error = msg
-                self.showToast(msg, style: .error)
-            }
+            await self.openSession(row)
+            guard self.session != nil else { return }
+            self.refreshModels()
+            // `refreshModels` runs `reconcileSelection`; keep the field the
+            // user just filled in.
+            self.modelPathText = path
         }
     }
 
@@ -453,7 +457,7 @@ extension AppModel {
         // (`swift/CLAUDE.md` Gotcha 26): the server keeps it resident and
         // keeps answering for it, so removing its files leaves a server
         // serving a model whose bytes are gone.
-        if Self.isAttachedToServer(model: model, servedIDs: Set(serverAttachedSessions.keys)) {
+        if Self.isAttachedToServer(model: model, servedIDs: Set(serverAttachedSessions.keys).union(serverInfo?.models ?? [])) {
             showToast(
                 "'\(model.alias)' is attached to the running server. Detach it there first.",
                 style: .warning)

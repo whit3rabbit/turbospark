@@ -162,21 +162,30 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.mode = try container.decodeIfPresent(AppPermissionMode.self, forKey: .mode) ?? .auto
-        self.fileRead = try container.decodeIfPresent(AppToolPermission.self, forKey: .fileRead) ?? .allow
-        self.fileWrite = try container.decodeIfPresent(AppToolPermission.self, forKey: .fileWrite) ?? .ask
-        self.terminal = try container.decodeIfPresent(AppToolPermission.self, forKey: .terminal) ?? .ask
-        self.web = try container.decodeIfPresent(AppToolPermission.self, forKey: .web) ?? .allow
-        self.mcp = try container.decodeIfPresent(AppToolPermission.self, forKey: .mcp) ?? .ask
-        self.automation = try container.decodeIfPresent(AppToolPermission.self, forKey: .automation) ?? .ask
+        // A mode or permission case written by a newer build must not drop
+        // the whole project row. An ABSENT key keeps its historical default;
+        // an UNKNOWN value falls back to the conservative setting (ask),
+        // never to allow.
+        func permission(_ key: CodingKeys, absent: AppToolPermission) -> AppToolPermission {
+            guard container.contains(key) else { return absent }
+            return container.decodeTolerant(AppToolPermission.self, forKey: key, fallback: .ask)
+        }
+        self.mode = container.contains(.mode)
+            ? container.decodeTolerant(AppPermissionMode.self, forKey: .mode, fallback: .ask)
+            : .auto
+        self.fileRead = permission(.fileRead, absent: .allow)
+        self.fileWrite = permission(.fileWrite, absent: .ask)
+        self.terminal = permission(.terminal, absent: .ask)
+        self.web = permission(.web, absent: .allow)
+        self.mcp = permission(.mcp, absent: .ask)
+        self.automation = permission(.automation, absent: .ask)
         self.browser = container.decodeTolerant(AppToolPermission.self, forKey: .browser, fallback: .ask)
         let decodedBrowserOrigins = (try? container.decodeLossyArray(
             String.self, forKey: .browserOriginAllowlist)) ?? []
         self.browserOriginAllowlist = BrowserPermissionRuleStore.normalizedAllowlist(decodedBrowserOrigins)
-        self.replFileAccessRoots = try container.decodeIfPresent(
-            [String].self, forKey: .replFileAccessRoots) ?? []
-        self.mcpAllowRules = try container.decodeIfPresent([String].self, forKey: .mcpAllowRules) ?? []
-        self.mcpDenyRules = try container.decodeIfPresent([String].self, forKey: .mcpDenyRules) ?? []
+        self.replFileAccessRoots = try container.decodeLossyArray(String.self, forKey: .replFileAccessRoots)
+        self.mcpAllowRules = try container.decodeLossyArray(String.self, forKey: .mcpAllowRules)
+        self.mcpDenyRules = try container.decodeLossyArray(String.self, forKey: .mcpDenyRules)
     }
 
     /// Auto configuration: smart risk-gated execution (Unsloth Studio default).
@@ -505,7 +514,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.skillStateEnabled = try container.decodeIfPresent(Bool.self, forKey: .skillStateEnabled) ?? false
         self.enabledPlugins = try container.decodeIfPresent([String: Bool].self, forKey: .enabledPlugins) ?? [:]
         self.localPluginPaths = try container.decodeIfPresent([String].self, forKey: .localPluginPaths) ?? []
-        self.marketplaces = try container.decodeIfPresent(ProjectMarketplaces.self, forKey: .marketplaces) ?? ProjectMarketplaces()
+        self.marketplaces = container.decodeLenient(ProjectMarketplaces.self, forKey: .marketplaces, fallback: ProjectMarketplaces())
         self.enabledSkills = try container.decodeIfPresent([String: Bool].self, forKey: .enabledSkills) ?? [:]
         self.enabledMcpServers = try container.decodeIfPresent([String: Bool].self, forKey: .enabledMcpServers) ?? [:]
         self.approvedMcpJsonServers = try container.decodeIfPresent([String].self, forKey: .approvedMcpJsonServers) ?? []

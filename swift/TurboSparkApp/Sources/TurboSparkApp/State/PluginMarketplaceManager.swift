@@ -289,6 +289,8 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
                 reason: "Source of entry '\(entry.name)' has an unusable shape")
         }
 
+        try Self.applyEntryComponents(entry: entry, stagedRoot: stagedRoot)
+
         // Version: manifest > entry > git sha12 > unknown, Claude Code's
         // order. The manifest is read from the STAGED copy, so it is what
         // was actually installed.
@@ -405,6 +407,51 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
 
     /// MARK: - Helpers
 
+    /// Component keys a marketplace entry may declare for the plugin.
+    private static let entryComponentKeys = [
+        "commands", "agents", "skills", "hooks", "mcpServers", "userConfig",
+    ]
+
+    /// Applies the entry's strict/non-strict merge to the STAGED copy. The
+    /// loader only reads `.claude-plugin/plugin.json` and convention
+    /// directories, so entry-declared components (a non-strict entry with
+    /// `skills: [...]` and no plugin.json, say) were silently dropped.
+    /// `PluginManifestParser.merging` decides validity (strict without a
+    /// manifest, or a component declared on both sides, throws); the merged
+    /// result is then written as raw JSON because the parsed manifest does
+    /// not round-trip. An entry that declares no components is left alone, so
+    /// convention-directory plugins keep installing as before.
+    static func applyEntryComponents(entry: PluginManifestParser.MarketplaceEntry, stagedRoot: URL) throws {
+        guard entryComponentKeys.contains(where: { entry.raw[$0] != nil }) else { return }
+        let manifestURL = stagedRoot.appendingPathComponent(
+            PluginManifestParser.manifestRelativePath)
+        var manifestDict: [String: Any]?
+        if let data = try? Data(contentsOf: manifestURL) {
+            manifestDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }
+        let description = "marketplace entry '\(entry.name)'"
+        let pluginManifest = try manifestDict.map {
+            try PluginManifestParser.manifest(
+                from: $0, fallbackName: entry.name, sourceDescription: description)
+        }
+        var entryDict = entry.raw
+        entryDict["strict"] = entry.strict
+        _ = try PluginManifestParser.merging(
+            pluginManifest: pluginManifest, entryDict: entryDict,
+            pluginName: entry.name, sourceDescription: description)
+
+        var merged = manifestDict ?? ["name": entry.name]
+        for key in entryComponentKeys + ["version", "description", "author"]
+        where merged[key] == nil {
+            if let value = entry.raw[key] { merged[key] = value }
+        }
+        try FileManager.default.createDirectory(
+            at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(
+            withJSONObject: merged, options: [.prettyPrinted, .sortedKeys]
+        ).write(to: manifestURL, options: .atomic)
+    }
+
     /// The version declared by the plugin's own manifest inside a staged
     /// copy. Distinct from `readManifestIfPossible`, which looks for
     /// MARKETPLACE metadata.
@@ -443,11 +490,16 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
     }
 
     static func sanitizedVersion(_ value: String) -> String {
-        String(value.map { character in
+        let cleaned = String(value.map { character in
             character.isLetter || character.isNumber || character == "-"
                 || character == "_" || character == "."
                 ? character : "-"
         })
+        // "", "." and ".." would make the install path the plugin family
+        // directory (or its parent), and the replace step would then move
+        // every other installed version into staging and delete it.
+        if cleaned.isEmpty || cleaned.allSatisfy({ $0 == "." }) { return "unknown" }
+        return cleaned
     }
 
     static func copyContents(of source: URL, to destination: URL) throws {

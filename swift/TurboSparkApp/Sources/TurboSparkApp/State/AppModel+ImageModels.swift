@@ -258,9 +258,12 @@ extension AppModel {
     /// Drops the resident image session to reclaim physical memory.
     public func unloadImageModel() {
         guard canUnloadImageModel, serverImageTasks.isEmpty else { return }
-        imageSession?.cancel()
+        let old = imageSession
         imageSession = nil
         imageSessionPath = nil
+        // Cancel, wait for the producer, then release the weights and the
+        // MLX buffer cache so the memory actually returns to the system.
+        Task { await old?.unload() }
         showToast("Image model unloaded", style: .info)
     }
 }
