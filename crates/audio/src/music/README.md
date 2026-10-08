@@ -6,7 +6,7 @@ The [central inventory](../../MODELS.md#music) tracks upstream source families, 
 
 ## Model Families
 
-- **[MiniMax Music 0.5 (`minimax_music3`)](minimax_music3/README.md)**: Hierarchical autoregressive music generation with a flow-matching Diffusion Transformer (DiT) latent decoder and a 44.1 kHz stereo vocoder.
+- **[MiniMax Music 3 (`minimax_music3`)](minimax_music3/README.md)**: Hierarchical autoregressive music generation with a flow-matching Diffusion Transformer (DiT) latent decoder and a 44.1 kHz stereo vocoder.
 
 ## Scope
 

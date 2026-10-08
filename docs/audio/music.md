@@ -23,6 +23,7 @@ Music generation models in TurboSpark produce polyphonic musical compositions an
     - Tiny AR (9000 frames): 64.3 s
     - Tiny Flow per chunk: 169.1 ms
     - Full-size converted models use `runtime::Music3Runner` on macOS with packed resident Metal weights. Real-time performance remains unqualified.
+  - Apple M4 Max, Metal, cached 4-bit profile, indicative (host not quiet, not a frozen row): 1 s of audio at 2 flow steps generates in about 12 s (118 s before the kernel work, byte-identical output); 8 s at 1 flow step takes 75 s (RTF 9.4) with peak footprint 11.7 GiB, which stays at 11.8 GiB through 16 s. The AR stage runs at about 0.3 s per frame, and a default 30-step DiT chunk projects to about 250 s, so the default request is far from real time. Method, instruments, and rejected experiments are in the [family README](../../crates/audio/src/music/minimax_music3/README.md#metal-performance).
 - **Numeric Contracts**:
   - Bit-exact RNG reproduction of MLX keys, splits, and uniforms.
   - Audio output: 44.1 kHz, stereo (2 channels).

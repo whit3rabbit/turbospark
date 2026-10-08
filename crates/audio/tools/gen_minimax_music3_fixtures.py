@@ -11,7 +11,7 @@ the pinned source, with the project venv interpreter:
     ../.venv-mlxaudio/bin/python \
         ../turbospark/crates/audio/tools/gen_minimax_music3_fixtures.py
 
-Outputs into crates/speech/testdata/minimax_music3/:
+Outputs into crates/audio/testdata/minimax_music3/:
 
 - tiny_weights.safetensors + tiny_config.json
     A seeded `ModelConfig.tiny()` parameter tree in the converted MLX

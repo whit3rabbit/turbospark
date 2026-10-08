@@ -7,7 +7,7 @@ Command-line binaries for [turbospark](https://github.com/whit3rabbit/turbospark
 - `turbospark-model`: Finds, inspects, and installs models.
 - `turbospark-check`: Generates text and runs interactive chat.
 - `turbospark-image`: Generates native diffusion images via Z-Image-Turbo.
-- `turbospark-music`: Generates music audio via MiniMax Music 0.3 flow matching DiT and vocoder.
+- `turbospark-music`: Generates music audio via MiniMax Music 3 (autoregressive backbone, flow-matching DiT, and vocoder).
 - `turbospark`: Unified front end over all subcommands, the HTTP server, and external coding agents.
 
 Generation is macOS-only and requires a Metal-capable Apple Silicon device. On other platforms, the binaries parse arguments and validate configuration.
@@ -85,7 +85,7 @@ turbospark-image --model ~/models/z-image-turbo \
 
 ### 4. `turbospark-music`
 
-Native music generation via MiniMax Music 0.3 flow matching DiT and vocoder:
+Native music generation via MiniMax Music 3 (autoregressive backbone, flow-matching DiT, and vocoder):
 
 ```sh
 turbospark-music --model ~/models/minimax-music-0.3 \

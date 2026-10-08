@@ -12,7 +12,7 @@ Run from inside the mlx-audio checkout root:
 
     cd ../mlx-audio
     PYTHONPATH=$PWD ../.venv-mlxaudio/bin/python \
-        ../turbospark/crates/speech/tools/time_minimax_music3_reference.py
+        ../turbospark/crates/audio/tools/time_minimax_music3_reference.py
 """
 
 from __future__ import annotations

@@ -22,7 +22,7 @@ crates/audio/
 │   ├── whisper.rs           # Whisper log-mel DSP frontend (80/128 bands, 30s windowing)
 │   │
 │   ├── music/               # Music Generation
-│   │   ├── minimax_music3/  # MiniMax Music 0.5 (AR + Flow DiT + 44.1 kHz Vocoder)
+│   │   ├── minimax_music3/  # MiniMax Music 3 (AR + Flow DiT + 44.1 kHz Vocoder)
 │   │   └── README.md
 │   │
 │   ├── stt/                 # Speech-to-Text & Alignment

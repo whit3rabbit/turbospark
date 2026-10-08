@@ -24,15 +24,21 @@
 
 pub mod backend;
 pub mod precision;
+pub use output_stats::{output_stats, OutputStats};
 pub use precision::Music3Precision;
+pub use progress::{Control, Progress};
+pub use stage_timings::StageTimings;
 mod conv;
 mod depth;
 mod dit;
 mod euler;
 mod fusion;
+mod output_stats;
+mod progress;
 mod prompt;
 mod qwen3;
 mod rng;
+mod stage_timings;
 mod vocoder;
 mod weights;
 
@@ -43,8 +49,10 @@ mod tests;
 #[cfg(test)]
 mod timing;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Instant;
 
 use tokenizers::Tokenizer;
 use turbospark_model_io::safetensors::SafetensorsFile;
@@ -505,6 +513,9 @@ pub struct Model {
     tokenizer: Option<Tokenizer>,
     backend: Option<Rc<dyn ComputeBackend>>,
     precision: Music3Precision,
+    // Reset at the start of each timed request; `Model` is already
+    // single-threaded (`Rc` backend), so a `RefCell` adds no constraint.
+    stage: RefCell<StageTimings>,
 }
 
 /// Chunk windows over `num_frames` AR frames: 200-frame windows hopping
@@ -514,6 +525,23 @@ pub(crate) fn chunk_starts(num_frames: usize) -> Vec<usize> {
         return vec![0];
     }
     (0..num_frames - CHUNK_HOP).step_by(CHUNK_HOP).collect()
+}
+
+/// Whether a config's dimensions describe a tiny test fixture. Only such
+/// models may fall back to the deterministic local text encoder when no
+/// tokenizer ships with the checkpoint; full-size models fail closed.
+pub fn is_tiny_fixture_dims(hidden_size: usize, vocab_size: usize) -> bool {
+    hidden_size <= 64 && vocab_size <= 512
+}
+
+/// Fused frame hiddens plus the sampled codebooks of each frame.
+type FrameHiddens = (Vec<f32>, Vec<Vec<i32>>);
+
+// Only reachable if a path that cannot cancel somehow did.
+fn never_cancelled() -> SpeechError {
+    SpeechError::Input {
+        why: "generation was cancelled".to_string(),
+    }
 }
 
 /// Assemble prompt text from caption and lyrics.
@@ -699,18 +727,53 @@ impl Model {
             tokenizer: None,
             backend: store.backend(),
             precision: store.precision(),
+            stage: RefCell::new(StageTimings::default()),
         })
     }
 
     /// Generate from the public caption-and-lyrics contract using the
     /// tokenizer shipped with the converted checkpoint.
     pub fn generate_text(&self, request: &TextGenerateRequest) -> Result<Generation> {
+        self.generate_text_timed(request)
+            .map(|(generation, _)| generation)
+    }
+
+    /// [`Model::generate_text`] plus a per-stage wall-time breakdown. The
+    /// generated audio is identical; only the timings are extra.
+    pub fn generate_text_timed(
+        &self,
+        request: &TextGenerateRequest,
+    ) -> Result<(Generation, StageTimings)> {
+        self.generate_text_inner(request, &mut progress::ignore)?
+            .ok_or_else(never_cancelled)
+    }
+
+    /// [`Model::generate_text_timed`] that reports milestones and can be
+    /// cancelled. `on_progress` runs on the calling thread between units of
+    /// work (once per AR frame and per flow chunk), so it should be cheap.
+    /// Returns `Ok(None)` if it answered [`Control::Cancel`]; the model keeps
+    /// no state across requests, so it is immediately reusable.
+    pub fn generate_text_with_progress(
+        &self,
+        request: &TextGenerateRequest,
+        mut on_progress: impl FnMut(Progress) -> Control,
+    ) -> Result<Option<(Generation, StageTimings)>> {
+        self.generate_text_inner(request, &mut on_progress)
+    }
+
+    fn generate_text_inner(
+        &self,
+        request: &TextGenerateRequest,
+        progress: &mut dyn FnMut(Progress) -> Control,
+    ) -> Result<Option<(Generation, StageTimings)>> {
+        let started = Instant::now();
+        *self.stage.borrow_mut() = StageTimings::default();
         let (duration, steps, seed) = request.resolve()?;
         let frames = ((duration * self.config.frame_rate).trunc() as usize).max(1);
         let prompt_text = assemble_prompt(&request.caption, &request.lyrics);
         let text_ids = match &self.tokenizer {
             Some(tokenizer) => prompt::encode_official_text(tokenizer, &prompt_text)?,
-            None if self.config.vocab_size <= 512 && self.config.hidden_size <= 64 => {
+            None if is_tiny_fixture_dims(self.config.hidden_size, self.config.vocab_size) => {
                 prompt::encode_tiny_ids(&prompt_text, 32)
             }
             None => {
@@ -727,17 +790,42 @@ impl Model {
                 ),
             });
         }
-        self.generate(&GenerateRequest {
-            text_ids,
-            frames,
-            steps,
-            seed,
-        })
+        self.stage.borrow_mut().tokenize = started.elapsed();
+        if progress(Progress::Tokenized {
+            prompt_tokens: text_ids.len(),
+        }) == Control::Cancel
+        {
+            return Ok(None);
+        }
+        let Some(generation) = self.generate_inner(
+            &GenerateRequest {
+                text_ids,
+                frames,
+                steps,
+                seed,
+            },
+            progress,
+        )?
+        else {
+            return Ok(None);
+        };
+        let mut timings = self.stage.borrow().clone();
+        timings.total = started.elapsed();
+        Ok(Some((generation, timings)))
     }
 
     /// Full generation: AR frame hiddens, flow decoding, and stereo
     /// output clipped to [-1, 1].
     pub fn generate(&self, request: &GenerateRequest) -> Result<Generation> {
+        self.generate_inner(request, &mut progress::ignore)?
+            .ok_or_else(never_cancelled)
+    }
+
+    fn generate_inner(
+        &self,
+        request: &GenerateRequest,
+        progress: &mut dyn FnMut(Progress) -> Control,
+    ) -> Result<Option<Generation>> {
         if request.frames == 0 || request.frames > MAX_AUDIO_FRAMES {
             return Err(SpeechError::Input {
                 why: format!("frames must be in 1..={MAX_AUDIO_FRAMES}"),
@@ -756,15 +844,34 @@ impl Model {
                 ),
             });
         }
-        let (hiddens, _codes) =
-            self.generate_frame_hiddens(&request.text_ids, request.frames, request.seed)?;
+        let Some((hiddens, _codes)) = self.generate_frame_hiddens_inner(
+            &request.text_ids,
+            request.frames,
+            request.seed,
+            |_| {},
+            progress,
+        )?
+        else {
+            return Ok(None);
+        };
         // The end token can stop the AR stage before `frames`; the
         // flow stage consumes the emitted count, matching the
         // reference, which derives chunking from the hiddens' own
         // length.
         let fused = self.config.num_codebooks * self.config.hidden_size;
         let emitted = hiddens.len() / fused;
-        let stereo = self.run_flow(&hiddens, emitted, request.steps, request.seed)?;
+        let Some(stereo) = self.run_flow_internal(
+            &hiddens,
+            emitted,
+            request.steps,
+            request.seed,
+            None,
+            progress,
+        )?
+        else {
+            return Ok(None);
+        };
+        let interleave_started = Instant::now();
         let samples = stereo.len() / 2;
         // Interleave planar stereo into the reference's [S, 2] frame
         // order and clip to the unit range.
@@ -780,12 +887,13 @@ impl Model {
                 waveform.push(clipped);
             }
         }
-        Ok(Generation {
+        self.stage.borrow_mut().stitch += interleave_started.elapsed();
+        Ok(Some(Generation {
             waveform,
             samples,
             sample_rate: self.config.sample_rate,
             frames: emitted,
-        })
+        }))
     }
 
     /// The AR stage: prefill the text pair, then emit up to
@@ -807,8 +915,26 @@ impl Model {
         text_ids: &[i32],
         max_frames: usize,
         seed: u64,
-        mut observe: impl FnMut(SamplingTrace<'_>),
+        observe: impl FnMut(SamplingTrace<'_>),
     ) -> Result<(Vec<f32>, Vec<Vec<i32>>)> {
+        self.generate_frame_hiddens_inner(
+            text_ids,
+            max_frames,
+            seed,
+            observe,
+            &mut progress::ignore,
+        )?
+        .ok_or_else(never_cancelled)
+    }
+
+    fn generate_frame_hiddens_inner(
+        &self,
+        text_ids: &[i32],
+        max_frames: usize,
+        seed: u64,
+        mut observe: impl FnMut(SamplingTrace<'_>),
+        progress: &mut dyn FnMut(Progress) -> Control,
+    ) -> Result<Option<FrameHiddens>> {
         let config = &self.config;
         let hidden = config.hidden_size;
         let vocab = config.vocab_size;
@@ -849,6 +975,7 @@ impl Model {
         } else {
             pair.extend_from_slice(text_ids);
         }
+        let prefill_started = Instant::now();
         let embeddings = self.lm.embed_ids(&pair, 2, prompt_len)?;
         let mut cache: Vec<KvCache> = (0..config.num_hidden_layers)
             .map(|_| KvCache::new())
@@ -861,6 +988,7 @@ impl Model {
             let base = (b * prompt_len + prompt_len - 1) * hidden;
             last_hidden.extend_from_slice(&hidden_state[base..base + hidden]);
         }
+        self.stage.borrow_mut().prefill += prefill_started.elapsed();
 
         let mut key = Key::new(seed);
         let mut frames: Vec<f32> = Vec::with_capacity(max_frames * config.num_codebooks * hidden);
@@ -872,7 +1000,10 @@ impl Model {
             }
             let (next_key, subkey) = rng::split(key);
             key = next_key;
+            let lap = Instant::now();
             let logits = self.lm.logits(&last_hidden)?;
+            self.stage.borrow_mut().lm_head += lap.elapsed();
+            let lap = Instant::now();
             // Semantic mask: audio codes plus the end token.
             let mut guided = vec![0.0f32; vocab];
             let mut conditional_row = vec![0.0f32; vocab];
@@ -895,6 +1026,7 @@ impl Model {
                 }
             }
             let (sampled, mut rng_key) = rng::sample_top_k(&guided, subkey, AR_SAMPLING_TOP_K);
+            self.stage.borrow_mut().sampling += lap.elapsed();
             observe(SamplingTrace {
                 frame: frame_index,
                 codebook: 0,
@@ -909,6 +1041,7 @@ impl Model {
             let semantic_code = sampled - config.audio_code_offset;
 
             // Depth expansion over both CFG rows.
+            let lap = Instant::now();
             let mut sequence: Vec<f32> = Vec::new();
             for b in 0..2 {
                 sequence.extend(ops_linear_no_bias(
@@ -1018,6 +1151,7 @@ impl Model {
                 }
             }
 
+            self.stage.borrow_mut().depth += lap.elapsed();
             if frame_index > 0 {
                 let mut frame = Vec::with_capacity(config.num_codebooks * hidden);
                 frame.extend_from_slice(&last_hidden[..hidden]);
@@ -1025,9 +1159,17 @@ impl Model {
                 frames.extend_from_slice(&frame);
                 frame_codes.push(codes.iter().map(|c| *c as i32).collect());
                 emitted += 1;
+                if progress(Progress::ArFrame {
+                    emitted,
+                    target: max_frames,
+                }) == Control::Cancel
+                {
+                    return Ok(None);
+                }
             }
 
             // Feedback embedding for the LM step (both rows identical).
+            let lap = Instant::now();
             let mut feedback_row =
                 self.lm
                     .embed_ids(&[(semantic_code + config.audio_code_offset) as i32], 1, 1)?;
@@ -1054,13 +1196,15 @@ impl Model {
             for b in 0..2 {
                 last_hidden.extend_from_slice(&hidden_state[b * hidden..(b + 1) * hidden]);
             }
+            self.stage.borrow_mut().lm_decode += lap.elapsed();
         }
+        self.stage.borrow_mut().frames = emitted;
         if frames.is_empty() {
             return Err(SpeechError::Input {
                 why: "MiniMax Music 3 generated zero audio frames".to_string(),
             });
         }
-        Ok((frames, frame_codes))
+        Ok(Some((frames, frame_codes)))
     }
 
     // Concatenation promotes across every residual codebook, including
@@ -1091,7 +1235,15 @@ impl Model {
         steps: usize,
         seed: u64,
     ) -> Result<Vec<f32>> {
-        self.run_flow_internal(frame_hiddens, frames, steps, seed, None)
+        self.run_flow_internal(
+            frame_hiddens,
+            frames,
+            steps,
+            seed,
+            None,
+            &mut progress::ignore,
+        )?
+        .ok_or_else(never_cancelled)
     }
 
     /// Replay flow with supplied channel-major initial noise per chunk.
@@ -1103,7 +1255,15 @@ impl Model {
         steps: usize,
         noise_chunks: &[Vec<f32>],
     ) -> Result<Vec<f32>> {
-        self.run_flow_internal(frame_hiddens, frames, steps, 0, Some(noise_chunks))
+        self.run_flow_internal(
+            frame_hiddens,
+            frames,
+            steps,
+            0,
+            Some(noise_chunks),
+            &mut progress::ignore,
+        )?
+        .ok_or_else(never_cancelled)
     }
 
     fn run_flow_internal(
@@ -1113,7 +1273,8 @@ impl Model {
         steps: usize,
         seed: u64,
         supplied_noise: Option<&[Vec<f32>]>,
-    ) -> Result<Vec<f32>> {
+        progress: &mut dyn FnMut(Progress) -> Control,
+    ) -> Result<Option<Vec<f32>>> {
         if frames == 0 || frames > MAX_AUDIO_FRAMES || !(1..=30).contains(&steps) {
             return Err(SpeechError::Input {
                 why: "flow requires 1..=9000 frames and 1..=30 steps".into(),
@@ -1130,6 +1291,7 @@ impl Model {
             });
         }
         let starts = chunk_starts(frames);
+        let total_chunks = starts.len();
         if let Some(noise) = supplied_noise {
             if noise.len() != starts.len() {
                 return Err(SpeechError::Input {
@@ -1152,8 +1314,16 @@ impl Model {
         // Keys are 64 bits, including the flow stream's fixed seed offset.
         let mut noise_sequence = rng::KeySequence::new(seed.wrapping_add(7));
         for (chunk_index, start) in starts.into_iter().enumerate() {
+            if progress(Progress::FlowChunk {
+                index: chunk_index,
+                total: total_chunks,
+            }) == Control::Cancel
+            {
+                return Ok(None);
+            }
             let end = (start + CHUNK_FRAMES).min(frames);
             let chunk_frames = end - start;
+            let lap = Instant::now();
             let condition = self.condition.forward_typed(
                 &frame_hiddens[start * fused..end * fused],
                 chunk_frames,
@@ -1214,6 +1384,8 @@ impl Model {
                 condition_dtype,
                 &[config.dit_in_channels, target],
             );
+            self.stage.borrow_mut().condition += lap.elapsed();
+            let lap = Instant::now();
             let (latents, cond_out) = euler::denoise_chunk_typed(
                 &self.transformer,
                 &noise,
@@ -1227,6 +1399,7 @@ impl Model {
                 previous_condition.as_deref(),
                 condition_dtype,
             )?;
+            self.stage.borrow_mut().dit += lap.elapsed();
             let carry_start = target.saturating_sub(2 * OVERLAP_LATENT_LENGTH);
             let carry_end = carry_start.max(target.saturating_sub(OVERLAP_LATENT_LENGTH));
             previous_latent = Some(slice_channel_rows(
@@ -1248,8 +1421,13 @@ impl Model {
                 latent_dtype = latent_dtype
                     .promote(self.transformer.output_dtype(latent_dtype, condition_dtype));
             }
+            let lap = Instant::now();
             waves.push(self.vocoder.forward_typed(&latents, target, latent_dtype)?);
+            let mut stage = self.stage.borrow_mut();
+            stage.vocoder += lap.elapsed();
+            stage.chunks += 1;
         }
+        let stitch_started = Instant::now();
         // Crop-stitch along the sample axis per channel: the reference
         // concatenates the cropped `[1, 2, S_i]` waves on the last
         // axis, so left and right accumulate separately.
@@ -1280,7 +1458,8 @@ impl Model {
             out_right.extend_from_slice(&wave[samples + lo..samples + hi]);
         }
         out_left.extend_from_slice(&out_right);
-        Ok(out_left)
+        self.stage.borrow_mut().stitch += stitch_started.elapsed();
+        Ok(Some(out_left))
     }
 }
 

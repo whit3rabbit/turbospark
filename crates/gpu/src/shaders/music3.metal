@@ -42,6 +42,16 @@ inline float music_unscaled(uint mode,uint code) {
     const float table[8]={0,0.5f,1,1.5f,2,3,4,6};
     return code&8 ? -table[code&7] : table[code&7];
 }
+// Affine scales and offsets are uploaded at checkpoint width (bf16) when every
+// value is exactly representable, and widened here: the conversion is a shift,
+// so the value is bit-identical to the f32 upload it replaces.
+#ifdef MUSIC3_SCALES_BF16
+inline float music_sc(device const float *a, ulong i) {
+    return as_type<float>(uint(((device const ushort*)a)[i])<<16);
+}
+#else
+inline float music_sc(device const float *a, ulong i) { return a[i]; }
+#endif
 inline float music_value(device const uchar *w, device const float *sc,
                          device const float *off, device const uchar *bs,
                          constant uint *p, uint row, uint col) {
@@ -56,7 +66,7 @@ inline float music_value(device const uchar *w, device const float *sc,
     if (shift+bits>32) code|=u[bit/32+1]<<(32-shift);
     code&=(1u<<bits)-1;
     ulong g=ulong(row)*(cols/group)+col/group;
-    if (mode==3) return float(code)*sc[g]+off[g];
+    if (mode==3) return float(code)*music_sc(sc,g)+music_sc(off,g);
     float scale=mode==6 ? music_e4m3(bs[g]) : exp2(float(int(bs[g])-127));
     if (mode==5) return music_e4m3(code)*scale;
     const float table[8]={0,0.5f,1,1.5f,2,3,4,6};
@@ -157,7 +167,7 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
                     }
                     xsum+=xs;
                 }
-                sum+=dot*sc[ulong(o)*(cols/p[3])+g]+xsum*off[ulong(o)*(cols/p[3])+g];
+                sum+=dot*music_sc(sc,ulong(o)*(cols/p[3])+g)+xsum*music_sc(off,ulong(o)*(cols/p[3])+g);
             }
         } else for(uint c=begin+tid;c<end;c+=128) {
             float weight=music_value(w,sc,off,bs,p,o,c);
@@ -177,6 +187,55 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
         if(p[0]>=3 || p[7]==1) result=music_round(result,p[6]);
         y[gid]=music_round(result+(p[5] ? bias[o] : 0.0f),p[6]);
     }
+}
+
+// Packed form of the affine "wide" branch of music3_linear (qmv_fast
+// emulation: eight lanes per output, lane t owns groups t, t+8, ..., each
+// 8-element chunk is summed in order into `acc`, `acc` is added to the
+// lane's running total, and lanes reduce with shuffle-down 4, 2, 1). The
+// per-output arithmetic is unchanged; the gain is layout only: sixteen
+// (row, output) pairs share one threadgroup instead of one pair using
+// eight of 128 threads, and a four-bit chunk of eight codes is one 32-bit
+// load with the group's scale and offset hoisted out of the element loop.
+// Requires group % 8 == 0 and cols % group == 0 (checked on the host).
+kernel void music3_linear_wide(device const uchar *w [[buffer(0)]],
+ device const float *sc [[buffer(1)]], device const float *off [[buffer(2)]],
+ device const uchar *bs [[buffer(3)]], device const float *x [[buffer(4)]],
+ device const float *bias [[buffer(5)]], device float *y [[buffer(6)]],
+ constant uint *p [[buffer(7)]], uint tid [[thread_index_in_threadgroup]],
+ uint tg [[threadgroup_position_in_grid]]) {
+    uint out=p[4], cols=p[1], bits=p[2], group=p[3];
+    ulong pair=ulong(tg)*16+tid/8;
+    uint lane=tid%8;
+    bool live=pair<ulong(p[7])*out;
+    float result=0;
+    if(live) {
+        uint row=uint(pair/out), o=uint(pair%out), groups=cols/group;
+        device const uint *u=(device const uint*)w+ulong(o)*((cols*bits+31)/32);
+        device const float *xr=x+ulong(row)*cols;
+        for(uint g=lane;g<groups;g+=8) {
+            float s=music_sc(sc,ulong(o)*groups+g), f=music_sc(off,ulong(o)*groups+g);
+            for(uint c=g*group;c<(g+1)*group;c+=8) {
+                float acc=0;
+                if(bits==4) {
+                    uint word=u[c/8];
+                    float4 xa=*(device const float4*)(xr+c), xb=*(device const float4*)(xr+c+4);
+                    float xv[8]={xa.x,xa.y,xa.z,xa.w,xb.x,xb.y,xb.z,xb.w};
+                    for(uint i=0;i<8;i++) acc+=xv[i]*(float((word>>(4*i))&15u)*s+f);
+                } else {
+                    for(uint i=0;i<8;i++) {
+                        uint bit=(c+i)*bits,shift=bit%32;
+                        uint code=u[bit/32]>>shift; if(shift+bits>32) code|=u[bit/32+1]<<(32-shift);
+                        code&=(1u<<bits)-1;
+                        acc+=xr[c+i]*(float(code)*s+f);
+                    }
+                }
+                result+=acc;
+            }
+        }
+    }
+    result+=simd_shuffle_down(result,ushort(4));result+=simd_shuffle_down(result,ushort(2));result+=simd_shuffle_down(result,ushort(1));
+    if(live && lane==0) y[pair]=music_round(music_round(result,p[6])+(p[5] ? bias[uint(pair%out)] : 0),p[6]);
 }
 
 kernel void music3_embedding(device const uchar *w [[buffer(0)]],
@@ -212,6 +271,57 @@ kernel void music3_conv_mma(device const uchar *w [[buffer(0)]],device const flo
     simdgroup_store(cm,result,8);threadgroup_barrier(mem_flags::mem_threadgroup);
     for(uint j=0;j<2;j++) {uint idx=lane+j*32,t=t0+idx/8,o=o0+idx%8;if(t<outlen && o<oc) y[ulong(o)*outlen+t]=music_round(music_round(result[idx],p[10])+(p[9] ? bias[o] : 0),p[10]);}
 }
+
+// Tiled form of music3_conv_mma (see music3_linear_tiled). Each output keeps
+// the same K-ordered chain of 8x8x8 products, including the zero-padded
+// products for taps that miss the input; the gather index math and weight
+// reads are shared across a (time x channel) tile instead of repeated per
+// 8x8 tile. SRxSO must be 4.
+template <uint SR, uint SO, uint RM, uint RN>
+kernel void music3_conv_tiled(device const uchar *w [[buffer(0)]],device const float *x [[buffer(1)]],
+ device const float *bias [[buffer(2)]],device float *y [[buffer(3)]],constant uint *p [[buffer(4)]],
+ uint tid [[thread_index_in_threadgroup]],uint gid [[threadgroup_position_in_grid]]) {
+    constexpr uint SGR=8*RM,SGO=8*RN,SGE=SGR*SGO,PER=SGE/32,TR=SR*SGR,TO=SO*SGO,BK=32;
+    uint ic=p[0],oc=p[1],ksize=p[2],stride=p[3],pad=p[4],dilation=p[5],transpose=p[6],len=p[7],outlen=p[8];
+    uint total_k=ic*ksize,oblocks=(oc+TO-1)/TO,t0=(gid/oblocks)*TR,o0=(gid%oblocks)*TO;
+    uint simd=tid/32,lane=tid%32,sr=simd/SO,so=simd%SO;
+    threadgroup float xs[TR*BK],ws[BK*TO],res[SR*SO*SGE];
+    simdgroup_float8x8 c[RM][RN];
+    for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) c[i][j]=simdgroup_float8x8(0.0f);
+    for(uint f0=0;f0<total_k;f0+=BK) {
+        for(uint idx=tid;idx<TR*BK;idx+=128) {
+            uint r=idx%TR,kc=idx/TR,t=t0+r,f=f0+kc,k=f/ic,i=f%ic;
+            if(transpose) k=ksize-1-k;
+            int pos=int(t*stride+k*dilation)-int(pad);
+            bool valid=t<outlen && f<total_k;
+            if(transpose) {pos=int(t+pad)-int(k);valid=valid && pos>=0 && uint(pos)%stride==0;pos/=int(stride);}
+            xs[r*BK+kc]=valid && pos>=0 && uint(pos)<len ? x[ulong(i)*len+uint(pos)] : 0;
+        }
+        for(uint idx=tid;idx<TO*BK;idx+=128) {
+            uint oo=idx%TO,kc=idx/TO,o=o0+oo,ff=f0+kc,kk=ff/ic,ii=ff%ic;
+            if(transpose) kk=ksize-1-kk;
+            ulong wi=transpose ? (ulong(ii)*oc+o)*ksize+kk : (ulong(o)*ic+ii)*ksize+kk;
+            ws[kc*TO+oo]=o<oc && ff<total_k ? (p[11]==0 ? ((device const float*)w)[wi] : p[11]==1 ? float(((device const half*)w)[wi]) : as_type<float>(uint(((device const ushort*)w)[wi])<<16)) : 0;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for(uint kb=0;kb<BK/8;kb++) {
+            if(f0+kb*8>=total_k) break;
+            simdgroup_float8x8 a[RM],b[RN];
+            for(uint i=0;i<RM;i++) simdgroup_load(a[i],xs+(sr*SGR+i*8)*BK+kb*8,BK);
+            for(uint j=0;j<RN;j++) simdgroup_load(b[j],ws+(kb*8)*TO+so*SGO+j*8,TO);
+            for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_multiply_accumulate(c[i][j],a[i],b[j],c[i][j]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_store(c[i][j],res+simd*SGE+i*8*SGO+j*8,SGO);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    // Lanes cover consecutive time steps so the channel-major store is contiguous.
+    for(uint m=0;m<PER;m++) {
+        uint e=lane+32*m,rr=e%SGR,oo=e/SGR,t=t0+sr*SGR+rr,o=o0+so*SGO+oo;
+        if(t<outlen && o<oc) y[ulong(o)*outlen+t]=music_round(music_round(res[simd*SGE+rr*SGO+oo],p[10])+(p[9] ? bias[o] : 0),p[10]);
+    }
+}
+template [[host_name("music3_conv_tiled_32x32")]] [[kernel]] decltype(music3_conv_tiled<2,2,2,2>) music3_conv_tiled<2,2,2,2>;
 
 // Channel-major activations, PyTorch convolution weight layouts.
 kernel void music3_conv(device const uchar *w [[buffer(0)]],
@@ -433,6 +543,90 @@ kernel void music3_linear_mma(device const uchar *w [[buffer(0)]],
         }
     }
 }
+// Tiled form of music3_linear_mma. Every output element still accumulates
+// the same sequence of 8x8x8 SIMD-matrix products in K order (split-K parts
+// folded exactly as before), so results are bit-identical; what changes is
+// reuse. A threadgroup of four simdgroups stages a (rows x 32) activation
+// tile and decodes a (32 x outputs) weight tile once, and each simdgroup
+// holds 2x2 accumulators. The 8x8 kernel decoded every weight once per 8
+// rows and paid two barriers per 8-wide K step. SRxSO must be 4.
+template <uint SR, uint SO, uint RM, uint RN>
+kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
+ device const float *sc [[buffer(1)]],device const float *off [[buffer(2)]],
+ device const uchar *bs [[buffer(3)]],device const float *x [[buffer(4)]],
+ device const float *bias [[buffer(5)]],device float *y [[buffer(6)]],
+ constant uint *p [[buffer(7)]],uint tid [[thread_index_in_threadgroup]],uint gid [[threadgroup_position_in_grid]]) {
+    // Each simdgroup owns (8*RM) rows by (8*RN) outputs of the tile.
+    constexpr uint SGR=8*RM,SGO=8*RN,SGE=SGR*SGO,PER=SGE/32,TR=SR*SGR,TO=SO*SGO,BK=32;
+    uint cols=p[1],out=p[4],rows=p[7],parts=p[8];
+    uint oblocks=(out+TO-1)/TO,r0=(gid/oblocks)*TR,o0=(gid%oblocks)*TO;
+    uint simd=tid/32,lane=tid%32,sr=simd/SO,so=simd%SO;
+    threadgroup float xs[TR*BK],ws[BK*TO],res[SR*SO*SGE];
+    float total[PER];
+    for(uint m=0;m<PER;m++) total[m]=0;
+    bool quant=p[0]>=3,fast4=p[0]==3 && p[2]==4;
+    uint words=(cols*p[2]+31)/32;
+    for(uint part=0;part<parts;part++) {
+        simdgroup_float8x8 c[RM][RN];
+        for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) c[i][j]=simdgroup_float8x8(0.0f);
+        uint begin=part*(cols/parts),end=begin+cols/parts;
+        for(uint k0=begin;k0<end;k0+=BK) {
+            for(uint idx=tid;idx<TR*BK;idx+=128) {
+                uint r=idx/BK,kc=idx%BK;
+                xs[idx]=r0+r<rows && k0+kc<end ? x[ulong(r0+r)*cols+k0+kc] : 0;
+            }
+            if(fast4) {
+                // Eight consecutive four-bit codes share one 32-bit word and
+                // one scale/offset (group % 8 == 0); same per-element value as
+                // music_value. Consecutive lanes take consecutive outputs.
+                for(uint idx=tid;idx<TO*(BK/8);idx+=128) {
+                    uint oo=idx%TO,q=idx/TO,o=o0+oo,kk=k0+q*8;
+                    for(uint i=0;i<8;i++) {
+                        float weight=0;
+                        if(o<out && kk<end) {
+                            uint code=((device const uint*)w)[ulong(o)*words+kk/8]>>(4*i)&15u;
+                            ulong g=ulong(o)*(cols/p[3])+kk/p[3];
+                            weight=float(code)*music_sc(sc,g)+music_sc(off,g);
+                        }
+                        ws[(q*8+i)*TO+oo]=music_round(weight,p[6]);
+                    }
+                }
+            } else {
+                for(uint idx=tid;idx<TO*BK;idx+=128) {
+                    uint oo=idx/BK,kc=idx%BK,o=o0+oo,kk=k0+kc;
+                    float weight=0;
+                    if(o<out && kk<end) weight=music_value(w,sc,off,bs,p,o,kk);
+                    ws[kc*TO+oo]=quant ? music_round(weight,p[6]) : weight;
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            for(uint kb=0;kb<BK/8;kb++) {
+                if(k0+kb*8>=end) break;
+                simdgroup_float8x8 a[RM],b[RN];
+                for(uint i=0;i<RM;i++) simdgroup_load(a[i],xs+(sr*SGR+i*8)*BK+kb*8,BK);
+                for(uint j=0;j<RN;j++) simdgroup_load(b[j],ws+(kb*8)*TO+so*SGO+j*8,TO);
+                for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_multiply_accumulate(c[i][j],a[i],b[j],c[i][j]);
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+        for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_store(c[i][j],res+simd*SGE+i*8*SGO+j*8,SGO);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for(uint m=0;m<PER;m++) {
+            float r=res[simd*SGE+lane+32*m];
+            total[m]=parts>1 ? music_round(total[m]+music_round(r,p[6]),p[6]) : r;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for(uint m=0;m<PER;m++) {
+        uint e=lane+32*m,row=r0+sr*SGR+e/SGO,o=o0+so*SGO+e%SGO;
+        if(row<rows && o<out) {
+            float value=quant ? music_round(total[m],p[6]) : total[m];
+            y[ulong(row)*out+o]=music_round(value+(p[5] ? bias[o] : 0),p[6]);
+        }
+    }
+}
+template [[host_name("music3_linear_tiled_32x32")]] [[kernel]] decltype(music3_linear_tiled<2,2,2,2>) music3_linear_tiled<2,2,2,2>;
+template [[host_name("music3_linear_tiled_16x64")]] [[kernel]] decltype(music3_linear_tiled<1,4,2,2>) music3_linear_tiled<1,4,2,2>;
 kernel void music3_snake(device const float *x [[buffer(0)]],device const float *alpha [[buffer(1)]],device float *y [[buffer(2)]],constant uint *p [[buffer(3)]],uint gid [[thread_position_in_grid]]) {
     if(gid>=p[2]) return;
     float a=alpha[gid/p[0]],s=music_round(metal::precise::sin(music_round(a*x[gid],p[1])),p[1]);
