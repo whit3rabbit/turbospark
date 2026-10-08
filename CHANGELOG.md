@@ -13,7 +13,57 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Security
+- `swift/TurboSparkApp`: file tools resolve symlinks on the deepest existing
+  ancestor before the containment check, so `write_file`, `apply_patch`,
+  `multi_edit`, `notebook_edit` and the REPL can no longer create files
+  outside the project through a symlinked directory. `search_code` skips
+  symlinks and non-regular files, so a link to `~/.ssh` is not read.
+- `swift/TurboSparkApp`: `web_fetch` validates every redirect hop and the
+  connected peer address, and the host check normalizes IPv4-mapped IPv6,
+  trailing-dot and alternate loopback spellings. DNS rebinding is narrowed,
+  not closed: the check runs after the connection, so a rebound host can still
+  receive a request, but its response is discarded.
+- `swift/TurboSparkApp`: project custom tools (`.turbospark/tools`,
+  `.agents/tools`) are blocked until the user trusts them per project, cannot
+  take a built-in tool's name, and cannot declare a category below terminal
+  (command and script tools) or web (http tools). An approval sheet shows the
+  full command, environment and headers. Reject is the default.
+- `swift/TurboSparkApp`: one `ToolArgumentResolver` now backs the executor,
+  approval card, diff formatter and risk classifier, and calls that supply
+  conflicting aliases are refused. Write aliases such as `write_to_file`
+  categorize as file writes, so batch children reach the sensitive-path gate.
+  `call_mcp_tool` permission and risk use the resolved target tool.
+- `swift/TurboSparkApp`: scheduled cron and wakeup prompts are delivered to the
+  model as plain text and no longer run as `!` shell commands that skipped the
+  permission engine.
+- `swift/TurboSparkApp`: Agent mode auto-allows read-only asks only. File
+  writes, interpreters, custom tools and scheduling go through the classifier
+  or an approval card.
+- `swift/TurboSparkApp`: every app git call on a project repository runs with
+  `core.fsmonitor`, hooks, pagers, external diff and textconv disabled
+  (`HardenedGit`), so a planted `.git/config` cannot execute code on a status
+  refresh or `@diff`.
+- `swift/TurboSparkApp`: approval sheets for repo-declared and imported MCP
+  servers show the full command, working directory, environment and header
+  names, and flag loader variables (`NODE_OPTIONS`, `DYLD_*`, `LD_*`, `PATH`).
+  Return no longer approves a repo-declared server. The multi-edit and
+  `http_request` approval cards show their payload with secrets hidden.
+- `swift/TurboSparkApp`: browser dialogs show the source origin and switch to
+  their tab, a navigate approval no longer transfers to a padded or different
+  URL, the encrypted export requires recent authentication on a protected
+  profile, the plaintext export no longer includes MCP credentials, and
+  sensitive plugin options stay out of the plaintext hook options file.
+
 ### Added
+- `swift/TurboSparkApp`: approval sheet for project custom tools
+  (`ProjectToolApprovalSheet`) backed by `CustomToolTrustStore`.
+- `swift/TurboSparkApp`: `make swift-test-app` and `make swift-test-qwenimage`
+  run the TurboSparkApp and QwenImage suites, which no make target ran before.
+  See `docs/TESTING.md`. The QwenImage suite needs the Metal toolchain.
+- `swift/TurboSparkApp`: new regression suites for symlink containment, web
+  rebinding, persistence migration, wire decoding, tool vocabulary parity and
+  the agent loop fixes below.
 - `crates/audio`: consolidated and shared core neural network ops and layers
   (`nn.rs`: `Conv1d`, `ConvTranspose1d`, `Linear`, `LayerNorm`, `RMSNorm`,
   `Embedding`), shared vocoder and codec blocks (`conv.rs`, `dac.rs`,
@@ -206,11 +256,66 @@ when this file gets updated relative to the version bump and the tag.
 - `docs/CLI.md`, `docs/IMAGE_GENERATION.md`, `docs/ZIMAGE_TURBO.md`: documented
   the bounded image resolution envelope and clarified that pinned quality and
   hardware resource evidence remains specific to the 1024x1024 baseline.
+- `swift/TurboSparkApp`: SQLite child tables (`messages`, `alternates`,
+  `attachments`, `artifacts`) are keyed per chat and `todos` by
+  `(chat_id, ordinal)`, with an automatic migration on open. Older app builds
+  cannot read a database written by this one.
+- `swift/TurboSparkApp`: scheduled prompts are injected as model-origin text
+  instead of through the composer. They wait for an idle chat and a loaded
+  model, and no longer overwrite a draft.
+- `swift/TurboSparkApp`: `todo_write` refuses a missing or unparseable list
+  instead of clearing it. Send `"[]"` to clear.
+- `swift/TurboSparkApp`: the workflow script checker rejects undeclared
+  identifiers, duplicate bindings and reserved binding names, so a saved
+  workflow that used one now fails the check.
+- `swift/TurboSparkApp`: `Config set`, `ListMcpResources`, `ReadMcpResource`,
+  `ProposeGoal` and `SendFeedback` return an explicit "not implemented"
+  error instead of reporting success.
+- `swift/TurboSparkApp`: the app bundle includes and signs the `turbospark` CLI,
+  and `make dmg` fails if it is missing.
 
 ### Fixed
 - `swift/TurboSparkApp`: parenthesized optional existential type in
   `AppModel.swift` as `(any ImageGenerationSession)?` to satisfy Swift 6 and
   Xcode 16 syntax requirements on macos-15 packaging runners.
+- `swift/TurboSparkApp`: upgrading from a pre-vault build no longer deletes
+  project memory and tool observations. The legacy migration walked only to
+  the first directory and then removed the whole root.
+- `swift/TurboSparkApp`: a todo id reused across chats, or a branched or
+  duplicated chat, no longer makes every later chat save fail with a UNIQUE
+  constraint error.
+- `swift/TurboSparkApp`: exact backup export skips orphan asset files and
+  writes atomically, restore creates a missing `profiles/` directory, and
+  asset headers take their length from the bytes actually encrypted.
+  Undecodable chat and project rows are no longer deleted by the next save.
+- `swift/TurboSpark`: `ChatMessage` decodes the null `path` or `base64` field
+  Rust emits for image parts, so a history with an image no longer reports
+  that the conversation does not fit.
+- `swift/TurboSparkApp`: image generation holds its permit until the producer
+  task finishes, so Stop no longer lets two generations share one pipeline.
+- `swift/TurboSparkApp`: MCP tool arguments keep their JSON types, and MCP
+  children get a PATH containing the resolved command's directory and the
+  Homebrew locations, so `npx` servers start when the app opens from Finder.
+- `swift/TurboSparkApp`: non-fork `/skill` commands run, a guardrail retry
+  that is declined no longer leaves the chat stuck generating, `/rewind`
+  resets the compaction boundary, duplicate todo ids no longer crash, and
+  changing the approval mode keeps MCP rules and the browser allowlist.
+- `swift/TurboSparkApp`: `read_file` in `time_machine` mode no longer hangs on
+  more than 64 KB of git output, and `apply_patch` refuses a new-file header
+  over an existing file.
+- `swift/TurboSparkApp`: a failed background-shell launch no longer closes
+  pipes its reader threads still use, and bang commands, the classifier
+  timeout and Stop no longer cancel each other's work.
+- `swift/TurboSparkApp`: `glob` honors its pattern, `search_code` honors regex
+  and filters, `apply_patch` is hunk-aware and keeps CRLF files CRLF, and
+  `notebook_edit` targets the right cell.
+- `swift/TurboSparkApp`: cron `nextFire` no longer skips a minute, one-shot
+  wakeups keep their fire time, and impossible schedules are rejected.
+- `swift/TurboSparkApp`: tool, state, browser, model hub, server and
+  presentation fixes from a full review of `swift/`. Of the review's 28
+  critical and high issues all are fixed. Most of the 244 medium and 319 low
+  findings were triaged and about a third to three quarters fixed. The rest
+  are deferred and recorded in the review.
 
 ## [0.2.0] - 2026-09-26
 
