@@ -24,7 +24,7 @@ final class WorkflowScriptCheckerTests: XCTestCase {
           } else {
             await artifact({ value: results });
           }
-          for (const item of items) {
+          for (const item of files) {
             if (item !== null) { await report(item); } else { await artifact(item); }
           }
         }
@@ -82,6 +82,7 @@ final class WorkflowScriptCheckerTests: XCTestCase {
     func testForOfParsesBindingSequenceAndNestedBody() throws {
         let source = """
         async function workflow() {
+          const names = args.names;
           for (const name of names) {
             const prefix = args.prefix;
             if (name === prefix) { await report(name); } else { await artifact(name); }
@@ -92,7 +93,7 @@ final class WorkflowScriptCheckerTests: XCTestCase {
         XCTAssertTrue(result.isValid, result.diagnostics.map(\.message).joined(separator: "\n"))
         let ast = try XCTUnwrap(result.ast)
 
-        guard case .forOf(let name, _, let sequence, let body) = ast.body.statements[0].kind else {
+        guard case .forOf(let name, _, let sequence, let body) = ast.body.statements[1].kind else {
             return XCTFail("Expected a for-of statement")
         }
         XCTAssertEqual(name, "name")
@@ -209,11 +210,11 @@ final class WorkflowScriptCheckerTests: XCTestCase {
         let memberOverflow = WorkflowScriptChecker.parse(wrapped("const item = \(memberOverLimit);"))
         XCTAssertEqual(memberOverflow.diagnostics.first?.rule, .nestingLimitExceeded)
 
-        let logicalAtLimit = Array(repeating: "ready", count: 64).joined(separator: " && ")
+        let logicalAtLimit = Array(repeating: "args", count: 64).joined(separator: " && ")
         let logicalBoundary = WorkflowScriptChecker.parse(wrapped("if (\(logicalAtLimit)) {}"))
         XCTAssertTrue(logicalBoundary.isValid, logicalBoundary.diagnostics.map(\.message).joined(separator: "\n"))
 
-        let logicalOverLimit = Array(repeating: "ready", count: 65).joined(separator: " && ")
+        let logicalOverLimit = Array(repeating: "args", count: 65).joined(separator: " && ")
         let logicalOverflow = WorkflowScriptChecker.parse(wrapped("if (\(logicalOverLimit)) {}"))
         XCTAssertEqual(logicalOverflow.diagnostics.first?.rule, .nestingLimitExceeded)
     }

@@ -65,6 +65,10 @@ enum WorkflowScriptDiagnosticRule: String, Equatable, Sendable {
     case undeclaredWorkflowArgument
     case executableIdentityUnavailable
     case reservedActorName
+    case undeclaredIdentifier
+    case duplicateBinding
+    case reservedBindingName
+    case duplicateCommandSlot
 }
 
 struct WorkflowScriptDiagnostic: Equatable, Sendable {

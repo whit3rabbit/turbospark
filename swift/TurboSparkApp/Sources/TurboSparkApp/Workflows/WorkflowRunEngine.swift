@@ -155,9 +155,20 @@ actor WorkflowRunEngine: WorkflowCommandSink {
       recordedRunFailure = nil
     }
 
+    // A refused resume (newer canonicalization or transcript version, a
+    // mismatched descriptor, a corrupt journal) is a refusal, not a run
+    // failure. Nothing has executed, so nothing is journaled: the recorded
+    // run keeps its state and can be resumed by a build that understands it.
+    let snapshot: WorkflowJournalResumeSnapshot
     do {
-      let snapshot = try await journal.resumeSnapshot(runID: program.descriptor.id)
+      snapshot = try await journal.resumeSnapshot(runID: program.descriptor.id)
       try validateResume(snapshot.history)
+    } catch {
+      runState = .failed
+      return
+    }
+
+    do {
       let persistedState =
         snapshot.history.events.reversed().compactMap { event -> WorkflowRunState? in
           guard case .stateChanged(let state) = event.payload else { return nil }
@@ -180,6 +191,7 @@ actor WorkflowRunEngine: WorkflowCommandSink {
       if interpreter == nil {
         interpreter = WorkflowInterpreter(limits: limits.interpreter, engine: self)
       }
+      interpreter?.clearPendingCancel()
       if cancelBeforeStart {
         cancelBeforeStart = false
         interpreter?.requestCancel()
@@ -210,7 +222,12 @@ actor WorkflowRunEngine: WorkflowCommandSink {
   /// Requests cooperative cancellation. The active await owns the cancellation boundary.
   func cancel() async {
     if let interpreter {
-      interpreter.requestCancel()
+      // Only arm the interpreter while start() is running. A Stop pressed
+      // after the run ended would otherwise leave the pre-start flag set and
+      // silently cancel the next resume.
+      if activeStart {
+        interpreter.requestCancel()
+      }
     } else {
       cancelBeforeStart = true
     }

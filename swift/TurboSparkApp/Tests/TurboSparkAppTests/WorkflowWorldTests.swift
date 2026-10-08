@@ -25,6 +25,24 @@ final class WorkflowWorldTests: XCTestCase {
         XCTAssertTrue(grep.truncated)
     }
 
+    func testStdoutOnlyInvocationExcludesStderrWarnings() async throws {
+        func invocation(stdoutOnly: Bool) -> WorkflowWorldProcessInvocation {
+            WorkflowWorldProcessInvocation(
+                executableURL: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", "printf 'a.txt'; echo 'warning: denied' >&2"],
+                workingDirectoryURL: FileManager.default.temporaryDirectory,
+                environment: [:],
+                timeoutSeconds: 10,
+                outputCapBytes: 4096,
+                stdoutOnly: stdoutOnly)
+        }
+        let executor = WorkflowWorldSystemExecutor()
+        let clean = try await executor.execute(invocation(stdoutOnly: true))
+        XCTAssertEqual(clean.outputText, "a.txt")
+        let merged = try await executor.execute(invocation(stdoutOnly: false))
+        XCTAssertTrue(merged.outputText.contains("warning: denied"))
+    }
+
     func testInvalidUTF8StillRefusesCappedFileRead() async throws {
         let root = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -98,14 +116,47 @@ final class WorkflowWorldTests: XCTestCase {
         XCTAssertEqual(git.outputText, "git status")
         XCTAssertEqual(git.argv.first, "git")
         let requests = await executor.requests()
-        XCTAssertEqual(requests.count, 1)
+        // Request 0 is the filter-driver enumeration; request 1 is the read.
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[0].arguments, ["config", "--get-regexp", "^filter\\."])
         XCTAssertEqual(
-            requests[0].arguments,
+            requests[1].arguments,
             [
                 "--no-pager", "-c", "core.fsmonitor=false",
                 "status", "--short", "--untracked-files=all", "--no-renames",
             ])
-        XCTAssertEqual(requests[0].workingDirectoryURL, PathContainment.canonical(root))
+        XCTAssertEqual(requests[1].workingDirectoryURL, PathContainment.canonical(root))
+    }
+
+    func testFilterDriversAreNeutralizedForGitReads() {
+        let config = """
+        filter.x.clean ./payload.sh
+        filter.x.smudge cat
+        filter.a.b.process ./p
+        core.other nope
+        """
+        XCTAssertEqual(
+            WorkflowWorld.filterNeutralizingOverrides(configOutput: config),
+            [
+                "-c", "filter.x.clean=", "-c", "filter.x.smudge=", "-c", "filter.x.process=",
+                "-c", "filter.a.b.clean=", "-c", "filter.a.b.smudge=", "-c", "filter.a.b.process=",
+            ])
+        XCTAssertEqual(WorkflowWorld.filterNeutralizingOverrides(configOutput: ""), [])
+    }
+
+    func testStatusReadCarriesFilterOverridesAndLogDisablesSignatures() async throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = WorkflowWorldTestExecutor(outputText: "filter.x.clean ./payload.sh")
+        let world = WorkflowWorld(workspaceRoot: root, executor: executor)
+        _ = try await world.read(.git(op: .status), identity: identity(siteIndex: 0))
+        _ = try await world.read(.git(op: .log), identity: identity(siteIndex: 1))
+        let requests = await executor.requests()
+        XCTAssertEqual(requests.count, 4)
+        XCTAssertEqual(Array(requests[1].arguments.prefix(6)), [
+            "-c", "filter.x.clean=", "-c", "filter.x.smudge=", "-c", "filter.x.process=",
+        ])
+        XCTAssertTrue(requests[3].arguments.contains("log.showSignature=false"))
     }
 
     func testAbsoluteAndParentTraversalPathsAreSandboxRefusals() async throws {
@@ -170,9 +221,9 @@ final class WorkflowWorldTests: XCTestCase {
         XCTAssertEqual(complete.outputText, "first.swift\nsecond.swift")
         XCTAssertTrue(complete.truncated)
         let completeRequests = await completeExecutor.requests()
-        XCTAssertEqual(completeRequests.count, 1)
+        XCTAssertEqual(completeRequests.count, 2)
         XCTAssertEqual(
-            completeRequests[0].arguments,
+            completeRequests[1].arguments,
             [
                 "--no-pager", "-c", "core.fsmonitor=false",
                 "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames",

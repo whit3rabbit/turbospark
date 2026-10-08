@@ -241,8 +241,43 @@ final class WorkflowInterpreterTests: XCTestCase {
         ])
     }
 
+    func testDynamicCommandValuesRejectNulAndDotPathComponents() async throws {
+        let source = """
+        async function workflow() {
+          command("build", { executable: "/usr/bin/true", workingDirectory: "workspace", argv: [
+            { name: "summary", kind: "boundedText", maximumBytes: 16 },
+            { name: "sourcePath", kind: "workspaceInputPath" }
+          ] });
+          const result = await run("build", { summary: args.summary, sourcePath: args.sourcePath });
+        }
+        """
+        let sink = WorkflowInterpreterTestSink()
+        let interpreter = WorkflowInterpreter(limits: WorkflowInterpreterLimits(), engine: sink)
+        for invalid in [
+            ["summary": "ok\u{0}--dangerous", "sourcePath": "a/b"],
+            ["summary": "ok", "sourcePath": "./a"],
+            ["summary": "ok", "sourcePath": "a/./b"],
+        ] {
+            do {
+                try await interpreter.execute(program: try parse(source, args: invalid))
+                XCTFail("NUL bytes and '.' path components must fail before dispatch")
+            } catch let error as WorkflowError {
+                XCTAssertEqual(error.kind, .validation)
+            }
+        }
+        let rejected = await sink.requestCount()
+        XCTAssertEqual(rejected, 0)
+
+        try await interpreter.execute(
+            program: try parse(source, args: ["summary": "ok", "sourcePath": "a/b"]))
+        let accepted = await sink.requestCount()
+        XCTAssertEqual(accepted, 1)
+    }
+
     func testHostGlobalsAreRefusedByTheRuntimeFacadeBoundary() async throws {
-        let program = try parse("async function workflow() { const value = process.env; await report(value); }")
+        // The checker now rejects the undeclared `process` statically; this
+        // test is about the interpreter's own defense in depth.
+        let program = try parseBypassingScopeChecks("async function workflow() { const value = process.env; await report(value); }")
         let sink = WorkflowInterpreterTestSink()
         let interpreter = WorkflowInterpreter(limits: WorkflowInterpreterLimits(), engine: sink)
 
@@ -257,7 +292,9 @@ final class WorkflowInterpreterTests: XCTestCase {
     }
 
     func testFacadeArgumentsCannotBeShadowedByALocalBinding() async throws {
-        let program = try parse("async function workflow() { const args = { input: \"shadow\" }; await report(args.input); }")
+        // Same: the checker reports the reserved name, the interpreter must
+        // still refuse it if a program ever reaches it unchecked.
+        let program = try parseBypassingScopeChecks("async function workflow() { const args = { input: \"shadow\" }; await report(args.input); }")
         let sink = WorkflowInterpreterTestSink()
         let interpreter = WorkflowInterpreter(limits: WorkflowInterpreterLimits(), engine: sink)
 
@@ -328,6 +365,24 @@ final class WorkflowInterpreterTests: XCTestCase {
         }
         let requests = await sink.requests()
         XCTAssertEqual(requests.map(\.operation), [.report(value: .number(1))])
+    }
+
+    /// Builds a checked program while ignoring ONLY the scope diagnostics, so
+    /// the interpreter's runtime refusals stay covered.
+    private func parseBypassingScopeChecks(_ source: String) throws -> WorkflowCheckedProgram {
+        let scopeRules: Set<WorkflowScriptDiagnosticRule> = [
+            .undeclaredIdentifier, .duplicateBinding, .reservedBindingName,
+        ]
+        let result = WorkflowScriptChecker.parse(source)
+        XCTAssertTrue(result.diagnostics.allSatisfy { scopeRules.contains($0.rule) })
+        let ast = try XCTUnwrap(result.ast)
+        let manifest = try XCTUnwrap(WorkflowScriptManifestCompiler.build(ast).manifest)
+        return WorkflowCheckedProgram(
+            ast: ast,
+            descriptor: WorkflowRunDescriptor(
+                id: UUID(), name: "Test workflow", source: source, sourceHash: "test",
+                facadeVersion: ast.facadeVersion, args: WorkflowFrozenArguments([:]),
+                manifest: manifest))
     }
 
     private func parse(

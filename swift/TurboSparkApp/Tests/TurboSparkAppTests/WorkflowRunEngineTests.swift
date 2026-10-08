@@ -147,6 +147,30 @@ final class WorkflowRunEngineTests: XCTestCase {
       1)
   }
 
+  func testStopPressedAfterTheRunEndedDoesNotPoisonTheNextResume() async throws {
+    let checked = try makeCheckedProgram(
+      "async function workflow() { phase(\"draft\"); await report(\"resume\"); }")
+    let store = WorkflowRunEngineMemoryStore()
+    let journal = WorkflowJournal(store: store)
+    try await journal.createRun(checked.descriptor)
+    let capabilities = WorkflowRunEngineTestCapabilities(mode: .cancelFirstThenSucceed)
+    let engine = WorkflowRunEngine(
+      program: checked,
+      journal: journal,
+      capabilities: capabilities)
+    let firstStart = Task { await engine.start() }
+    await capabilities.waitForCallCount(1)
+    await engine.cancel()
+    await firstStart.value
+
+    // A second Stop while no attempt is active must not arm the next resume.
+    await engine.cancel()
+    await engine.start()
+
+    let resumed = await engine.progress()
+    XCTAssertEqual(resumed.state, .completed)
+  }
+
   func testCancelledCapabilityOutcomeWithoutTokenCanResume() async throws {
     let checked = try makeCheckedProgram("async function workflow() { await report(\"retry\"); }")
     let store = WorkflowRunEngineMemoryStore()
@@ -235,8 +259,10 @@ final class WorkflowRunEngineTests: XCTestCase {
     }
 
     XCTAssertEqual(first, replayed)
-    XCTAssertEqual(callsAfterFirst.count, 1)
-    XCTAssertEqual(callsAfterReplay.count, 1)
+    // The first read may spawn more than one git process (a filter-driver
+    // probe precedes status); the contract is that a replay spawns none.
+    XCTAssertGreaterThanOrEqual(callsAfterFirst.count, 1)
+    XCTAssertEqual(callsAfterReplay.count, callsAfterFirst.count)
     XCTAssertEqual(resolvedReads.count, 1)
     XCTAssertEqual(progress.usage.replayedRequests, 1)
   }

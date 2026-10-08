@@ -60,6 +60,7 @@ private struct WorkflowScriptSemanticValidator {
     mutating func validate(_ ast: WorkflowScriptAST) -> [WorkflowScriptDiagnostic] {
         collectEntryActors(ast.body)
         collectEntryCommands(ast.body)
+        validateBindingScopes(ast.body)
         validateFacadePlacement(in: ast.body, isEntryBlock: true)
         validateActorReferences(in: ast.body)
         collectAndValidateGraphs(in: ast.body)
@@ -122,6 +123,7 @@ private struct WorkflowScriptSemanticValidator {
                   case .literal(.string(let key)) = keyExpression.kind
             else { continue }
 
+            validateCommandSlots(call)
             if commandDeclarations[key] != nil {
                 append(
                     .duplicateCommandPin,
@@ -713,6 +715,114 @@ private struct WorkflowScriptSemanticValidator {
             for argument in call.arguments { validateArgumentReferences(in: argument, declaredNames: declaredNames) }
         case .literal, .identifier:
             break
+        }
+    }
+
+    // MARK: - Binding scopes
+
+    /// Mirrors the interpreter's block-scoped environment so errors it would
+    /// raise AFTER approval (and after earlier asks spent model time) are
+    /// reported by the checker instead: a use before declaration or typo
+    /// (`Unknown workflow identifier`), a `const` repeated in one scope
+    /// (including a for-of binding redeclared in its own body), and `args`
+    /// as a binding name. A declaration is visible only after its value has
+    /// been evaluated, exactly as in the interpreter.
+    private mutating func validateBindingScopes(_ block: WorkflowBlock) {
+        var scopes: [Set<String>] = [[]]
+        validateBindingScopes(block, scopes: &scopes)
+    }
+
+    private mutating func validateBindingScopes(_ block: WorkflowBlock, scopes: inout [Set<String>]) {
+        for statement in block.statements {
+            switch statement.kind {
+            case .declaration(let name, let nameRange, let value):
+                validateIdentifiers(in: value, scopes: scopes)
+                if name == "args" {
+                    append(
+                        .reservedBindingName,
+                        "The frozen args facade cannot be shadowed by a const binding.",
+                        at: nameRange.start)
+                } else if scopes[scopes.count - 1].contains(name) {
+                    append(
+                        .duplicateBinding,
+                        "Workflow const binding '\(name)' is already declared in this scope.",
+                        at: nameRange.start)
+                }
+                scopes[scopes.count - 1].insert(name)
+            case .expression(let expression):
+                validateIdentifiers(in: expression, scopes: scopes)
+            case .conditional(let condition, let thenBlock, let elseBlock):
+                validateIdentifiers(in: condition, scopes: scopes)
+                scopes.append([])
+                validateBindingScopes(thenBlock, scopes: &scopes)
+                scopes.removeLast()
+                if let elseBlock {
+                    scopes.append([])
+                    validateBindingScopes(elseBlock, scopes: &scopes)
+                    scopes.removeLast()
+                }
+            case .forOf(let name, let nameRange, let sequence, let body):
+                validateIdentifiers(in: sequence, scopes: scopes)
+                if name == "args" {
+                    append(
+                        .reservedBindingName,
+                        "A loop binding cannot shadow the frozen args facade.",
+                        at: nameRange.start)
+                }
+                // The interpreter runs the body in the same environment that
+                // holds the loop variable, so redeclaring it there collides.
+                scopes.append([name])
+                validateBindingScopes(body, scopes: &scopes)
+                scopes.removeLast()
+            }
+        }
+    }
+
+    private mutating func validateIdentifiers(in expression: WorkflowExpression, scopes: [Set<String>]) {
+        switch expression.kind {
+        case .identifier(let name):
+            if name != "args", !scopes.contains(where: { $0.contains(name) }) {
+                append(
+                    .undeclaredIdentifier,
+                    "Unknown workflow identifier '\(name)'.",
+                    at: expression.sourceRange.start)
+            }
+        case .member(let base, _):
+            validateIdentifiers(in: base, scopes: scopes)
+        case .array(let values):
+            for value in values { validateIdentifiers(in: value, scopes: scopes) }
+        case .object(let members):
+            for member in members { validateIdentifiers(in: member.value, scopes: scopes) }
+        case .unaryNot(let value):
+            validateIdentifiers(in: value, scopes: scopes)
+        case .binary(let left, _, let right):
+            validateIdentifiers(in: left, scopes: scopes)
+            validateIdentifiers(in: right, scopes: scopes)
+        case .call(let call), .awaited(let call):
+            for argument in call.arguments { validateIdentifiers(in: argument, scopes: scopes) }
+        case .literal:
+            break
+        }
+    }
+
+    /// The interpreter rejects a command whose argv declares one dynamic slot
+    /// name twice; catch it before approval.
+    private mutating func validateCommandSlots(_ call: WorkflowCall) {
+        guard call.arguments.count > 1,
+              let argv = objectMember("argv", in: call.arguments[1]),
+              case .array(let entries) = argv.kind
+        else { return }
+        var seen = Set<String>()
+        for entry in entries {
+            guard let nameExpression = objectMember("name", in: entry),
+                  case .literal(.string(let slot)) = nameExpression.kind
+            else { continue }
+            if !seen.insert(slot).inserted {
+                append(
+                    .duplicateCommandSlot,
+                    "Command argument slot '\(slot)' is declared more than once.",
+                    at: nameExpression.sourceRange.start)
+            }
         }
     }
 

@@ -195,7 +195,19 @@ private struct WorkflowScriptLiteralValidator {
                 at: executable.value.sourceRange.start)
         }
         if let workingDirectory = fields["workingDirectory"] {
-            _ = requireString(workingDirectory.value, field: "command working directory")
+            if let path = requireString(workingDirectory.value, field: "command working directory") {
+                // Same rules as WorkflowWorld.validateRelativePath: containment
+                // must not depend on a later dispatch path alone.
+                let components = path.split(separator: "/", omittingEmptySubsequences: false)
+                if path.isEmpty || path.hasPrefix("/") || path.utf8.contains(0)
+                    || components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." })
+                {
+                    append(
+                        .literalValueOutOfRange,
+                        "Command working directory must be a non-empty workspace-relative path without '.', '..', or empty components.",
+                        at: workingDirectory.value.sourceRange.start)
+                }
+            }
         }
         if let argv = fields["argv"], let items = requireArray(argv.value, field: "command argv") {
             for item in items {
@@ -318,7 +330,11 @@ private struct WorkflowScriptLiteralValidator {
             _ = requireString(operation.arguments[0], field: "glob pattern")
         case .read:
             _ = requireString(operation.arguments[0], field: "world read path")
-            _ = requireInteger(operation.arguments[1], field: "world read byte limit", minimum: 1)
+            // WorkflowWorld refuses reads above its byte cap at run time, so
+            // reject them at check time instead of after approval.
+            _ = requireInteger(
+                operation.arguments[1], field: "world read byte limit",
+                range: 1...WorkflowWorldLimits().maximumReadBytes)
         case .grep:
             _ = requireString(operation.arguments[0], field: "grep pattern")
             if operation.arguments.count == 2 {

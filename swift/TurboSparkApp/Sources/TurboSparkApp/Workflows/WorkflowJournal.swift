@@ -354,8 +354,19 @@ struct WorkflowJournal: Sendable {
             }
         }
 
+        // A corrupt or hand-edited profile can hold two rows for one actor;
+        // uniqueKeysWithValues would trap, so fail closed instead.
+        var duplicateActor: String?
         let transcriptsByActor = Dictionary(
-            uniqueKeysWithValues: history.actorTranscripts.map { ($0.actorName, $0) })
+            history.actorTranscripts.map { ($0.actorName, $0) },
+            uniquingKeysWith: { first, _ in
+                duplicateActor = first.actorName
+                return first
+            })
+        if let duplicateActor {
+            throw WorkflowJournalError.malformedHistory(
+                "duplicate actor transcript rows for '\(duplicateActor)'")
+        }
         for transcript in history.actorTranscripts {
             guard let snapshot = transcript.snapshot else {
                 throw WorkflowJournalError.unreadableTranscript(actor: transcript.actorName)

@@ -271,6 +271,14 @@ final class WorkflowInterpreter {
         }
     }
 
+    /// Drops a cancellation armed between attempts. A fresh start must not
+    /// inherit a stale Stop from the previous run.
+    func clearPendingCancel() {
+        stateLock.lock()
+        cancelBeforeNextAttempt = false
+        stateLock.unlock()
+    }
+
     private func register(_ token: WorkflowCancellationToken) {
         stateLock.lock()
         if cancelBeforeNextAttempt {
@@ -778,6 +786,11 @@ private final class WorkflowInterpreterAttempt {
                 guard value.utf8.count <= rule.maximumBytes else {
                     throw failure(.validation, "Dynamic command value '\(name)' exceeds its byte limit.")
                 }
+                // argv becomes C strings, so an embedded NUL would truncate the
+                // executed argument relative to what was validated and journaled.
+                guard !value.utf8.contains(0) else {
+                    throw failure(.validation, "Dynamic command value '\(name)' must not contain NUL.")
+                }
                 switch rule.kind {
                 case .allowedValue:
                     guard rule.allowedValues?.contains(value) == true else {
@@ -790,7 +803,7 @@ private final class WorkflowInterpreterAttempt {
                     guard !value.isEmpty,
                           !value.hasPrefix("/"),
                           !value.utf8.contains(0),
-                          components.allSatisfy({ $0 != ".." })
+                          components.allSatisfy({ $0 != ".." && $0 != "." })
                     else {
                         throw failure(.validation, "Dynamic path '\(name)' must stay workspace-relative.")
                     }

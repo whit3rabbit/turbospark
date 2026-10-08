@@ -62,6 +62,9 @@ struct WorkflowWorldProcessInvocation: Equatable, Sendable {
     var environment: [String: String]
     var timeoutSeconds: TimeInterval
     var outputCapBytes: Int
+    /// Parse stdout only. NUL-delimited records (`status -z`) are corrupted
+    /// by a stderr warning interleaved into the merged stream.
+    var stdoutOnly = false
 
     var argv: [String] {
         ["git"] + arguments
@@ -85,7 +88,7 @@ struct WorkflowWorldSystemExecutor: WorkflowWorldExecutorPort {
             environment: invocation.environment,
             timeoutSeconds: invocation.timeoutSeconds,
             outputCapBytes: invocation.outputCapBytes,
-            mergeStreams: true)
+            mergeStreams: !invocation.stdoutOnly)
         guard !output.timedOut else {
             throw WorkflowError(
                 kind: .resourceLimit,
@@ -95,7 +98,7 @@ struct WorkflowWorldSystemExecutor: WorkflowWorldExecutorPort {
         return WorkflowWorldObservation(
             argv: invocation.argv,
             exitStatus: Int(output.exitCode),
-            outputText: output.combinedText,
+            outputText: invocation.stdoutOnly ? output.stdout : output.combinedText,
             truncated: output.outputTruncated)
     }
 }
@@ -251,10 +254,25 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
             return .glob(pattern: pattern)
         case "read":
             guard arguments.count == 2,
-                  case .string(let path) = arguments[0],
-                  case .integer(let requestedBytes) = arguments[1],
-                  let maxBytes = Int(exactly: requestedBytes)
+                  case .string(let path) = arguments[0]
             else {
+                throw refusal("read requires a fixed path and byte limit", site: site)
+            }
+            // The interpreter emits every script numeral as `.number`, so
+            // only accepting `.integer` refused every read. A whole,
+            // finite double is the same request; the byte-limit bounds are
+            // enforced where the read executes.
+            let requestedBytes: Int?
+            switch arguments[1] {
+            case .integer(let value):
+                requestedBytes = Int(exactly: value)
+            case .number(let value):
+                requestedBytes = value.isFinite && value.rounded(.towardZero) == value
+                    ? Int(exactly: value) : nil
+            default:
+                requestedBytes = nil
+            }
+            guard let maxBytes = requestedBytes else {
                 throw refusal("read requires a fixed path and byte limit", site: site)
             }
             return .read(path: path, maxBytes: maxBytes)
@@ -298,7 +316,26 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
         let enumeration = try entries(under: root, site: site)
         var matches: [String] = []
 
+        // Both sides standardized the same way: the enumerator may hand back
+        // /var/... for a root spelled /private/var/...
+        let standardRoot = root.standardizedFileURL.path
+        let rootPrefix = standardRoot.hasSuffix("/") ? standardRoot : standardRoot + "/"
         for candidate in enumeration.entries {
+            // Match the pattern on the candidate's own workspace-relative name
+            // BEFORE checking containment: an unrelated symlink that points
+            // outside the tree (a venv's python3 -> /opt/homebrew/...) used to
+            // abort the whole glob although nothing it names was a match. A
+            // candidate that matches and escapes is still refused.
+            let candidatePath = candidate.standardizedFileURL.path
+            if candidatePath.hasPrefix(rootPrefix) {
+                let named = String(candidatePath.dropFirst(rootPrefix.count))
+                guard expression.firstMatch(
+                    in: named,
+                    range: NSRange(named.startIndex..., in: named)) != nil
+                else {
+                    continue
+                }
+            }
             let resolved = PathContainment.canonical(candidate)
             guard PathContainment.isContained(resolved, in: root) else {
                 throw refusal("a glob match resolves outside the workspace", site: site)
@@ -392,7 +429,7 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
         let candidates: [URL]
         let enumerationTruncated: Bool
         if values.isDirectory == true {
-            let enumeration = try entries(under: searchRoot, site: site)
+            let enumeration = try entries(under: searchRoot, site: site, skippingMetadata: true)
             candidates = enumeration.entries
             enumerationTruncated = enumeration.truncated
         } else if values.isRegularFile == true {
@@ -409,7 +446,13 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
         for candidate in sortedCandidates {
             let resolved = PathContainment.canonical(candidate)
             guard PathContainment.isContained(resolved, in: root) else {
-                throw refusal("a grep candidate resolves outside the workspace", site: site)
+                // A stray symlink met while walking a directory is skipped
+                // (nothing is read through it); only an explicitly named
+                // file that escapes is refused.
+                if candidate == searchRoot {
+                    throw refusal("a grep candidate resolves outside the workspace", site: site)
+                }
+                continue
             }
             guard try resolved.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
                 continue
@@ -431,12 +474,15 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
             }
             let fileTruncated = data.count > remaining
             let visibleData = Data(data.prefix(remaining))
+            // A binary file is not searchable text: skip it WITHOUT charging
+            // the scan budget, or compressed objects and build products
+            // exhaust it before any source file is read.
+            if visibleData.contains(0) { continue }
             scannedBytes += visibleData.count
             if fileTruncated {
                 scanTruncated = true
             }
-            guard !visibleData.contains(0),
-                  let text = Self.utf8Text(visibleData, allowingPartialTail: fileTruncated)
+            guard let text = Self.utf8Text(visibleData, allowingPartialTail: fileTruncated)
             else {
                 if fileTruncated { break }
                 continue
@@ -460,6 +506,52 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
             exitStatus: 0,
             outputText: output.string,
             truncated: enumerationTruncated || scanTruncated || output.truncated)
+    }
+
+    private static let gitEnvironment: [String: String] = [
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_PAGER": "cat",
+        "GIT_TERMINAL_PROMPT": "0",
+        "HOME": "/var/empty",
+        "LC_ALL": "C",
+        "PAGER": "cat",
+        "PATH": "/usr/bin:/bin",
+    ]
+
+    /// `-c filter.<name>.{clean,smudge,process}=` for every filter driver the
+    /// repository defines. A workspace from an untrusted archive can ship
+    /// `.git/config` plus `.gitattributes` that run a clean filter during a
+    /// "read-only" status or diff. The enumeration (`git config --get-regexp`)
+    /// executes nothing. An empty command runs nothing, and `-c` wins over the
+    /// file config.
+    private func filterNeutralizingOverrides(root: URL) async throws -> [String] {
+        let probe = WorkflowWorldProcessInvocation(
+            executableURL: URL(fileURLWithPath: "/usr/bin/git"),
+            arguments: ["config", "--get-regexp", "^filter\\."],
+            workingDirectoryURL: root,
+            environment: Self.gitEnvironment,
+            timeoutSeconds: limits.gitTimeoutSeconds,
+            outputCapBytes: limits.maximumOutputBytes)
+        let observation = try await executor.execute(probe)
+        return Self.filterNeutralizingOverrides(configOutput: observation.outputText)
+    }
+
+    static func filterNeutralizingOverrides(configOutput: String) -> [String] {
+        var names: [String] = []
+        for line in configOutput.split(separator: "\n") {
+            guard line.hasPrefix("filter.") else { continue }
+            let key = line.split(separator: " ", maxSplits: 1)[0]
+            let afterPrefix = key.dropFirst("filter.".count)
+            guard let lastDot = afterPrefix.lastIndex(of: "."), lastDot != afterPrefix.startIndex
+            else { continue }
+            let name = String(afterPrefix[afterPrefix.startIndex..<lastDot])
+            if !names.contains(name) { names.append(name) }
+        }
+        return names.flatMap { name in
+            ["clean", "smudge", "process"].flatMap { ["-c", "filter.\(name).\($0)="] }
+        }
     }
 
     private func git(
@@ -490,6 +582,7 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
         case .log:
             arguments = [
                 "--no-pager", "-c", "core.fsmonitor=false",
+                "-c", "log.showSignature=false",
                 "log", "--no-decorate", "--no-color", "-n", "20", "--format=%h %s", "--",
             ]
         case .changedFiles:
@@ -498,23 +591,18 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
                 "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames",
             ]
         }
+        // Status and diff run clean filters on stale-stat files, and log may
+        // run gpg.program; both are repo-configured programs (see
+        // filterNeutralizingOverrides). Neutralize them before the read.
+        let overrides = try await filterNeutralizingOverrides(root: root)
         let invocation = WorkflowWorldProcessInvocation(
             executableURL: URL(fileURLWithPath: "/usr/bin/git"),
-            arguments: arguments,
+            arguments: overrides + arguments,
             workingDirectoryURL: root,
-            environment: [
-                "GIT_CONFIG_GLOBAL": "/dev/null",
-                "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_OPTIONAL_LOCKS": "0",
-                "GIT_PAGER": "cat",
-                "GIT_TERMINAL_PROMPT": "0",
-                "HOME": "/var/empty",
-                "LC_ALL": "C",
-                "PAGER": "cat",
-                "PATH": "/usr/bin:/bin",
-            ],
+            environment: Self.gitEnvironment,
             timeoutSeconds: limits.gitTimeoutSeconds,
-            outputCapBytes: limits.maximumOutputBytes)
+            outputCapBytes: limits.maximumOutputBytes,
+            stdoutOnly: operation == .changedFiles)
         let observation = try await executor.execute(invocation)
         guard operation == .changedFiles else { return observation }
         return try changedFilesObservation(from: observation, site: site)
@@ -576,9 +664,14 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
             truncated: observation.truncated || output.truncated)
     }
 
+    /// Directory names a root walk never descends into: VCS and build
+    /// metadata spend the entry cap and scan budget before any source file.
+    private static let skippedDescendantNames: Set<String> = [".git", ".build", "node_modules"]
+
     private func entries(
         under directory: URL,
-        site: WorkflowSiteKey
+        site: WorkflowSiteKey,
+        skippingMetadata: Bool = false
     ) throws -> DirectoryEnumeration {
         guard limits.maximumDirectoryEntries > 0 else {
             throw WorkflowError(
@@ -597,6 +690,15 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
         var result: [URL] = []
         var truncated = false
         while let candidate = enumerator.nextObject() as? URL {
+            if skippingMetadata,
+               Self.skippedDescendantNames.contains(candidate.lastPathComponent) {
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir),
+                   isDir.boolValue {
+                    enumerator.skipDescendants()
+                    continue
+                }
+            }
             if result.count >= limits.maximumDirectoryEntries {
                 truncated = true
                 break
