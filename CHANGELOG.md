@@ -315,6 +315,22 @@ when this file gets updated relative to the version bump and the tag.
   `ram_bits.json` 4/5/6/8-bit module assignments and safetensors shard layout.
 - `ROADMAP.md`: added priority item tracking Krea 2 Turbo Native MLX bring-up
   status, safety requirements, and remaining pipeline integration tasks.
+- `crates/audio`: added speech recognition support for Cactus Compute's Whistle
+  checkpoint (`turbospark_audio::models::stt::whistle`), including CQ format
+  weights loader, acoustic frontend, causal decoder, tokenizer, unit tests, and
+  a CLI example (`crates/audio/examples/whistle_transcribe.rs`).
+- `swift/TurboSparkApp`: context window and prefill time budgeting for native
+  tool calling (`AppModel.nativeToolBudget`, `PrefillRateStore`), bounding
+  definitions to 40% of context (`nativeToolWindowFraction`) and 60 seconds of
+  observed prefill speed (`nativeToolPrefillBudgetSeconds`), with an opt-in
+  toggle in General settings ("Use it even when the first turn is slow").
+- `swift/TurboSparkApp`: audio workspace export panel (`AudioExportPanel`), live
+  generation progress overlay (`AudioGenerationProgress`), and reusable prompt
+  library view (`AudioPromptLibraryView`).
+- `swift/TurboSparkApp`: unified sidebar and navigation rail presentation with
+  dynamic theme scaling, accessibility font sizing, grouped navigation
+  (`SidebarNavigationGroup`), and localized compact relative timestamps in
+  `MessageTimestampFormatter`.
 - `swift/TurboSparkApp`: added a Prompt generator to the Music tab that builds
   a MiniMax Music style description from genre, mood, tempo, groove,
   instruments, vocals, structure, and production choices (following the
@@ -380,6 +396,15 @@ when this file gets updated relative to the version bump and the tag.
   returns the Hugging Face repo id lowercased and the check compared it
   byte-for-byte. The repo id now compares ASCII case-insensitively, as
   `hub.rs` already does; the revision pin is still exact.
+- `.github/workflows`, `scripts`: install protobuf in CI and release workflows,
+  and add an automated Homebrew protobuf check in `make-app-bundle.sh` for
+  building `openkind-server`.
+- `swift/TurboSparkApp`: resolved Swift compiler warnings and concurrency diagnostics
+  across `MLXImageGenerationSession`, `CodemodeWorkerContext`, `REPLHostFacade`,
+  `AppModel+Downloads`, and excluded `Tools/Codemode/README.md` in `Package.swift`.
+- `crates/audio`, `crates/catalog`, `crates/model-io`: resolved Rust dead-code warnings
+  and lint issues across audio STT and Mimi models, formatted `sha256.rs`, and
+  updated loopback test assertions in `hub_cache.rs`.
 - `swift/TurboSparkApp`: use native `AudioObjectID` array rather than `NSNumber` in
   `CATapDescription` initializers to fix compilation on macOS 15+ SDK.
 - `swift/TurboSparkApp`: parenthesized optional existential type in
