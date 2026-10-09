@@ -76,6 +76,117 @@ extension AppModel {
         }
     }
 
+    // MARK: - Budget
+
+    /// The share of the context window the offered tool definitions may take.
+    ///
+    /// **THE NATIVE LANE IS NOT FREE.** The template renders every offered
+    /// tool's full JSON schema; the app's 40-tool set measured about 6,100
+    /// tokens against the 650 of the same prompt without it. The text lane
+    /// listed names and descriptions only and cost far less. On a large window
+    /// that is a fair price for schemas the model can actually follow; on a
+    /// small one it would leave no room for the conversation.
+    static let nativeToolWindowFraction = 0.4
+
+    /// The longest the definitions may add to a turn's FIRST prefill.
+    ///
+    /// **SPACE IS NOT THE ONLY COST, AND TIME CAN BE THE WORSE ONE.** On
+    /// Bonsai 2 the 6,754-token native prompt took 1,207 s to prefill (about
+    /// 5.6 tokens/s) while the same conversation's second turn, with the
+    /// prefix cached, took 7.8 s. A checkpoint that slow would make the first
+    /// agent turn a twenty-minute wait for definitions. Later turns reuse the
+    /// prefix, so this bounds the one-time cost.
+    static let nativeToolPrefillBudgetSeconds = 60.0
+
+    /// Why the native lane is or is not used for a set of definitions.
+    enum NativeToolBudget: Equatable {
+        case allowed
+        /// The definitions would take too much of the window.
+        case tooLargeForWindow
+        /// Prefilling them would take longer than `nativeToolPrefillBudgetSeconds`.
+        case tooSlowToPrefill
+        /// No prefill speed has been observed for this checkpoint yet, so the
+        /// cost in time is unknown. Decided as a no: the text lane works, and
+        /// guessing wrong the other way costs minutes.
+        case prefillSpeedUnknown
+    }
+
+    /// Whether `toolTokens` of definitions fit the share of a window above.
+    static func nativeToolsFit(toolTokens: Int, maxContext: UInt32) -> Bool {
+        Double(toolTokens) <= Double(maxContext) * nativeToolWindowFraction
+    }
+
+    /// The pure decision, so each reason is testable without an engine.
+    ///
+    /// - Parameter ignoresPrefillSpeed: the user's explicit choice to accept a
+    ///   slow first turn (`nativeToolCallingIgnoresSpeed`). It skips only the
+    ///   time rule; the window rule always applies, because no amount of
+    ///   patience makes definitions that fill the window fit beside the
+    ///   conversation.
+    static func nativeToolBudget(
+        toolTokens: Int, maxContext: UInt32, prefillTokensPerSecond: Double?,
+        ignoresPrefillSpeed: Bool = false
+    ) -> NativeToolBudget {
+        guard nativeToolsFit(toolTokens: toolTokens, maxContext: maxContext) else {
+            return .tooLargeForWindow
+        }
+        if toolTokens == 0 || ignoresPrefillSpeed { return .allowed }
+        guard let rate = prefillTokensPerSecond, rate > 0 else { return .prefillSpeedUnknown }
+        return Double(toolTokens) / rate <= nativeToolPrefillBudgetSeconds
+            ? .allowed : .tooSlowToPrefill
+    }
+
+    /// What `specs` add to a prompt, measured by the engine (the checkpoint's
+    /// own template decides this, so an estimate from the JSON would be a
+    /// guess) and cached for the session. Nil if it cannot be measured.
+    func nativeToolTokenCost(_ specs: [ToolSpec], session: TurboSparkSession) async -> Int? {
+        guard !specs.isEmpty, let encoded = try? JSONEncoder().encode(specs) else { return 0 }
+        var hasher = Hasher()
+        hasher.combine(ObjectIdentifier(session))
+        hasher.combine(encoded)
+        let key = hasher.finalize()
+        if let known = nativeToolCostCache[key] { return known }
+        let probe = [ChatMessage.user(".")]
+        guard let bare = try? await session.countTokens(probe),
+            let priced = try? await session.countTokens(probe, tools: specs)
+        else { return nil }
+        let cost = max(0, priced - bare)
+        nativeToolCostCache[key] = cost
+        return cost
+    }
+
+    /// The budget verdict for `specs` on this session: the definitions' measured
+    /// cost against the window, and against this checkpoint's observed prefill
+    /// speed. An unmeasurable cost is a no, the safe direction.
+    func nativeToolBudget(_ specs: [ToolSpec], session: TurboSparkSession) async -> NativeToolBudget {
+        guard let cost = await nativeToolTokenCost(specs, session: session) else {
+            return .prefillSpeedUnknown
+        }
+        return Self.nativeToolBudget(
+            toolTokens: cost, maxContext: session.info.maxContext,
+            prefillTokensPerSecond: prefillRates.rate(for: session.info.modelPath),
+            ignoresPrefillSpeed: nativeToolCallingIgnoresSpeed)
+    }
+
+    func nativeToolBudgetAllows(_ specs: [ToolSpec], session: TurboSparkSession) async -> Bool {
+        await nativeToolBudget(specs, session: session) == .allowed
+    }
+
+    /// Remembers how fast this checkpoint prefilled on the turn that just
+    /// finished, for the next turn's budget decision (and the next launch's).
+    ///
+    /// Only tokens the engine actually prefilled count: a turn that reused its
+    /// cached prefix prefilled almost nothing, and dividing the whole prompt by
+    /// that time would report an absurdly fast checkpoint. Tiny prefills are
+    /// ignored, since their time is mostly fixed overhead.
+    func recordPrefillRate(from result: GenerationResult, session: TurboSparkSession) {
+        guard let rate = PrefillRateStore.observedRate(
+            promptTokens: result.promptTokens, reusedTokens: result.reusedPrefixTokens,
+            prefillSeconds: result.prefillSeconds)
+        else { return }
+        prefillRates.record(rate, for: session.info.modelPath)
+    }
+
     // MARK: - Replay
 
     /// True when every call on the row came from native tool calling (and
@@ -174,5 +285,43 @@ extension AppModel {
             }
         }
         return out
+    }
+}
+
+/// Observed prefill speed per checkpoint, remembered across launches.
+///
+/// A plain per-user preference, not profile data: it describes a model file on
+/// this machine, not anything the user wrote. Smoothed so one unusual turn
+/// (a thermal dip, a background job) does not flip the lane.
+struct PrefillRateStore {
+    /// Prefills shorter than this say more about fixed overhead than speed.
+    static let minimumTokens = 256
+    static let key = "TurboSpark.observedPrefillTokensPerSecond"
+    var defaults: UserDefaults = .standard
+
+    /// The speed a turn demonstrated, or nil if it demonstrated none.
+    ///
+    /// Only tokens the engine actually prefilled count: a turn that reused its
+    /// cached prefix prefilled almost nothing, and dividing the whole prompt by
+    /// that time would report an absurdly fast checkpoint. Short or sub-second
+    /// prefills are ignored, since their time is mostly fixed overhead.
+    static func observedRate(promptTokens: Int, reusedTokens: Int, prefillSeconds: Double) -> Double? {
+        let fresh = promptTokens - reusedTokens
+        guard fresh >= minimumTokens, prefillSeconds >= 1, prefillSeconds.isFinite else { return nil }
+        return Double(fresh) / prefillSeconds
+    }
+
+    func rate(for modelPath: String) -> Double? {
+        let rates = defaults.dictionary(forKey: Self.key) as? [String: Double]
+        return rates?[modelPath].flatMap { $0 > 0 ? $0 : nil }
+    }
+
+    func record(_ rate: Double, for modelPath: String) {
+        guard rate.isFinite, rate > 0 else { return }
+        var rates = (defaults.dictionary(forKey: Self.key) as? [String: Double]) ?? [:]
+        // Weighted toward the newest observation, so a change in how the
+        // machine is running is followed within a couple of turns.
+        rates[modelPath] = rates[modelPath].map { $0 * 0.5 + rate * 0.5 } ?? rate
+        defaults.set(rates, forKey: Self.key)
     }
 }

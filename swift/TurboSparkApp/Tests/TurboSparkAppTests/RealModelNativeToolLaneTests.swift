@@ -66,6 +66,24 @@ final class RealModelNativeToolLaneTests: XCTestCase {
         print("PROMPT tokens bare=\(bare) with tools=\(priced)")
         XCTAssertGreaterThan(priced, bare + 200, "a full tool set must be visible to the budget")
 
+        // The lane's budget rule, against the engine's own measurement. The
+        // speed is unknown until a turn has been observed, and an unknown speed
+        // is a no, so a fresh checkpoint starts on the text lane.
+        let defaultsName = "native-lane-rates-\(UUID().uuidString)"
+        let rateDefaults = UserDefaults(suiteName: defaultsName)!
+        defer { rateDefaults.removePersistentDomain(forName: defaultsName) }
+        model.prefillRates = PrefillRateStore(defaults: rateDefaults)
+        let measured = await model.nativeToolTokenCost(specs, session: session)
+        let cost = try XCTUnwrap(measured)
+        XCTAssertEqual(cost, priced - bare, accuracy: 8, "the guard measures what the meter measures")
+        let beforeAnyTurn = await model.nativeToolBudget(specs, session: session)
+        XCTAssertEqual(beforeAnyTurn, .prefillSpeedUnknown)
+        let allowedBeforeAnyTurn = await model.nativeToolBudgetAllows(specs, session: session)
+        XCTAssertFalse(allowedBeforeAnyTurn)
+        XCTAssertFalse(
+            AppModel.nativeToolsFit(toolTokens: cost, maxContext: 8_192),
+            "an 8k window would be mostly tool definitions, so it uses the text lane")
+
         func run(_ history: [ChatMessage]) async throws -> (GenerationResult, [GenerationToolCall]) {
             var result: GenerationResult?
             var calls: [GenerationToolCall] = []
@@ -82,6 +100,18 @@ final class RealModelNativeToolLaneTests: XCTestCase {
         // Turn 1: the model calls a tool; the app's gate validates it.
         let (first, firstCalls) = try await run(messages)
         print("TURN1 stop=\(first.stopReason) calls=\(firstCalls.map { "\($0.name) \($0.argumentsJSON)" }) content=\(first.content.prefix(160))")
+        print("TIMING1 promptTokens=\(first.promptTokens) prefill=\(String(format: "%.1f", first.prefillSeconds))s decode=\(String(format: "%.1f", first.decodeSeconds))s newTokens=\(first.newTokens)")
+        // Observed from this turn, exactly as the app records it; the verdict
+        // must then be the pure rule applied to that measured speed.
+        model.recordPrefillRate(from: first, session: session)
+        let observed = try XCTUnwrap(model.prefillRates.rate(for: session.info.modelPath))
+        let verdict = await model.nativeToolBudget(specs, session: session)
+        print("BUDGET observed=\(String(format: "%.1f", observed)) tok/s cost=\(cost) tokens -> \(verdict)")
+        XCTAssertEqual(
+            verdict,
+            AppModel.nativeToolBudget(
+                toolTokens: cost, maxContext: session.info.maxContext,
+                prefillTokensPerSecond: observed))
         XCTAssertEqual(first.stopReason, .toolCalls)
         let gate = ToolCallDispatchGate.evaluate(
             content: first.content, streamState: .completed, availableTools: tools,
@@ -108,6 +138,7 @@ final class RealModelNativeToolLaneTests: XCTestCase {
             for: row, nativeLane: true, mediaCapability: .textOnly))
         let (second, secondCalls) = try await run(messages)
         print("TURN2 stop=\(second.stopReason) calls=\(secondCalls.count) content=\(second.content.prefix(200))")
+        print("TIMING2 promptTokens=\(second.promptTokens) reused=\(second.reusedPrefixTokens) prefill=\(String(format: "%.1f", second.prefillSeconds))s decode=\(String(format: "%.1f", second.decodeSeconds))s newTokens=\(second.newTokens)")
         XCTAssertNotEqual(second.stopReason, .toolCalls, "it should answer, not loop")
         XCTAssertTrue(
             second.content.uppercased().contains("PINEAPPLE"),

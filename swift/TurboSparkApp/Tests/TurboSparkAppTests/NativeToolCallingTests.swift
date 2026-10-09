@@ -160,6 +160,131 @@ final class NativeToolCallingTests: XCTestCase {
         XCTAssertFalse(native.contains("one tool call block each"))
     }
 
+    // MARK: budget
+
+    func testTheToolDefinitionsMayTakeAtMostTheirShareOfTheWindow() {
+        // The share is 40%: the measured 6,100-token, 40-tool set fits a 16k
+        // window and does not fit an 8k one.
+        XCTAssertEqual(AppModel.nativeToolWindowFraction, 0.4)
+        XCTAssertTrue(AppModel.nativeToolsFit(toolTokens: 6_100, maxContext: 16_384))
+        XCTAssertFalse(AppModel.nativeToolsFit(toolTokens: 6_100, maxContext: 8_192))
+        XCTAssertFalse(AppModel.nativeToolsFit(toolTokens: 6_100, maxContext: 4_096))
+        XCTAssertTrue(AppModel.nativeToolsFit(toolTokens: 0, maxContext: 4_096), "no tools always fit")
+        // The boundary itself is inclusive.
+        XCTAssertTrue(AppModel.nativeToolsFit(toolTokens: 400, maxContext: 1_000))
+        XCTAssertFalse(AppModel.nativeToolsFit(toolTokens: 401, maxContext: 1_000))
+    }
+
+    func testTheBudgetSaysWhichLimitStoppedTheLane() {
+        let fast = 400.0
+        // 6,100 tokens at 400 tok/s is ~15 s: allowed on a roomy window.
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(toolTokens: 6_100, maxContext: 32_768, prefillTokensPerSecond: fast),
+            .allowed)
+        // The window check comes first, whatever the speed.
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(toolTokens: 6_100, maxContext: 8_192, prefillTokensPerSecond: fast),
+            .tooLargeForWindow)
+        // Bonsai 2 measured 5.6 tok/s: ~1,090 s for the same definitions.
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(toolTokens: 6_100, maxContext: 32_768, prefillTokensPerSecond: 5.6),
+            .tooSlowToPrefill)
+        // Not yet observed: the safe answer, not a guess.
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(toolTokens: 6_100, maxContext: 32_768, prefillTokensPerSecond: nil),
+            .prefillSpeedUnknown)
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(toolTokens: 6_100, maxContext: 32_768, prefillTokensPerSecond: 0),
+            .prefillSpeedUnknown, "a zero rate is no information")
+        // Nothing to prefill needs no speed.
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(toolTokens: 0, maxContext: 4_096, prefillTokensPerSecond: nil),
+            .allowed)
+        // The time limit is inclusive: 60 s at 100 tok/s is 6,000 tokens.
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(toolTokens: 6_000, maxContext: 32_768, prefillTokensPerSecond: 100),
+            .allowed)
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(toolTokens: 6_001, maxContext: 32_768, prefillTokensPerSecond: 100),
+            .tooSlowToPrefill)
+    }
+
+    func testAcceptingASlowFirstTurnSkipsOnlyTheTimeRule() {
+        // The very cases that were refused for time are allowed...
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(
+                toolTokens: 6_100, maxContext: 32_768, prefillTokensPerSecond: 5.6,
+                ignoresPrefillSpeed: true),
+            .allowed)
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(
+                toolTokens: 6_100, maxContext: 32_768, prefillTokensPerSecond: nil,
+                ignoresPrefillSpeed: true),
+            .allowed, "no observed speed is no obstacle once the user has accepted the wait")
+        // ...but patience does not make definitions that fill the window fit.
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(
+                toolTokens: 6_100, maxContext: 8_192, prefillTokensPerSecond: 5_000,
+                ignoresPrefillSpeed: true),
+            .tooLargeForWindow)
+        // Off is the default and changes nothing.
+        XCTAssertEqual(
+            AppModel.nativeToolBudget(toolTokens: 6_100, maxContext: 32_768, prefillTokensPerSecond: 5.6),
+            .tooSlowToPrefill)
+    }
+
+    func testTheSlowFirstTurnOptInIsOffByDefaultAndPersists() throws {
+        var settings = MacAppSettings()
+        XCTAssertFalse(settings.nativeToolCallingIgnoresSpeed)
+        XCTAssertFalse(AppModel().nativeToolCallingIgnoresSpeed)
+        settings.nativeToolCallingIgnoresSpeed = true
+        let restored = try JSONDecoder().decode(
+            MacAppSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertTrue(restored.nativeToolCallingIgnoresSpeed)
+        let legacy = try JSONDecoder().decode(MacAppSettings.self, from: Data("{}".utf8))
+        XCTAssertFalse(legacy.nativeToolCallingIgnoresSpeed, "settings written before the option stay conservative")
+    }
+
+    private func isolatedRates() -> (PrefillRateStore, () -> Void) {
+        let name = "prefill-rates-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        return (PrefillRateStore(defaults: defaults), { defaults.removePersistentDomain(forName: name) })
+    }
+
+    func testObservedPrefillSpeedIsRememberedPerCheckpointAndSmoothed() {
+        let (store, cleanup) = isolatedRates()
+        defer { cleanup() }
+        XCTAssertNil(store.rate(for: "/models/a"))
+        store.record(100, for: "/models/a")
+        XCTAssertEqual(store.rate(for: "/models/a"), 100)
+        store.record(200, for: "/models/a")
+        XCTAssertEqual(store.rate(for: "/models/a"), 150, "weighted toward the newest")
+        XCTAssertNil(store.rate(for: "/models/b"), "another checkpoint is not affected")
+        store.record(.infinity, for: "/models/a")
+        store.record(-5, for: "/models/a")
+        store.record(.nan, for: "/models/a")
+        XCTAssertEqual(store.rate(for: "/models/a"), 150, "nonsense observations are ignored")
+    }
+
+    func testOnlyTokensTheEnginePrefilledCountTowardTheObservedSpeed() {
+        // A full prefill: 6,000 tokens in 60 s.
+        XCTAssertEqual(
+            PrefillRateStore.observedRate(promptTokens: 6_000, reusedTokens: 0, prefillSeconds: 60),
+            100)
+        // A turn that reused its prefix prefilled 60 tokens in 0.6 s. Counting
+        // the whole prompt would read as a 10,000 tok/s checkpoint.
+        XCTAssertNil(
+            PrefillRateStore.observedRate(promptTokens: 6_000, reusedTokens: 5_940, prefillSeconds: 0.6))
+        // Even with a long enough prefill, only the fresh part is the numerator.
+        XCTAssertEqual(
+            PrefillRateStore.observedRate(promptTokens: 6_000, reusedTokens: 3_000, prefillSeconds: 30),
+            100)
+        // Sub-second and tiny prefills are overhead, not speed.
+        XCTAssertNil(PrefillRateStore.observedRate(promptTokens: 6_000, reusedTokens: 0, prefillSeconds: 0.2))
+        XCTAssertNil(PrefillRateStore.observedRate(promptTokens: 100, reusedTokens: 0, prefillSeconds: 5))
+        XCTAssertNil(PrefillRateStore.observedRate(promptTokens: 6_000, reusedTokens: 0, prefillSeconds: .nan))
+    }
+
     // MARK: replay
 
     private func nativeRow(

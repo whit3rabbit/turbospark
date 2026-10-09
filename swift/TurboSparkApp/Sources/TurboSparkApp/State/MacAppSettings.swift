@@ -328,6 +328,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Offer tools through the engine's native tool calling when the loaded
     /// checkpoint supports it. Off keeps the prompt-described text lane.
     public var nativeToolCallingEnabled: Bool
+    /// Accept a slow first turn for native tool calling (skips the prefill-time
+    /// limit; the context-window limit still applies).
+    public var nativeToolCallingIgnoresSpeed: Bool
     /// Whether pinned standing instructions may be injected into requests.
     public var instructionPinningEnabled: Bool
     /// Minimum token savings required before microcompact changes a request.
@@ -486,6 +489,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         microcompactEnabled: Bool = true,
         autoContinuationEnabled: Bool = true,
         nativeToolCallingEnabled: Bool = true,
+        nativeToolCallingIgnoresSpeed: Bool = false,
         instructionPinningEnabled: Bool = true,
         microcompactMinimumSavingsTokens: Int = 512,
         instructionPinTokenCeiling: Int = 512,
@@ -566,6 +570,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.microcompactEnabled = microcompactEnabled
         self.autoContinuationEnabled = autoContinuationEnabled
         self.nativeToolCallingEnabled = nativeToolCallingEnabled
+        self.nativeToolCallingIgnoresSpeed = nativeToolCallingIgnoresSpeed
         self.instructionPinningEnabled = instructionPinningEnabled
         self.microcompactMinimumSavingsTokens = microcompactMinimumSavingsTokens
         self.instructionPinTokenCeiling = instructionPinTokenCeiling
@@ -706,6 +711,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .autoContinuationEnabled, fallback: true)
         self.nativeToolCallingEnabled = c.decodeLenient(
             Bool.self, forKey: .nativeToolCallingEnabled, fallback: true)
+        self.nativeToolCallingIgnoresSpeed = c.decodeLenient(
+            Bool.self, forKey: .nativeToolCallingIgnoresSpeed, fallback: false)
         self.instructionPinningEnabled = c.decodeLenient(
             Bool.self, forKey: .instructionPinningEnabled, fallback: true)
         self.microcompactMinimumSavingsTokens = c.decodeLenient(

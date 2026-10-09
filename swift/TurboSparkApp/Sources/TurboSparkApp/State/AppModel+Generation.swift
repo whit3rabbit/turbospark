@@ -93,9 +93,9 @@ extension AppModel {
         // parses the checkpoint's own call markup; the prompt does not also
         // describe them. An empty offer is the text lane, so a turn with no
         // tools reads exactly as it always did.
-        let nativeToolSpecs = nativeToolLane(project: turnProject)
+        var nativeToolSpecs = nativeToolLane(project: turnProject)
             ? Self.nativeToolSpecs(from: turnAvailableTools) : []
-        let nativeLane = !nativeToolSpecs.isEmpty
+        var nativeLane = !nativeToolSpecs.isEmpty
 
         generationEpoch += 1
         let myEpoch = generationEpoch
@@ -142,6 +142,15 @@ extension AppModel {
             var generationRequestIndex = 0
             var continuationRequestsStarted = 0
             do {
+                // The definitions' measured cost must fit their share of the
+                // window, or this turn describes tools in the prompt instead
+                // (see `nativeToolWindowFraction`). Decided before anything is
+                // built from the lane, and by the rule the token meter uses.
+                if nativeLane, !(await self.nativeToolBudgetAllows(nativeToolSpecs, session: session)) {
+                    nativeToolSpecs = []
+                    nativeLane = false
+                    options.tools = []
+                }
                 await self.interruptTitleGenerationForForeground()
                 await self.interruptMemoryCaptureForForeground()
                 await self.prepareSemanticMemoryRecall(
@@ -353,6 +362,7 @@ extension AppModel {
                             )
                             // Account for every model request, including each
                             // continuation segment, exactly once.
+                            self.recordPrefillRate(from: result, session: session)
                             self.recordUsage(
                                 promptTokens: result.promptTokens,
                                 outputTokens: result.newTokens,

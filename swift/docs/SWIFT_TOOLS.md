@@ -25,8 +25,10 @@ or `docs/`.
 A tool call passes through five stages, and the permission gate is NOT one
 of the registry's. It sits in the caller.
 
-1. **Parse.** `Tools/Core/ToolCallParser` pulls calls out of the reply. It
-   is the only parser, with two callers, `State/AppModel+AgentLoop` and
+1. **Parse.** `Tools/Core/ToolCallParser` pulls calls out of the reply, or,
+   in the native lane (below), receives them already parsed by the engine
+   and builds the same `AppToolCall`. It is the only reader of text, with
+   two callers, `State/AppModel+AgentLoop` and
    `State/SubagentRunner`. Each keeps its own guard and neither keeps its
    own parser. On the main loop, `Tools/Guardrails/ForgeGuardrailsEngine`
    runs first (`State/AppModel+Generation.swift`), rescuing a call the
@@ -52,6 +54,87 @@ of the registry's. It sits in the caller.
 5. **Render.** `Generation/ToolCallDiffFormatter.summarize` builds the
    card's one-line summary by tool name, and `Generation/ToolCallCardView`
    carries one name-keyed branch, the todo checklist.
+
+### The native lane (`State/AppModel+NativeToolCalling.swift`)
+
+Until 2026-10 a turn taught the model the app's own `<tool_call>` text
+format in the system prompt (a list of tool names and descriptions, no
+parameter schemas), read calls back out of the reply, and replayed them as
+text. When the loaded checkpoint frames tool calls natively
+(`session.info.toolCalling.native`) and the user has not turned
+`nativeToolCallingEnabled` off (General settings, default on), the turn uses
+the engine's tool calling instead:
+
+- **Offering.** `GenerateOptions.tools` carries the turn's
+  `promptDefinitions` as full JSON schemas, rendered by the checkpoint's own
+  chat template. The system prompt drops the tool list and the invocation
+  format (`systemPromptAddendum(nativeToolCalling:)`) and keeps the task
+  tracking and subagent guidance.
+- **Parsing.** The engine returns structured calls (`.toolCall` events). They
+  become `ToolCallParser.nativeCandidates` and enter
+  `ToolCallDispatchGate.evaluate(nativeCalls:)`, which runs the SAME schema
+  validation (`TurnAvailableTools.validate`) as a text call, then the same
+  hooks, permission engine, risk classifier, approval cards and executors.
+  Nothing after "a call exists" changed. With native calls present the reply
+  text is prose and neither the text arms nor Forge inspect it; with none, the
+  text gate runs as before, so a model that answers in the app's format
+  anyway still works.
+- **Replay.** A native row (`AppToolCall.nativeCallID` set, persisted) goes
+  back as an assistant `toolCalls` entry plus an id-matched `tool` message,
+  and the result is sent BARE because the template wraps it. Every other row
+  replays as it always did. If native calling is later off, or the checkpoint
+  changes, a native row is written back as text, so a chat can cross lanes.
+  `AppModel.historyMessages(for:nativeLane:mediaCapability:)` is the one place
+  this is decided, shared by the prompt builder and the token estimate.
+- **Budget, in space and in time.** The definitions are not free. The 40-tool
+  set measures about 6,100 tokens against 650 for the same prompt without it,
+  and prefill on this engine is slow for the installed checkpoints:
+
+  | Checkpoint | First turn (6,751 prompt tokens) | Second turn (prefix reused) |
+  |---|---|---|
+  | Qwen 3.6 | 335 s prefill (about 20 tok/s) | 2.6 s |
+  | Bonsai 2 | 1,207 s prefill (about 5.6 tok/s) | 7.8 s |
+
+  (Apple M4 Max, `RealModelNativeToolLaneTests`, on AC power but NOT a quiet
+  machine: load average about 7 while another session was building, so these
+  are pessimistic, perhaps by up to 2x. Qwen 3.6 ranged 255-342 s over three
+  runs; it also streams its experts from disk, so a cold run is a worst case.)
+  They are not a test artifact. Prefill here is one forward pass per prompt
+  token (`docs/BATCHED_PREFILL.md`), so it runs near decode speed, and even
+  Gemma 4 with its chunked driver is documented at 42 tok/s
+  (`docs/BENCHMARKS.md`), about 145 s for these definitions. The cached second
+  turn is why the cost is one-time per conversation, but the KV prefix belongs
+  to the session, so it is paid again after switching chats. A client such as
+  Claude Code or OpenCode over the in-process server sends a larger prompt than
+  this and meets the same one-time cost (not measured here). So the lane is gated
+  twice, by the same rule for the turn and for the token meter
+  (`AppModel.nativeToolBudget`): the definitions must take at most 40% of the
+  window (`nativeToolWindowFraction`), AND prefilling them must take at most
+  60 s at this checkpoint's OBSERVED prefill speed
+  (`nativeToolPrefillBudgetSeconds`, speeds remembered per checkpoint in
+  `PrefillRateStore`). A checkpoint with no observed speed yet uses the text
+  lane, because guessing wrong costs minutes. **At today's prefill speeds that
+  means no measured checkpoint passes the 60 s rule with the full 40-tool set
+  (both installed ones use the text lane), so the lane is effectively opt-in.**
+  General settings has "Use it even when the first turn is slow"
+  (`nativeToolCallingIgnoresSpeed`, default off), which skips only the time rule
+  for users who prefer native calling and accept a one-time wait; the window
+  rule still applies. The ways to make the lane cheap by default are to offer
+  fewer tools natively (the rest reachable through the existing deferred-tool
+  bridge) or to shorten the schemas; neither is done, because each changes what
+  the model can see. `countTokens(tools:)` and `fitWindow(tools:)` give the
+  engine's own count, and microcompact clears old native results by call id.
+- **Not covered.** `SubagentRunner` has its own loop and stays on the text
+  lane. The bounded skill-state prompt assembles its own tool text and stays
+  on it. A checkpoint with `toolCalling.native == false` keeps the text lane
+  and Forge guardrails.
+
+Verified against real checkpoints with the app's real 40-tool set, prompt
+builder, gate, executor and replay (`RealModelNativeToolLaneTests`, Qwen 3.6),
+and the engine surface on Qwen 3.6 and Bonsai 2 (`RealModelToolCallingTests`).
+Not covered by a test that drives the SwiftUI loop itself, and not run on other
+families (Gemma, Llama, Harmony); those get the lane whenever the engine
+reports native calling, so treat a surprise there as a lane bug first.
 
 The two callers differ on purpose:
 
@@ -557,8 +640,10 @@ quarantine-protected nor test-redirected (Gotcha 43).
 ## 11. How MCP tools reach the model: advertisement, approval, rules
 
 Three layers sit between a discovered MCP tool and a model's use of it.
-Each exists because the turn path has NO `tools` array: the model reads its
-vocabulary from the system prompt and emits `<tool_call>` blocks. Dynamic MCP
+Each exists because the text lane has NO `tools` array: the model reads its
+vocabulary from the system prompt and emits `<tool_call>` blocks. (In the
+native lane the offered `promptDefinitions` are the tools array; deferred MCP
+tools stay deferred, and the engine only reports a call to an offered name.) Dynamic MCP
 tools therefore use progressive disclosure: the bridge tools are eager, while
 the dynamic catalog exposes names and short descriptions first, then loads a
 full schema only when requested.

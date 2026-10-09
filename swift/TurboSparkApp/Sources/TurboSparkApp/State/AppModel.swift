@@ -265,6 +265,14 @@ public final class AppModel: ObservableObject {
     /// Offer tools through the engine's native tool calling when the loaded
     /// checkpoint supports it, instead of describing them in the prompt.
     @Published public var nativeToolCallingEnabled: Bool = true
+    /// Use native tool calling even when the definitions would take longer than
+    /// the prefill-time budget to process the first time. Off by default.
+    @Published public var nativeToolCallingIgnoresSpeed: Bool = false
+    /// What a tool set costs in prompt tokens, measured once per (session,
+    /// tool set) by `nativeToolTokenCost`. Not published: nothing renders it.
+    var nativeToolCostCache: [Int: Int] = [:]
+    /// Observed prefill speed per checkpoint, for the native lane's time budget.
+    var prefillRates = PrefillRateStore()
     /// Whether pinned standing instructions may be injected into requests.
     @Published public var instructionPinningEnabled: Bool = true
     /// Minimum token savings required before microcompact changes a request.

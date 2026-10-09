@@ -494,15 +494,37 @@ What the engine does and does not do:
   only renderer that can express tools, so a checkpoint that ships none
   refuses the turn by name. A misspelled offer (an empty or repeated name, a
   `parameters` that is not a JSON object) is refused before any decoding.
-- **Tool definitions count toward the prompt**, and `countTokens` and
-  `fitWindow` do not see them. Leave extra room when budgeting.
+- **Tool definitions count toward the prompt, so budget with them.**
+  `countTokens(_:reasoning:tools:)` and `fitWindow(_:maxTokens:reasoning:tools:)`
+  render the offered definitions into the measured prompt; without `tools:`
+  they measure the conversation alone. They are not small: a 40-tool set with
+  full schemas measured about 6,100 tokens against 650 for the same prompt
+  without it. Measure a candidate set's cost as
+  `countTokens(probe, tools: set) - countTokens(probe)` and decide whether it
+  fits the window before offering it (`AppModel.nativeToolWindowFraction`
+  takes 40%). **Space is not the only cost: time is.** Prefill is sequential
+  for most families here, so the same 6,751-token prompt took 335 s to prefill
+  on Qwen 3.6 (about 20 tok/s) and 1,207 s on Bonsai 2 (about 5.6 tok/s) on
+  the first turn, against 2.6 s and 7.8 s once the prefix was cached. Bound the
+  first-turn cost by `definitionTokens / observedPrefillTokensPerSecond`, as
+  the app does (`nativeToolPrefillBudgetSeconds`, 60 s).
 - **The binding runs nothing.** Executing a tool, and the loop around it, is
-  the host's job. `TurboSparkApp` still uses its own parser and guardrails
-  (`Tools/Core/*`, `Tools/Guardrails/*`) because they also cover checkpoints
-  whose markup is not native, and moving the app's agent loop onto this
-  surface is a behaviour change that needs the real-model gates in
-  `.claude/docs/model-gates.md`. This surface is covered end to end on a
-  scripted model (`crates/ffi/tests/c_surface.rs`), not on a real checkpoint.
+  the host's job. `TurboSparkApp` uses this surface for its main agent loop
+  when the checkpoint reports `toolCalling.native` (see
+  `swift/docs/SWIFT_TOOLS.md`, "The native lane"), and keeps its own text
+  format, parser and guardrails for checkpoints that do not.
+- **The app gates its use of this.** `TurboSparkApp` offers tools natively only
+  when the definitions fit 40% of the window and would prefill within 60 s at
+  the checkpoint's observed speed. No measured checkpoint meets the second
+  rule with a 40-tool set, so the app stays on its text lane unless the user
+  chooses "Use it even when the first turn is slow" in General settings. The
+  limit is time, not context size: 6,100 tokens is small, but prefill here is
+  per-token (see `swift/docs/SWIFT_TOOLS.md` for the measurements).
+- **Evidence.** The engine surface is covered on a scripted model
+  (`crates/ffi/tests/c_surface.rs`) and against real checkpoints
+  (`RealModelToolCallingTests`: Qwen 3.6 and Bonsai 2 each called
+  `get_weather {"city":"Oslo"}`, stopped with `.toolCalls`, and used the
+  replayed result). Other families are not yet run against a real model.
 
 ### Estimating tokens
 
@@ -1062,8 +1084,8 @@ do {
 }
 ```
 
-`.cancelled` is the caller's own cancel request ending an install or an audio
-job. It is not a failure and should not be shown as one. (A cancelled TEXT turn
+`.cancelled` is the caller's own cancel request ending an install, an audio
+job, or an audio open (`AudioOpenToken`). It is not a failure and should not be shown as one. (A cancelled TEXT turn
 is not an error at all: it returns normally with `stopReason == .cancelled` and
 the partial text.) `.busy` means the resource is in use by another operation,
 today the native audio device or session; unlike `.open`, retrying once that
@@ -1218,6 +1240,9 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_daemon_stop()` | stop background daemon if running |
 | `ts_daemon_start(args_json)` | start background server daemon with optional arguments |
 | `ts_daemon_restart(args_json)` | restart background server daemon with optional arguments |
+| `ts_session_count_tokens_with_tools(s, messages, reasoning, tools_json, out_count)` | the prompt token count with the offered tool definitions rendered in |
+| `ts_session_fit_window_with_tools_json(s, messages, reasoning, tools_json, max_tokens, out)` | window fit measured with the offered tool definitions |
+| `ts_audio_open_token_new/_cancel/_free`, `ts_audio_session_open_cancellable` | a stoppable, observable audio open (see "Audio") |
 | `ts_audio_*`, `ts_heavy_work_*` | the native audio surface (catalog, install, adopt, delete, delete_legacy, sessions and jobs); see "Audio" below and the header's audio block |
 
 ### A complete C example
@@ -1500,9 +1525,18 @@ non-Qwen `model_type`, and cannot cancel an in-flight finish. Prefer
 
 ### Known limits
 
-- **Opening a managed model hashes every byte** with no progress and no cancel
-  (`ts_audio_session_open`), including after each idle unload. Call it off the
-  main thread and expect it to take a while on a multi-gigabyte model.
+- **Opening a managed model hashes every byte**, including after each idle
+  unload, so it takes a while on a multi-gigabyte model; call it off the main
+  thread. It can now be stopped and observed: create an `AudioOpenToken`, pass
+  it with an `onProgress` handler to
+  `AudioSession.init(modelPath:task:...openToken:onProgress:)`, and `cancel()`
+  from any thread. Progress arrives as `AudioProgress(stage: "verifying",
+  completed:, total:)` in bytes, about every 16 MiB. A stop is honoured within
+  about 1 MiB of hashing, and once more just before the engine loads; the load
+  itself is not interruptible. A stopped open throws a `TurboSparkError` with
+  `.cancelled`. The integrity check is unchanged (a stop never reports success
+  and a mismatch is still refused), and the result is still not cached. A
+  folder you chose yourself is not verified, so it reports nothing.
 - **Music progress is indeterminate.** The runtime reports `completed: 0` with
   no total; the generator has determinate counters that are not wired through
   yet.
@@ -1628,11 +1662,11 @@ its symptom is a mutation check whose result never moves.
 Stated so the omissions are decisions on the record rather than gaps.
 
 - **Running a tool, or tool calls on a checkpoint whose markup is not
-  native.** Offering tools and parsing native calls IS supported now (see
-  "Tool calling"); executing a tool is the host's job, and
+  native.** Offering tools and parsing native calls IS supported (see "Tool
+  calling"); executing a tool is the host's job, and
   `info.toolCalling.native == false` checkpoints need the host's own repair
-  layer (the app's guardrails), which the server also has and this surface does
-  not.
+  layer (the app's text lane and guardrails), which the server also has and
+  this surface does not.
 - **Logprobs, grammar-constrained or structured output, perplexity, and KV
   save/restore.** These do not exist in the Rust runtime (the server only warns
   on `response_format`), so they are not binding gaps.
@@ -1682,10 +1716,9 @@ purpose. Each would need new evidence or an explicit decision to change.
   would not do anything. The families that do run guidance (4, in
   `docs/IMAGE_GENERATION.md`) are where it could matter, and the app does not
   generate with them.
-- **Cancellable or cached audio open verification.** `ts_audio_session_open`
-  hashes every byte of a managed model. Caching the result would weaken an
-  integrity check, and the cancel flag it could take is only consulted between
-  files, not inside a large file's hash.
+- **A cached audio open verification.** Cancelling and observing it is
+  supported (see "Known limits"), but caching a successful result would weaken
+  an integrity check and is not offered.
 - **VAD, diarization, Moonshine, enhancement and separation** have Rust model
   code but no `Engine` variant in `runtime::native_audio`, so there is no
   session to open (`AudioTask.isRunnable` reports it). They also need catalog

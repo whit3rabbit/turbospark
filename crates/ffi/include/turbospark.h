@@ -732,8 +732,10 @@ int32_t ts_session_fit_window_with_tools_json(const TsSession *s,
  * Absent or empty renders and decodes exactly as before. Offering tools
  * renders through the checkpoint's own chat_template.jinja (the only renderer
  * that can express them), so a checkpoint that ships none refuses the turn by
- * name, and the definitions COUNT TOWARD THE PROMPT: ts_session_count_tokens
- * and ts_session_fit_window_json do not see them, so budget extra room.
+ * name, and the definitions COUNT TOWARD THE PROMPT, which can be thousands of
+ * tokens for a full tool set. ts_session_count_tokens and
+ * ts_session_fit_window_json do not see them; use the _with_tools variants,
+ * which take the same array, to budget for them.
  * Calls are parsed only in the checkpoint's NATIVE markup
  * (sessionInfo.toolCalling.native) and only for a function offered here; a
  * call to anything else is plain text. An empty or repeated name, or a

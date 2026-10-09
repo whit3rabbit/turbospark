@@ -181,7 +181,10 @@ extension AppModel {
     /// ONE builder, two consumers, for the same reason the estimate and
     /// `buildAppendOnlyHistory` were already kept on one path: the meter and
     /// the breakdown cannot be allowed to describe different conversations.
-    func buildEstimateParts() -> (
+    /// - Parameter allowNativeTools: the native lane's budget verdict
+    ///   (`nativeToolBudgetAllows`), decided by the caller because measuring it
+    ///   is async. Defaults to allowed; the lane's other conditions still apply.
+    func buildEstimateParts(allowNativeTools: Bool = true) -> (
         history: [ChatMessage], pieces: [ContextUsagePiece], attachmentTokens: Int,
         tools: [ToolSpec]
     ) {
@@ -191,7 +194,8 @@ extension AppModel {
         // The same decision the turn makes, from the same capture, so the
         // meter prices the tools the turn will actually send.
         let nativeSpecs: [ToolSpec] = {
-            guard let session, nativeToolLane(project: estimateProject) else { return [] }
+            guard allowNativeTools, let session, nativeToolLane(project: estimateProject)
+            else { return [] }
             return Self.nativeToolSpecs(
                 from: captureTurnTools(project: estimateProject, session: session))
         }()
@@ -337,7 +341,14 @@ extension AppModel {
             // Built after the debounce, not per keystroke: the build walks the
             // whole transcript, queries the DB per media reference and runs
             // memory search, which grew input lag with conversation length.
-            let parts = self.buildEstimateParts()
+            let estimateProject = self.turnProject(chatID: self.selectedChatID)
+            var allowNative = true
+            if self.nativeToolLane(project: estimateProject) {
+                let specs = Self.nativeToolSpecs(
+                    from: self.captureTurnTools(project: estimateProject, session: session))
+                allowNative = await self.nativeToolBudgetAllows(specs, session: session)
+            }
+            let parts = self.buildEstimateParts(allowNativeTools: allowNative)
             var exact: Int?
             if let count = try? await session.countTokens(
                 parts.history, reasoning: self.reasoning, tools: parts.tools)

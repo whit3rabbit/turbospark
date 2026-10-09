@@ -292,6 +292,18 @@ struct GeneralSettingsPaneView: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
 
+            Toggle(isOn: controls.nativeToolCallingIgnoresSpeed) {
+                Text("Use it even when the first turn is slow", bundle: .module)
+            }
+            .disabled(!controls.nativeToolCallingEnabled.wrappedValue)
+            .settingsControl("Use it even when the first turn is slow", pane: .general, timing: .nextTurn)
+            Text(
+                "Skips the time limit on processing tool definitions. On a slow model the first turn can take minutes while they are processed; later turns reuse them. The context-window limit still applies.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+
             Toggle(isOn: controls.instructionPinningEnabled) {
                 Text("Include pinned instructions in model requests", bundle: .module)
             }
@@ -362,6 +374,7 @@ struct ChatRuntimeSettingsBindings {
     let microcompactEnabled: Binding<Bool>
     let autoContinuationEnabled: Binding<Bool>
     let nativeToolCallingEnabled: Binding<Bool>
+    let nativeToolCallingIgnoresSpeed: Binding<Bool>
     let instructionPinningEnabled: Binding<Bool>
     let microcompactMinimumSavingsTokens: Binding<Int>
     let instructionPinTokenCeiling: Binding<Int>
@@ -385,6 +398,13 @@ struct ChatRuntimeSettingsBindings {
             get: { model.nativeToolCallingEnabled },
             set: { value in
                 model.nativeToolCallingEnabled = value
+                model.persistSettingsDebounced()
+            }
+        )
+        nativeToolCallingIgnoresSpeed = Binding(
+            get: { model.nativeToolCallingIgnoresSpeed },
+            set: { value in
+                model.nativeToolCallingIgnoresSpeed = value
                 model.persistSettingsDebounced()
             }
         )

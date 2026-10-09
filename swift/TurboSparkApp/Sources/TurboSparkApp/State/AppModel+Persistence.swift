@@ -113,6 +113,7 @@ extension AppModel {
         self.microcompactEnabled = settings.microcompactEnabled
         self.autoContinuationEnabled = settings.autoContinuationEnabled
         self.nativeToolCallingEnabled = settings.nativeToolCallingEnabled
+        self.nativeToolCallingIgnoresSpeed = settings.nativeToolCallingIgnoresSpeed
         self.instructionPinningEnabled = settings.instructionPinningEnabled
         self.microcompactMinimumSavingsTokens = settings.microcompactMinimumSavingsTokens
         self.instructionPinTokenCeiling = settings.instructionPinTokenCeiling
@@ -248,6 +249,7 @@ extension AppModel {
             microcompactEnabled: microcompactEnabled,
             autoContinuationEnabled: autoContinuationEnabled,
             nativeToolCallingEnabled: nativeToolCallingEnabled,
+            nativeToolCallingIgnoresSpeed: nativeToolCallingIgnoresSpeed,
             instructionPinningEnabled: instructionPinningEnabled,
             microcompactMinimumSavingsTokens: microcompactMinimumSavingsTokens,
             instructionPinTokenCeiling: instructionPinTokenCeiling,
