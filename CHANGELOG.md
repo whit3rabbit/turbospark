@@ -108,8 +108,12 @@ when this file gets updated relative to the version bump and the tag.
   in `TurboSparkAudio`.
 - `crates/runtime`: Whisper transcription progress reporting (`WhisperProgress`)
   with window-level and token-level streaming callbacks.
-- `crates/audio`, `crates/runtime`: MiniMax Music 0.3 flow guidance reuse
-  (`FlowGuidance`), benchmark drivers (`music3_bench`), and spectral distance tools.
+- `crates/audio`, `crates/runtime`, `crates/cli`: MiniMax Music 0.3 flow guidance reuse
+  (`FlowGuidance`, `turbospark-music generate --flow-uncond-interval N
+  [--flow-uncond-warmup N]`), benchmark drivers (`music3_bench`,
+  `ab_music3_flow.py`), and a spectral distance tool. Opt-in; the default
+  output is byte-identical. Interval 3 cut DiT time by 30 to 41 percent in an
+  8 s, 30-step measurement on a busy host (see the module README for limits).
 - `swift/TurboSparkApp`: native tool calling engine and comprehensive test suite
   in `NativeToolCallingTests`.
 - `swift/TurboSparkApp`: audio model installation manager and unmanaged legacy cleanup
@@ -311,6 +315,13 @@ when this file gets updated relative to the version bump and the tag.
   `ram_bits.json` 4/5/6/8-bit module assignments and safetensors shard layout.
 - `ROADMAP.md`: added priority item tracking Krea 2 Turbo Native MLX bring-up
   status, safety requirements, and remaining pipeline integration tasks.
+- `swift/TurboSparkApp`: added a Prompt generator to the Music tab that builds
+  a MiniMax Music style description from genre, mood, tempo, groove,
+  instruments, vocals, structure, and production choices (following the
+  published MiniMax Music prompt guide), warns when the vocal choice and the
+  lyrics field disagree, and includes a lyrics guide with section-tag and
+  song-layout insertion. Nothing is written to the description until
+  "Use as Description" is pressed.
 
 ### Changed
 - `swift/TurboSparkApp`: streamlined `ImagesSectionView` with centered progress
@@ -364,6 +375,11 @@ when this file gets updated relative to the version bump and the tag.
   Later repack lines still read as packing because there is no end marker yet.
 
 ### Fixed
+- `crates/catalog`: `pull-audio` for MiniMax Music 3 failed after a complete,
+  hash-verified download with "unexpected repository pin" because the transfer
+  returns the Hugging Face repo id lowercased and the check compared it
+  byte-for-byte. The repo id now compares ASCII case-insensitively, as
+  `hub.rs` already does; the revision pin is still exact.
 - `swift/TurboSparkApp`: use native `AudioObjectID` array rather than `NSNumber` in
   `CATapDescription` initializers to fix compilation on macOS 15+ SDK.
 - `swift/TurboSparkApp`: parenthesized optional existential type in

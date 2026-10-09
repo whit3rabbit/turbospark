@@ -41,6 +41,11 @@
   - _Depends: 2.2_
   - _Requirements: 3.1, 3.3, 3.5, 4.1, 4.3, 5.2_
   - _Design: 1, 3, 4_
+  - _Blocked: Debug round 1 returned STOP_FOR_HUMAN. An approved native BF16
+    parity prerequisite is missing under mlx-audio-models task 53. Identical
+    input/weight replay proves a shared Music3 GPU projection mismatch after
+    private model call-geometry corrections; GPU numerical repair is outside
+    this task boundary. See [debug report](debug-2.3.md)._
 
 - [ ] 3. Native ABI
 - [ ] 3.1 Add guarded audio catalog, model, and cancellable job handles
@@ -104,6 +109,12 @@
   independent review and all six physical tests with unchanged waveform gates.
   Full audio/runtime/GPU, Rust 1.82 Linux and control mutations passed; broad
   geometry, performance, peak-memory, ABI/app and feature gates remain separate.
+
+- Task 2.3 debug: paired CFG semantic/residual projection geometry changes BF16
+  results. The narrowed private correction passes warmup but full generation
+  still fails due to a matched-input Music3 Metal projection mismatch. Add an
+  approved upstream native BF16 parity prerequisite before retrying; preserve
+  the 2e-4 gates, exact codes, and unreached waveform/repeat qualification.
 
 ## Approved expansion tasks
 
