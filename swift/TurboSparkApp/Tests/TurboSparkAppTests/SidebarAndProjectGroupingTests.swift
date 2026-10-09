@@ -4,33 +4,46 @@ import XCTest
 @testable import TurboSparkApp
 
 final class SidebarAndProjectGroupingTests: XCTestCase {
+    func testCompactTimestampsFollowTheSelectedLanguage() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let date = now.addingTimeInterval(-52 * 86400)
+        XCTAssertEqual(
+            MessageTimestampFormatter.compactRelativeString(
+                for: date, relativeTo: now, locale: Locale(identifier: "fr")),
+            "52j")
+        XCTAssertEqual(
+            MessageTimestampFormatter.compactRelativeString(
+                for: date, relativeTo: now, locale: Locale(identifier: "en")),
+            "52d")
+    }
+
     func testCompactRelativeTimestamps() {
         let now = Date()
 
         // Less than 60 seconds
         let secondsAgo = now.addingTimeInterval(-25)
-        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: secondsAgo, relativeTo: now), "now")
+        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: secondsAgo, relativeTo: now, locale: Locale(identifier: "en")), "Just now")
 
         // Minutes
         let fiveMinutesAgo = now.addingTimeInterval(-300)
-        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: fiveMinutesAgo, relativeTo: now), "5m")
+        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: fiveMinutesAgo, relativeTo: now, locale: Locale(identifier: "en")), "5m")
 
         let fortyFiveMinutesAgo = now.addingTimeInterval(-2700)
-        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: fortyFiveMinutesAgo, relativeTo: now), "45m")
+        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: fortyFiveMinutesAgo, relativeTo: now, locale: Locale(identifier: "en")), "45m")
 
         // Hours
         let oneHourAgo = now.addingTimeInterval(-3600)
-        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: oneHourAgo, relativeTo: now), "1h")
+        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: oneHourAgo, relativeTo: now, locale: Locale(identifier: "en")), "1h")
 
         let twoHoursAgo = now.addingTimeInterval(-7200)
-        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: twoHoursAgo, relativeTo: now), "2h")
+        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: twoHoursAgo, relativeTo: now, locale: Locale(identifier: "en")), "2h")
 
         // Days
         let fiftyTwoDaysAgo = now.addingTimeInterval(-52 * 86400)
-        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: fiftyTwoDaysAgo, relativeTo: now), "52d")
+        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: fiftyTwoDaysAgo, relativeTo: now, locale: Locale(identifier: "en")), "52d")
 
         let sixtyDaysAgo = now.addingTimeInterval(-60 * 86400)
-        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: sixtyDaysAgo, relativeTo: now), "60d")
+        XCTAssertEqual(MessageTimestampFormatter.compactRelativeString(for: sixtyDaysAgo, relativeTo: now, locale: Locale(identifier: "en")), "60d")
     }
 
     @MainActor

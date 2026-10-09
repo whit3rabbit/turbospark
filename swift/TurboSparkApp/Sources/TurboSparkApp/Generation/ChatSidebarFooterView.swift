@@ -4,14 +4,15 @@ import SwiftUI
 /// Footer component for the chat sidebar showing user profile, device connection, and settings.
 struct ChatSidebarFooterView: View {
     @Environment(\.appTheme) private var theme
+    @Environment(\.locale) private var locale
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @ObservedObject var model: AppModel
     let chatCount: Int
     @Binding var languageRawValue: String
 
-    @ScaledMetric private var actionButtonSize: CGFloat = 24
-    @ScaledMetric private var avatarSize: CGFloat = 26
-    @ScaledMetric private var sidebarFooterMinHeight: CGFloat = 46
+    private var actionButtonSize: CGFloat { theme.sidebarActionSize }
+    private var avatarSize: CGFloat { 26 * theme.sidebarScale }
+    private var sidebarFooterMinHeight: CGFloat { 46 * theme.sidebarScale }
     @State private var confirmingEndGhost = false
 
     private var profileDisplayName: String {
@@ -23,7 +24,7 @@ struct ChatSidebarFooterView: View {
         if !fullName.isEmpty {
             return fullName
         }
-        return active.name.isEmpty ? "User" : active.name
+        return active.name.isEmpty ? String(localized: "User", bundle: .module, locale: locale) : active.name
     }
 
     private var profileInitial: String {
@@ -50,29 +51,35 @@ struct ChatSidebarFooterView: View {
                 Section(header: Text("Appearance", bundle: .module)) {
                     Picker(selection: $appearanceManager.appearance) {
                         ForEach(AppAppearance.allCases) { option in
-                            Label(option.label, systemImage: option.systemImage)
+                            Label { Text(LocalizedStringKey(option.label), bundle: .module) } icon: { Image(systemName: option.systemImage) }
                                 .tag(option)
                         }
                     } label: { Text("Theme", bundle: .module) }
 
                     Picker(selection: $appearanceManager.textSize) {
                         ForEach(AppTextSize.allCases) { size in
-                            Text(size.label)
+                            Text(LocalizedStringKey(size.label), bundle: .module)
                                 .tag(size)
                         }
                     } label: { Text("Text Size", bundle: .module) }
 
                     Picker(selection: $languageRawValue) {
                         ForEach(AppLanguage.allCases) { language in
-                            Text(language.label)
-                                .tag(language.rawValue)
+                            Group {
+                                if language == .system {
+                                    Text("System", bundle: .module)
+                                } else {
+                                    Text(verbatim: language.label)
+                                }
+                            }
+                            .tag(language.rawValue)
                         }
                     } label: { Text("Language", bundle: .module) }
                 }
 
                 Divider()
 
-                Text("\(chatCount) local chats stored", bundle: .module)
+                Text("\(chatCount) local chats", bundle: .module)
             } label: {
                 HStack(spacing: 7) {
                     avatarView
@@ -117,12 +124,12 @@ struct ChatSidebarFooterView: View {
     private var avatarView: some View {
         ZStack {
             Circle()
-                .fill(Color(nsColor: .controlAccentColor).opacity(0.85))
+                .fill(theme.selection)
                 .frame(width: avatarSize, height: avatarSize)
 
             Text(profileInitial)
                 .font(theme.ui(.tiny, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.appText)
         }
         .accessibilityHidden(true)
     }
@@ -134,14 +141,14 @@ struct ChatSidebarFooterView: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
             .background(
-                Color.primary.opacity(0.08),
+                theme.foreground.opacity(0.08),
                 in: RoundedRectangle(cornerRadius: 4, style: .continuous)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .stroke(.appBorder, lineWidth: 0.5)
             )
-            .accessibilityLabel("Profile badge")
+            .accessibilityLabel(Text("Active Profile", bundle: .module))
     }
 
     /// Ghost Mode: start a temporary chat, or end the one being viewed.
@@ -157,7 +164,7 @@ struct ChatSidebarFooterView: View {
                 model.enterGhostChat()
             }
         } label: {
-            GhostGlyph(size: 14, color: model.isInGhostChat ? theme.accent : Color.secondary)
+            GhostGlyph(size: 14 * theme.sidebarScale, color: model.isInGhostChat ? theme.accent : theme.secondaryText)
                 .frame(width: actionButtonSize, height: actionButtonSize)
                 .contentShape(Rectangle())
         }
@@ -165,15 +172,11 @@ struct ChatSidebarFooterView: View {
         // `enterGhostChat()`/`endGhostChat()` both no-op under exactly this
         // guard, matching the File menu's "New Temporary Chat".
         .disabled(model.generating || model.submitting || model.pendingToolCall != nil)
-        .help(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
-        .accessibilityLabel(model.isInGhostChat ? "End temporary chat" : "New temporary chat")
-        .accessibilityHint(
-            model.isInGhostChat
-                ? "Discards the temporary conversation. It is never saved."
-                : "Starts a temporary chat that lives only in memory and is never saved.")
+        .help(Text(LocalizedStringKey(model.isInGhostChat ? "Discard Temporary Chat" : "New Temporary Chat"), bundle: .module))
+        .accessibilityLabel(Text(LocalizedStringKey(model.isInGhostChat ? "Discard Temporary Chat" : "New Temporary Chat"), bundle: .module))
         .accessibilityAddTraits(model.isInGhostChat ? [.isButton, .isSelected] : .isButton)
         .confirmationDialog(
-            "End temporary chat?", isPresented: $confirmingEndGhost,
+            Text("Discard Temporary Chat", bundle: .module), isPresented: $confirmingEndGhost,
             titleVisibility: .visible
         ) {
             Button(role: .destructive) {
@@ -187,7 +190,7 @@ struct ChatSidebarFooterView: View {
 
     private var deviceButton: some View {
         Button {
-            // Companion / local server indicator
+            model.activeSection = .server
         } label: {
             Image(systemName: "iphone")
                 .font(theme.ui(.callout, weight: .medium))
@@ -196,8 +199,8 @@ struct ChatSidebarFooterView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Local Engine & Device Status")
-        .accessibilityLabel("Local Engine and Device Status")
+        .help(Text("API", bundle: .module))
+        .accessibilityLabel(Text("API", bundle: .module))
     }
 
     private var settingsButton: some View {
@@ -209,7 +212,7 @@ struct ChatSidebarFooterView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Settings (Cmd+,)")
-        .accessibilityLabel("Application Settings")
+        .help(Text("Settings", bundle: .module) + Text(verbatim: " (Cmd+,)"))
+        .accessibilityLabel(Text("Settings", bundle: .module))
     }
 }

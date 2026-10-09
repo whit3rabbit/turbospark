@@ -34,7 +34,7 @@ struct ChatSidebarView: View {
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
 
-            Divider()
+            SidebarDivider()
 
             contentView
         }
@@ -65,11 +65,11 @@ struct ChatSidebarView: View {
             )
         }
         .alert(
-            "Rename chat",
+            Text("Rename", bundle: .module),
             isPresented: renameAlertPresented,
             presenting: chatBeingRenamed
         ) { chat in
-            TextField("Chat name", text: $renameText)
+            TextField(text: $renameText) { Text("Chat name", bundle: .module) }
             Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
             Button {
                 model.renameChat(id: chat.id, title: renameText)
@@ -79,7 +79,7 @@ struct ChatSidebarView: View {
             Text("Choose a name that identifies this chat.", bundle: .module)
         }
         .alert(
-            "Delete chat?",
+            Text("Delete", bundle: .module),
             isPresented: deletionAlertPresented,
             presenting: chatPendingDeletion
         ) { chat in
@@ -106,25 +106,27 @@ struct ChatSidebarView: View {
                     HStack(spacing: 5) {
                         Image(systemName: mode.systemImage)
                             .font(theme.ui(.tiny, weight: .semibold))
-                        Text(mode.title)
+                        Text(LocalizedStringKey(mode.title), bundle: .module)
                             .font(theme.ui(.tiny, weight: isSelected ? .semibold : .medium))
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 24)
-                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                    .padding(.vertical, 4)
+                    .frame(minHeight: theme.sidebarRowHeight - 4)
+                    .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
                     .background(
-                        isSelected ? Color.primary.opacity(0.12) : Color.clear,
+                        isSelected ? theme.foreground.opacity(0.12) : Color.clear,
                         in: RoundedRectangle(cornerRadius: 6, style: .continuous)
                     )
                     .contentShape(.rect(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Switch to \(mode.title) tab")
+                .help(Text(LocalizedStringKey(mode.title), bundle: .module))
+                .accessibilityLabel(Text(LocalizedStringKey(mode.title), bundle: .module))
                 .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             }
         }
         .padding(2)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(theme.foreground.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(.appBorder, lineWidth: 0.5)
@@ -137,13 +139,13 @@ struct ChatSidebarView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
 
-            TextField(
-                model.interactionMode == .projects ? "Filter projects and tasks..." : "Filter chats...",
-                text: $searchText
-            )
+            TextField(text: $searchText) {
+                Text(LocalizedStringKey(model.interactionMode == .projects
+                     ? "Filter projects and tasks..." : "Filter chats..."), bundle: .module)
+            }
             .textFieldStyle(.plain)
             .font(theme.ui(.tiny))
 
@@ -153,22 +155,26 @@ struct ChatSidebarView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(theme.ui(.tiny))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
-                .help("Clear filter")
-                .accessibilityLabel("Clear filter")
+                .help(Text("Clear filters", bundle: .module))
+                .accessibilityLabel(Text("Clear filters", bundle: .module))
             }
         }
         .padding(.horizontal, 8)
-        .frame(height: 26)
-        .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(.vertical, 5)
+        .frame(minHeight: theme.sidebarRowHeight)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(.appBorder, lineWidth: 0.5)
         )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(model.interactionMode == .projects ? "Filter projects and tasks" : "Filter chats")
+        .help(Text(LocalizedStringKey(model.interactionMode == .projects
+              ? "Filter projects and tasks..." : "Filter chats..."), bundle: .module))
+        .accessibilityLabel(Text(LocalizedStringKey(model.interactionMode == .projects
+              ? "Filter projects and tasks..." : "Filter chats..."), bundle: .module))
     }
 
     // MARK: - Content View
@@ -200,12 +206,12 @@ struct ChatSidebarView: View {
                     Image(systemName: "plus")
                         .font(theme.ui(.tiny, weight: .semibold))
                         .foregroundStyle(.appSecondary)
-                        .frame(width: 20, height: 20)
+                        .frame(width: theme.sidebarActionSize, height: theme.sidebarActionSize)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Add codebase project")
-                .accessibilityLabel("Add project")
+                .help(Text("Add Project", bundle: .module))
+                .accessibilityLabel(Text("Add Project", bundle: .module))
             }
             .padding(.horizontal, 14)
             .padding(.top, 8)
@@ -234,8 +240,8 @@ struct ChatSidebarView: View {
                     projectBeingEdited: $projectBeingEdited,
                     projectForMcpSettings: $projectForMcpSettings)
             }
-            .frame(height: min(200, CGFloat(72 + model.projects.count * 48)))
-            Divider()
+            .frame(height: min(180, CGFloat(72 + model.projects.count * 48)) * theme.sidebarScale)
+            SidebarDivider()
             newChatButton
                 .padding(.horizontal, 10)
                 .padding(.top, 8)
@@ -276,48 +282,48 @@ struct ChatSidebarView: View {
                 .foregroundStyle(.appSecondary)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(Color.primary.opacity(0.06), in: Capsule())
+                .background(theme.foreground.opacity(0.06), in: Capsule())
             }
             .buttonStyle(.plain)
-            .help("Show chats from all projects")
-            .accessibilityLabel("Clear project filter and show all chats")
+            .help(Text("All Chats", bundle: .module))
+            .accessibilityLabel(Text("All Chats", bundle: .module))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(theme.foreground.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     private var newChatButton: some View {
         Button {
             model.createChat()
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "square.and.pencil")
-                    .font(theme.ui(.small))
-                    .accessibilityHidden(true)
-                Text("New chat", bundle: .module)
-                    .font(theme.ui(.small, weight: .medium))
-                Spacer()
-                Text(verbatim: "Cmd+N")
-                    .font(theme.ui(.tiny))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    newChatLabel.fixedSize()
+                    Spacer(minLength: 8)
+                    Text(verbatim: "Cmd+N")
+                        .font(theme.ui(.tiny))
+                        .foregroundStyle(.appSecondary)
+                        .fixedSize()
+                        .accessibilityHidden(true)
+                }
+                newChatLabel
             }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 30)
-            .contentShape(.rect)
         }
-        .buttonStyle(.plain)
-        .background(
-            TurboSparkTheme.surfaceColor,
-            in: .rect(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.appBorder, lineWidth: 0.5)
-        }
+        .buttonStyle(SidebarActionButtonStyle())
         .disabled(model.isRunning)
-        .help("Create a new chat (Cmd+N)")
-        .accessibilityHint("Starts a fresh conversation. Disabled while the model is generating.")
+        .help(Text("New chat", bundle: .module) + Text(verbatim: " (Cmd+N)"))
+    }
+
+    private var newChatLabel: some View {
+        Label {
+            Text("New chat", bundle: .module)
+                .font(theme.ui(.small, weight: .medium))
+        } icon: {
+            Image(systemName: "square.and.pencil")
+                .font(theme.ui(.small))
+                .accessibilityHidden(true)
+        }
     }
 
     private var chatList: some View {
@@ -333,23 +339,22 @@ struct ChatSidebarView: View {
                     VStack(spacing: 6) {
                         Image(systemName: "bubble.left.and.bubble.right")
                             .font(theme.ui(.title2))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                             .padding(.top, 18)
                             .padding(.bottom, 2)
                             .accessibilityHidden(true)
-                        Text(searchText.isEmpty ? "No chats yet" : "No matching chats")
+                        Text(LocalizedStringKey(searchText.isEmpty ? "No chats yet" : "No matching chats"), bundle: .module)
                             .font(theme.ui(.tiny, weight: .medium))
                             .foregroundStyle(.appSecondary)
-                        Text(searchText.isEmpty ? "Start a conversation to see history here" : "Try a different search term")
+                        Text(LocalizedStringKey(searchText.isEmpty ? "Start a conversation to see history here" : "Try a different search term"), bundle: .module)
                             .font(theme.ui(.tiny))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                             .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
                     .padding(.horizontal, 12)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("No chats yet. Start a conversation to see history here.")
+                    .accessibilityElement(children: .combine)
                 } else if !layout.isSearching {
                     // The qwen-code session grouping: time-bucket headers
                     // over the recency-sorted list. Suppressed while a
@@ -366,7 +371,7 @@ struct ChatSidebarView: View {
                         )
                     }
                     ForEach(layout.groups, id: \.bucket) { group in
-                        Text(group.bucket.label)
+                        Text(LocalizedStringKey(group.bucket.label), bundle: .module)
                             .font(theme.ui(.tiny, weight: .semibold))
                             .foregroundStyle(.appSecondary)
                             .padding(.leading, 10)
@@ -416,7 +421,7 @@ struct ChatSidebarView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "archivebox")
                             .font(theme.ui(.tiny))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                             .accessibilityHidden(true)
                         Text(chat.title)
                             .font(theme.ui(.small))
@@ -430,7 +435,7 @@ struct ChatSidebarView: View {
                                 .font(theme.ui(.tiny, weight: .medium))
                         }
                         .buttonStyle(.plain)
-                        .help("Move this chat back into the chat list")
+                        .help(Text("Restore", bundle: .module))
                         Button(role: .destructive) {
                             chatPendingDeletion = chat
                         } label: {
@@ -438,17 +443,17 @@ struct ChatSidebarView: View {
                                 .font(theme.ui(.tiny))
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(.tertiary)
-                        .help("Delete archived chat")
+                        .foregroundStyle(.appSecondary)
+                        .help(Text("Delete", bundle: .module))
                     }
                     .padding(.leading, 12)
                     .padding(.vertical, 2)
                     .accessibilityElement(children: .combine)
                 }
             } label: {
-                Label(
-                    archived.count == 1 ? "Archived (1 chat)" : "Archived (\(archived.count) chats)",
-                    systemImage: "archivebox")
+                Label {
+                    Text("Archived", bundle: .module) + Text(verbatim: " (\(archived.count))")
+                } icon: { Image(systemName: "archivebox") }
                     .font(theme.ui(.tiny, weight: .medium))
                     .foregroundStyle(.appSecondary)
             }

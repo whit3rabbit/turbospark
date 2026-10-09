@@ -14,7 +14,7 @@ struct ChatSidebarProjectsSectionView: View {
     @State private var hoveredProjectID: UUID?
     @State private var projectPendingDeletion: AppProject?
 
-    @ScaledMetric private var projectActionSize: CGFloat = 22
+    private var projectActionSize: CGFloat { theme.sidebarActionSize }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -34,9 +34,8 @@ struct ChatSidebarProjectsSectionView: View {
                         .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.borderless)
-                .help("Add codebase project")
-                .accessibilityLabel("Add project")
-                .accessibilityHint("Opens project settings to create a new project")
+                .help(Text("Add Project", bundle: .module))
+                .accessibilityLabel(Text("Add Project", bundle: .module))
             }
             .padding(.horizontal, 10)
             .padding(.top, 8)
@@ -80,16 +79,16 @@ struct ChatSidebarProjectsSectionView: View {
             HStack(spacing: 8) {
                 Image(systemName: isSelected ? "folder.fill" : "folder")
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
+                    .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                     .accessibilityHidden(true)
                 Text("All Chats", bundle: .module)
-                    .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
+                    .font(theme.ui(.small, weight: isSelected ? .semibold : nil))
                     .foregroundStyle(.appText)
                 Spacer()
                 Text(verbatim: "\(model.chats.count)")
                     .font(theme.ui(.tiny))
                     .foregroundStyle(.appSecondary)
-                    .accessibilityLabel("\(model.chats.count) chats")
+                    .accessibilityLabel(Text("\(model.chats.count) local chats", bundle: .module))
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
@@ -97,14 +96,13 @@ struct ChatSidebarProjectsSectionView: View {
         }
         .buttonStyle(.plain)
         .background(
-            isSelected ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear,
+            isSelected ? theme.selection : Color.clear,
             in: .rect(cornerRadius: 8)
         )
-        .help("Show all conversations")
-        .accessibilityLabel("All chats")
-        .accessibilityValue("\(model.chats.count) total")
+        .help(Text("All Chats", bundle: .module))
+        .accessibilityLabel(Text("All Chats", bundle: .module))
+        .accessibilityValue(Text("\(model.chats.count) local chats", bundle: .module))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint("Shows every chat regardless of project")
     }
 
     private func projectRow(_ project: AppProject) -> some View {
@@ -118,14 +116,14 @@ struct ChatSidebarProjectsSectionView: View {
                 HStack(spacing: 8) {
                     Image(systemName: isSelected ? "folder.fill.badge.gearshape" : "folder.badge.gearshape")
                         .font(theme.ui(.tiny))
-                        .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
+                        .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(project.name)
-                            .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
+                            .font(theme.ui(.small, weight: isSelected ? .semibold : nil))
                             .foregroundStyle(.appText)
                             .lineLimit(1)
-                        Text(project.agentType.label)
+                        Text(LocalizedStringKey(project.agentType.label), bundle: .module)
                             .font(theme.ui(.tiny))
                             .foregroundStyle(.appSecondary)
                     }
@@ -136,9 +134,9 @@ struct ChatSidebarProjectsSectionView: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .help("Switch to project \(project.name)")
-            .accessibilityLabel("Project \(project.name)")
-            .accessibilityValue("\(project.agentType.label)\(isSelected ? ", selected" : "")")
+            .help(Text("Switch to \(project.name)", bundle: .module))
+            .accessibilityLabel(Text("Project: \(project.name)", bundle: .module))
+            .accessibilityValue(Text(LocalizedStringKey(project.agentType.label), bundle: .module))
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
 
             if showsActions {
@@ -152,8 +150,8 @@ struct ChatSidebarProjectsSectionView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("New chat in \(project.name)")
-                .accessibilityLabel("New chat in \(project.name)")
+                .help(Text("New chat", bundle: .module))
+                .accessibilityLabel(Text("New chat", bundle: .module))
             }
 
             Menu {
@@ -205,7 +203,7 @@ struct ChatSidebarProjectsSectionView: View {
             .padding(.trailing, 4)
         }
         .background(
-            isSelected ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear,
+            isSelected ? theme.selection : Color.clear,
             in: .rect(cornerRadius: 8)
         )
         .onHover { isHovering in

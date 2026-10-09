@@ -22,16 +22,29 @@ struct SidebarSectionNavView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
-    @ScaledMetric private var rowHeight: CGFloat = 30
     @State private var hoveredSection: AppModel.AppNavigationSection?
     @Namespace private var selectionNamespace
 
     var body: some View {
         VStack(spacing: 2) {
-            ForEach(AppModel.AppNavigationSection.allCases) { section in
-                sectionRow(section)
-                if section == .audio && model.activeSection == .audio {
-                    AudioSidebarDestinations(model: model, controller: model.audioWorkspace)
+            ForEach(SidebarNavigationGroup.allCases) { group in
+                if group != .creation {
+                    SidebarDivider().padding(.horizontal, 8).padding(.vertical, 6)
+                }
+                if group == .models {
+                    Text("Models", bundle: .module)
+                        .font(theme.ui(.tiny, weight: .semibold))
+                        .foregroundStyle(.appSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 2)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                ForEach(group.sections) { section in
+                    sectionRow(section)
+                    if section == .audio && model.activeSection == .audio {
+                        AudioSidebarDestinations(model: model, controller: model.audioWorkspace)
+                    }
                 }
             }
         }
@@ -49,16 +62,17 @@ struct SidebarSectionNavView: View {
             HStack(spacing: 9) {
                 Image(systemName: isSelected ? section.selectedSystemImage : section.systemImage)
                     .font(theme.ui(.small, weight: .medium))
-                    .foregroundStyle(isSelected ? theme.accent : Color.secondary)
-                    .frame(width: 18)
+                    .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
+                    .frame(width: 18 * theme.sidebarScale)
                     // Symbol swap (outline to filled) crossfades instead of
                     // popping, matching the rail's own treatment.
                     .contentTransition(.symbolEffect(.replace))
 
                 Text(LocalizedStringKey(section.title), bundle: .module)
-                    .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-                    .lineLimit(1)
+                    .font(theme.ui(.small, weight: isSelected ? .semibold : nil))
+                    .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer(minLength: 0)
                 if section == .audio {
@@ -68,13 +82,14 @@ struct SidebarSectionNavView: View {
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: rowHeight)
+            .padding(.vertical, 4)
+            .frame(minHeight: theme.sidebarRowHeight)
             .background {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(
                         isSelected
-                            ? theme.accent.opacity(0.14)
-                            : Color.primary.opacity(isHovered ? 0.07 : 0))
+                            ? theme.selection
+                            : theme.foreground.opacity(isHovered ? 0.07 : 0))
             }
             // The rail's one moving mark, kept at this width. Only the
             // selected row hosts it, so SwiftUI interpolates its frame from
@@ -83,7 +98,7 @@ struct SidebarSectionNavView: View {
                 if isSelected {
                     Capsule()
                         .fill(theme.accent)
-                        .frame(width: 2.5, height: rowHeight * 0.5)
+                        .frame(width: 2.5, height: theme.sidebarRowHeight * 0.5)
                         .offset(x: -4)
                         .matchedGeometryEffect(id: "sidebarSelection", in: selectionNamespace)
                 }
@@ -91,13 +106,10 @@ struct SidebarSectionNavView: View {
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.98))
-        // No hover tooltip: the label is already on screen, which is the
-        // whole point of this presentation. The rail keeps its tooltip
-        // because there the title is the only thing a tooltip can add.
-        .help("\(section.title) (⌘\(String(section.shortcutKey)))")
+        .help(Text(LocalizedStringKey(section.title), bundle: .module)
+              + Text(verbatim: " (Cmd+\(section.shortcutKey))"))
         .accessibilityLabel(Text(LocalizedStringKey(section.title), bundle: .module))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint("Switches the main pane to \(section.title)")
         .onHover { hovering in
             withAnimation(TSMotion.hover) {
                 if hovering {

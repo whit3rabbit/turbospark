@@ -25,33 +25,43 @@ struct NavigationRailView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
-    @ScaledMetric private var itemSize: CGFloat = 34
+    private var itemSize: CGFloat { min(42, 34 * theme.sidebarScale) }
     @State private var hoveredSection: AppModel.AppNavigationSection? = nil
     @State private var isSettingsHovered = false
     @Namespace private var selectionNamespace
 
     var body: some View {
         VStack(spacing: 4) {
-            ForEach(AppModel.AppNavigationSection.allCases) { section in
-                if section == .audio {
-                    Menu {
-                        AudioDestinationMenu(model: model)
-                    } label: {
-                        Image(systemName: section.systemImage)
-                            .font(theme.ui(.callout, weight: .medium))
-                            .foregroundStyle(model.activeSection == .audio ? theme.accent : Color.secondary)
-                            .frame(width: itemSize, height: itemSize)
-                            .background(theme.accent.opacity(model.activeSection == .audio ? 0.14 : 0),
-                                        in: RoundedRectangle(cornerRadius: 8))
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(SidebarNavigationGroup.allCases) { group in
+                        if group != .creation {
+                            SidebarDivider().padding(.horizontal, 12).padding(.vertical, 4)
+                        }
+                        ForEach(group.sections) { section in
+                            if section == .audio {
+                                Menu {
+                                    AudioDestinationMenu(model: model)
+                                } label: {
+                                    Image(systemName: section.systemImage)
+                                        .font(theme.ui(.callout, weight: .medium))
+                                        .foregroundStyle(model.activeSection == .audio ? theme.accent : theme.secondaryText)
+                                        .frame(width: itemSize, height: itemSize)
+                                        .background(theme.accent.opacity(model.activeSection == .audio ? 0.14 : 0),
+                                                    in: RoundedRectangle(cornerRadius: 8))
+                                }
+                                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                                .help(Text("Audio", bundle: .module))
+                                .accessibilityLabel(Text("Audio", bundle: .module))
+                                .accessibilityAddTraits(model.activeSection == .audio ? .isSelected : [])
+                            } else {
+                                railButton(section)
+                            }
+                        }
                     }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help(Text("Audio", bundle: .module))
-                    .accessibilityLabel(Text("Audio", bundle: .module))
-                    .accessibilityAddTraits(model.activeSection == .audio ? .isSelected : [])
-                } else {
-                    railButton(section)
                 }
             }
+            .scrollIndicators(.hidden)
             Spacer(minLength: 0)
             settingsButton
         }
@@ -75,14 +85,14 @@ struct NavigationRailView: View {
         } label: {
             Image(systemName: isSelected ? section.selectedSystemImage : section.systemImage)
                 .font(theme.ui(.callout, weight: .medium))
-                .foregroundStyle(isSelected ? theme.accent : Color.secondary)
+                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                 .frame(width: itemSize, height: itemSize)
                 .background {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(
                             isSelected
-                                ? theme.accent.opacity(0.14)
-                                : Color.primary.opacity(isHovered ? 0.07 : 0))
+                                ? theme.selection
+                                : theme.foreground.opacity(isHovered ? 0.07 : 0))
                 }
                 // The one moving mark. Only the selected row hosts it, so
                 // SwiftUI interpolates its frame from the old row to the new.
@@ -101,18 +111,10 @@ struct NavigationRailView: View {
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.92))
-        .help("\(section.title) (⌘\(String(section.shortcutKey)))")
-        .accessibilityLabel(section.title)
+        .help(Text(LocalizedStringKey(section.title), bundle: .module)
+              + Text(verbatim: " (Cmd+\(section.shortcutKey))"))
+        .accessibilityLabel(Text(LocalizedStringKey(section.title), bundle: .module))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint("Switches the main pane to \(section.title)")
-        .overlay(alignment: .leading) {
-            if isHovered {
-                RailTooltip(title: section.title, shortcut: "⌘\(String(section.shortcutKey))")
-                    .offset(x: itemSize + 12)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
-                    .zIndex(100)
-            }
-        }
         .onHover { hovering in
             withAnimation(TSMotion.hover) {
                 if hovering {
@@ -132,63 +134,16 @@ struct NavigationRailView: View {
                 .frame(width: itemSize, height: itemSize)
                 .background {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.primary.opacity(isSettingsHovered ? 0.07 : 0))
+                        .fill(theme.foreground.opacity(isSettingsHovered ? 0.07 : 0))
                 }
                 .rotationEffect(.degrees(isSettingsHovered ? 30 : 0))
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.92))
-        .help("Settings (⌘,)")
-        .accessibilityLabel("Settings")
-        .accessibilityHint("Opens application settings window")
-        .overlay(alignment: .leading) {
-            if isSettingsHovered {
-                RailTooltip(title: "Settings", shortcut: "⌘,")
-                    .offset(x: itemSize + 12)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
-                    .zIndex(100)
-            }
-        }
+        .help(Text("Settings", bundle: .module) + Text(verbatim: " (Cmd+,)"))
+        .accessibilityLabel(Text("Settings", bundle: .module))
         .onHover { hovering in
             withAnimation(TSMotion.select) { isSettingsHovered = hovering }
         }
-    }
-}
-
-/// Floating hover tooltip badge for navigation rail icons.
-private struct RailTooltip: View {
-    @Environment(\.appTheme) private var theme
-    let title: String
-    let shortcut: String
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(theme.ui(.tiny, weight: .medium))
-                .foregroundStyle(Color.primary)
-                .lineLimit(1)
-
-            Text(shortcut)
-                .font(theme.code(.small, weight: .semibold))
-                .foregroundStyle(Color.secondary)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1.5)
-                .background(
-                    Color(nsColor: .separatorColor).opacity(0.3),
-                    in: RoundedRectangle(cornerRadius: 3))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(
-            Color(nsColor: .windowBackgroundColor)
-                .shadow(.drop(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 2)),
-            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(.appBorder, lineWidth: 0.5)
-        )
-        .fixedSize()
-        .allowsHitTesting(false)
     }
 }

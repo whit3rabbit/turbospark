@@ -36,6 +36,7 @@ struct AppSidebarView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let isExpanded: Bool
+    @State private var navigationHeight: CGFloat = 300
 
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
@@ -56,36 +57,65 @@ struct AppSidebarView: View {
                     isDark: theme.isDark, reduceTransparency: theme.reduceTransparency)
                 : TurboSparkTheme.railBackgroundColor(
                     isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
+        .font(theme.ui(.small))
+        .foregroundStyle(.appText)
         .clipped()
     }
 
     private var expanded: some View {
-        VStack(spacing: 0) {
-            SidebarSectionNavView(model: model)
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                ScrollView {
+                    SidebarSectionNavView(model: model)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background {
+                            GeometryReader { navigation in
+                                Color.clear.preference(
+                                    key: SidebarNavigationHeightKey.self,
+                                    value: navigation.size.height)
+                            }
+                        }
+                }
+                // Leave space for history at larger text sizes; Audio can use
+                // the remaining column because it has no chat list below it.
+                .frame(height: min(navigationHeight, max(120, model.activeSection == .chat
+                    ? geometry.size.height - 320 * theme.sidebarScale
+                    : geometry.size.height - 60 * theme.sidebarScale)))
+                .onPreferenceChange(SidebarNavigationHeightKey.self) { height in
+                    if height > 0 { navigationHeight = height }
+                }
 
-            Divider()
-                .padding(.top, 8)
+                SidebarDivider()
+                    .padding(.top, 8)
 
-            // The chat list is only meaningful beside a conversation. In every
-            // other section the nav rows and the footer are the whole sidebar,
-            // and the Spacer is what keeps the footer on the floor.
-            if model.activeSection == .chat {
-                ChatSidebarView(model: model)
-            } else {
-                Spacer(minLength: 0)
+                // The chat list is only meaningful beside a conversation. In every
+                // other section the nav rows and the footer are the whole sidebar,
+                // and the Spacer is what keeps the footer on the floor.
+                if model.activeSection == .chat {
+                    ChatSidebarView(model: model)
+                } else {
+                    Spacer(minLength: 0)
+                }
+
+                ChatSidebarFooterView(
+                    model: model,
+                    // "local chats stored" is a machine-wide figure, so it counts
+                    // every persisted chat regardless of the selected project or
+                    // the archive filter the list above applies.
+                    chatCount: model.chats.filter { !$0.isGhost }.count,
+                    languageRawValue: $languageRawValue)
             }
-
-            ChatSidebarFooterView(
-                model: model,
-                // "local chats stored" is a machine-wide figure, so it counts
-                // every persisted chat regardless of the selected project or
-                // the archive filter the list above applies.
-                chatCount: model.chats.filter { !$0.isGhost }.count,
-                languageRawValue: $languageRawValue)
         }
         // Starts below the top bar's height so the first row clears the
         // traffic lights, which a `.hiddenTitleBar` window draws over this
         // column. Same reason and same figure as the rail's own inset.
         .padding(.top, AppChromeLayout.topBarHeight + 6)
+    }
+}
+
+private struct SidebarNavigationHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

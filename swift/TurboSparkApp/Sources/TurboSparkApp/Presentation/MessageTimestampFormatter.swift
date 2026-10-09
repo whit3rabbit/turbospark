@@ -57,21 +57,20 @@ public enum MessageTimestampFormatter {
         return formatter.string(from: date)
     }
 
-    /// Returns a compact relative time representation such as "now", "5m", "2h", "52d".
-    public static func compactRelativeString(for date: Date, relativeTo now: Date = Date()) -> String {
+    /// Abbreviated units follow the selected app language, not English suffixes.
+    public static func compactRelativeString(
+        for date: Date, relativeTo now: Date = Date(), locale: Locale = .current
+    ) -> String {
         let interval = now.timeIntervalSince(date)
         if interval < 60 {
-            return "now"
+            return String(localized: "Just now", bundle: .module, locale: locale)
         }
-        let minutes = Int(interval / 60.0)
-        if minutes < 60 {
-            return "\(minutes)m"
-        }
-        let hours = Int(interval / 3600.0)
-        if hours < 24 {
-            return "\(hours)h"
-        }
-        let days = Int(interval / 86400.0)
-        return "\(days)d"
+        let formatter = DateComponentsFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.calendar?.locale = locale
+        formatter.unitsStyle = .abbreviated
+        formatter.maximumUnitCount = 1
+        formatter.allowedUnits = interval < 3600 ? .minute : (interval < 86400 ? .hour : .day)
+        return formatter.string(from: interval) ?? relativeString(for: date, relativeTo: now, locale: locale)
     }
 }

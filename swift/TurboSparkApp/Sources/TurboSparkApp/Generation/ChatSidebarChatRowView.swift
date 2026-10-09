@@ -26,7 +26,7 @@ struct ChatSidebarChatRowView: View {
     @Binding var chatForSystemPrompt: AppChat?
 
     @State private var isHovered = false
-    @ScaledMetric private var actionButtonSize: CGFloat = 26
+    private var actionButtonSize: CGFloat { theme.sidebarActionSize }
 
     var body: some View {
         let isSelected = chat.id == model.selectedChatID
@@ -40,8 +40,8 @@ struct ChatSidebarChatRowView: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(
                     isSelected
-                        ? theme.accent.opacity(0.18)
-                        : Color.primary.opacity(isHovered ? 0.05 : 0))
+                        ? theme.selection
+                        : theme.foreground.opacity(isHovered ? 0.05 : 0))
                 .overlay {
                     if isSelected {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -66,54 +66,54 @@ struct ChatSidebarChatRowView: View {
             isHovered = hovering
         }
         .contextMenu {
-            Button(chat.isPinned ? "Unpin" : "Pin") {
+            Button {
                 model.setChatPinned(id: chat.id, pinned: !chat.isPinned)
-            }
+            } label: { Text(LocalizedStringKey(chat.isPinned ? "Unpin" : "Pin"), bundle: .module) }
             Button {
                 renameText = chat.title
                 chatBeingRenamed = chat
             } label: { Text("Rename", bundle: .module) }
             .disabled(model.isRunning || chat.isGhost)
-            Button(chat.systemPrompt == nil ? "Set System Prompt" : "Edit System Prompt") {
+            Button {
                 chatForSystemPrompt = chat
-            }
+            } label: { Text("Chat System Prompt", bundle: .module) }
             .disabled(model.isRunning)
             Button {
                 _ = model.duplicateChat(id: chat.id)
             } label: { Text("Duplicate", bundle: .module) }
             .disabled(model.isRunning || chat.isGhost)
-            Button(chat.isArchived ? "Unarchive" : "Archive") {
+            Button {
                 model.setChatArchived(id: chat.id, archived: !chat.isArchived)
-            }
+            } label: { Text(LocalizedStringKey(chat.isArchived ? "Unarchive" : "Archive"), bundle: .module) }
             .disabled(chat.isGhost)
             // The qwen-code "open in split view" action: the chat joins the
             // pane column without leaving the list. The selected chat is
             // refused by the model (a pane would mirror the main column),
             // so the item is disabled rather than a silent no-op.
-            Button(model.isSplitPane(chatID: chat.id) ? "Close Split Pane" : "Open in Split View") {
+            Button {
                 model.toggleSplitPane(chatID: chat.id)
-            }
+            } label: { Text(LocalizedStringKey(model.isSplitPane(chatID: chat.id) ? "Close Split Pane" : "Open in Split View"), bundle: .module) }
             .disabled(chat.isGhost || model.isRunning || chat.id == model.selectedChatID)
             Button(role: .destructive) {
                 chatPendingDeletion = chat
             } label: { Text("Delete", bundle: .module) }
             .disabled(model.isRunning)
         }
-        .accessibilityAction(named: chat.isPinned ? "Unpin chat" : "Pin chat") {
+        .accessibilityAction(named: Text(LocalizedStringKey(chat.isPinned ? "Unpin" : "Pin"), bundle: .module)) {
             model.setChatPinned(id: chat.id, pinned: !chat.isPinned)
         }
-        .accessibilityAction(named: "Rename chat") {
+        .accessibilityAction(named: Text("Rename", bundle: .module)) {
             if !model.isRunning && !chat.isGhost {
                 renameText = chat.title
                 chatBeingRenamed = chat
             }
         }
-        .accessibilityAction(named: "Duplicate chat") {
+        .accessibilityAction(named: Text("Duplicate", bundle: .module)) {
             if !model.isRunning && !chat.isGhost {
                 _ = model.duplicateChat(id: chat.id)
             }
         }
-        .accessibilityAction(named: "Delete chat") {
+        .accessibilityAction(named: Text("Delete", bundle: .module)) {
             if !model.isRunning {
                 chatPendingDeletion = chat
             }
@@ -140,7 +140,7 @@ struct ChatSidebarChatRowView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Text(chat.title)
-                            .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
+                            .font(theme.ui(.small, weight: isSelected ? .semibold : nil))
                             .foregroundStyle(.appText)
                             .lineLimit(1)
                         // The qwen-code workspace accent: one deterministic
@@ -150,7 +150,7 @@ struct ChatSidebarChatRowView: View {
                             Circle()
                                 .fill(accent)
                                 .frame(width: 6, height: 6)
-                                .help("Project")
+                                .help(Text("Projects", bundle: .module))
                                 .accessibilityHidden(true)
                         }
                     }
@@ -170,11 +170,9 @@ struct ChatSidebarChatRowView: View {
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.985))
         .disabled(model.isRunning && !isSelected)
-        .help("Switch to \(chat.title)")
+        .help(Text("Switch to \(chat.title)", bundle: .module))
         .accessibilityLabel(chat.title)
-        .accessibilityValue(chat.preview.isEmpty
-                            ? (isSelected ? "Selected" : "")
-                            : "\(chat.preview)\(isSelected ? ", selected" : "")")
+        .accessibilityValue(Text(verbatim: chat.preview))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
@@ -191,14 +189,14 @@ struct ChatSidebarChatRowView: View {
         } else if chat.isPinned {
             Image(systemName: "pin.fill")
                 .font(theme.ui(.tiny))
-                .foregroundStyle(isSelected ? theme.accent : Color.secondary)
+                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                 .accessibilityHidden(true)
         } else if isSelected && model.isRunning {
             TaskProgressFlameIcon(size: 13)
         } else {
             Image(systemName: isSelected ? "bubble.left.fill" : "bubble.left")
                 .font(theme.ui(.tiny))
-                .foregroundStyle(isSelected ? theme.accent : Color.secondary)
+                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                 .contentTransition(.symbolEffect(.replace))
                 .accessibilityHidden(true)
         }
