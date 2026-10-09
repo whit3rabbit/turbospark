@@ -379,11 +379,13 @@ impl RingCache {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.len
     }
 
     /// Absolute position of the first retained entry.
+    #[allow(dead_code)]
     pub(crate) fn start(&self) -> usize {
         self.start
     }

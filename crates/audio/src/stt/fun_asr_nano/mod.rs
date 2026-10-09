@@ -222,7 +222,9 @@ pub struct FunAsrNano {
 }
 
 struct AudioStages {
+    #[allow(dead_code)]
     features: Vec<f32>,
+    #[allow(dead_code)]
     encoder: Vec<f32>,
     adaptor: Vec<f32>,
     feature_rows: usize,

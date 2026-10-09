@@ -247,6 +247,8 @@ fn cached_responses_are_partitioned_by_token_fingerprint_and_anonymous_client() 
     let client_one = Client::with_token(Some(token_one.to_string()));
     let client_two = Client::with_token(Some(token_two.to_string()));
     let anonymous_client = Client::with_token(None);
+    assert_eq!(client_one.token(), Some(token_one));
+    assert_eq!(client_two.token(), Some(token_two));
     assert!(anonymous_client.token().is_none());
     let catalog = Catalog::embedded().unwrap();
     let first_hub = HubClient::new(
@@ -284,16 +286,29 @@ fn cached_responses_are_partitioned_by_token_fingerprint_and_anonymous_client() 
     let anonymous = anonymous_hub
         .search(&query, Refresh::AllowCache)
         .expect("anonymous credential partition fetch");
+
+    for (hub, fetched) in [
+        (&first_hub, &first),
+        (&second_hub, &second),
+        (&anonymous_hub, &anonymous),
+    ] {
+        let cached = hub
+            .search(&query, Refresh::AllowCache)
+            .expect("same credential cache hit");
+        assert!(cached.from_cache);
+        assert_eq!(cached.entries[0].repo_id, fetched.entries[0].repo_id);
+        assert_eq!(cached.fetched_at, fetched.fetched_at);
+    }
     let requests = server.join().unwrap();
 
     assert_eq!(requests.len(), 3, "each credential partition must fetch");
-    assert!(requests[0]
-        .to_ascii_lowercase()
-        .contains(&format!("authorization: bearer {token_one}")));
-    assert!(requests[1]
-        .to_ascii_lowercase()
-        .contains(&format!("authorization: bearer {token_two}")));
-    assert!(!requests[2].to_ascii_lowercase().contains("authorization:"));
+    // Cache identity uses the credential even though loopback is not a trusted
+    // Hugging Face host and must never receive a bearer token.
+    for request in &requests {
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+        assert!(!request.contains(token_one));
+        assert!(!request.contains(token_two));
+    }
     assert!(!first.from_cache);
     assert!(!second.from_cache);
     assert!(!anonymous.from_cache);

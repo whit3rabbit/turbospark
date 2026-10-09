@@ -84,7 +84,9 @@ mod tests {
     fn scratch(name: &str, len: usize) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("sha256-{}-{name}", std::process::id()));
         // Not a repeating pattern, so a hash over the wrong span differs.
-        let bytes: Vec<u8> = (0..len).map(|i| (i.wrapping_mul(2654435761) >> 7) as u8).collect();
+        let bytes: Vec<u8> = (0..len)
+            .map(|i| (i.wrapping_mul(2654435761) >> 7) as u8)
+            .collect();
         std::fs::write(&path, bytes).unwrap();
         path
     }
@@ -109,7 +111,11 @@ mod tests {
         })
         .unwrap();
         assert_eq!(result, None, "a stopped hash yields no digest");
-        assert_eq!(seen, vec![chunk as u64, 2 * chunk as u64], "stopped within a chunk of the request");
+        assert_eq!(
+            seen,
+            vec![chunk as u64, 2 * chunk as u64],
+            "stopped within a chunk of the request"
+        );
         std::fs::remove_file(path).unwrap();
     }
 
@@ -117,7 +123,9 @@ mod tests {
     fn an_empty_file_still_hashes() {
         let path = scratch("empty", 0);
         assert_eq!(
-            hash_file_observed(&path, 1 << 20, |_| true).unwrap().unwrap(),
+            hash_file_observed(&path, 1 << 20, |_| true)
+                .unwrap()
+                .unwrap(),
             hash_data(&[])
         );
         std::fs::remove_file(path).unwrap();

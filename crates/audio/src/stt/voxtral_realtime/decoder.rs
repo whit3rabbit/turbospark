@@ -383,6 +383,7 @@ impl Decoder {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn geometry(&self) -> &DecoderGeometry {
         &self.geometry
     }

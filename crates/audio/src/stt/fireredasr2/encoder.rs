@@ -21,9 +21,11 @@ pub(super) struct Encoder {
 pub(super) struct EncoderOutput {
     pub values: Vec<f32>,
     pub rows: usize,
+    #[allow(dead_code)]
     pub trace: Option<EncoderTrace>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(super) struct EncoderTrace {
     pub subsampled: Snapshot,
@@ -32,6 +34,7 @@ pub(super) struct EncoderTrace {
     pub final_block: Snapshot,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(super) struct Snapshot {
     pub shape: Vec<usize>,
@@ -358,7 +361,6 @@ struct ConformerConvolution {
     batch_norm: LayerNorm,
     pointwise_out: Conv1d,
     width: usize,
-    kernel: usize,
 }
 
 struct Conv1d {
@@ -460,7 +462,6 @@ impl ConformerConvolution {
                 0,
             )?,
             width,
-            kernel,
         })
     }
 
@@ -615,6 +616,7 @@ impl Encoder {
         self.forward_layers(features, frames, trace, self.config.encoder_layers)
     }
 
+    #[cfg(test)]
     pub(super) fn forward_first_block(
         &self,
         features: &[f32],

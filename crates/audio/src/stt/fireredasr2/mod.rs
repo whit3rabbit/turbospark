@@ -128,6 +128,10 @@ impl FireRedAsr2 {
         FIREREDASR2_AED
     }
 
+    pub fn config(&self) -> &FireRedAsr2Config {
+        &self.config
+    }
+
     /// Transcribe mono normalized f32 PCM at 16 kHz with upstream beam defaults.
     pub fn transcribe(&self, samples: &[f32]) -> Result<String> {
         self.transcribe_with_options(samples, FireRedAsr2Options::default())

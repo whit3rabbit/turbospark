@@ -368,7 +368,6 @@ struct StreamableConvTranspose1d {
     kernel: usize,
     stride: usize,
     groups: usize,
-    causal: bool,
     /// PyTorch layout `[in, out/groups, K]`.
     weight: Vec<f32>,
     bias: Option<Vec<f32>>,
@@ -413,7 +412,6 @@ impl StreamableConvTranspose1d {
             kernel,
             stride: 1,
             groups,
-            causal: true,
             weight,
             bias,
         })
@@ -978,7 +976,6 @@ impl TransformerLayer {
 
 struct ProjectedTransformer {
     layers: Vec<TransformerLayer>,
-    d_model: usize,
 }
 
 impl ProjectedTransformer {
@@ -1083,7 +1080,6 @@ impl Mimi {
             };
         let init_conv1d = stream_conv("encoder.init_conv1d.conv.conv.weight".to_string(), 1, 1)?;
         let mut layers = Vec::new();
-        let mut mult = 1usize;
         for (li, &ratio) in sn.ratios.iter().rev().enumerate() {
             let mut residuals = Vec::new();
             let mut dilation = 1usize;
@@ -1122,7 +1118,6 @@ impl Mimi {
                 residuals,
                 downsample,
             });
-            mult *= 2;
         }
         let final_conv1d = stream_conv("encoder.final_conv1d.conv.conv.weight".to_string(), 1, 1)?;
         Ok(SeanetEncoder {
@@ -1148,7 +1143,6 @@ impl Mimi {
             };
         let init_conv1d = stream_conv("decoder.init_conv1d.conv.conv.weight".to_string(), 1, 1)?;
         let mut layers = Vec::new();
-        let mut mult = 1usize << sn.ratios.len();
         for (li, &ratio) in sn.ratios.iter().enumerate() {
             let upsample = StreamableConvTranspose1d {
                 stride: ratio,
@@ -1190,7 +1184,6 @@ impl Mimi {
                 upsample,
                 residuals,
             });
-            mult /= 2;
         }
         let final_conv1d = stream_conv("decoder.final_conv1d.conv.conv.weight".to_string(), 1, 1)?;
         Ok(SeanetDecoder {
@@ -1300,7 +1293,7 @@ impl Mimi {
             };
             layers.push(layer);
         }
-        Ok(ProjectedTransformer { layers, d_model: d })
+        Ok(ProjectedTransformer { layers })
     }
 
     /// Encodes mono samples into `[nq][frames]` code levels.

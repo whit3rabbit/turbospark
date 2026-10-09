@@ -639,7 +639,13 @@ impl AudioCatalog {
             cancelled,
             on_progress,
         };
-        verify_asset_bytes_observed(self.profile(identity)?, &path, true, None, Some(&mut observer))?;
+        verify_asset_bytes_observed(
+            self.profile(identity)?,
+            &path,
+            true,
+            None,
+            Some(&mut observer),
+        )?;
         Ok(path)
     }
 
@@ -1224,9 +1230,7 @@ fn verify_asset_bytes_observed(
         }
         if hash {
             let digest = match observer.as_deref_mut() {
-                None => Some(
-                    model_io::hash_file(&path, 1024 * 1024).map_err(|e| e.to_string())?,
-                ),
+                None => Some(model_io::hash_file(&path, 1024 * 1024).map_err(|e| e.to_string())?),
                 Some(observer) => {
                     let mut reported = 0u64;
                     let base = finished_bytes;
@@ -1411,9 +1415,8 @@ mod tests {
         // Untouched: passes, and the last report is "all bytes of all assets".
         let mut reports: Vec<(String, u64, u64)> = Vec::new();
         let never = || false;
-        let mut sink = |asset: &str, done: u64, total: u64| {
-            reports.push((asset.to_string(), done, total))
-        };
+        let mut sink =
+            |asset: &str, done: u64, total: u64| reports.push((asset.to_string(), done, total));
         let mut observer = VerifyObserver {
             cancelled: &never,
             on_progress: &mut sink,

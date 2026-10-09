@@ -552,6 +552,7 @@ impl AudioEncoder {
         (projected2, ds_len)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn geometry(&self) -> &EncoderGeometry {
         &self.geometry
     }

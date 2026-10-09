@@ -379,6 +379,7 @@ struct Wav2Vec2 {
     config: MmsConfig,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct StageTensor {
     name: String,

@@ -78,6 +78,7 @@ impl TekkenTokenizer {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn num_special_tokens(&self) -> usize {
         self.n_special
     }

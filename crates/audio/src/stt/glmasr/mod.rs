@@ -404,9 +404,11 @@ impl GlmAsr {
 struct EncodedAudio {
     features: Vec<f32>,
     rows: usize,
+    #[allow(dead_code)]
     trace: Option<AudioTrace>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct Snapshot {
     shape: Vec<usize>,
@@ -414,6 +416,7 @@ struct Snapshot {
     values: Vec<f32>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct AudioTrace {
     mel: Snapshot,

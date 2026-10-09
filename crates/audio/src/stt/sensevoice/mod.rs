@@ -419,6 +419,7 @@ impl SenseVoiceSmall {
     }
 }
 
+#[allow(dead_code)]
 struct StageSnapshot {
     name: &'static str,
     shape: [usize; 2],
