@@ -21,7 +21,7 @@ extension AudioWorkspaceController {
 
     var workspaceHistory: [AudioLibraryItem] {
         guard AudioWorkspacePage.destinations.contains(page) else { return [] }
-        return items.filter { $0.kind == kind && $0.id != selectedID }
+        return items.filter { $0.kind == kind && $0.id != selectedID && $0.status == .completed && $0.hasPlayableAudio }
             .sorted { $0.createdAt > $1.createdAt }
     }
 }

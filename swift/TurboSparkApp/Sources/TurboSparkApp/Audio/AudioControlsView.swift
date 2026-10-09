@@ -65,22 +65,64 @@ struct AudioExportMenu: View {
 
     var body: some View {
         Menu {
-            if !item.clips.isEmpty {
-                Button { controller.exportAudio(preset: .nativeWAV) } label: { Text("WAV (original format)", bundle: .module) }
-                Button { controller.exportAudio(preset: .videoWAV) } label: { Text("WAV (48 kHz for video)", bundle: .module) }
-                Button { controller.exportAudio(preset: .m4a) } label: { Text("M4A", bundle: .module) }
-            }
             if item.preferredTranscript != nil {
-                if !item.clips.isEmpty { Divider() }
-                Button { controller.exportTranscript(format: .text) } label: { Text("Text", bundle: .module) }
-                Button { controller.exportTranscript(format: .srt) } label: { Text("SRT subtitles", bundle: .module) }
-                Button { controller.exportTranscript(format: .vtt) } label: { Text("WebVTT subtitles", bundle: .module) }
-                Button { controller.exportTranscript(format: .json) } label: { Text("Structured result (JSON)", bundle: .module) }
+                Button { controller.exportTranscript(item, format: .text) } label: { Text("Text", bundle: .module) }
+                Button { controller.exportTranscript(item, format: .srt) } label: { Text("SRT subtitles", bundle: .module) }
+                Button { controller.exportTranscript(item, format: .vtt) } label: { Text("WebVTT subtitles", bundle: .module) }
+                Button { controller.exportTranscript(item, format: .json) } label: { Text("Structured result (JSON)", bundle: .module) }
             }
         } label: {
             Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
         }
-        .disabled((item.clips.isEmpty && item.preferredTranscript == nil) || controller.hasRecordingActivity)
+        .menuStyle(.borderlessButton).fixedSize()
+        .disabled(item.preferredTranscript == nil || controller.hasRecordingActivity || controller.isExporting)
+    }
+}
+
+@MainActor
+struct AudioSaveAsButton: View {
+    @ObservedObject var controller: AudioWorkspaceController
+    let item: AudioLibraryItem
+
+    var body: some View {
+        Button { controller.exportAudio(item) } label: {
+            Label { Text("Save As...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+        }
+        .fixedSize()
+        .disabled(!item.hasPlayableAudio || controller.hasRecordingActivity || controller.isExporting)
+    }
+}
+
+@MainActor
+struct AudioDeleteButton: View {
+    @ObservedObject var controller: AudioWorkspaceController
+    let item: AudioLibraryItem
+    @State private var deletingItem: AudioLibraryItem?
+
+    var body: some View {
+        Button(role: .destructive) { deletingItem = item } label: {
+            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
+        }
+        .fixedSize()
+        .disabled(!controller.canDelete(item))
+        .modifier(AudioDeleteConfirmation(controller: controller, item: $deletingItem))
+    }
+}
+
+@MainActor
+struct AudioDeleteConfirmation: ViewModifier {
+    @ObservedObject var controller: AudioWorkspaceController
+    @Binding var item: AudioLibraryItem?
+
+    func body(content: Content) -> some View {
+        content.alert(Text("Delete saved audio?", bundle: .module), isPresented: Binding(
+            get: { item != nil }, set: { if !$0 { item = nil } }
+        ), presenting: item) { candidate in
+            Button(role: .destructive) { controller.delete(candidate); item = nil } label: { Text("Delete", bundle: .module) }
+            Button(role: .cancel) { item = nil } label: { Text("Cancel", bundle: .module) }
+        } message: { candidate in
+            Text(verbatim: candidate.title + "\n\n") + Text("This removes the item and its edits from your audio library. Files saved to other folders are kept.", bundle: .module)
+        }
     }
 }
 
@@ -127,33 +169,64 @@ struct AudioWorkspaceStatusView: View {
                 Text("Your input and completed takes are kept. Adjust the settings and try again.", bundle: .module)
                     .foregroundStyle(.appSecondary)
             }
-            HStack {
-                if controller.isBusy || controller.isInstalling || controller.recordingSetupStatus != nil {
-                    if let progress = controller.progress {
-                        ProgressView(value: max(0, min(1, progress))).frame(maxWidth: 140)
-                    } else {
+            if controller.error == nil || controller.isBusy || controller.isExporting || !controller.pendingSaves.isEmpty || !controller.pendingTranscriptEdits.isEmpty {
+                HStack(spacing: 12) {
+                    if controller.isBusy || controller.isInstalling || controller.recordingSetupStatus != nil {
+                        if let progress = controller.progress {
+                            ProgressView(value: max(0, min(1, progress))).frame(width: 180)
+                                .accessibilityLabel(Text(controller.status))
+                                .accessibilityValue(Text(controller.generationProgress?.counter ?? "\(Int(progress * 100))%"))
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
+                    } else if controller.isExporting {
                         ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: controller.error == nil ? "checkmark.circle" : "exclamationmark.triangle")
                     }
-                } else {
-                    Image(systemName: controller.error == nil ? "checkmark.circle" : "exclamationmark.triangle")
-                }
-                Text(controller.status).lineLimit(2)
-                Spacer(minLength: 12)
-                if controller.transcriptBacklog > 0 {
-                    HStack(spacing: 5) {
-                        Text("Transcription backlog", bundle: .module)
-                        Text(verbatim: String(controller.transcriptBacklog)).monospacedDigit()
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(controller.isExporting && !controller.isBusy
+                             ? String(localized: "Exporting audio", bundle: .module) : controller.status).lineLimit(2)
+                        if let generation = controller.generationProgress {
+                            HStack(spacing: 12) {
+                                if let counter = generation.counter { Text(counter).monospacedDigit() }
+                                if let detail = generation.detail { Text(detail).monospacedDigit() }
+                            }.foregroundStyle(.appSecondary)
+                        }
+                    }
+                    Spacer(minLength: 12)
+                    if controller.transcriptBacklog > 0 {
+                        HStack(spacing: 5) {
+                            Text("Transcription backlog", bundle: .module)
+                            Text(verbatim: String(controller.transcriptBacklog)).monospacedDigit()
+                        }
+                    }
+                    if controller.recordingSetupStatus != nil {
+                        Button { controller.cancelRecordingSetup() } label: { Text("Cancel", bundle: .module) }
+                            .keyboardShortcut(".", modifiers: .command)
+                    } else if controller.isBusy {
+                        Button { controller.cancel() } label: { Text("Cancel", bundle: .module) }
+                            .keyboardShortcut(".", modifiers: .command)
+                    }
+                    if !controller.pendingSaves.isEmpty || !controller.pendingTranscriptEdits.isEmpty {
+                        Button { controller.retryAutosave() } label: { Text("Retry", bundle: .module) }
                     }
                 }
-                if controller.recordingSetupStatus != nil {
-                    Button { controller.cancelRecordingSetup() } label: { Text("Cancel", bundle: .module) }
-                        .keyboardShortcut(".", modifiers: .command)
-                } else if controller.isBusy {
-                    Button { controller.cancel() } label: { Text("Cancel", bundle: .module) }
-                        .keyboardShortcut(".", modifiers: .command)
-                }
-                if !controller.pendingSaves.isEmpty || !controller.pendingTranscriptEdits.isEmpty {
-                    Button { controller.retryAutosave() } label: { Text("Retry", bundle: .module) }
+            }
+            if let generation = controller.generationProgress {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    HStack(spacing: 16) {
+                        HStack(spacing: 6) {
+                            Text("Elapsed time", bundle: .module)
+                            Text(audioTime(context.date.timeIntervalSince(generation.startedAt))).monospacedDigit()
+                        }
+                        if generation.phase != .preparing {
+                            HStack(spacing: 6) {
+                                Text("Last update", bundle: .module)
+                                Text(audioTime(context.date.timeIntervalSince(generation.updatedAt))).monospacedDigit()
+                            }
+                        }
+                    }.foregroundStyle(.appSecondary)
                 }
             }
         }

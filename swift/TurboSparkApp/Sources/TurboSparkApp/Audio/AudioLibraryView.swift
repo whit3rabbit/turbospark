@@ -39,17 +39,7 @@ struct AudioLibraryView: View {
                 editingItem = nil
             }
         }
-        .confirmationDialog(Text("Delete saved audio?", bundle: .module), isPresented: Binding(
-            get: { deletingItem != nil }, set: { if !$0 { deletingItem = nil } }
-        ), titleVisibility: .visible) {
-            Button(role: .destructive) {
-                if let item = deletingItem { controller.delete(item) }
-                deletingItem = nil
-            } label: { Text("Delete", bundle: .module) }
-            Button(role: .cancel) { deletingItem = nil } label: { Text("Cancel", bundle: .module) }
-        } message: {
-            if let item = deletingItem { Text(item.title) }
-        }
+        .modifier(AudioDeleteConfirmation(controller: controller, item: $deletingItem))
     }
 
     private var library: some View {
@@ -106,7 +96,7 @@ struct AudioLibraryView: View {
                     Text(item.title).themedFont(.base, weight: .medium).lineLimit(2)
                     HStack {
                         Text(item.createdAt, format: .dateTime.month(.abbreviated).day())
-                        Text(audioTime(item.duration)).monospacedDigit()
+                        if item.hasPlayableAudio { Text(audioTime(item.duration)).monospacedDigit() }
                     }.themedFont(.small).foregroundStyle(.appSecondary)
                     if !item.collection.isEmpty { Text(item.collection).themedFont(.small).foregroundStyle(.appSecondary) }
                     if item.status != .completed {
@@ -138,6 +128,8 @@ struct AudioLibraryView: View {
                 .menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel(Text("Audio actions", bundle: .module))
                 .disabled(controller.hasRecordingActivity || controller.isBusy)
+                AudioDeleteButton(controller: controller, item: item).labelStyle(.iconOnly)
+                    .buttonStyle(.plain)
             }
         }
         .padding(12)
@@ -171,7 +163,12 @@ struct AudioItemDetailView: View {
                         .themedFont(.small).foregroundStyle(.appSecondary)
                 }
                 Spacer()
-                AudioExportMenu(controller: controller, item: item)
+            }
+            HStack(spacing: 12) {
+                if item.hasPlayableAudio { AudioSaveAsButton(controller: controller, item: item) }
+                if item.preferredTranscript != nil { AudioExportMenu(controller: controller, item: item) }
+                Spacer(minLength: 8)
+                AudioDeleteButton(controller: controller, item: item)
             }
             if !item.clips.isEmpty { AudioTransportView(controller: controller) }
             if let failure = item.failure {
@@ -247,6 +244,7 @@ struct AudioItemDetailView: View {
                 Button { controller.compare(with: candidate) } label: { Text(candidate.title) }
             }
         } label: { Text("Compare at this position", bundle: .module) }
+        .menuStyle(.borderlessButton).fixedSize()
         .disabled(item.clips.isEmpty || comparisonItems.isEmpty || controller.hasRecordingActivity)
         .help(Text("Switch takes while keeping the playback position.", bundle: .module))
     }

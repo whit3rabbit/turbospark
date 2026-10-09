@@ -115,6 +115,12 @@ struct AudioLibraryItem: Codable, Equatable, Identifiable, Sendable {
         transcripts.last(where: { $0.source == .user }) ?? transcripts.last
     }
     var duration: Double { clips.map { $0.offset + $0.duration }.max() ?? 0 }
+    var hasPlayableAudio: Bool { clips.contains { $0.frameCount > 0 && $0.duration.isFinite && $0.duration > 0 } }
+    // Older builds persisted a job before synthesis. Keep explicit drafts,
+    // but do not present empty failed/interrupted jobs as saved audio.
+    var isEmptyGeneratedAttempt: Bool {
+        (kind == .music || kind == .voiceover) && status != .draft && !hasPlayableAudio && transcripts.isEmpty
+    }
     var assetReferences: [String] { clips.map(\.assetReference) }
     func validate() throws {
         guard schemaVersion == 1, clips.count <= 100_000,

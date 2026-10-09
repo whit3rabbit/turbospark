@@ -2,10 +2,21 @@ import Foundation
 import TurboSpark
 
 extension AudioWorkspaceController {
-    func request(from recipe: AudioRecipe, task: AudioTask) -> AudioRequest {
+    /// The music engine refuses empty lyrics and accepts this exact token as
+    /// the explicit instrumental opt-in. The lyrics editor shows it as the
+    /// placeholder, and an untouched field maps to it at request time.
+    nonisolated static let instrumentalLyrics = "[instrumental]"
+
+    /// Whitespace-only lyrics mean the writer left the instrumental in place.
+    static func effectiveLyrics(_ lyrics: String) -> String {
+        lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? instrumentalLyrics : lyrics
+    }
+
+    static func request(from recipe: AudioRecipe, task: AudioTask) -> AudioRequest {
         var request = AudioRequest(task: task, language: recipe.language == "auto" ? nil : recipe.language)
         request.text = recipe.text; request.voice = recipe.voice; request.speed = recipe.speed
-        request.caption = recipe.caption; request.lyrics = recipe.lyrics
+        request.caption = recipe.caption
+        request.lyrics = task == .music ? effectiveLyrics(recipe.lyrics) : recipe.lyrics
         request.durationSeconds = recipe.durationSeconds; request.steps = recipe.steps; request.seed = recipe.seed
         return request
     }
@@ -34,14 +45,22 @@ extension AudioWorkspaceController {
         var result = AudioLibraryItem(title: title, kind: kind)
         if result.title.isEmpty { result.title = page.title }
         result.recipe = inputs; result.recipe.task = task.rawValue
+        if task == .music { result.recipe.lyrics = Self.effectiveLyrics(inputs.lyrics) }
         result.sourceID = selected?.id; result.status = .processing
         result.localModelBookmark = preferences.localModels[profile.identity.alias]
         result.modelFamily = profile.family
         if result.localModelBookmark == nil { result.modelIdentity = try? JSONEncoder().encode(profile.identity) }
         if task == .speechToText { result.clips = selected?.clips ?? [] }
-        do { try save(result) } catch { fail(error); return }
+        let synthesis = task == .music || task == .textToSpeech
+        // Generation has no recoverable audio yet. Publish only after the
+        // result is validated and encrypted; a failed job is not a saved take.
+        if synthesis { activeGeneration = result }
+        else { do { try save(result) } catch { fail(error); return } }
         selectedID = result.id
         isBusy = true; progress = nil; error = nil
+        activeRunID = result.id
+        generationProgress = task == .music ? AudioGenerationProgress() : nil
+        status = String(localized: "Waiting for background work", bundle: .module)
         let token = epoch; let currentTask = task; let portable = page == .advanced && allowPortableExperiment
         let experimentalMetal = page == .advanced && allowExperimentalMetal
         jobTask = Task { [weak self] in
@@ -49,12 +68,17 @@ extension AudioWorkspaceController {
             let admitted = await ImageJobCoordinator.shared.acquire()
             defer { if admitted { Task { await ImageJobCoordinator.shared.release() } } }
             defer {
-                if self.valid(token) { self.isBusy = false; self.progress = nil; self.scheduleUnload(); self.startNextDraft() }
+                if self.valid(token) {
+                    self.isBusy = false; self.progress = nil; self.generationProgress = nil; self.activeRunID = nil
+                    self.scheduleUnload(); self.startNextDraft()
+                }
             }
             do {
                 guard admitted else { throw CancellationError() }
+                try Task.checkCancellation()
+                self.status = String(localized: "Loading model", bundle: .module)
                 let session = try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
-                let request = self.request(from: inputs, task: currentTask)
+                let request = Self.request(from: inputs, task: currentTask)
                 if currentTask == .speechToText {
                     guard let selected else { throw AudioWorkspaceError.message(String(localized: "Import or select a recording first.", bundle: .module)) }
                     try await self.transcribe(item: selected, into: result.id, session: session, request: request, source: .final, token: token)
@@ -70,13 +94,15 @@ extension AudioWorkspaceController {
                     } else { pcm = [] }
                     let output = try await session.execute(request, pcm: pcm) { [weak self] update in
                         Task { @MainActor in
-                            guard let self, self.valid(token) else { return }
-                            self.status = update.stage
-                            self.progress = update.total.flatMap { $0 > 0 ? Double(update.completed) / Double($0) : nil }
+                            self?.receiveProgress(update, runID: result.id, token: token)
                         }
                     }
                     try Task.checkCancellation()
                     guard self.valid(token) else { return }
+                    if synthesis { _ = try Self.validateGeneratedAudio(output.pcm) }
+                    self.generationProgress?.saving()
+                    self.status = String(localized: "Saving audio", bundle: .module)
+                    self.progress = nil
                     var generatedClip: AudioLibraryClip?
                     if let audio = output.pcm {
                         let assets = self.assets; let lifetime = self.lifetime
@@ -86,6 +112,7 @@ extension AudioWorkspaceController {
                             try lifetime.check()
                             return try assets.store(data: bytes, fileName: "take.wav", mimeType: "audio/wav")
                         }.value
+                        try Task.checkCancellation()
                         guard self.valid(token) else { return }
                         generatedClip = AudioLibraryClip(assetReference: saved.storedReference, sampleRate: Double(audio.format.sampleRate), channels: Int(audio.format.channels), frameCount: Int64(audio.samples.count / Int(audio.format.channels)))
                     }
@@ -100,10 +127,17 @@ extension AudioWorkspaceController {
                 }
                 guard self.valid(token) else { return }
                 if currentTask == .speechToText { try self.persistMutation(result.id) { $0.status = .completed; $0.updatedAt = Date() } }
+                self.status = String(localized: "Saved in this profile", bundle: .module)
             } catch {
                 guard self.valid(token) else { return }
                 let cancelled = Task.isCancelled
-                if self.pendingSaves[result.id] == nil { self.update(result.id) { $0.status = cancelled ? .interrupted : .failed; $0.failure = error.localizedDescription } }
+                if synthesis {
+                    self.activeGeneration = nil
+                    if self.selectedID == result.id { self.selectedID = selected?.id }
+                } else if self.pendingSaves[result.id] == nil {
+                    self.update(result.id) { $0.status = cancelled ? .interrupted : .failed; $0.failure = error.localizedDescription }
+                }
+                self.status = cancelled ? String(localized: "Interrupted", bundle: .module) : String(localized: "Failed", bundle: .module)
                 self.error = cancelled ? nil : error.localizedDescription
             }
         }

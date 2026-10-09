@@ -224,7 +224,7 @@ extension AudioWorkspaceController {
                 guard admitted else { throw CancellationError() }
                 let session = try await self.residentSession(for: profile, source: item)
                 let pcm = try await Task.detached { try AudioMediaIO.readMono16k(item.clips, store: assets, start: offset, duration: duration, cancel: lifetime.check) }.value
-                let result = try await session.execute(self.request(from: item.recipe, task: .speechToText), pcm: pcm)
+                let result = try await session.execute(Self.request(from: item.recipe, task: .speechToText), pcm: pcm)
                 try Task.checkCancellation()
                 guard self.valid(token) else { return }
                 if let transcript = result.transcript {
@@ -269,7 +269,7 @@ extension AudioWorkspaceController {
             do {
                 guard admitted else { throw CancellationError() }
                 let session = try await self.residentSession(for: profile, source: item)
-                try await self.transcribe(item: item, into: id, session: session, request: self.request(from: item.recipe, task: .speechToText), source: .final, token: token)
+                try await self.transcribe(item: item, into: id, session: session, request: Self.request(from: item.recipe, task: .speechToText), source: .final, token: token)
                 guard self.valid(token) else { return }
                 self.publish(try self.library.update(id) { $0.status = .completed; $0.updatedAt = Date() })
                 self.transcriptBacklog = 0

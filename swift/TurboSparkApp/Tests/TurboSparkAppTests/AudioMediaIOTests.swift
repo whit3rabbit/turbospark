@@ -115,6 +115,50 @@ final class AudioMediaIOTests: XCTestCase {
         XCTAssertTrue(decoded.contains { abs($0) > 0.1 })
     }
 
+    func testFLACAndAIFFPreserveStereoFramesAndSamplesAt24BitPrecision() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.wav")
+        let frames = 44_100
+        let samples = (0..<frames).flatMap { frame -> [Float] in
+            [Float(sin(Double(frame) * 2 * .pi * 440 / 44_100)) * 0.25,
+             Float(cos(Double(frame) * 2 * .pi * 220 / 44_100)) * 0.5]
+        }
+        try AudioMediaIO.wav(samples: samples, sampleRate: 44_100, channels: 2).write(to: source)
+        for preset in [AudioExportPreset.flac, .aiff] {
+            let output = root.appendingPathComponent("output." + preset.fileExtension)
+            try AudioMediaIO.encodeLossless(from: source, to: output, preset: preset)
+            let file = try AVAudioFile(forReading: output, commonFormat: .pcmFormatFloat32, interleaved: false)
+            XCTAssertEqual(file.length, Int64(frames))
+            XCTAssertEqual(file.processingFormat.sampleRate, 44_100)
+            XCTAssertEqual(file.processingFormat.channelCount, 2)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(frames)))
+            try file.read(into: buffer)
+            let decoded = try AudioMediaIO.interleavedSamples(buffer)
+            XCTAssertEqual(decoded.count, samples.count)
+            XCTAssertLessThan(zip(decoded, samples).map { abs($0 - $1) }.max() ?? .infinity, 1.0 / 4_194_304)
+        }
+    }
+
+    func testCancelledLosslessConversionRemovesPartialOutput() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.wav")
+        try AudioMediaIO.wav(samples: Array(repeating: 0.25, count: 48_000), sampleRate: 48_000, channels: 1).write(to: source)
+        for preset in [AudioExportPreset.flac, .aiff] {
+            let output = root.appendingPathComponent("partial." + preset.fileExtension)
+            var checks = 0
+            XCTAssertThrowsError(try AudioMediaIO.encodeLossless(from: source, to: output, preset: preset, cancel: {
+                checks += 1
+                if checks == 3 { throw CancellationError() }
+            })) { XCTAssertTrue($0 is CancellationError) }
+            XCTAssertEqual(checks, 3)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        }
+    }
+
     func testRejectsMalformedPCM() {
         XCTAssertThrowsError(try AudioMediaIO.wav(samples: [0], sampleRate: 48_000, channels: 2))
         XCTAssertThrowsError(try AudioMediaIO.wav(samples: [.nan], sampleRate: 48_000, channels: 1))

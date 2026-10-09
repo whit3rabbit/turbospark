@@ -71,8 +71,10 @@ final class AudioNavigationTests: XCTestCase {
     func testMusicAndSpeechOutputsStayWithTheirTask() throws {
         try withController { controller in
             let recording = AudioLibraryItem(title: "Meeting", kind: .recording)
-            let music = AudioLibraryItem(title: "Soundtrack", kind: .music)
-            let speech = AudioLibraryItem(title: "Narration", kind: .voiceover)
+            var music = AudioLibraryItem(title: "Soundtrack", kind: .music)
+            var speech = AudioLibraryItem(title: "Narration", kind: .voiceover)
+            let clip = AudioLibraryClip(assetReference: "fixture", sampleRate: 24_000, channels: 1, frameCount: 24_000)
+            music.clips = [clip]; speech.clips = [clip]
             controller.items = [recording, music, speech]
             controller.selectedID = recording.id
             controller.selectPage(.music)

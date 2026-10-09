@@ -110,8 +110,7 @@ extension AudioWorkspaceController {
             isPlaying = autoplay && player.play()
         } catch { self.error = error.localizedDescription; stopPlayback() }
     }
-    func exportAudio(preset: AudioExportPreset) {
-        guard let item = selectedItem else { return }
+    func exportAudio(_ item: AudioLibraryItem, preset: AudioExportPreset = .nativeWAV) {
         export(clips: item.clips, title: item.title, preset: preset)
     }
     func exportClip(_ clip: AudioLibraryClip, preset: AudioExportPreset) {
@@ -119,41 +118,53 @@ extension AudioWorkspaceController {
         export(clips: [clip], title: (selectedItem?.title ?? "Audio") + " - " + clip.source, preset: preset)
     }
     func export(clips: [AudioLibraryClip], title: String, preset: AudioExportPreset) {
-        guard !clips.isEmpty, exportTask == nil, !isShutDown, !hasRecordingActivity else { return }
+        guard !clips.isEmpty, !isExporting, exportTask == nil, !isShutDown, !hasRecordingActivity else { return }
         let token = epoch
-        let panel = NSSavePanel(); panel.canCreateDirectories = true
-        let suffix = preset == .m4a ? "m4a" : "wav"
-        panel.allowedContentTypes = [UTType(filenameExtension: suffix) ?? .audio]
-        panel.nameFieldStringValue = ProfileBackup.sanitizedFileName(title, fallback: "Audio") + "." + suffix
-        guard panel.runModal() == .OK, let target = panel.url, valid(token), !hasRecordingActivity else { return }
+        let chooser = AudioExportPanel(title: title, preset: preset)
+        isExporting = true
+        guard chooser.panel.runModal() == .OK, let target = chooser.panel.url, valid(token), !hasRecordingActivity else {
+            isExporting = false
+            return
+        }
+        let preset = chooser.preset
+        let suffix = preset.fileExtension
         let assets = self.assets; let lifetime = self.lifetime
         do {
             let temporary = try scratchURL(extension: "wav")
             let encoded = try scratchURL(extension: suffix)
-            status = String(localized: "Exporting audio", bundle: .module)
+            if !isBusy { status = String(localized: "Exporting audio", bundle: .module) }
             exportTask = Task { [weak self] in
-                defer { try? FileManager.default.removeItem(at: temporary); try? FileManager.default.removeItem(at: encoded) }
+                let scoped = target.startAccessingSecurityScopedResource()
+                defer {
+                    if scoped { target.stopAccessingSecurityScopedResource() }
+                    try? FileManager.default.removeItem(at: temporary)
+                    try? FileManager.default.removeItem(at: encoded)
+                    self?.scratchURLs.remove(temporary)
+                    self?.scratchURLs.remove(encoded)
+                    self?.exportTask = nil
+                    self?.isExporting = false
+                }
                 do {
                     try await Task.detached { try AudioMediaIO.render(clips, store: assets, to: temporary, sampleRate: preset == .videoWAV ? 48_000 : nil, cancel: lifetime.check) }.value
-                    if preset == .m4a { try await AudioMediaIO.encodeM4A(from: temporary, to: encoded) }
+                    try Task.checkCancellation()
+                    switch preset {
+                    case .m4a: try await AudioMediaIO.encodeM4A(from: temporary, to: encoded)
+                    case .flac, .aiff:
+                        try await Task.detached { try AudioMediaIO.encodeLossless(from: temporary, to: encoded, preset: preset, cancel: lifetime.check) }.value
+                    case .nativeWAV, .videoWAV: break
+                    }
                     guard let self, self.valid(token), !Task.isCancelled else { return }
-                    let source = preset == .m4a ? encoded : temporary
-                    // A failed encode never damages an existing export.
-                    let sibling = target.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).\(suffix)")
-                    defer { try? FileManager.default.removeItem(at: sibling) }
-                    try FileManager.default.copyItem(at: source, to: sibling)
-                    if FileManager.default.fileExists(atPath: target.path) { _ = try FileManager.default.replaceItemAt(target, withItemAt: sibling) }
-                    else { try FileManager.default.moveItem(at: sibling, to: target) }
-                    self.status = String(localized: "Audio exported", bundle: .module)
+                    let source = preset == .nativeWAV || preset == .videoWAV ? temporary : encoded
+                    try AudioMediaIO.commitExport(from: source, to: target)
+                    if !self.isBusy { self.status = String(localized: "Audio exported", bundle: .module) }
                 } catch {
                     if let self, self.valid(token) { self.error = error.localizedDescription }
                 }
-                if let self, self.valid(token) { self.exportTask = nil }
             }
-        } catch { fail(error) }
+        } catch { isExporting = false; fail(error) }
     }
-    func exportTranscript(format: AudioTranscriptExportFormat) {
-        guard !isShutDown, !hasRecordingActivity, let item = selectedItem, let transcript = item.preferredTranscript else { return }
+    func exportTranscript(_ item: AudioLibraryItem, format: AudioTranscriptExportFormat) {
+        guard !isShutDown, !hasRecordingActivity, let transcript = item.preferredTranscript else { return }
         let token = epoch
         let panel = NSSavePanel(); panel.canCreateDirectories = true
         let suffix = format == .text ? "txt" : format.rawValue

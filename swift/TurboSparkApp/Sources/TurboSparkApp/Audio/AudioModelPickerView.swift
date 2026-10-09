@@ -24,7 +24,7 @@ struct AudioModelPickerView: View {
                     .help(Text("Refresh", bundle: .module))
                     .accessibilityLabel(Text("Refresh", bundle: .module))
             }
-            Picker(selection: Binding(get: { controller.recipe.modelID }, set: controller.selectModel)) {
+            Picker(selection: Binding(get: { controller.recipe.modelID }, set: { controller.selectModel($0) })) {
                 Text("Choose a model", bundle: .module).tag(Optional<String>.none)
                 ForEach(controller.availableProfiles) { profile in
                     Text(profile.displayName).tag(Optional(profile.identity.alias))

@@ -5,7 +5,6 @@ import Foundation
 import TurboSpark
 import UniformTypeIdentifiers
 
-enum AudioExportPreset: String, CaseIterable { case nativeWAV, videoWAV, m4a }
 enum AudioTranscriptExportFormat: String, CaseIterable { case text, srt, vtt, json }
 struct AudioCaptureApplication: Identifiable { var id: Int32; var name: String }
 struct AudioCaptureMicrophone: Identifiable { var id: String; var name: String }
@@ -40,8 +39,12 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var status = String(localized: "Saved in this profile", bundle: .module)
     @Published var error: String?
     @Published var progress: Double?
+    @Published var generationProgress: AudioGenerationProgress?
+    @Published var activeGeneration: AudioLibraryItem?
+    var activeRunID: UUID?
     @Published var transcriptBacklog = 0
     @Published var isPlaying = false
+    @Published var isExporting = false
     @Published var playbackTime: Double = 0
     @Published var captureMicrophone = true
     @Published var captureSystemAudio = false
@@ -126,7 +129,10 @@ final class AudioWorkspaceController: ObservableObject {
             Task { @MainActor in self?.tick() }
         }
     }
-    var selectedItem: AudioLibraryItem? { items.first { $0.id == selectedID } }
+    var selectedItem: AudioLibraryItem? {
+        if let activeGeneration, activeGeneration.id == selectedID { return activeGeneration }
+        return items.first { $0.id == selectedID }
+    }
     var task: AudioTask {
         switch page {
         case .record, .transcribe: return .speechToText
@@ -169,7 +175,11 @@ final class AudioWorkspaceController: ObservableObject {
         case .speechToText, .enhancement, .separation, .alignment, .diarization, .speechDetection, .codec, .languageIdentification:
             return selectedItem?.clips.isEmpty == false
         case .textToSpeech: return !recipe.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .music: return !recipe.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .music:
+            return !recipe.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && recipe.durationSeconds.isFinite && recipe.durationSeconds > 0
+                && recipe.durationSeconds <= Double(selectedProfile?.capabilities.maxInputSeconds ?? 360)
+                && (1...30).contains(recipe.steps)
         }
     }
     var presets: [AudioPreset] { preferences.presets }
@@ -177,9 +187,9 @@ final class AudioWorkspaceController: ObservableObject {
     var filteredItems: [AudioLibraryItem] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return items.filter {
-            query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)
+            !$0.isEmptyGeneratedAttempt && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)
                 || $0.collection.localizedCaseInsensitiveContains(query)
-                || ($0.preferredTranscript?.segments.contains { $0.text.localizedCaseInsensitiveContains(query) } ?? false)
+                || ($0.preferredTranscript?.segments.contains { $0.text.localizedCaseInsensitiveContains(query) } ?? false))
         }.sorted { $0.favorite == $1.favorite ? $0.createdAt > $1.createdAt : $0.favorite }
     }
     func valid(_ token: UUID) -> Bool {
@@ -202,7 +212,10 @@ final class AudioWorkspaceController: ObservableObject {
     func flushPreferences() {
         preferences.page = page; preferences.recipe = recipe
         if let model = recipe.modelID { preferences.selectedModels[task.rawValue] = model }
-        do { try library.savePreferences(preferences); status = String(localized: "Saved in this profile", bundle: .module) }
+        do {
+            try library.savePreferences(preferences)
+            if !isBusy && error == nil { status = String(localized: "Saved in this profile", bundle: .module) }
+        }
         catch { fail(error) }
     }
     func selectPage(_ page: AudioWorkspacePage) {
@@ -261,18 +274,24 @@ final class AudioWorkspaceController: ObservableObject {
     func publish(_ item: AudioLibraryItem) {
         if let index = items.firstIndex(where: { $0.id == item.id }) { items[index] = item }
         else { items.insert(item, at: 0) }
-        status = String(localized: "Saved in this profile", bundle: .module)
+        if !isBusy { status = String(localized: "Saved in this profile", bundle: .module) }
     }
     func refreshPendingPins() {
         ManagedAssetPins.set(Set(pendingSaves.values.flatMap(\.assetReferences).compactMap(ManagedAssetStore.assetID(from:))), owner: pendingAssetOwner)
     }
     func save(_ item: AudioLibraryItem) throws {
-        do { try library.save(item); pendingSaves.removeValue(forKey: item.id); refreshPendingPins(); publish(item) }
+        do {
+            try library.save(item); pendingSaves.removeValue(forKey: item.id); refreshPendingPins(); publish(item)
+            if activeGeneration?.id == item.id { activeGeneration = nil }
+        }
         catch { pendingSaves[item.id] = item; refreshPendingPins(); throw error }
     }
     @discardableResult func persistMutation(_ id: UUID, _ mutation: (inout AudioLibraryItem) -> Void) throws -> AudioLibraryItem {
         if var pending = pendingSaves[id] {
             mutation(&pending); try save(pending); return pending
+        }
+        if var active = activeGeneration, active.id == id {
+            mutation(&active); try save(active); return active
         }
         var candidate: AudioLibraryItem?
         do {
@@ -306,8 +325,13 @@ final class AudioWorkspaceController: ObservableObject {
         update(item.id) { $0.title = title; $0.updatedAt = Date() }
     }
     func organize(_ item: AudioLibraryItem, collection: String) { update(item.id) { $0.collection = collection } }
+    func canDelete(_ item: AudioLibraryItem) -> Bool {
+        !isShutDown && !hasRecordingActivity && !isExporting && item.id != activeRunID
+            && item.id != recordingID && !(isBusy && item.status == .processing)
+    }
     func delete(_ item: AudioLibraryItem) {
-        guard item.id != recordingID, !(isBusy && item.status == .processing) else { return }
+        // Recheck at confirmation time: the item may have started processing.
+        guard canDelete(item) else { return }
         do {
             try library.delete(item.id); items.removeAll { $0.id == item.id }
             pendingSaves.removeValue(forKey: item.id); pendingTranscriptEdits.removeValue(forKey: item.id); refreshPendingPins()
@@ -490,9 +514,9 @@ final class AudioWorkspaceController: ObservableObject {
         let token = epoch
         do {
             let opening = AudioModelOpening()
-            opening.onProgress = { [weak self] fraction in
+            opening.onProgress = { [weak self, weak opening] fraction in
                 Task { @MainActor in
-                    guard let self, self.opening != nil else { return }
+                    guard let self, let opening, self.valid(token), self.opening === opening else { return }
                     self.status = String(localized: "Verifying", bundle: .module)
                     self.progress = fraction
                 }
@@ -541,7 +565,8 @@ final class AudioWorkspaceController: ObservableObject {
         if let old = session { DispatchQueue.global(qos: .userInitiated).sync { old.close() } }
         session = nil; sessionKey = nil; modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
         for url in scratchURLs { try? FileManager.default.removeItem(at: url) }
-        scratchURLs.removeAll(); items.removeAll(); pendingTranscriptEdits.removeAll(); pendingSaves.removeAll(); ManagedAssetPins.clear(owner: pendingAssetOwner); recipe = AudioRecipe(); preferences = AudioWorkspacePreferences()
+        scratchURLs.removeAll(); items.removeAll(); activeGeneration = nil; activeRunID = nil; generationProgress = nil
+        pendingTranscriptEdits.removeAll(); pendingSaves.removeAll(); ManagedAssetPins.clear(owner: pendingAssetOwner); recipe = AudioRecipe(); preferences = AudioWorkspacePreferences()
     }
 }
 

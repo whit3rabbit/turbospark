@@ -117,6 +117,50 @@ enum AudioMediaIO {
         }
     }
 
+    /// Native lossless formats use bounded PCM blocks rather than loading a song at once.
+    static func encodeLossless(from source: URL, to destination: URL, preset: AudioExportPreset, cancel: () throws -> Void = {}) throws {
+        try cancel()
+        guard preset == .flac || preset == .aiff else { throw MediaError.conversion }
+        do {
+            let input = try AVAudioFile(forReading: source, commonFormat: .pcmFormatFloat32, interleaved: false)
+            guard input.length > 0 else { throw MediaError.noAudio }
+            var settings: [String: Any] = [
+                AVSampleRateKey: input.processingFormat.sampleRate,
+                AVNumberOfChannelsKey: input.processingFormat.channelCount
+            ]
+            if preset == .flac {
+                settings[AVFormatIDKey] = kAudioFormatFLAC
+                settings[AVEncoderBitDepthHintKey] = 24
+            } else {
+                settings[AVFormatIDKey] = kAudioFormatLinearPCM
+                settings[AVLinearPCMBitDepthKey] = 24
+                settings[AVLinearPCMIsFloatKey] = false
+                settings[AVLinearPCMIsBigEndianKey] = true
+                settings[AVLinearPCMIsNonInterleaved] = false
+            }
+            let output = try AVAudioFile(forWriting: destination, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: 16_384) else { throw MediaError.conversion }
+            while input.framePosition < input.length {
+                try Task.checkCancellation(); try cancel()
+                try input.read(into: buffer)
+                guard buffer.frameLength > 0 else { throw MediaError.conversion }
+                try output.write(from: buffer)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    static func commitExport(from source: URL, to target: URL) throws {
+        // Copy only completed audio, then atomically replace an existing export.
+        let sibling = target.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).\(target.pathExtension)")
+        defer { try? FileManager.default.removeItem(at: sibling) }
+        try FileManager.default.copyItem(at: source, to: sibling)
+        if FileManager.default.fileExists(atPath: target.path) { _ = try FileManager.default.replaceItemAt(target, withItemAt: sibling) }
+        else { try FileManager.default.moveItem(at: sibling, to: target) }
+    }
+
     static func encodeM4A(from source: URL, to destination: URL) async throws {
         let asset = AVURLAsset(url: source)
         guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else { throw MediaError.conversion }

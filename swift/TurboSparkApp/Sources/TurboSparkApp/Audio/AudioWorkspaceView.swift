@@ -7,6 +7,11 @@ struct AudioWorkspaceView: View {
     @ObservedObject var controller: AudioWorkspaceController
     @State private var presetName = ""
     @State private var showingPreset = false
+    @State private var showingPrompts = false
+    @State private var savingPrompt = false
+    @State private var showingGenerator = false
+    // Held here, not in the sheet, so reopening the generator keeps the choices.
+    @State private var promptSelection = MusicPromptSelection()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,12 +27,12 @@ struct AudioWorkspaceView: View {
                                 workflow.frame(maxWidth: .infinity)
                                 modelPanel.frame(width: 300)
                             }
-                            .frame(maxWidth: 1280)
+                            .frame(maxWidth: 1440)
                             .frame(maxWidth: .infinity)
                             .padding(24)
                         } else {
                             VStack(alignment: .leading, spacing: 20) {
-                                if controller.page != .record { modelPanel }
+                                if controller.page != .record { compactModelPanel }
                                 workflow
                             }
                             .padding(24)
@@ -40,10 +45,18 @@ struct AudioWorkspaceView: View {
         .background(.appPage)
         .themedFont(.base)
         .sheet(isPresented: $showingPreset) {
-            AudioNameSheet(title: "Save preset", value: $presetName) {
-                controller.savePreset(name: presetName)
-                showingPreset = false
+            AudioNameSheet(title: savingPrompt ? "Save Prompt" : "Save preset", value: $presetName) {
+                if savingPrompt {
+                    if controller.savePrompt(name: presetName) { showingPreset = false }
+                } else {
+                    controller.savePreset(name: presetName)
+                    showingPreset = false
+                }
             }
+        }
+        .sheet(isPresented: $showingPrompts) { AudioPromptLibraryView(controller: controller) }
+        .sheet(isPresented: $showingGenerator) {
+            MusicPromptGeneratorView(controller: controller, selection: $promptSelection)
         }
     }
 
@@ -87,9 +100,9 @@ struct AudioWorkspaceView: View {
                 .foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
             if controller.page == .record { recording }
             else { modelAndInputs }
-            if let item = controller.workspaceResult {
+            if let item = controller.workspaceResult, item.status != .processing {
                 AudioItemDetailView(controller: controller, item: item)
-            } else if AudioWorkspacePage.destinations.contains(controller.page) {
+            } else if !controller.isBusy && AudioWorkspacePage.destinations.contains(controller.page) {
                 VStack(spacing: 10) {
                     Image(systemName: controller.page == .transcribe ? "text.alignleft" : "waveform")
                         .themedFont(.title).foregroundStyle(.appSecondary)
@@ -104,21 +117,24 @@ struct AudioWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Saved audio", bundle: .module).themedFont(.base, weight: .semibold)
                     ForEach(controller.workspaceHistory.prefix(5)) { item in
-                        Button { controller.select(item) } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: controller.page.symbol).foregroundStyle(.appAccent)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(item.title).lineLimit(1)
-                                    Text(item.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
-                                        .themedFont(.tiny).foregroundStyle(.appSecondary)
+                        HStack(spacing: 12) {
+                            Button { controller.select(item) } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: controller.page.symbol).foregroundStyle(.appAccent)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(item.title).lineLimit(1)
+                                        Text(item.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
+                                            .themedFont(.tiny).foregroundStyle(.appSecondary)
+                                    }
+                                    Spacer(minLength: 8)
+                                    Text(audioTime(item.duration)).monospacedDigit().foregroundStyle(.appSecondary)
                                 }
-                                Spacer()
-                                Text(audioTime(item.duration)).monospacedDigit().foregroundStyle(.appSecondary)
-                                Image(systemName: "chevron.right").foregroundStyle(.appSecondary)
-                            }
-                            .padding(12).background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
-                            .contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+                                .contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                            AudioSaveAsButton(controller: controller, item: item)
+                            AudioDeleteButton(controller: controller, item: item).labelStyle(.iconOnly)
+                        }
+                        .padding(12).background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
                     }
                 }
             }
@@ -130,6 +146,25 @@ struct AudioWorkspaceView: View {
             .padding(18)
             .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
             .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
+    }
+
+    private var compactModelPanel: some View {
+        DisclosureGroup {
+            AudioModelPickerView(model: model, controller: controller).padding(.top, 12)
+        } label: {
+            HStack(spacing: 12) {
+                Label { Text("Audio model", bundle: .module) } icon: { Image(systemName: "cpu") }
+                Spacer(minLength: 8)
+                if let profile = controller.selectedProfile {
+                    Text(profile.displayName).lineLimit(1).foregroundStyle(.appSecondary)
+                } else {
+                    Text("Choose a model", bundle: .module).foregroundStyle(.appSecondary)
+                }
+            }.themedFont(.small)
+        }
+        .padding(16)
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
     }
 
     private var pageDescription: String {
@@ -183,7 +218,7 @@ struct AudioWorkspaceView: View {
     }
 
     private var operationPicker: some View {
-        Picker(selection: Binding(get: { controller.recipe.task }, set: controller.selectTask)) {
+        Picker(selection: Binding(get: { controller.recipe.task }, set: { controller.selectTask($0) })) {
             if controller.page == .cleanup {
                 if AudioTask.enhancement.isRunnable {
                     Text("Enhance speech", bundle: .module).tag(AudioTask.enhancement.rawValue)
@@ -337,29 +372,55 @@ struct AudioWorkspaceView: View {
     }
 
     private var musicInputs: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Music description", bundle: .module).themedFont(.small, weight: .semibold)
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $controller.recipe.caption)
-                    .scrollContentBackground(.hidden)
-                    .themedFont(.base)
-                    .accessibilityLabel(Text("Music description", bundle: .module))
-                if controller.recipe.caption.isEmpty {
-                    Text("Describe the mood, instruments, and style", bundle: .module)
-                        .foregroundStyle(.appSecondary)
-                        .padding(.horizontal, 5).padding(.vertical, 8)
-                        .allowsHitTesting(false).accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Music description", bundle: .module).themedFont(.small, weight: .semibold)
+                    Spacer()
+                    Button { showingGenerator = true } label: {
+                        Label { Text("Prompt generator", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
+                    }
+                    .buttonStyle(.borderless).themedFont(.small)
                 }
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $controller.recipe.caption)
+                        .scrollContentBackground(.hidden)
+                        .themedFont(.base)
+                        .accessibilityLabel(Text("Music description", bundle: .module))
+                    if controller.recipe.caption.isEmpty {
+                        Text("Describe the mood, instruments, and style", bundle: .module)
+                            .foregroundStyle(.appSecondary)
+                            .padding(.horizontal, 5).padding(.vertical, 8)
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
+                .frame(height: 110).padding(8)
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
             }
-            .frame(height: 110).padding(8)
-            .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
             if controller.selectedProfile?.capabilities.supportsLyrics == true {
-                Text("Lyrics", bundle: .module).themedFont(.small, weight: .semibold)
-                TextEditor(text: $controller.recipe.lyrics)
-                    .frame(minHeight: 100).themedFont(.base)
-                    .scrollContentBackground(.hidden).padding(8)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Lyrics", bundle: .module).themedFont(.small, weight: .semibold)
+                        Spacer()
+                        if AudioWorkspaceController.effectiveLyrics(controller.recipe.lyrics) == AudioWorkspaceController.instrumentalLyrics {
+                            Text("Instrumental", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
+                        }
+                    }
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $controller.recipe.lyrics)
+                            .themedFont(.base)
+                            .scrollContentBackground(.hidden)
+                            .accessibilityLabel(Text("Lyrics", bundle: .module))
+                        if controller.recipe.lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(verbatim: AudioWorkspaceController.instrumentalLyrics)
+                                .foregroundStyle(.appSecondary)
+                                .padding(.horizontal, 5).padding(.vertical, 8)
+                                .allowsHitTesting(false).accessibilityHidden(true)
+                        }
+                    }
+                    .frame(height: 100).padding(8)
                     .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
-                    .accessibilityLabel(Text("Lyrics", bundle: .module))
+                }
             }
             if controller.selectedProfile != nil {
                 HStack {
@@ -373,7 +434,7 @@ struct AudioWorkspaceView: View {
                         HStack {
                             Text("Seed", bundle: .module)
                             TextField(value: $controller.recipe.seed, format: .number) { Text("Seed", bundle: .module) }
-                                .textFieldStyle(.roundedBorder)
+                                .textFieldStyle(.roundedBorder).frame(maxWidth: 200)
                         }
                         Stepper(value: $controller.recipe.steps, in: 1...30) {
                             HStack { Text("Steps", bundle: .module); Text(verbatim: String(controller.recipe.steps)) }
@@ -386,11 +447,30 @@ struct AudioWorkspaceView: View {
 
     private var experimentActions: some View {
         ViewThatFits(in: .horizontal) {
-            HStack { presetMenu; saveDraftButton; Spacer(); runButton }
+            HStack(spacing: 12) { libraryActions; Spacer(minLength: 16); runButton }
             VStack(alignment: .leading, spacing: 12) {
-                HStack { presetMenu; saveDraftButton }
+                libraryActions
                 runButton
             }
+        }
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder private var libraryActions: some View {
+        if controller.task == .music || controller.task == .textToSpeech {
+            HStack(spacing: 12) {
+                Button { showingPrompts = true } label: {
+                    Label { Text("Prompt library", bundle: .module) } icon: { Image(systemName: "text.book.closed") }
+                }
+                Button {
+                    savingPrompt = true
+                    presetName = String((controller.task == .music ? controller.recipe.caption : controller.recipe.text).prefix(60))
+                    showingPreset = true
+                } label: { Text("Save Prompt", bundle: .module) }
+                    .disabled(!controller.canSavePrompt)
+            }.fixedSize()
+        } else {
+            HStack(spacing: 12) { presetMenu; saveDraftButton }
         }
     }
 
@@ -414,7 +494,7 @@ struct AudioWorkspaceView: View {
 
     private var presetMenu: some View {
         Menu {
-            Button { presetName = ""; showingPreset = true } label: { Text("Save preset", bundle: .module) }
+            Button { savingPrompt = false; presetName = ""; showingPreset = true } label: { Text("Save preset", bundle: .module) }
             if !controller.presets.isEmpty {
                 Divider()
                 ForEach(controller.presets) { preset in
