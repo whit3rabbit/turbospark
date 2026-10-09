@@ -83,6 +83,15 @@ if [ "$skip_build" -eq 0 ]; then
     echo "OPENKIND_RELEASE_REVISION must be an exact published 40-character commit for the Swift package" >&2
     exit 1
   }
+  if ! command -v protoc >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      echo "==> protoc not found; installing protobuf via Homebrew"
+      HOMEBREW_NO_AUTO_UPDATE=1 brew install protobuf
+    else
+      echo "error: protoc is required to build openkind-server; install protobuf (e.g. brew install protobuf)" >&2
+      exit 1
+    fi
+  fi
   openkind_build_dir="$(mktemp -d)"
   trap 'rm -rf "$openkind_build_dir"' EXIT
   cargo install --locked --version "$openkind_server_version" --target "$target" --features mlx \
