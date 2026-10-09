@@ -11,6 +11,7 @@
 //! progress, and the stable-prefix/tail-revision machinery is where the
 //! Metal encoder path plugs in. Cancel discards the buffer.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -30,8 +31,15 @@ impl SttRunner {
     /// config, tokenizer, and tensor shapes at open, so a mislabeled or
     /// foreign directory fails here rather than mid-transcription.
     fn open(model_dir: &Path) -> Result<Self, String> {
-        let config = std::fs::read_to_string(model_dir.join("config.json"))
+        // Family dispatch must not allocate an unbounded config before the
+        // selected runner gets a chance to apply its resource checks.
+        let mut config = String::new();
+        std::fs::File::open(model_dir.join("config.json"))
+            .and_then(|file| file.take((1 << 20) + 1).read_to_string(&mut config))
             .map_err(|e| format!("read config.json: {e}"))?;
+        if config.len() > 1 << 20 {
+            return Err("config.json exceeds 1 MiB limit".into());
+        }
         let model_type = serde_json::from_str::<serde_json::Value>(&config)
             .ok()
             .and_then(|parsed| {

@@ -2056,6 +2056,37 @@ fn embedding_encoder_cache_real_model_measurement() {
 
 #[test]
 #[cfg(target_os = "macos")]
+fn stt_open_rejects_hostile_architecture_before_loading_and_clears_handle() {
+    let dir = std::env::temp_dir().join(format!("ts-stt-admission-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = serde_json::json!({
+        "model_type":"whisper", "d_model":384, "encoder_layers":512, "decoder_layers":512,
+        "encoder_attention_heads":6, "decoder_attention_heads":6,
+        "encoder_ffn_dim":1536, "decoder_ffn_dim":1536, "vocab_size":51864,
+        "num_mel_bins":80, "max_source_positions":1500, "max_target_positions":448
+    });
+    std::fs::write(dir.join("config.json"), config.to_string()).unwrap();
+    let path = c(dir.to_str().unwrap());
+    let mut model = std::ptr::NonNull::<TsSttModel>::dangling().as_ptr();
+    let result = unsafe { ts_stt_open(path.as_ptr(), &mut model) };
+    assert_eq!(result, abi::TS_ERR_OPEN);
+    assert!(model.is_null());
+    let error = last_error();
+    assert!(
+        error.contains("encoder_layers") && error.contains("maximum"),
+        "{error}"
+    );
+
+    std::fs::write(dir.join("config.json"), vec![b' '; (1 << 20) + 1]).unwrap();
+    let result = unsafe { ts_stt_open(path.as_ptr(), &mut model) };
+    assert_eq!(result, abi::TS_ERR_OPEN);
+    assert!(model.is_null());
+    assert!(last_error().contains("1 MiB limit"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
 fn stt_handles_reject_null_and_unknown_inputs() {
     let mut model: *mut TsSttModel = ptr::null_mut();
     let code = unsafe { ts_stt_open(ptr::null(), &mut model) };

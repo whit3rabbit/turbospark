@@ -246,6 +246,21 @@ A speech install is a directory containing exactly:
   estimated allocations for the CPU runner (f32 weights, caches, scratch,
   and loading margin). This estimate is not a measured process-memory ceiling.
 
+Whisper open requires this receipt and verifies all three files' sizes and
+SHA-256 hashes. The recorded family, mel width, and CPU estimate must match
+the parsed config. Reinstall or regenerate the receipt after changing an
+install; a receipt establishes file consistency, not publisher identity.
+
+Before loading owned weights, the runner applies the default load guard's
+host reserve, subtracts the current process footprint, and refuses abnormal
+or unavailable host memory-pressure readings. Admission includes the CPU
+estimate, another copy for Metal weights and caches, attention scores,
+mapped checkpoint pages, and a loading allowance, with a 24 GiB hard cap.
+This is an estimated admission check, not a guarantee against later host
+memory pressure. Concurrent Whisper opens are serialized through allocation.
+Configs are limited to the supported Whisper architecture envelope;
+safetensors ranges must cover the payload without overlap or gaps.
+
 The catalog refuses GGML/GGUF speech distributions and foreign layouts by
 name before anything is parsed.
 

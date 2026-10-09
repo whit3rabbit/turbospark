@@ -15,6 +15,7 @@
 //! comes back empty contributes no segment. The same PCM always yields the
 //! same segments.
 
+mod admission;
 pub mod decode;
 #[cfg(target_os = "macos")]
 pub mod metal;
@@ -24,7 +25,6 @@ pub mod weights;
 
 pub use decode::{StopReason, WindowDecoder};
 
-use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -113,16 +113,35 @@ impl WhisperRunner {
         self.transcribe_controlled(pcm, language, cancelled, &mut progress)
     }
     /// Opens a speech install directory containing `config.json`,
-    /// `model.safetensors`, and `tokenizer.json`.
+    /// `model.safetensors`, `tokenizer.json`, and a matching speech receipt.
     pub fn open(model_dir: &Path) -> Result<Self, String> {
+        Self::open_with_budget(model_dir, admission::host_budget)
+    }
+
+    fn open_with_budget(
+        model_dir: &Path,
+        available: impl Fn() -> Result<u64, String>,
+    ) -> Result<Self, String> {
+        // Serialize Whisper admission and allocation so simultaneous opens do
+        // not both spend the same process headroom snapshot.
+        static OPEN_LOCK: Mutex<()> = Mutex::new(());
+        let _open = OPEN_LOCK.lock().map_err(|_| "Whisper open lock poisoned")?;
         let config_path = model_dir.join("config.json");
-        let config_str = fs::read_to_string(&config_path)
-            .map_err(|e| format!("failed to read {}: {e}", config_path.display()))?;
-        let config = WhisperConfig::from_json_str(&config_str)
+        let config_bytes = admission::read_bounded(&config_path, admission::CONFIG_LIMIT)?;
+        let config_str = std::str::from_utf8(&config_bytes).map_err(|e| e.to_string())?;
+        let config = WhisperConfig::from_json_str(config_str)
             .map_err(|e| format!("failed to parse {}: {e}", config_path.display()))?;
+        // Reject oversized configurations before touching tokenizer or weights.
+        admission::admit(&config, 0, available()?)?;
+        let receipt = admission::receipt(model_dir, &config)?;
+        let checkpoint_bytes = receipt.files["model.safetensors"].size;
+        admission::admit(&config, checkpoint_bytes, available()?)?;
+        admission::verify_bytes(&receipt, "config.json", &config_bytes)?;
 
         let tokenizer_path = model_dir.join("tokenizer.json");
-        let tokenizer = Tokenizer::from_file(&tokenizer_path)
+        let tokenizer_bytes = admission::read_bounded(&tokenizer_path, admission::TOKENIZER_LIMIT)?;
+        admission::verify_bytes(&receipt, "tokenizer.json", &tokenizer_bytes)?;
+        let tokenizer = Tokenizer::from_bytes(&tokenizer_bytes)
             .map_err(|e| format!("failed to load tokenizer.json: {e}"))?;
         // Tokenizers can reassign added-token IDs while loading. Use the
         // resolved table so prompts and decoded IDs share one identity.
@@ -143,8 +162,13 @@ impl WhisperRunner {
         }
 
         let safetensors_path = model_dir.join("model.safetensors");
-        let file = SafetensorsFile::open(&safetensors_path)
+        // The supported envelope needs far fewer descriptors than a general
+        // language-model shard; bound serde's header expansion accordingly.
+        let file = SafetensorsFile::open_with_header_limit(&safetensors_path, 1 << 20)
             .map_err(|e| format!("failed to open {}: {e}", safetensors_path.display()))?;
+        file.verify_sha256(&receipt.files["model.safetensors"].sha256)
+            .map_err(|e| format!("speech receipt model.safetensors: {e}"))?;
+        admission::admit(&config, checkpoint_bytes, available()?)?;
         let weights = WhisperWeights::load_from_safetensors(&file, &config)
             .map_err(|e| format!("failed to load whisper weights: {e}"))?;
 

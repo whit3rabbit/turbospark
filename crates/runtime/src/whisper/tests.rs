@@ -284,7 +284,7 @@ fn window_stride_is_one_second_of_overlap() {
 // `synthetic_runner` above builds weights in memory; `WhisperRunner::open`
 // is the path a real install takes, and nothing else exercised it.
 
-const TINY_CONFIG_JSON: &str = r#"{"model_type":"whisper","d_model":16,"encoder_layers":2,"decoder_layers":2,
+pub(super) const TINY_CONFIG_JSON: &str = r#"{"model_type":"whisper","d_model":16,"encoder_layers":2,"decoder_layers":2,
     "encoder_attention_heads":4,"decoder_attention_heads":4,
     "encoder_ffn_dim":32,"decoder_ffn_dim":32,"vocab_size":51864,
     "num_mel_bins":80,"max_source_positions":1500,"max_target_positions":448,
@@ -504,6 +504,142 @@ fn write_speech_install(
         })
         .collect();
     write_safetensors(&dir.join("model.safetensors"), &mutate_tensors(tensors));
+    write_test_receipt(dir);
+}
+
+fn write_test_receipt(dir: &std::path::Path) {
+    use model_io::speech_receipt::{FileEntry, SpeechInstallReceipt};
+    let config =
+        WhisperConfig::from_json_str(&std::fs::read_to_string(dir.join("config.json")).unwrap())
+            .unwrap();
+    let files = ["config.json", "tokenizer.json", "model.safetensors"]
+        .into_iter()
+        .map(|name| {
+            let path = dir.join(name);
+            (
+                name.to_string(),
+                FileEntry {
+                    size: std::fs::metadata(&path).unwrap().len(),
+                    sha256: model_io::hash_file(&path, 1 << 20).unwrap(),
+                },
+            )
+        })
+        .collect();
+    SpeechInstallReceipt::new(
+        "whisper",
+        config.n_mels,
+        config.memory_ceiling_bytes(),
+        None,
+        None,
+        files,
+    )
+    .write_to_dir(dir)
+    .unwrap();
+}
+
+#[test]
+fn open_admission_precedes_tokenizer_and_weight_loading() {
+    let dir = speech_install_dir("admission");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("config.json"), TINY_CONFIG_JSON).unwrap();
+    // No receipt, tokenizer, or tensor file exists. Memory refusal must win.
+    let error = WhisperRunner::open_with_budget(&dir, || Ok(1))
+        .err()
+        .unwrap();
+    assert!(error.contains("memory admission refused"), "{error}");
+    let oversized = TINY_CONFIG_JSON.replace("\"encoder_layers\":2", "\"encoder_layers\":512");
+    assert_ne!(oversized, TINY_CONFIG_JSON);
+    std::fs::write(dir.join("config.json"), oversized).unwrap();
+    let error =
+        WhisperRunner::open_with_budget(&dir, || panic!("architecture gate must run first"))
+            .err()
+            .unwrap();
+    assert!(
+        error.contains("encoder_layers") && error.contains("maximum"),
+        "{error}"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn open_budget_counts_mapped_source_and_metal_before_materialization() {
+    let dir = speech_install_dir("budget-boundary");
+    write_speech_install(&dir, |tensors| tensors);
+    let config = WhisperConfig::from_json_str(TINY_CONFIG_JSON).unwrap();
+    let mapped = std::fs::metadata(dir.join("model.safetensors"))
+        .unwrap()
+        .len();
+    let estimate = super::admission::estimated_open_bytes(&config, mapped);
+    assert!(estimate > config.memory_ceiling_bytes() * 2 + mapped);
+    let error = WhisperRunner::open_with_budget(&dir, || Ok(estimate - 1))
+        .err()
+        .unwrap();
+    assert!(error.contains("memory admission refused"), "{error}");
+    let runner = WhisperRunner::open_with_budget(&dir, || Ok(estimate)).unwrap();
+    assert_eq!(runner.weights.enc_layers.len(), 2);
+    drop(runner);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn open_requires_matching_receipt_metadata_and_content() {
+    use model_io::speech_receipt::{SpeechInstallReceipt, SPEECH_RECEIPT_FILENAME};
+    let dir = speech_install_dir("receipt");
+    write_speech_install(&dir, |tensors| tensors);
+    let original = SpeechInstallReceipt::read_from_dir(&dir).unwrap();
+    std::fs::remove_file(dir.join(SPEECH_RECEIPT_FILENAME)).unwrap();
+    let error = WhisperRunner::open_with_budget(&dir, || Ok(u64::MAX))
+        .err()
+        .unwrap();
+    assert!(error.contains(SPEECH_RECEIPT_FILENAME), "{error}");
+    for change in ["estimate", "mel", "family", "missing", "size", "hash"] {
+        let mut receipt = original.clone();
+        match change {
+            "estimate" => receipt.memory_ceiling_bytes = 1,
+            "mel" => receipt.n_mels = 128,
+            "family" => receipt.speech_family = "qwen3_asr".into(),
+            "missing" => {
+                receipt.files.remove("tokenizer.json");
+            }
+            "size" => receipt.files.get_mut("config.json").unwrap().size += 1,
+            "hash" => receipt.files.get_mut("model.safetensors").unwrap().sha256 = "0".repeat(64),
+            _ => unreachable!(),
+        }
+        receipt.write_to_dir(&dir).unwrap();
+        let error = WhisperRunner::open_with_budget(&dir, || Ok(u64::MAX))
+            .err()
+            .unwrap();
+        assert!(error.contains("receipt"), "{change}: {error}");
+    }
+    original.write_to_dir(&dir).unwrap();
+    // Preserve lengths, so size-only verification cannot catch the edits.
+    for name in ["config.json", "tokenizer.json", "model.safetensors"] {
+        let path = dir.join(name);
+        let original_bytes = std::fs::read(&path).unwrap();
+        let mut changed = original_bytes.clone();
+        if name == "config.json" {
+            let json =
+                TINY_CONFIG_JSON.replace("\"scale_embedding\":false", "\"scale_embedding\":true ");
+            assert_ne!(json.as_bytes(), original_bytes);
+            changed = json.into_bytes();
+        } else if name == "tokenizer.json" {
+            let at = changed.iter().position(|b| *b == b'k').unwrap();
+            changed[at] = b'K';
+        } else {
+            *changed.last_mut().unwrap() ^= 1;
+        }
+        assert_eq!(changed.len(), original_bytes.len());
+        std::fs::write(&path, changed).unwrap();
+        let error = WhisperRunner::open_with_budget(&dir, || Ok(u64::MAX))
+            .err()
+            .unwrap();
+        assert!(
+            (error.contains("checksum") || error.contains("SHA-256")) && error.contains(name),
+            "{name}: {error}"
+        );
+        std::fs::write(path, original_bytes).unwrap();
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -701,6 +837,7 @@ fn open_uses_loaded_special_ids_and_refuses_config_mismatch() {
     // the existing token's actual ID, which the runner must use.
     json["added_tokens"][1]["id"] = serde_json::json!(42);
     std::fs::write(dir.join("tokenizer.json"), json.to_string()).unwrap();
+    write_test_receipt(&dir);
     let runner = WhisperRunner::open(&dir).unwrap();
     assert_eq!(
         runner.tokens.sot,
@@ -715,6 +852,7 @@ fn open_uses_loaded_special_ids_and_refuses_config_mismatch() {
     let mut config: serde_json::Value = serde_json::from_str(TINY_CONFIG_JSON).unwrap();
     config["eos_token_id"] = serde_json::json!(42);
     std::fs::write(dir.join("config.json"), config.to_string()).unwrap();
+    write_test_receipt(&dir);
     let error = WhisperRunner::open(&dir).err().unwrap();
     assert!(error.contains("eos_token_id"), "{error}");
     std::fs::remove_dir_all(dir).ok();

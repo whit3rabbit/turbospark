@@ -38,6 +38,11 @@ pub struct SafetensorsFile {
 impl SafetensorsFile {
     /// Open and memory-map a `.safetensors` file.
     pub fn open(path: &Path) -> Result<Self, ModelError> {
+        Self::open_with_header_limit(path, 100_000_000)
+    }
+
+    /// Apply a model-specific metadata limit before parsing tensor descriptors.
+    pub fn open_with_header_limit(path: &Path, max_header_bytes: u64) -> Result<Self, ModelError> {
         let file = File::open(path).map_err(|e| ModelError::IoFailed {
             call: format!("open {}", path.display()),
             detail: e.to_string(),
@@ -56,6 +61,13 @@ impl SafetensorsFile {
         }
 
         let header_len = u64::from_le_bytes(mmap[0..8].try_into().unwrap());
+        // Bound JSON expansion before serde materializes an untrusted header.
+        let max_header_bytes = max_header_bytes.min(100_000_000);
+        if header_len > max_header_bytes {
+            return Err(ModelError::IndexCorrupt {
+                detail: format!("safetensors header exceeds {max_header_bytes} byte limit"),
+            });
+        }
         let header_len = usize::try_from(header_len).map_err(|_| ModelError::IndexCorrupt {
             detail: format!("safetensors header length {header_len} overflows usize"),
         })?;
@@ -93,6 +105,34 @@ impl SafetensorsFile {
             tensors.insert(k, desc);
         }
 
+        // Safetensors owns each byte exactly once. Aliased descriptors can
+        // otherwise expand a small mapping into many independent owned tensors.
+        let mut ranges: Vec<_> = tensors
+            .iter()
+            .map(|(name, desc)| (desc.data_offsets.0, desc.data_offsets.1, name))
+            .collect();
+        ranges.sort_unstable();
+        let data_len = mmap.len() - data_start;
+        let mut previous_end = 0;
+        for (start, end, name) in ranges {
+            if start > end || end > data_len {
+                return Err(ModelError::IndexCorrupt {
+                    detail: format!("tensor {name} has invalid data_offsets ({start}..{end}) for {data_len} data bytes"),
+                });
+            }
+            if start != previous_end {
+                return Err(ModelError::IndexCorrupt {
+                    detail: format!("tensor {name} data_offsets overlap or leave a gap: starts at {start}, expected {previous_end}"),
+                });
+            }
+            previous_end = end;
+        }
+        if previous_end != data_len {
+            return Err(ModelError::IndexCorrupt {
+                detail: "safetensors has unclaimed trailing data".to_string(),
+            });
+        }
+
         Ok(Self {
             mmap,
             data_start,
@@ -103,6 +143,16 @@ impl SafetensorsFile {
     /// Check if a tensor is present.
     pub fn contains_tensor(&self, name: &str) -> bool {
         self.tensors.contains_key(name)
+    }
+
+    /// Verify the mapping that will actually be decoded, not a reopened path.
+    pub fn verify_sha256(&self, expected: &str) -> Result<(), ModelError> {
+        if !crate::sha256::hash_data(&self.mmap).eq_ignore_ascii_case(expected) {
+            return Err(ModelError::ChecksumMismatch {
+                file: "safetensors".to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// List all tensor names in the file.
@@ -184,6 +234,15 @@ impl SafetensorsFile {
             }
             Ok(())
         };
+        let allocate = |count: usize| -> Result<Vec<f32>, ModelError> {
+            let mut out = Vec::new();
+            out.try_reserve_exact(count)
+                .map_err(|e| ModelError::IoFailed {
+                    call: format!("allocate tensor {name}"),
+                    detail: e.to_string(),
+                })?;
+            Ok(out)
+        };
 
         match desc.dtype.to_uppercase().as_str() {
             "F32" => {
@@ -193,7 +252,7 @@ impl SafetensorsFile {
                     });
                 }
                 check_count(bytes.len() / 4)?;
-                let mut out = Vec::with_capacity(bytes.len() / 4);
+                let mut out = allocate(bytes.len() / 4)?;
                 for chunk in bytes.chunks_exact(4) {
                     out.push(f32::from_le_bytes(chunk.try_into().unwrap()));
                 }
@@ -206,7 +265,7 @@ impl SafetensorsFile {
                     });
                 }
                 check_count(bytes.len() / 2)?;
-                let mut out = Vec::with_capacity(bytes.len() / 2);
+                let mut out = allocate(bytes.len() / 2)?;
                 for chunk in bytes.chunks_exact(2) {
                     let u = u16::from_le_bytes(chunk.try_into().unwrap());
                     out.push(f32::from_bits((u as u32) << 16));
@@ -220,7 +279,7 @@ impl SafetensorsFile {
                     });
                 }
                 check_count(bytes.len() / 2)?;
-                let mut out = Vec::with_capacity(bytes.len() / 2);
+                let mut out = allocate(bytes.len() / 2)?;
                 for chunk in bytes.chunks_exact(2) {
                     let u = u16::from_le_bytes(chunk.try_into().unwrap());
                     out.push(foundation::LogitValue::from_bits(u).to_f32());

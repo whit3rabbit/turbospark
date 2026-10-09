@@ -16,6 +16,19 @@
 
 use serde::Deserialize;
 
+// Supported architecture envelope (large-v3 is the largest shipped shape).
+// `WhisperConfig::validate` enforces these before any size arithmetic because
+// config.json is model-controlled and the MLX loader sizes a generated
+// positional table from it. The runner windows audio into 30 s chunks, which
+// is exactly 1500 encoder positions.
+const WHISPER_SOURCE_POSITIONS: usize = 1500;
+const MAX_TARGET_POSITIONS: usize = 448;
+const MAX_D_MODEL: usize = 1280;
+const MAX_HEADS: usize = 20;
+const MAX_LAYERS: usize = 32;
+const MAX_FFN_DIM: usize = 5120;
+const MAX_VOCAB_SIZE: usize = 51866;
+
 /// SOT-grammar token ids resolved from the loaded whisper tokenizer.
 /// Token order and the English/multilingual text-vocabulary boundary are
 /// part of the checkpoint contract, so extraction must be validated
@@ -481,6 +494,47 @@ impl WhisperConfig {
                 "must be finite and positive".to_string(),
             ));
         }
+        // Upper bounds come before any size arithmetic. config.json is
+        // model-controlled, and the MLX loader generates the encoder's
+        // sinusoid table from these counts without a stored tensor to cap
+        // them, so a few bytes of JSON could otherwise request an
+        // allocation of any size. Overflow alone is not a bound.
+        if self.max_source_positions != WHISPER_SOURCE_POSITIONS {
+            return Err(reject(
+                "max_source_positions",
+                format!(
+                    "the runner windows audio into 30 s chunks of exactly {WHISPER_SOURCE_POSITIONS} \
+                     encoder positions, got {}",
+                    self.max_source_positions
+                ),
+            ));
+        }
+        for (field, value, max) in [
+            (
+                "max_target_positions",
+                self.max_target_positions,
+                MAX_TARGET_POSITIONS,
+            ),
+            ("d_model", self.d_model, MAX_D_MODEL),
+            ("num_attention_heads", self.num_attention_heads, MAX_HEADS),
+            (
+                "decoder_attention_heads",
+                self.decoder_attention_heads(),
+                MAX_HEADS,
+            ),
+            ("encoder_layers", self.encoder_layers(), MAX_LAYERS),
+            ("decoder_layers", self.decoder_layers(), MAX_LAYERS),
+            ("encoder_ffn_dim", self.encoder_ffn_dim, MAX_FFN_DIM),
+            ("decoder_ffn_dim", self.decoder_ffn_dim(), MAX_FFN_DIM),
+            ("vocab_size", self.vocab_size, MAX_VOCAB_SIZE),
+        ] {
+            if value > max {
+                return Err(reject(
+                    field,
+                    format!("{value} exceeds the supported maximum of {max}"),
+                ));
+            }
+        }
         if self.d_model.checked_mul(4).is_none()
             || self
                 .d_model
@@ -939,12 +993,119 @@ mod tests {
     }
 
     #[test]
+    fn rejects_dimensions_beyond_the_supported_envelope() {
+        // Multiplication that does not overflow usize is still not a bound:
+        // the MLX loader would allocate source_positions * d_model f32s for
+        // the omitted sinusoid table.
+        let mlx = |ctx: usize| {
+            format!(
+                r#"{{"n_mels":80,"n_audio_ctx":{ctx},"n_audio_state":64,"n_audio_head":4,
+                "n_audio_layer":2,"n_vocab":51864,"n_text_ctx":448,"n_text_state":64,
+                "n_text_head":4,"n_text_layer":2,"quantization":{{"group_size":64,"bits":8}},
+                "model_type":"whisper"}}"#
+            )
+        };
+        let err = WhisperConfig::from_json_str(&mlx(100_000_000)).unwrap_err();
+        assert!(err.to_string().contains("max_source_positions"), "{err}");
+        assert!(WhisperConfig::from_json_str(&mlx(1500)).is_ok());
+
+        let cases = [
+            (
+                "\"max_source_positions\": 1500",
+                "\"max_source_positions\": 3000",
+                "max_source_positions",
+            ),
+            (
+                "\"max_target_positions\": 448",
+                "\"max_target_positions\": 100000000",
+                "max_target_positions",
+            ),
+            ("\"d_model\": 384", "\"d_model\": 1000000", "d_model"),
+            (
+                "\"encoder_layers\": 4",
+                "\"encoder_layers\": 100000",
+                "encoder_layers",
+            ),
+            (
+                "\"decoder_layers\": 4",
+                "\"decoder_layers\": 100000",
+                "decoder_layers",
+            ),
+            (
+                "\"encoder_ffn_dim\": 1536",
+                "\"encoder_ffn_dim\": 100000000",
+                "encoder_ffn_dim",
+            ),
+            (
+                "\"vocab_size\": 51864",
+                "\"vocab_size\": 100000000",
+                "vocab_size",
+            ),
+        ];
+        for (from, to, field) in cases {
+            assert!(TINY_EN.contains(from), "fixture drifted: {from}");
+            let err = WhisperConfig::from_json_str(&TINY_EN.replace(from, to)).unwrap_err();
+            assert!(
+                err.to_string().contains(field),
+                "expected {field} rejection, got: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn ceiling_is_derived_and_stable_for_tiny_en() {
         let config = WhisperConfig::from_json_str(TINY_EN).unwrap();
         // All resident weights must fit at f32, including encoder weights.
         let weight_bytes = 4 * (8_208_384 + 29_551_872);
         assert!(config.memory_ceiling_bytes() > weight_bytes);
         assert!(config.memory_ceiling_bytes() >= weight_bytes + 51864 * 384 * 8);
+    }
+
+    #[test]
+    fn architecture_limits_reject_all_allocation_dimensions() {
+        for (field, value) in [
+            ("d_model", 1296),
+            ("encoder_layers", 512),
+            ("decoder_layers", 512),
+            ("encoder_attention_heads", 24),
+            ("decoder_attention_heads", 24),
+            ("encoder_ffn_dim", 5121),
+            ("decoder_ffn_dim", 5121),
+            ("vocab_size", 51867),
+            ("max_source_positions", 1501),
+            ("max_target_positions", 449),
+        ] {
+            let mut json: serde_json::Value = serde_json::from_str(TINY_EN).unwrap();
+            json[field] = value.into();
+            let err = WhisperConfig::from_json_str(&json.to_string()).unwrap_err();
+            let expected_field = if field == "encoder_attention_heads" {
+                "num_attention_heads"
+            } else {
+                field
+            };
+            assert!(err.to_string().contains(expected_field), "{field}: {err}");
+            assert!(
+                err.to_string().contains("supported maximum")
+                    || (field == "max_source_positions"
+                        && err.to_string().contains("exactly 1500")),
+                "{err}"
+            );
+        }
+        let mut largest: serde_json::Value = serde_json::from_str(TINY_EN).unwrap();
+        for (field, value) in [
+            ("d_model", 1280),
+            ("encoder_layers", 32),
+            ("decoder_layers", 32),
+            ("encoder_attention_heads", 20),
+            ("decoder_attention_heads", 20),
+            ("encoder_ffn_dim", 5120),
+            ("decoder_ffn_dim", 5120),
+            ("vocab_size", 51866),
+            ("n_mels", 128),
+        ] {
+            largest[field] = value.into();
+        }
+        WhisperConfig::from_json_str(&largest.to_string()).unwrap();
     }
 
     #[test]

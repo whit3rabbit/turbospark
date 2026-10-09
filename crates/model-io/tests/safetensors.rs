@@ -51,8 +51,9 @@ fn a_backwards_data_offsets_range_is_refused() {
     buf.extend_from_slice(header);
     buf.extend_from_slice(&[0u8; 16]);
     let path = write_file(&buf);
-    let file = SafetensorsFile::open(&path).unwrap();
-    let err = file.raw_bytes("w").unwrap_err();
+    let err = SafetensorsFile::open(&path)
+        .err()
+        .expect("invalid range must fail at open");
     assert!(matches!(err, ModelError::IndexCorrupt { .. }), "{err:?}");
 }
 
@@ -66,8 +67,9 @@ fn data_offsets_past_the_file_are_refused() {
     buf.extend_from_slice(header);
     buf.extend_from_slice(&[0u8; 16]);
     let path = write_file(&buf);
-    let file = SafetensorsFile::open(&path).unwrap();
-    let err = file.raw_bytes("w").unwrap_err();
+    let err = SafetensorsFile::open(&path)
+        .err()
+        .expect("invalid range must fail at open");
     assert!(matches!(err, ModelError::IndexCorrupt { .. }), "{err:?}");
 }
 
@@ -122,4 +124,87 @@ fn a_header_length_overflow_is_refused() {
         panic!("expected the header-length overflow to be refused at open");
     };
     assert!(matches!(err, ModelError::IndexCorrupt { .. }), "{err:?}");
+}
+
+fn framed(header: &serde_json::Value, data: &[u8]) -> Vec<u8> {
+    let json = serde_json::to_vec(header).unwrap();
+    let mut bytes = (json.len() as u64).to_le_bytes().to_vec();
+    bytes.extend(json);
+    bytes.extend(data);
+    bytes
+}
+
+#[test]
+fn globally_overlapping_ranges_refuse_before_owned_loading() {
+    // Identical, nested, and partially overlapping ranges are independently
+    // in bounds. None may authorize another owned copy of the same bytes.
+    for offsets in [[0, 16], [4, 12], [8, 24]] {
+        let header = serde_json::json!({
+            "z": {"dtype":"F32", "shape":[4], "data_offsets":[0,16]},
+            "a": {"dtype":"F32", "shape":[(offsets[1]-offsets[0])/4], "data_offsets":offsets}
+        });
+        let path = write_file(&framed(&header, &[0; 24]));
+        let err = SafetensorsFile::open(&path)
+            .err()
+            .expect("overlap must fail at open");
+        assert!(err.to_string().contains("overlap"), "{err}");
+    }
+}
+
+#[test]
+fn many_aliases_cannot_amplify_a_small_checkpoint() {
+    let mut header = serde_json::Map::new();
+    for layer in 0..512 {
+        header.insert(
+            format!("layer.{layer}"),
+            serde_json::json!({
+                "dtype":"F32", "shape":[4], "data_offsets":[0,16]
+            }),
+        );
+    }
+    let path = write_file(&framed(&header.into(), &[0; 16]));
+    let err = SafetensorsFile::open(&path)
+        .err()
+        .expect("aliases must fail at open");
+    assert!(err.to_string().contains("overlap"), "{err}");
+}
+
+#[test]
+fn ordered_by_offsets_adjacent_and_empty_tensors_remain_valid() {
+    let header = serde_json::json!({
+        "z": {"dtype":"F32", "shape":[1], "data_offsets":[0,4]},
+        "a": {"dtype":"F32", "shape":[1], "data_offsets":[4,8]},
+        "empty": {"dtype":"F32", "shape":[0], "data_offsets":[4,4]}
+    });
+    let bytes = framed(&header, &[0; 8]);
+    let path = write_file(&bytes);
+    let file = SafetensorsFile::open(&path).unwrap();
+    assert_eq!(file.load_as_f32("a").unwrap(), vec![0.0]);
+    assert!(file.load_as_f32("empty").unwrap().is_empty());
+    file.verify_sha256(&turbospark_model_io::hash_data(&bytes))
+        .unwrap();
+    assert!(file.verify_sha256(&"0".repeat(64)).is_err());
+}
+
+#[test]
+fn gaps_and_unclaimed_trailing_data_refuse_at_open() {
+    for offsets in [[4, 8], [0, 4]] {
+        let header = serde_json::json!({
+            "w": {"dtype":"F32", "shape":[1], "data_offsets":offsets}
+        });
+        let path = write_file(&framed(&header, &[0; 8]));
+        assert!(SafetensorsFile::open(&path).is_err());
+    }
+}
+
+#[test]
+fn model_specific_header_limit_is_checked_before_json_expansion() {
+    let bytes = valid_file_bytes();
+    let header_len = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+    let path = write_file(&bytes);
+    assert!(SafetensorsFile::open_with_header_limit(&path, header_len).is_ok());
+    let err = SafetensorsFile::open_with_header_limit(&path, header_len - 1)
+        .err()
+        .unwrap();
+    assert!(err.to_string().contains("header exceeds"), "{err}");
 }
