@@ -210,6 +210,12 @@ impl GraniteSpeechNarConfig {
             .get("encoder_layer_indices")
             .and_then(Value::as_array)
             .ok_or_else(|| bad_config("encoder_layer_indices", "must be an integer array"))?;
+        if raw_indices.is_empty() {
+            return Err(bad_config(
+                "encoder_layer_indices",
+                "must select at least one encoder layer",
+            ));
+        }
         let mut encoder_layer_indices = Vec::with_capacity(raw_indices.len());
         for index in raw_indices {
             let raw = index
@@ -230,6 +236,12 @@ impl GraniteSpeechNarConfig {
                 ));
             }
             encoder_layer_indices.push(resolved);
+        }
+        if encoder_layer_indices.len() != projector.num_encoder_layers {
+            return Err(bad_config(
+                "encoder_layer_indices",
+                "must match projector_config.num_encoder_layers",
+            ));
         }
         if root
             .get("scale_projected_embeddings")
@@ -1628,7 +1640,19 @@ impl GraniteSpeechNar {
             .collect();
         let hypothesis = ctc_collapse_decode(&hypothesis_ids, self.config.blank_token_id);
 
-        let mut fused_steps = enc_out.hidden_states[0].len() / self.config.projector.encoder_dim;
+        let Some(first_state) = enc_out.hidden_states.first() else {
+            return Err(bad_config(
+                "encoder_layer_indices",
+                "encoder produced no selected hidden states",
+            ));
+        };
+        if enc_out.hidden_states.len() != self.config.projector.num_encoder_layers {
+            return Err(bad_config(
+                "encoder_layer_indices",
+                "selected hidden-state count does not match projector_config.num_encoder_layers",
+            ));
+        }
+        let mut fused_steps = first_state.len() / self.config.projector.encoder_dim;
         let mut fused = vec![
             0.0f32;
             fused_steps
@@ -1697,15 +1721,96 @@ impl GraniteSpeechNar {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_insertion_slots, ctc_collapse_decode, GraniteSpeechNar, GRANITE_SPEECH_4_1_2B_NAR,
+        add_insertion_slots, ctc_collapse_decode, GraniteSpeechNar, GraniteSpeechNarConfig,
+        GRANITE_SPEECH_4_1_2B_NAR,
     };
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use std::path::Path;
 
     const FIXTURE: &str = include_str!("../../../testdata/granite_speech_nar_reference.json");
 
     fn load_fixture() -> Value {
         serde_json::from_str(FIXTURE).expect("valid granite_speech_nar reference fixture")
+    }
+
+    fn valid_config() -> Value {
+        json!({
+            "architectures": ["GraniteSpeechNarForASR"],
+            "encoder_config": {
+                "num_layers": 2,
+                "hidden_dim": 4,
+                "num_heads": 2,
+                "dim_head": 2,
+                "input_dim": 80,
+                "output_dim": 4,
+                "bpe_output_dim": 8,
+                "bpe_pooling_window": 1,
+                "conv_kernel_size": 3,
+                "conv_expansion_factor": 2,
+                "feedforward_mult": 4,
+                "max_pos_emb": 16,
+                "context_size": 4,
+                "self_conditioning_layer": 1
+            },
+            "projector_config": {
+                "num_layers": 1,
+                "num_encoder_layers": 2,
+                "hidden_size": 4,
+                "num_heads": 2,
+                "block_size": 2,
+                "downsample_rate": 1,
+                "encoder_dim": 4,
+                "llm_dim": 4,
+                "mlp_ratio": 2
+            },
+            "text_config": {
+                "hidden_size": 4,
+                "intermediate_size": 8,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 1,
+                "vocab_size": 16,
+                "rms_norm_eps": 0.00001,
+                "rope_parameters": {"rope_theta": 10000.0},
+                "attention_multiplier": 1.0,
+                "embedding_multiplier": 1.0,
+                "logits_scaling": 1.0,
+                "residual_multiplier": 1.0
+            },
+            "encoder_layer_indices": [0, 2],
+            "scale_projected_embeddings": true,
+            "blank_token_id": 15,
+            "min_edit_sequence_length": 8
+        })
+    }
+
+    #[test]
+    fn config_rejects_empty_encoder_layer_indices() {
+        let mut config = valid_config();
+        config["encoder_layer_indices"] = json!([]);
+
+        assert!(GraniteSpeechNarConfig::from_json(&config).is_err());
+    }
+
+    #[test]
+    fn config_rejects_encoder_layer_index_count_mismatches() {
+        for indices in [json!([0]), json!([0, 1, 2])] {
+            let mut config = valid_config();
+            config["encoder_layer_indices"] = indices;
+
+            assert!(GraniteSpeechNarConfig::from_json(&config).is_err());
+        }
+    }
+
+    #[test]
+    fn config_accepts_encoder_layer_indices_matching_projector() {
+        let config = GraniteSpeechNarConfig::from_json(&valid_config()).expect("valid config");
+
+        assert_eq!(config.encoder_layer_indices, [0, 2]);
+        assert_eq!(
+            config.encoder_layer_indices.len(),
+            config.projector.num_encoder_layers
+        );
     }
 
     #[derive(serde::Deserialize)]
