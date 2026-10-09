@@ -282,6 +282,72 @@ Tried and not kept (no demonstrated gain on a busy host, so no code):
   sorts in sampling: exact, but the head is about 5 percent and sampling under
   1 percent of the 8 s run. Candidates, not done.
 
+## Flow guidance reuse (opt-in)
+
+At the default 30 steps the DiT dominates a request: each Euler step runs the
+conditional and the unconditional (CFG) forward, and the 1-step table above
+hides that. `FlowGuidance { uncond_interval, uncond_warmup }` runs the
+unconditional forward only on the first `uncond_warmup` steps and then every
+`uncond_interval`-th step, and between those adds the last guidance correction
+(`guided - conditional`) to the fresh conditional velocity. Interval 3 with
+warmup 2 runs 12 unconditional forwards per 30-step chunk instead of 30, so
+42 forwards instead of 60. The idea comes from the audio.cpp MiniMax Music 3
+port (`flow_uncond_interval`); the numbers below are ours.
+
+Enable it with `Model::set_flow_guidance` / `Music3Runner::set_flow_guidance`,
+or `turbospark-music generate --flow-uncond-interval 3 [--flow-uncond-warmup 2]`.
+The default is `FlowGuidance::EXACT` (interval 1): the reference trajectory,
+with the 1 s, 2-step, seed 7 WAV still at SHA-256 `29c340d1...`. Reuse changes
+the output, so it is never implied by another option.
+
+Measured 2026-10-08 on Apple M4 Max, AC power, release build, the pinned
+`mlx-community/MiniMax-Music3-4bit` snapshot (`c7ea32923b24`), caption "upbeat
+acoustic folk with warm guitar", lyrics `[instrumental]`, seed 7, 8 s (one
+200-frame chunk), 30 steps, interleaved by
+`crates/audio/scripts/ab_music3_flow.py`. The host was **not quiet** (load
+average 5 to 12 from unrelated applications), so these are not benchmark rows.
+
+| Variant | DiT, run 0 | DiT, run 1 | Forwards |
+|---|---|---|---|
+| exact, 30 steps | 388 s | 273 s | 60 |
+| reuse, interval 3, warmup 2, 30 steps | 228 s (0.59x) | 192 s (0.70x) | 42 |
+| exact, 21 steps (cost-matched control) | 184 s | | 42 |
+
+Run 1 had the lower load and matches the forward-count arithmetic (42 / 60 =
+0.70); run 0 is noisier. Output is deterministic per variant (identical
+`output_stats` across both runs). Distance to the exact 30-step WAV, from
+`crates/audio/scripts/spectral_distance.py` (waveform correlation and
+log-spaced band log-magnitude L1; a drift check, not a quality score):
+
+| Candidate vs exact 30 steps | Correlation | Log-band L1 |
+|---|---|---|
+| reuse, interval 3, 30 steps | 0.9947 | 1.13 dB |
+| exact, 21 steps (same 42 forwards) | 0.9548 | 1.48 dB |
+
+At equal DiT cost, reuse stays closer to the 30-step reference than spending
+the same forwards on fewer steps. One prompt and one seed, no listening test;
+audio.cpp reports about 0.3 dB mel-L1 for the same idea on its stack with a
+different metric. Treat it as a speed option, and listen before relying on it.
+It is a flow-stage saving only: the AR stage and vocoder are unchanged, and a
+60 s request is still far from real time.
+
+### Evaluated against audio.cpp, not adopted
+
+- Flow chunk hop 150 (audio.cpp `flow_chunk_hop_frames`): not implemented.
+  Our chunk geometry (`CHUNK_HOP`, `OVERLAP_LATENT_LENGTH`, `CROP_*`) is derived
+  for a 100-frame hop with a 172-latent carry taken from the interior of the
+  previous window. At hop 150 the carry would come from the window edge, the
+  hop is a non-integer 516.75 latents, and the current `chunk_starts` formula
+  leaves the last frames uncovered (a 1500-frame request needs 10 chunks, not
+  9). There is no objective metric here that could validate that change.
+- Quantizing the depth decoder harder: audio.cpp finds it weight-bandwidth
+  bound on CUDA. Ours is dispatch-bound (about 830 synchronous dispatches per
+  AR frame), so it would not help.
+- Candidates still open and unmeasured: batching several takes through one AR
+  pass (extra rows are nearly free when dispatch-bound), overlapping AR with
+  flow (needs a `Send` backend), and a full on-device depth frame (needs a
+  bit-exact on-device MLX threefry top-k).
+
 ## Rust API
 
 `Model::generate_text` stays the simple entry point. Callers that need more use:

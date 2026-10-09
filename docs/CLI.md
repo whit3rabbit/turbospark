@@ -103,6 +103,13 @@ defaults to 60 seconds, 30 steps, and seed 0. Full-size converted profiles use
 resident in their checkpoint encoding. Local tiny fixtures exercise the CPU
 reference path. Both paths write 44.1 kHz stereo WAV output.
 
+`--flow-uncond-interval N` (default 1) with `--flow-uncond-warmup N` (default
+2) re-evaluates the flow unconditional guidance branch only every Nth step and
+reuses the last guidance correction in between. Interval 3 cut DiT time by
+about 30 percent in an 8 s, 30-step measurement and changes the output; the
+default output is unchanged. The measurement and its limits are in the module
+README.
+
 Metal execution is implemented; profile-specific quality and real-time
 performance qualification remain separate. See the [Music 3 verification
 notes](../crates/audio/src/music/minimax_music3/README.md).

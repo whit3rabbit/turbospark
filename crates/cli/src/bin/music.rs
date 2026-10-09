@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use audio::music::minimax_music3::{
-    is_tiny_fixture_dims, Generation, Model, Music3Precision, StageTimings, TextGenerateRequest,
+    is_tiny_fixture_dims, FlowGuidance, Generation, Model, Music3Precision, StageTimings,
+    TextGenerateRequest,
 };
 use audio::Waveform;
 use catalog::Store;
@@ -16,7 +17,8 @@ USAGE:
     turbospark-music generate --model ALIAS_OR_DIR --caption TEXT \\
         (--lyrics TEXT | --lyrics-file PATH) --output WAV \\
         [--duration SECONDS] [--steps N] [--seed N] [--precision checkpoint|float32] \\
-        [--wav-format pcm16|float32] [--timings]
+        [--wav-format pcm16|float32] [--timings] \\
+        [--flow-uncond-interval N] [--flow-uncond-warmup N]
 
 The model must be a pinned MiniMax Music 3 profile installed by
 `turbospark-model pull-audio`, or a local converted model directory.
@@ -24,6 +26,11 @@ Lyrics are required. Use `[instrumental]` explicitly for instrumental output.
 --wav-format pcm16 (default) rounds to 16-bit integers; float32 writes the
 generated samples unrounded. --timings prints per-stage wall time and the
 real-time factor to stderr.
+--flow-uncond-interval N (default 1, the reference trajectory) re-evaluates the
+flow unconditional guidance branch only every Nth step after
+--flow-uncond-warmup steps (default 2) and reuses the last guidance
+correction in between. N=3 cuts DiT time by about 30 percent and changes the
+output; the default output is unchanged.
 ";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +45,7 @@ struct GenerateOptions {
     precision: Music3Precision,
     wav_format: WavFormat,
     timings: bool,
+    flow_guidance: FlowGuidance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +100,7 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
     let mut precision = None;
     let mut wav_format = None;
     let mut timings = false;
+    let mut flow_guidance = FlowGuidance::EXACT;
     let mut index = 1usize;
     while index < args.len() {
         let flag = args[index].as_str();
@@ -160,6 +169,17 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
                 };
                 set_once(&mut wav_format, selected, flag)?;
             }
+            "--flow-uncond-interval" | "--flow-uncond-warmup" => {
+                let text = value()?;
+                let parsed = text.parse::<usize>().map_err(|_| {
+                    Error::Usage(format!("{flag} {text:?} is not a non-negative integer"))
+                })?;
+                if flag == "--flow-uncond-interval" {
+                    flow_guidance.uncond_interval = parsed;
+                } else {
+                    flow_guidance.uncond_warmup = parsed;
+                }
+            }
             "--output" => set_once(&mut output, PathBuf::from(value()?), flag)?,
             "--help" | "-h" => return Err(Error::Usage(USAGE.to_string())),
             other if other.starts_with('-') => {
@@ -193,7 +213,13 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
         precision: precision.unwrap_or(Music3Precision::Checkpoint),
         wav_format: wav_format.unwrap_or(WavFormat::Pcm16),
         timings,
+        flow_guidance,
     };
+    if options.flow_guidance.uncond_interval == 0 {
+        return Err(Error::Usage(
+            "--flow-uncond-interval must be at least 1".to_string(),
+        ));
+    }
     text_request(&options)
         .validate()
         .map_err(|error| Error::Usage(error.to_string()))?;
@@ -256,10 +282,18 @@ fn generate_to_file(store: &Store, options: &GenerateOptions) -> Result<(), Erro
     let request = text_request(options);
     let (generated, timings) = if is_tiny_fixture(&model_path)? {
         Model::load_converted_with_precision(&model_path, options.precision)
-            .and_then(|model| model.generate_text_timed(&request))
+            .and_then(|model| {
+                model.set_flow_guidance(options.flow_guidance)?;
+                model.generate_text_timed(&request)
+            })
             .map_err(|error| Error::Failed(error.to_string()))?
     } else {
-        generate_metal(&model_path, &request, options.precision)?
+        generate_metal(
+            &model_path,
+            &request,
+            options.precision,
+            options.flow_guidance,
+        )?
     };
     let waveform = Waveform::new(generated.sample_rate, 2, generated.waveform)
         .map_err(|error| Error::Failed(error.to_string()))?;
@@ -316,8 +350,12 @@ fn generate_metal(
     path: &Path,
     request: &TextGenerateRequest,
     precision: Music3Precision,
+    flow_guidance: FlowGuidance,
 ) -> Result<(Generation, StageTimings), Error> {
     let runner = runtime::Music3Runner::open_with_precision(path, precision)
+        .map_err(|error| Error::Failed(error.to_string()))?;
+    runner
+        .set_flow_guidance(flow_guidance)
         .map_err(|error| Error::Failed(error.to_string()))?;
     eprintln!(
         "Music 3 Metal: {:.2} GiB resident weights",
@@ -333,6 +371,7 @@ fn generate_metal(
     _path: &Path,
     _request: &TextGenerateRequest,
     _precision: Music3Precision,
+    _flow_guidance: FlowGuidance,
 ) -> Result<(Generation, StageTimings), Error> {
     Err(Error::Failed(
         "full-size Music 3 generation requires macOS and a Metal device".into(),
@@ -362,6 +401,28 @@ mod tests {
             "song.wav".to_string(),
         ]
         .to_vec()
+    }
+
+    #[test]
+    fn parser_defaults_to_exact_flow_guidance_and_accepts_reuse_flags() {
+        let args = base_args("tiny-model".to_string());
+        assert_eq!(
+            parse_args(&args).unwrap().flow_guidance,
+            FlowGuidance::EXACT
+        );
+        let mut reuse = args.clone();
+        reuse
+            .extend(["--flow-uncond-interval", "3", "--flow-uncond-warmup", "4"].map(String::from));
+        let parsed = parse_args(&reuse).unwrap().flow_guidance;
+        assert_eq!((parsed.uncond_interval, parsed.uncond_warmup), (3, 4));
+        for bad in [
+            ["--flow-uncond-interval", "0"],
+            ["--flow-uncond-warmup", "x"],
+        ] {
+            let mut invalid = args.clone();
+            invalid.extend(bad.map(String::from));
+            assert!(parse_args(&invalid).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

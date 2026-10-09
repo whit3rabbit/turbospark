@@ -305,6 +305,13 @@ pub fn install_music(
     Ok(installed)
 }
 
+/// Hub repository ids are ASCII case-insensitive and the transfer layer
+/// returns them lowercased (`hub.rs` compares them the same way); the
+/// revision stays an exact immutable pin.
+fn same_repository_pin(repo: &str, revision: &str, entry: &MusicCatalogEntry) -> bool {
+    repo.eq_ignore_ascii_case(&entry.model_id) && revision == entry.revision
+}
+
 fn promote_music_source(
     receipt: &DownloadReceipt,
     entry: &MusicCatalogEntry,
@@ -323,8 +330,11 @@ fn promote_music_source(
             staged.role
         ));
     }
-    if staged.repo.repo != entry.model_id || staged.repo.revision != entry.revision {
-        return Err("music transfer returned an unexpected repository pin".to_string());
+    if !same_repository_pin(&staged.repo.repo, &staged.repo.revision, entry) {
+        return Err(format!(
+            "music transfer returned an unexpected repository pin: got {}@{}, expected {}@{}",
+            staged.repo.repo, staged.repo.revision, entry.model_id, entry.revision
+        ));
     }
     if staged.files.len() != entry.required_files.len() {
         return Err("music transfer returned an incomplete pinned file set".to_string());
@@ -408,6 +418,40 @@ mod tests {
             );
         }
         assert!(catalog.pinned_plan("owner/arbitrary-model").is_err());
+    }
+
+    #[test]
+    fn repository_pin_ignores_repo_case_but_not_revision_or_name() {
+        let entry = embedded_music_entry("minimax-music3-4bit").unwrap();
+        assert!(same_repository_pin(
+            &entry.model_id,
+            &entry.revision,
+            &entry
+        ));
+        assert!(same_repository_pin(
+            &entry.model_id.to_ascii_lowercase(),
+            &entry.revision,
+            &entry
+        ));
+        let mut other_revision = entry.revision.clone();
+        other_revision.replace_range(
+            ..1,
+            if entry.revision.starts_with('0') {
+                "1"
+            } else {
+                "0"
+            },
+        );
+        assert!(!same_repository_pin(
+            &entry.model_id,
+            &other_revision,
+            &entry
+        ));
+        assert!(!same_repository_pin(
+            "mlx-community/MiniMax-Music3-8bit",
+            &entry.revision,
+            &entry
+        ));
     }
 
     #[test]
