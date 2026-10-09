@@ -136,14 +136,17 @@ fn relocating_the_default_store_verifies_and_rewrites_install_paths() {
         !source.join("models").exists(),
         "the managed model tree should be removed from the source"
     );
+    assert!(
+        source.join("hub-cache/query.json").is_file(),
+        "private hub cache entries should remain at the original store"
+    );
     assert_eq!(
-        std::fs::read(destination.join("hub-cache/query.json")).unwrap(),
-        cached_hub_response,
-        "validated hub cache entries should move with the store"
+        std::fs::read(source.join("hub-cache/query.json")).unwrap(),
+        cached_hub_response
     );
     assert!(
-        !source.join("hub-cache").exists(),
-        "the managed hub cache should be removed from the source"
+        !destination.join("hub-cache").exists(),
+        "model-store relocation must not export private hub metadata"
     );
     assert_eq!(
         std::fs::read_to_string(source.join("hf_token")).unwrap(),

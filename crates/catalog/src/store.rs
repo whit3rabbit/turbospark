@@ -205,10 +205,11 @@ fn copy_entry(
 }
 
 fn managed_entries(root: &Path) -> Vec<PathBuf> {
-    // Credentials are deliberately not part of model-store relocation. A
-    // destination may be removable or shared storage whose access controls
-    // are weaker than the source filesystem's mode 0600 token file.
-    ["models", "installed.json", "models.json", "hub-cache"]
+    // Credentials and authenticated Hub metadata are deliberately not part of
+    // model-store relocation. A destination may be removable or shared
+    // storage whose access controls are weaker than their private source
+    // directory. Hub metadata is a disposable cache and will be rebuilt.
+    ["models", "installed.json", "models.json"]
         .into_iter()
         .map(|name| root.join(name))
         .filter(|path| path.exists())

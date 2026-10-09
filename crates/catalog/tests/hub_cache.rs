@@ -226,6 +226,77 @@ fn fresh_queries_hit_cache_and_force_refresh_fetches_again() {
     assert_eq!(server.join().unwrap().len(), 2);
 }
 
+#[cfg(unix)]
+#[test]
+fn authenticated_cache_permissions_are_private_and_repaired() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _endpoint_lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let root = TempRoot::new("private-permissions");
+    std::fs::create_dir_all(root.path().join("hub-cache")).unwrap();
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(
+        root.path().join("hub-cache"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let payload = hub_payload("private/account-only-model", &"a".repeat(40), 10);
+    let (endpoint, server) = fixture_server(vec![payload]);
+    turbospark_catalog::set_hf_endpoint_override(Some(endpoint));
+    let _reset = EndpointReset;
+
+    let client = Client::with_token(Some("hf_authenticated_fixture".to_string()));
+    let hub = HubClient::new(
+        &client,
+        Catalog::embedded().unwrap(),
+        Machine::default(),
+        4096,
+        model_io::ExpertCacheSlots::Auto,
+    )
+    .with_store(Store::new(root.path()));
+    let query = HubQuery::new("private/account-only-model");
+
+    hub.search(&query, Refresh::AllowCache)
+        .expect("authenticated cache fetch");
+    let cache = cache_file(root.path());
+    for path in [root.path().to_path_buf(), root.path().join("hub-cache")] {
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+    assert_eq!(
+        std::fs::metadata(&cache).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(
+        root.path().join("hub-cache"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let cached = hub
+        .search(&query, Refresh::AllowCache)
+        .expect("authenticated cache repair");
+    assert!(cached.from_cache);
+
+    for path in [root.path().to_path_buf(), root.path().join("hub-cache")] {
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+    assert_eq!(
+        std::fs::metadata(cache).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(server.join().unwrap().len(), 1);
+}
+
 #[test]
 fn cached_responses_are_partitioned_by_token_fingerprint_and_anonymous_client() {
     let _endpoint_lock = ENDPOINT_LOCK

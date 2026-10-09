@@ -30,6 +30,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
 /// Maximum list size accepted by the default metadata validator.
 pub const MAX_HUB_PAGE_ENTRIES: u32 = 1_000;
 /// Page size for the on-demand trending feed.
@@ -894,6 +897,9 @@ impl<'a> HubClient<'a> {
         validator: &HubMetadataValidator,
     ) -> Option<ValidatedList> {
         let path = self.cache_path(url)?;
+        if !self.prepare_cache_path(&path) {
+            return None;
+        }
         let max_envelope_bytes = validator
             .limits()
             .max_response_bytes
@@ -974,7 +980,7 @@ impl<'a> HubClient<'a> {
         let Some(parent) = path.parent() else {
             return;
         };
-        if fs::create_dir_all(parent).is_err() {
+        if !self.prepare_cache_path(&path) {
             return;
         }
         let sequence = CACHE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -986,13 +992,22 @@ impl<'a> HubClient<'a> {
             ".{file_name}.tmp-{}-{sequence}",
             std::process::id()
         ));
-        let Ok(mut file) = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-        else {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let Ok(mut file) = options.open(&temporary) else {
             return;
         };
+        #[cfg(unix)]
+        if file
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .is_err()
+        {
+            drop(file);
+            let _ = fs::remove_file(&temporary);
+            return;
+        }
         if file.write_all(&bytes).is_err() || file.sync_all().is_err() {
             drop(file);
             let _ = fs::remove_file(&temporary);
@@ -1012,6 +1027,19 @@ impl<'a> HubClient<'a> {
                 .join("hub-cache")
                 .join(format!("{}.json", cache_key(url, self.client.token()))),
         )
+    }
+
+    fn prepare_cache_path(&self, path: &Path) -> bool {
+        // Hub responses can contain account-specific metadata, so protect
+        // both the store root and the cache directory before opening a cache
+        // file left behind by an older, permissive version.
+        let Some(store) = self.store.as_ref() else {
+            return false;
+        };
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        create_private_directory(store.root()).is_ok() && create_private_directory(parent).is_ok()
     }
 
     fn compose(&self, fetched: ValidatedList, bundled_rows: Vec<&CatalogEntry>) -> HubPage {
@@ -1339,11 +1367,31 @@ fn cache_key(url: &str, token: Option<&str>) -> String {
 }
 
 fn read_bounded_cache(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
+    #[cfg(unix)]
+    if fs::symlink_metadata(path).ok()?.file_type().is_symlink() {
+        return None;
+    }
     let file = std::fs::File::open(path).ok()?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .ok()?;
     let read_limit = u64::try_from(max_bytes).ok()?.checked_add(1)?;
     let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
     file.take(read_limit).read_to_end(&mut bytes).ok()?;
     (bytes.len() <= max_bytes).then_some(bytes)
+}
+
+fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700).create(path)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(path)
+    }
 }
 
 fn system_time_to_unix_seconds(time: SystemTime) -> Option<u64> {
