@@ -2157,6 +2157,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokenizers",
+ "turbospark-core",
  "turbospark-model-io",
  "turbospark-tokenizer",
  "unicode-segmentation",

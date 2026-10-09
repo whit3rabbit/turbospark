@@ -31,6 +31,7 @@ pub mod voxtral;
 pub mod voxtral_realtime;
 pub mod wav2vec;
 pub mod whisper;
+pub mod whistle;
 
 pub use canary::{Canary, CanaryProfile, CANARY_1B_V2_Q8};
 pub use fireredasr2::{
@@ -71,3 +72,4 @@ pub use voxtral_realtime::{
 };
 pub use wav2vec::{Wav2Vec, Wav2VecConfig, Wav2VecProfile, WAV2VEC2_BASE_960H};
 pub use whisper::{WhisperConfig, WhisperModel, WhisperSpecialTokens, WhisperWeights};
+pub use whistle::{Whistle, WhistleEmbedding, WhistleTranscription};

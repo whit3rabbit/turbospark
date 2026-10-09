@@ -1,0 +1,9 @@
+Whistle operator fixtures
+Source: Cactus Compute, Cactus-Compute/whistle
+Revision: b358ddadd89b7a713b5aa131f23032d3cca1b251
+License: Apache-2.0 (see LICENSE-APACHE).
+
+TurboSpark modifications: ops.cact contains only selected tensors and eight
+rows of the encoder Q matrix. Its tensor directory and count were rewritten.
+The .f32 files are numeric outputs of the pinned Cactus CPU runtime.
+The runtime itself is not redistributed.

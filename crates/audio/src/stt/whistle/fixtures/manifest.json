@@ -1,0 +1,14 @@
+{
+  "model_revision": "b358ddadd89b7a713b5aa131f23032d3cca1b251",
+  "model_sha256": "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb",
+  "runtime_revision": "2ae11323dc000f5e70c49f7403efa6af12ba9e67",
+  "runtime_library_sha256": "98da47c15e1065b4cdc7ddc55e825be78414d4586832db3becaeded39a373df4",
+  "reference": "released CPU oracle; private speech frontend absent from public JAX source",
+  "fixture_sha256": {
+    "hada.f32": "8a994da7710cea845503ce5f07c649e5f577129a7943b7e2ff5b3a4bdb1b6fba",
+    "ops.cact": "010517cbbfc3635efc4773182438df90dbf53ff79cd16ffa92204c5e19f62bec",
+    "q_project.f32": "ddf01e016caf8384f47447cfe21da9cb2d932875d9524e923cd8f49c09494904",
+    "q_row.f32": "f8f4dab49f4b4521f084798c73b0e8755ded76b66f01ed69032a4f0ae479f2b2",
+    "tone_features.f32": "0f08c4bf04093da7ccc953028eb8d09daf726f89a0d066b615f3fe76ed3838ad"
+  }
+}
