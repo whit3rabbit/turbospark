@@ -68,7 +68,7 @@ final class CodemodeWorkerContext: @unchecked Sendable {
         }
         guard let callback else { return }
         let errorArgument: Any = result.ok ? NSNull() : (result.payload ?? "the tool call failed")
-        let payloadArgument: Any = result.ok ? (result.payload ?? NSNull()) : NSNull()
+        let payloadArgument: Any = result.ok ? (result.payload.map { $0 as Any } ?? NSNull()) : NSNull()
         callback.call(withArguments: [errorArgument, payloadArgument])
     }
 

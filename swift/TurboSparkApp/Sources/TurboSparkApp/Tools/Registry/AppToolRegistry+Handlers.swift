@@ -683,7 +683,7 @@ extension AppToolRegistry {
             regex = try? NSRegularExpression(
                 pattern: pattern, options: caseSensitive ? [] : [.caseInsensitive])
         }
-        let globMatcher = try pathFilter.flatMap { filter -> NSRegularExpression? in
+        let globMatcher = pathFilter.flatMap { filter -> NSRegularExpression? in
             filter.isEmpty ? nil : try? globRegex(filter)
         }
         let extensions = Set(fileTypes.map { $0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ". *")) }.filter { !$0.isEmpty })

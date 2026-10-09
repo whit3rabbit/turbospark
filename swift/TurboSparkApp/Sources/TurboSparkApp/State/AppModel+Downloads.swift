@@ -111,7 +111,7 @@ extension AppModel {
         installETAText = nil
         let startedAt = Date()
 
-        installTask = Task {
+        installTask = Task { [self] in
             // Cancel may arrive before the native worker registers its control handle.
             let cancellationMonitor = Task { @MainActor in
                 while !Task.isCancelled {

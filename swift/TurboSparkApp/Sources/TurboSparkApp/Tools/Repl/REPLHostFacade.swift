@@ -1,5 +1,5 @@
 import Foundation
-import JavaScriptCore
+@preconcurrency import JavaScriptCore
 
 typealias REPLConsoleSink = @Sendable (REPLTextOutputEvent) -> Void
 

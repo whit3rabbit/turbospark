@@ -33,26 +33,24 @@ final class ImageProducerSlot: @unchecked Sendable {
     private var token: UUID?
 
     func store(_ task: Task<Void, Never>, token: UUID) {
-        lock.lock()
-        self.task = task
-        self.token = token
-        lock.unlock()
+        lock.withLock {
+            self.task = task
+            self.token = token
+        }
     }
 
     /// Clears only if `token` still owns the slot.
     func clear(token: UUID) {
-        lock.lock()
-        if self.token == token {
-            task = nil
-            self.token = nil
+        lock.withLock {
+            if self.token == token {
+                task = nil
+                self.token = nil
+            }
         }
-        lock.unlock()
     }
 
     func cancel() {
-        lock.lock()
-        let current = task
-        lock.unlock()
+        let current = lock.withLock { task }
         current?.cancel()
     }
 
@@ -60,15 +58,17 @@ final class ImageProducerSlot: @unchecked Sendable {
         // A producer that finishes clears its own slot, so loop until the
         // slot is empty or holds a task that has already completed.
         while true {
-            lock.lock()
-            let current = task
-            lock.unlock()
+            let current = lock.withLock { task }
             guard let current else { return }
             await current.value
-            lock.lock()
-            let same = task == current
-            if same { task = nil; token = nil }
-            lock.unlock()
+            let same = lock.withLock {
+                let match = task == current
+                if match {
+                    task = nil
+                    token = nil
+                }
+                return match
+            }
             if same { return }
         }
     }

@@ -39,6 +39,9 @@ let package = Package(
                 .product(name: "Syntext", package: "syntext"),
                 .product(name: "Sparkle", package: "Sparkle")
             ],
+            exclude: [
+                "Tools/Codemode/README.md"
+            ],
             resources: [
                 .process("Resources")
             ],
