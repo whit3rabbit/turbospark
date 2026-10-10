@@ -125,6 +125,13 @@ impl Weights {
         &self.config
     }
 
+    /// The opened checkpoint shards, for families that load deeply
+    /// nested submodule trees (codec decoders, diffusion heads) through
+    /// their own tensor loaders instead of per-tensor absolute lookups.
+    pub fn shards(&self) -> &[SafetensorsFile] {
+        &self.files
+    }
+
     /// True when `{prefix}{name}.weight` (or its scales) exists in a shard.
     pub fn contains(&self, name: &str) -> bool {
         self.find(name).is_some()

@@ -450,28 +450,302 @@ struct ConvNeXtBlock {
     gamma: Option<Vec<f32>>,
 }
 
+/// The conv weight layout a checkpoint stores for `embed` and `dwconv`.
+/// Both arrive at the PyTorch layouts the struct fields hold: torch
+/// `[out, in, K]` conv / `[out, 1, K]` depthwise, or the MLX layouts
+/// `[out, K, in]` / `[out, K, 1]` the spark BiCodec prenet stores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConvLayout {
+    Torch,
+    Mlx,
+}
+
+/// Loads a `VocosBackbone` from `file` with tensors under `prefix`
+/// (the spark BiCodec prenet reuses this backbone with its own tensor
+/// names; the tensor layout and block math are the shared reference).
+pub(crate) fn load_backbone(
+    file: &SafetensorsFile,
+    bb: &VocosBackboneConfig,
+    prefix: &str,
+    layout: ConvLayout,
+) -> Result<Backbone> {
+    let embed_weight = match layout {
+        ConvLayout::Torch => load_f32_shaped(
+            file,
+            &format!("{prefix}.embed.weight"),
+            &[bb.dim, bb.input_channels, bb.input_kernel_size],
+        )?,
+        ConvLayout::Mlx => {
+            let stored = load_f32_shaped(
+                file,
+                &format!("{prefix}.embed.weight"),
+                &[bb.dim, bb.input_kernel_size, bb.input_channels],
+            )?;
+            crate::codec::conv::permute_okc_to_ock(
+                &stored,
+                bb.dim,
+                bb.input_kernel_size,
+                bb.input_channels,
+            )
+        }
+    };
+    let embed_bias = if file.contains_tensor(&format!("{prefix}.embed.bias")) {
+        Some(load_f32_shaped(
+            file,
+            &format!("{prefix}.embed.bias"),
+            &[bb.dim],
+        )?)
+    } else {
+        None
+    };
+    let (adanorm, norm_w, norm_b) = if let Some(num_emb) = bb.adanorm_num_embeddings {
+        let scale_bias = load_f32_shaped(file, &format!("{prefix}.norm.scale.bias"), &[bb.dim])?;
+        let shift_bias = load_f32_shaped(file, &format!("{prefix}.norm.shift.bias"), &[bb.dim])?;
+        // Learned scale/shift weights ride trained checkpoints (the
+        // spark BiCodec prenet); vocos checkpoints omit them and the
+        // init ones/zeros apply.
+        let scale_weight = file
+            .contains_tensor(&format!("{prefix}.norm.scale.weight"))
+            .then(|| {
+                load_f32_shaped(
+                    file,
+                    &format!("{prefix}.norm.scale.weight"),
+                    &[bb.dim, num_emb],
+                )
+            })
+            .transpose()?;
+        let shift_weight = file
+            .contains_tensor(&format!("{prefix}.norm.shift.weight"))
+            .then(|| {
+                load_f32_shaped(
+                    file,
+                    &format!("{prefix}.norm.shift.weight"),
+                    &[bb.dim, num_emb],
+                )
+            })
+            .transpose()?;
+        (
+            Some(AdaLayerNorm {
+                eps: 1e-6,
+                dim: bb.dim,
+                num_embeddings: num_emb,
+                scale_weight,
+                shift_weight,
+                scale_bias,
+                shift_bias,
+            }),
+            Vec::new(),
+            None,
+        )
+    } else {
+        (
+            None,
+            load_f32_shaped(file, &format!("{prefix}.norm.weight"), &[bb.dim])?,
+            Some(load_f32_shaped(
+                file,
+                &format!("{prefix}.norm.bias"),
+                &[bb.dim],
+            )?),
+        )
+    };
+    let init_value = bb
+        .layer_scale_init_value
+        .unwrap_or(1.0 / bb.num_layers as f32);
+    let mut blocks = Vec::with_capacity(bb.num_layers);
+    for i in 0..bb.num_layers {
+        let block_prefix = format!("{prefix}.convnext.{i}");
+        let dwconv_weight = match layout {
+            ConvLayout::Torch => load_f32_shaped(
+                file,
+                &format!("{block_prefix}.dwconv.weight"),
+                &[bb.dim, 1, bb.dw_kernel_size],
+            )?,
+            ConvLayout::Mlx => {
+                let stored = load_f32_shaped(
+                    file,
+                    &format!("{block_prefix}.dwconv.weight"),
+                    &[bb.dim, bb.dw_kernel_size, 1],
+                )?;
+                crate::codec::conv::permute_okc_to_ock(&stored, bb.dim, bb.dw_kernel_size, 1)
+            }
+        };
+        let dwconv_bias = if file.contains_tensor(&format!("{block_prefix}.dwconv.bias")) {
+            Some(load_f32_shaped(
+                file,
+                &format!("{block_prefix}.dwconv.bias"),
+                &[bb.dim],
+            )?)
+        } else {
+            None
+        };
+        let (block_adanorm, norm_w, norm_b) = if let Some(num_emb) = bb.adanorm_num_embeddings {
+            let block_scale_weight = file
+                .contains_tensor(&format!("{block_prefix}.norm.scale.weight"))
+                .then(|| {
+                    load_f32_shaped(
+                        file,
+                        &format!("{block_prefix}.norm.scale.weight"),
+                        &[bb.dim, num_emb],
+                    )
+                })
+                .transpose()?;
+            let block_shift_weight = file
+                .contains_tensor(&format!("{block_prefix}.norm.shift.weight"))
+                .then(|| {
+                    load_f32_shaped(
+                        file,
+                        &format!("{block_prefix}.norm.shift.weight"),
+                        &[bb.dim, num_emb],
+                    )
+                })
+                .transpose()?;
+            (
+                Some(AdaLayerNorm {
+                    eps: 1e-6,
+                    dim: bb.dim,
+                    num_embeddings: num_emb,
+                    scale_weight: block_scale_weight,
+                    shift_weight: block_shift_weight,
+                    scale_bias: load_f32_shaped(
+                        file,
+                        &format!("{block_prefix}.norm.scale.bias"),
+                        &[bb.dim],
+                    )?,
+                    shift_bias: load_f32_shaped(
+                        file,
+                        &format!("{block_prefix}.norm.shift.bias"),
+                        &[bb.dim],
+                    )?,
+                }),
+                Vec::new(),
+                None,
+            )
+        } else {
+            (
+                None,
+                load_f32_shaped(file, &format!("{block_prefix}.norm.weight"), &[bb.dim])?,
+                Some(load_f32_shaped(
+                    file,
+                    &format!("{block_prefix}.norm.bias"),
+                    &[bb.dim],
+                )?),
+            )
+        };
+        let pwconv1_w = load_f32_shaped(
+            file,
+            &format!("{block_prefix}.pwconv1.weight"),
+            &[bb.intermediate_dim, bb.dim],
+        )?;
+        let pwconv1_b = if file.contains_tensor(&format!("{block_prefix}.pwconv1.bias")) {
+            Some(load_f32_shaped(
+                file,
+                &format!("{block_prefix}.pwconv1.bias"),
+                &[bb.intermediate_dim],
+            )?)
+        } else {
+            None
+        };
+        let pwconv2_w = load_f32_shaped(
+            file,
+            &format!("{block_prefix}.pwconv2.weight"),
+            &[bb.dim, bb.intermediate_dim],
+        )?;
+        let pwconv2_b = if file.contains_tensor(&format!("{block_prefix}.pwconv2.bias")) {
+            Some(load_f32_shaped(
+                file,
+                &format!("{block_prefix}.pwconv2.bias"),
+                &[bb.dim],
+            )?)
+        } else {
+            None
+        };
+        let gamma = load_f32_shaped(file, &format!("{block_prefix}.gamma"), &[bb.dim])?;
+        let gamma = if init_value > 0.0 { Some(gamma) } else { None };
+        blocks.push(ConvNeXtBlock {
+            dwconv_weight,
+            dwconv_bias,
+            dim: bb.dim,
+            dw_kernel: bb.dw_kernel_size,
+            norm_w,
+            norm_b,
+            adanorm: block_adanorm,
+            pwconv1_w,
+            pwconv1_b,
+            intermediate: bb.intermediate_dim,
+            pwconv2_w,
+            pwconv2_b,
+            gamma,
+        });
+    }
+    let final_norm_w = load_f32_shaped(
+        file,
+        &format!("{prefix}.final_layer_norm.weight"),
+        &[bb.dim],
+    )?;
+    let final_norm_b =
+        if bb.bias && file.contains_tensor(&format!("{prefix}.final_layer_norm.bias")) {
+            Some(load_f32_shaped(
+                file,
+                &format!("{prefix}.final_layer_norm.bias"),
+                &[bb.dim],
+            )?)
+        } else {
+            None
+        };
+    Ok(Backbone {
+        embed_weight,
+        embed_bias,
+        in_ch: bb.input_channels,
+        dim: bb.dim,
+        input_kernel: bb.input_kernel_size,
+        adanorm,
+        norm_w,
+        norm_b,
+        blocks,
+        final_norm_w,
+        final_norm_b,
+    })
+}
+
 struct AdaLayerNorm {
     eps: f32,
     dim: usize,
     num_embeddings: usize,
-    /// The reference replaces the scale weight with ones and the shift
-    /// weight with zeros; the biases stay learned.
+    /// The vocos reference replaces the scale weight with ones and the
+    /// shift weight with zeros at init and vocos checkpoints omit them;
+    /// the spark BiCodec checkpoints store learned weights, which the
+    /// module load applies over the init values. `None` keeps the init
+    /// behavior (scale = sum(embedding) + bias, shift = bias).
+    scale_weight: Option<Vec<f32>>,
+    shift_weight: Option<Vec<f32>>,
     scale_bias: Vec<f32>,
     shift_bias: Vec<f32>,
 }
 
 impl AdaLayerNorm {
     fn forward(&self, x: &mut [f32], embedding: &[f32], frames: usize) {
-        // scale[c] = sum(embedding) + scale_bias[c]; shift[c] = 0 * ... + shift_bias[c].
+        // scale[c] = weight[c] . embedding + scale_bias[c] with the
+        // stored weight, or ones-weight sum(embedding) + scale_bias[c]
+        // when the checkpoint keeps the init weight. The shift is the
+        // same with its (init-zero or learned) weight.
+        let row_dot = |weight: &Option<Vec<f32>>, c: usize, ones_term: f32, bias: f32| -> f32 {
+            match weight {
+                Some(w) => {
+                    let row = &w[c * embedding.len()..(c + 1) * embedding.len()];
+                    row.iter().zip(embedding).map(|(&a, &b)| a * b).sum::<f32>() + bias
+                }
+                None => ones_term + bias,
+            }
+        };
         let mut scale = vec![0.0f32; self.dim];
         let mut shift = vec![0.0f32; self.dim];
         for c in 0..self.dim {
-            let mut s = self.scale_bias[c];
+            let mut s = 0.0f32;
             for v in embedding {
                 s += v;
             }
-            scale[c] = s;
-            shift[c] = self.shift_bias[c];
+            scale[c] = row_dot(&self.scale_weight, c, s, self.scale_bias[c]);
+            shift[c] = row_dot(&self.shift_weight, c, 0.0, self.shift_bias[c]);
         }
         ops::layernorm_cm(x, self.dim, frames, None, None, self.eps);
         for f in 0..frames {
@@ -554,7 +828,7 @@ impl ConvNeXtBlock {
     }
 }
 
-struct Backbone {
+pub(crate) struct Backbone {
     /// Embed conv weight, PyTorch layout `[dim, in_ch, K]`.
     embed_weight: Vec<f32>,
     embed_bias: Option<Vec<f32>>,
@@ -570,7 +844,14 @@ struct Backbone {
 }
 
 impl Backbone {
-    fn forward(&self, x: &[f32], frames: usize, bandwidth_embedding: Option<&[f32]>) -> Vec<f32> {
+    /// `x [ch, frames]` -> hidden `[dim, frames]`, the AdaLayerNorm
+    /// condition (bandwidth embedding) optional.
+    pub(crate) fn forward(
+        &self,
+        x: &[f32],
+        frames: usize,
+        bandwidth_embedding: Option<&[f32]>,
+    ) -> Vec<f32> {
         let mut h = ops::conv1d(
             x,
             &self.embed_weight,
@@ -729,175 +1010,7 @@ impl Vocos {
         };
         let bb = &config.backbone;
         let bb_prefix = "backbone";
-        let embed_weight = load_f32_shaped(
-            file,
-            &format!("{bb_prefix}.embed.weight"),
-            &[bb.dim, bb.input_channels, bb.input_kernel_size],
-        )?;
-        let embed_bias = if file.contains_tensor(&format!("{bb_prefix}.embed.bias")) {
-            Some(load_f32_shaped(
-                file,
-                &format!("{bb_prefix}.embed.bias"),
-                &[bb.dim],
-            )?)
-        } else {
-            None
-        };
-        let (adanorm, norm_w, norm_b) = if let Some(num_emb) = bb.adanorm_num_embeddings {
-            let scale_bias =
-                load_f32_shaped(file, &format!("{bb_prefix}.norm.scale.bias"), &[bb.dim])?;
-            let shift_bias =
-                load_f32_shaped(file, &format!("{bb_prefix}.norm.shift.bias"), &[bb.dim])?;
-            // The scale/shift weights are overridden to ones/zeros and
-            // are absent from checkpoints; the biases carry the terms.
-            (
-                Some(AdaLayerNorm {
-                    eps: 1e-6,
-                    dim: bb.dim,
-                    num_embeddings: num_emb,
-                    scale_bias,
-                    shift_bias,
-                }),
-                Vec::new(),
-                None,
-            )
-        } else {
-            (
-                None,
-                load_f32_shaped(file, &format!("{bb_prefix}.norm.weight"), &[bb.dim])?,
-                Some(load_f32_shaped(
-                    file,
-                    &format!("{bb_prefix}.norm.bias"),
-                    &[bb.dim],
-                )?),
-            )
-        };
-        let init_value = bb
-            .layer_scale_init_value
-            .unwrap_or(1.0 / bb.num_layers as f32);
-        let mut blocks = Vec::with_capacity(bb.num_layers);
-        for i in 0..bb.num_layers {
-            let prefix = format!("{bb_prefix}.convnext.{i}");
-            let dwconv_weight = load_f32_shaped(
-                file,
-                &format!("{prefix}.dwconv.weight"),
-                &[bb.dim, 1, bb.dw_kernel_size],
-            )?;
-            let dwconv_bias = if file.contains_tensor(&format!("{prefix}.dwconv.bias")) {
-                Some(load_f32_shaped(
-                    file,
-                    &format!("{prefix}.dwconv.bias"),
-                    &[bb.dim],
-                )?)
-            } else {
-                None
-            };
-            let (block_adanorm, norm_w, norm_b) = if let Some(num_emb) = bb.adanorm_num_embeddings {
-                (
-                    Some(AdaLayerNorm {
-                        eps: 1e-6,
-                        dim: bb.dim,
-                        num_embeddings: num_emb,
-                        scale_bias: load_f32_shaped(
-                            file,
-                            &format!("{prefix}.norm.scale.bias"),
-                            &[bb.dim],
-                        )?,
-                        shift_bias: load_f32_shaped(
-                            file,
-                            &format!("{prefix}.norm.shift.bias"),
-                            &[bb.dim],
-                        )?,
-                    }),
-                    Vec::new(),
-                    None,
-                )
-            } else {
-                (
-                    None,
-                    load_f32_shaped(file, &format!("{prefix}.norm.weight"), &[bb.dim])?,
-                    Some(load_f32_shaped(
-                        file,
-                        &format!("{prefix}.norm.bias"),
-                        &[bb.dim],
-                    )?),
-                )
-            };
-            let pwconv1_w = load_f32_shaped(
-                file,
-                &format!("{prefix}.pwconv1.weight"),
-                &[bb.intermediate_dim, bb.dim],
-            )?;
-            let pwconv1_b = if file.contains_tensor(&format!("{prefix}.pwconv1.bias")) {
-                Some(load_f32_shaped(
-                    file,
-                    &format!("{prefix}.pwconv1.bias"),
-                    &[bb.intermediate_dim],
-                )?)
-            } else {
-                None
-            };
-            let pwconv2_w = load_f32_shaped(
-                file,
-                &format!("{prefix}.pwconv2.weight"),
-                &[bb.dim, bb.intermediate_dim],
-            )?;
-            let pwconv2_b = if file.contains_tensor(&format!("{prefix}.pwconv2.bias")) {
-                Some(load_f32_shaped(
-                    file,
-                    &format!("{prefix}.pwconv2.bias"),
-                    &[bb.dim],
-                )?)
-            } else {
-                None
-            };
-            let gamma = load_f32_shaped(file, &format!("{prefix}.gamma"), &[bb.dim])?;
-            let gamma = if init_value > 0.0 { Some(gamma) } else { None };
-            blocks.push(ConvNeXtBlock {
-                dwconv_weight,
-                dwconv_bias,
-                dim: bb.dim,
-                dw_kernel: bb.dw_kernel_size,
-                norm_w,
-                norm_b,
-                adanorm: block_adanorm,
-                pwconv1_w,
-                pwconv1_b,
-                intermediate: bb.intermediate_dim,
-                pwconv2_w,
-                pwconv2_b,
-                gamma,
-            });
-        }
-        let final_norm_w = load_f32_shaped(
-            file,
-            &format!("{bb_prefix}.final_layer_norm.weight"),
-            &[bb.dim],
-        )?;
-        let final_norm_b = if config.backbone.bias
-            && file.contains_tensor(&format!("{bb_prefix}.final_layer_norm.bias"))
-        {
-            Some(load_f32_shaped(
-                file,
-                &format!("{bb_prefix}.final_layer_norm.bias"),
-                &[bb.dim],
-            )?)
-        } else {
-            None
-        };
-        let backbone = Backbone {
-            embed_weight,
-            embed_bias,
-            in_ch: bb.input_channels,
-            dim: bb.dim,
-            input_kernel: bb.input_kernel_size,
-            adanorm,
-            norm_w,
-            norm_b,
-            blocks,
-            final_norm_w,
-            final_norm_b,
-        };
+        let backbone = load_backbone(file, bb, bb_prefix, ConvLayout::Torch)?;
         let hd = &config.head;
         let out_w = load_f32_shaped(file, "head.out.weight", &[hd.n_fft + 2, hd.dim])?;
         let out_b = if file.contains_tensor("head.out.bias") {

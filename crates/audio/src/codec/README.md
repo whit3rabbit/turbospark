@@ -19,7 +19,10 @@ The [central inventory](../../MODELS.md#codec) tracks upstream source families, 
 - **[Nemotron VoiceChat](nemotron_voicechat/README.md)**: NVIDIA speech synthesis vocoder with complex iSTFT projection heads.
 - **[S3](s3/README.md)**: Continuous speech representation with sliding-window causal convolutions and streaming downsampling.
 - **[SNAC](snac/README.md)**: Multi-scale neural audio codec with hierarchically downsampled codebook rates for real-time speech and audio generation.
+- **[Spark BiCodec](spark_bicodec/README.md)**: Single-codebook audio codec with a causal encoder, bidirectional decoder, and multi-scale STFT discriminators.
+- **[StepAudio2](stepaudio2/README.md)**: Dual-stream speech codec extracting CampPlus speaker embeddings, HuBERT acoustic tokens, and HiFT neural vocoder generation.
 - **[Vocos](vocos/README.md)**: Fourier-based neural vocoder synthesizing waveforms via inverse STFT from learned magnitude and phase projections.
+- **[WavVAE](wavvae/README.md)**: MegaTTS3 25 Hz latent codec with a SEANet/LSTM encoder, a diagonal Gaussian latent, and a HiFiGAN-style generator.
 
 ## Scope and Structure
 

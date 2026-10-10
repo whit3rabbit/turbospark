@@ -271,13 +271,14 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `irodori_tts` | Source | 73 | Default task-qualified family | None |
 | `kitten_tts` | README | 25 | Alias `kitten` | None |
 | `kokoro` | README | 24 | Default task-qualified family | [Flat port](src/tts/kokoro/mod.rs) |
-| `kugelaudio` | README | 40 | Default task-qualified family | None |
+| `kugelaudio` | README | 40 | Default task-qualified family | [Family port](src/tts/kugelaudio/README.md) over the shared [lm qwen2 backbone](src/lm/README.md) and the vibevoice decoder/diffusion-head/scheduler modules |
 | `llama` | Source | 63 | SNAC TTS wrapper over generic Llama backbone | [Family port](src/tts/llama/README.md) |
 | `longcat_audiodit` | README | 39 | Aliases `audiodit`, `longcat` | None |
+| `megatts3` | PyTorch (not in mlx-audio) | None | Zero-shot voice cloning; staged port with PyTorch parity fixtures | [Partial family port](src/tts/megatts3/README.md) (DiT, sampler, text encoder, duration LM, aligner, G2P, English frontend subset, `MegaTts3` pipeline) over the [WavVAE codec](src/codec/wavvae/README.md); whole pipeline matches the reference on real weights; catalog, runtime, FFI, server, Swift not wired |
 | `melotts` | README | 27 | Default task-qualified family | None |
-| `moss_tts` | README | 44 | Delay-pattern and local-transformer variants | None |
-| `moss_tts_delay` | Alias | 44 | Alias of `tts/moss_tts` | None |
-| `moss_tts_local` | Alias | 44 | Alias of `tts/moss_tts` | None |
+| `moss_tts` | README | 44 | Delay-pattern and local-transformer variants | [Family port](src/tts/moss_tts/README.md) over the shared [lm qwen3 backbone](src/lm/README.md); the legacy local-transformer checkpoints are refused |
+| `moss_tts_delay` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (delay-pattern variant) |
+| `moss_tts_local` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (v1.5 local-transformer variant) |
 | `moss_tts_nano` | README | 33 | Default task-qualified family | [Family port](src/tts/moss_tts_nano/README.md) |
 | `omnivoice` | README | 38 | Default task-qualified family | None |
 | `outetts` | README | 29 | Default task-qualified family | [Family port](src/tts/outetts/README.md) |
@@ -287,13 +288,13 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `rumik_oss` | README | 36 | Default task-qualified family | [Family port](src/tts/rumik_oss/README.md) |
 | `sesame` | README | 30 | CSM / MisoTTS; aliases `csm`, `marvis` | [Family port](src/tts/sesame/README.md) |
 | `soprano` | README | 26 | Default task-qualified family | [Family port](src/tts/soprano/README.md) |
-| `spark` | README | 28 | Default task-qualified family | None |
+| `spark` | README | 28 | Default task-qualified family; waveform decode through the [BiCodec codec port](src/codec/spark_bicodec/README.md) | [Family port](src/tts/spark/README.md) |
 | `tada` | Source | 75 | Default task-qualified family | None |
 | `vibevoice` | Source | 76 | Alias `vibevoice_streaming` | None |
 | `voxcpm` | Source | 77 | Alias `voxcpm1.5` | None |
 | `voxcpm2` | README | 37 | Default task-qualified family | None |
 | `voxtral_tts` | README | 43 | Default task-qualified family | None |
-| `zonos2` | Source | 78 | Default task-qualified family | None |
+| `zonos2` | Source | 78 | Default task-qualified family; waveform decode through the shared [Descript DAC codec port](src/codec/descript/README.md) | [Family port](src/tts/zonos2/README.md) |
 
 ## STT
 
@@ -456,3 +457,4 @@ Codecs and shared learned components. [Pinned source directory](https://github.c
 | `snac` | Family port | None | snac_24khz verified end to end (fixture codes exact, real checkpoint encode exact + zero-noise decode parity); LocalMHA refused, see [family README](src/codec/snac/README.md) | Yes |
 | `stepaudio2` | Family port | None | Tiny fixture end to end (kaldi fbank + CAMPPlus embedding, chatterbox prompt mel + length-matched prompt_feat, flow mel, HiFT f0 + waveform with recorded sine draws, end-to-end decode); batch>1 and speech-tokenizer/file loading out of contract, see [family README](src/codec/stepaudio2/README.md) | Yes |
 | `vocos` | Family port | None | Tiny fixture end to end (log-mel front end + ConvNeXt + iSTFT head parity, numpy-convention irfft); mel variant, see [family README](src/codec/vocos/README.md) | Yes |
+| `wavvae` (MegaTTS3; not an mlx-audio directory) | Family port | None | Tiny fixture end to end against the unmodified PyTorch classes (posterior, sampled latent, decoded audio, padding edge cases) plus an env-gated real-checkpoint run with the community encoder (encoder mean 3.3e-6, decoder 4.6e-6); official decoder-only profile loads without an encoder; encoder provenance unverified, see [family README](src/codec/wavvae/README.md) | Yes |
