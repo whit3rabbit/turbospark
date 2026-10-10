@@ -116,16 +116,23 @@ final class WorkflowWorldTests: XCTestCase {
         XCTAssertEqual(git.outputText, "git status")
         XCTAssertEqual(git.argv.first, "git")
         let requests = await executor.requests()
-        // Request 0 is the filter-driver enumeration; request 1 is the read.
-        XCTAssertEqual(requests.count, 2)
-        XCTAssertEqual(requests[0].arguments, ["config", "--get-regexp", "^filter\\."])
+        // Three repository-path probes precede filter enumeration and the read.
+        XCTAssertEqual(requests.count, 5)
+        XCTAssertEqual(requests[0].arguments, ["rev-parse", "--show-toplevel"])
+        XCTAssertEqual(requests[0].environment["GIT_CEILING_DIRECTORIES"],
+            root.deletingLastPathComponent().path)
+        XCTAssertNil(requests[0].environment["GIT_DIR"])
+        XCTAssertEqual(requests[3].arguments, ["config", "--get-regexp", "^filter\\."])
         XCTAssertEqual(
-            requests[1].arguments,
+            requests[4].arguments,
             [
                 "--no-pager", "-c", "core.fsmonitor=false",
-                "status", "--short", "--untracked-files=all", "--no-renames",
+                "status", "--short", "--untracked-files=all", "--no-renames", "--", ".",
             ])
-        XCTAssertEqual(requests[1].workingDirectoryURL, PathContainment.canonical(root))
+        XCTAssertEqual(requests[4].workingDirectoryURL, PathContainment.canonical(root))
+        XCTAssertEqual(requests[4].environment["GIT_DIR"], root.path)
+        XCTAssertEqual(requests[4].environment["GIT_WORK_TREE"], root.path)
+        XCTAssertEqual(requests[4].environment["GIT_COMMON_DIR"], root.path)
     }
 
     func testFilterDriversAreNeutralizedForGitReads() {
@@ -152,11 +159,12 @@ final class WorkflowWorldTests: XCTestCase {
         _ = try await world.read(.git(op: .status), identity: identity(siteIndex: 0))
         _ = try await world.read(.git(op: .log), identity: identity(siteIndex: 1))
         let requests = await executor.requests()
-        XCTAssertEqual(requests.count, 4)
-        XCTAssertEqual(Array(requests[1].arguments.prefix(6)), [
+        XCTAssertEqual(requests.count, 10)
+        XCTAssertEqual(Array(requests[4].arguments.prefix(6)), [
             "-c", "filter.x.clean=", "-c", "filter.x.smudge=", "-c", "filter.x.process=",
         ])
-        XCTAssertTrue(requests[3].arguments.contains("log.showSignature=false"))
+        XCTAssertTrue(requests[9].arguments.contains("log.showSignature=false"))
+        XCTAssertEqual(Array(requests[9].arguments.suffix(2)), ["--", "."])
     }
 
     func testAbsoluteAndParentTraversalPathsAreSandboxRefusals() async throws {
@@ -221,12 +229,13 @@ final class WorkflowWorldTests: XCTestCase {
         XCTAssertEqual(complete.outputText, "first.swift\nsecond.swift")
         XCTAssertTrue(complete.truncated)
         let completeRequests = await completeExecutor.requests()
-        XCTAssertEqual(completeRequests.count, 2)
+        XCTAssertEqual(completeRequests.count, 5)
         XCTAssertEqual(
-            completeRequests[1].arguments,
+            completeRequests[4].arguments,
             [
                 "--no-pager", "-c", "core.fsmonitor=false",
                 "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames",
+                "--", ".",
             ])
 
         let partialExecutor = WorkflowWorldTestExecutor(
@@ -238,6 +247,123 @@ final class WorkflowWorldTests: XCTestCase {
             identity: identity(siteIndex: 1))
         XCTAssertEqual(partial.outputText, "first.swift")
         XCTAssertTrue(partial.truncated)
+    }
+
+    func testGitDiffRefusesARepositoryDiscoveredAboveWorkspace() async throws {
+        let repository = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: repository) }
+        try runGit(["init", "--quiet"], at: repository)
+        let sibling = repository.appendingPathComponent("sibling-secret.txt")
+        try Data().write(to: sibling)
+        try runGit(["add", "--", "sibling-secret.txt"], at: repository)
+        try Data("ANCESTOR_SIBLING_SECRET".utf8).write(to: sibling)
+
+        let workspace = repository.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let world = WorkflowWorld(workspaceRoot: workspace)
+        do {
+            _ = try await world.read(.git(op: .diff), identity: identity(siteIndex: 0))
+            XCTFail("Git must not discover a repository above the declared workspace")
+        } catch let error as WorkflowError {
+            XCTAssertEqual(error.kind, .sandboxRefusal)
+        }
+    }
+
+    func testGitDiffRefusesRepositoryLocalWorkTreeOutsideWorkspace() async throws {
+        let workspace = try makeWorkspace()
+        let outside = try makeWorkspace()
+        defer {
+            try? FileManager.default.removeItem(at: workspace)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try runGit(["init", "--quiet"], at: workspace)
+        try runGit(["config", "core.worktree", outside.path], at: workspace)
+
+        let credential = outside.appendingPathComponent("credential.txt")
+        try Data().write(to: credential)
+        try runGit(
+            ["--git-dir", workspace.appendingPathComponent(".git").path,
+             "--work-tree", outside.path, "add", "--", "credential.txt"],
+            at: workspace)
+        try Data("CANARY_SECRET_OUTSIDE_WORKSPACE".utf8).write(to: credential)
+
+        let world = WorkflowWorld(workspaceRoot: workspace)
+        do {
+            _ = try await world.read(.git(op: .diff), identity: identity(siteIndex: 0))
+            XCTFail("Git must not read a repository-local work tree outside the workspace")
+        } catch let error as WorkflowError {
+            XCTAssertEqual(error.kind, .sandboxRefusal)
+        }
+    }
+
+    func testGitDiffRefusesSymlinkedRepositoryWorkTreeOutsideWorkspace() async throws {
+        let workspace = try makeWorkspace()
+        let outside = try makeWorkspace()
+        defer {
+            try? FileManager.default.removeItem(at: workspace)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try runGit(["init", "--quiet"], at: workspace)
+        let linkedWorkTree = workspace.appendingPathComponent("linked-worktree")
+        try FileManager.default.createSymbolicLink(
+            atPath: linkedWorkTree.path,
+            withDestinationPath: outside.path)
+        try runGit(["config", "core.worktree", linkedWorkTree.path], at: workspace)
+
+        let world = WorkflowWorld(workspaceRoot: workspace)
+        do {
+            _ = try await world.read(.git(op: .diff), identity: identity(siteIndex: 0))
+            XCTFail("A work tree symlink that resolves outside the workspace must be refused")
+        } catch let error as WorkflowError {
+            XCTAssertEqual(error.kind, .sandboxRefusal)
+        }
+    }
+
+    func testGitDiffRefusesGitDirectoryOutsideWorkspace() async throws {
+        let workspace = try makeWorkspace()
+        let externalRepository = try makeWorkspace()
+        defer {
+            try? FileManager.default.removeItem(at: workspace)
+            try? FileManager.default.removeItem(at: externalRepository)
+        }
+        try runGit(["init", "--quiet"], at: externalRepository)
+        try runGit(["config", "core.worktree", workspace.path], at: externalRepository)
+        let credential = workspace.appendingPathComponent("credential.txt")
+        try Data().write(to: credential)
+        try runGit(
+            ["--git-dir", externalRepository.appendingPathComponent(".git").path,
+             "--work-tree", workspace.path, "add", "--", "credential.txt"],
+            at: workspace)
+        try Data("CANARY_SECRET_IN_EXTERNAL_GIT_DIR".utf8).write(to: credential)
+
+        try Data("gitdir: \(externalRepository.appendingPathComponent(".git").path)\n".utf8)
+            .write(to: workspace.appendingPathComponent(".git"))
+
+        let world = WorkflowWorld(workspaceRoot: workspace)
+        do {
+            _ = try await world.read(.git(op: .diff), identity: identity(siteIndex: 0))
+            XCTFail("Git metadata outside the declared workspace must be refused")
+        } catch let error as WorkflowError {
+            XCTAssertEqual(error.kind, .sandboxRefusal)
+        }
+    }
+
+    func testGitDiffWorksForContainedRepositoryAndUsesWorkspacePathspec() async throws {
+        let workspace = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        try runGit(["init", "--quiet"], at: workspace)
+        try runGit(["config", "user.name", "Workflow Tests"], at: workspace)
+        try runGit(["config", "user.email", "workflow-tests@example.invalid"], at: workspace)
+        let file = workspace.appendingPathComponent("tracked.txt")
+        try Data("baseline\n".utf8).write(to: file)
+        try runGit(["add", "--", "tracked.txt"], at: workspace)
+        try runGit(["commit", "--quiet", "-m", "baseline"], at: workspace)
+        try Data("contained diff content\n".utf8).write(to: file)
+
+        let world = WorkflowWorld(workspaceRoot: workspace)
+        let diff = try await world.read(.git(op: .diff), identity: identity(siteIndex: 0))
+        XCTAssertTrue(diff.outputText.contains("contained diff content"))
+        XCTAssertEqual(Array(diff.argv.suffix(2)), ["--", "."])
     }
 
     func testUnsupportedCanonicalReadFailsClosed() async throws {
@@ -273,6 +399,23 @@ final class WorkflowWorldTests: XCTestCase {
         return root
     }
 
+    private func runGit(_ arguments: [String], at directory: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-C", directory.path] + arguments
+        process.environment = [
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "HOME": "/var/empty",
+            "PATH": "/usr/bin:/bin",
+        ]
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw WorkflowWorldTestError.gitCommandFailed(Int(process.terminationStatus))
+        }
+    }
+
     private func identity(siteIndex: Int) -> WorkflowRequestIdentity {
         WorkflowRequestIdentity(
             site: WorkflowSiteKey(lane: "main", siteIndex: siteIndex, ordinal: 0),
@@ -298,6 +441,10 @@ final class WorkflowWorldTests: XCTestCase {
     }
 }
 
+private enum WorkflowWorldTestError: Error {
+    case gitCommandFailed(Int)
+}
+
 actor WorkflowWorldTestExecutor: WorkflowWorldExecutorPort {
     private(set) var recordedRequests: [WorkflowWorldProcessInvocation] = []
     private let outputText: String
@@ -312,11 +459,23 @@ actor WorkflowWorldTestExecutor: WorkflowWorldExecutorPort {
         _ invocation: WorkflowWorldProcessInvocation
     ) async throws -> WorkflowWorldObservation {
         recordedRequests.append(invocation)
+        let outputText: String
+        let outputTruncated: Bool
+        switch invocation.arguments {
+        case ["rev-parse", "--show-toplevel"],
+             ["rev-parse", "--absolute-git-dir"],
+             ["rev-parse", "--git-common-dir"]:
+            outputText = invocation.workingDirectoryURL.path + "\n"
+            outputTruncated = false
+        default:
+            outputText = self.outputText
+            outputTruncated = truncated
+        }
         return WorkflowWorldObservation(
             argv: ["git"] + invocation.arguments,
             exitStatus: 0,
             outputText: outputText,
-            truncated: truncated)
+            truncated: outputTruncated)
     }
 
     func requests() -> [WorkflowWorldProcessInvocation] {

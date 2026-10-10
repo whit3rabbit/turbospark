@@ -16,6 +16,9 @@ cleanup() {
         printf 'Kept compatibility fixture and archived source at %s\n' "$temp_root"
     else
         rm -rf "$temp_root"
+        if [[ -z "${WORKFLOW_COMPAT_SCRATCH_ROOT:-}" ]]; then
+            rm -rf "$cache_root"
+        fi
     fi
 }
 trap cleanup EXIT

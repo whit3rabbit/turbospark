@@ -111,6 +111,12 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
         var truncated: Bool
     }
 
+    private struct GitRepositoryLocation {
+        var workTree: URL
+        var gitDirectory: URL
+        var commonDirectory: URL
+    }
+
     private struct BoundedText {
         private(set) var data = Data()
         private(set) var truncated = false
@@ -508,7 +514,7 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
             truncated: enumerationTruncated || scanTruncated || output.truncated)
     }
 
-    private static let gitEnvironment: [String: String] = [
+    private static let gitBaseEnvironment: [String: String] = [
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_OPTIONAL_LOCKS": "0",
@@ -520,18 +526,117 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
         "PATH": "/usr/bin:/bin",
     ]
 
+    private func gitEnvironment(
+        root: URL,
+        repository: GitRepositoryLocation? = nil
+    ) -> [String: String] {
+        var environment = Self.gitBaseEnvironment
+        // Search this directory, then stop before inspecting any ancestor
+        // repository. The resolved repository is still validated below.
+        environment["GIT_CEILING_DIRECTORIES"] = root.deletingLastPathComponent().path
+        if let repository {
+            environment["GIT_DIR"] = repository.gitDirectory.path
+            environment["GIT_WORK_TREE"] = repository.workTree.path
+            environment["GIT_COMMON_DIR"] = repository.commonDirectory.path
+        }
+        return environment
+    }
+
+    private func resolveGitDirectory(
+        _ arguments: [String],
+        root: URL,
+        environment: [String: String],
+        site: WorkflowSiteKey
+    ) async throws -> URL {
+        let invocation = WorkflowWorldProcessInvocation(
+            executableURL: URL(fileURLWithPath: "/usr/bin/git"),
+            arguments: arguments,
+            workingDirectoryURL: root,
+            environment: environment,
+            timeoutSeconds: limits.gitTimeoutSeconds,
+            outputCapBytes: limits.maximumOutputBytes,
+            stdoutOnly: true)
+        let observation = try await executor.execute(invocation)
+        guard observation.exitStatus == 0, !observation.truncated else {
+            throw refusal("Git could not resolve repository metadata safely", site: site)
+        }
+
+        // Git prints one line terminator. Removing only that byte preserves
+        // valid newline characters in the directory name itself.
+        let rawPath = observation.outputText.hasSuffix("\n")
+            ? String(observation.outputText.dropLast())
+            : observation.outputText
+        guard !rawPath.isEmpty, !rawPath.contains("\0") else {
+            throw refusal("Git returned an invalid repository path", site: site)
+        }
+        let candidate = rawPath.hasPrefix("/")
+            ? URL(fileURLWithPath: rawPath)
+            : URL(fileURLWithPath: rawPath, relativeTo: root).standardizedFileURL
+        let path = candidate.path
+        guard let resolvedPath = path.withCString({ realpath($0, nil) }) else {
+            throw refusal("Git returned an unavailable repository path", site: site)
+        }
+        defer { free(resolvedPath) }
+        let resolved = PathContainment.canonical(
+            URL(fileURLWithPath: String(cString: resolvedPath), isDirectory: true))
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            throw refusal("Git returned a non-directory repository path", site: site)
+        }
+        return resolved
+    }
+
+    private func resolveGitRepository(
+        root: URL,
+        site: WorkflowSiteKey
+    ) async throws -> GitRepositoryLocation {
+        let discoveryEnvironment = gitEnvironment(root: root)
+        let workTree = try await resolveGitDirectory(
+            ["rev-parse", "--show-toplevel"],
+            root: root,
+            environment: discoveryEnvironment,
+            site: site)
+        let gitDirectory = try await resolveGitDirectory(
+            ["rev-parse", "--absolute-git-dir"],
+            root: root,
+            environment: discoveryEnvironment,
+            site: site)
+        let commonDirectory = try await resolveGitDirectory(
+            ["rev-parse", "--git-common-dir"],
+            root: root,
+            environment: discoveryEnvironment,
+            site: site)
+
+        guard PathContainment.isContained(workTree, in: root),
+              PathContainment.isContained(root, in: workTree),
+              PathContainment.isContained(gitDirectory, in: root),
+              PathContainment.isContained(commonDirectory, in: root)
+        else {
+            throw refusal("the Git repository resolves outside the declared workspace", site: site)
+        }
+        return GitRepositoryLocation(
+            workTree: workTree,
+            gitDirectory: gitDirectory,
+            commonDirectory: commonDirectory)
+    }
+
     /// `-c filter.<name>.{clean,smudge,process}=` for every filter driver the
     /// repository defines. A workspace from an untrusted archive can ship
     /// `.git/config` plus `.gitattributes` that run a clean filter during a
     /// "read-only" status or diff. The enumeration (`git config --get-regexp`)
     /// executes nothing. An empty command runs nothing, and `-c` wins over the
     /// file config.
-    private func filterNeutralizingOverrides(root: URL) async throws -> [String] {
+    private func filterNeutralizingOverrides(
+        root: URL,
+        repository: GitRepositoryLocation
+    ) async throws -> [String] {
         let probe = WorkflowWorldProcessInvocation(
             executableURL: URL(fileURLWithPath: "/usr/bin/git"),
             arguments: ["config", "--get-regexp", "^filter\\."],
             workingDirectoryURL: root,
-            environment: Self.gitEnvironment,
+            environment: gitEnvironment(root: root, repository: repository),
             timeoutSeconds: limits.gitTimeoutSeconds,
             outputCapBytes: limits.maximumOutputBytes)
         let observation = try await executor.execute(probe)
@@ -572,34 +677,36 @@ final class WorkflowWorld: WorkflowCapabilities, Sendable {
         case .status:
             arguments = [
                 "--no-pager", "-c", "core.fsmonitor=false",
-                "status", "--short", "--untracked-files=all", "--no-renames",
+                "status", "--short", "--untracked-files=all", "--no-renames", "--", ".",
             ]
         case .diff:
             arguments = [
                 "--no-pager", "-c", "core.fsmonitor=false",
-                "diff", "--no-ext-diff", "--no-textconv", "--no-color",
+                "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--", ".",
             ]
         case .log:
             arguments = [
                 "--no-pager", "-c", "core.fsmonitor=false",
                 "-c", "log.showSignature=false",
-                "log", "--no-decorate", "--no-color", "-n", "20", "--format=%h %s", "--",
+                "log", "--no-decorate", "--no-color", "-n", "20", "--format=%h %s", "--", ".",
             ]
         case .changedFiles:
             arguments = [
                 "--no-pager", "-c", "core.fsmonitor=false",
-                "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames",
+                "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--", ".",
             ]
         }
+        let repository = try await resolveGitRepository(root: root, site: site)
         // Status and diff run clean filters on stale-stat files, and log may
         // run gpg.program; both are repo-configured programs (see
         // filterNeutralizingOverrides). Neutralize them before the read.
-        let overrides = try await filterNeutralizingOverrides(root: root)
+        let environment = gitEnvironment(root: root, repository: repository)
+        let overrides = try await filterNeutralizingOverrides(root: root, repository: repository)
         let invocation = WorkflowWorldProcessInvocation(
             executableURL: URL(fileURLWithPath: "/usr/bin/git"),
             arguments: overrides + arguments,
             workingDirectoryURL: root,
-            environment: Self.gitEnvironment,
+            environment: environment,
             timeoutSeconds: limits.gitTimeoutSeconds,
             outputCapBytes: limits.maximumOutputBytes,
             stdoutOnly: operation == .changedFiles)
