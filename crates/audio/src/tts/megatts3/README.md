@@ -14,7 +14,10 @@ ported and gated against the reference on real weights; the product surfaces
   unmodified PyTorch classes through `tools/gen_megatts3_dit_fixtures.py`.
 - **Paper**: [MegaTTS 3](https://arxiv.org/abs/2502.18924).
 - **Weights**: `tools/convert_megatts3.py` turns the pinned `.ckpt` files into
-  MLX-layout safetensors (conv weights `[out, K, in]`, weight norm unfolded).
+  MLX-layout safetensors (conv weights `[out, K, in]`, weight norm unfolded),
+  plus a root `config.json` (`model_type: megatts3`, `voice_clone`), `LICENSE`,
+  `NOTICE.md` (sources, hashes, encoder provenance) and a model card, so the
+  output folder can be published as is. Output bytes are deterministic.
 
 ## Stage status
 
@@ -42,7 +45,11 @@ h --24 x [adaLN-zero, rotary MHA (16 heads), adaLN-zero, SiLU MLP]--> adaLN out
 Three CFG rows share `x` and the timestep: spk+txt (real phones, prompt),
 txt (real phones, no prompt), uncond (mask tokens `vocab - 1`, no prompt),
 combined as `uncond + p_w (txt - uncond) + t_w (spk_txt - txt)`. Everything
-independent of `x` and the timestep is computed once in `Dit::prepare`.
+independent of `x` and the timestep is computed once in `Dit::prepare`. The
+three rows run as one stacked `[3 * frames, dim]` pass (attention over
+`3 * heads` planes, the timestep-only adaLN projections computed once); this is
+bit-identical to running each row alone because every op works per position
+and each row's heads only see that row's keys.
 
 The sampler is Euler flow matching with F5-TTS sway sampling
 (`t -> 1 - cos(pi t / 2)`) and the AMO overshoot step. It draws fresh Gaussian
@@ -85,6 +92,18 @@ let prompt = tts.prepare_prompt(&reference_24k, &mut rng)?;   // `preprocess`
 let audio = tts.synthesize(&prompt, "Hello world.", &SynthParams::default(), &mut rng)?;
 // audio: mono f32 at 24 kHz
 ```
+
+`synthesize_controlled` is the same pipeline with a `progress` callback
+(before each chunk and after every diffusion step; an error from it cancels)
+and an `emit` callback that streams finished audio: each chunk's samples are
+released as soon as it is decoded, minus the 0.16 s tail the next chunk may
+crossfade into (`Crossfader`; the concatenation equals `combine_segments` bit
+for bit). Helpers for callers that validate before queueing: `plan_chunks`
+(the language and empty-text checks), `resample_reference` (any rate to 24 kHz
+with the long sinc-Hann filter) and `activation_reserve_bytes` (a measured,
+conservative peak above the weights). `MegaTts3::open` checks the root
+`config.json` when present: `model_type` must be `megatts3` and `voice_clone`
+must match whether the WavVAE has its encoder.
 
 `prepare_prompt` pads the prompt, measures its BS.1770 loudness, aligns it, encodes
 it to a latent with the community WavVAE encoder, and primes the duration LM.
@@ -219,6 +238,10 @@ at inference and are ignored.
 | Aligner, real checkpoint on real speech (env-gated) | All keys load strictly. From the reference's own 16 kHz audio: mel within 1.5e-5, all 70 tokens identical, 34 phones and the 328-frame `mel2ph` identical. From the 24 kHz prompt through the crate resampler: same length and phones, token deltas at most 1 frame, mel gap 3e-2. Set `TURBOSPARK_ALIGNER_MODEL` and `TURBOSPARK_ALIGNER_GOLDEN`; goldens come from `gen_megatts3_aligner_fixtures.py --real-src --clip`. |
 | Duration LM, tiny fixture (`testdata/megatts3_duration/`) | Built from the reference's own `make_dur_prompt` and `dur_pred`: three chunks (first/non-final, non-final/final, first/final with `alpha` 1.2) with recorded `rand_like` draws. Unrounded regression 7e-7, raw codes exact, final `mel2ph` exact (jitter, pause floors, padding); decoding chunks in a different order or twice reproduces the same results; test tolerance 1e-5. |
 | Duration LM, real checkpoint (env-gated) | All keys load strictly into the reference; 14 prompt phones, one 10-phone chunk: codes exact, `mel2ph` exact (320 frames), regression 5.6e-5 (values up to 11); default tolerance 3e-4. Set `TURBOSPARK_DUR_MODEL` and `TURBOSPARK_DUR_GOLDEN`; goldens come from `gen_megatts3_duration_fixtures.py --real-src`. |
+| CFG batching | `stacked_cfg_rows_match_rows_run_alone_bit_for_bit` on the tiny DiT; a mutant that lets attention cross rows fails it. On real weights the `turbospark-clone` WAVs (one chunk, 4 steps; two chunks with the crossfade, 2 steps) are byte-identical before and after the change. |
+| Streaming join | `Crossfader` against the original one-shot join on six shapes, including middle segments shorter than two fades: bitwise equal, and audio is released before the end whenever it is longer than one fade. A mutant holding back half a fade fails it and the reference `combine_audio_segments` fixtures. |
+| Regenerated goldens | The e2e goldens were regenerated with torch 2.14.1 and transformers 4.57.6 (the originals' versions were not recorded): case 0 max diff 5.4e-5, case 1 1.07e-3, correlation 1.000000 for both. Case 1 exceeds the 1e-3 default tolerance; the code before and after the batching change gives exactly the same diffs, so the shift is in the reference build, not the port. The tolerance was not widened. |
+| Memory (CPU path, one reading) | Peak RSS 6.3 GB for a 3.3 s reference and 3 s output, 8.6 GB for a 27.5 s reference and 7.6 s output: about 5.8 GB resident (the bf16 G2P widens to 2 GB) plus about 3.2 MiB per latent frame. `activation_reserve_bytes` uses 3.5 MiB per frame. |
 | Mutation checks (DiT) | Swapped `p_w`/`t_w`, neox rotary, swapped final adaLN scale/shift, uncond row using real phones, unmasked prompt region, zeroed ctx-mask embedding, dropped relative-value term, off-by-one key window, zero AMO noise, and a skipped per-step draw each fail the tiny-fixture test. |
 | Mutation checks (pipeline) | A trim off by one latent frame, a prompt latent not restored over the sampler output, and swapped first/final chunk flags each fail the whole-pipeline test: the first on output length, the second on the audio comparison, the third on a replay draw-size mismatch (the changed flags change the draw order). |
 | Mutation checks (G2P and chunker) | EOS never recognised, BOS marker dropped from the prompt, final token kept, `sil` token dropped, wrong prompt speech token, chunk budget off by one, joining space after wide characters, splitting on any ASCII stop, and a dropped last chunk each fail a test. The argmax tie rule is equivalent in the tests (no ties occur). |

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-use audio::tts::megatts3::{MegaTts3, SeededRng, SynthParams, SAMPLE_RATE};
-use audio::{SincHannOptions, Waveform};
+use audio::tts::megatts3::{resample_reference, MegaTts3, SeededRng, SynthParams, SAMPLE_RATE};
+use audio::Waveform;
 
 const USAGE: &str = "\
 turbospark-clone: clone a voice from a short recording and speak new English text
@@ -231,16 +231,7 @@ fn load_reference(path: &Path) -> Result<Vec<f32>, Error> {
         .chunks_exact(channels)
         .map(|frame| frame.iter().sum::<f32>() / channels as f32)
         .collect();
-    if wave.sample_rate == SAMPLE_RATE {
-        return Ok(mono);
-    }
-    // The reference loads with librosa (soxr); a long sinc-Hann filter is the
-    // closest portable match (see the aligner resampler notes).
-    let options = SincHannOptions {
-        lowpass_filter_width: 64,
-        ..SincHannOptions::default()
-    };
-    audio::resample_mono_sinc_hann(&mono, wave.sample_rate, SAMPLE_RATE, &options)
+    resample_reference(&mono, wave.sample_rate)
         .map_err(|e| Error::Failed(format!("resampling the reference: {e}")))
 }
 

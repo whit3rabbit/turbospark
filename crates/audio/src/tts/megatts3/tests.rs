@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use super::dit::{Dit, DitConfig};
-use super::sampler::{amo_step, sample, sway_schedule, SamplerParams};
+use super::sampler::{amo_step, sample, sample_controlled, sway_schedule, SamplerParams};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 fn fixture(dir: &Path, name: &str) -> PathBuf {
@@ -279,6 +279,67 @@ fn prepare_rejects_bad_inputs() {
 }
 
 #[test]
+fn step_hook_reports_every_step_and_cancels() {
+    let dit = load_tiny();
+    let dir = testdata();
+    let cond = dit
+        .prepare(
+            &i32s(&dir, "a_phone.npy"),
+            &i32s(&dir, "a_tone.npy"),
+            &i32s(&dir, "a_mel2ph.npy"),
+            &f32s(&dir, "a_prompt.npy"),
+        )
+        .unwrap();
+    let params = SamplerParams {
+        steps: 4,
+        ..SamplerParams::default()
+    };
+    let mut draws = 0usize;
+    let mut seen = Vec::new();
+    let plain = sample(&dit, &cond, params, &mut |o: &mut [f32]| o.fill(0.25)).unwrap();
+    let hooked = sample_controlled(
+        &dit,
+        &cond,
+        params,
+        &mut |o: &mut [f32]| {
+            draws += 1;
+            o.fill(0.25)
+        },
+        &mut |done| {
+            seen.push(done);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(seen, vec![1, 2, 3, 4]);
+    assert_eq!(draws, 5, "initial latent plus one draw per step");
+    assert_eq!(plain, hooked, "the hook must not change the result");
+
+    // An error from the hook stops the loop right there.
+    let mut draws = 0usize;
+    let stopped = sample_controlled(
+        &dit,
+        &cond,
+        params,
+        &mut |o: &mut [f32]| {
+            draws += 1;
+            o.fill(0.25)
+        },
+        &mut |done| {
+            if done == 2 {
+                Err(crate::SpeechError::Input {
+                    why: "cancelled".into(),
+                })
+            } else {
+                Ok(())
+            }
+        },
+    );
+    assert!(stopped.is_err());
+    assert_eq!(draws, 3, "no draws after the cancelling step");
+}
+
+#[test]
 fn velocity_checks_latent_shape() {
     let dit = load_tiny();
     let dir = testdata();
@@ -291,6 +352,36 @@ fn velocity_checks_latent_shape() {
         )
         .unwrap();
     assert!(dit.velocity(&cond, &[0.0; 3], 0.5, 1.0, 1.0).is_err());
+}
+
+#[test]
+fn stacked_cfg_rows_match_rows_run_alone_bit_for_bit() {
+    let dit = load_tiny();
+    let dir = testdata();
+    let cond = dit
+        .prepare(
+            &i32s(&dir, "a_phone.npy"),
+            &i32s(&dir, "a_tone.npy"),
+            &i32s(&dir, "a_mel2ph.npy"),
+            &f32s(&dir, "a_prompt.npy"),
+        )
+        .unwrap();
+    let n = cond.frames * dit.config().channels;
+    let x: Vec<f32> = (0..n)
+        .map(|i| ((i * 37 % 101) as f32 - 50.0) / 25.0)
+        .collect();
+    let batched = dit.rows_batched(&cond, &x, 0.37);
+    let alone = dit.rows_unbatched(&cond, &x, 0.37);
+    assert_eq!(batched.len(), 3 * n);
+    // Bitwise: stacking must not change the reduction order of any value.
+    let same = batched
+        .iter()
+        .zip(&alone)
+        .all(|(a, b)| a.to_bits() == b.to_bits());
+    assert!(same, "stacked CFG rows differ from rows run alone");
+    // The rows really differ, so a mix-up between them would be visible.
+    assert_ne!(&batched[..n], &batched[n..2 * n]);
+    assert_ne!(&batched[n..2 * n], &batched[2 * n..]);
 }
 
 #[test]

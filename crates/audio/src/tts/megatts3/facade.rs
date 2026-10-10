@@ -24,15 +24,19 @@ use super::duration::{
     DurationPrompt, FRAMES_MULTIPLE,
 };
 use super::g2p::G2p;
-use super::postprocess::{combine_segments, integrated_loudness, match_loudness};
+use super::postprocess::{integrated_loudness, match_loudness, Crossfader};
 use super::rng::Randomness;
-use super::sampler::{sample, SamplerParams};
+use super::sampler::{sample_controlled, SamplerParams};
 use super::text::{chunk_english, ensure_english, normalize_english, DEFAULT_MAX_CHARS};
 use crate::codec::wavvae::WavVae;
+use crate::resample::{resample_mono_sinc_hann, SincHannOptions};
 use crate::{Result, SpeechError};
 
 /// Output and prompt sample rate.
 pub const SAMPLE_RATE: u32 = PROMPT_RATE;
+/// `model_type` of the root `config.json` the converter writes; runtimes
+/// dispatch on it.
+pub const MODEL_TYPE: &str = "megatts3";
 /// The Space cuts prompts to 28 s (`cut_wav(max_len=28)`).
 pub const MAX_PROMPT_SECONDS: usize = 28;
 /// Latent frames cover this many output samples (`vae_stride * hop_size`).
@@ -102,10 +106,14 @@ pub struct MegaTts3 {
 impl MegaTts3 {
     /// Opens a converted checkpoint directory (`tools/convert_megatts3.py`):
     /// `aligner_lm/`, `diffusion_transformer/`, `duration_lm/`, `wavvae/`, `g2p/`.
+    /// A root `config.json`, when present, must name [`MODEL_TYPE`] and
+    /// declare `voice_clone` matching whether the WavVAE has its encoder.
     pub fn open(dir: &Path) -> Result<Self> {
+        let wavvae = WavVae::open(&dir.join("wavvae"))?;
+        check_root_config(dir, wavvae.has_encoder())?;
         Ok(Self {
             aligner: Aligner::open(&dir.join("aligner_lm"))?,
-            wavvae: WavVae::open(&dir.join("wavvae"))?,
+            wavvae,
             dit: Dit::open(&dir.join("diffusion_transformer"))?,
             duration: DurationLm::open(&dir.join("duration_lm"))?,
             g2p: G2p::open(&dir.join("g2p"))?,
@@ -217,18 +225,42 @@ impl MegaTts3 {
         params: &SynthParams,
         rng: &mut dyn Randomness,
     ) -> Result<Vec<f32>> {
-        ensure_english(text)?;
-        let chunks = chunk_english(&normalize_english(text), params.max_chunk_bytes);
-        if chunks.iter().all(|c| c.trim().is_empty()) {
-            return Err(SpeechError::Input {
-                why: "text is empty after normalization".to_string(),
-            });
-        }
+        let mut out = Vec::new();
+        self.synthesize_controlled(prompt, text, params, rng, &mut |_| Ok(()), &mut |pcm| {
+            out.extend(pcm);
+            true
+        })?;
+        Ok(out)
+    }
+
+    /// [`synthesize`](Self::synthesize) with progress, cancellation and
+    /// streaming. `progress` runs before each chunk and after every diffusion
+    /// step; an error from it stops synthesis and is returned. `emit` receives
+    /// the finished audio in order (all but the crossfade tail of each chunk
+    /// as soon as the chunk is decoded); returning `false` stops early with
+    /// `Ok`. The concatenated output equals `synthesize` bit for bit.
+    pub fn synthesize_controlled(
+        &mut self,
+        prompt: &VoicePrompt,
+        text: &str,
+        params: &SynthParams,
+        rng: &mut dyn Randomness,
+        progress: &mut dyn FnMut(SynthProgress) -> Result<()>,
+        emit: &mut dyn FnMut(Vec<f32>) -> bool,
+    ) -> Result<()> {
+        let chunks = plan_chunks(text, params.max_chunk_bytes)?;
         let code_size = self.duration.config().code_size;
         let prompt_frames = prompt.latent_frames();
-        let mut segments = Vec::with_capacity(chunks.len());
+        let mut fader = Crossfader::new(SAMPLE_RATE);
         let last = chunks.len() - 1;
         for (i, chunk) in chunks.iter().enumerate() {
+            let at = |step| SynthProgress {
+                chunk: i,
+                chunks: chunks.len(),
+                step,
+                steps: params.steps,
+            };
+            progress(at(0))?;
             let (ph, tone) = self.g2p.phonemize(chunk)?;
             let raw = self.duration.predict(&prompt.duration, &ph, &tone)?;
             let opts = ChunkOptions {
@@ -255,16 +287,134 @@ impl MegaTts3 {
                 p_w: params.p_w,
                 t_w: params.t_w,
             };
-            let mut x = sample(&self.dit, &cond, sampler, &mut |o| rng.normal(o))?;
+            let mut x = sample_controlled(
+                &self.dit,
+                &cond,
+                sampler,
+                &mut |o| rng.normal(o),
+                &mut |done| progress(at(done)),
+            )?;
             // The prompt region is replaced by the prompt's own latent.
             x[..prompt.latent.len()].copy_from_slice(&prompt.latent);
             let audio = self.wavvae.decode(&x)?;
             let trimmed = &audio[prompt_frames * SAMPLES_PER_LATENT..];
             let loud = integrated_loudness(trimmed, SAMPLE_RATE)?;
-            segments.push(match_loudness(trimmed, loud, prompt.loudness));
+            let ready = fader.push(&match_loudness(trimmed, loud, prompt.loudness))?;
+            if !ready.is_empty() && !emit(ready) {
+                return Ok(());
+            }
         }
-        combine_segments(&segments, SAMPLE_RATE)
+        let tail = fader.finish();
+        if !tail.is_empty() {
+            emit(tail);
+        }
+        Ok(())
     }
+}
+
+/// Where a synthesis is: reported before each text chunk (`step` 0) and after
+/// every diffusion step of that chunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SynthProgress {
+    /// 0-based chunk index.
+    pub chunk: usize,
+    pub chunks: usize,
+    /// Diffusion steps finished in this chunk.
+    pub step: usize,
+    pub steps: usize,
+}
+
+/// The text checks synthesis starts with (English only, not empty after
+/// normalization), returning the chunks it will synthesize. Cheap; callers
+/// use it to refuse a request before queueing it.
+pub fn plan_chunks(text: &str, max_chunk_bytes: usize) -> Result<Vec<String>> {
+    ensure_english(text)?;
+    let chunks = chunk_english(&normalize_english(text), max_chunk_bytes);
+    if chunks.is_empty() || chunks.iter().all(|c| c.trim().is_empty()) {
+        return Err(SpeechError::Input {
+            why: "text is empty after normalization".to_string(),
+        });
+    }
+    Ok(chunks)
+}
+
+/// Conservative peak activation bytes (above the loaded weights) for one
+/// synthesis: a prompt of `prompt_samples` at 24 kHz, a longest text chunk of
+/// `longest_chunk_bytes`, and duration factor `dur_alpha`.
+///
+/// Peak RSS grows with the latent frames of a chunk (prompt plus target):
+/// measured on the CPU path at about 3.2 MiB per frame (6.3 GB at about 160
+/// frames, 8.6 GB at about 880). The target length is bounded at 3 latent
+/// frames per text byte, above the 1.5 to 2.2 observed.
+pub fn activation_reserve_bytes(
+    prompt_samples: usize,
+    longest_chunk_bytes: usize,
+    dur_alpha: f32,
+) -> u64 {
+    const PER_FRAME: u64 = 3_670_016; // 3.5 MiB, above the measured 3.2
+    const SLACK: u64 = 256 << 20;
+    let used = prompt_samples.min(MAX_PROMPT_SECONDS * SAMPLE_RATE as usize);
+    let prompt_frames = used.div_ceil(SAMPLES_PER_LATENT);
+    let alpha = if dur_alpha.is_finite() {
+        dur_alpha.max(1.0)
+    } else {
+        1.0
+    };
+    let target = ((longest_chunk_bytes as f64) * 3.0 * f64::from(alpha)).ceil() as usize;
+    let frames = (prompt_frames + target).min(MAX_LATENT_FRAMES + prompt_frames);
+    frames as u64 * PER_FRAME + SLACK
+}
+
+/// Mono reference audio at `rate` Hz resampled to the 24 kHz prompt rate.
+/// The reference loads prompts with librosa (soxr); the long sinc-Hann filter
+/// is the closest portable match (see the aligner resampler notes).
+pub fn resample_reference(mono: &[f32], rate: u32) -> Result<Vec<f32>> {
+    if rate == SAMPLE_RATE {
+        return Ok(mono.to_vec());
+    }
+    let options = SincHannOptions {
+        lowpass_filter_width: 64,
+        ..SincHannOptions::default()
+    };
+    resample_mono_sinc_hann(mono, rate, SAMPLE_RATE, &options)
+        .map_err(|e| SpeechError::Audio(e.to_string()))
+}
+
+/// The root `config.json` the converter writes. Older converted directories
+/// have none; when present it must agree with what was loaded.
+pub(super) fn check_root_config(dir: &Path, can_clone: bool) -> Result<()> {
+    let path = dir.join("config.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(SpeechError::Audio(format!(
+                "reading {}: {e}",
+                path.display()
+            )))
+        }
+    };
+    let bad = |field: &str, why: String| SpeechError::BadConfig {
+        field: format!("config.json {field}"),
+        why,
+    };
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| bad("(file)", e.to_string()))?;
+    let model_type = value.get("model_type").and_then(|v| v.as_str());
+    if model_type != Some(MODEL_TYPE) {
+        return Err(bad(
+            "model_type",
+            format!("expected {MODEL_TYPE:?}, found {model_type:?}"),
+        ));
+    }
+    let declared = value.get("voice_clone").and_then(|v| v.as_bool());
+    if declared != Some(can_clone) {
+        return Err(bad(
+            "voice_clone",
+            format!("declares {declared:?} but the WavVAE encoder is present: {can_clone}"),
+        ));
+    }
+    Ok(())
 }
 
 /// `prepare_inputs_for_dit`: concatenates the prompt and chunk phones, tones and

@@ -84,6 +84,19 @@ pub fn sample(
     params: SamplerParams,
     noise: &mut dyn FnMut(&mut [f32]),
 ) -> Result<Vec<f32>> {
+    sample_controlled(dit, cond, params, noise, &mut |_| Ok(()))
+}
+
+/// [`sample`] calling `on_step(done)` after each finished step. An error from
+/// `on_step` stops the loop and is returned (cancellation); the noise drawn
+/// so far is not rolled back, so a stopped run cannot be resumed.
+pub fn sample_controlled(
+    dit: &Dit,
+    cond: &DitCondition,
+    params: SamplerParams,
+    noise: &mut dyn FnMut(&mut [f32]),
+    on_step: &mut dyn FnMut(usize) -> Result<()>,
+) -> Result<Vec<f32>> {
     if params.steps == 0 || params.steps > MAX_STEPS {
         return Err(SpeechError::Input {
             why: format!("steps must be in 1..={MAX_STEPS}, got {}", params.steps),
@@ -103,6 +116,7 @@ pub fn sample(
         let v = dit.velocity(cond, &x, schedule[i], params.p_w, params.t_w)?;
         noise(&mut eps);
         x = amo_step(&x, schedule[i], schedule[i + 1], &v, &eps);
+        on_step(i + 1)?;
     }
     Ok(x)
 }

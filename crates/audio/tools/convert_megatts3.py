@@ -24,11 +24,16 @@ Output layout (MLX convention, matching `codec/wnconv.rs`):
 
 Usage:
   convert_megatts3.py --src SRC --inventory
-  convert_megatts3.py --src SRC --out OUT --dict-json dict.json [--wavvae community|official]
+  convert_megatts3.py --src SRC --out OUT --dict-json dict.json --license LICENSE \
+      [--wavvae community|official]
 
 SRC is a Hugging Face snapshot directory (`aligner_lm/`, `diffusion_transformer/`,
 `duration_lm/`, `wavvae/`, `g2p/`). `dict.json` is
-`tts/utils/text_utils/dict.json` from the MegaTTS3 code repo.
+`tts/utils/text_utils/dict.json` and LICENSE is the Apache-2.0 text, both from
+the MegaTTS3 code repo. The output also gets a root `config.json` (the runtime
+dispatches on its `model_type`), `NOTICE.md` (sources and provenance) and a
+model card `README.md`, so the folder can be published as is. Every output is
+deterministic: the same inputs give the same bytes, which catalog pins rely on.
 """
 
 import argparse
@@ -463,6 +468,120 @@ def load_dict_json(path):
     return data
 
 
+# --------------------------------------------------------------- root files
+
+# Bumped when the converted layout changes in a way a loader must notice.
+FORMAT_VERSION = 1
+ENCODER_PROVENANCE = (
+    "ByteDance withheld the WavVAE encoder from its release. The encoder in this "
+    "folder is a third-party re-upload by mrfakename (mrfakename/MegaTTS3-VoiceCloning), "
+    "credited to ModelScope ACoderPassBy/MegaTTS-SFT. Its origin and license were not "
+    "independently verified; the re-upload's repository declares Apache-2.0."
+)
+
+
+def root_config(wavvae_variant):
+    """The root `config.json`: runtimes dispatch on `model_type`, and
+    `voice_clone` must agree with whether the WavVAE carries its encoder."""
+    return {
+        "format_version": FORMAT_VERSION,
+        "model_type": "megatts3",
+        "sample_rate": 24000,
+        "voice_clone": wavvae_variant == "community",
+        "wavvae_variant": wavvae_variant,
+    }
+
+
+def notice_text(wavvae_variant):
+    """NOTICE.md: where every source came from. Deterministic (no timestamps),
+    so the same inputs always give the same bytes and the same pins."""
+    used = [f"aligner_lm/{COMPONENTS['aligner_lm'][0]}",
+            f"diffusion_transformer/{COMPONENTS['diffusion_transformer'][0]}",
+            f"duration_lm/{COMPONENTS['duration_lm'][0]}",
+            "g2p/model.safetensors", "g2p/tokenizer.json",
+            f"wavvae/{WAVVAE_FILE[wavvae_variant]}"]
+    lines = [
+        "# Notice",
+        "",
+        "MegaTTS3 (ByteDance) weights converted to safetensors for TurboSpark by",
+        "`crates/audio/tools/convert_megatts3.py`. Values are unchanged: f16 and bf16",
+        "are widened to f32 and conv weights reorder their axes; nothing was retrained.",
+        "",
+        "## Sources",
+        "",
+        f"- `ByteDance/MegaTTS3` at `{SOURCES['ByteDance/MegaTTS3']}`: aligner, DiT,",
+        "  duration LM and G2P. Declared license: Apache-2.0.",
+    ]
+    if wavvae_variant == "community":
+        lines += [
+            f"- `mrfakename/MegaTTS3-VoiceCloning` at `{SOURCES['mrfakename/MegaTTS3-VoiceCloning']}`:",
+            "  the WavVAE with its encoder.",
+        ]
+    else:
+        lines += ["- The WavVAE is ByteDance's decoder-only release (no voice cloning)."]
+    lines += ["", "| Source file | sha256 |", "|---|---|"]
+    lines += [f"| `{rel}` | `{PINNED[rel][0]}` |" for rel in used]
+    if wavvae_variant == "community":
+        lines += ["", "## WavVAE encoder provenance", "", ENCODER_PROVENANCE]
+    lines += [
+        "",
+        "## Use",
+        "",
+        "Clone only voices you have the right to use. TurboSpark asks for explicit",
+        "consent on every cloning request.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def model_card(wavvae_variant):
+    clone = wavvae_variant == "community"
+    lines = [
+        "---",
+        "license: apache-2.0",
+        "base_model: ByteDance/MegaTTS3",
+        "pipeline_tag: text-to-speech",
+        "tags:",
+        "- megatts3",
+        "- safetensors",
+    ]
+    if clone:
+        lines.append("- voice-cloning")
+    lines += [
+        "---",
+        "",
+        "# MegaTTS3 for TurboSpark",
+        "",
+        "MegaTTS3 (ByteDance) converted to safetensors for TurboSpark's Rust runtime.",
+        "Each component lives in its own folder (`aligner_lm/`, `diffusion_transformer/`,",
+        "`duration_lm/`, `wavvae/`, `g2p/`); `manifest.json` lists every file's sha256.",
+        "",
+        "See `NOTICE.md` for the exact sources and their hashes."
+        + (" The WavVAE encoder's origin and license are unverified; read the notice"
+           " before redistributing." if clone else ""),
+        "",
+        "Clone only voices you have the right to use.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def write_root_files(out, wavvae_variant, license_path, manifest):
+    with open(license_path, encoding="utf-8") as fh:
+        if "Apache License" not in fh.read(4096):
+            raise ConvertError(f"{license_path} does not look like the Apache-2.0 LICENSE")
+    shutil.copyfile(license_path, os.path.join(out, "LICENSE"))
+    with open(os.path.join(out, "config.json"), "w", encoding="utf-8") as fh:
+        json.dump(root_config(wavvae_variant), fh, indent=2, sort_keys=True)
+    for name, text in (("NOTICE.md", notice_text(wavvae_variant)),
+                       ("README.md", model_card(wavvae_variant))):
+        with open(os.path.join(out, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
+    for name in ("config.json", "LICENSE", "NOTICE.md", "README.md"):
+        path = os.path.join(out, name)
+        manifest["files"][name] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+
+
 # ------------------------------------------------------------------------ main
 
 
@@ -478,6 +597,10 @@ def main(argv=None):
     ap.add_argument("--out")
     ap.add_argument("--dict-json")
     ap.add_argument("--wavvae", choices=sorted(WAVVAE_FILE), default="community")
+    ap.add_argument(
+        "--license",
+        help="upstream LICENSE text (Apache-2.0, from the MegaTTS3 code repo), copied to LICENSE",
+    )
     ap.add_argument("--inventory", action="store_true", help="print tensors, write nothing")
     ap.add_argument(
         "--skip-g2p",
@@ -485,8 +608,8 @@ def main(argv=None):
         help="development only: do not copy the 1 GB G2P model (recorded in the manifest)",
     )
     args = ap.parse_args(argv)
-    if not args.inventory and not (args.out and args.dict_json):
-        ap.error("--out and --dict-json are required unless --inventory")
+    if not args.inventory and not (args.out and args.dict_json and args.license):
+        ap.error("--out, --dict-json and --license are required unless --inventory")
     if args.out and os.path.exists(args.out) and os.listdir(args.out):
         ap.error(f"--out {args.out} exists and is not empty")
 
@@ -557,6 +680,8 @@ def main(argv=None):
         "sha256": sha256_file(os.path.join(args.out, "frontend", "dict.json")),
         "size": os.path.getsize(os.path.join(args.out, "frontend", "dict.json")),
     }
+
+    write_root_files(args.out, args.wavvae, args.license, manifest)
     with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2, sort_keys=True)
     print(f"wrote {args.out}")

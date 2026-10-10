@@ -148,35 +148,87 @@ pub fn match_loudness(samples: &[f32], input_lufs: f64, target_lufs: f64) -> Vec
 /// reproduced as written (they do not sum exactly to one). A segment shorter
 /// than the fade is an error (the reference's broadcast would fail).
 pub fn combine_segments(segments: &[Vec<f32>], rate: u32) -> Result<Vec<f32>> {
-    let w = (f64::from(rate) * CROSSFADE_SECONDS) as usize;
-    let n = 2 * w;
-    let hann: Vec<f64> = (0..n)
-        .map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / (n as f64 - 1.0)).cos())
-        .collect();
-    let mut iter = segments.iter();
-    let Some(first) = iter.next() else {
-        return Ok(Vec::new());
-    };
-    let mut combined = first.clone();
-    for segment in iter {
-        if combined.len() < w || segment.len() < w {
-            return Err(SpeechError::Input {
-                why: format!(
-                    "segments of {} and {} samples cannot be crossfaded over {w} samples",
-                    combined.len(),
-                    segment.len()
-                ),
-            });
-        }
-        let tail_start = combined.len() - w;
-        let mut joined = combined[..tail_start].to_vec();
-        for i in 0..w {
-            let v =
-                f64::from(combined[tail_start + i]) * hann[w + i] + f64::from(segment[i]) * hann[i];
-            joined.push(v as f32);
-        }
-        joined.extend_from_slice(&segment[w..]);
-        combined = joined;
+    let mut fader = Crossfader::new(rate);
+    let mut combined = Vec::new();
+    for segment in segments {
+        combined.extend(fader.push(segment)?);
     }
+    combined.extend(fader.finish());
     Ok(combined)
+}
+
+/// [`combine_segments`] one segment at a time, so finished audio can be
+/// streamed before the next chunk is synthesized. It holds back only the last
+/// fade-width samples, which the next segment may still blend into; the
+/// concatenated output is bit-identical to [`combine_segments`].
+pub struct Crossfader {
+    w: usize,
+    hann: Vec<f64>,
+    /// Combined samples not yet returned; never shorter than `w` once more
+    /// than `w` samples have been combined.
+    pending: Vec<f32>,
+    /// Length of the whole combined signal so far.
+    total: usize,
+    started: bool,
+}
+
+impl Crossfader {
+    pub fn new(rate: u32) -> Self {
+        let w = (f64::from(rate) * CROSSFADE_SECONDS) as usize;
+        let n = 2 * w;
+        let hann = (0..n)
+            .map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / (n as f64 - 1.0)).cos())
+            .collect();
+        Self {
+            w,
+            hann,
+            pending: Vec::new(),
+            total: 0,
+            started: false,
+        }
+    }
+
+    /// Joins `segment` and returns the samples that can no longer change.
+    pub fn push(&mut self, segment: &[f32]) -> Result<Vec<f32>> {
+        let w = self.w;
+        if !self.started {
+            self.started = true;
+            self.pending = segment.to_vec();
+            self.total = segment.len();
+        } else {
+            // Nothing is released until more than `w` samples exist, so a
+            // short combined signal is still entirely in `pending`.
+            if self.total < w || segment.len() < w {
+                return Err(SpeechError::Input {
+                    why: format!(
+                        "segments of {} and {} samples cannot be crossfaded over {w} samples",
+                        self.total,
+                        segment.len()
+                    ),
+                });
+            }
+            let tail_start = self.pending.len() - w;
+            let (fade_in, fade_out) = self.hann.split_at(w);
+            for (((old, &new), &out_gain), &in_gain) in self.pending[tail_start..]
+                .iter_mut()
+                .zip(&segment[..w])
+                .zip(fade_out)
+                .zip(fade_in)
+            {
+                *old = (f64::from(*old) * out_gain + f64::from(new) * in_gain) as f32;
+            }
+            self.pending.extend_from_slice(&segment[w..]);
+            self.total += segment.len() - w;
+        }
+        if self.pending.len() <= w {
+            return Ok(Vec::new());
+        }
+        let keep = self.pending.split_off(self.pending.len() - w);
+        Ok(std::mem::replace(&mut self.pending, keep))
+    }
+
+    /// Ends the stream and returns the held-back tail.
+    pub fn finish(self) -> Vec<f32> {
+        self.pending
+    }
 }

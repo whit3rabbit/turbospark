@@ -12,7 +12,9 @@
 
 use std::path::{Path, PathBuf};
 
-use super::facade::{dit_inputs, MegaTts3, SynthParams, VoicePrompt};
+use super::facade::{
+    check_root_config, dit_inputs, plan_chunks, MegaTts3, SynthParams, VoicePrompt,
+};
 use super::rng::{ReplayRng, SeededRng};
 use super::tests::{f32s, i32s, max_diff};
 use super::tests_duration::{load_tiny, prompt_for};
@@ -65,6 +67,48 @@ fn tone_rule_keeps_the_chinese_tone_ids() {
             "unexpected tone {t}"
         );
     }
+}
+
+#[test]
+fn plan_chunks_refuses_what_synthesis_would_refuse() {
+    assert_eq!(plan_chunks("Hello world.", 130).unwrap().len(), 1);
+    assert!(plan_chunks("   ", 130).is_err(), "blank");
+    assert!(plan_chunks("", 130).is_err(), "empty");
+    assert!(
+        plan_chunks("\u{4f60}\u{597d}", 130).is_err(),
+        "non-Latin script"
+    );
+    let long = "Hello world, this is a short test. ".repeat(10);
+    assert!(plan_chunks(&long, 130).unwrap().len() > 1, "chunked");
+}
+
+#[test]
+fn root_config_must_agree_with_the_loaded_encoder() {
+    let dir = std::env::temp_dir().join(format!("megatts3-root-config-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |text: &str| std::fs::write(dir.join("config.json"), text).unwrap();
+    // Older converted directories have no root config; that stays loadable.
+    let _ = std::fs::remove_file(dir.join("config.json"));
+    assert!(check_root_config(&dir, true).is_ok());
+    write(r#"{"model_type":"megatts3","voice_clone":true}"#);
+    assert!(check_root_config(&dir, true).is_ok());
+    assert!(
+        check_root_config(&dir, false).is_err(),
+        "declares an encoder it lacks"
+    );
+    write(r#"{"model_type":"megatts3","voice_clone":false}"#);
+    assert!(check_root_config(&dir, true).is_err(), "undeclared encoder");
+    assert!(check_root_config(&dir, false).is_ok());
+    write(r#"{"model_type":"kokoro","voice_clone":true}"#);
+    assert!(check_root_config(&dir, true).is_err(), "wrong family");
+    write(r#"{"model_type":"megatts3"}"#);
+    assert!(
+        check_root_config(&dir, true).is_err(),
+        "missing voice_clone"
+    );
+    write("not json");
+    assert!(check_root_config(&dir, true).is_err(), "malformed");
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

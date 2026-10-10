@@ -352,6 +352,39 @@ class ConvertTests(unittest.TestCase):
         self.assertNotIn("x", got)
         self.assertNotIn("list", got)
 
+    def test_root_files_are_deterministic_and_declare_cloning(self):
+        lic = self.p("LICENSE.src")
+        with open(lic, "w", encoding="utf-8") as fh:
+            fh.write("                                 Apache License\n Version 2.0\n")
+        outs = []
+        for run in ("a", "b"):
+            out = self.p(run)
+            os.makedirs(out)
+            manifest = {"files": {}}
+            cv.write_root_files(out, "community", lic, manifest)
+            self.assertEqual(sorted(manifest["files"]), ["LICENSE", "NOTICE.md", "README.md", "config.json"])
+            outs.append(manifest["files"])
+        self.assertEqual(outs[0], outs[1], "same inputs must give the same bytes")
+        with open(self.p("a/config.json"), encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        self.assertEqual((cfg["model_type"], cfg["voice_clone"], cfg["sample_rate"]), ("megatts3", True, 24000))
+        self.assertFalse(cv.root_config("official")["voice_clone"])
+        with open(self.p("a/NOTICE.md"), encoding="utf-8") as fh:
+            notice = fh.read()
+        community_sha = cv.PINNED["wavvae/model_only_last.ckpt"][0]
+        self.assertIn(community_sha, notice)
+        self.assertIn(cv.ENCODER_PROVENANCE, notice)
+        self.assertIn("not independently verified", cv.ENCODER_PROVENANCE)
+        official = cv.notice_text("official")
+        self.assertNotIn(community_sha, official)
+        self.assertNotIn(cv.ENCODER_PROVENANCE, official)
+        # Only the Apache text is accepted as LICENSE.
+        with open(self.p("bad"), "w", encoding="utf-8") as fh:
+            fh.write("MIT License\n")
+        os.makedirs(self.p("c"))
+        with self.assertRaises(cv.ConvertError):
+            cv.write_root_files(self.p("c"), "community", self.p("bad"), {"files": {}})
+
     def test_dict_json_validation(self):
         with open(self.p("d.json"), "w", encoding="utf-8-sig") as fh:
             json.dump({"phone": ["a", "b"], "tone": ["x"]}, fh)

@@ -429,41 +429,68 @@ impl Dit {
         self.time_out.forward(&h, 1)
     }
 
-    /// One transformer pass over `[frames, dim]`.
-    fn run_row(&self, cond: &DitCondition, mut x: Vec<f32>, temb_silu: &[f32]) -> Vec<f32> {
+    /// One transformer pass over `batch` stacked rows `[batch * frames, dim]`.
+    ///
+    /// Stacking changes no value: every linear, norm and activation works per
+    /// position (each output is the same `k`-ascending sum however many rows
+    /// share the call), and attention runs on `batch * heads` independent
+    /// planes, so a row's heads only see that row's keys. The adaLN
+    /// projections depend only on the timestep and are shared by all rows.
+    fn run_rows(
+        &self,
+        cond: &DitCondition,
+        mut x: Vec<f32>,
+        batch: usize,
+        temb_silu: &[f32],
+    ) -> Vec<f32> {
         let frames = cond.frames;
+        let rows = batch * frames;
         let d = self.cfg.dim;
         let heads = self.cfg.heads;
         let hd = d / heads;
+        debug_assert_eq!(x.len(), rows * d);
         let ones = vec![1.0f32; d];
         let (cos, sin) = (&cond.rope_cos, &cond.rope_sin);
+        // Row-major `[batch * frames, dim]` <-> head-major `[batch * heads, frames, hd]`.
+        let split = |y: &[f32]| -> Vec<f32> {
+            let mut out = Vec::with_capacity(y.len());
+            for row in y.chunks_exact(frames * d) {
+                out.extend(ops::split_heads(row, frames, heads, hd));
+            }
+            out
+        };
+        let merge = |y: &[f32]| -> Vec<f32> {
+            let mut out = Vec::with_capacity(y.len());
+            for row in y.chunks_exact(frames * d) {
+                out.extend(ops::merge_heads(row, frames, heads, hd));
+            }
+            out
+        };
         for block in &self.blocks {
             let m = block.ada.forward(temb_silu, 1);
             let (shift_a, scale_a, gate_a) = (&m[..d], &m[d..2 * d], &m[2 * d..3 * d]);
             let (shift_m, scale_m, gate_m) = (&m[3 * d..4 * d], &m[4 * d..5 * d], &m[5 * d..6 * d]);
 
             let mut n = x.clone();
-            ops::layernorm(&mut n, frames, d, &ones, None, LN_EPS);
+            ops::layernorm(&mut n, rows, d, &ones, None, LN_EPS);
             modulate(&mut n, scale_a, shift_a, d);
-            let mut q = ops::split_heads(&block.wq.forward(&n, frames), frames, heads, hd);
-            let mut k = ops::split_heads(&block.wk.forward(&n, frames), frames, heads, hd);
-            let v = ops::split_heads(&block.wv.forward(&n, frames), frames, heads, hd);
-            ops::rope_interleaved(&mut q, heads, frames, hd, cos, sin);
-            ops::rope_interleaved(&mut k, heads, frames, hd, cos, sin);
+            let mut q = split(&block.wq.forward(&n, rows));
+            let mut k = split(&block.wk.forward(&n, rows));
+            let v = split(&block.wv.forward(&n, rows));
+            ops::rope_interleaved(&mut q, batch * heads, frames, hd, cos, sin);
+            ops::rope_interleaved(&mut k, batch * heads, frames, hd, cos, sin);
             let a = ops::mha(
                 &q,
                 &k,
                 &v,
                 None,
-                heads,
+                batch * heads,
                 frames,
                 frames,
                 hd,
                 1.0 / (hd as f32).sqrt(),
             );
-            let o = block
-                .wo
-                .forward(&ops::merge_heads(&a, frames, heads, hd), frames);
+            let o = block.wo.forward(&merge(&a), rows);
             for (row, orow) in x.chunks_exact_mut(d).zip(o.chunks_exact(d)) {
                 for j in 0..d {
                     row[j] += gate_a[j] * orow[j];
@@ -471,11 +498,11 @@ impl Dit {
             }
 
             let mut n = x.clone();
-            ops::layernorm(&mut n, frames, d, &ones, None, LN_EPS);
+            ops::layernorm(&mut n, rows, d, &ones, None, LN_EPS);
             modulate(&mut n, scale_m, shift_m, d);
-            let mut h = block.w1.forward(&n, frames);
+            let mut h = block.w1.forward(&n, rows);
             ops::silu(&mut h);
-            let f = block.w2.forward(&h, frames);
+            let f = block.w2.forward(&h, rows);
             for (row, frow) in x.chunks_exact_mut(d).zip(f.chunks_exact(d)) {
                 for j in 0..d {
                     row[j] += gate_m[j] * frow[j];
@@ -484,10 +511,18 @@ impl Dit {
         }
         // AdaLNZero_Out: scale first, then shift.
         let m = self.final_ada.forward(temb_silu, 1);
-        ops::layernorm(&mut x, frames, d, &ones, None, LN_EPS);
+        ops::layernorm(&mut x, rows, d, &ones, None, LN_EPS);
         modulate(&mut x, &m[..d], &m[d..], d);
-        self.postnet
-            .forward(&self.out_proj.forward(&x, frames), frames)
+        self.postnet.forward(&self.out_proj.forward(&x, rows), rows)
+    }
+
+    /// Stacks `x_prenet(x) + base[r]` for the requested CFG rows.
+    fn stacked_input(&self, cond: &DitCondition, xp: &[f32], rows: &[usize]) -> Vec<f32> {
+        let mut h = Vec::with_capacity(rows.len() * xp.len());
+        for &r in rows {
+            h.extend(xp.iter().zip(&cond.base[r]).map(|(a, b)| a + b));
+        }
+        h
     }
 
     /// CFG-combined velocity for noisy latent `x [frames, channels]` at
@@ -516,18 +551,33 @@ impl Dit {
         let xp = self.x_prenet.forward(&x_in, frames);
         let mut temb = self.time_embedding(sigma);
         ops::silu(&mut temb);
-        let rows: Vec<Vec<f32>> = cond
-            .base
-            .iter()
-            .map(|base| {
-                let h: Vec<f32> = xp.iter().zip(base).map(|(a, b)| a + b).collect();
-                self.run_row(cond, h, &temb)
-            })
-            .collect();
-        let (spk_txt, txt, uncond) = (&rows[0], &rows[1], &rows[2]);
-        Ok((0..frames * ch)
+        let h = self.stacked_input(cond, &xp, &[0, 1, 2]);
+        let out = self.run_rows(cond, h, 3, &temb);
+        let n = frames * ch;
+        let (spk_txt, txt, uncond) = (&out[..n], &out[n..2 * n], &out[2 * n..]);
+        Ok((0..n)
             .map(|i| uncond[i] + p_w * (txt[i] - uncond[i]) + t_w * (spk_txt[i] - txt[i]))
             .collect())
+    }
+
+    /// The uncombined output of each CFG row run alone, for the batching
+    /// invariance test.
+    #[cfg(test)]
+    pub(super) fn rows_unbatched(&self, cond: &DitCondition, x: &[f32], sigma: f32) -> Vec<f32> {
+        let xp = self.x_prenet.forward(x, cond.frames);
+        let mut temb = self.time_embedding(sigma);
+        ops::silu(&mut temb);
+        (0..3)
+            .flat_map(|r| self.run_rows(cond, self.stacked_input(cond, &xp, &[r]), 1, &temb))
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn rows_batched(&self, cond: &DitCondition, x: &[f32], sigma: f32) -> Vec<f32> {
+        let xp = self.x_prenet.forward(x, cond.frames);
+        let mut temb = self.time_embedding(sigma);
+        ops::silu(&mut temb);
+        self.run_rows(cond, self.stacked_input(cond, &xp, &[0, 1, 2]), 3, &temb)
     }
 }
 

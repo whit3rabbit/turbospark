@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use super::postprocess::{
-    combine_segments, integrated_loudness, match_loudness, CROSSFADE_SECONDS,
+    combine_segments, integrated_loudness, match_loudness, Crossfader, CROSSFADE_SECONDS,
 };
 use super::rng::{Randomness, ReplayRng, SeededRng};
 use super::tests::{f32s, max_diff};
@@ -132,6 +132,81 @@ fn crossfade_edge_cases() {
     )
     .unwrap();
     assert_eq!(joined.len(), (w + 100) + (w + 50) + (w + 7) - 2 * w);
+}
+
+/// The one-shot join as originally written, kept as an independent oracle
+/// for the streaming [`Crossfader`].
+fn one_shot_join(segments: &[Vec<f32>], rate: u32) -> Vec<f32> {
+    let w = (f64::from(rate) * CROSSFADE_SECONDS) as usize;
+    let n = 2 * w;
+    let hann: Vec<f64> = (0..n)
+        .map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / (n as f64 - 1.0)).cos())
+        .collect();
+    let mut combined = segments[0].clone();
+    for segment in &segments[1..] {
+        let tail_start = combined.len() - w;
+        let mut joined = combined[..tail_start].to_vec();
+        for i in 0..w {
+            let v =
+                f64::from(combined[tail_start + i]) * hann[w + i] + f64::from(segment[i]) * hann[i];
+            joined.push(v as f32);
+        }
+        joined.extend_from_slice(&segment[w..]);
+        combined = joined;
+    }
+    combined
+}
+
+#[test]
+fn streaming_crossfade_matches_the_one_shot_join_bit_for_bit() {
+    let rate = 1_000; // fade of 160 samples keeps the shapes small
+    let w = (f64::from(rate) * CROSSFADE_SECONDS) as usize;
+    let signal = |len: usize, seed: usize| -> Vec<f32> {
+        (0..len)
+            .map(|i| (((i + seed) * 7919 % 1000) as f32 - 500.0) / 600.0)
+            .collect()
+    };
+    // Short middle segments (under 2w) make the held tail contain samples a
+    // previous join already blended, the case a naive stream gets wrong.
+    let shapes: &[&[usize]] = &[
+        &[w + 10],
+        &[10],
+        &[3 * w, 2 * w + 5],
+        &[w, w, w],
+        &[2 * w + 1, w + 3, w, 4 * w],
+        &[w + 1, w + 1, w + 1, w + 1],
+    ];
+    for (k, sizes) in shapes.iter().enumerate() {
+        let segs: Vec<Vec<f32>> = sizes
+            .iter()
+            .enumerate()
+            .map(|(i, &n)| signal(n, 31 * i + k))
+            .collect();
+        let want = one_shot_join(&segs, rate);
+        let mut fader = Crossfader::new(rate);
+        let mut got = Vec::new();
+        let mut released_early = false;
+        for s in &segs {
+            let part = fader.push(s).unwrap();
+            released_early |= !part.is_empty();
+            got.extend(part);
+        }
+        got.extend(fader.finish());
+        assert_eq!(got.len(), want.len(), "shape {k} length");
+        assert!(
+            got.iter()
+                .zip(&want)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "shape {k} differs from the one-shot join"
+        );
+        // Anything longer than one fade streams before the end.
+        assert_eq!(released_early, want.len() > w, "shape {k} streaming");
+        assert_eq!(
+            combine_segments(&segs, rate).unwrap(),
+            want,
+            "shape {k} combine"
+        );
+    }
 }
 
 #[test]

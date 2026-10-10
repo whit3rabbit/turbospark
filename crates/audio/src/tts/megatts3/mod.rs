@@ -47,7 +47,11 @@ mod tests_text;
 pub use aligner::{AlignedPrompt, Aligner, AlignerConfig};
 pub use dit::{Dit, DitCondition, DitConfig};
 pub use duration::{DurationConfig, DurationLm, DurationPrompt};
-pub use facade::{MegaTts3, SynthParams, VoicePrompt, SAMPLE_RATE};
+pub use facade::{
+    activation_reserve_bytes, plan_chunks, resample_reference, MegaTts3, SynthParams,
+    SynthProgress, VoicePrompt, MAX_PROMPT_SECONDS, MODEL_TYPE, SAMPLE_RATE,
+};
 pub use g2p::G2p;
+pub use postprocess::Crossfader;
 pub use rng::{Randomness, ReplayRng, SeededRng};
 pub use sampler::SamplerParams;
