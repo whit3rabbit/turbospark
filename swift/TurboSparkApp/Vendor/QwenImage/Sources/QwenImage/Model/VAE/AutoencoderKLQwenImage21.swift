@@ -375,8 +375,16 @@ final class QwenImage21Decoder3d: Module {
 
     var hidden = QwenImage21Conv.apply(z[0..., 0..., 0, 0..., 0...], convIn)
     hidden = midBlock(hidden)
+    // Decode is memory-bound at full resolution: the last blocks hold
+    // several 288-channel float32 maps. Evaluating each block and dropping
+    // the allocator cache between them bounds the live set to one block
+    // instead of the whole lazy graph. The values are unchanged.
+    MLX.eval(hidden)
+    Memory.clearCache()
     for block in upBlocks {
       hidden = block(hidden)
+      MLX.eval(hidden)
+      Memory.clearCache()
     }
     hidden = silu(normOut(hidden))
     let pixels = QwenImage21Conv.apply(hidden, convOut)

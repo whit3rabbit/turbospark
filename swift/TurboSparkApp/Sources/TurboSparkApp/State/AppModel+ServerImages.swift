@@ -8,7 +8,13 @@ extension AppModel {
         if imageSessionPath != model.path || imageSession == nil {
             let old = imageSession
             Task { await old?.unload() }
-            imageSession = MLXImageGenerationSession(model: model)
+            // Family routing mirrors the engine's id-prefix rule through the
+            // catalog helper, so every image entry point shares one dispatch.
+            if ImageModelFamily.family(for: model.modelID).hasPrefix("qwen-image-2.1") {
+                imageSession = try QwenImageGenerationSession(model: model)
+            } else {
+                imageSession = MLXImageGenerationSession(model: model)
+            }
             imageSessionPath = model.path
         }
         guard let imageSession else {

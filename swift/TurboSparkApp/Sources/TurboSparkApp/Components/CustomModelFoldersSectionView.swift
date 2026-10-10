@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TurboSpark
 
 /// Settings section for managing additional external folders to scan for models.
 struct CustomModelFoldersSectionView: View {
@@ -118,7 +119,10 @@ struct CustomModelFoldersSectionView: View {
     /// so a repeated path must not trap the dictionary build.
     nonisolated static func folderCounts(
         for folders: [String], count: (String) -> Int = {
+            // Image installs live in the same folders and are found by the
+            // image scan, not the text-model one, so the count adds both.
             ModelStorageManager.scanModels(in: $0, sourceTag: "Custom").count
+                + ((try? TurboSparkCatalog.imageInstalled(in: ModelStorageManager.expandPath($0)))?.count ?? 0)
         }
     ) -> [String: Int] {
         var result: [String: Int] = [:]

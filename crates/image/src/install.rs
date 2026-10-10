@@ -32,6 +32,12 @@ pub const QWEN_IMAGE_21_STEPS: u32 = 40;
 pub const QWEN_IMAGE_21_GUIDANCE: f32 = 1.0;
 pub const QWEN_IMAGE_21_PROMPT_MAX_TOKENS: u32 = 1024;
 
+/// Qwen-Image-2.1-Turbo: the same transformer and 64-channel latent grid as
+/// the base model, distilled to a fixed 8-step sigma ladder with CFG off.
+pub const QWEN_IMAGE_21_TURBO_STEPS: u32 = 8;
+pub const QWEN_IMAGE_21_TURBO_GUIDANCE: f32 = 1.0;
+pub const QWEN_IMAGE_21_TURBO_PROMPT_MAX_TOKENS: u32 = 1024;
+
 /// Krea 2 Turbo's distilled sampling envelope from its pinned BAA recipe.
 pub const KREA_2_TURBO_STEPS: u32 = 8;
 pub const KREA_2_TURBO_GUIDANCE: f32 = 1.0;
@@ -43,6 +49,7 @@ pub const KREA_2_TURBO_PROMPT_MAX_TOKENS: u32 = 1024;
 pub enum ImageFamily {
     ZImage,
     QwenImage21,
+    QwenImage21Turbo,
     Krea2Turbo,
 }
 
@@ -54,6 +61,10 @@ pub fn image_family_for_model_id(model_id: &str) -> ImageFamily {
         ImageFamily::Krea2Turbo
     } else if model_id.starts_with("mlx-community/Qwen-Image-2.1") {
         ImageFamily::QwenImage21
+    } else if model_id.starts_with("Sawfwair/Qwen-Image-2.1-Turbo") {
+        // Scoped to the Turbo repository, not the publisher: another repo
+        // under the same owner must not inherit this envelope.
+        ImageFamily::QwenImage21Turbo
     } else {
         ImageFamily::ZImage
     }
@@ -83,6 +94,16 @@ impl ImageFamily {
                 prompt_max_tokens: QWEN_IMAGE_21_PROMPT_MAX_TOKENS,
                 latent_shape: vec![1, 64, 64, 64],
             },
+            ImageFamily::QwenImage21Turbo => ImageSupported {
+                width: IMAGE_WIDTH,
+                height: IMAGE_HEIGHT,
+                batch: IMAGE_BATCH,
+                scheduler_steps: QWEN_IMAGE_21_TURBO_STEPS,
+                transformer_forwards: QWEN_IMAGE_21_TURBO_STEPS,
+                guidance_scale: QWEN_IMAGE_21_TURBO_GUIDANCE,
+                prompt_max_tokens: QWEN_IMAGE_21_TURBO_PROMPT_MAX_TOKENS,
+                latent_shape: vec![1, 64, 64, 64],
+            },
             ImageFamily::Krea2Turbo => ImageSupported {
                 width: IMAGE_WIDTH,
                 height: IMAGE_HEIGHT,
@@ -100,7 +121,7 @@ impl ImageFamily {
     pub fn license(self) -> &'static str {
         match self {
             ImageFamily::ZImage => "Apache-2.0",
-            ImageFamily::QwenImage21 => "qwen-research",
+            ImageFamily::QwenImage21 | ImageFamily::QwenImage21Turbo => "qwen-research",
             ImageFamily::Krea2Turbo => "Krea 2 Community License Agreement",
         }
     }
@@ -111,6 +132,7 @@ impl std::fmt::Display for ImageFamily {
         formatter.write_str(match self {
             ImageFamily::ZImage => "z-image",
             ImageFamily::QwenImage21 => "qwen-image-2.1",
+            ImageFamily::QwenImage21Turbo => "qwen-image-2.1-turbo",
             ImageFamily::Krea2Turbo => "krea-2-turbo",
         })
     }

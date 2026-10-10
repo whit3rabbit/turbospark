@@ -287,6 +287,11 @@ public enum ImageModelFamily {
         if modelID.hasPrefix("mlx-community/Qwen-Image-2.1") {
             return "qwen-image-2.1"
         }
+        // Scoped to the Turbo repository, mirroring the Rust prefix in
+        // `catalog::QWEN_IMAGE_21_TURBO_PREFIX`.
+        if modelID.hasPrefix("Sawfwair/Qwen-Image-2.1-Turbo") {
+            return "qwen-image-2.1-turbo"
+        }
         return "z-image"
     }
 }
@@ -407,6 +412,17 @@ public enum TurboSparkCatalog {
         try decode(
             [ImageInstalledModel].self,
             from: try takeString { ts_image_installed_json($0) })
+    }
+
+    /// Valid image-generation installs under a folder outside the managed
+    /// store: the folder and its immediate subdirectories, or one install
+    /// bundle passed directly. Read-only. Throws if `root` is not a directory.
+    public static func imageInstalled(in root: String) throws -> [ImageInstalledModel] {
+        try decode(
+            [ImageInstalledModel].self,
+            from: try takeString { out in
+                root.withCString { ts_image_installed_in_json($0, out) }
+            })
     }
 
     /// The curated pinned image sources, including the Z-Image MLX variants.

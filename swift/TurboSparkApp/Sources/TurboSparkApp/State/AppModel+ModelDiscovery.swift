@@ -56,7 +56,10 @@ extension AppModel {
             installed = catalogRows
             catalog = try TurboSparkCatalog.available()
             imageCatalog = try TurboSparkCatalog.imageAvailable()
-            imageModels = try TurboSparkCatalog.imageInstalled()
+            managedImageModels = try TurboSparkCatalog.imageInstalled()
+            // Rows from the last scan stay until the new scan lands, so a
+            // selected side-loaded model does not vanish during a refresh.
+            applyImageModels()
             telemetry = TurboSparkSession.systemTelemetry
             reconcileSelection()
             reconcileImageSelection()
@@ -77,6 +80,10 @@ extension AppModel {
             // exactly the models the setting had just excluded.
             modelScanTask?.cancel()
             modelScanTask = nil
+            if customDirs.isEmpty, !scannedImageModels.isEmpty {
+                scannedImageModels = []
+                applyImageModels()
+            }
             guard lmPath != nil || !customDirs.isEmpty else { return }
 
             // **THE STORED TASK IS THE ONE DOING THE WALK** (state#87).
@@ -91,13 +98,76 @@ extension AppModel {
             modelScanTask = Task.detached(priority: .utility) { [weak self] in
                 let scanned = ModelStorageManager.scanExternal(
                     lmStudioPath: lmPath, customPaths: customDirs)
+                let scannedImages = Self.scanImageInstalls(in: customDirs)
                 guard !Task.isCancelled, let self else { return }
                 await MainActor.run {
                     self.mergeScannedModels(scanned, into: catalogRows)
+                    // Only when the scan found something different. Rebuilding
+                    // `imageModels` on every scan would rewrite it from the
+                    // store for a user with no extra image folders at all.
+                    if scannedImages != self.scannedImageModels {
+                        self.scannedImageModels = scannedImages
+                        self.applyImageModels()
+                    }
                 }
             }
         } catch {
             self.error = "\(error)"
+        }
+    }
+
+    /// Image installs under the user's additional model folders. A folder that
+    /// cannot be read contributes nothing and does not stop the others.
+    nonisolated static func scanImageInstalls(
+        in folders: [String],
+        scan: (String) throws -> [ImageInstalledModel] = { try TurboSparkCatalog.imageInstalled(in: $0) }
+    ) -> [ImageInstalledModel] {
+        var found: [ImageInstalledModel] = []
+        for folder in folders {
+            if Task.isCancelled { break }
+            found.append(contentsOf: (try? scan(ModelStorageManager.expandPath(folder))) ?? [])
+        }
+        return found
+    }
+
+    /// Managed rows first, then scanned rows that are not already present and
+    /// were not removed from the list. De-duplicated by standardized path, the
+    /// same identity the text-model merge uses.
+    nonisolated static func mergedImageModels(
+        managed: [ImageInstalledModel],
+        scanned: [ImageInstalledModel],
+        isExcluded: (String) -> Bool
+    ) -> [ImageInstalledModel] {
+        func standardized(_ path: String) -> String {
+            URL(fileURLWithPath: path).standardizedFileURL.path
+        }
+        var seen = Set(managed.map { standardized($0.path) })
+        var merged = managed
+        for row in scanned {
+            let path = standardized(row.path)
+            guard !seen.contains(path), !isExcluded(row.path) else { continue }
+            seen.insert(path)
+            merged.append(row)
+        }
+        return merged
+    }
+
+    /// Rebuilds `imageModels` from the managed and scanned rows.
+    func applyImageModels() {
+        imageModels = Self.mergedImageModels(
+            managed: managedImageModels,
+            scanned: scannedImageModels,
+            isExcluded: { ModelOrganizationStore.shared.isExcludedFromScan(path: $0) })
+        reconcileImageSelection()
+    }
+
+    /// Whether the app installed this image model into its own store, and may
+    /// therefore delete its bytes. A scanned row was only found in a folder the
+    /// user pointed the app at. Matched on path, like the text models.
+    func isManagedImageModel(_ image: ImageInstalledModel) -> Bool {
+        let path = URL(fileURLWithPath: image.path).standardizedFileURL.path
+        return managedImageModels.contains {
+            URL(fileURLWithPath: $0.path).standardizedFileURL.path == path
         }
     }
 

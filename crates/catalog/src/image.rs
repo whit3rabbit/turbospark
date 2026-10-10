@@ -11,6 +11,11 @@ use repack::HttpRangeSource;
 
 const EMBEDDED: &str = include_str!("image_models.json");
 
+/// Scoped to the Turbo repository rather than its publisher, so another
+/// repository under the same owner does not inherit the 8-step envelope.
+/// Kept in step with `turbospark_image::install::image_family_for_model_id`.
+pub const QWEN_IMAGE_21_TURBO_PREFIX: &str = "Sawfwair/Qwen-Image-2.1-Turbo";
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ImageCatalogEntry {
     pub alias: String,
@@ -28,6 +33,8 @@ pub fn image_family_for_model_id(model_id: &str) -> &'static str {
         "krea-2-turbo"
     } else if model_id.starts_with("mlx-community/Qwen-Image-2.1") {
         "qwen-image-2.1"
+    } else if model_id.starts_with(QWEN_IMAGE_21_TURBO_PREFIX) {
+        "qwen-image-2.1-turbo"
     } else {
         "z-image"
     }
@@ -491,6 +498,7 @@ fn select_files(files: &[String], model_id: &str) -> Result<Vec<String>, String>
     let mut selected = Vec::new();
     let mut components = [false; 3];
     let is_krea2 = model_id.starts_with("baa-ai/Krea-2-Turbo");
+    let is_qwen_turbo = model_id.starts_with(QWEN_IMAGE_21_TURBO_PREFIX);
     for file in files {
         let path = Path::new(file);
         if !safe_relative(path) {
@@ -525,8 +533,11 @@ fn select_files(files: &[String], model_id: &str) -> Result<Vec<String>, String>
             None
         };
         let is_weight = component.is_some() && file.ends_with(".safetensors");
-        let is_krea_notice = is_krea2 && matches!(file.as_str(), "LICENSE.pdf" | "Notice");
-        if is_metadata || is_tokenizer || is_weight || is_krea_notice {
+        // The Qwen Research License requires the license text and NOTICE file
+        // to travel with the weights, so the install keeps them.
+        let is_notice = (is_krea2 && matches!(file.as_str(), "LICENSE.pdf" | "Notice"))
+            || (is_qwen_turbo && matches!(file.as_str(), "LICENSE" | "Notice"));
+        if is_metadata || is_tokenizer || is_weight || is_notice {
             if let Some(index) = component.filter(|_| is_weight) {
                 components[index] = true;
             }
@@ -712,6 +723,96 @@ mod tests {
         assert!(selected.contains(&"processor/chat_template.jinja".to_string()));
         assert!(selected.contains(&"transformer/model.safetensors".to_string()));
         assert!(!selected.iter().any(|file| file.contains("README")));
+    }
+
+    #[test]
+    fn the_qwen_turbo_row_is_pinned_to_the_full_commit_and_license_files() {
+        let catalog = ImageCatalog::embedded().expect("image catalog");
+        let turbo = catalog
+            .get("qwen-image-2.1-turbo-mlx-mixed-4bit")
+            .expect("Qwen Turbo row");
+        assert_eq!(
+            turbo.model_id,
+            "Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit"
+        );
+        assert_eq!(turbo.revision, "d8276b786f94a4e8944189cc181e839e31759ab5");
+        assert_eq!(turbo.family.as_deref(), Some("qwen-image-2.1-turbo"));
+        assert_eq!(turbo.required_files.len(), 16);
+        // The Qwen Research License requires both to ship with the weights.
+        for file in ["LICENSE", "Notice", "model_index.json"] {
+            assert!(turbo.required_files.contains(&file.to_string()), "{file}");
+        }
+        assert_eq!(
+            super::image_family_for_model_id("Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit"),
+            "qwen-image-2.1-turbo"
+        );
+        // Another repository from the same owner is not Turbo.
+        assert_eq!(
+            super::image_family_for_model_id("Sawfwair/Something-Else"),
+            "z-image"
+        );
+    }
+
+    /// The real file listing of the pinned Turbo commit, including the
+    /// documentation and conversion scripts that must not be downloaded.
+    #[test]
+    fn select_files_picks_exactly_the_pinned_turbo_files() {
+        let listing = [
+            ".gitattributes",
+            "LICENSE",
+            "MODIFICATIONS.md",
+            "Notice",
+            "QWEN21_CONVERSION.json",
+            "README.md",
+            "SHA256SUMS",
+            "UPSTREAM_MODEL_CARD.md",
+            "convert.py",
+            "finalize_packaging.py",
+            "mererun_model.json",
+            "model_index.json",
+            "processor/chat_template.jinja",
+            "processor/processor_config.json",
+            "processor/tokenizer.json",
+            "processor/tokenizer_config.json",
+            "scheduler/scheduler_config.json",
+            "text_encoder/config.json",
+            "text_encoder/generation_config.json",
+            "text_encoder/model.safetensors",
+            "transformer/config.json",
+            "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+            "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
+            "transformer/diffusion_pytorch_model.safetensors.index.json",
+            "vae/config.json",
+            "vae/diffusion_pytorch_model.safetensors",
+        ]
+        .map(String::from)
+        .to_vec();
+        let selected =
+            super::select_files(&listing, "Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit")
+                .expect("Turbo layout selects");
+
+        let catalog = ImageCatalog::embedded().expect("image catalog");
+        let row = catalog
+            .get("qwen-image-2.1-turbo-mlx-mixed-4bit")
+            .expect("Qwen Turbo row");
+        let mut required = row.required_files.clone();
+        required.sort();
+        assert_eq!(selected, required);
+        // Scripts and card documents stay out of the download.
+        for skipped in [
+            "convert.py",
+            "finalize_packaging.py",
+            "README.md",
+            "SHA256SUMS",
+        ] {
+            assert!(!selected.iter().any(|file| file == skipped), "{skipped}");
+        }
+        // The notice files are Turbo-only: the same listing under another
+        // owner must not pull them in.
+        let other = super::select_files(&listing, "mlx-community/Qwen-Image-2.1-MLX-4bit")
+            .expect("other layout selects");
+        assert!(!other.contains(&"LICENSE".to_string()));
+        assert!(!other.contains(&"Notice".to_string()));
     }
 
     #[test]

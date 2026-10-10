@@ -21,19 +21,31 @@ struct ImageModelManagerView: View {
             .padding(24)
         }
         .confirmationDialog(
-            "Delete image model?",
+            imageToDelete.map { model.isManagedImageModel($0) } ?? true
+                ? "Delete image model?" : "Remove image model?",
             isPresented: Binding(
                 get: { imageToDelete != nil },
                 set: { if !$0 { imageToDelete = nil } }),
             presenting: imageToDelete
         ) { image in
-            Button("Delete \(image.alias)", role: .destructive) {
-                model.deleteImageModel(image)
-                imageToDelete = nil
+            if model.isManagedImageModel(image) {
+                Button("Delete \(image.alias)", role: .destructive) {
+                    model.deleteImageModel(image)
+                    imageToDelete = nil
+                }
+            } else {
+                Button("Remove \(image.alias) from the list", role: .destructive) {
+                    model.deleteImageModel(image)
+                    imageToDelete = nil
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: { image in
-            Text("This removes \(image.path) from the shared TurboSpark image store.", bundle: .module)
+            if model.isManagedImageModel(image) {
+                Text("This removes \(image.path) from the shared TurboSpark image store.", bundle: .module)
+            } else {
+                Text(verbatim: "The files stay on disk at \(image.path). You can restore it under Settings > Models.")
+            }
         }
         .task {
             model.refreshTelemetry()
@@ -45,7 +57,7 @@ struct ImageModelManagerView: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .foregroundStyle(.appAccent)
-                Text("Curated Z-Image models", bundle: .module)
+                Text("Image Models", bundle: .module)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
                 if let telemetry = model.telemetry {
@@ -69,8 +81,8 @@ struct ImageModelManagerView: View {
             HStack {
                 Text(
                     model.hasInstalledMLXImageModel
-                        ? "A curated Z-Image install is available."
-                        : "No curated Z-Image model is downloaded yet.",
+                        ? "A curated image model is installed."
+                        : "No curated image model is downloaded yet.",
                     bundle: .module
                 )
                 .themedFont(.tiny)
@@ -154,18 +166,29 @@ struct ImageModelManagerView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
+            // Only the shared store is ours to delete from. A model found in an
+            // additional model folder is dropped from the list and its files
+            // stay where they are, the same rule the text models follow.
+            let managed = model.isManagedImageModel(image)
             Button(role: .destructive) {
                 imageToDelete = image
             } label: {
                 Label {
-                    Text("Delete", bundle: .module)
+                    if managed {
+                        Text("Delete", bundle: .module)
+                    } else {
+                        Text("Remove", bundle: .module)
+                    }
                 } icon: {
-                    Image(systemName: "trash")
+                    Image(systemName: managed ? "trash" : "eye.slash")
                 }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .accessibilityHint("Removes this image model from the shared image store")
+            .accessibilityHint(
+                managed
+                    ? "Removes this image model from the shared image store"
+                    : "Hides this image model without deleting its files")
         }
         .padding(10)
         .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
@@ -202,6 +225,16 @@ struct ImageModelManagerView: View {
                 Text(verbatim: "\(source.quantization)  |  \(source.modelID)")
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
+                // The Qwen Research License allows research and evaluation use
+                // only and asks derivative products to say they are built with
+                // Qwen. Show it before the download, in the license's words.
+                if source.resolvedFamily.hasPrefix("qwen-image-2.1") {
+                    Text(
+                        verbatim: "Qwen Research License: research and evaluation use only, no commercial use. Built with Qwen.")
+                        .themedFont(.tiny)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
             if let installed {

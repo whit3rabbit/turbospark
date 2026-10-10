@@ -38,6 +38,34 @@ public struct QwenImageGenerationRequest: Sendable {
   }
 }
 
+/// How long the pipeline keeps modules in memory.
+public enum QwenImageResidency: Sendable {
+  /// Keep the text encoder, transformer, and VAE resident between jobs.
+  /// Fastest repeat jobs, highest steady-state footprint.
+  case warm
+  /// Load each stage when it is needed and release it as soon as the next
+  /// stage no longer needs it: the encoder after encoding, the transformer
+  /// before the VAE decode, the VAE after the job. Peak is the largest
+  /// stage instead of the sum, at the cost of reloading weights per job.
+  case staged
+}
+
+/// Precision of the VAE decode.
+public enum QwenImageVAEPrecision: Sendable {
+  /// The conservative default: float32 activations.
+  case float32
+  /// The VAE's stored dtype, which the Diffusers reference decodes in, at
+  /// roughly half the activation memory.
+  case bfloat16
+
+  var dtype: DType {
+    switch self {
+    case .float32: return .float32
+    case .bfloat16: return .bfloat16
+    }
+  }
+}
+
 public final class QwenImage21Pipeline: @unchecked Sendable {
   public struct GenerationProgress: Sendable {
     public let stage: Stage
@@ -48,6 +76,7 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
     /// benchmark mappings stay family-neutral.
     public enum Stage: String, Sendable {
       case loadingModel = "Loading model"
+      case loadingTextEncoder = "Loading text encoder"
       case encodingText = "Encoding text"
       case loadingTransformer = "Loading transformer"
       case loadingVAE = "Loading VAE"
@@ -65,6 +94,8 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
   public typealias ProgressHandler = (GenerationProgress) -> Void
 
   private let logger: Logger
+  private let residency: QwenImageResidency
+  private let vaeDecodeDtype: DType
   private var tokenizer: QwenTokenizer?
   private var textEncoder: Qwen3VLTextEncoder?
   private var transformer: QwenImage21Transformer2DModel?
@@ -75,7 +106,13 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
   private var loadedModelPath: String?
   private var systemDropIndex = 0
 
-  public init(logger: Logger = Logger(label: "qwen-image.pipeline")) {
+  public init(
+    residency: QwenImageResidency = .warm,
+    vaePrecision: QwenImageVAEPrecision = .float32,
+    logger: Logger = Logger(label: "qwen-image.pipeline")
+  ) {
+    self.residency = residency
+    self.vaeDecodeDtype = vaePrecision.dtype
     self.logger = logger
   }
 
@@ -95,6 +132,9 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
 
   // MARK: - Model loading
 
+  /// Validates the snapshot and loads the configs and tokenizer. Under
+  /// `.warm` it also loads every module; under `.staged` the modules load
+  /// lazily inside `generate`, one stage at a time.
   public func loadModel(
     modelSpec: String,
     progressHandler: ProgressHandler? = nil
@@ -132,45 +172,68 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
     let loadedTokenizer = try QwenTokenizer.load(from: resolved)
     systemDropIndex = loadedTokenizer.tokenCount(of: QwenImageModelMetadata.systemSegmentT2I)
 
-    progressHandler?(GenerationProgress(stage: .encodingText, stepIndex: 0, totalSteps: 1))
-    logger.info("Loading text encoder...")
-    let encoder = Qwen3VLTextEncoder(configuration: componentConfigs.textEncoder)
-    // The vision tower and language-model head never run in text-to-image
-    // generation; skipping them keeps ~1 GiB of the snapshot unloaded.
-    let encoderWeights = try QwenImageWeightsMapper.loadComponent(
-      resolved.appending(path: "text_encoder", directoryHint: .isDirectory),
-      skipPrefixes: ["vision_tower.", "language_model.lm_head"]
-    )
-    try QwenImageWeightsMapper.apply(encoderWeights, to: encoder, logger: logger)
-    textEncoder = encoder
-    Memory.clearCache()
-    try Task.checkCancellation()
-
-    progressHandler?(GenerationProgress(stage: .loadingTransformer, stepIndex: 0, totalSteps: 1))
-    logger.info("Loading transformer...")
-    let loadedTransformer = QwenImage21Transformer2DModel(configuration: componentConfigs.transformer)
-    let transformerWeights = try QwenImageWeightsMapper.loadComponent(
-      resolved.appending(path: "transformer", directoryHint: .isDirectory))
-    try QwenImageWeightsMapper.apply(transformerWeights, to: loadedTransformer, logger: logger)
-    transformer = loadedTransformer
-    Memory.clearCache()
-    try Task.checkCancellation()
-
-    progressHandler?(GenerationProgress(stage: .loadingVAE, stepIndex: 0, totalSteps: 1))
-    logger.info("Loading VAE decoder...")
-    let loadedVAE = AutoencoderKLQwenImage21(configuration: componentConfigs.vae)
-    let vaeWeights = try QwenImageWeightsMapper.loadComponent(
-      resolved.appending(path: "vae", directoryHint: .isDirectory))
-    try QwenImageWeightsMapper.applyDense(vaeWeights, to: loadedVAE, logger: logger)
-    vae = loadedVAE
-    Memory.clearCache()
-
+    // Set before the module loads so a failure midway leaves a pipeline the
+    // idempotent `load*IfNeeded` calls can finish, not a half-set one.
     tokenizer = loadedTokenizer
     configs = componentConfigs
     snapshot = resolved
-    isModelLoaded = true
     loadedModelPath = modelSpec
+    isModelLoaded = true
+
+    if residency == .warm {
+      _ = try loadTextEncoderIfNeeded(progressHandler)
+      try Task.checkCancellation()
+      try loadTransformerIfNeeded(progressHandler)
+      try Task.checkCancellation()
+      try loadVAEIfNeeded(progressHandler)
+      Memory.clearCache()
+    }
     logger.info("Model loaded")
+  }
+
+  private func loadTextEncoderIfNeeded(
+    _ progressHandler: ProgressHandler?
+  ) throws -> Qwen3VLTextEncoder {
+    if let textEncoder { return textEncoder }
+    guard let snapshot, let configs else { throw QwenImagePipelineError.modelNotLoaded }
+    progressHandler?(GenerationProgress(stage: .loadingTextEncoder, stepIndex: 0, totalSteps: 1))
+    logger.info("Loading text encoder...")
+    let encoder = Qwen3VLTextEncoder(configuration: configs.textEncoder)
+    // The vision tower and language-model head never run in text-to-image
+    // generation; the canonicalizer drops them and maps the transformers-5
+    // spelling onto the module tree.
+    let encoderWeights = try QwenImageWeightsMapper.loadComponent(
+      snapshot.appending(path: "text_encoder", directoryHint: .isDirectory),
+      rename: QwenImageWeightsMapper.canonicalTextEncoderName
+    )
+    try QwenImageWeightsMapper.apply(encoderWeights, to: encoder, logger: logger)
+    textEncoder = encoder
+    return encoder
+  }
+
+  private func loadTransformerIfNeeded(_ progressHandler: ProgressHandler?) throws {
+    if transformer != nil { return }
+    guard let snapshot, let configs else { throw QwenImagePipelineError.modelNotLoaded }
+    progressHandler?(GenerationProgress(stage: .loadingTransformer, stepIndex: 0, totalSteps: 1))
+    logger.info("Loading transformer...")
+    let loaded = QwenImage21Transformer2DModel(configuration: configs.transformer)
+    let weights = try QwenImageWeightsMapper.loadComponent(
+      snapshot.appending(path: "transformer", directoryHint: .isDirectory),
+      rename: QwenImageWeightsMapper.canonicalTransformerName)
+    try QwenImageWeightsMapper.apply(weights, to: loaded, logger: logger)
+    transformer = loaded
+  }
+
+  private func loadVAEIfNeeded(_ progressHandler: ProgressHandler?) throws {
+    if vae != nil { return }
+    guard let snapshot, let configs else { throw QwenImagePipelineError.modelNotLoaded }
+    progressHandler?(GenerationProgress(stage: .loadingVAE, stepIndex: 0, totalSteps: 1))
+    logger.info("Loading VAE decoder...")
+    let loaded = AutoencoderKLQwenImage21(configuration: configs.vae)
+    let weights = try QwenImageWeightsMapper.loadComponent(
+      snapshot.appending(path: "vae", directoryHint: .isDirectory))
+    try QwenImageWeightsMapper.applyDense(weights, to: loaded, logger: logger)
+    vae = loaded
   }
 
   // MARK: - Generation
@@ -214,12 +277,57 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
 
     try await loadModel(modelSpec: request.model, progressHandler: progressHandler)
 
-    guard let tokenizer, let textEncoder, let transformer, let vae, let configs else {
-      throw QwenImagePipelineError.modelNotLoaded
+    guard let configs else { throw QwenImagePipelineError.modelNotLoaded }
+    // A published sigma ladder fixes the step count; running another count
+    // would silently skip or invent sigmas.
+    if let ladder = configs.scheduler.staticSigmaLadder, ladder.count != request.steps {
+      throw QwenImagePipelineError.stepsFixedByCheckpoint(
+        requested: request.steps, required: ladder.count)
     }
     try Task.checkCancellation()
 
-    // 1. Prompt encoding: raw template, no padding (batch of one).
+    // 1. Prompt encoding. Under `.staged` the encoder is released inside
+    //    `encodePrompt`, before the transformer and VAE are loaded.
+    let textEmbeddings = try encodePrompt(request, progressHandler: progressHandler)
+    Memory.clearCache()
+    let textLength = textEmbeddings.dim(1)
+    logger.info("Prompt encoded: \(textLength) tokens")
+    try Task.checkCancellation()
+
+    // 2. Denoise. Under `.staged` the transformer is released inside
+    //    `denoise`'s caller, before the VAE decode.
+    try loadTransformerIfNeeded(progressHandler)
+    let latentHeight = height / QwenImageModelMetadata.vaeScaleFactor
+    let latentWidth = width / QwenImageModelMetadata.vaeScaleFactor
+    let latents = try await denoise(
+      request, textEmbeddings: textEmbeddings, latentHeight: latentHeight,
+      latentWidth: latentWidth, progressHandler: progressHandler)
+    if residency == .staged {
+      transformer = nil
+      Memory.clearCache()
+    }
+    try Task.checkCancellation()
+
+    // 3. VAE decode with per-channel denormalization.
+    try loadVAEIfNeeded(progressHandler)
+    progressHandler?(GenerationProgress(
+      stage: .decoding, stepIndex: request.steps, totalSteps: request.steps))
+    let clamped = try decode(latents, latentHeight: latentHeight, latentWidth: latentWidth)
+    if residency == .staged {
+      vae = nil
+    }
+    Memory.clearCache()
+    return clamped
+  }
+
+  /// Encodes the framed prompt. Locals die at return, so the caller's
+  /// `Memory.clearCache()` sees a released encoder under `.staged`.
+  private func encodePrompt(
+    _ request: QwenImageGenerationRequest,
+    progressHandler: ProgressHandler?
+  ) throws -> MLXArray {
+    guard let tokenizer else { throw QwenImagePipelineError.tokenizerNotLoaded }
+    let encoder = try loadTextEncoderIfNeeded(progressHandler)
     progressHandler?(GenerationProgress(stage: .encodingText, stepIndex: 0, totalSteps: request.steps))
     logger.info("Encoding prompt...")
     let framed = String(
@@ -231,20 +339,30 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
       throw QwenImagePipelineError.invalidModelPath("the framed prompt produced no user tokens")
     }
     let inputIds = MLXArray(tokenIds.map { Int32($0) }).reshaped(1, tokenIds.count)
-    var hiddenStates = textEncoder.encodeHiddenStates(inputIds: inputIds, attentionMask: nil)
+    var hiddenStates = encoder.encodeHiddenStates(inputIds: inputIds, attentionMask: nil)
     if systemDropIndex > 0 {
       hiddenStates = hiddenStates[0..., systemDropIndex..., 0...]
     }
     let textEmbeddings = hiddenStates.asType(.bfloat16)
     MLX.eval(textEmbeddings)
-    Memory.clearCache()
-    let textLength = textEmbeddings.dim(1)
-    logger.info("Prompt encoded: \(textLength) tokens")
+    if residency == .staged {
+      textEncoder = nil
+    }
+    return textEmbeddings
+  }
 
-    // 2. Latents: [1, C, 1, h, w] noise, packed to [1, h*w, C].
-    let scale = QwenImageModelMetadata.vaeScaleFactor
-    let latentHeight = height / scale
-    let latentWidth = width / scale
+  /// Runs the schedule and returns the final packed latents `[1, h*w, C]`.
+  private func denoise(
+    _ request: QwenImageGenerationRequest,
+    textEmbeddings: MLXArray,
+    latentHeight: Int,
+    latentWidth: Int,
+    progressHandler: ProgressHandler?
+  ) async throws -> MLXArray {
+    guard let transformer, let configs else { throw QwenImagePipelineError.modelNotLoaded }
+    let textLength = textEmbeddings.dim(1)
+
+    // Latents: [1, C, 1, h, w] noise, packed to [1, h*w, C].
     let latentShape: [Int] = [
       1, QwenImageModelMetadata.latentChannels, 1, latentHeight, latentWidth,
     ]
@@ -254,7 +372,6 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
       .transposed(0, 2, 1)
     MLX.eval(latents)
 
-    // 3. Schedule.
     let scheduler = QwenImage21Scheduler(
       numInferenceSteps: request.steps,
       imageSequenceLength: latentHeight * latentWidth,
@@ -262,14 +379,15 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
     )
     let timesteps = scheduler.timestepValues
 
-    // 4. Denoising loop with the prefix KV cache.
+    // Denoising loop with the prefix KV cache.
     let layout = QwenImage21Transformer2DModel.ForwardLayout(
       textLength: textLength,
       imageHeight: latentHeight,
       imageWidth: latentWidth
     )
     let cache = QwenImage21KVCache(numLayers: transformer.configuration.numLayers)
-    logger.info("Running \(request.steps) denoising steps at \(width)x\(height)...")
+    logger.info(
+      "Running \(request.steps) denoising steps at \(latentWidth * QwenImageModelMetadata.vaeScaleFactor)x\(latentHeight * QwenImageModelMetadata.vaeScaleFactor)...")
     for stepIndex in 0..<request.steps {
       try Task.checkCancellation()
       let timestep = MLXArray([timesteps[stepIndex] / Float(configs.scheduler.numTrainTimesteps)])
@@ -303,24 +421,28 @@ public final class QwenImage21Pipeline: @unchecked Sendable {
         stage: .denoising, stepIndex: stepIndex + 1, totalSteps: request.steps))
     }
     logger.info("Denoising complete")
+    return latents
+  }
 
-    // 5. VAE decode with per-channel denormalization.
-    progressHandler?(GenerationProgress(
-      stage: .decoding, stepIndex: request.steps, totalSteps: request.steps))
+  private func decode(
+    _ latents: MLXArray,
+    latentHeight: Int,
+    latentWidth: Int
+  ) throws -> MLXArray {
+    guard let vae else { throw QwenImagePipelineError.vaeNotLoaded }
     let packed = vae.denormalizeLatents(
       latents.transposed(0, 2, 1).reshaped(
         1, QwenImageModelMetadata.latentChannels, 1, latentHeight, latentWidth
-      ).asType(.float32))
+      ).asType(vaeDecodeDtype))
     let decoded = vae.decode(packed)
     MLX.eval(decoded)
 
-    // [-1, 1] -> [0, 1], dropping the alpha channel at encode time.
-    let image = (decoded[0..., 0..., 0, 0..., 0...] + 1.0) * 0.5
+    // [-1, 1] -> [0, 1], dropping the alpha channel at encode time. The
+    // arithmetic runs in float32 so a bfloat16 decode adds no further
+    // rounding of the pixel values.
+    let image = (decoded[0..., 0..., 0, 0..., 0...].asType(.float32) + 1.0) * 0.5
     let clamped = MLX.minimum(MLX.maximum(image, 0.0), 1.0)
     MLX.eval(clamped)
-    Memory.clearCache()
-
     return clamped
   }
 }
-

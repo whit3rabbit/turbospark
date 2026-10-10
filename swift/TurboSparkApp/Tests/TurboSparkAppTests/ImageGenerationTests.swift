@@ -177,10 +177,15 @@ final class ImageGenerationTests: XCTestCase {
             thirtyTwoGB,
             [
                 "z-image-turbo-mlx-8bit",
+                "qwen-image-2.1-turbo-mlx-mixed-4bit",
                 "z-image-turbo-mlx-4bit",
                 "z-image-turbo-mlx-q4",
                 "z-image-turbo-mlx-2bit",
             ])
+        // Qwen-Image Turbo measured 11.2 GiB, which is not a comfortable fit
+        // for the 16 GiB tier alongside the app and the system.
+        XCTAssertFalse(sixteenGB.contains("qwen-image-2.1-turbo-mlx-mixed-4bit"))
+        XCTAssertFalse(eightGB.contains("qwen-image-2.1-turbo-mlx-mixed-4bit"))
         XCTAssertTrue(
             sixteenGB.allSatisfy { AppModel.testedImageModelAliases.contains($0) })
         XCTAssertTrue(
@@ -201,14 +206,60 @@ final class ImageGenerationTests: XCTestCase {
         XCTAssertTrue(model.hasInstalledMLXImageModel)
     }
 
-    func testSwiftImageSupportIsLimitedToZImageTurbo() {
+    func testSwiftImageSupportIsLimitedToTestedFamilies() {
         XCTAssertTrue(
             AppModel.supportsMLXImageModel(modelID: "andrevp/Z-Image-Turbo-MLX-8bit"))
+        XCTAssertTrue(
+            AppModel.supportsMLXImageModel(
+                modelID: "Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit"))
+        // Only the Turbo repository is admitted, not the publisher.
+        XCTAssertFalse(AppModel.supportsMLXImageModel(modelID: "Sawfwair/Something-Else"))
         XCTAssertFalse(
             AppModel.supportsMLXImageModel(modelID: "deepsweet/Z-Image-6B-MLX-Q8"))
         XCTAssertFalse(
             AppModel.supportsMLXImageModel(modelID: "mlx-community/Qwen-Image-2.1-MLX-4bit"))
         XCTAssertFalse(AppModel.testedImageModelAliases.contains("qwen-image-2.1-mlx-4bit"))
+    }
+
+    private func qwenTurboModel(sourcePath: String?) -> ImageInstalledModel {
+        ImageInstalledModel(
+            alias: "qwen-image-2.1-turbo-mlx-mixed-4bit",
+            modelID: "Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit",
+            revision: "d8276b786f94a4e8944189cc181e839e31759ab5",
+            path: "/models/qwen-turbo.image.gturbo",
+            width: 1024,
+            height: 1024,
+            schedulerSteps: 8,
+            quantization: "mlx-affine-linear-weights-group-64-bits-4-8",
+            sourcePath: sourcePath)
+    }
+
+    func testQwenSessionNeedsTheRetainedSourceTree() {
+        XCTAssertThrowsError(try QwenImageGenerationSession(model: qwenTurboModel(sourcePath: nil)))
+        XCTAssertThrowsError(
+            try QwenImageGenerationSession(model: qwenTurboModel(sourcePath: "/does/not/exist")))
+    }
+
+    /// The pipeline floors each side to a multiple of 32, so 1008 would come
+    /// back as 992 under metadata that says 1008. The session must refuse
+    /// before it loads anything.
+    func testQwenSessionRejectsSizesThePipelineWouldSilentlyFloor() async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwen-session-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        let session = try QwenImageGenerationSession(
+            model: qwenTurboModel(sourcePath: source.path))
+        let options = ImageGenerateOptions(
+            prompt: "a fox", seed: 1, width: 1008, height: 1024, steps: 8)
+        do {
+            for try await _ in session.generate(options) {}
+            XCTFail("a non-multiple-of-32 width must be rejected")
+        } catch let error as QwenImageSessionError {
+            XCTAssertEqual(error, .dimensionsNotSupported(1008, 1024, 32))
+        }
+        await session.unload()
     }
 
     func testImageJobStartsWaitingAndCarriesTheRequest() {

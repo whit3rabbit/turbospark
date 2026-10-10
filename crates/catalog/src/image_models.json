@@ -185,6 +185,30 @@
     ]
   },
   {
+    "alias": "qwen-image-2.1-turbo-mlx-mixed-4bit",
+    "model_id": "Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit",
+    "revision": "d8276b786f94a4e8944189cc181e839e31759ab5",
+    "family": "qwen-image-2.1-turbo",
+    "required_files": [
+      "LICENSE",
+      "Notice",
+      "model_index.json",
+      "processor/chat_template.jinja",
+      "processor/processor_config.json",
+      "processor/tokenizer.json",
+      "processor/tokenizer_config.json",
+      "scheduler/scheduler_config.json",
+      "text_encoder/config.json",
+      "text_encoder/model.safetensors",
+      "transformer/config.json",
+      "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+      "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
+      "transformer/diffusion_pytorch_model.safetensors.index.json",
+      "vae/config.json",
+      "vae/diffusion_pytorch_model.safetensors"
+    ]
+  },
+  {
     "alias": "krea-2-turbo-mlx-mixed-precision",
     "model_id": "baa-ai/Krea-2-Turbo-RAM-9GB-MLX",
     "revision": "58d4ebf1d13c3b086bde5ee45c038b299347dae9",

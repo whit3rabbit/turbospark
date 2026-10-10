@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 import QwenImage
 
 /// Per-stage wall-clock accumulation over the pipeline progress events,
@@ -11,6 +12,7 @@ struct StageBreakdown {
 
     static let bucketByStage = [
         "Loading model": "load_weights_s",
+        "Loading text encoder": "load_weights_s",
         "Loading transformer": "load_weights_s",
         "Loading VAE": "load_weights_s",
         "Encoding text": "text_encode_s",
@@ -67,6 +69,40 @@ enum PeakMemory {
     }
 }
 
+/// Polls the process footprint every 20 ms and keeps the maximum seen while
+/// each pipeline stage was current. Lazy MLX weight materialization and VAE
+/// activations rise and fall between progress events, so event-time sampling
+/// misses the stage that sets the peak.
+final class StagePeakSampler: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stage = "start"
+    private var maxima: [String: UInt64] = [:]
+    private var running = true
+
+    func setStage(_ name: String) {
+        lock.withLock { stage = name }
+    }
+
+    func start() {
+        let thread = Thread { [self] in
+            while lock.withLock({ running }) {
+                if let footprint = PeakMemory.currentFootprintBytes() {
+                    lock.withLock {
+                        maxima[stage] = max(maxima[stage] ?? 0, footprint)
+                    }
+                }
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+        }
+        thread.start()
+    }
+
+    func stop() -> [(String, UInt64)] {
+        lock.withLock { running = false }
+        return lock.withLock { maxima.sorted { $0.key < $1.key }.map { ($0.key, $0.value) } }
+    }
+}
+
 func emit(_ line: String) {
     print(line)
     fflush(stdout)
@@ -81,6 +117,8 @@ struct QwenImageMLXBenchmark {
         var seed: UInt64 = 42
         var width = 1024
         var height = 1024
+        var residency = QwenImageResidency.warm
+        var vaeDtype = QwenImageVAEPrecision.float32
 
         var iterator = CommandLine.arguments.makeIterator()
         _ = iterator.next()
@@ -111,6 +149,18 @@ struct QwenImageMLXBenchmark {
                     fatalError("--height requires a positive integer")
                 }
                 height = parsed
+            case "--vae-dtype":
+                switch iterator.next() {
+                case "float32": vaeDtype = .float32
+                case "bfloat16": vaeDtype = .bfloat16
+                default: fatalError("--vae-dtype requires float32 or bfloat16")
+                }
+            case "--residency":
+                switch iterator.next() {
+                case "warm": residency = .warm
+                case "staged": residency = .staged
+                default: fatalError("--residency requires warm or staged")
+                }
             default:
                 positional.append(argument)
             }
@@ -118,7 +168,7 @@ struct QwenImageMLXBenchmark {
 
         guard positional.count == 1 || positional.count == 2 else {
             fatalError(
-                "usage: QwenImageMLXBenchmark <mlx-model-directory> [output.png] [--steps N] [--prompt TEXT] [--seed N] [--width N] [--height N]"
+                "usage: QwenImageMLXBenchmark <mlx-model-directory> [output.png] [--steps N] [--prompt TEXT] [--seed N] [--width N] [--height N] [--residency warm|staged] [--vae-dtype float32|bfloat16]"
             )
         }
 
@@ -126,7 +176,7 @@ struct QwenImageMLXBenchmark {
         let outputURL = positional.count == 2
             ? URL(fileURLWithPath: positional[1])
             : FileManager.default.temporaryDirectory.appendingPathComponent("qwen-image-mlx-benchmark.png")
-        let pipeline = QwenImage21Pipeline()
+        let pipeline = QwenImage21Pipeline(residency: residency, vaePrecision: vaeDtype)
         let startedAt = Date()
         var breakdown = StageBreakdown()
         var peakMemoryBytes: UInt64 = 0
@@ -140,15 +190,24 @@ struct QwenImageMLXBenchmark {
             model: model
         )
 
+        let sampler = StagePeakSampler()
+        sampler.start()
         let png = try await pipeline.generateToMemory(request) { progress in
+            sampler.setStage(progress.stage.rawValue)
             let elapsed = Date().timeIntervalSince(startedAt)
-            emit("PROGRESS elapsed_s=\(String(format: "%.2f", elapsed)) stage=\(progress.stage.rawValue) step=\(progress.stepIndex)/\(progress.totalSteps)")
+            // The live footprint at each event shows which stage owns the peak;
+            // the lifetime peak below stays the number to quote.
+            let live = PeakMemory.currentFootprintBytes().map {
+                String(format: "%.2f", Double($0) / 1_073_741_824.0)
+            } ?? "n/a"
+            emit("PROGRESS elapsed_s=\(String(format: "%.2f", elapsed)) stage=\(progress.stage.rawValue) step=\(progress.stepIndex)/\(progress.totalSteps) footprint_gib=\(live)")
             breakdown.observe(stage: progress.stage.rawValue)
             if let footprint = PeakMemory.currentFootprintBytes() {
                 peakMemoryBytes = max(peakMemoryBytes, footprint)
             }
         }
         breakdown.finish()
+        let stagePeaks = sampler.stop()
         if let footprint = PeakMemory.currentFootprintBytes() {
             peakMemoryBytes = max(peakMemoryBytes, footprint)
         }
@@ -158,13 +217,16 @@ struct QwenImageMLXBenchmark {
         try png.write(to: outputURL)
         let elapsed = Date().timeIntervalSince(startedAt)
         emit(
-            "RESULT elapsed_s=\(String(format: "%.2f", elapsed)) steps=\(steps) width=\(width) height=\(height) png_bytes=\(png.count) path=\(outputURL.path)"
+            "RESULT elapsed_s=\(String(format: "%.2f", elapsed)) steps=\(steps) width=\(width) height=\(height) residency=\(residency) vae_dtype=\(vaeDtype) png_bytes=\(png.count) path=\(outputURL.path)"
         )
         let breakdownFields =
             breakdown.totals.sorted { $0.key < $1.key }
             .map { "\($0.key)=\(String(format: "%.2f", $0.value))" }
             .joined(separator: " ")
         emit("BREAKDOWN \(breakdownFields)")
+        for (stage, bytes) in stagePeaks {
+            emit("STAGE_PEAK stage=\(stage) gib=\(String(format: "%.2f", Double(bytes) / 1_073_741_824.0))")
+        }
         emit("PEAK_MEM bytes=\(peakMemoryBytes) gib=\(String(format: "%.2f", Double(peakMemoryBytes) / 1_073_741_824.0))")
     }
 }

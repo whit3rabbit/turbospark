@@ -48,6 +48,7 @@ extension AppModel {
             "andrevp/Z-Image-Turbo-MLX-4bit",
             "andrevp/Z-Image-Turbo-MLX-8bit",
             "deepsweet/Z-Image-Turbo-6B-MLX-Q4",
+            "Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit",
         ].contains(modelID)
     }
 
@@ -58,6 +59,7 @@ extension AppModel {
         "z-image-turbo-mlx-4bit",
         "z-image-turbo-mlx-8bit",
         "z-image-turbo-mlx-q4",
+        "qwen-image-2.1-turbo-mlx-mixed-4bit",
     ]
 
     /// Returns MLX choices ranked for this machine; the first is the default.
@@ -65,13 +67,17 @@ extension AppModel {
     /// and the remaining rows give users a useful quality/footprint choice.
     ///
     /// The tiers are memory-fit gates, not speed claims. They retain only
-    /// Z-Image Turbo exports, ordered by the repository's measured memory
-    /// envelopes for this app.
+    /// exports with a measured memory envelope for this app. Qwen-Image 2.1
+    /// Turbo measured 11.2 GiB at 1024 x 1024 with staged residency and a
+    /// bfloat16 decode; it sits in the 32 GiB tier behind the Z-Image 8-bit
+    /// default, whose recorded 1024 x 1024 row in docs/BENCHMARKS.md is
+    /// faster (not a paired run).
     public static func recommendedImageModelAliases(physicalMemoryBytes: UInt64) -> [String] {
         let gib = physicalMemoryBytes / (1024 * 1024 * 1024)
         if gib >= 32 {
             return [
                 "z-image-turbo-mlx-8bit",
+                "qwen-image-2.1-turbo-mlx-mixed-4bit",
                 "z-image-turbo-mlx-4bit",
                 "z-image-turbo-mlx-q4",
                 "z-image-turbo-mlx-2bit",
@@ -228,6 +234,20 @@ extension AppModel {
             imageSession?.cancel()
             imageSession = nil
             imageSessionPath = nil
+        }
+        // A model found in an additional folder is excluded, not deleted: the
+        // next scan would find it again, and the bytes are not ours to remove.
+        // The same rule the text models follow. Restore is under Settings >
+        // Models, in the list of excluded paths.
+        guard isManagedImageModel(image) else {
+            ModelOrganizationStore.shared.excludeFromScan(path: image.path)
+            if wasSelected { imageModelPathText = "" }
+            refreshModels()
+            showToast(
+                "Removed '\(image.alias)' from TurboSpark. The files were left on disk at "
+                    + "\(image.path); restore it under Settings > Models.",
+                style: .info, duration: 5.0)
+            return
         }
         do {
             try TurboSparkCatalog.deleteImage(image.path)

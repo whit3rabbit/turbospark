@@ -13,6 +13,11 @@ public struct QwenImageSchedulerConfig: Sendable {
   public var timeShiftType: String
   public var shiftTerminal: Float?
   public var shift: Float
+  /// Fixed sigma ladder (without the trailing zero) the Turbo checkpoint
+  /// publishes as `sample_sigmas` in `model_index.json`. It applies only
+  /// when `useDynamicShifting` is false; the ladder then replaces the
+  /// computed schedule outright and its length fixes the step count.
+  public var sampleSigmas: [Float]?
 
   public init(
     numTrainTimesteps: Int = 1000,
@@ -23,7 +28,8 @@ public struct QwenImageSchedulerConfig: Sendable {
     useDynamicShifting: Bool = true,
     timeShiftType: String = "exponential",
     shiftTerminal: Float? = 0.02,
-    shift: Float = 1.0
+    shift: Float = 1.0,
+    sampleSigmas: [Float]? = nil
   ) {
     self.numTrainTimesteps = numTrainTimesteps
     self.baseShift = baseShift
@@ -34,6 +40,37 @@ public struct QwenImageSchedulerConfig: Sendable {
     self.timeShiftType = timeShiftType
     self.shiftTerminal = shiftTerminal
     self.shift = shift
+    self.sampleSigmas = sampleSigmas
+  }
+
+  /// The static ladder in force for this config, or nil when the schedule
+  /// is computed (dynamic shifting on, or no published ladder).
+  public var staticSigmaLadder: [Float]? {
+    guard !useDynamicShifting, let sampleSigmas, !sampleSigmas.isEmpty else { return nil }
+    return sampleSigmas
+  }
+
+  /// Parses `sample_sigmas` from `model_index.json`. Returns nil when the
+  /// key is absent; throws on a malformed ladder so a corrupt index fails
+  /// loudly instead of silently falling back to the 40-step schedule.
+  public static func sampleSigmas(fromModelIndex index: [String: Any]) throws -> [Float]? {
+    guard let raw = index["sample_sigmas"] else { return nil }
+    guard let numbers = raw as? [Any] else {
+      throw QwenImagePipelineError.weightsMissing("model_index.json sample_sigmas is not an array")
+    }
+    let values: [Float] = try numbers.map { element in
+      if let double = element as? Double { return Float(double) }
+      if let int = element as? Int { return Float(int) }
+      throw QwenImagePipelineError.weightsMissing("model_index.json sample_sigmas holds a non-number")
+    }
+    guard !values.isEmpty,
+      values.allSatisfy({ $0.isFinite && $0 > 0 && $0 <= 1 }),
+      zip(values, values.dropFirst()).allSatisfy({ $0 > $1 })
+    else {
+      throw QwenImagePipelineError.weightsMissing(
+        "model_index.json sample_sigmas must be strictly decreasing values in (0, 1]")
+    }
+    return values
   }
 
   public static func fromConfigJSON(_ config: [String: Any]) -> QwenImageSchedulerConfig {
@@ -90,6 +127,19 @@ public struct QwenImage21Scheduler: Sendable {
     precondition(numInferenceSteps > 0)
     let n = numInferenceSteps
     let numTrain = Float(config.numTrainTimesteps)
+
+    // A published ladder is the whole schedule: no linspace, shift, or
+    // terminal stretch. Callers validate the step count against it first
+    // (`QwenImage21Pipeline` throws), so a mismatch here is a programmer
+    // error, not an input to paper over.
+    if let ladder = config.staticSigmaLadder {
+      precondition(ladder.count == n, "static sigma ladder length must equal the step count")
+      self.numTrainTimesteps = config.numTrainTimesteps
+      self.timesteps = ladder.map { $0 * numTrain }
+      self.sigmas = ladder + [0.0]
+      self.numInferenceSteps = n
+      return
+    }
 
     // 1. Base sigmas: linspace(sigma_max = 1, sigma_min = 1/num_train, N).
     let sigmaMin = 1.0 / numTrain

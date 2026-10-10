@@ -127,6 +127,87 @@ final class ImageWorkspaceTests: XCTestCase {
         XCTAssertEqual(ImageModelPresentation.family("studio/another-model"), "studio/another-model")
         XCTAssertEqual(ImageModelPresentation.quantization("mlx-affine-linear-weights-group-64-bits-8"), "8-bit")
         XCTAssertEqual(ImageModelPresentation.quantization("custom-format"), "custom-format")
+        XCTAssertEqual(
+            ImageModelPresentation.family("Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit"),
+            "Qwen-Image 2.1 Turbo")
+    }
+
+    // MARK: - Additional model folders
+
+    private func imageRow(_ alias: String, path: String) -> ImageInstalledModel {
+        ImageInstalledModel(
+            alias: alias, modelID: "andrevp/Z-Image-Turbo-MLX-4bit", revision: "rev",
+            path: path, width: 1024, height: 1024, schedulerSteps: 9)
+    }
+
+    func testScannedImageModelsMergeAfterTheManagedOnesWithoutDuplicates() {
+        let managed = [imageRow("managed", path: "/store/managed.gturbo")]
+        let scanned = [
+            imageRow("alias-differs", path: "/store/managed.gturbo"),  // same install, seen twice
+            imageRow("drive-a", path: "/Volumes/A/models/drive-a.gturbo"),
+            imageRow("drive-a-again", path: "/Volumes/A/models/../models/drive-a.gturbo"),
+        ]
+        let merged = AppModel.mergedImageModels(
+            managed: managed, scanned: scanned, isExcluded: { _ in false })
+        XCTAssertEqual(merged.map(\.alias), ["managed", "drive-a"])
+    }
+
+    func testAnExcludedScannedImageModelStaysOutOfTheList() {
+        let scanned = [
+            imageRow("kept", path: "/Volumes/A/kept.gturbo"),
+            imageRow("removed", path: "/Volumes/A/removed.gturbo"),
+        ]
+        let merged = AppModel.mergedImageModels(
+            managed: [], scanned: scanned, isExcluded: { $0 == "/Volumes/A/removed.gturbo" })
+        XCTAssertEqual(merged.map(\.alias), ["kept"])
+    }
+
+    func testOnlyStoreInstallsAreManagedAndSoDeletable() {
+        let model = AppModel()
+        model.managedImageModels = [imageRow("managed", path: "/store/managed.gturbo")]
+        XCTAssertTrue(model.isManagedImageModel(imageRow("managed", path: "/store/./managed.gturbo")))
+        XCTAssertFalse(model.isManagedImageModel(imageRow("external", path: "/Volumes/A/external.gturbo")))
+    }
+
+    func testOneUnreadableFolderDoesNotStopTheOthersFromBeingScanned() {
+        struct Unreadable: Error {}
+        let found = AppModel.scanImageInstalls(in: ["/bad", "/good"]) { folder in
+            if folder == "/bad" { throw Unreadable() }
+            return [self.imageRow("good", path: "/good/good.gturbo")]
+        }
+        XCTAssertEqual(found.map(\.alias), ["good"])
+    }
+
+    /// The real FFI call, against folders with no installs.
+    func testTheNativeFolderScanReturnsEmptyForAFolderAndErrorsForAMissingOne() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("image-scan-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        XCTAssertEqual(try TurboSparkCatalog.imageInstalled(in: folder.path), [])
+        XCTAssertThrowsError(
+            try TurboSparkCatalog.imageInstalled(in: folder.appendingPathComponent("missing").path))
+    }
+
+    /// An image install is a bundle with a manifest, like a text model. In a
+    /// shared folder the text scan must leave it to the image scan, or it
+    /// shows up as a text model that cannot load.
+    func testTheTextScanDoesNotListAnImageInstallAsATextModel() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("text-scan-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for (name, manifest) in [
+            ("picture.gturbo", #"{"capability":"image-generation"}"#),
+            ("chat.gturbo", #"{"family":"gemma4"}"#),
+        ] {
+            let bundle = root.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try Data(manifest.utf8).write(to: bundle.appendingPathComponent("manifest.json"))
+        }
+        let aliases = ModelStorageManager.scanModels(in: root.path, sourceTag: "Custom").map(\.alias)
+        XCTAssertEqual(aliases, ["chat"])
+        XCTAssertTrue(ModelStorageManager.isImageInstall(at: root.appendingPathComponent("picture.gturbo")))
+        XCTAssertFalse(ModelStorageManager.isImageInstall(at: root.appendingPathComponent("chat.gturbo")))
     }
 
     func testRefreshPreservesAnExplicitSideLoadedModel() {

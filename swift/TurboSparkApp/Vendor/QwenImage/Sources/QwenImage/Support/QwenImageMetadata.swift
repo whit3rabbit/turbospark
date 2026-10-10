@@ -46,6 +46,7 @@ public enum QwenImagePipelineError: Error, Sendable, LocalizedError {
   case vaeNotLoaded
   case modelNotLoaded
   case unsupportedBatch(String)
+  case stepsFixedByCheckpoint(requested: Int, required: Int)
 
   public var errorDescription: String? {
     switch self {
@@ -71,6 +72,8 @@ public enum QwenImagePipelineError: Error, Sendable, LocalizedError {
       return "The Qwen-Image model is not loaded."
     case .unsupportedBatch(let reason):
       return "Unsupported batch: \(reason)"
+    case .stepsFixedByCheckpoint(let requested, let required):
+      return "This checkpoint publishes a fixed \(required)-step schedule; \(requested) steps were requested."
     }
   }
 }

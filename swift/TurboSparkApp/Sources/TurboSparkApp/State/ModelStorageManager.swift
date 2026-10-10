@@ -167,6 +167,10 @@ public enum ModelStorageManager {
             if isDirectory && (pathExtension == "gturbo" || hasManifest(at: fileURL)) {
                 enumerator.skipDescendants()
                 visitedPaths.insert(path)
+                // An image install is a bundle with a manifest too. It is not a
+                // text model, and listing it as one puts a row in the text
+                // picker that cannot load. The image scan finds it instead.
+                if isImageInstall(at: fileURL) { continue }
 
                 let alias = fileURL.deletingPathExtension().lastPathComponent
                 let family = detectFamily(from: fileURL, fallbackName: alias)
@@ -210,6 +214,16 @@ public enum ModelStorageManager {
         }
 
         return discovered
+    }
+
+    /// Whether a bundle's manifest declares an image-generation install.
+    /// `internal` for tests.
+    static func isImageInstall(at url: URL) -> Bool {
+        let manifestURL = url.appendingPathComponent("manifest.json")
+        guard let data = try? Data(contentsOf: manifestURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return json["capability"] as? String == "image-generation"
     }
 
     /// Checks if a directory contains a gturbo manifest.json file.

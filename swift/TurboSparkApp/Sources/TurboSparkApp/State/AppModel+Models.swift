@@ -463,6 +463,15 @@ extension AppModel {
                 style: .warning)
             return
         }
+        // Humanize owns a separate mapping that the Chat session cannot see.
+        // Keep this guard here so deletion from Installed Models is safe too.
+        if humanizeWorkspace.usesModel(at: model.path) {
+            guard !humanizeWorkspace.isBusy else {
+                showToast(String(localized: "Stop Humanize before deleting its model.", bundle: .module), style: .warning)
+                return
+            }
+            humanizeWorkspace.unload()
+        }
         // **MATCHED ON PATH ALONE** (state#14): `alias` is not unique once a
         // scanned row exists, so an `alias ||` arm unloads the session of a
         // DIFFERENT model that happens to share the name.

@@ -97,6 +97,39 @@ final class EngineImageTranscoderTests: XCTestCase {
         XCTAssertEqual(before, after, "the second call must reuse the cached file")
     }
 
+    func testManagedDerivativeUsesAssetIDAndPrivatePermissions() throws {
+        let source = try write(.tiff, name: "protected.tiff", width: 6, height: 4)
+        let assetID = String(repeating: "a", count: 64)
+        let reference = "\(ManagedAssetStore.referencePrefix)\(assetID)"
+        let cache = directory.appendingPathComponent("private-cache", isDirectory: true)
+
+        let output = EngineImageTranscoder.enginePath(
+            for: source, cacheDirectory: cache, storedReference: reference)
+
+        XCTAssertEqual(URL(fileURLWithPath: output).lastPathComponent, "\(assetID).png")
+        let cacheMode = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: cache.path)[.posixPermissions] as? NSNumber)
+        let outputMode = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: output)[.posixPermissions] as? NSNumber)
+        XCTAssertEqual(cacheMode.intValue & 0o777, 0o700)
+        XCTAssertEqual(outputMode.intValue & 0o777, 0o600)
+    }
+
+    func testLegacyPersistentCacheIsRemoved() throws {
+        let root = UserProfileStore.storeDirectory(
+            profileID: UserProfileStore.defaultProfileID,
+            machineRoot: AppStorageRoot.machineRoot) ?? AppStorageRoot.machineRoot
+        let legacy = root.appendingPathComponent("EngineImageCache", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        let file = legacy.appendingPathComponent("old-plaintext.png")
+        try Data("plaintext image bytes".utf8).write(to: file)
+
+        EngineImageTranscoder.purgeLegacyPersistentCache(
+            profileID: UserProfileStore.defaultProfileID)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     func testUnreadableAndRemotePathsAreReturnedAsIs() {
         XCTAssertEqual(EngineImageTranscoder.enginePath(for: ""), "")
         XCTAssertEqual(

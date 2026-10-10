@@ -103,11 +103,7 @@ pub(crate) fn install(
     // to the native runtime as a fallback. deepsweet rows are mflux
     // conversions whose trees the catalog normalizes for the same purpose,
     // and the Qwen-Image-2.1 row keeps the mlx-community processor layout.
-    let mlx_source_path = if entry.model_id.starts_with("andrevp/")
-        || entry.model_id.starts_with("deepsweet/")
-        || entry.model_id.starts_with("mlx-community/")
-        || entry.model_id.starts_with("baa-ai/Krea-2-Turbo")
-    {
+    let mlx_source_path = if retains_mlx_source_tree(&entry.model_id) {
         let _ = std::fs::remove_dir_all(source.join(".download-cache"));
         source.canonicalize().ok()
     } else {
@@ -133,6 +129,19 @@ pub(crate) fn install(
         source_path: mlx_source_path,
     })
     .map_err(|e| e.to_string())
+}
+
+/// Whether an install keeps its original MLX safetensors tree beside the
+/// packed install. The install path and the installed-row rescan
+/// (`catalog.rs`) must agree, or a row would install with a source tree and
+/// then rescan without one. The Turbo prefix is scoped to its repository, not
+/// the publisher.
+pub(super) fn retains_mlx_source_tree(model_id: &str) -> bool {
+    model_id.starts_with("andrevp/")
+        || model_id.starts_with("deepsweet/")
+        || model_id.starts_with("mlx-community/")
+        || model_id.starts_with("baa-ai/Krea-2-Turbo")
+        || model_id.starts_with(catalog::QWEN_IMAGE_21_TURBO_PREFIX)
 }
 
 fn quantization_label(alias: &str) -> String {
@@ -166,5 +175,24 @@ mod tests {
             quantization_label("z-image-mlx-q8"),
             "mlx-affine-linear-weights-group-64-bits-8"
         );
+        // The label is the transformer width, matching what the installed
+        // manifest reports; the Q8 text encoder is not part of it.
+        assert_eq!(
+            quantization_label("qwen-image-2.1-turbo-mlx-mixed-4bit"),
+            "mlx-affine-linear-weights-group-64-bits-4"
+        );
+    }
+
+    #[test]
+    fn the_retained_source_tree_covers_the_turbo_repository_only() {
+        use super::retains_mlx_source_tree;
+        assert!(retains_mlx_source_tree(
+            "Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit"
+        ));
+        assert!(!retains_mlx_source_tree("Sawfwair/Something-Else"));
+        assert!(retains_mlx_source_tree(
+            "mlx-community/Qwen-Image-2.1-MLX-4bit"
+        ));
+        assert!(!retains_mlx_source_tree("Tongyi-MAI/Z-Image-Turbo"));
     }
 }

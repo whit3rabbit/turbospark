@@ -91,6 +91,18 @@ final class WireFieldDecodeTests: XCTestCase {
             ImageInstalledModel.self, from: Data("{\(base)}".utf8))
         XCTAssertEqual(old.family, "qwen-image-2.1")
     }
+
+    func testImageFamilyFallbackRoutesTheTurboRepositoryOnly() {
+        XCTAssertEqual(
+            ImageModelFamily.family(for: "Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit"),
+            "qwen-image-2.1-turbo")
+        // The 40-step base family must not absorb the Turbo repository, and
+        // another repository from the same owner stays on the default family.
+        XCTAssertEqual(
+            ImageModelFamily.family(for: "mlx-community/Qwen-Image-2.1-MLX-4bit"),
+            "qwen-image-2.1")
+        XCTAssertEqual(ImageModelFamily.family(for: "Sawfwair/Something-Else"), "z-image")
+    }
 }
 
 final class DaemonStatusDecodeTests: XCTestCase {

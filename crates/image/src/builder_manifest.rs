@@ -80,12 +80,14 @@ pub(super) fn make_manifest(
             "packed_index": "tensor_inventory_sha256",
             "runtime_gate": match family {
                 ImageFamily::Krea2Turbo => "pending-native-krea2-runtime",
+                ImageFamily::QwenImage21Turbo => "pending-native-qwen-turbo-runtime",
                 _ => "ig1-captured-inputs-and-real-vae",
             },
         }),
         resource_envelope: serde_json::json!({
             "reference_contract": match family {
                 ImageFamily::Krea2Turbo => "pending-krea2-device-measurements",
+                ImageFamily::QwenImage21Turbo => "pending-qwen-turbo-device-measurements",
                 _ => "docs/verification/z-image-ig0-resource-contract.json",
             },
             "ownership": "one-heavyweight-stage-at-a-time",
@@ -141,7 +143,9 @@ fn tokenizer_metadata(
         // The Qwen-Image-2.1 processor layout ships the template as a sibling
         // Jinja file instead of an embedded tokenizer_config field, and the
         // pipeline left-pads its prompt batch.
-        ImageFamily::QwenImage21 => ("chat_template.jinja", 1024, "left_pad"),
+        ImageFamily::QwenImage21 | ImageFamily::QwenImage21Turbo => {
+            ("chat_template.jinja", 1024, "left_pad")
+        }
         ImageFamily::Krea2Turbo => ("chat_template.jinja", 1024, "left_pad"),
     };
     Ok(BTreeMap::from([
@@ -177,6 +181,10 @@ fn scheduler_metadata(
     let (shift, evaluation_count, guidance_policy) = match family {
         ImageFamily::ZImage => (3.0, 9, "zero"),
         ImageFamily::QwenImage21 => (1.0, 40, "true-cfg-default-off"),
+        // The distilled 8-step ladder is fixed by the checkpoint's
+        // `sample_sigmas`; the Swift MLX runtime reads it from the retained
+        // source tree, so only the count and guidance policy are recorded.
+        ImageFamily::QwenImage21Turbo => (1.0, 8, "true-cfg-default-off"),
         ImageFamily::Krea2Turbo => (1.0, 8, "mflux-krea-guidance-1"),
     };
     Ok(BTreeMap::from([
@@ -213,7 +221,9 @@ fn text_encoder_metadata(
     // pipeline reads the last decoder state before the final norm.
     let hidden_state_output = match family {
         ImageFamily::ZImage => "hidden_states[-2]",
-        ImageFamily::QwenImage21 => "hidden_states[-1]-pre-final-norm",
+        ImageFamily::QwenImage21 | ImageFamily::QwenImage21Turbo => {
+            "hidden_states[-1]-pre-final-norm"
+        }
         ImageFamily::Krea2Turbo => "qwen3-vl-mflux-text-fusion",
     };
     BTreeMap::from([
@@ -341,7 +351,7 @@ fn vae_metadata(
         ),
         // The Qwen-Image-2.1 VAE normalizes latents per channel with the
         // mean/std vectors carried by its own config instead of one scalar.
-        ImageFamily::QwenImage21 => (
+        ImageFamily::QwenImage21 | ImageFamily::QwenImage21Turbo => (
             "[64,height,width]",
             "rms-norm-and-per-channel-latent-stats",
             serde_json::json!({"latents_mean": "vae-config", "latents_std": "vae-config"}),

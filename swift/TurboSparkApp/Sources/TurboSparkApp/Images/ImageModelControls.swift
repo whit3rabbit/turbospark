@@ -6,6 +6,9 @@ import TurboSpark
 enum ImageModelPresentation {
     static func family(_ modelID: String) -> String {
         let lowered = modelID.lowercased()
+        if lowered.contains("qwen-image-2.1-turbo") {
+            return "Qwen-Image 2.1 Turbo"
+        }
         if lowered.contains("z-image-turbo") || lowered.contains("z-image") {
             return "Z-Image Turbo"
         }

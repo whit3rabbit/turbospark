@@ -18,6 +18,13 @@ package in the app. Its implementation record, verification evidence, and
 the head-to-head benchmark against the Z-Image Turbo MLX rows are in
 [QWEN_IMAGE_21_MLX.md](QWEN_IMAGE_21_MLX.md).
 
+A third family, Qwen-Image-2.1-Turbo (an 8-step distillation with a mixed
+4-bit transformer and 8-bit text encoder), runs through the same vendored
+package with per-layer quantization widths, a fixed sigma ladder, and staged
+module residency. Its evidence page, including the measured memory per stage
+and the limits of those measurements, is
+[QWEN_IMAGE_21_TURBO.md](QWEN_IMAGE_21_TURBO.md).
+
 Current size-selection status: the CLI and Swift app accept image sides from
 512 through 1024 pixels, in multiples of 16, with a maximum total area of
 1024-by-1024. The Swift menu offers square, 4:3, and 16:9 presets; the CLI

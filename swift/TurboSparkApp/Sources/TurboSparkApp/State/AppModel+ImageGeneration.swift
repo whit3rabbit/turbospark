@@ -61,7 +61,7 @@ extension AppModel {
             return
         }
         guard hasSupportedSelectedImageModel else {
-            showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
+            showToast("Select a supported MLX image model from the curated list.", style: .warning)
             return
         }
         guard !isInGhostChat else {
@@ -151,7 +151,7 @@ extension AppModel {
             return
         }
         guard hasSupportedSelectedImageModel else {
-            showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
+            showToast("Select a supported MLX image model from the curated list.", style: .warning)
             return
         }
         guard canStartImageGeneration else { return }
@@ -168,7 +168,7 @@ extension AppModel {
             return
         }
         guard hasSupportedSelectedImageModel else {
-            showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
+            showToast("Select a supported MLX image model from the curated list.", style: .warning)
             return
         }
         guard canStartImageGeneration else { return }
@@ -238,7 +238,7 @@ extension AppModel {
     ) {
         guard imageGenerationTask == nil else { return }
         guard hasSupportedSelectedImageModel else {
-            showToast("Select a supported MLX Z-Image model from the curated list.", style: .warning)
+            showToast("Select a supported MLX image model from the curated list.", style: .warning)
             return
         }
         let requests = ImageGenerationSequence.requests(options: options, count: count)

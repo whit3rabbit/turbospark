@@ -99,6 +99,23 @@ pub unsafe extern "C" fn ts_image_installed_json(out: *mut *mut c_char) -> c_int
     })
 }
 
+/// Valid image-generation installs under a folder outside the managed store.
+/// Scans the folder and its immediate subdirectories, or resolves one install
+/// bundle passed directly. Never deletes or modifies anything.
+#[no_mangle]
+pub unsafe extern "C" fn ts_image_installed_in_json(
+    root: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let root =
+            strings::required(root, "root").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let json = models::image_installed_in_json(std::path::Path::new(root))
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// Deletes one valid image-generation install by path or unambiguous alias.
 #[no_mangle]
 pub unsafe extern "C" fn ts_image_delete(identifier: *const c_char) -> c_int {

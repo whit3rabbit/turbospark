@@ -293,6 +293,105 @@ fn builds_the_qwen_image_21_layout_through_complete_install() {
     fs::remove_dir_all(root).expect("remove test directory");
 }
 
+#[test]
+fn builds_the_qwen_image_21_turbo_layout_through_complete_install() {
+    let root = temporary_directory();
+    let source = root.join("source");
+    let output = root.join("image.gturbo");
+    // The Turbo repository layout: Diffusers shard spellings for the
+    // transformer, a single-file text encoder and VAE with no index, the
+    // tokenizer under `processor/`, and the fixed sigma ladder in the root
+    // model_index.json.
+    fs::create_dir_all(source.join("processor")).expect("create processor source");
+    fs::create_dir_all(source.join("scheduler")).expect("create scheduler source");
+    fs::write(source.join("processor/tokenizer.json"), b"tokenizer").expect("write tokenizer");
+    fs::write(
+        source.join("processor/tokenizer_config.json"),
+        b"{\"processor_class\": \"Qwen3VLProcessor\"}",
+    )
+    .expect("write tokenizer config");
+    fs::write(source.join("processor/chat_template.jinja"), b"template")
+        .expect("write chat template");
+    fs::write(
+        source.join("model_index.json"),
+        b"{\"_class_name\": \"QwenImage21Pipeline\", \"sample_sigmas\": [1.0, 0.5]}",
+    )
+    .expect("write model index");
+    fs::write(
+        source.join("scheduler/scheduler_config.json"),
+        b"{\"shift\": 1.0, \"use_dynamic_shifting\": false, \"shift_terminal\": null}",
+    )
+    .expect("write scheduler");
+    write_safetensors_source(&source.join("text_encoder"), TEXT_ENCODER_INDEX);
+    fs::remove_file(source.join("text_encoder").join(TEXT_ENCODER_INDEX))
+        .expect("remove text encoder index");
+    write_safetensors_source(&source.join("transformer"), TRANSFORMER_INDEX);
+    write_safetensors_source(&source.join("vae"), VAE_INDEX);
+    fs::remove_file(source.join("vae").join(VAE_INDEX)).expect("remove VAE index");
+
+    build_image_install(&ImageInstallSpec {
+        source_root: source,
+        output_root: output.clone(),
+        model_id: "Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit".to_string(),
+        model_revision: "synthetic-qwen-turbo".to_string(),
+    })
+    .expect("build Qwen Turbo image install");
+
+    let manifest = ImageManifest::load(&output).expect("load Qwen Turbo manifest");
+    assert_eq!(
+        manifest.source["family"],
+        serde_json::json!("qwen-image-2.1-turbo")
+    );
+    assert_eq!(
+        manifest.source["license"],
+        serde_json::json!("qwen-research")
+    );
+    assert_eq!(manifest.supported.scheduler_steps, 8);
+    assert_eq!(manifest.supported.transformer_forwards, 8);
+    assert_eq!(manifest.supported.guidance_scale, 1.0);
+    assert_eq!(manifest.supported.prompt_max_tokens, 1024);
+    assert_eq!(manifest.supported.latent_shape, vec![1, 64, 64, 64]);
+    assert_eq!(
+        manifest.components["scheduler"].metadata["evaluation_count"],
+        serde_json::json!(8)
+    );
+    assert_eq!(
+        manifest.components["text_encoder"].metadata["hidden_state_output"],
+        serde_json::json!("hidden_states[-1]-pre-final-norm")
+    );
+    manifest
+        .verify_files(&output)
+        .expect("verify Qwen Turbo image install");
+
+    // The 40-step base envelope must not validate against a Turbo manifest.
+    let mut forged = manifest.clone();
+    forged.supported.scheduler_steps = 40;
+    forged.supported.transformer_forwards = 40;
+    let error = forged
+        .validate()
+        .expect_err("base-model step count must be rejected for Turbo");
+    assert!(error.contains("unsupported image envelope"), "got {error}");
+    fs::remove_dir_all(root).expect("remove test directory");
+}
+
+#[test]
+fn the_turbo_family_prefix_is_scoped_to_its_repository() {
+    use crate::install::{image_family_for_model_id, ImageFamily};
+    assert_eq!(
+        image_family_for_model_id("Sawfwair/Qwen-Image-2.1-Turbo-MLX-Mixed-4bit"),
+        ImageFamily::QwenImage21Turbo
+    );
+    // Another repository from the same owner keeps the legacy envelope.
+    assert_eq!(
+        image_family_for_model_id("Sawfwair/Some-Other-Model"),
+        ImageFamily::ZImage
+    );
+    assert_eq!(
+        image_family_for_model_id("mlx-community/Qwen-Image-2.1-MLX-4bit"),
+        ImageFamily::QwenImage21
+    );
+}
+
 fn write_common_source_tree(source: &Path) {
     fs::create_dir_all(source.join("tokenizer")).expect("create tokenizer source");
     fs::create_dir_all(source.join("scheduler")).expect("create scheduler source");

@@ -13,17 +13,31 @@ import UniformTypeIdentifiers
 /// fluently and wrongly.
 ///
 /// So the engine is given a PNG for anything it cannot read faithfully. The
-/// stored attachment is never modified; the PNG lives in a cache keyed by the
-/// source's path, size and modification time.
+/// stored attachment is never modified; managed derivatives live beside the
+/// profile's decrypted attachments and are removed with their source or when
+/// that cache is purged.
 enum EngineImageTranscoder {
-    /// The cache directory under the profile's store root.
-    static var defaultCacheDirectory: URL { AppStorageRoot.subdirectory("EngineImageCache") }
+    /// Used only for non-managed paths when there is no unlocked profile.
+    /// This process-unique temporary directory is purged on app lifecycle
+    /// boundaries and is never placed under persistent Application Support.
+    private static let transientCacheDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("TurboSpark-ImageTranscoder-\(UUID().uuidString)", isDirectory: true)
+
+    /// A protected per-profile cache when possible, with a process-private
+    /// temporary cache for standalone paths that have no vault session.
+    static var defaultCacheDirectory: URL {
+        ManagedAssetStore.shared.imageTranscoderCacheDirectory() ?? transientCacheDirectory
+    }
 
     /// The path to hand the engine for `path`: the same path when it is
     /// already faithful, a cached PNG when not, and the original path again if
     /// anything fails, so the engine reports its own (named) decode error
     /// rather than this layer inventing one.
-    static func enginePath(for path: String, cacheDirectory: URL? = nil) -> String {
+    static func enginePath(
+        for path: String,
+        cacheDirectory: URL? = nil,
+        storedReference: String? = nil
+    ) -> String {
         // Remote URLs and empty (unresolvable) paths are not ours to rewrite.
         guard path.hasPrefix("/"),
             let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
@@ -35,8 +49,8 @@ enum EngineImageTranscoder {
         guard needsTranscode(type: type, orientation: orientation) else { return path }
 
         let cache = cacheDirectory ?? defaultCacheDirectory
-        let output = cache.appendingPathComponent(cacheName(for: path) + ".png")
-        if FileManager.default.fileExists(atPath: output.path) { return output.path }
+        let name = cacheName(for: path, storedReference: storedReference)
+        let output = cache.appendingPathComponent(name + ".png")
 
         let width = (properties?[kCGImagePropertyPixelWidth] as? Int) ?? 0
         let height = (properties?[kCGImagePropertyPixelHeight] as? Int) ?? 0
@@ -51,19 +65,37 @@ enum EngineImageTranscoder {
         else { return path }
 
         do {
-            try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: cache, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700])
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cache.path)
+            if FileManager.default.fileExists(atPath: output.path) {
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: output.path)
+                return output.path
+            }
             // Written beside the destination and moved in, so a concurrent
-            // reader never sees a half-written PNG.
+            // reader never sees a half-written PNG. Create it with private
+            // permissions before ImageIO writes any pixels.
             let staging = cache.appendingPathComponent(".\(UUID().uuidString).png")
+            defer { try? FileManager.default.removeItem(at: staging) }
+            guard FileManager.default.createFile(
+                atPath: staging.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            else { return path }
             guard
                 let destination = CGImageDestinationCreateWithURL(
                     staging as CFURL, UTType.png.identifier as CFString, 1, nil)
-            else { return path }
+            else {
+                try? FileManager.default.removeItem(at: staging)
+                return path
+            }
             CGImageDestinationAddImage(destination, image, nil)
             guard CGImageDestinationFinalize(destination) else {
                 try? FileManager.default.removeItem(at: staging)
                 return path
             }
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: staging.path)
             if FileManager.default.fileExists(atPath: output.path) {
                 try? FileManager.default.removeItem(at: staging)
             } else {
@@ -71,8 +103,38 @@ enum EngineImageTranscoder {
             }
             return output.path
         } catch {
+            // A failed write must not strand a partially decoded attachment.
             return path
         }
+    }
+
+    /// Clears converted images when a chat is deleted. They are disposable
+    /// and are rebuilt from their still-encrypted sources if another chat
+    /// needs them later.
+    static func purgeCache() {
+        ManagedAssetStore.shared.purgeImageTranscoderCache()
+        purgeTransientCache()
+    }
+
+    static func purgeTransientCache() {
+        try? FileManager.default.removeItem(at: transientCacheDirectory)
+    }
+
+    /// Removes plaintext PNGs created by versions that cached under
+    /// Application Support. Run for all known profiles at launch and for the
+    /// selected profile whenever its decrypted cache is purged.
+    static func purgeLegacyPersistentCaches() {
+        purgeLegacyPersistentCache(profileID: UserProfileStore.defaultProfileID)
+        for profile in UserProfileStore.loadRegistry().profiles {
+            purgeLegacyPersistentCache(profileID: profile.id)
+        }
+    }
+
+    static func purgeLegacyPersistentCache(profileID: String) {
+        let root = UserProfileStore.storeDirectory(
+            profileID: profileID, machineRoot: AppStorageRoot.machineRoot) ?? AppStorageRoot.machineRoot
+        try? FileManager.default.removeItem(
+            at: root.appendingPathComponent("EngineImageCache", isDirectory: true))
     }
 
     /// PNG is read as-is (the engine's decoder ignores a PNG's rare
@@ -87,7 +149,8 @@ enum EngineImageTranscoder {
         }
     }
 
-    private static func cacheName(for path: String) -> String {
+    private static func cacheName(for path: String, storedReference: String?) -> String {
+        if let id = storedReference.flatMap(ManagedAssetStore.assetID(from:)) { return id }
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
         let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
