@@ -21,9 +21,6 @@ struct HumanizeDiff: Sendable, Equatable {
     /// Share of the rewrite that is new wording, 0...1.
     var changedShare: Double { totalWeight > 0 ? Double(newWeight) / Double(totalWeight) : 0 }
 
-    /// New wording ranges, matching inserted ranges.
-    var ranges: [NSRange] { inserted }
-
     /// Compares each rewritten part with the draft text it came from. Parts
     /// are rewritten independently, so pairing them keeps every comparison
     /// small and word-level even on a long document. A part with no segment
@@ -136,9 +133,9 @@ struct HumanizeDiff: Sendable, Equatable {
                 for k in 1..<(groups.count - 1) where groups[k].same {
                     let run = groups[k].kept * 2
                     let p = groups[k - 1], q = groups[k + 1]
-                    let pWeight = p.deleted > 0 && p.inserted > 0 ? min(p.deleted, p.inserted) : max(p.deleted, p.inserted)
-                    let qWeight = q.deleted > 0 && q.inserted > 0 ? min(q.deleted, q.inserted) : max(q.deleted, q.inserted)
-                    guard run < pWeight, run < qWeight else { continue }
+                    // The publisher's rule, kept as-is: the larger side of
+                    // each neighboring change sets the bar.
+                    guard run <= max(p.deleted, p.inserted), run <= max(q.deleted, q.inserted) else { continue }
                     groups[k].ops = groups[k].ops.flatMap { op -> [Op] in
                         guard case .same(let i, let j) = op else { return [op] }
                         return [.delete(i), .insert(j)]
@@ -189,7 +186,7 @@ struct HumanizeDiff: Sendable, Equatable {
     private static func tokens(_ text: String) -> [Token] {
         // Grouped numbers (1,250 / 10:30 / 3.5) stay one unit; Han and kana are
         // individual units; composed Unicode words keep their UTF-16 ranges.
-        matches(#"\d+(?:[.,:/]\d+)+|[\p{Han}\p{Hiragana}\p{Katakana}]|[\p{L}\p{M}\p{N}]+(?:['’][\p{L}\p{M}\p{N}]+)*|[^\s]"#,
+        matches(#"\d+(?:[.,:/]\d+)+|[\p{Han}\p{Hiragana}\p{Katakana}]|[\p{L}\p{M}\p{N}]+(?:['\u2019][\p{L}\p{M}\p{N}]+)*|[^\s]"#,
                 in: text)
     }
 

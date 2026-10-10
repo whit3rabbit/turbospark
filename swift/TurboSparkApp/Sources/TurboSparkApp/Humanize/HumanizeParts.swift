@@ -145,29 +145,3 @@ actor HumanizeTokenCounter {
         return try tokenizer!.count(draft.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }
-
-/// Context calculation for a draft's prompt, draft tokens, and automatic output reservation.
-struct HumanizeContextBudget: Equatable, Sendable {
-    var draftTokens: Int
-    var outputLimit: Int?
-
-    var outputTokens: Int {
-        let desired = max(256, draftTokens * 5 / 2)
-        if let limit = outputLimit {
-            return min(limit, desired)
-        }
-        return min(2048, desired)
-    }
-
-    var estimatedTotal: Int {
-        draftTokens + HumanizePlanner.promptReserve + outputTokens
-    }
-
-    var fits: Bool {
-        estimatedTotal <= HumanizePlanner.window
-    }
-
-    var fraction: Double {
-        min(1.0, Double(estimatedTotal) / Double(HumanizePlanner.window))
-    }
-}

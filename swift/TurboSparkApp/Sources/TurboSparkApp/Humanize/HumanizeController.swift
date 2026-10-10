@@ -37,7 +37,11 @@ final class HumanizeController: ObservableObject {
     }
 
     @Published var draft = ""
-    @Published var outputLimit: Int?
+    /// Saved on every change; a run uses the rules as they were when it started.
+    @Published var rules: HumanizeRules {
+        didSet { if rules != oldValue { rulesStore.save(rules) } }
+    }
+    private let rulesStore: HumanizeRulesStore
     @Published private(set) var rewrite = ""
     /// The draft the current rewrite was made from, for highlighting.
     @Published private(set) var sourceDraft = ""
@@ -53,7 +57,8 @@ final class HumanizeController: ObservableObject {
     }
     /// Nil until every part of a finished rewrite reported its audit.
     @Published private(set) var checks: HumanizeChecks?
-    var audit: HumanizeChecks? { checks }
+    /// Nil until a rewrite finishes every part.
+    @Published private(set) var ruleFindings: HumanizeRuleFindings?
     @Published private(set) var stats: HumanizeStats?
     @Published private(set) var stopReason: GenerationResult.StopReason?
     @Published private(set) var phase: Phase = .idle
@@ -87,6 +92,11 @@ final class HumanizeController: ObservableObject {
         return try await TurboSparkSession(modelPath: path, options: options)
     }
 
+    init(defaults: UserDefaults = .standard) {
+        rulesStore = HumanizeRulesStore(defaults: defaults)
+        rules = rulesStore.load()
+    }
+
     private var engine: HumanizeEngine?
     private var enginePath: String?
     private var operationPath: String?
@@ -100,18 +110,10 @@ final class HumanizeController: ObservableObject {
         guard countedDraft == draft, countedPath == installedPath() else { return nil }
         return plan
     }
-    /// Budget calculation matching the current draft plan.
-    var currentBudget: HumanizeContextBudget? {
-        guard let plan = currentPlan else { return nil }
-        return HumanizeContextBudget(draftTokens: plan.tokens, outputLimit: outputLimit)
-    }
-    var canRun: Bool {
-        guard isInstalled && hasDraft && !isBusy else { return false }
-        if let budget = currentBudget {
-            return budget.fits
-        }
-        return currentPlan?.fits != false
-    }
+    /// Fit is judged per part, not on the whole draft: a long draft is
+    /// rewritten in parts, so only a single passage too long for the window
+    /// is refused.
+    var canRun: Bool { isInstalled && hasDraft && !isBusy && currentPlan?.fits != false }
 
     func usesModel(at path: String) -> Bool {
         enginePath == path || operationPath == path
@@ -176,9 +178,8 @@ final class HumanizeController: ObservableObject {
         // against the one engine.
         phase = engine == nil ? .loadingModel : .running
         operationPath = installedPath()
-        let source = draft
-        let limit = outputLimit
-        task = Task { [weak self] in await self?.perform(draft: source, limit: limit) }
+        let source = draft, rules = rules
+        task = Task { [weak self] in await self?.perform(draft: source, rules: rules) }
     }
 
     /// Stops the rewrite in flight. The partial text stays visible.
@@ -195,12 +196,13 @@ final class HumanizeController: ObservableObject {
         engineLoaded = false
     }
 
-    private func perform(draft: String, limit: Int?) async {
+    private func perform(draft: String, rules: HumanizeRules) async {
         errorMessage = nil
         rewrite = ""
         sourceDraft = draft
         segments = []
         checks = nil
+        ruleFindings = nil
         stats = nil
         stopReason = nil
         prefillProgress = nil
@@ -214,12 +216,11 @@ final class HumanizeController: ObservableObject {
             countedDraft = draft
             countedPath = path
             // Refused before mapping 12 GB of weights, and never truncated.
-            let budget = HumanizeContextBudget(draftTokens: plan.tokens, outputLimit: limit)
-            guard budget.fits else { throw HumanizeError.passageTooLong }
+            guard plan.fits else { throw HumanizeError.passageTooLong }
             let engine = try await ensureEngine()
             try Task.checkCancellation()
             phase = .running
-            try await rewrite(plan.parts, of: draft, limit: limit, with: engine)
+            try await rewrite(plan.parts, of: draft, rules: rules, with: engine)
         } catch is CancellationError {
             // A stopped rewrite is partial, so its audit would report numbers
             // "missing" that were never reached.
@@ -232,13 +233,19 @@ final class HumanizeController: ObservableObject {
 
     /// Rewrites each part in order. Finished parts stay on screen when a later
     /// one fails or is stopped.
-    private func rewrite(_ parts: [HumanizePart], of draft: String, limit: Int?, with engine: HumanizeEngine) async throws {
+    private func rewrite(
+        _ parts: [HumanizePart], of draft: String, rules: HumanizeRules, with engine: HumanizeEngine
+    ) async throws {
         let source = draft as NSString
         var output = ""
         var combined = HumanizeChecks()
         var audited = true
         var totals = HumanizeStats()
         var truncated = false
+        var finished = true
+        // One seed for every part: repeatable output means the same draft
+        // gives the same rewrite, part for part.
+        let options = HumanizeOptions(seed: rules.fixedSeed ? rules.seed : nil)
         for (index, part) in parts.enumerated() {
             if index > 0 {
                 // The draft's own break between two parts, kept as written.
@@ -250,7 +257,8 @@ final class HumanizeController: ObservableObject {
             let prefix = output
             var streamed = ""
             var result: GenerationResult?
-            let options = HumanizeOptions(maxNewTokens: limit.map(UInt32.init))
+            // Parts are sized so the engine's automatic budget (2.5x, capped
+            // at 2,048) always covers them; no per-call limit is sent.
             for try await event in engine.humanize(source.substring(with: part.range), options: options) {
                 try Task.checkCancellation()
                 switch event {
@@ -271,11 +279,14 @@ final class HumanizeController: ObservableObject {
             if Task.isCancelled || result?.stopReason == .cancelled { throw CancellationError() }
             guard let result else {
                 audited = false
+                finished = false
                 break
             }
             // The result's content is authoritative; the stream is only its
-            // progressive view.
-            let text = result.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            // progressive view. Replacements apply before the segment is
+            // recorded, so highlights line up with the text the user copies.
+            let text = rules.applyReplacements(
+                to: result.content.trimmingCharacters(in: .whitespacesAndNewlines))
             let start = (output as NSString).length
             output += text
             rewrite = output
@@ -288,6 +299,7 @@ final class HumanizeController: ObservableObject {
             stopReason = truncated ? .maxTokens : result.stopReason
         }
         checks = audited ? combined : nil
+        if finished { ruleFindings = rules.check(draft: draft, rewrite: output) }
     }
 
     private func ensureEngine() async throws -> HumanizeEngine {

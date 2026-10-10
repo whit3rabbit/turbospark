@@ -12,7 +12,7 @@ final class HumanizeRealModelTests: XCTestCase {
         guard let dir = ProcessInfo.processInfo.environment["TURBOSPARK_HUMANIZER_INSTALL_DIR"]
         else { throw XCTSkip("set TURBOSPARK_HUMANIZER_INSTALL_DIR to run on the real model") }
 
-        let controller = HumanizeController()
+        let controller = HumanizeController(defaults: UserDefaults(suiteName: "humanize.real.\(UUID().uuidString)")!)
         controller.installedPath = { dir }
         controller.draft = """
             In conclusion, it is important to note that our team shipped 37 fixes across \
@@ -29,7 +29,7 @@ final class HumanizeRealModelTests: XCTestCase {
         XCTAssertNil(controller.errorMessage)
         XCTAssertEqual(controller.stopReason, .eos)
         XCTAssertGreaterThan(controller.rewrite.split(separator: " ").count, 10)
-        let audit = try XCTUnwrap(controller.audit)
+        let audit = try XCTUnwrap(controller.checks)
         print("REWRITE: \(controller.rewrite)")
         print("AUDIT: \(audit)")
 
@@ -49,7 +49,7 @@ final class HumanizeRealModelTests: XCTestCase {
         guard let dir = ProcessInfo.processInfo.environment["TURBOSPARK_HUMANIZER_INSTALL_DIR"]
         else { throw XCTSkip("set TURBOSPARK_HUMANIZER_INSTALL_DIR to run on the real model") }
 
-        let controller = HumanizeController()
+        let controller = HumanizeController(defaults: UserDefaults(suiteName: "humanize.real.\(UUID().uuidString)")!)
         controller.installedPath = { dir }
         controller.draft = String(repeating: "The committee reviewed 14 proposals and approved 3 of them. ", count: 12)
         controller.run()
@@ -63,7 +63,7 @@ final class HumanizeRealModelTests: XCTestCase {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         XCTAssertEqual(controller.stopReason, .cancelled)
-        XCTAssertNil(controller.audit, "a partial rewrite must not be audited")
+        XCTAssertNil(controller.checks, "a partial rewrite must not be audited")
         XCTAssertFalse(controller.rewrite.isEmpty)
         XCTAssertTrue(controller.canRun, "Stop must leave the controller reusable")
         controller.unload()
