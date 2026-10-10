@@ -459,6 +459,30 @@ mod tests {
     }
 
     #[test]
+    fn batch_attention_layout_refuses_manifest_scale_query_heads_before_allocation() {
+        // A hand-built manifest controls `numHeads`. Layout sizing is pure
+        // arithmetic, so this proves the refusal happens before any Metal
+        // buffer exists (no context is created here).
+        let mut arch = model_io::known_architecture(ModelFamily::Llama);
+        arch.num_experts = 0;
+        arch.num_layers = 1;
+        arch.full_attention_layer_mask = vec![1];
+        arch.full_head_dim = 2;
+        arch.num_heads = 2_000_000;
+
+        let error = batch_attention_layout(&arch).expect_err("2M query heads must be refused");
+        assert!(
+            matches!(&error, RealForwardError::Unsupported(msg) if msg.contains("ExceedsBudget")),
+            "unexpected error: {error:?}"
+        );
+
+        // A real shape still sizes.
+        arch.num_heads = 32;
+        arch.full_head_dim = 128;
+        assert!(batch_attention_layout(&arch).expect("sizes").is_some());
+    }
+
+    #[test]
     fn batch_attention_buffers_match_shared_layout_byte_lengths() {
         let context = gpu::MetalContext::new().expect("Metal device");
         let layout = gpu::BatchAttentionScratchLayout::new(32, 128)

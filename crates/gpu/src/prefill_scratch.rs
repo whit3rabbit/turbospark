@@ -15,6 +15,17 @@ const U32_SIZE: usize = 4;
 const FP32_SIZE: usize = 4;
 const ROW_PLAN_U32_FIELDS: usize = 4;
 
+/// Upper bound on the summed batch-attention scratch a layout may request.
+///
+/// `num_q_heads` comes from an untrusted manifest, and the buffers scale with
+/// it linearly (the split-KV partials by `capacity * max_chunks * (head_dim + 2)`
+/// FP32 values per head). Checked arithmetic only stops wraparound, not a
+/// representable multi-gigabyte request, and `MetalContext::new_output_buffer`
+/// cannot report an allocation failure. 256 MiB is about 14x the footprint of
+/// the largest supported shape (128 heads at head_dim 128), and still holds
+/// 128 heads at the 512-element head-dimension ceiling.
+pub const MAX_BATCH_ATTENTION_SCRATCH_BYTES: usize = 256 * 1024 * 1024;
+
 /// Byte layout for dense-Llama multi-row attention scratch buffers.
 ///
 /// The layout reserves the existing prefill row capacity and the maximum
@@ -41,6 +52,11 @@ pub enum BatchAttentionScratchLayoutError {
     InvalidHeadDimension,
     /// A required byte count overflowed `usize`.
     SizeOverflow,
+    /// The summed buffers exceed [`MAX_BATCH_ATTENTION_SCRATCH_BYTES`].
+    ExceedsBudget {
+        /// Bytes the layout would allocate.
+        requested: usize,
+    },
 }
 
 impl BatchAttentionScratchLayout {
@@ -73,6 +89,12 @@ impl BatchAttentionScratchLayout {
             .and_then(|bytes| bytes.checked_add(row_plan_bytes))
             .and_then(|bytes| bytes.checked_add(partial_state_bytes))
             .ok_or(BatchAttentionScratchLayoutError::SizeOverflow)?;
+        // Refuse before any caller can reach a Metal allocation.
+        if total_bytes > MAX_BATCH_ATTENTION_SCRATCH_BYTES {
+            return Err(BatchAttentionScratchLayoutError::ExceedsBudget {
+                requested: total_bytes,
+            });
+        }
 
         Ok(Self {
             capacity,

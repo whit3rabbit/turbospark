@@ -4,7 +4,8 @@
 
 use turbospark_gpu::{
     BatchAttentionScratchLayout, BatchAttentionScratchLayoutError, MetalContext,
-    PrefillChunkScratchBuffers, PrefillChunkScratchLayout, MAX_BATCH_ROWS,
+    PrefillChunkScratchBuffers, PrefillChunkScratchLayout, MAX_BATCH_ATTENTION_SCRATCH_BYTES,
+    MAX_BATCH_ROWS,
 };
 
 #[test]
@@ -65,6 +66,36 @@ fn batch_attention_layout_refuses_size_overflow() {
         BatchAttentionScratchLayout::new(usize::MAX, 512),
         Err(BatchAttentionScratchLayoutError::SizeOverflow)
     );
+}
+
+#[test]
+fn batch_attention_layout_refuses_manifest_scale_query_heads() {
+    // The reported case: 2M query heads at head_dim 2 is ~8.4 GB of scratch
+    // from a tiny install. It is representable, so only the budget stops it.
+    assert_eq!(
+        BatchAttentionScratchLayout::new(2_000_000, 2),
+        Err(BatchAttentionScratchLayoutError::ExceedsBudget {
+            requested: 8_448_000_256
+        })
+    );
+}
+
+#[test]
+fn batch_attention_layout_budget_admits_largest_supported_shapes() {
+    // Real shapes must keep working, including the head-dimension ceiling.
+    for (heads, head_dim) in [(32, 128), (64, 128), (128, 128), (128, 512)] {
+        let layout = BatchAttentionScratchLayout::new(heads, head_dim).unwrap();
+        assert!(layout.total_bytes() <= MAX_BATCH_ATTENTION_SCRATCH_BYTES);
+    }
+    // The boundary is exact: one more head than fits is refused.
+    let at_limit = (1..).find(|&h| BatchAttentionScratchLayout::new(h, 512).is_err());
+    let first_refused = at_limit.unwrap();
+    assert!(first_refused > 128);
+    assert!(matches!(
+        BatchAttentionScratchLayout::new(first_refused, 512),
+        Err(BatchAttentionScratchLayoutError::ExceedsBudget { .. })
+    ));
+    assert!(BatchAttentionScratchLayout::new(first_refused - 1, 512).is_ok());
 }
 
 fn dense_arch() -> model_io::ArchConfig {
