@@ -35,6 +35,41 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 /// Maximum list size accepted by the default metadata validator.
 pub const MAX_HUB_PAGE_ENTRIES: u32 = 1_000;
+
+/// Repository-wide cap on fallback `HEAD` size requests for one
+/// `repo_variants` call. The metadata validator admits 10,000 siblings, so
+/// without this a hostile or nonconforming listing that omits sizes turns one
+/// call into thousands of serial blocking requests. Files past the budget keep
+/// an unknown size.
+const MAX_VARIANT_SIZE_HEADS: usize = 64;
+
+/// Failed fallback `HEAD` requests tolerated before the rest are skipped. Each
+/// request can block for the client timeout, so a dead or hostile host must
+/// not be asked once per remaining file.
+const MAX_VARIANT_SIZE_HEAD_FAILURES: usize = 3;
+
+/// Outbound-request budget shared by every variant group of one listing.
+struct SizeHeadBudget {
+    remaining: usize,
+    failures: usize,
+}
+
+impl SizeHeadBudget {
+    fn new() -> Self {
+        Self {
+            remaining: MAX_VARIANT_SIZE_HEADS,
+            failures: 0,
+        }
+    }
+
+    fn try_take(&mut self) -> bool {
+        if self.remaining == 0 || self.failures >= MAX_VARIANT_SIZE_HEAD_FAILURES {
+            return false;
+        }
+        self.remaining -= 1;
+        true
+    }
+}
 /// Page size for the on-demand trending feed.
 pub const DEFAULT_TRENDING_LIMIT: u32 = 30;
 const SEARCH_FRESHNESS: Duration = Duration::from_secs(15 * 60);
@@ -769,8 +804,15 @@ impl<'a> HubClient<'a> {
             .collect();
 
         let mut variants = Vec::new();
+        let mut budget = SizeHeadBudget::new();
         for group in group_variants(&repo_files) {
-            variants.push(self.enrich_variant(&resolved_repo, group, &validator, probe));
+            variants.push(self.enrich_variant(
+                &resolved_repo,
+                group,
+                &validator,
+                probe,
+                &mut budget,
+            ));
         }
         Ok(variants)
     }
@@ -781,25 +823,29 @@ impl<'a> HubClient<'a> {
         group: crate::quant::VariantFiles,
         validator: &HubMetadataValidator,
         probe: Option<&ProbeReport>,
+        budget: &mut SizeHeadBudget,
     ) -> HubGgufVariant {
         let matching_probe =
             probe.filter(|candidate| probe_matches_variant(repo, &group, candidate));
         let group_files = file_names(&group.files);
-        let mut files = group.files;
-        for file in &mut files {
-            if file.size.is_none() {
-                file.size = self
-                    .client
-                    .content_length(&repo.file_url(&file.name))
-                    .ok()
-                    .flatten();
-            }
-        }
-
         let complete = matches!(
             &group.shard_set,
             ShardSetStatus::SingleFile | ShardSetStatus::Complete { .. }
         );
+        let mut files = group.files;
+        // An incomplete or inconsistent group is disabled whatever its sizes
+        // are, so spending requests on it only amplifies hostile listings.
+        if complete {
+            for file in &mut files {
+                if file.size.is_some() || !budget.try_take() {
+                    continue;
+                }
+                match self.client.content_length(&repo.file_url(&file.name)) {
+                    Ok(size) => file.size = size,
+                    Err(_) => budget.failures += 1,
+                }
+            }
+        }
         let total_result = if complete {
             checked_variant_total(&files, validator)
         } else {

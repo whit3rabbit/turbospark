@@ -457,3 +457,159 @@ fn a_probe_refusal_disables_the_variant_with_its_reason() {
     assert_eq!(q5.fit.verdict, "unknown (probe it)");
     assert_eq!(server.join().expect("fixture server joins").len(), 1);
 }
+
+/// Serves `metadata` for the listing GET and `head_status` for every HEAD,
+/// counting each. Unlike `fixture_server` it does not need the request count
+/// up front, so a regression that sends extra HEADs is counted, not hidden.
+fn counting_server(
+    metadata: String,
+    head_size: Option<u64>,
+    head_status: u16,
+) -> (
+    String,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    impl FnOnce(),
+) {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind counting server");
+    let address = listener.local_addr().expect("counting address");
+    let heads = Arc::new(AtomicUsize::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (heads_t, stop_t) = (heads.clone(), stop.clone());
+    let handle = thread::spawn(move || {
+        for stream in listener.incoming() {
+            if stop_t.load(Ordering::SeqCst) {
+                break;
+            }
+            let mut stream = stream.expect("accept");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("set request timeout");
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().expect("clone stream"))
+                .read_line(&mut request)
+                .expect("read request line");
+            let wire = if request.starts_with("HEAD ") {
+                heads_t.fetch_add(1, Ordering::SeqCst);
+                match head_size {
+                    Some(size) if head_status == 200 => format!(
+                        "HTTP/1.1 200 OK\r\nx-linked-size: {size}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    ),
+                    _ => format!(
+                        "HTTP/1.1 {head_status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    ),
+                }
+            } else {
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    metadata.len(),
+                    metadata
+                )
+            };
+            stream.write_all(wire.as_bytes()).expect("write response");
+        }
+    });
+    let shutdown = move || {
+        stop.store(true, Ordering::SeqCst);
+        // Wake the blocking accept so the loop sees the stop flag.
+        let _ = std::net::TcpStream::connect(address);
+        handle.join().expect("counting server joins");
+    };
+    (format!("http://{address}"), heads, shutdown)
+}
+
+fn shard_names(count: usize) -> Vec<String> {
+    (1..=count)
+        .map(|index| format!("model-Q4_K_M-{index:05}-of-{count:05}.gguf"))
+        .collect()
+}
+
+#[test]
+fn unsized_incomplete_group_costs_no_head_requests() {
+    use std::sync::atomic::Ordering;
+    let _endpoint_lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // 200 files of a 201-shard set: incomplete, so never installable.
+    let files = shard_names(201).into_iter().take(200).collect::<Vec<_>>();
+    let (endpoint, heads, shutdown) = counting_server(
+        metadata(files.iter().map(|name| unlisted_file(name)).collect()),
+        Some(1),
+        200,
+    );
+    let (_reset, client) = client_for(endpoint);
+    let hub = hub_for(&client);
+
+    let variants = hub
+        .repo_variants(&RepoRef::new("owner/model", REVISION))
+        .expect("variants");
+    shutdown();
+
+    assert!(matches!(
+        variants[0].installability,
+        VariantInstallability::IncompleteShardSet { .. }
+    ));
+    assert_eq!(heads.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn size_fallback_stops_at_the_repository_request_budget() {
+    use std::sync::atomic::Ordering;
+    let _endpoint_lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let files = shard_names(100);
+    let (endpoint, heads, shutdown) = counting_server(
+        metadata(files.iter().map(|name| unlisted_file(name)).collect()),
+        Some(1),
+        200,
+    );
+    let (_reset, client) = client_for(endpoint);
+    let hub = hub_for(&client);
+
+    let variants = hub
+        .repo_variants(&RepoRef::new("owner/model", REVISION))
+        .expect("variants");
+    shutdown();
+
+    let q4 = variant(&variants, "Q4_K_M");
+    assert_eq!(heads.load(Ordering::SeqCst), 64);
+    assert_eq!(
+        q4.files.iter().filter(|file| file.size.is_some()).count(),
+        64
+    );
+    assert_eq!(q4.total_bytes, None);
+    assert!(matches!(
+        q4.installability,
+        VariantInstallability::UnknownSize { .. }
+    ));
+}
+
+#[test]
+fn size_fallback_gives_up_after_repeated_head_failures() {
+    use std::sync::atomic::Ordering;
+    let _endpoint_lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let files = shard_names(20);
+    let (endpoint, heads, shutdown) = counting_server(
+        metadata(files.iter().map(|name| unlisted_file(name)).collect()),
+        None,
+        500,
+    );
+    let (_reset, client) = client_for(endpoint);
+    let hub = hub_for(&client);
+
+    let variants = hub
+        .repo_variants(&RepoRef::new("owner/model", REVISION))
+        .expect("variants");
+    shutdown();
+
+    assert_eq!(heads.load(Ordering::SeqCst), 3);
+    assert!(matches!(
+        variant(&variants, "Q4_K_M").installability,
+        VariantInstallability::UnknownSize { .. }
+    ));
+}
