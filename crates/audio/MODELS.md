@@ -275,7 +275,7 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `llama` | Source | 63 | SNAC TTS wrapper over generic Llama backbone | [Family port](src/tts/llama/README.md) |
 | `longcat_audiodit` | README | 39 | Aliases `audiodit`, `longcat` | None |
 | `megatts3` | PyTorch (not in mlx-audio) | None | Zero-shot voice cloning; staged port with PyTorch parity fixtures | [Partial family port](src/tts/megatts3/README.md) (DiT, sampler, text encoder, duration LM, aligner, G2P, English frontend subset, `MegaTts3` pipeline) over the [WavVAE codec](src/codec/wavvae/README.md); whole pipeline matches the reference on real weights; catalog, runtime, FFI, server, Swift not wired |
-| `melotts` | README | 27 | Default task-qualified family | None |
+| `melotts` | README | 27 | Default task-qualified family | [Family port](src/tts/melotts/README.md); the g2p intake is caller-owned |
 | `moss_tts` | README | 44 | Delay-pattern and local-transformer variants | [Family port](src/tts/moss_tts/README.md) over the shared [lm qwen3 backbone](src/lm/README.md); the legacy local-transformer checkpoints are refused |
 | `moss_tts_delay` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (delay-pattern variant) |
 | `moss_tts_local` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (v1.5 local-transformer variant) |
