@@ -4,6 +4,13 @@ Text-to-Speech (TTS) models synthesize high-fidelity natural speech from input t
 
 ## Implemented Model Families
 
+### Qwen3-TTS (native Swift MLX)
+
+[Qwen3-TTS in Audio](../QWEN3_TTS.md) covers Base voice cloning,
+CustomVoice speech, VoiceDesign, supported checkpoints, and verification.
+This provider lives in `swift/TurboSparkApp/Vendor/Qwen3TTS`; it is not a Rust
+inference module in `crates/audio/src/tts`.
+
 ### Kokoro (82M)
 
 - **In-Crate Directory**: [`crates/audio/src/tts/kokoro/`](../../crates/audio/src/tts/kokoro/)
