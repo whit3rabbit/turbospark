@@ -631,7 +631,8 @@ Send binary frames of 16 kHz mono PCM (`s16le`), then send text frame
 
 ### POST /v1/audio/speech
 
-Synthesizes speech using Kokoro-82M (English, voice `af_heart`).
+Synthesizes speech using Kokoro-82M (English, voice `af_heart`) or bridged voice
+cloning models (e.g. Qwen3-TTS).
 
 | Field | Type | Notes |
 |---|---|---|
@@ -641,6 +642,10 @@ Synthesizes speech using Kokoro-82M (English, voice `af_heart`).
 | `speed` | number | Speed multiplier between 0.5 and 2.0 (default 1.0) |
 | `response_format` | string | `wav` (default) or `pcm` |
 | `stream` | boolean | Chunked PCM delivery (requires `response_format: pcm`) |
+| `language` | string | Optional language tag |
+| `reference_audio` | string | Optional base64-encoded WAV/PCM audio for voice cloning |
+| `reference_text` | string | Optional transcript of reference audio |
+| `instruction` | string | Optional style, emotion, or pacing instruction |
 
 ### POST /v1/audio/generate
 

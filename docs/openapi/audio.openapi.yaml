@@ -108,7 +108,7 @@ paths:
         '429': { $ref: '#/components/responses/Busy' }
   /v1/audio/speech:
     post:
-      summary: Synthesize speech (Kokoro, English, voice af_heart)
+      summary: Synthesize speech (Kokoro or bridged voice cloning models)
       requestBody:
         required: true
         content:
@@ -340,6 +340,10 @@ components:
         speed: { type: number, minimum: 0.5, maximum: 2.0, default: 1.0 }
         response_format: { type: string, enum: [wav, pcm], default: wav, description: pcm is 16-bit little-endian mono. }
         stream: { type: boolean, default: false, description: Requires pcm. }
+        language: { type: string, description: Language tag for synthesis. }
+        reference_audio: { type: string, description: Base64-encoded reference audio clip for voice cloning. }
+        reference_text: { type: string, description: Transcript of reference audio clip. }
+        instruction: { type: string, description: Emotion, style, or delivery guidance. }
     GenerateRequest:
       type: object
       required: [model, prompt]

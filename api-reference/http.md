@@ -201,7 +201,8 @@ Send raw binary 16 kHz mono PCM frames (`s16le`), then send text frame
 
 ### POST /v1/audio/speech
 
-Synthesizes speech using Kokoro-82M (English, voice `af_heart`).
+Synthesizes speech using Kokoro-82M (English, voice `af_heart`) or bridged voice
+cloning models (e.g. Qwen3-TTS).
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/speech \
@@ -214,6 +215,9 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   }' \
   -o speech.wav
 ```
+
+For voice cloning models, optional fields include `reference_audio` (base64-encoded
+WAV/PCM), `reference_text`, `instruction`, and `language`.
 
 Output: 24 kHz mono audio (`wav` or raw `pcm`).
 
