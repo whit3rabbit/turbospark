@@ -207,6 +207,79 @@ async fn suffix_is_refused() {
     assert!(text.contains("suffix"), "{text}");
 }
 
+/// `ScriptedChatModel::model_id` is the constant `"scripted"`, so a test
+/// with two distinguishable backends needs a wrapper that names them; the
+/// same shape as `registry.rs`'s `Named`.
+struct NamedCompletion(ScriptedChatModel, String);
+
+impl ChatModel for NamedCompletion {
+    fn tokenizer(&self) -> &MfTokenizer {
+        self.0.tokenizer()
+    }
+    fn vocab_size(&self) -> usize {
+        self.0.vocab_size()
+    }
+    fn max_context(&self) -> u32 {
+        self.0.max_context()
+    }
+    fn model_id(&self) -> &str {
+        &self.1
+    }
+    fn with_producer(
+        &self,
+        f: &mut dyn FnMut(&mut dyn LogitProducer) -> Result<RawDecodeResult, RuntimeError>,
+    ) -> Result<RawDecodeResult, RuntimeError> {
+        self.0.with_producer(f)
+    }
+}
+
+async fn spawn_two_model_server() -> String {
+    let named = |id: &str| {
+        let tok = load_tokenizer();
+        Arc::new(NamedCompletion(
+            ScriptedChatModel::new(tok, 4096, Vec::new()),
+            id.to_string(),
+        )) as Arc<dyn ChatModel>
+    };
+    let registry: Arc<dyn turbospark_server::registry::ModelRegistry> = Arc::new(
+        turbospark_server::registry::StaticRegistry::new(vec![
+            named("alpha.gturbo"),
+            named("beta.gturbo"),
+        ])
+        .expect("test model ids are unique"),
+    );
+    let router = build_router(registry);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
+/// **A REQUEST THIS ENDPOINT REFUSES IS REFUSED BEFORE MODEL RESOLUTION.**
+/// Resolution is the side-effectful step: on a server with request-triggered
+/// loading enabled it can open an installed model, and a request the shape
+/// check was always going to reject must not be able to cause that. Two
+/// attached models make an unknown name a routing 404, so a `suffix` 400
+/// coming back instead is the observable that the cheap validation runs
+/// first -- reorder the handler and this test fails.
+#[tokio::test]
+async fn an_invalid_request_is_refused_before_model_resolution() {
+    let base = spawn_two_model_server().await;
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/completions"))
+        .json(&serde_json::json!({
+            "model": "neither-of-those", "prompt": "hi", "suffix": " there"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let text = response.text().await.unwrap();
+    assert!(text.contains("suffix"), "{text}");
+}
+
 #[tokio::test]
 async fn n_greater_than_one_is_refused() {
     let base = spawn_server(Vec::new()).await;

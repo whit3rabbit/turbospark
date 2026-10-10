@@ -329,6 +329,36 @@ public enum ServerImageEvent: Decodable, Sendable {
     }
 }
 
+public struct ServerSpeechRequest: Decodable, Sendable {
+    public let model: String
+    public let text: String
+    public let voice: String
+    public let speed: Float
+    public let language: String?
+    public let referenceAudio: String?
+    public let referenceText: String?
+    public let instruction: String?
+}
+
+public enum ServerSpeechEvent: Decodable, Sendable {
+    case start(id: UInt64, request: ServerSpeechRequest)
+    case cancel(id: UInt64)
+
+    private enum CodingKeys: String, CodingKey { case kind, id, request }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try values.decode(String.self, forKey: .kind)
+        let id = try values.decode(UInt64.self, forKey: .id)
+        switch kind {
+        case "start": self = .start(id: id, request: try values.decode(ServerSpeechRequest.self, forKey: .request))
+        case "cancel": self = .cancel(id: id)
+        default: throw DecodingError.dataCorruptedError(
+            forKey: .kind, in: values, debugDescription: "unknown speech event")
+        }
+    }
+}
+
 public final class TurboSparkServer: @unchecked Sendable {
     private struct Handle: @unchecked Sendable { let raw: OpaquePointer }
     private let handle: Handle
@@ -446,6 +476,57 @@ public final class TurboSparkServer: @unchecked Sendable {
             }
         } else {
             throw TurboSparkError(code: .invalidArgument, message: "image result is empty")
+        }
+    }
+
+    public func attachAudioSpeechModel(id: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        try id.withCString { try check(ts_server_attach_audio_speech_model(handle.raw, $0)) }
+    }
+
+    public func detachAudioSpeechModel() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        try check(ts_server_detach_audio_speech_model(handle.raw))
+    }
+
+    public func pollAudioSpeechEvents(max: UInt32 = 32) -> [ServerSpeechEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !stopped,
+              let json = try? takeString({ ts_server_poll_audio_speech_events_json(handle.raw, max, $0) }),
+              let rows = try? decode([LossySpeechEvent].self, from: json)
+        else { return [] }
+        return rows.compactMap(\.event)
+    }
+
+    struct LossySpeechEvent: Decodable {
+        let event: ServerSpeechEvent?
+        init(from decoder: Decoder) throws {
+            event = try? ServerSpeechEvent(from: decoder)
+        }
+    }
+
+    public func completeAudioSpeechRequest(
+        id: UInt64, samples: [Float]?, sampleRate: UInt32 = 24_000, error: String? = nil
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try checkRunning()
+        if let error {
+            try error.withCString {
+                try check(ts_server_complete_audio_speech_request(handle.raw, id, nil, 0, sampleRate, $0))
+            }
+        } else if let samples {
+            try samples.withUnsafeBufferPointer { buf in
+                try check(ts_server_complete_audio_speech_request(
+                    handle.raw, id, buf.baseAddress, samples.count, sampleRate, nil))
+            }
+        } else {
+            throw TurboSparkError(code: .invalidArgument, message: "audio speech result is empty")
         }
     }
 

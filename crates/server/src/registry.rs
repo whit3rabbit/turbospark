@@ -179,6 +179,17 @@ pub trait ModelRegistry: Send + Sync {
 /// single-capable-model fallback. The loader is consulted only for a named request that does
 /// not already identify an attached model. After a successful load, resolution goes back
 /// through the wrapped registry so host-owned attachment and request-use state are preserved.
+///
+/// Whether the loader is consulted AT ALL is the host's decision: consult this type only
+/// when request-triggered loading is explicitly enabled, because resolution here is a side
+/// effect (an installed model may be opened and attached) that an unauthenticated inference
+/// request should not be able to cause by default.
+///
+/// **NOTHING HERE BOUNDS CUMULATIVE RESIDENCY.** Every successful `load` attaches a model
+/// that stays resident until the host detaches it. The bounded-resolution executor and the
+/// loader's own single-flight coalescing limit concurrent work, not how many DISTINCT models
+/// a SEQUENCE of requests may open; a host that enables this must gate the loader itself
+/// (an opt-in flag, a residency budget, idle unloading) at its own registry.
 pub struct ModelLoaderRegistry {
     registry: Arc<dyn ModelRegistry>,
     loader: Arc<dyn ModelLoader>,

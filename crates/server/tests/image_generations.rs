@@ -160,3 +160,48 @@ async fn image_route_rejects_unsupported_options_and_missing_provider() {
         .unwrap()
         .contains("unsupported"));
 }
+
+#[tokio::test]
+async fn image_route_bounds_prompt_and_body_size() {
+    let fake = Arc::new(FakeImages::default());
+    let base = spawn(Some(Arc::clone(&fake))).await;
+    let client = reqwest::Client::new();
+    let post = |prompt: String| {
+        client
+            .post(format!("{base}/v1/images/generations"))
+            .bearer_auth("secret")
+            .json(&serde_json::json!({"model":"z-test", "prompt":prompt}))
+            .send()
+    };
+
+    let at_limit = post("x".repeat(turbospark_server::MAX_IMAGE_PROMPT_BYTES))
+        .await
+        .unwrap();
+    assert_eq!(at_limit.status(), 200);
+
+    // Over the prompt cap but inside the route body cap: handler rejects.
+    let over_prompt = post("x".repeat(turbospark_server::MAX_IMAGE_PROMPT_BYTES + 1))
+        .await
+        .unwrap();
+    assert_eq!(over_prompt.status(), 413);
+    let error: serde_json::Value = over_prompt.json().await.unwrap();
+    assert_eq!(error["error"]["param"], "prompt");
+
+    // Far past the route body cap but far under the shared 25 MiB cap: the
+    // route-level limit must apply, not the router-wide one.
+    // The padding field is unknown, so a handler that saw this body would
+    // answer 400; only the route-level body limit can produce 413.
+    let over_body = client
+        .post(format!("{base}/v1/images/generations"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({
+            "model":"z-test", "prompt":"a fox", "pad":"x".repeat(1024 * 1024)
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(over_body.status(), 413);
+
+    // Only the in-limit request reached the provider.
+    assert_eq!(fake.calls.lock().unwrap().len(), 1);
+}

@@ -177,7 +177,7 @@ pub use encoder_model::RealEncoderModel;
 pub use guardrails::GuardrailConfig;
 /// Shared application state for request handling.
 pub use handler::AppState;
-pub use images::{ImageError, ImageGenerateRequest, ImageProvider};
+pub use images::{ImageError, ImageGenerateRequest, ImageProvider, MAX_IMAGE_PROMPT_BYTES};
 /// Trait and canned test backend for chat generation.
 pub use model::{ChatModel, ScriptedChatModel};
 pub use queue::{GenerationPermit, GenerationQueue};
@@ -322,7 +322,15 @@ pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterO
         .route("/v1/chat/completions", post(handler::chat_completions))
         .route("/v1/completions", post(completions::completions))
         .route("/v1/responses", post(responses::responses))
-        .route("/v1/images/generations", post(images::generations))
+        // Image prompts are short text, so this route gets a far smaller body
+        // cap than the shared one below. A handler-level layer runs inside the
+        // router-wide layer and overrides it for this route only.
+        .route(
+            "/v1/images/generations",
+            post(images::generations).layer(axum::extract::DefaultBodyLimit::max(
+                images::MAX_IMAGE_REQUEST_BODY_BYTES,
+            )),
+        )
         .route("/v1/images/edits", post(images::edits_unsupported))
         .route("/v1/messages", post(messages::messages))
         .route("/v1/messages/count_tokens", post(messages::count_tokens))

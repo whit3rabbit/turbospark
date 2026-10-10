@@ -63,13 +63,24 @@ impl IdleSweep {
 
     /// Runs one policy evaluation. The registry releases its lock before the
     /// detached events are published to the host observer.
+    ///
+    /// **"OFF" MEANS "OFF FOR MODELS THE HOST ATTACHED", NOT "OFF FOR
+    /// EVERYTHING".** A model the host attached is a deliberate act no
+    /// timer undoes. A model an HTTP request caused to open (request-loaded,
+    /// `on_demand`) is bounded residency the SERVER took on at a client's
+    /// naming, so even the default policy releases those after
+    /// [`DEFAULT_IDLE_TTL`] -- which is what keeps an opted-in
+    /// request-loading server from ratcheting toward its model-count cap on
+    /// one-time names.
     pub(crate) fn sweep_once(&self) -> Vec<String> {
         let policy = *self.policy.lock().unwrap_or_else(|p| p.into_inner());
-        if !policy.enabled {
-            return Vec::new();
-        }
+        let (ttl, on_demand_only) = if policy.enabled {
+            (policy.ttl, false)
+        } else {
+            (DEFAULT_IDLE_TTL, true)
+        };
 
-        let detached = self.registry.detach_idle_expired(policy.ttl);
+        let detached = self.registry.detach_idle_expired(ttl, on_demand_only);
         for model in &detached {
             ServerObserver::record(
                 &*self.events,
@@ -106,7 +117,8 @@ mod tests {
     }
 
     use super::super::server_registry::{EventRing, LiveRegistry};
-    use super::{IdlePolicy, IdleSweep};
+    use super::{IdlePolicy, IdleSweep, DEFAULT_IDLE_TTL};
+    use crate::server_registry::ModelResidency;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -260,7 +272,7 @@ mod tests {
         let events = Arc::new(EventRing::default());
         let sweep = IdleSweep::new(Arc::clone(&registry), Arc::clone(&events));
         registry
-            .attach(fixture_model("idle-model", None))
+            .attach(fixture_model("idle-model", None), ModelResidency::host())
             .expect("model should attach");
 
         clock.advance(Duration::from_secs(3_601));
@@ -283,6 +295,44 @@ mod tests {
         );
     }
 
+    /// The default (disabled) policy still bounds request-loaded models:
+    /// they are residency the server took on at a client's naming, while a
+    /// host-attached model is a deliberate act no timer undoes.
+    #[test]
+    fn the_default_sweep_releases_only_request_loaded_models() {
+        let clock = ManualClock::new();
+        let registry = Arc::new(LiveRegistry::with_clock(clock.source()));
+        let events = Arc::new(EventRing::default());
+        let sweep = IdleSweep::new(Arc::clone(&registry), Arc::clone(&events));
+        registry
+            .attach(fixture_model("host-model", None), ModelResidency::host())
+            .expect("host model should attach");
+        registry
+            .attach(
+                fixture_model("request-loaded-model", None),
+                ModelResidency {
+                    bytes: 0,
+                    on_demand: true,
+                },
+            )
+            .expect("request-loaded model should attach");
+
+        clock.advance(DEFAULT_IDLE_TTL - Duration::from_millis(1));
+        assert!(
+            sweep.sweep_once().is_empty(),
+            "not idle for long enough yet"
+        );
+
+        clock.advance(Duration::from_millis(1));
+        assert_eq!(sweep.sweep_once(), vec!["request-loaded-model"]);
+        assert_eq!(registry.ids(), vec!["host-model"]);
+
+        let (recorded, _) = events.drain(10);
+        assert!(
+            matches!(recorded.as_slice(), [ServerEvent::ModelDetached { model, .. }] if model == "request-loaded-model")
+        );
+    }
+
     #[test]
     fn zero_ttl_is_rejected_when_enabled_but_kept_the_previous_policy() {
         let clock = ManualClock::new();
@@ -293,7 +343,10 @@ mod tests {
             .set_policy(enabled(Duration::from_secs(30)))
             .expect("valid idle policy");
         registry
-            .attach(fixture_model("idle-policy-model", None))
+            .attach(
+                fixture_model("idle-policy-model", None),
+                ModelResidency::host(),
+            )
             .expect("model should attach");
 
         let error = sweep
@@ -325,7 +378,7 @@ mod tests {
         let ttl = Duration::from_secs(30);
         sweep.set_policy(enabled(ttl)).expect("valid idle policy");
         registry
-            .attach(fixture_model("leased-model", None))
+            .attach(fixture_model("leased-model", None), ModelResidency::host())
             .expect("model should attach");
         let lease = match registry.resolve(Some("leased-model")) {
             Resolution::Model(model) => model,
@@ -356,7 +409,10 @@ mod tests {
         sweep.set_policy(enabled(ttl)).expect("valid idle policy");
         let queue = GenerationQueue::shared();
         registry
-            .attach(fixture_model("queued-model", Some(Arc::clone(&queue))))
+            .attach(
+                fixture_model("queued-model", Some(Arc::clone(&queue))),
+                ModelResidency::host(),
+            )
             .expect("model should attach");
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let permit = queue
@@ -378,7 +434,10 @@ mod tests {
         let registry = LiveRegistry::default();
         let queue = GenerationQueue::shared();
         registry
-            .attach(fixture_model("held-model", Some(Arc::clone(&queue))))
+            .attach(
+                fixture_model("held-model", Some(Arc::clone(&queue))),
+                ModelResidency::host(),
+            )
             .expect("model should attach");
         let lease = match registry.resolve(Some("held-model")) {
             Resolution::Model(model) => model,
@@ -432,7 +491,7 @@ mod tests {
             .generation_queue()
             .expect("FFI server models expose their generation queue");
         registry
-            .attach(model as Arc<dyn ChatModel>)
+            .attach(model as Arc<dyn ChatModel>, ModelResidency::host())
             .expect("FFI model should attach");
 
         let cancel = Arc::new(AtomicBool::new(false));
@@ -488,7 +547,7 @@ mod tests {
             let ttl = Duration::from_secs(1);
             sweep.set_policy(enabled(ttl)).expect("valid idle policy");
             registry
-                .attach(fixture_model("racing-model", None))
+                .attach(fixture_model("racing-model", None), ModelResidency::host())
                 .expect("model should attach");
             clock.advance(ttl + Duration::from_millis(1));
 
@@ -542,7 +601,13 @@ mod tests {
             }
             self.loads.fetch_add(1, Ordering::SeqCst);
             self.registry
-                .attach(Arc::clone(&self.model))
+                .attach(
+                    Arc::clone(&self.model),
+                    ModelResidency {
+                        bytes: 0,
+                        on_demand: true,
+                    },
+                )
                 .expect("unloaded model should attach again");
             LoadOutcome::Loaded(Arc::clone(&self.model))
         }
@@ -565,7 +630,7 @@ mod tests {
         sweep.set_policy(enabled(ttl)).expect("valid idle policy");
         let model = fixture_model("reload-model", None);
         registry
-            .attach(Arc::clone(&model))
+            .attach(Arc::clone(&model), ModelResidency::host())
             .expect("model should attach");
         clock.advance(ttl + Duration::from_millis(1));
         assert_eq!(sweep.sweep_once(), vec!["reload-model"]);

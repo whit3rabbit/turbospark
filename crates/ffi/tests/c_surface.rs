@@ -1361,8 +1361,10 @@ async fn chat(base: &str, model: &str) -> (u16, serde_json::Value) {
 
 /// **A NULL SESSION IS A RUNNING SERVER WITH NOTHING TO SERVE**, which is
 /// the state a GUI starts one in before its user has chosen a model. The
-/// socket is bound and `/health` answers. A named request goes through the
-/// installed-model loader even when nothing is attached.
+/// socket is bound and `/health` answers. Request-triggered loading is OFF
+/// by default, so a named request resolves exactly as the pre-loader server
+/// resolved: an empty server answers 503 and nothing a request says can
+/// open an installed model.
 #[tokio::test]
 async fn a_server_started_with_no_session_binds_and_reports_itself_empty() {
     let server = unsafe { start_server(ptr::null(), "{}") };
@@ -1382,12 +1384,62 @@ async fn a_server_started_with_no_session_binds_and_reports_itself_empty() {
 
     let (status, body) = chat(&base, "turbospark-review-nonexistent-model-78ba2035").await;
     assert_eq!(
+        status, 503,
+        "an empty server is a configuration state, not a missing model"
+    );
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no model capable"),
+        "{body}"
+    );
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// The opt-in counterpart: with `allowRequestModelLoad` the loader runs on
+/// an unattached name, finds no installed match, and answers the documented
+/// 404 with suggestions -- without opening anything, which a nonexistent
+/// identity cannot.
+#[tokio::test]
+async fn opt_in_request_loading_reports_an_unknown_name_with_suggestions() {
+    let server = unsafe { start_server(ptr::null(), r#"{"allowRequestModelLoad":true}"#) };
+    let base = server_base_url(server);
+
+    let (status, body) = chat(&base, "turbospark-review-nonexistent-model-78ba2035").await;
+    assert_eq!(
         status, 404,
         "an unknown installed identity should be missing"
     );
     assert_eq!(body["error"]["code"], "model_not_found");
     assert_eq!(body["error"]["available"], serde_json::json!([]));
     assert!(body["error"]["suggestions"].is_array());
+
+    unsafe { ts_server_stop(server) };
+}
+
+/// **THE MODEL-COUNT CAP BINDS HOST ATTACHES TOO, AT THE ABI BOUNDARY.**
+/// `maxAttachedModels` is a residency ceiling over everything the server
+/// holds, so a second attach over the cap is refused with the limit named
+/// rather than admitted and left for memory pressure to discover.
+#[test]
+fn max_attached_models_refuses_an_attach_over_the_cap() {
+    let server = unsafe { start_server(ptr::null(), r#"{"maxAttachedModels":1}"#) };
+    let first = named_session("/models/alpha.gturbo", 32);
+    let second = named_session("/models/beta.gturbo", 32);
+
+    let id = unsafe { attach(server, &first) };
+    assert_eq!(id, "alpha.gturbo");
+
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_server_attach_session(server, &second, &mut out) };
+    assert_ne!(code, abi::TS_OK, "the second attach must be refused");
+    assert!(out.is_null(), "a refused attach must not write an id");
+    assert!(last_error().contains("limit of 1"), "{}", last_error());
+
+    // The refused attach left nothing half-attached.
+    assert_eq!(server_info(server)["models"].as_array().unwrap().len(), 1);
 
     unsafe { ts_server_stop(server) };
 }

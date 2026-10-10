@@ -20,6 +20,10 @@ pub enum ImageEvent {
     },
 }
 
+/// Cap on prompt bytes held by undrained `Start` events. The server already
+/// bounds one prompt, but the queue must not depend on that to stay bounded.
+const MAX_QUEUED_PROMPT_BYTES: usize = 1024 * 1024;
+
 struct Pending {
     reply: oneshot::Sender<Result<Vec<u8>, ImageError>>,
 }
@@ -43,11 +47,38 @@ struct CancelOnDrop {
     id: u64,
 }
 
+impl State {
+    /// Withdraw a request whose reply is gone. A `Start` Swift has not polled
+    /// yet is removed outright: nothing is running, so no `Cancel` is needed,
+    /// and keeping it would pin the prompt after the pending slot is freed.
+    fn withdraw(&mut self, id: u64) {
+        let queued = self.events.iter().position(
+            |event| matches!(event, ImageEvent::Start { id: queued, .. } if *queued == id),
+        );
+        match queued {
+            Some(index) => {
+                self.events.remove(index);
+            }
+            None => self.events.push_back(ImageEvent::Cancel { id }),
+        }
+    }
+
+    fn queued_prompt_bytes(&self) -> usize {
+        self.events
+            .iter()
+            .map(|event| match event {
+                ImageEvent::Start { request, .. } => request.prompt.len(),
+                ImageEvent::Cancel { .. } => 0,
+            })
+            .sum()
+    }
+}
+
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.pending.remove(&self.id).is_some() && !state.stopped {
-            state.events.push_back(ImageEvent::Cancel { id: self.id });
+            state.withdraw(self.id);
         }
     }
 }
@@ -90,7 +121,7 @@ impl ImageBridge {
             if let Some(pending) = state.pending.remove(&id) {
                 let _ = pending.reply.send(Err(ImageError::Cancelled));
             }
-            state.events.push_back(ImageEvent::Cancel { id });
+            state.withdraw(id);
         }
     }
 
@@ -144,7 +175,11 @@ impl ImageProvider for ImageBridge {
                 }
                 // A disconnected client can leave a Start and Cancel pair
                 // until Swift next polls. Bound that backlog as well as work.
-                if locked.pending.len() >= 4 || locked.events.len() >= 64 {
+                // Counts alone do not bound memory: prompts vary in size.
+                if locked.pending.len() >= 4
+                    || locked.events.len() >= 64
+                    || locked.queued_prompt_bytes() + request.prompt.len() > MAX_QUEUED_PROMPT_BYTES
+                {
                     return Err(ImageError::Busy);
                 }
                 locked.next_id = locked.next_id.wrapping_add(1);
@@ -216,6 +251,76 @@ mod tests {
         assert!(bridge.complete(id, Ok(vec![1])).is_err());
         bridge.stop();
         assert_eq!(bridge.generate(request()).await, Err(ImageError::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn dropped_client_releases_undrained_start_payload() {
+        let bridge = ImageBridge::default();
+        bridge.attach("z-test".into()).unwrap();
+        let big = || ImageGenerateRequest {
+            prompt: "x".repeat(200 * 1024),
+            ..request()
+        };
+        // Far more abandoned requests than the 4-slot and 64-event limits
+        // could hold if Start payloads survived cancellation.
+        for _ in 0..200 {
+            let worker = bridge.clone();
+            let job = tokio::spawn(async move { worker.generate(big()).await });
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            job.abort();
+            let _ = job.await;
+            let state = bridge.state.lock().unwrap();
+            assert!(state.events.is_empty(), "undrained Start must be removed");
+            assert!(state.pending.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn drained_start_still_gets_cancel_event() {
+        let bridge = ImageBridge::default();
+        bridge.attach("z-test".into()).unwrap();
+        let worker = bridge.clone();
+        let job = tokio::spawn(async move { worker.generate(request()).await });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(bridge.drain(0).len(), 1);
+        job.abort();
+        let _ = job.await;
+        assert!(matches!(
+            bridge.drain(0).as_slice(),
+            [ImageEvent::Cancel { .. }]
+        ));
+    }
+
+    #[tokio::test]
+    async fn queued_prompt_bytes_are_budgeted() {
+        let bridge = ImageBridge::default();
+        bridge.attach("z-test".into()).unwrap();
+        let worker = bridge.clone();
+        let first = tokio::spawn(async move {
+            worker
+                .generate(ImageGenerateRequest {
+                    prompt: "x".repeat(MAX_QUEUED_PROMPT_BYTES),
+                    ..request()
+                })
+                .await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        // Without the budget this request would be admitted and wait forever,
+        // so bound the wait: a regression must fail, not hang.
+        let over = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            bridge.generate(request()),
+        )
+        .await;
+        assert_eq!(over, Ok(Err(ImageError::Busy)));
+        // Polling releases the budget.
+        assert_eq!(bridge.drain(0).len(), 1);
+        let worker = bridge.clone();
+        let second = tokio::spawn(async move { worker.generate(request()).await });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(bridge.drain(0).len(), 1);
+        bridge.detach().unwrap();
+        let _ = (first.await, second.await);
     }
 
     #[tokio::test]

@@ -27,6 +27,95 @@ use turbospark_server::registry::{
 };
 use turbospark_server::ChatModel;
 
+/// Admission ceiling a server enforces on its resident model set.
+///
+/// **THE COUNT IS THE DEFAULT BOUND; THE BYTES ARE OPT-IN.** A count cap
+/// bounds what a client that keeps naming installed models can accumulate
+/// when request-triggered loading is enabled. A byte ceiling over
+/// committed weights plus KV is available for hosts that want an exact
+/// aggregate budget, but it is NOT derived by default: `committed_bytes`
+/// counts mapped weight address space that streamed or mapped expert
+/// residency deliberately keeps mostly UNRESIDENT, so a physical-memory
+/// default would refuse large streamed installs that run fine.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResidencyPolicy {
+    /// Refuse an attach that would exceed this many simultaneously
+    /// attached models.
+    pub(crate) max_models: usize,
+    /// Cumulative ceiling in bytes over every attached model's
+    /// committed weights plus KV cache. `u64::MAX` disables it.
+    pub(crate) max_bytes: u64,
+}
+
+impl Default for ResidencyPolicy {
+    fn default() -> Self {
+        Self {
+            max_models: DEFAULT_MAX_ATTACHED_MODELS,
+            max_bytes: u64::MAX,
+        }
+    }
+}
+
+/// A machine that can hold this many resident text models at once does not
+/// exist; every model is also individually load-guarded at open.
+pub(crate) const DEFAULT_MAX_ATTACHED_MODELS: usize = 8;
+
+/// Why a server refused to admit a model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AttachError {
+    DuplicateIdentity(String),
+    ModelCountExceeded { attached: usize, max: usize },
+    ByteBudgetExceeded { held: u64, needs: u64, ceiling: u64 },
+}
+
+impl std::fmt::Display for AttachError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DuplicateIdentity(identity) => write!(
+                f,
+                "a model with id or alias '{identity}' is already attached to this server; \
+                 detach it first, or open the second install under a different directory name"
+            ),
+            Self::ModelCountExceeded { attached, max } => write!(
+                f,
+                "attaching another model would exceed the server's limit of {max} \
+                 attached models ({attached} attached); detach one first"
+            ),
+            Self::ByteBudgetExceeded {
+                held,
+                needs,
+                ceiling,
+            } => write!(
+                f,
+                "attached models hold {held} bytes and this model needs {needs} more, \
+                 over the {ceiling}-byte ceiling; detach a model or raise maxAttachedModelBytes"
+            ),
+        }
+    }
+}
+
+/// How much resident state an admitted model holds, and who asked for it.
+///
+/// `on_demand` marks a model the HTTP request path opened (rather than one
+/// the host attached deliberately): those are what the default idle sweep
+/// may release, because no operator ever decided they should stay.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ModelResidency {
+    pub(crate) bytes: u64,
+    pub(crate) on_demand: bool,
+}
+
+impl ModelResidency {
+    /// A host-attached model whose byte cost this registry does not track
+    /// (embedding encoders, scripted test fixtures).
+    pub(crate) fn host() -> Self {
+        Self {
+            bytes: 0,
+            on_demand: false,
+        }
+    }
+}
+
 /// The models attached to one running server.
 pub(crate) struct LiveRegistry {
     // A `Vec` rather than a `HashMap` because attachment ORDER is what a
@@ -35,11 +124,13 @@ pub(crate) struct LiveRegistry {
     // models at once does not exist. Uniqueness is enforced on insert.
     models: Mutex<Vec<Arc<LiveModelEntry>>>,
     clock: Arc<dyn Fn() -> Instant + Send + Sync>,
+    policy: ResidencyPolicy,
 }
 
 struct LiveModelEntry {
     model: Arc<dyn ChatModel>,
     generation_queue: Option<Arc<turbospark_server::GenerationQueue>>,
+    residency: ModelResidency,
     use_state: Mutex<ModelUseState>,
     clock: Arc<dyn Fn() -> Instant + Send + Sync>,
 }
@@ -81,19 +172,33 @@ impl Drop for LiveRequestLease {
 
 impl Default for LiveRegistry {
     fn default() -> Self {
-        Self::with_clock(Arc::new(Instant::now))
+        Self::with_policy(ResidencyPolicy::default())
     }
 }
 
 impl LiveRegistry {
+    pub(crate) fn with_policy(policy: ResidencyPolicy) -> Self {
+        Self::with_clock_and_policy(Arc::new(Instant::now), policy)
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_clock(clock: Arc<dyn Fn() -> Instant + Send + Sync>) -> Self {
+        Self::with_clock_and_policy(clock, ResidencyPolicy::default())
+    }
+
+    fn with_clock_and_policy(
+        clock: Arc<dyn Fn() -> Instant + Send + Sync>,
+        policy: ResidencyPolicy,
+    ) -> Self {
         Self {
             models: Mutex::new(Vec::new()),
             clock,
+            policy,
         }
     }
 
-    /// Adds a model, or refuses if any public identity is already attached.
+    /// Adds a model, or refuses if any public identity is already attached
+    /// or the residency policy has no room left.
     ///
     /// **A DUPLICATE ID IS REFUSED BY NAME RATHER THAN SUFFIXED.** The id is
     /// what a client puts in a request's `model` field and what
@@ -102,7 +207,17 @@ impl LiveRegistry {
     /// on the name the host knows would remove the wrong one. Two sessions
     /// on one install directory is a caller mistake, and this is where it is
     /// cheapest to say so.
-    pub(crate) fn attach(&self, model: Arc<dyn ChatModel>) -> Result<String, String> {
+    ///
+    /// **THE RESIDENCY CEILINGS ARE CHECKED UNDER THE SAME LOCK.** A request
+    /// that names an installed model is how an ordinary inference client can
+    /// grow this server's footprint, so admission -- count and, when
+    /// configured, cumulative bytes -- is decided atomically with the insert
+    /// rather than re-derivable from a stale snapshot.
+    pub(crate) fn attach(
+        &self,
+        model: Arc<dyn ChatModel>,
+        residency: ModelResidency,
+    ) -> Result<String, AttachError> {
         let row = model_row(&*model);
         let id = row.id.clone();
         let generation_queue = model.generation_queue();
@@ -110,20 +225,36 @@ impl LiveRegistry {
         let last_used = (clock)();
         let mut models = self.models.lock().unwrap_or_else(|p| p.into_inner());
         let mut identities = HashSet::new();
+        let mut held_bytes = 0u64;
         for existing in models.iter() {
             identities.extend(model_row(&*existing.model).ids().map(str::to_string));
+            held_bytes = held_bytes.saturating_add(existing.residency.bytes);
         }
         for identity in row.ids() {
             if !identities.insert(identity.to_string()) {
-                return Err(format!(
-                    "a model with id or alias '{identity}' is already attached to this server; \
-                     detach it first, or open the second install under a different directory name"
-                ));
+                return Err(AttachError::DuplicateIdentity(identity.to_string()));
+            }
+        }
+        if models.len() >= self.policy.max_models {
+            return Err(AttachError::ModelCountExceeded {
+                attached: models.len(),
+                max: self.policy.max_models,
+            });
+        }
+        if residency.bytes > 0 {
+            let total = held_bytes.saturating_add(residency.bytes);
+            if total > self.policy.max_bytes {
+                return Err(AttachError::ByteBudgetExceeded {
+                    held: held_bytes,
+                    needs: residency.bytes,
+                    ceiling: self.policy.max_bytes,
+                });
             }
         }
         models.push(Arc::new(LiveModelEntry {
             model,
             generation_queue,
+            residency,
             use_state: Mutex::new(ModelUseState {
                 active_requests: 0,
                 last_used,
@@ -164,11 +295,19 @@ impl LiveRegistry {
     /// Atomically detaches entries whose last request use is older than `ttl`.
     /// The request lease count and queue load are checked while holding the
     /// same registry lock that resolution uses to acquire a lease.
-    pub(crate) fn detach_idle_expired(&self, ttl: Duration) -> Vec<String> {
+    ///
+    /// With `on_demand_only` the sweep is scoped to request-loaded models:
+    /// that is the DEFAULT policy, where a host-attached model is a
+    /// deliberate act that no timer undoes, while a model an HTTP request
+    /// caused to open is bounded residency the server took back.
+    pub(crate) fn detach_idle_expired(&self, ttl: Duration, on_demand_only: bool) -> Vec<String> {
         let now = (self.clock)();
         let mut models = self.models.lock().unwrap_or_else(|p| p.into_inner());
         let mut detached = Vec::new();
         models.retain(|entry| {
+            if on_demand_only && !entry.residency.on_demand {
+                return true;
+            }
             let expired_and_unused = {
                 let state = entry.use_state.lock().unwrap_or_else(|p| p.into_inner());
                 state.active_requests == 0 && now.saturating_duration_since(state.last_used) >= ttl
@@ -497,7 +636,9 @@ mod tests {
             4096,
             Vec::new(),
         )));
-        let id = registry.attach(model).expect("model should attach");
+        let id = registry
+            .attach(model, ModelResidency::host())
+            .expect("model should attach");
 
         let resolved = match registry.resolve(Some(&id)) {
             Resolution::Model(resolved) => resolved,
@@ -526,11 +667,14 @@ mod tests {
             .join("../tokenizer/tests/fixtures/ChatMLTokenizer");
         let tokenizer = MfTokenizer::load_from_dir(&tokenizer_dir).unwrap();
         registry
-            .attach(Arc::new(ChatOnlyModel(ScriptedChatModel::new(
-                tokenizer,
-                4096,
-                Vec::new(),
-            ))))
+            .attach(
+                Arc::new(ChatOnlyModel(ScriptedChatModel::new(
+                    tokenizer,
+                    4096,
+                    Vec::new(),
+                ))),
+                ModelResidency::host(),
+            )
             .unwrap();
 
         assert!(matches!(
@@ -546,18 +690,20 @@ mod tests {
             .join("../tokenizer/tests/fixtures/ChatMLTokenizer");
         let tokenizer = || MfTokenizer::load_from_dir(&tokenizer_dir).unwrap();
         registry
-            .attach(Arc::new(ChatOnlyModel(ScriptedChatModel::new(
-                tokenizer(),
-                4096,
-                Vec::new(),
-            ))))
+            .attach(
+                Arc::new(ChatOnlyModel(ScriptedChatModel::new(
+                    tokenizer(),
+                    4096,
+                    Vec::new(),
+                ))),
+                ModelResidency::host(),
+            )
             .unwrap();
         let embedding_id = registry
-            .attach(Arc::new(ScriptedChatModel::new(
-                tokenizer(),
-                4096,
-                Vec::new(),
-            )))
+            .attach(
+                Arc::new(ScriptedChatModel::new(tokenizer(), 4096, Vec::new())),
+                ModelResidency::host(),
+            )
             .unwrap();
 
         let resolved = match registry.resolve_embedding(Some("text-embedding-3-small")) {
@@ -570,5 +716,163 @@ mod tests {
         assert!(registry.detach("live-chat"));
         drop(resolved);
         assert!(registry.detach(&embedding_id));
+    }
+
+    fn fixture_for_policy_tests(id: &str) -> Arc<dyn ChatModel> {
+        let tokenizer_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tokenizer/tests/fixtures/ChatMLTokenizer");
+        let tokenizer =
+            MfTokenizer::load_from_dir(&tokenizer_dir).expect("fixture tokenizer should load");
+        Arc::new(IdentifiedFixtureModel {
+            inner: ScriptedChatModel::new(tokenizer, 4096, Vec::new()),
+            id: id.to_string(),
+        })
+    }
+
+    struct IdentifiedFixtureModel {
+        inner: ScriptedChatModel,
+        id: String,
+    }
+
+    impl ChatModel for IdentifiedFixtureModel {
+        fn tokenizer(&self) -> &MfTokenizer {
+            self.inner.tokenizer()
+        }
+        fn vocab_size(&self) -> usize {
+            self.inner.vocab_size()
+        }
+        fn max_context(&self) -> u32 {
+            self.inner.max_context()
+        }
+        fn model_id(&self) -> &str {
+            &self.id
+        }
+        fn supports_embeddings(&self) -> bool {
+            false
+        }
+        fn with_producer(
+            &self,
+            f: &mut dyn FnMut(
+                &mut dyn runtime::LogitProducer,
+            )
+                -> Result<runtime::RawDecodeResult, runtime::RuntimeError>,
+        ) -> Result<runtime::RawDecodeResult, runtime::RuntimeError> {
+            self.inner.with_producer(f)
+        }
+    }
+
+    #[test]
+    fn attach_refuses_when_the_model_count_cap_is_reached() {
+        let registry = LiveRegistry::with_policy(ResidencyPolicy {
+            max_models: 2,
+            max_bytes: u64::MAX,
+        });
+        registry
+            .attach(
+                fixture_for_policy_tests("cap-a.gturbo"),
+                ModelResidency::host(),
+            )
+            .expect("first model fits under the cap");
+        registry
+            .attach(
+                fixture_for_policy_tests("cap-b.gturbo"),
+                ModelResidency::host(),
+            )
+            .expect("second model fills the cap");
+        let error = registry
+            .attach(
+                fixture_for_policy_tests("cap-c.gturbo"),
+                ModelResidency::host(),
+            )
+            .expect_err("the third model must be refused");
+        assert_eq!(
+            error,
+            AttachError::ModelCountExceeded {
+                attached: 2,
+                max: 2
+            }
+        );
+        assert!(error.to_string().contains("limit of 2"));
+
+        // Detaching frees a slot: the cap is a residency bound, not a
+        // lifetime tally.
+        assert!(registry.detach("cap-a.gturbo"));
+        registry
+            .attach(
+                fixture_for_policy_tests("cap-c.gturbo"),
+                ModelResidency::host(),
+            )
+            .expect("freed slot admits the model");
+    }
+
+    #[test]
+    fn attach_refuses_when_the_byte_budget_cannot_cover_the_model() {
+        let registry = LiveRegistry::with_policy(ResidencyPolicy {
+            max_models: 8,
+            max_bytes: 100,
+        });
+        registry
+            .attach(
+                fixture_for_policy_tests("bytes-a.gturbo"),
+                ModelResidency {
+                    bytes: 60,
+                    on_demand: false,
+                },
+            )
+            .expect("60 of 100 bytes fits");
+        let error = registry
+            .attach(
+                fixture_for_policy_tests("bytes-b.gturbo"),
+                ModelResidency {
+                    bytes: 50,
+                    on_demand: true,
+                },
+            )
+            .expect_err("60 + 50 exceeds the 100-byte ceiling");
+        assert_eq!(
+            error,
+            AttachError::ByteBudgetExceeded {
+                held: 60,
+                needs: 50,
+                ceiling: 100
+            }
+        );
+        registry
+            .attach(
+                fixture_for_policy_tests("bytes-c.gturbo"),
+                ModelResidency {
+                    bytes: 40,
+                    on_demand: true,
+                },
+            )
+            .expect("exactly filling the ceiling is admitted");
+
+        assert!(registry.detach("bytes-a.gturbo"));
+        registry
+            .attach(
+                fixture_for_policy_tests("bytes-b.gturbo"),
+                ModelResidency {
+                    bytes: 50,
+                    on_demand: true,
+                },
+            )
+            .expect("detaching releases its bytes to the budget");
+    }
+
+    #[test]
+    fn a_zero_byte_attach_never_trips_the_byte_budget() {
+        let registry = LiveRegistry::with_policy(ResidencyPolicy {
+            max_models: 8,
+            max_bytes: 0,
+        });
+        // Models whose cost this registry does not track (embedding
+        // encoders, fixtures) carry zero bytes and are bounded by the count
+        // cap alone.
+        registry
+            .attach(
+                fixture_for_policy_tests("zero-a.gturbo"),
+                ModelResidency::host(),
+            )
+            .expect("zero-byte attaches are the count cap's business");
     }
 }

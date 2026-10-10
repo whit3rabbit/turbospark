@@ -80,11 +80,17 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -o hello.wav
 ```
 
-Kokoro, US English, voice `af_heart` only. `input` (alias `text`) is at most
-4096 characters, `speed` 0.5 to 2.0. Output is 24 kHz mono: `wav` (default) or
-`pcm` (16-bit little-endian). OpenAI's default is mp3. This server cannot
-encode it and refuses by name. `stream=true` needs `pcm` and sends one chunk
-per synthesized segment. A failure after the first chunk ends the body early.
+Kokoro, US English, voice `af_heart` only, or attached bridged speech models
+such as Qwen3-TTS. `input` (alias `text`) is at most 4096 characters, `speed` 0.5
+to 2.0. Optional voice cloning fields include:
+- `reference_audio`: base64-encoded WAV or PCM reference audio to clone.
+- `reference_text`: transcript of the reference audio clip.
+- `instruction`: emotion, style, or pacing guidance for synthesis.
+
+Output is 24 kHz mono: `wav` (default) or `pcm` (16-bit little-endian).
+OpenAI's default is mp3. This server cannot encode it and refuses by name.
+`stream=true` needs `pcm` and sends one chunk per synthesized segment. A failure
+after the first chunk ends the body early.
 
 ## Music generation
 

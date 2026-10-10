@@ -33,6 +33,10 @@ struct SpeechInput {
     speed: Option<f32>,
     response_format: Option<String>,
     stream: Option<bool>,
+    language: Option<String>,
+    reference_audio: Option<String>,
+    reference_text: Option<String>,
+    instruction: Option<String>,
 }
 
 pub(crate) async fn speech(
@@ -98,6 +102,10 @@ pub(crate) async fn speech(
             text: input.input,
             voice: input.voice.unwrap_or_else(|| "af_heart".to_string()),
             speed,
+            language: input.language,
+            reference_audio: input.reference_audio,
+            reference_text: input.reference_text,
+            instruction: input.instruction,
         };
         let mut synthesized = match audio.provider.speak(request).await {
             Ok(s) => s,

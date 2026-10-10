@@ -121,6 +121,10 @@ pub struct SpeechRequest {
     pub text: String,
     pub voice: String,
     pub speed: f32,
+    pub language: Option<String>,
+    pub reference_audio: Option<String>,
+    pub reference_text: Option<String>,
+    pub instruction: Option<String>,
 }
 
 /// Synthesized audio arriving one segment at a time. Dropping the receiver

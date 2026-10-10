@@ -753,7 +753,37 @@ pub struct ServerOptions {
     /// seconds, releasing its weights. Absent or 0 keeps every model resident
     /// until `ts_server_detach_model` or `ts_server_stop` (the default).
     /// `ts_server_set_idle_unload` changes it on a running server.
+    ///
+    /// The default never touches HOST-attached models. A model an HTTP
+    /// request caused to open (`allowRequestModelLoad`) is still released
+    /// after 30 idle minutes by the same sweep, because that residency was
+    /// taken on at a client's naming rather than by the operator.
     pub idle_unload_seconds: Option<u64>,
+    /// Let an HTTP request that names a model which is NOT attached open the
+    /// matching installed model and attach it. Absent or `false` (the
+    /// default) keeps the original contract: only host-attached models are
+    /// served, and an unknown name is refused without touching the
+    /// installed store.
+    ///
+    /// **THIS IS DELIBERATELY OPT-IN.** Opening a checkpoint is a heavyweight,
+    /// memory-consuming side effect; leaving it on by default would let any
+    /// client that can reach the server grow its residency by naming
+    /// installed aliases, with no inference required. A host that wants the
+    /// load-on-demand behavior turns it on here, and the request-opened
+    /// models are then bounded by `maxAttachedModels`,
+    /// `maxAttachedModelBytes`, and the default idle sweep.
+    pub allow_request_model_load: Option<bool>,
+    /// Ceiling on how many models may be attached at once, host-attached
+    /// and request-loaded together. Absent means 8.
+    pub max_attached_models: Option<usize>,
+    /// Cumulative ceiling in bytes over every attached model's committed
+    /// weights plus KV cache; an attach that would exceed it is refused.
+    /// Absent means no byte ceiling: the default bounds are the model-count
+    /// cap and each model's own open-time load guard. Note that streamed or
+    /// mapped expert residency deliberately keeps most weight bytes
+    /// UNRESIDENT, so hosts using those modes should size this consciously
+    /// rather than assume committed bytes track wired memory.
+    pub max_attached_model_bytes: Option<u64>,
 }
 
 /// What `ts_server_info_json` returns.

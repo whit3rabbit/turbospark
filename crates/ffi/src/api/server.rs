@@ -35,7 +35,9 @@ fn model_id_of(session: &session::Session) -> String {
 /// null and calling `ts_server_attach_session` immediately.
 ///
 /// `options_json` may be null or `{}`. Recognised keys: `port` (0, the
-/// default, asks the OS for one), `apiKey`.
+/// default, asks the OS for one), `apiKey`, `allowRequestModelLoad` (the
+/// default, `false`, refuses requests that name a model nobody attached),
+/// `maxAttachedModels`, `maxAttachedModelBytes`, and `idleUnloadSeconds`.
 ///
 /// The server keeps EVERY ATTACHED SESSION'S ENGINE ALIVE independently of
 /// the `TsSession *` it came from: `ts_session_close` drops only the
@@ -91,6 +93,19 @@ pub unsafe extern "C" fn ts_server_start(
         let default_reasoning = reasoning_effort(options.default_reasoning.as_deref())
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let default_system = options.default_system.filter(|s| !s.trim().is_empty());
+        // A byte ceiling is opt-in: the default bounds are the model-count
+        // cap plus each model's own open-time load guard. `physical_memory`
+        // answers 0 off macOS, where there is no probe and no real open
+        // path either.
+        let load_policy = crate::server::ServerLoadPolicy {
+            allow_request_loads: options.allow_request_model_load.unwrap_or(false),
+            residency: crate::server_registry::ResidencyPolicy {
+                max_models: options
+                    .max_attached_models
+                    .unwrap_or(crate::server_registry::DEFAULT_MAX_ATTACHED_MODELS),
+                max_bytes: options.max_attached_model_bytes.unwrap_or(u64::MAX),
+            },
+        };
         let server = Server::start(
             options.port,
             options.host,
@@ -99,6 +114,7 @@ pub unsafe extern "C" fn ts_server_start(
             guardrails,
             default_system,
             default_reasoning,
+            load_policy,
         )
         .map_err(|e| (abi::TS_ERR_OPEN, e))?;
         if let Some(seconds) = options.idle_unload_seconds {
@@ -227,10 +243,12 @@ pub unsafe extern "C" fn ts_server_detach_model(
 }
 
 /// Sets how long an attached model may sit unused before the server detaches
-/// it and releases its weights. `seconds` of 0 turns the sweep off, which is
-/// the default. Takes effect on the next 30 s sweep, applies to every model
-/// including ones attached later, and never detaches a model with a request
-/// in flight.
+/// it and releases its weights. `seconds` of 0 turns the sweep off for
+/// HOST-attached models, which is the default; a model an HTTP request
+/// opened (`allowRequestModelLoad`) is still released after 30 idle minutes
+/// by the same sweep. Takes effect on the next 30 s sweep, applies to every
+/// model including ones attached later, and never detaches a model with a
+/// request in flight.
 #[no_mangle]
 pub unsafe extern "C" fn ts_server_set_idle_unload(server: *const TsServer, seconds: u64) -> c_int {
     guard_result(|| {
@@ -370,6 +388,81 @@ pub unsafe extern "C" fn ts_server_complete_image_request(
         };
         server
             .image_bridge()
+            .complete(request_id, result)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Registers one Swift-owned audio speech model on the running HTTP listener.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_attach_audio_speech_model(
+    ptr: *const TsServer,
+    model_id: *const c_char,
+) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let id = strings::required(model_id, "modelId")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        server
+            .speech_bridge()
+            .attach(id.to_string())
+            .map_err(|e| (abi::TS_ERR_OPEN, e))
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_detach_audio_speech_model(ptr: *const TsServer) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        server
+            .speech_bridge()
+            .detach()
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Drains start and cancellation events for the Swift audio speech worker.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_poll_audio_speech_events_json(
+    ptr: *const TsServer,
+    max: u32,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let events = server.speech_bridge().drain(max as usize);
+        let json = serde_json::to_string(&events).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Completes one speech/voice cloning request with PCM samples, or with an error.
+#[no_mangle]
+pub unsafe extern "C" fn ts_server_complete_audio_speech_request(
+    ptr: *const TsServer,
+    request_id: u64,
+    pcm: *const f32,
+    sample_count: usize,
+    sample_rate: u32,
+    error_message: *const c_char,
+) -> c_int {
+    guard_result(|| {
+        let server = server::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let result = if !error_message.is_null() {
+            let message = strings::required(error_message, "errorMessage")
+                .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+            Err(turbospark_server::AudioError::Failed(message.to_string()))
+        } else if pcm.is_null() || sample_count == 0 {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "PCM samples are required".into(),
+            ));
+        } else {
+            let samples = std::slice::from_raw_parts(pcm, sample_count).to_vec();
+            Ok((samples, if sample_rate == 0 { 24000 } else { sample_rate }))
+        };
+        server
+            .speech_bridge()
             .complete(request_id, result)
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })

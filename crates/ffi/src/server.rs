@@ -68,6 +68,21 @@ use crate::session::SessionCore;
 
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(1);
 
+/// What the request path may open, and what the resident set may grow to.
+///
+/// **REQUEST-TRIGGERED LOADING IS OPT-IN.** `allow_request_loads: false` (the
+/// default) restores the original contract: the server serves only the
+/// models its host attached, and a request naming anything else is refused
+/// without consulting the installed store. Opening a multi-gigabyte
+/// checkpoint is a heavyweight side effect no unauthenticated loopback
+/// client should be able to cause by naming an alias; a host that wants the
+/// Ollama-style "any installed model by name" behavior says so here.
+#[derive(Clone, Copy)]
+pub(crate) struct ServerLoadPolicy {
+    pub(crate) allow_request_loads: bool,
+    pub(crate) residency: crate::server_registry::ResidencyPolicy,
+}
+
 /// What `ts_server_start` writes to `*out`, and what `ts_server_stop` frees.
 pub struct Server {
     port: u16,
@@ -90,6 +105,7 @@ pub struct Server {
     events: Arc<EventRing>,
     idle_sweep: Arc<IdleSweep>,
     image_bridge: Arc<crate::server_image::ImageBridge>,
+    speech_bridge: Arc<crate::server_speech::SpeechBridge>,
     /// Set BEFORE the graceful-shutdown signal is sent, and read from every
     /// `FfiChatModel` this server has attached (`attach` clones it in).
     /// Axum's graceful shutdown waits for in-flight connections to finish and
@@ -110,6 +126,143 @@ pub struct Server {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+struct BridgedAudioProvider {
+    #[cfg(target_os = "macos")]
+    real: Option<Arc<turbospark_server::audio_real::RealAudioProvider>>,
+    speech_bridge: Arc<crate::server_speech::SpeechBridge>,
+}
+
+impl turbospark_server::AudioProvider for BridgedAudioProvider {
+    fn models(&self) -> Vec<turbospark_server::AudioModelInfo> {
+        let mut list = Vec::new();
+        #[cfg(target_os = "macos")]
+        if let Some(real) = &self.real {
+            list.extend(real.models());
+        }
+        list.extend(self.speech_bridge.models());
+        list
+    }
+
+    fn transcribe(
+        &self,
+        request: turbospark_server::TranscribeRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<turbospark_server::Transcription, turbospark_server::AudioError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        #[cfg(target_os = "macos")]
+        if let Some(real) = &self.real {
+            return real.transcribe(request);
+        }
+        Box::pin(async {
+            Err(turbospark_server::AudioError::Unsupported(
+                "transcription is not available".into(),
+            ))
+        })
+    }
+
+    fn speak(
+        &self,
+        request: turbospark_server::SpeechRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<turbospark_server::SpeechStream, turbospark_server::AudioError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        if self.speech_bridge.model().as_deref() == Some(&request.model) {
+            return self.speech_bridge.speak(request);
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(real) = &self.real {
+            return real.speak(request);
+        }
+        Box::pin(async move {
+            Err(turbospark_server::AudioError::NotFound(format!(
+                "audio model {:?} is not attached",
+                request.model
+            )))
+        })
+    }
+
+    fn generate(
+        &self,
+        request: turbospark_server::GenerateRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<turbospark_server::GeneratedAudio, turbospark_server::AudioError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        #[cfg(target_os = "macos")]
+        if let Some(real) = &self.real {
+            return real.generate(request);
+        }
+        Box::pin(async {
+            Err(turbospark_server::AudioError::Unsupported(
+                "music generation is not available".into(),
+            ))
+        })
+    }
+
+    fn load(
+        &self,
+        alias: String,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<turbospark_server::AudioModelInfo, turbospark_server::AudioError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        #[cfg(target_os = "macos")]
+        if let Some(real) = &self.real {
+            return real.load(alias);
+        }
+        Box::pin(async {
+            Err(turbospark_server::AudioError::Unsupported(
+                "model loading is not available".into(),
+            ))
+        })
+    }
+
+    fn unload(
+        &self,
+        id: String,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<(), turbospark_server::AudioError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        if self.speech_bridge.model().as_deref() == Some(&id) {
+            let _ = self.speech_bridge.detach();
+            return Box::pin(async { Ok(()) });
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(real) = &self.real {
+            return real.unload(id);
+        }
+        Box::pin(async {
+            Err(turbospark_server::AudioError::Unsupported(
+                "model unloading is not available".into(),
+            ))
+        })
+    }
+}
+
+
 impl Server {
     /// Spawns a background thread that binds `port` (0 for an OS-assigned
     /// one) on loopback or a Tailscale IPv4 address and serves it. Blocks
@@ -120,6 +273,7 @@ impl Server {
     /// [`Self::attach`] straight after when it was handed a session, which
     /// is what makes a null `session` mean "start empty" rather than being a
     /// second code path.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start(
         port: u16,
         host: Option<String>,
@@ -128,6 +282,7 @@ impl Server {
         guardrails: turbospark_server::GuardrailConfig,
         default_system: Option<String>,
         default_reasoning: tokenizer::ReasoningEffort,
+        load_policy: ServerLoadPolicy,
     ) -> Result<Self, String> {
         let host: std::net::IpAddr = host
             .as_deref()
@@ -152,43 +307,49 @@ impl Server {
         }
         let traffic = Arc::new(crate::server_transport::Traffic::new(capture_text));
         let auth_enabled = api_key.is_some();
-        let registry = Arc::new(LiveRegistry::default());
+        let registry = Arc::new(LiveRegistry::with_policy(load_policy.residency));
         let events = Arc::new(EventRing::default());
         let stopping = Arc::new(AtomicBool::new(false));
-        let loader = Arc::new(HostLoader::new(
-            Arc::clone(&registry),
-            Arc::clone(&events),
-            Arc::clone(&stopping),
-            guardrails,
-            default_system.clone(),
-            default_reasoning,
-        ));
-        let resolver = Arc::new(turbospark_server::registry::ModelLoaderRegistry::new(
-            Arc::clone(&registry) as Arc<dyn turbospark_server::registry::ModelRegistry>,
-            loader,
-        ));
+        // The installed-model loader sits on the resolution path only when
+        // the host opted in. Without it a request that names a model nobody
+        // attached resolves exactly as the pre-loader server did: the
+        // wrapped registry's own policy, which refuses an unknown name on a
+        // multi-model server and answers 503 on an empty one -- nothing a
+        // request says can open a checkpoint.
+        let resolver: Arc<dyn turbospark_server::registry::ModelRegistry> =
+            if load_policy.allow_request_loads {
+                let loader = Arc::new(HostLoader::new(
+                    Arc::clone(&registry),
+                    Arc::clone(&events),
+                    Arc::clone(&stopping),
+                    guardrails,
+                    default_system.clone(),
+                    default_reasoning,
+                ));
+                Arc::new(turbospark_server::registry::ModelLoaderRegistry::new(
+                    Arc::clone(&registry) as Arc<dyn turbospark_server::registry::ModelRegistry>,
+                    loader,
+                ))
+            } else {
+                Arc::clone(&registry) as Arc<dyn turbospark_server::registry::ModelRegistry>
+            };
         let idle_sweep = Arc::new(IdleSweep::new(Arc::clone(&registry), Arc::clone(&events)));
         let idle_sweep_task = Arc::clone(&idle_sweep);
 
         let image_bridge = Arc::new(crate::server_image::ImageBridge::default());
+        let speech_bridge = Arc::new(crate::server_speech::SpeechBridge::default());
         #[cfg(target_os = "macos")]
         let audio_provider = Arc::new(turbospark_server::audio_real::RealAudioProvider::new());
-        #[cfg(target_os = "macos")]
-        let state = turbospark_server::ServerState::new(
-            resolver as Arc<dyn turbospark_server::registry::ModelRegistry>,
-        )
-        .with_image_provider(Arc::clone(&image_bridge) as Arc<dyn turbospark_server::ImageProvider>)
-        .with_audio_provider(
-            Arc::clone(&audio_provider) as Arc<dyn turbospark_server::AudioProvider>
-        );
-        #[cfg(not(target_os = "macos"))]
-        let state =
-            turbospark_server::ServerState::new(
-                resolver as Arc<dyn turbospark_server::registry::ModelRegistry>,
-            )
+        let bridged_audio: Arc<dyn turbospark_server::AudioProvider> = Arc::new(BridgedAudioProvider {
+            #[cfg(target_os = "macos")]
+            real: Some(Arc::clone(&audio_provider)),
+            speech_bridge: Arc::clone(&speech_bridge),
+        });
+        let state = turbospark_server::ServerState::new(Arc::clone(&resolver))
             .with_image_provider(
-                Arc::clone(&image_bridge) as Arc<dyn turbospark_server::ImageProvider>
-            );
+                Arc::clone(&image_bridge) as Arc<dyn turbospark_server::ImageProvider>,
+            )
+            .with_audio_provider(bridged_audio);
 
         let router = turbospark_server::build_router_with_options(
             state,
@@ -307,6 +468,7 @@ impl Server {
             events,
             idle_sweep,
             image_bridge,
+            speech_bridge,
             #[cfg(target_os = "macos")]
             audio_provider: Some(audio_provider),
             stopping,
@@ -327,14 +489,24 @@ impl Server {
     ) -> Result<String, String> {
         let model: Arc<dyn turbospark_server::ChatModel> =
             Arc::new(crate::server_model::FfiChatModel::new(
-                core,
+                Arc::clone(&core),
                 model_id,
                 self.guardrails,
                 self.default_system.clone(),
                 self.default_reasoning,
                 Arc::clone(&self.stopping),
             ));
-        let id = self.registry.attach(model)?;
+        // A host attach is a deliberate act: it counts against the residency
+        // ceilings at its real footprint (committed weights plus KV), but it
+        // is never `on_demand`, so no timer releases it.
+        let residency = crate::server_registry::ModelResidency {
+            bytes: core.committed_bytes.saturating_add(core.kv_bytes),
+            on_demand: false,
+        };
+        let id = self
+            .registry
+            .attach(model, residency)
+            .map_err(|error| error.to_string())?;
         ServerObserver::record(
             &*self.events,
             turbospark_server::observe::ServerEvent::ModelAttached {
@@ -353,7 +525,15 @@ impl Server {
             let model = turbospark_server::RealEncoderModel::open(&dir)
                 .map_err(|e| format!("failed to open embedding model from {}: {e}", dir.display()))?
                 .with_model_id(model_arg.to_string());
-            let id = self.registry.attach(Arc::new(model))?;
+            // The registry does not track an encoder's byte cost; the
+            // attach is host-explicit and bounded by the count cap.
+            let id = self
+                .registry
+                .attach(
+                    Arc::new(model),
+                    crate::server_registry::ModelResidency::host(),
+                )
+                .map_err(|error| error.to_string())?;
             ServerObserver::record(
                 &*self.events,
                 turbospark_server::observe::ServerEvent::ModelAttached {
@@ -392,6 +572,10 @@ impl Server {
 
     pub(crate) fn image_bridge(&self) -> &crate::server_image::ImageBridge {
         &self.image_bridge
+    }
+
+    pub(crate) fn speech_bridge(&self) -> &crate::server_speech::SpeechBridge {
+        &self.speech_bridge
     }
 
     pub(crate) fn attach_audio_model(
@@ -456,18 +640,23 @@ impl Server {
     pub(crate) fn info(&self) -> crate::wire::ServerInfo {
         let ids = self.registry.ids();
         #[cfg(target_os = "macos")]
-        let audio_models = self
+        let mut audio_models = self
             .audio_provider
             .as_ref()
             .map(|p| {
                 turbospark_server::AudioProvider::models(&**p)
                     .into_iter()
                     .map(|m| m.id)
-                    .collect()
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default();
         #[cfg(not(target_os = "macos"))]
-        let audio_models = Vec::new();
+        let mut audio_models = Vec::new();
+        if let Some(m) = self.speech_bridge.model() {
+            if !audio_models.contains(&m) {
+                audio_models.push(m);
+            }
+        }
 
         crate::wire::ServerInfo {
             port: self.port,
@@ -504,6 +693,7 @@ impl Server {
     fn stop(&mut self) {
         self.stopping.store(true, Ordering::Release);
         self.image_bridge.stop();
+        self.speech_bridge.stop();
         if let Some(tx) = self.shutdown.take() {
             // A dropped receiver (the thread already exited on its own,
             // e.g. a bind race elsewhere tore the listener down) means
@@ -548,6 +738,16 @@ pub(crate) unsafe fn borrow<'a>(ptr: *const Server) -> Result<&'a Server, String
         .ok_or_else(|| "server must not be null".to_string())
 }
 
+/// Opens installed models for requests that named one, on a host that opted
+/// in to request-triggered loading.
+///
+/// **THE CONCURRENCY CONTROLS HERE ARE NOT A RESIDENCY BUDGET.** The router
+/// bounds simultaneous resolutions, and [`SingleFlight`] coalesces
+/// concurrent opens of ONE alias; neither bounds how many DISTINCT models a
+/// sequence of requests may open. That bound lives in the wrapped
+/// registry's [`crate::server_registry::ResidencyPolicy`], which every
+/// successful open is admitted under, and in the default idle sweep, which
+/// releases request-loaded models no request has touched for a TTL.
 struct HostLoader {
     registry: std::sync::Arc<LiveRegistry>,
     events: std::sync::Arc<EventRing>,
@@ -610,9 +810,9 @@ impl HostLoader {
                 vec![row.alias],
             ) {
                 Ok(model) => model,
-                Err(detail) => {
+                Err(error) => {
                     return turbospark_server::registry::LoadOutcome::Refused(
-                        turbospark_server::registry::LoadRefusal::OpenFailed { detail },
+                        attach_error_to_refusal(error),
                     )
                 }
             };
@@ -783,6 +983,7 @@ fn find_installed_in(
     Ok(first)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn attach_chat_model(
     registry: &LiveRegistry,
     events: &EventRing,
@@ -793,7 +994,7 @@ fn attach_chat_model(
     core: Arc<SessionCore>,
     model_id: String,
     aliases: Vec<String>,
-) -> Result<Arc<dyn turbospark_server::ChatModel>, String> {
+) -> Result<Arc<dyn turbospark_server::ChatModel>, crate::server_registry::AttachError> {
     let mut aliases = aliases;
     aliases.retain(|alias| !alias.is_empty() && alias != &model_id);
     let mut unique_aliases = Vec::new();
@@ -804,7 +1005,7 @@ fn attach_chat_model(
     }
     let model: Arc<dyn turbospark_server::ChatModel> =
         Arc::new(crate::server_model::FfiChatModel::new_with_aliases(
-            core,
+            Arc::clone(&core),
             model_id,
             unique_aliases,
             guardrails,
@@ -812,7 +1013,14 @@ fn attach_chat_model(
             default_reasoning,
             stopping,
         ));
-    let id = registry.attach(Arc::clone(&model))?;
+    // A request-opened model is `on_demand`: the residency policy bounds it,
+    // and the default idle sweep releases it after its idle TTL even when no
+    // explicit idle policy is set.
+    let residency = crate::server_registry::ModelResidency {
+        bytes: core.committed_bytes.saturating_add(core.kv_bytes),
+        on_demand: true,
+    };
+    let id = registry.attach(Arc::clone(&model), residency)?;
     ServerObserver::record(
         events,
         turbospark_server::observe::ServerEvent::ModelAttached {
@@ -821,6 +1029,30 @@ fn attach_chat_model(
         },
     );
     Ok(model)
+}
+
+/// Maps a registry admission refusal onto the typed loader refusal the
+/// router serializes into its 503. The byte ceiling is the same
+/// "does not fit" shape a per-open load guard reports; the count cap has no
+/// byte terms to state, so it reads as an open failure naming the limit.
+#[cfg(target_os = "macos")]
+fn attach_error_to_refusal(
+    error: crate::server_registry::AttachError,
+) -> turbospark_server::registry::LoadRefusal {
+    use turbospark_server::registry::LoadRefusal;
+    match error {
+        crate::server_registry::AttachError::ByteBudgetExceeded {
+            held,
+            needs,
+            ceiling,
+        } => LoadRefusal::DoesNotFit {
+            committed_bytes: held.saturating_add(needs),
+            ceiling_bytes: ceiling,
+        },
+        other => LoadRefusal::OpenFailed {
+            detail: other.to_string(),
+        },
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -961,7 +1193,7 @@ impl SingleFlight {
 #[cfg(test)]
 mod single_flight_tests {
     use super::{load_after_miss, SingleFlight};
-    use crate::server_registry::LiveRegistry;
+    use crate::server_registry::{LiveRegistry, ModelResidency};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier, Condvar, Mutex};
     use std::time::Duration;
@@ -1158,7 +1390,7 @@ mod single_flight_tests {
         let first = load_after_miss(&registry, &single_flight, "scripted", "scripted", || {
             opens.fetch_add(1, Ordering::SeqCst);
             registry
-                .attach(Arc::clone(&model))
+                .attach(Arc::clone(&model), ModelResidency::host())
                 .expect("first load should attach");
             LoadOutcome::Loaded(model)
         });

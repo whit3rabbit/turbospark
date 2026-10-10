@@ -283,24 +283,19 @@ fn stream_response(
 /// crate that mirrors `turbospark-check --prompt`'s convention rather than
 /// the chat endpoints' `add_bos: false` (a chat template emits its own
 /// `<bos>`; nothing does here, so the tokenizer has to).
+///
+/// **EVERY CHEAP REQUEST CHECK RUNS BEFORE MODEL RESOLUTION.** Resolution is
+/// not free: on a server with request-triggered loading enabled it can open
+/// an installed model. A request whose `suffix` or `n` this endpoint was
+/// always going to refuse must be refused BEFORE any of that, or a sequence
+/// of deliberately invalid requests naming different installed models could
+/// attach heavyweight sessions without ever running inference.
 pub async fn completions(
     State(state): State<crate::ServerState>,
     tag: Option<axum::Extension<crate::observe::RequestTag>>,
     lease_slot: axum::Extension<crate::handler::RequestLeaseSlot>,
     Json(request): Json<CompletionRequest>,
 ) -> Response {
-    let model = match crate::handler::resolve_backend(
-        &state,
-        &lease_slot.0,
-        tag.map(|t| t.0),
-        Some(request.model.as_str()),
-        request.stream.unwrap_or(false),
-    )
-    .await
-    {
-        Ok(m) => m,
-        Err(response) => return response,
-    };
     if request.suffix.is_some() {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -315,12 +310,24 @@ pub async fn completions(
         Ok(c) => c,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, e),
     };
-    config.rate = model.rate_control();
     let degraded = completion_warnings(&request);
     let prompt = match single_prompt(request.prompt) {
         Ok(p) => p,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, e),
     };
+    let model = match crate::handler::resolve_backend(
+        &state,
+        &lease_slot.0,
+        tag.map(|t| t.0),
+        Some(request.model.as_str()),
+        request.stream.unwrap_or(false),
+    )
+    .await
+    {
+        Ok(m) => m,
+        Err(response) => return response,
+    };
+    config.rate = model.rate_control();
     let prompt_ids = model.tokenizer().encode(&prompt, true);
     let cancel = crate::cancel::new_cancel();
 

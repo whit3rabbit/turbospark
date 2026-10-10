@@ -52,6 +52,7 @@ enum Work {
     },
     Speak {
         text: String,
+        voice: String,
         speed: f32,
         chunks: mpsc::Sender<Result<Vec<f32>, AudioError>>,
     },
@@ -150,6 +151,7 @@ fn run(engine: Engine, queue: Receiver<Work>) {
             }
             Work::Speak {
                 text,
+                voice,
                 speed,
                 chunks,
             } => {
@@ -159,6 +161,7 @@ fn run(engine: Engine, queue: Receiver<Work>) {
                     AudioRequest {
                         task: native_task(AudioTask::TextToSpeech),
                         text,
+                        voice,
                         speed,
                         ..AudioRequest::default()
                     },
@@ -417,6 +420,7 @@ impl AudioProvider for RealAudioProvider {
             let (chunks, rx) = mpsc::channel(2);
             worker.submit(Work::Speak {
                 text: request.text,
+                voice: request.voice,
                 speed: request.speed,
                 chunks,
             })?;

@@ -16,6 +16,15 @@ use crate::ServerState;
 
 static NEXT_SEED: AtomicU64 = AtomicU64::new(1);
 
+/// Largest accepted image prompt. Text-to-image prompts are short; the shared
+/// 25 MiB chat body limit exists for base64 photos and must not apply here,
+/// because every accepted prompt is cloned into the host bridge queue.
+pub const MAX_IMAGE_PROMPT_BYTES: usize = 32 * 1024;
+
+/// Route-level body cap, enforced while the body is read. It leaves room for
+/// JSON framing and escaping around a maximum-size prompt.
+pub(crate) const MAX_IMAGE_REQUEST_BODY_BYTES: usize = 4 * MAX_IMAGE_PROMPT_BYTES;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageGenerateRequest {
     pub model: String,
@@ -128,6 +137,13 @@ pub async fn generations(
         return error(
             StatusCode::BAD_REQUEST,
             "prompt must not be empty",
+            Some("prompt"),
+        );
+    }
+    if input.prompt.len() > MAX_IMAGE_PROMPT_BYTES {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!("prompt must not exceed {MAX_IMAGE_PROMPT_BYTES} bytes"),
             Some("prompt"),
         );
     }
