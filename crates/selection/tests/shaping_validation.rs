@@ -27,9 +27,20 @@ fn top_p_outside_zero_to_one_range_is_rejected() {
 }
 
 #[test]
-fn positive_temperature_with_sub_one_top_p_and_no_top_k_is_rejected() {
-    let result = ShapingConfig::new(0.7, 0, Some(0.5), 1.0, None);
-    assert!(result.is_err());
+fn sub_one_top_p_with_disabled_top_k_is_valid_top_p_sampling() {
+    // Refused from this crate's first spec slice until the humanizer
+    // bring-up: the pipeline applies the mass cut before the rank cut and
+    // a zero rank cut skips it, so the combination is ordinary top-p
+    // sampling, and the humanizer's documented recipe needs exactly it.
+    // See `ShapingConfig::new`'s doc for the removal's full account.
+    let humanizer = ShapingConfig::new(1.0, 0, Some(0.95), 1.0, Some(7));
+    assert!(humanizer.is_ok(), "the humanizer recipe must construct");
+    let config = humanizer.expect("checked above");
+    assert_eq!(config.top_p(), Some(0.95));
+    assert_eq!(config.top_k(), 0);
+    // Every degenerate value stays refused; only the combination gate went.
+    assert!(ShapingConfig::new(0.7, 0, Some(0.0), 1.0, None).is_err());
+    assert!(ShapingConfig::new(0.7, 0, Some(1.1), 1.0, None).is_err());
 }
 
 #[test]

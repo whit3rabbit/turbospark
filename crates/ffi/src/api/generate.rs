@@ -68,6 +68,62 @@ pub unsafe extern "C" fn ts_generate(
     })
 }
 
+/// Rewrites a draft with the humanizer model (`humanizer-12b`).
+///
+/// `draft` is the plain text to rewrite. The model is a raw-completion
+/// rewriter, so the byte-exact instruction wrapper, the model's own sampling
+/// recipe (temperature 1.0, top_p 0.95, top_k off) and EOS-only stop are
+/// applied HERE and are not host-settable. `options_json` may be null or `{}`
+/// and takes only `maxNewTokens` and `seed`; any other key fails the call by
+/// name. Open the session with `maxContext` 8192: the model's window is that
+/// and no larger.
+///
+/// Streams through `cb` like `ts_generate` (`TS_EVENT_CONTENT` carries the
+/// rewrite). `result_json` is `ts_generate`'s result with an `audit` object
+/// beside it. Blocks for the whole rewrite; call it from a background thread.
+/// `ts_session_cancel` ends it with `stopReason` "cancelled".
+#[no_mangle]
+pub unsafe extern "C" fn ts_humanize(
+    ptr: *const TsSession,
+    draft: *const c_char,
+    options_json: *const c_char,
+    cb: TsEventCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        // Before any work, for the reason `ts_generate` states.
+        if result_json.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "resultJson must not be null".to_string(),
+            ));
+        }
+        let session = session::borrow(ptr).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let draft =
+            strings::required(draft, "draft").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let options = parse_json_or_default::<generate::HumanizeOptions>(options_json, "options")?;
+        let _heavy_work = HeavyWorkGuard::acquire();
+
+        let result = generate::humanize(session, draft, &options, |kind, text, a, b| {
+            if let Some(f) = cb {
+                f(
+                    userdata,
+                    kind,
+                    text.as_ptr() as *const c_char,
+                    text.len(),
+                    a,
+                    b,
+                );
+            }
+        })
+        .map_err(|e| (abi::TS_ERR_GENERATE, e))?;
+
+        let json = serde_json::to_string(&result).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// Evaluates the prompt token count without running generation.
 #[no_mangle]
 pub unsafe extern "C" fn ts_session_count_tokens(

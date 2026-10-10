@@ -26,6 +26,6 @@ pub use parser::{parse, ParseOutcome};
 pub use request::{
     steering_knob, ExpertCacheSlots, ExpertResidency, InvocationRequest, KvBits, LoadGuard,
     MaxContext, Mode, PowerProfile, PrefillChunk, ReadAheadMode, ReasoningEffort, Speculation,
-    SpeculativeDrafter, SteeringMode, ALLOWED_SPECULATION_BLOCKS,
+    SpeculativeDrafter, SteeringMode, ALLOWED_SPECULATION_BLOCKS, DEFAULT_MAX_NEW,
 };
 pub use usage::{render_usage, render_version, VERSION};

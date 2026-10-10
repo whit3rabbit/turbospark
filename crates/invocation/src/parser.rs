@@ -51,6 +51,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut model: Option<String> = None;
     let mut prompt: Option<String> = None;
     let mut messages_file: Option<String> = None;
+    let mut humanize_file: Option<String> = None;
     let mut chat = false;
     let mut system_parts: Vec<String> = Vec::new();
     let mut max_new = DEFAULT_MAX_NEW;
@@ -60,7 +61,6 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut temperature = DEFAULT_TEMPERATURE;
     let mut top_k = DEFAULT_TOP_K;
     let mut top_p = DEFAULT_TOP_P;
-    let mut top_p_explicit = false;
     let mut repetition_penalty = DEFAULT_REPETITION_PENALTY;
     let mut seed: Option<u64> = None;
     let mut stop: Vec<String> = Vec::new();
@@ -84,9 +84,8 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
     let mut steering_target: f32 = 0.0;
     let mut steering_gate: f32 = 0.0;
     // Tracked because both default to 0.0 and both are legal AT 0.0, so the
-    // value cannot say whether a caller supplied it. Same shape as
-    // `top_p_explicit` below, and needed for the same kind of whole-invocation
-    // check.
+    // value cannot say whether a caller supplied it. Needed for the same kind
+    // of whole-invocation check.
     let mut steering_target_explicit = false;
     let mut steering_gate_explicit = false;
     let mut vision_sidecar: Option<String> = None;
@@ -139,6 +138,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
             "--model" => model = Some(value.clone()),
             "--prompt" => prompt = Some(value.clone()),
             "--messages-file" => messages_file = Some(value.clone()),
+            "--humanize-file" => humanize_file = Some(value.clone()),
             "--system" => system_parts.push(value.clone()),
             "--max-new" => match value.parse::<u32>() {
                 Ok(n) if n > 0 => max_new = n,
@@ -180,7 +180,6 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
             "--top-p" => match value.parse::<f64>() {
                 Ok(p) if p.is_finite() && p > 0.0 && p <= 1.0 => {
                     top_p = p;
-                    top_p_explicit = true;
                 }
                 _ => return invalid("--top-p", value),
             },
@@ -330,11 +329,31 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
             second: "--chat",
         });
     }
+    if humanize_file.is_some() && prompt.is_some() {
+        return ParseOutcome::Failure(ParseFailure::MutuallyExclusive {
+            first: "--humanize-file",
+            second: "--prompt",
+        });
+    }
+    if humanize_file.is_some() && messages_file.is_some() {
+        return ParseOutcome::Failure(ParseFailure::MutuallyExclusive {
+            first: "--humanize-file",
+            second: "--messages-file",
+        });
+    }
+    if humanize_file.is_some() && chat {
+        return ParseOutcome::Failure(ParseFailure::MutuallyExclusive {
+            first: "--humanize-file",
+            second: "--chat",
+        });
+    }
 
     let mode = if let Some(p) = prompt {
         Mode::Prompt(p)
     } else if let Some(m) = messages_file {
         Mode::MessagesFile(m)
+    } else if let Some(h) = humanize_file {
+        Mode::HumanizeFile(h)
     } else if chat {
         Mode::Chat
     } else {
@@ -357,16 +376,12 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
         });
     }
 
-    // Only fires when the caller explicitly supplied a sub-one threshold;
-    // the documented default threshold paired with rank-based shaping
-    // turned off is not itself a violation.
-    if top_p_explicit && top_p < 1.0 && top_k == 0 {
-        return ParseOutcome::Failure(ParseFailure::InvalidValue {
-            option: "--top-p",
-            value: "cumulative-probability truncation below 1.0 requires rank-based truncation to be enabled"
-                .to_string(),
-        });
-    }
+    // A SUB-ONE `--top-p` WITH `--top-k 0` IS ACCEPTED. This used to be a
+    // refusal mirroring `ShapingConfig::new`'s old gate on the same pair;
+    // the gate came out for the humanizer recipe (temperature 1.0, top_p
+    // 0.95, top_k off), which is ordinary top-p sampling, and the two
+    // surfaces come out together or not at all -- a CLI that accepted what
+    // the sampler refused would just move the failure one layer down.
 
     // A STEERING PARAMETER WITHOUT `--steering` IS REFUSED, NOT IGNORED, and
     // it is the same argument the inverted layer range is refused on: the run

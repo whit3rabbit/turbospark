@@ -2379,3 +2379,35 @@ swallows the efficiency arm's. What it did settle is that the rate cap holds
 10.00 tok/s to 0.01% and keeps the machine out of thermal governance
 entirely, where the performance arm never is. Full write-up:
 `docs/POWER_BASELINE.md`.
+
+
+## Humanizer 12B (dense Gemma 4, MLX INT8), first rows
+
+`humanizer-12b` (`cowWhySo/humanizer-12b-mlx-8bit` @ `baea046b`, a dense
+Gemma 4 12B fine-tune) is the first dense and first INT8-affine carrier of
+the Gemma 4 family, and the frozen rows live in
+`crates/bench/tests/humanizer_quality_gate.rs` and
+`crates/bench/tests/humanizer_memory_oracle.rs`. It is a RAW COMPLETION
+rewriter: the frozen corpus conditions on `foundation::humanizer`'s
+byte-exact wrapper (SHA-256-pinned against the publisher's
+`prompt_format.json`) and scores only rewrite-position tokens; the sampled
+arm runs the model's own recipe (temperature 1.0, top_p 0.95, top_k off),
+not the shared protocol's.
+
+| | |
+| --- | --- |
+| Date | 2026-10-09 |
+| Chip | Apple M4 Max, 36 GB |
+| Power | AC |
+| Install | `~/.turbospark/models/text/humanizer-12b.gturbo`, written by `turbospark-model pull` |
+| Rewrite perplexity | 1.9198 (three frozen draft/rewrite pairs; a sentinel against its own past, not comparable across families) |
+| Greedy + sampled digests | frozen; two fresh processes agreed on every digit |
+| Memory (8,192 ctx) | 773-924 MiB peak across three sessions; replay of a warm case flat |
+| Decode | 12.5-13.4 tok/s quiet, 6.5-8.1 loaded (the oracle floor sits under the worst reproduced reading) |
+| Validity | every protocol rewrite terminated on EOS |
+
+The memory row's gap between install bytes (~12.7 GB) and peak is the
+same file-backed-weight accounting every other family's row shows; the
+ceiling is the highest reading plus 5%. One loaded session attributed a
+one-off +16 GiB to the warm replay and never again; the instrumented
+rerun measured 0.0 MiB. See the oracle file for the full account.

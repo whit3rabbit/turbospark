@@ -2231,3 +2231,67 @@ Deliberately not done (the descope list; this section is its one home):
   `docs/TOOL_CALLING.md`'s table. Both dialects themselves ARE landed and
   real-table-tested (ROADMAP's tool-calling item, 2026-09-19); only the
   real-generation smoke is owed.
+
+## The dense Gemma 4 arm (`humanizer-12b`), landed and owed (2026-10-10)
+
+`cowWhySo/humanizer-12b-mlx-8bit` (@ `baea046b`) made the Gemma 4 family's
+dense half real, and with it the family's first INT8-affine install. What
+landed: the dense decode arm in `families/gemma4` (router-shaped reads
+skipped, `layer_scalar` kept -- the real dense trunk carries it per layer,
+and the dense FFN applies it exactly as the MoE sandwich tail does), the
+INT8 embedding lookup kernel (`embed_lookup_int8`, port-local, parity +
+mutation), the INT8 batched prefill GEMM (`dequant_int8_batch`, parity
+including a reassociation-hostile fixture, bit-exact against the GEMV),
+the dense chunked-prefill driver, and both frozen gates. What deliberately
+differed, with the ceiling:
+
+- **The sampler gate `top_p < 1.0 requires top_k > 0` came out.** Its
+  origin was a clean-room spec default (`6058e721`), never an observed
+  sampling failure; the pipeline already applies the mass cut before the
+  rank cut and a zero rank cut skips it, so the combination is ordinary
+  top-p sampling, and the model's documented recipe (temperature 1.0,
+  top_p 0.95, top_k off) needs exactly it. Removed from both surfaces
+  (`ShapingConfig::new` and the CLI parser) in the same change.
+- **The dense chunked-prefill driver batches the FFN always and the
+  attention only under `TURBOSPARK_BATCHED_GEMV`.** The asymmetry is
+  where the work was: the FFN's three M-row INT8 GEMMs are the whole win,
+  the attention half's batched form is the MoE driver's seam reused
+  as-is. The embedding stays a per-token lookup (no batched embed
+  exists; the lookup is a few microseconds of the pass). Both arms are
+  held byte-identical to the sequential walk by tests.
+- **The INT8 GEMM ships the INT4 sibling's dispatch shapes (unroll 4,
+  the best-row-block steps) without its own `c(M)` sweep.** The row-block
+  axis is proven not to move a bit (the proof lives on the sibling and
+  carries over), so borrowing it is safe for correctness and unproven
+  for speed. A sweep on the real shapes (gate/up 15360x3840, down
+  3840x15360, q 8192x3840) is the named follow-up before anyone quotes
+  a prefill win.
+- **On a dense install the FFN pass's GPU time lands in `final_cb`** (it
+  commits with the head's command buffer), so `TURBOSPARK_PHASES`'s
+  routed/pipeline buckets read zero and the FFN work hides in the final
+  bucket. Splitting the buckets is owed only if someone measures dense
+  prefill phases.
+- **Cross-engine parity is behavioral, not a KL diff.** The engine's
+  rewrites are coherent, fact-preserving, terminate at EOS, and the
+  frozen perplexity (1.9198 on its own corpus) is stable across
+  processes; the publisher's own runner is mlx-lm, and a capture-and-
+  compare of layer outputs against `mlx_lm`'s `gemma4_unified` class is
+  the owed cross-engine gate (`layer_scalar`'s placement is the field
+  that check would pin).
+- **The humanize mode forces the recipe and drops `--stop`.** The
+  publisher is explicit that `###` must never be a stop string and that
+  the CLI-shaped sampling defaults are wrong for this model, so
+  `--humanize-file` ignores both rather than honoring them half-way.
+  `--max-new` still wins when the caller names a non-default budget.
+- **The C ABI's `ts_humanize` exposes only `maxNewTokens` and `seed`, and
+  refuses every other option key by name.** The wrapper bytes, the
+  sampling recipe and the EOS-only stop are the checkpoint's contract, so
+  the entry point owns them instead of mirroring `ts_generate`'s open
+  option set (`deny_unknown_fields`: a host sending `temperature` is told,
+  not ignored into the recipe). It cannot tell which model its session
+  holds (the family string is `gemma4` for the MoE and dense halves alike),
+  so the Swift section selects `humanizer-12b` by catalog alias and opens
+  its own session at 8,192 context; on any other model the call returns
+  fluent nonsense rather than an error. The output budget uses the draft's
+  real token count; the CLI's whitespace-word count (which floors a CJK
+  draft at 256 tokens) was aligned to the same rule in the same change.

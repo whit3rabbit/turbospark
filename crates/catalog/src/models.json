@@ -508,7 +508,6 @@
       "notes": "The roadmap's pinned official single-file Q3_K_M GGUF, executable since the Q3_K resident kernels landed (2026-09-19): resident GEMV + embedding lookup, no routed pair (Q6_K's footing; the real file is dense). Carries Q3_K on every attention and FFN projection (53.8% of weights), Q4_K on the embedding table and remaining projections, Q6_K on output.weight, and three Q5_K tensors -- the first mixed Q3_K/Q5_K install this port runs. Frozen quality at perplexity 12.2878 with stable greedy and sampled digests (8-slot constrained digest equals the 16-slot one) and a memory oracle at 651 MiB peak at 8192 context (+0.02 MiB replay, all three cases endOfTurn). Greedy and sampled CLI smokes coherent. The CPU reference is anchored to ggml by a generated oracle; see DEVIATIONS.md's qwen2 section. Install removed after the gates froze per the session's space goal; re-pull to re-verify."
     },
     {
-
       "alias": "qwen36",
       "name": "Qwen 3.6 35B-A3B (MLX INT4, group 64)",
       "family": "qwen36",
@@ -1044,6 +1043,46 @@
       "status": "runs",
       "gates": [],
       "notes": "The cheapest real install here, ~3 minutes. Its chat framing is Zephyr and its special-token table is Mistral's, which is why framing comes from the checkpoint's own template and not from the dialect probe."
+    },
+    {
+      "alias": "humanizer-12b",
+      "name": "Humanizer 12B (dense Gemma 4, MLX INT8, group 64)",
+      "family": "gemma4",
+      "source": {
+        "kind": "mlx",
+        "repo": "cowWhySo/humanizer-12b-mlx-8bit",
+        "revision": "baea046b43eb77516e270ffea17869bbe9110fc8",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 12684762516,
+      "install_bytes": 13000000000,
+      "status": "verified",
+      "gates": [
+        "humanizer_quality_gate",
+        "humanizer_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 924,
+          "decode_tok_s_min": 6.5,
+          "decode_tok_s_max": 13.4,
+          "measured_on": "2026-10-09",
+          "source": "this port, three sessions, one quiet and two loaded; the spread is machine load, not engine drift, and the oracle floor sits under the worst reproduced reading"
+        }
+      ],
+      "notes": "Dense Gemma 4 12B (gemma4_unified), the first dense and first INT8-affine carrier of the family: the dense decode arm, the INT8 embedding lookup and the INT8 batched prefill GEMM exist for this row. A RAW COMPLETION rewriter: wrap drafts with foundation::humanizer and never apply a chat template (the publisher is explicit that one breaks it); sampling is the model's own recipe (temperature 1.0, top_p 0.95, top_k off), which the CLI forces in the humanize mode. turbospark humanize humanizer-12b <draft> runs the whole flow, audit included."
     }
   ]
 }

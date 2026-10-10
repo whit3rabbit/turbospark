@@ -34,6 +34,11 @@ pub enum Mode {
     Prompt(String),
     /// Conversation input read from a messages-file path.
     MessagesFile(String),
+    /// Humanizer rewrite of a UTF-8 draft (`-` reads stdin). The flow
+    /// wraps the draft in the model's own byte-exact completion wrapper,
+    /// forces the model's documented sampling recipe, and audits the
+    /// rewrite afterward; the CLI's sampling flags do not reach it.
+    HumanizeFile(String),
     /// Interactive chat mode. Carries no value of its own.
     Chat,
 }

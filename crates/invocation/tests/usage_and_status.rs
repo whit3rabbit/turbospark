@@ -88,8 +88,8 @@ fn usage_text_enumerates_every_declared_option_with_a_default_or_allowed_value_d
         .collect();
     assert_eq!(
         required_and_mode_options.len(),
-        4,
-        "expected the required option plus the three mode-selecting options"
+        5,
+        "expected the required option plus the four mode-selecting options"
     );
     let other_options = OPTIONS.len() - required_and_mode_options.len();
     assert_eq!(

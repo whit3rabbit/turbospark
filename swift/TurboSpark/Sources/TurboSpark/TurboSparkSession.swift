@@ -186,6 +186,47 @@ public final class TurboSparkSession: @unchecked Sendable {
         }
     }
 
+    /// Rewrites `draft` with the humanizer model, streaming the rewrite.
+    ///
+    /// **THIS SESSION MUST HOLD `humanizer-12b`**, opened with
+    /// `maxContext: .fixed(8192)`. The model is a raw-completion rewriter:
+    /// the instruction wrapper and its sampling recipe are applied inside the
+    /// library, so there is nothing to template and nothing to tune here. The
+    /// library cannot tell which model the session holds; on a chat model the
+    /// output is fluent nonsense rather than an error.
+    ///
+    /// Same stream contract as `generate`: accumulate `.content` as the
+    /// rewrite, and the stream ends with `.finished(result)` whose `audit` is
+    /// non-nil. Cancelling the consuming `Task` cancels the rewrite.
+    public func humanize(
+        _ draft: String,
+        options: HumanizeOptions = HumanizeOptions()
+    ) -> AsyncThrowingStream<GenerationEvent, Error> {
+        let optionsJSON: String
+        do {
+            optionsJSON = try Self.encode(options)
+        } catch {
+            return AsyncThrowingStream { $0.finish(throwing: error) }
+        }
+
+        return QueuedGenerationStream.make(
+            queue: queue, cancelActive: { [weak self] in self?.cancel() }
+        ) { [self] continuation, didReceiveEvent in
+            let box = Box(continuation, didReceiveEvent: didReceiveEvent)
+            let userdata = Unmanaged.passRetained(box).toOpaque()
+            defer { Unmanaged<Box>.fromOpaque(userdata).release() }
+
+            let json = try takeString { out in
+                draft.withCString { d in
+                    optionsJSON.withCString { o in
+                        ts_humanize(self.handle.raw, d, o, streamCallback, userdata, out)
+                    }
+                }
+            }
+            continuation.yield(.finished(try decode(GenerationResult.self, from: json)))
+        }
+    }
+
     /// Starts an in-process HTTP server sharing THIS session's engine, and
     /// returns a handle to it.
     ///

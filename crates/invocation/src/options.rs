@@ -54,6 +54,13 @@ pub const OPTIONS: &[OptionDecl] = &[
         usage_hint: "interactive chat mode (mode-selecting)",
     },
     OptionDecl {
+        flag: "--humanize-file",
+        takes_value: true,
+        is_required: false,
+        is_mode_selecting: true,
+        usage_hint: "UTF-8 draft to rewrite, or - for stdin (mode-selecting)",
+    },
+    OptionDecl {
         flag: "--system",
         takes_value: true,
         is_required: false,

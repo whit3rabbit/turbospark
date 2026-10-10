@@ -2167,6 +2167,7 @@ dependencies = [
 name = "turbospark-bench"
 version = "0.2.0"
 dependencies = [
+ "half",
  "libc",
  "serde_json",
  "turbospark-catalog",
@@ -2202,8 +2203,10 @@ dependencies = [
  "indicatif",
  "libc",
  "serde_json",
+ "sha2",
  "turbospark-audio",
  "turbospark-catalog",
+ "turbospark-core",
  "turbospark-image",
  "turbospark-invocation",
  "turbospark-model-io",
@@ -2227,6 +2230,7 @@ name = "turbospark-core"
 version = "0.2.0"
 dependencies = [
  "half",
+ "sha2",
 ]
 
 [[package]]

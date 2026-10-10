@@ -23,6 +23,10 @@ USAGE:
     turbospark <COMMAND> [OPTIONS]
 
 RUN & CHAT:
+    humanize <MODEL> <DRAFT>       rewrite a draft with the humanizer model so it
+                                   reads like a person wrote it (DRAFT is a file
+                                   path or - for stdin; the rewrite goes to stdout,
+                                   the audit to stderr)
     run <MODEL> [PROMPT] [FLAGS]   run interactive chat REPL or a quick prompt
                                    (e.g. 'turbospark run gemma4' or
                                     'turbospark run gemma4 \"explain quantum computing\"')
@@ -152,6 +156,35 @@ fn handle_run(args: &[String]) -> ExitCode {
     execute_peer("turbospark-check", &check_args)
 }
 
+fn handle_humanize(args: &[String]) -> ExitCode {
+    if args.len() < 2 || args[0] == "--help" || args[0] == "-h" {
+        println!("usage: turbospark humanize <MODEL> <DRAFT> [flags...]\n");
+        println!("Rewrites a draft with the humanizer model (a raw-completion rewriter:");
+        println!("no chat template, the model's own sampling recipe, EOS-only stop).");
+        println!("DRAFT is a UTF-8 file path, or - to read stdin.");
+        println!();
+        println!("Examples:");
+        println!("  turbospark humanize humanizer-12b draft.txt");
+        println!("  cat draft.txt | turbospark humanize humanizer-12b -");
+        println!("  turbospark humanize humanizer-12b draft.txt --max-new 512 --seed 3");
+        return if args.len() < 2 {
+            ExitCode::from(2)
+        } else {
+            ExitCode::SUCCESS
+        };
+    }
+
+    // Same shape as `handle_run`: the model goes first, the draft becomes
+    // `--humanize-file`, and every other flag passes through untouched
+    // (`--max-new` and `--seed` are the ones the flow reads; the sampling
+    // flags are forced by the flow and would be ignored).
+    let mut check_args = vec!["--model".to_string(), args[0].clone()];
+    check_args.push("--humanize-file".to_string());
+    check_args.push(args[1].clone());
+    check_args.extend_from_slice(&args[2..]);
+    execute_peer("turbospark-check", &check_args)
+}
+
 fn handle_image(args: &[String]) -> ExitCode {
     let mut image_args = Vec::with_capacity(args.len() + 2);
     if args.first().map(String::as_str) != Some("generate") {
@@ -236,6 +269,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         "run" => handle_run(rest),
+        "humanize" => handle_humanize(rest),
         "image" => handle_image(rest),
         "serve" => execute_peer("turbospark-server", rest),
         "start" => handle_start(rest),

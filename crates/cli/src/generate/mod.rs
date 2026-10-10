@@ -41,8 +41,131 @@ pub fn try_generate(request: &InvocationRequest) {
     match &request.mode {
         Mode::Prompt(text) => run_prompt(request, text),
         Mode::MessagesFile(path) => run_messages_file(request, path),
+        Mode::HumanizeFile(path) => run_humanize(request, path),
         Mode::Chat => crate::chat::run(request),
     }
+}
+
+/// The humanizer rewrite: read the draft, wrap it in the model's byte-exact
+/// completion wrapper, force the model's own sampling recipe (the CLI
+/// sampling flags do not reach this mode -- the recipe is the checkpoint's
+/// contract, and its publisher documents the CLI-shaped defaults as
+/// wrong for it), stream the rewrite to stdout, and audit it to stderr.
+fn run_humanize(request: &InvocationRequest, path: &str) {
+    use foundation::humanizer::{
+        audit_rewrite, build_humanize_prompt, default_max_new, HUMANIZER_CONTEXT,
+        HUMANIZER_REPETITION_PENALTY, HUMANIZER_TEMPERATURE, HUMANIZER_TOP_K, HUMANIZER_TOP_P,
+    };
+
+    let draft = if path == "-" {
+        let mut buf = String::new();
+        match std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf) {
+            Ok(_) => buf,
+            Err(e) => {
+                eprintln!("note: not attempting real generation: cannot read stdin: {e}");
+                return;
+            }
+        }
+    } else {
+        match std::fs::read_to_string(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("note: not attempting real generation: cannot read {path}: {e}");
+                return;
+            }
+        }
+    };
+    if draft.trim().is_empty() {
+        eprintln!("note: not attempting real generation: the draft is empty");
+        return;
+    }
+
+    // THE CONTEXT IS CAPPED AT THE MODEL'S OWN CEILING. Left on `auto` the
+    // resolver reads the checkpoint's 262,144 max positions and sizes
+    // ~4.5 GiB of KV for a model whose whole contract is prompt + output
+    // within 8,192 -- an allocation the flow can never use. An explicit
+    // smaller window is the caller's and is honored; anything larger (and
+    // auto) is capped.
+    let mut capped = request.clone();
+    capped.max_context = match request.max_context {
+        invocation::MaxContext::Auto => invocation::MaxContext::Fixed(HUMANIZER_CONTEXT as u32),
+        invocation::MaxContext::Fixed(n) => {
+            invocation::MaxContext::Fixed(n.min(HUMANIZER_CONTEXT as u32))
+        }
+    };
+    let mut session = match open_session(&capped) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("note: not attempting real generation: {e}");
+            return;
+        }
+    };
+    // THE RECIPE IS FORCED. `top_k 0` with `top_p 0.95` at temperature 1.0
+    // is the publisher's documented sampler (their MLX runner constructs
+    // exactly this, and their generation_config corrects top_k back to 0);
+    // the CLI's defaults (temperature 0.2, top_k 64) would be a different
+    // model in practice.
+    let shaping = selection::ShapingConfig::new(
+        HUMANIZER_TEMPERATURE,
+        HUMANIZER_TOP_K,
+        Some(HUMANIZER_TOP_P),
+        HUMANIZER_REPETITION_PENALTY,
+        request.seed,
+    );
+    session.shaping = match shaping {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("note: not attempting real generation: {e}");
+            return;
+        }
+    };
+
+    let prompt = build_humanize_prompt(&draft);
+    let prompt_ids = session.tokenizer.encode(&prompt, true);
+    // THE OUTPUT BUDGET: about 2.5x the draft's tokens, floored at 256 and
+    // capped at 2048, then the publisher's whole-invocation ceiling of 8192
+    // prompt-plus-output. `--max-new` still wins when the caller names
+    // anything but the crate default, and the collision case (an explicit
+    // 1024, which then takes the 2.5x rule) is the documented direction of
+    // that trade: the recipe, not the number, is this mode's contract.
+    let budget = if request.max_new == invocation::DEFAULT_MAX_NEW {
+        // Real token count, not whitespace words: a CJK draft is one "word"
+        // and would floor at 256 tokens, truncating a long rewrite.
+        default_max_new(session.tokenizer.encode(draft.trim(), false).len())
+    } else {
+        request.max_new
+    };
+    let budget = budget.min((HUMANIZER_CONTEXT.saturating_sub(prompt_ids.len())) as u32);
+    let max_new = match clamp_max_new(&session, &capped, prompt_ids.len()) {
+        Ok(n) => n.min(budget),
+        Err(e) => {
+            eprintln!("note: not attempting real generation: {e}");
+            return;
+        }
+    };
+
+    println!("humanizing (real forward pass):");
+    // EOS-ONLY STOP. The publisher is explicit that `###` must never be a
+    // stop string on this model, so the caller's `--stop` list is dropped
+    // here rather than forwarded.
+    let mut sanitized = capped;
+    sanitized.stop.clear();
+    let (reply, result) = match stream_turn(&mut session, &sanitized, &prompt_ids, max_new) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("generation failed: {e}");
+            return;
+        }
+    };
+    print_footer(&result, request.quiet);
+
+    // THE AUDIT GOES TO STDERR so stdout stays the rewritten text, pipeable
+    // (the publisher's own runner prints its review note the same way).
+    let audit = audit_rewrite(&draft, &reply);
+    for warning in audit.warnings() {
+        eprintln!("note: {warning}");
+    }
+    print_phases(&session);
 }
 
 fn run_prompt(request: &InvocationRequest, prompt: &str) {

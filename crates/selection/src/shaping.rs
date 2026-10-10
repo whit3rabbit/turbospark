@@ -68,9 +68,19 @@ impl ShapingConfig {
     /// error and no selection attempted: a non-finite or negative
     /// temperature; a rank-based count outside `0..=MAX_TOP_K`; a
     /// cumulative-probability threshold that is non-finite, at or below
-    /// zero, or above one; a non-finite or non-positive repetition penalty;
-    /// and a sub-one threshold at a positive temperature with no
-    /// rank-based count requested.
+    /// zero, or above one; and a non-finite or non-positive repetition
+    /// penalty.
+    ///
+    /// A sub-one `top_p` with `top_k == 0` at a positive temperature was
+    /// REFUSED here from this crate's first spec slice until the humanizer
+    /// bring-up needed it: that combination is ordinary top-p sampling (the
+    /// pipeline below applies the mass truncation before the rank cut, and a
+    /// disabled rank cut simply skips it), and the restriction's origin is a
+    /// clean-room spec default, never an observed sampling failure. The first
+    /// real carrier is the humanizer model's documented recipe -- temperature
+    /// 1.0, top_p 0.95, top_k off, which its publisher's own MLX conversion
+    /// goes out of its way to correct back to `top_k: 0` -- so the gate came
+    /// out rather than growing an escape hatch.
     pub fn new(
         temperature: f64,
         top_k: u32,
@@ -99,13 +109,6 @@ impl ShapingConfig {
             return Err(SelectionError::new(format!(
                 "repetition_penalty must be finite and greater than zero, got {repetition_penalty}"
             )));
-        }
-        if let Some(p) = top_p {
-            if p < 1.0 && temperature > 0.0 && top_k == 0 {
-                return Err(SelectionError::new(
-                    "top_p below 1.0 at a positive temperature requires top_k to be enabled",
-                ));
-            }
         }
         Ok(Self {
             temperature,

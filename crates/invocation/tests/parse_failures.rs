@@ -24,17 +24,18 @@ fn expect_failure(outcome: ParseOutcome) -> ParseFailure {
 }
 
 #[test]
-fn disabled_top_k_with_explicit_sub_one_top_p_is_rejected() {
-    let failure = expect_failure(parse(&tok(&[
+fn disabled_top_k_with_explicit_sub_one_top_p_is_accepted() {
+    // Refused here until the humanizer recipe needed the combination; the
+    // sampler-side account lives on `ShapingConfig::new`. The parse now
+    // accepts it and the shaping layer sees the supplied values.
+    let request = match parse(&tok(&[
         "--model", "m", "--prompt", "hi", "--top-k", "0", "--top-p", "0.5",
-    ])));
-    assert!(matches!(
-        failure,
-        ParseFailure::InvalidValue {
-            option: "--top-p",
-            ..
-        }
-    ));
+    ])) {
+        ParseOutcome::Success(r) => r,
+        other => panic!("expected success, got {other:?}"),
+    };
+    assert_eq!(request.top_k, 0);
+    assert!((request.top_p - 0.5).abs() < f64::EPSILON);
 }
 
 #[test]

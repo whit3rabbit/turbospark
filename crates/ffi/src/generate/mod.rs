@@ -1,5 +1,6 @@
 //! One turn: render, decode, stream, and report.
 
+mod humanize;
 mod prompt;
 #[cfg(test)]
 mod tests;
@@ -26,6 +27,7 @@ pub const TS_EVENT_TOOL: i32 = 3;
 /// return plus `ts_last_error` remains the only error signal.
 pub const TS_EVENT_FINISH: i32 = 4;
 
+pub(crate) use humanize::{humanize, HumanizeOptions};
 pub(crate) use prompt::{
     count_text_tokens, count_tokens, detokenize, fit_window, render_prompt, tokenize, tool_offer,
     ToolOffer,
@@ -152,7 +154,7 @@ pub(crate) fn generate(
     session: &Session,
     messages: &[WireMessage],
     options: &GenerateOptions,
-    mut emit: impl FnMut(i32, &str, u32, u32),
+    emit: impl FnMut(i32, &str, u32, u32),
 ) -> Result<GenerateResult, String> {
     let reasoning = ReasoningEffort::parse(&options.reasoning)
         .ok_or_else(|| format!("unknown reasoning level {:?}", options.reasoning))?;
@@ -167,7 +169,34 @@ pub(crate) fn generate(
     // any image is touched: a bad sampling option should fail as cheaply as a
     // misspelled reasoning level, not after an image has been encoded.
     let shaping = session.shaping(options)?;
+    run_turn(
+        session,
+        &rendered_ids,
+        &image_parts,
+        &offer,
+        reasoning,
+        shaping,
+        options,
+        emit,
+    )
+}
 
+/// Decodes one already-rendered prompt. Shared by the template-driven
+/// [`generate`] and the raw-completion `humanize` flow, which differ only in
+/// how the prompt ids were produced and where the sampling config came from.
+/// `options` supplies the budget and stop sets only; its sampling fields are
+/// NOT read here, because `shaping` is the resolved config.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_turn(
+    session: &Session,
+    rendered_ids: &[i32],
+    image_parts: &[&crate::wire::WirePart],
+    offer: &ToolOffer,
+    reasoning: ReasoningEffort,
+    shaping: selection::ShapingConfig,
+    options: &GenerateOptions,
+    mut emit: impl FnMut(i32, &str, u32, u32),
+) -> Result<GenerateResult, String> {
     // Armed BEFORE the lock is taken, so a Stop pressed between turns cannot
     // cancel the next one before it has produced a token.
     let cancel = session.arm();
@@ -190,7 +219,7 @@ pub(crate) fn generate(
     // the engine through `vision_scope.engine_mut()` rather than re-borrowing
     // `engine` directly, which the borrow checker would refuse.
     let (prompt_ids, mut vision_scope) =
-        attach_images(&mut engine, session, &rendered_ids, &image_parts)?;
+        attach_images(&mut engine, session, rendered_ids, image_parts)?;
     let max_new = clamp_max_new(session, options.max_new_tokens, prompt_ids.len())?;
 
     let config = GenerationConfig {

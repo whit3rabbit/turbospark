@@ -75,6 +75,9 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
     /// engine parsed a call, and decoded with a default so a binding built
     /// against an older engine still decodes the rest of the struct.
     public let toolCalls: [GenerationToolCall]
+    /// The rewrite audit. Present only on a `humanize` result; nil on an
+    /// ordinary turn, whose engine reports no such field.
+    public let audit: HumanizeAudit?
 
     private enum CodingKeys: String, CodingKey {
         case promptTokens
@@ -88,6 +91,7 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
         case reasoning
         case peakMemoryPressure
         case toolCalls
+        case audit
     }
 
     public init(from decoder: Decoder) throws {
@@ -104,6 +108,7 @@ public struct GenerationResult: Decodable, Sendable, Equatable {
         peakMemoryPressure =
             try c.decodeIfPresent(String.self, forKey: .peakMemoryPressure) ?? "normal"
         toolCalls = try c.decodeIfPresent([GenerationToolCall].self, forKey: .toolCalls) ?? []
+        audit = try c.decodeIfPresent(HumanizeAudit.self, forKey: .audit)
     }
 }
 
