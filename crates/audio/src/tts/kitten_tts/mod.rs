@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use turbospark_audio::fft::ComplexF32;
-use turbospark_audio::stft::{istft, stft, StftOptions};
+use turbospark_audio::stft::{istft, StftOptions};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::codec::conv::{wn_fold_in_place, WnFold};
@@ -728,6 +728,10 @@ impl Lstm {
         })
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the direction weights and bias mirror the checkpoint"
+    )]
     fn dir_forward(
         &self,
         x: &[f32],
@@ -913,9 +917,13 @@ impl AdainResBlk1d {
         } else {
             None
         };
+        let mut conv1 = load_wn_conv(file, &format!("{base}.conv1"))?;
+        conv1.padding = 1;
+        let mut conv2 = load_wn_conv(file, &format!("{base}.conv2"))?;
+        conv2.padding = 1;
         Ok(AdainResBlk1d {
-            conv1: load_wn_conv(file, &format!("{base}.conv1"))?,
-            conv2: load_wn_conv(file, &format!("{base}.conv2"))?,
+            conv1,
+            conv2,
             conv1x1,
             norm1: AdaIn1d::load(file, &format!("{base}.norm1"), dim_in)?,
             norm2: AdaIn1d::load(file, &format!("{base}.norm2"), dim_out)?,
@@ -1013,10 +1021,10 @@ impl AdaInResBlock1 {
         let mut adain2 = Vec::new();
         let mut alpha1 = Vec::new();
         let mut alpha2 = Vec::new();
-        for i in 0..3 {
+        for (i, &dilation) in dilations.iter().enumerate() {
             let mut conv = load_wn_conv(file, &format!("{base}.convs1.{i}"))?;
-            conv.padding = get_padding(kernel, dilations[i]);
-            conv.dilation = dilations[i];
+            conv.padding = get_padding(kernel, dilation);
+            conv.dilation = dilation;
             convs1.push(conv);
             let mut conv = load_wn_conv(file, &format!("{base}.convs2.{i}"))?;
             conv.padding = get_padding(kernel, 1);
@@ -1564,8 +1572,9 @@ impl ProsodyPredictor {
                 AdainResBlk1d::load(file, &format!("{base}.N.1"), d_hid, d_hid / 2, true)?,
                 AdainResBlk1d::load(file, &format!("{base}.N.2"), d_hid / 2, d_hid / 2, false)?,
             ],
-            f0_proj: load_wn_conv(file, &format!("{base}.F0_proj"))?,
-            n_proj: load_wn_conv(file, &format!("{base}.N_proj"))?,
+            // The F0/N projections are plain (non-weight-norm) 1x1 convs.
+            f0_proj: load_plain_conv(file, &format!("{base}.F0_proj"))?,
+            n_proj: load_plain_conv(file, &format!("{base}.N_proj"))?,
             d_hid,
             style_dim,
         })
@@ -1639,10 +1648,20 @@ impl ProsodyPredictor {
                     cur = b.forward(&cur, seq, s, quant, &format!("{path}.{i}"));
                 }
                 // The 1x1 projection runs channels-last: a per-frame linear
-                // over the channel axis.
-                let ch = cur.len() / frames;
-                let input = maybe_fake_quant(&cur, quant.enabled(proj_path));
-                ops::linear(&input, &proj.weight, Some(&proj.bias), frames, ch, 1)
+                // over the channel axis. The upsample block doubled the
+                // frames, so derive both from the buffer and the last
+                // block's output width, and transpose the channel-major
+                // buffer into the projection's row-major layout.
+                let ch = blocks.last().map(|b| b.conv2.out_ch).unwrap_or(d);
+                let out_frames = cur.len() / ch;
+                let mut rows = vec![0.0f32; ch * out_frames];
+                for t in 0..out_frames {
+                    for c in 0..ch {
+                        rows[t * ch + c] = cur[c * out_frames + t];
+                    }
+                }
+                let rows = maybe_fake_quant(&rows, quant.enabled(proj_path));
+                ops::linear(&rows, &proj.weight, Some(&proj.bias), out_frames, ch, 1)
             };
         let f0 = branch(
             &self.f0_blocks,
@@ -1826,7 +1845,7 @@ impl Generator {
             if i + 1 < upsample_rates.len() {
                 let stride_f0: usize = upsample_rates[i + 1..].iter().product();
                 conv.stride = stride_f0;
-                conv.padding = (stride_f0 + 1) / 2;
+                conv.padding = floor_div(stride_f0 + 1, 2);
             } else {
                 conv.stride = 1;
                 conv.padding = 0;
@@ -1879,22 +1898,87 @@ impl Generator {
             }
         }
         let har_source = self.m_source.forward(&f0_up, rng, quant);
-        // STFT of the source: periodic Hann, center reflect.
+        let har = self.har_spectrum(&har_source);
+        self.forward_with_har(x, seq, s, &har, quant)
+    }
+
+    /// The STFT of the harmonic source as the `[mag; phase]` channel-major
+    /// feature the noise branch consumes: periodic Hann, center reflect.
+    ///
+    /// The transform runs in f64 (a direct DFT; the frames are short).
+    /// The phase channel is discontinuous at the arctan2 branch cut
+    /// wherever the true imaginary part sits below the FFT's rounding
+    /// error, so the sign of a near-zero imaginary part must not be left
+    /// to f32 butterfly rounding: an accurate DFT keeps the phase on the
+    /// same side of the branch cut as the reference (see the family
+    /// README for the measured residual).
+    fn har_spectrum(&self, har_source: &[f32]) -> Vec<f32> {
+        let n_fft = (self.bins - 1) * 2;
+        let pad = n_fft / 2;
+        // Periodic Hann in f64.
+        let window: Vec<f64> = (0..n_fft)
+            .map(|k| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * k as f64 / n_fft as f64).cos())
+            .collect();
+        // Reflect padding (torch.stft conventions), f64.
+        let mut padded = vec![0.0f64; har_source.len() + 2 * pad];
+        for (i, v) in padded[pad..pad + har_source.len()].iter_mut().enumerate() {
+            *v = f64::from(har_source[i]);
+        }
+        // torch.stft reflect padding: the edge sample is not repeated
+        // (padded[i] = x[pad - i]; padded[n + pad + i] = x[n - 2 - i]).
+        for i in 0..pad {
+            let src = (pad - i).min(har_source.len() - 1);
+            padded[i] = f64::from(har_source[src]);
+            let src = (har_source.len() - 2 - i).min(har_source.len() - 1);
+            padded[pad + har_source.len() + i] = f64::from(har_source[src]);
+        }
+        let frames_t = 1 + har_source.len() / self.hop;
+        let mut har = vec![0.0f32; 2 * self.bins * frames_t];
+        let mut frame = vec![0.0f64; n_fft];
+        for t in 0..frames_t {
+            let start = t * self.hop;
+            for (k, slot) in frame.iter_mut().enumerate() {
+                *slot = padded[start + k] * window[k];
+            }
+            for b in 0..self.bins {
+                let mut re = 0.0f64;
+                let mut im = 0.0f64;
+                let angle = -2.0 * std::f64::consts::PI * b as f64 / n_fft as f64;
+                for (k, &x) in frame.iter().enumerate() {
+                    let theta = angle * k as f64;
+                    re += x * theta.cos();
+                    im += x * theta.sin();
+                }
+                har[b * frames_t + t] = ((re * re + im * im).sqrt()) as f32;
+                // The DC bin of a real signal is purely real; the
+                // reference's FFT produces a +0.0 imaginary part there,
+                // which decides the side of the arctan2 branch cut when
+                // the real part is negative. (The Nyquist bin's zero sign
+                // varies with the reference's FFT rounding and cannot be
+                // matched systematically; see the family README.)
+                let im_f32 = if b == 0 { 0.0f32 } else { im as f32 };
+                har[(self.bins + b) * frames_t + t] = im_f32.atan2(re as f32);
+            }
+        }
+        har
+    }
+
+    /// The generator from the decoder features and a precomputed harmonic
+    /// spectrum (`[mag; phase]` channel-major at the STFT frame rate).
+    fn forward_with_har(
+        &self,
+        x: &[f32],
+        seq: usize,
+        s: &[f32],
+        har: &[f32],
+        quant: &ActivationQuant,
+    ) -> Vec<f32> {
         let opts = StftOptions {
             fft_size: (self.bins - 1) * 2,
             hop: self.hop,
             window: turbospark_audio::hann_window((self.bins - 1) * 2),
             center: true,
         };
-        let frames_t = 1 + har_source.len() / self.hop;
-        let spectra = stft(&har_source, &opts).expect("harmonic source STFT");
-        let mut har = vec![0.0f32; 2 * self.bins * frames_t];
-        for (t, frame) in spectra.iter().enumerate() {
-            for (b, z) in frame.iter().enumerate() {
-                har[b * frames_t + t] = (z.re * z.re + z.im * z.im).sqrt();
-                har[(self.bins + b) * frames_t + t] = z.im.atan2(z.re);
-            }
-        }
         let mut cur = x.to_vec();
         let mut cur_seq = seq;
         for i in 0..self.ups.len() {
@@ -1902,7 +1986,7 @@ impl Generator {
                 *v = leaky_relu(*v, 0.1);
             }
             let x_source = self.noise_convs[i].forward(
-                &har,
+                har,
                 quant,
                 &format!("decoder.generator.noise_convs.{i}"),
             );
@@ -1981,6 +2065,16 @@ impl Generator {
     }
 }
 
+/// Python `//`: floor division (the clippy `manual_div_ceil` suggestion
+/// would flip the rounding the reference relies on).
+#[allow(
+    clippy::manual_div_ceil,
+    reason = "the reference pads with floor((stride + 1) / 2)"
+)]
+fn floor_div(a: usize, b: usize) -> usize {
+    a / b
+}
+
 fn upsample_initial_channel_at(istftnet: &IstftnetConfig, stage: usize) -> usize {
     istftnet.upsample_initial_channel / (1usize << stage)
 }
@@ -2040,6 +2134,10 @@ impl KittenDecoder {
     }
 
     /// `asr` channel-major `[hidden, frames]`, `f0`/`n` curves `[frames]`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the signature mirrors the checkpoint path"
+    )]
     fn forward(
         &self,
         asr: &[f32],
@@ -2334,7 +2432,7 @@ impl Model {
         speed: f32,
         rng: &mut Rng,
     ) -> Result<Vec<f32>> {
-        let _ = ids_checked(input_ids)?;
+        ids_checked(input_ids)?;
         let seq = input_ids.len();
         // KittenAlbert duration features.
         let bert_out = self.albert.forward(input_ids)?;
@@ -2453,10 +2551,15 @@ impl Model {
         let mut rng = Rng::new(self.seed);
         let mut pending: Option<Vec<f32>> = None;
         let mut segments: Vec<Vec<f32>> = Vec::new();
+        // The reference loop feeds the RESOLVED speed of each chunk into
+        // the next `_prepare_inputs` call, so a voice speed prior
+        // compounds across chunks.
+        let mut speed = speed;
         for chunk in &chunks {
             let cleaned = preprocessor.process(chunk);
             let phonemes = phonemize(&cleaned);
             let segment = self.prepare_segment(&phonemes, cleaned.chars().count(), voice, speed)?;
+            speed = segment.speed;
             let audio = self.generate_with_rng(
                 &segment.input_ids,
                 &segment.ref_s,
@@ -2577,7 +2680,7 @@ impl Model {
             }
         }
         if tail_silence_samples > 0 {
-            audio.extend(std::iter::repeat(0.0).take(tail_silence_samples));
+            audio.resize(audio.len() + tail_silence_samples, 0.0);
         }
         audio
     }

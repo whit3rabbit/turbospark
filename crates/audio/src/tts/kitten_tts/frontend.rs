@@ -608,6 +608,10 @@ fn expand_ip_addresses(text: &str) -> String {
         }
         let mut groups = [0usize; 4];
         let mut j = i;
+        #[allow(
+            clippy::needless_range_loop,
+            reason = "the four octet positions are protocol-indexed"
+        )]
         for g in 0..4 {
             let len = digits_at(chars, j, 3);
             if len == 0 {
@@ -628,20 +632,17 @@ fn expand_ip_addresses(text: &str) -> String {
         let words = [
             "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
         ];
-        let mut octets: Vec<String> = Vec::new();
-        for g in 0..4 {
-            let digits: String = chars[groups[g]..]
-                .iter()
-                .take_while(|c| c.is_ascii_digit())
-                .collect();
-            octets.push(
-                digits
-                    .chars()
+        let octets: Vec<String> = groups
+            .iter()
+            .map(|&g| {
+                chars[g..]
+                    .iter()
+                    .take_while(|c| c.is_ascii_digit())
                     .map(|c| words[c.to_digit(10).expect("digit") as usize])
                     .collect::<Vec<_>>()
-                    .join(" "),
-            );
-        }
+                    .join(" ")
+            })
+            .collect();
         Some((octets.join(" dot "), j - i))
     })
 }
@@ -661,7 +662,11 @@ fn normalize_leading_decimals(text: &str) -> String {
         None
     });
     scan_replace(&with_minus, |chars, i| {
-        if chars[i] == '.' && (i == 0 || !chars[i - 1].is_ascii_digit()) && i + 1 < chars.len() {
+        if chars[i] == '.'
+            && (i == 0 || !chars[i - 1].is_ascii_digit())
+            && i + 1 < chars.len()
+            && chars[i + 1].is_ascii_digit()
+        {
             // The reference sub is `(?<!\d)\.([\d])` -> "0.\1": one digit.
             return Some((format!("0.{}", chars[i + 1]), 2));
         }
@@ -683,7 +688,7 @@ fn expand_currency(text: &str) -> String {
     scan_replace(text, |chars, i| {
         let symbol = CURRENCY_SYMBOLS
             .iter()
-            .find(|(s, _)| s.chars().count() == 1 && s.chars().next() == Some(chars[i]));
+            .find(|(s, _)| s.starts_with(chars[i]));
         let (_, unit) = match symbol {
             Some(entry) => entry,
             None => return None,
@@ -705,17 +710,27 @@ fn expand_currency(text: &str) -> String {
             j += digits_at(chars, j, usize::MAX);
         }
         let raw_number: String = chars[num_start..j].iter().collect();
-        j += space_run(chars, j);
-        // Optional [KMBT] scale with a lookahead: not followed by a letter
-        // or digit.
+        // \s*([KMBT])?(?![a-zA-Z\d]) with backtracking: the whitespace is
+        // only consumed when the scale letter or the trailing lookahead
+        // can still match after it.
+        let spaces = space_run(chars, j);
         let mut scale: Option<char> = None;
-        if j < chars.len() && matches!(chars[j], 'K' | 'M' | 'B' | 'T') {
-            let after_ok = j + 1 >= chars.len() || !(chars[j + 1].is_ascii_alphanumeric());
-            if after_ok {
-                scale = Some(chars[j]);
-                j += 1;
+        let mut matched_end: Option<usize> = None;
+        let lookahead_ok = |pos: usize| pos >= chars.len() || !chars[pos].is_ascii_alphanumeric();
+        for take in (0..=spaces).rev() {
+            let p = j + take;
+            if p < chars.len() && matches!(chars[p], 'K' | 'M' | 'B' | 'T') && lookahead_ok(p + 1) {
+                scale = Some(chars[p]);
+                matched_end = Some(p + 1);
+                break;
+            }
+            if lookahead_ok(p) {
+                matched_end = Some(p);
+                break;
             }
         }
+        let matched_end = matched_end?;
+        j = matched_end;
         let raw_clean: String = raw_number.chars().filter(|c| *c != ',').collect();
         let scale_map = [
             ("K", "thousand"),
@@ -726,7 +741,7 @@ fn expand_currency(text: &str) -> String {
         let expansion = if let Some(scale_char) = scale {
             let scale_word = scale_map
                 .iter()
-                .find(|(s, _)| s.chars().next() == Some(scale_char))
+                .find(|(s, _)| s.starts_with(scale_char))
                 .map(|(_, w)| *w)
                 .unwrap_or("");
             let num = if raw_clean.contains('.') {
@@ -793,7 +808,7 @@ fn expand_percentages(text: &str) -> String {
             j += 1;
             j += digits_at(chars, j, usize::MAX);
         }
-        let raw: String = chars[num_start..j].iter().collect();
+        let raw: String = chars[i..j].iter().collect();
         let mut k = j;
         k += space_run(chars, k);
         if k >= chars.len() || chars[k] != '%' {
@@ -957,18 +972,14 @@ fn expand_ordinals(text: &str) -> String {
             return None;
         }
         let mut j = i + d_len;
-        let matched = if slice_eq_ignore_ascii_case(chars, j, "st") {
-            2
-        } else if slice_eq_ignore_ascii_case(chars, j, "nd") {
-            2
-        } else if slice_eq_ignore_ascii_case(chars, j, "rd") {
-            2
-        } else if slice_eq_ignore_ascii_case(chars, j, "th") {
-            2
-        } else {
+        if !slice_eq_ignore_ascii_case(chars, j, "st")
+            && !slice_eq_ignore_ascii_case(chars, j, "nd")
+            && !slice_eq_ignore_ascii_case(chars, j, "rd")
+            && !slice_eq_ignore_ascii_case(chars, j, "th")
+        {
             return None;
-        };
-        j += matched;
+        }
+        j += 2;
         if !word_boundary(chars, j) {
             return None;
         }
@@ -1020,17 +1031,23 @@ fn expand_units(text: &str) -> String {
             j += digits_at(chars, j, usize::MAX);
         }
         let raw: String = chars[i..j].iter().collect();
-        let mut k = j;
-        k += space_run(chars, k);
-        // Alternation in reference order, IGNORECASE.
-        let unit = UNIT_MAP
-            .iter()
-            .find(|(u, _)| slice_eq_ignore_ascii_case(chars, k, u))
-            .map(|(u, _)| *u)?;
-        let after = k + unit.chars().count();
-        if !word_boundary(chars, after) {
-            return None;
+        // \s*(unit)\b with backtracking over the whitespace run.
+        let spaces = space_run(chars, j);
+        let mut found: Option<(&str, usize)> = None;
+        for take in (0..=spaces).rev() {
+            let p = j + take;
+            if let Some((u, _)) = UNIT_MAP
+                .iter()
+                .find(|(u, _)| slice_eq_ignore_ascii_case(chars, p, u))
+            {
+                let end = p + u.chars().count();
+                if word_boundary(chars, end) {
+                    found = Some((u, end));
+                    break;
+                }
+            }
         }
+        let (unit, after) = found?;
         let unit_lower: String = unit.chars().map(ascii_lower).collect();
         let expanded = UNIT_MAP
             .iter()
@@ -1156,16 +1173,25 @@ fn expand_decades(text: &str) -> String {
         if !word_boundary(chars, i) {
             return None;
         }
-        // \b(\d{1,3})0s\b
+        // \b(\d{1,3})0s\b: the digit run backtracks so the literal
+        // trailing 0 can match ("80s" reads group 8, then "0s").
         let d_len = digits_at(chars, i, 3);
         if d_len == 0 {
             return None;
         }
-        let mut j = i + d_len;
-        if j >= chars.len() || chars[j] != '0' {
+        let mut group_len = 0usize;
+        let mut j = i;
+        for len in (1..=d_len).rev() {
+            let candidate = i + len;
+            if candidate + 1 < chars.len() && chars[candidate] == '0' {
+                group_len = len;
+                j = candidate + 1;
+                break;
+            }
+        }
+        if group_len == 0 {
             return None;
         }
-        j += 1;
         if j >= chars.len() || ascii_lower(chars[j]) != 's' {
             return None;
         }
@@ -1173,7 +1199,7 @@ fn expand_decades(text: &str) -> String {
         if !word_boundary(chars, j) {
             return None;
         }
-        let base: i64 = chars[i..i + d_len]
+        let base: i64 = chars[i..i + group_len]
             .iter()
             .collect::<String>()
             .parse()

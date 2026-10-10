@@ -86,7 +86,7 @@ CONFIG = {
     "max_dur": 8,
     "n_layer": 2,
     "n_mels": 80,
-    "n_token": 120,
+    "n_token": 178,
     "style_dim": 128,
     "text_encoder_kernel_size": 5,
     "asr_res_dim": 4,
@@ -100,7 +100,7 @@ CONFIG = {
         "num_attention_heads": 2,
         "hidden_size": 24,
         "intermediate_size": 32,
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 256,
         "embedding_size": 8,
         "inner_group_num": 1,
         "num_hidden_groups": 1,
@@ -355,20 +355,26 @@ def stage_traces(model, input_ids, ref_s, speed, seed, strict=True):
     har = mx.concatenate([mag, phase], axis=1).swapaxes(2, 1)
     xg = cur
     ups = []
+    gen_stages = []
     for i in range(gen.num_upsamples):
         xg = istftnet.leaky_relu(xg, negative_slope=0.1)
         x_source = gen.noise_convs[i](har)
+        gen_stages.append({"noise_conv": floats(x_source)})
         x_source = gen.noise_res[i](x_source.swapaxes(2, 1), ref_s[:, :128])
+        gen_stages[-1]["noise_res"] = floats(x_source)
         xg = gen.ups[i](xg.swapaxes(2, 1), mx.conv_transpose1d).swapaxes(2, 1)
         ups.append(xg)
+        gen_stages[-1]["up"] = floats(xg)
         if i == gen.num_upsamples - 1:
             xg = gen.reflection_pad(xg)
         xg = xg + x_source
+        gen_stages[-1]["added"] = floats(xg)
         xs = None
         for j in range(gen.num_kernels):
             blk = gen.resblocks[i * gen.num_kernels + j](xg, ref_s[:, :128])
             xs = blk if xs is None else xs + blk
         xg = xs / gen.num_kernels
+        gen_stages[-1]["resblocks"] = floats(xg)
     xg = istftnet.leaky_relu(xg, negative_slope=0.01)
     post = gen.conv_post(xg.swapaxes(2, 1), mx.conv1d).swapaxes(2, 1)
     spec = mx.exp(post[:, : gen.post_n_fft // 2 + 1, :])
@@ -414,6 +420,7 @@ def stage_traces(model, input_ids, ref_s, speed, seed, strict=True):
             "har_source": floats(har_source),
             "stft_mag": floats(mag),
             "stft_phase": floats(phase),
+            "gen_stages": gen_stages,
             "ups": [floats(u) for u in ups],
             "conv_post": floats(post),
             "spec": floats(spec),
@@ -425,13 +432,17 @@ def stage_traces(model, input_ids, ref_s, speed, seed, strict=True):
 
 
 def phoneme_inputs(phonemizer, cleaner, chunk, voices):
-    """The reference `_prepare_inputs` text side, pinned per chunk."""
-    tokens = " ".join(basic_english_tokenize(phonemizer.phonemize([chunk])[0]))
+    """The reference `_prepare_inputs` text side, pinned per chunk: the
+    chunk runs through the TextPreprocessor first, then espeak."""
+    cleaned = TextPreprocessor()(chunk)
+    phonemes = phonemizer.phonemize([cleaned])[0]
+    tokens = " ".join(basic_english_tokenize(phonemes))
     ids = [0] + cleaner(tokens) + [0]
-    voice_row = min(len(chunk), voices.shape[0] - 1)
+    voice_row = min(len(cleaned), voices.shape[0] - 1)
     return {
         "chunk": chunk,
-        "phonemes": phonemizer.phonemize([chunk])[0],
+        "cleaned": cleaned,
+        "phonemes": phonemes,
         "token_string": tokens,
         "input_ids": ids,
         "voice_row": int(voice_row),
@@ -460,9 +471,137 @@ def main() -> None:
         cleaner_cases.append(
             {"phonemes": phonemes, "token_string": tokens, "ids": cleaner(tokens)}
         )
+    # STFT parity probe on a deterministic signal: the magnitude and the
+    # phase away from the atan2 branch cut. The reference stft/istft pair
+    # (mlx_audio.utils, periodic Hann, center reflect) is what the
+    # generator consumes.
+    import mlx_audio
+    from mlx_audio.utils import stft as mlx_stft
+    from mlx_audio.dsp import hanning
+
+    probe_sig = np.array(
+        [((i * 37) % 101) / 101.0 - 0.5 for i in range(256)], dtype=np.float32
+    )
+    probe_win = hanning(32, periodic=True)
+    probe_x = mlx_stft(
+        mx.array(probe_sig),
+        n_fft=32,
+        hop_length=4,
+        win_length=32,
+        window=probe_win,
+        center=True,
+        pad_mode="reflect",
+    ).transpose(1, 0)
+    probe = {
+        "signal": floats(probe_sig),
+        "n_fft": 32,
+        "hop": 4,
+        "mag": floats(mx.abs(probe_x)),
+        "phase": floats(mx.arctan2(mx.imag(probe_x), mx.real(probe_x))),
+    }
+
+    # Crossfade and tail treatments on pinned inputs (the glue the
+    # generate loop applies around the model).
+    rng_tail = np.random.RandomState(21)
+    tail_in = (rng_tail.standard_normal(6000) * 0.3).astype(np.float32)
+    cross_cases = []
+    rng_x = np.random.RandomState(22)
+    prev = (rng_x.standard_normal(3000) * 0.2).astype(np.float32)
+    nxt = (rng_x.standard_normal(2200) * 0.2).astype(np.float32)
+    fade = min(int(24000 * 20 / 1000), prev.shape[0], nxt.shape[0])
+    t = np.arange(fade, dtype=np.float32) / fade
+    blended = prev[-fade:] * (1.0 - t) + nxt[:fade] * t
+    cross_cases.append(
+        {
+            "prev": floats(prev),
+            "next": floats(nxt),
+            "merged": floats(np.concatenate([prev[:-fade], blended])),
+            "remainder": floats(nxt[fade:]),
+        }
+    )
+
+    # The tail treatment, replicated verbatim from the reference
+    # generate()._apply_tail closure (it is not reachable standalone).
+    def apply_tail(audio, sample_rate=24000, fade_out_ms=200, tail_silence_ms=200):
+        audio = mx.array(audio)
+        fade_out_samples = int(sample_rate * max(fade_out_ms, 0) / 1000)
+        tail_silence_samples = int(sample_rate * max(tail_silence_ms, 0) / 1000)
+        hop = max(1, int(sample_rate * 0.01))
+        tail_len = min(audio.shape[0], int(sample_rate * 1.0))
+        if tail_len > hop * 3:
+            tail_np = np.array(audio[-tail_len:])
+            n_frames = tail_np.shape[0] // hop
+            if n_frames > 3:
+                tail_np = tail_np[-n_frames * hop :].reshape(n_frames, hop)
+                rms = np.sqrt(np.mean(tail_np * tail_np, axis=1))
+                if rms.max() > 1e-6:
+                    rms_norm = rms / (rms.max() + 1e-9)
+                    silence_rel = 0.1
+                    resume_rel = 0.2
+                    min_silence_frames = max(3, int(0.03 / 0.01))
+                    run = 0
+                    for i in range(len(rms_norm) - 1, -1, -1):
+                        if rms_norm[i] < silence_rel:
+                            run += 1
+                        else:
+                            if run >= min_silence_frames:
+                                low_end = i + run
+                                if np.any(rms_norm[low_end + 1 :] > resume_rel):
+                                    cut_frame = low_end + 1
+                                    cut_idx = audio.shape[0] - tail_len + cut_frame * hop
+                                    audio = audio[:cut_idx]
+                                break
+                            run = 0
+        if fade_out_samples > 0:
+            hop = max(1, int(sample_rate * 0.01))
+            tail_len = min(audio.shape[0], int(sample_rate * max(fade_out_ms, 400) / 1000))
+            fade_start = max(0, audio.shape[0] - fade_out_samples)
+            if tail_len > hop:
+                tail = np.array(audio[-tail_len:])
+                n_frames = tail.shape[0] // hop
+                if n_frames > 0:
+                    tail = tail[-n_frames * hop :].reshape(n_frames, hop)
+                    rms = np.sqrt(np.mean(tail * tail, axis=1))
+                    if rms.size > 0:
+                        thr = max(rms.max() * 0.05, 1e-4)
+                        idxs = np.where(rms > thr)[0]
+                        if len(idxs):
+                            last_idx = idxs[-1]
+                            fade_start = audio.shape[0] - tail_len + last_idx * hop
+            fade_len = audio.shape[0] - fade_start
+            if fade_len < fade_out_samples:
+                fade_start = max(0, audio.shape[0] - fade_out_samples)
+                fade_len = audio.shape[0] - fade_start
+            if fade_len > 0:
+                fade_start_i = int(fade_start)
+                fade_len_i = int(fade_len)
+                t = mx.arange(fade_len_i, dtype=audio.dtype) / fade_len_i
+                fade_curve = 1.0 - t
+                audio = mx.concatenate(
+                    [audio[:fade_start_i], audio[fade_start_i:] * fade_curve], axis=0
+                )
+        if tail_silence_samples > 0:
+            audio = mx.concatenate(
+                [audio, mx.zeros((tail_silence_samples,), dtype=audio.dtype)], axis=0
+            )
+        return audio
+
+    rng_tail2 = np.random.RandomState(23)
+    tail_signal = (rng_tail2.standard_normal(9000) * 0.3).astype(np.float32)
+    tail_signal[-3000:] *= np.linspace(1.0, 0.0, 3000)
+    tail_cases = [
+        {
+            "input": floats(tail_signal),
+            "output": floats(apply_tail(tail_signal)),
+        }
+    ]
+
     frontend = {
         "reference_commit": REFERENCE_COMMIT,
         "symbols": symbols,
+        "stft_probe": probe,
+        "crossfade_cases": cross_cases,
+        "tail_cases": tail_cases,
         "phonemize_cases": phonemize_cases,
         "cleaner_cases": cleaner_cases,
         "preprocess_cases": [
@@ -560,11 +699,12 @@ def main() -> None:
     chunks = chunk_text(CHUNKED_TEXT.strip(), max_len=400)
     assert len(results) == len(chunks) >= 3
     segments = []
+    effective_speed = 1.0 * CONFIG["speed_priors"]["test-voice"]
     for chunk_index, chunk in enumerate(chunks):
         prepared = phoneme_inputs(phonemizer, cleaner, chunk, voices)
         ids_mx = mx.array([prepared["input_ids"]], dtype=mx.int32)
         ref_mx = mx.array(voices[prepared["voice_row"] : prepared["voice_row"] + 1])
-        pred_dur = model(ids_mx, ref_mx, 1.0, return_output=True).pred_dur
+        pred_dur = model(ids_mx, ref_mx, effective_speed, return_output=True).pred_dur
         segments.append(
             {**prepared, "pred_dur": ints(pred_dur)}
         )

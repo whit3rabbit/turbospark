@@ -269,7 +269,7 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `higgs_audio_v3` | README | 45 | Alias `higgs_multimodal_qwen3` | [Family port](src/tts/higgs_audio_v3/README.md) over the [codec port](src/codec/higgs_audio/README.md) |
 | `indextts` | Source | 72 | Default task-qualified family | [Family port](src/tts/indextts/README.md) over the [gpt2 backbone](src/lm/README.md) |
 | `irodori_tts` | Source | 73 | Default task-qualified family | None |
-| `kitten_tts` | README | 25 | Alias `kitten` | None |
+| `kitten_tts` | README | 25 | Alias `kitten` | [Family port](src/tts/kitten_tts/README.md); the espeak G2P intake is caller-owned |
 | `kokoro` | README | 24 | Default task-qualified family | [Flat port](src/tts/kokoro/mod.rs) |
 | `kugelaudio` | README | 40 | Default task-qualified family | [Family port](src/tts/kugelaudio/README.md) over the shared [lm qwen2 backbone](src/lm/README.md) and the vibevoice decoder/diffusion-head/scheduler modules |
 | `llama` | Source | 63 | SNAC TTS wrapper over generic Llama backbone | [Family port](src/tts/llama/README.md) |
