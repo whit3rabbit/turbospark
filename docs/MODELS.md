@@ -124,7 +124,10 @@ accepted through the image-only source adapter. The pinned andrevp 2-bit,
 family installs from the same image namespace as
 `qwen-image-2.1-mlx-4bit` (pinned `mlx-community` 4-bit export; Swift app
 generation only in this first cut, see
-[QWEN_IMAGE_21_MLX.md](QWEN_IMAGE_21_MLX.md)). It recognizes MLX affine U32
+[QWEN_IMAGE_21_MLX.md](QWEN_IMAGE_21_MLX.md)). The distilled
+`qwen-image-2.1-turbo-mlx-mixed-4bit` row (pinned `Sawfwair` mixed 4-bit and
+8-bit export, 8 steps, non-commercial Qwen Research License) installs the same
+way and is recorded in [QWEN_IMAGE_21_TURBO.md](QWEN_IMAGE_21_TURBO.md). It recognizes MLX affine U32
 weight planes and F16 or BF16 `.scales` and `.biases` companions at 2, 3, 4,
 5, 6, and 8 bits, with group size 64, then writes the repository's separate
 image install format. The full installer gates pass for the published 2-bit,

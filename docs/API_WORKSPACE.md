@@ -1,14 +1,14 @@
 # API workspace
 
 The API destination opens on Text. The selector moves through Text, Image,
-and TypeSafe with clicks, left and right keys, or horizontal swipes on the
-selector. Text and Image use the same TurboSpark listener and API key.
+Audio, and TypeSafe with clicks, left and right keys, or horizontal swipes on the
+selector. Text, Image, and Audio use the same TurboSpark listener and API key.
 TypeSafe starts a separate OpenKind daemon on `127.0.0.1` with its own
 Keychain key.
 
 ## Image request
 
-Attach one installed Z-Image MLX model in the Image tab (the app attaches only the Z-Image models it can generate with; see `AppModel.supportsMLXImageModel`), then
+Attach one installed MLX image model in the Image tab (the app attaches only the Z-Image and Qwen-Image 2.1 Turbo models it can generate with; see `AppModel.supportsMLXImageModel`), then
 send `POST /v1/images/generations` to the TurboSpark address:
 
 ```sh
@@ -23,7 +23,8 @@ attached image alias and API key.
 
 The endpoint returns `data[].b64_json` PNGs. `n` is 1 through 4 and runs
 serially. `size` is `WIDTHxHEIGHT`, with each side 512 through 1024 in
-multiples of 16 and total area at most 1024 by 1024. Optional `seed` is a
+multiples of 16 and total area at most 1024 by 1024. The Qwen-Image model
+needs each side to be a multiple of 32 and rejects other sizes. Optional `seed` is a
 TurboSpark extension; the resolved first seed is in `x-turbospark-seed`.
 Streaming, edits, URL output, and other OpenAI Images options are outside
 this prompt-to-PNG subset and rejected. Image output is omitted from text
@@ -37,8 +38,14 @@ session with the Images screen; image jobs run one at a time.
 
 Speech-to-text, text-to-speech, and music generation are supported on the
 in-process server via attached audio models (`ServerOptions`,
-`attachAudioModel`) and standalone `turbospark-server` (`--stt-model`,
-`--tts-model`, `--music-model`). See [Audio API](AUDIO_API.md).
+`attachAudioModel`), bridged Swift MLX speech models (`attachAudioSpeechModel`),
+and standalone `turbospark-server` (`--stt-model`, `--tts-model`, `--music-model`).
+See [Audio API](AUDIO_API.md).
+
+The Audio tab in the API workspace allows attaching an installed TTS or voice cloning
+model (such as Kokoro or Qwen3-TTS), testing `POST /v1/audio/speech` requests with
+optional voice cloning reference audio (`reference_audio`, `reference_text`, `instruction`),
+and playing back synthesized speech directly in the app.
 
 ## TypeSafe service
 

@@ -14,6 +14,59 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Security
+- `crates/ffi`: request-triggered model loading in the embedded HTTP server
+  is now opt-in. By default a request that names a model nobody attached is
+  refused without consulting the installed store, exactly as the server
+  behaved before the installed-model loader existed; a host that wants the
+  load-on-demand behavior sets `allowRequestModelLoad` in
+  `ts_server_start` options. This closes a memory-exhaustion path where an
+  unauthenticated loopback client (or a tailnet client holding the shared
+  inference key) could open every installed model by name, with no
+  inference required and no bound on cumulative residency.
+- `crates/ffi`: a resident-model policy now bounds what the embedded server
+  holds regardless of who attaches. `maxAttachedModels` (default 8) caps
+  simultaneously attached models; `maxAttachedModelBytes` optionally caps
+  the cumulative committed-weights-plus-KV footprint. Request-opened models
+  are marked on-demand and are released by the default idle sweep after 30
+  idle minutes, so an opted-in server's residency is self-healing; models
+  the host attached are never timed out. Byte ceilings are opt-in because
+  streamed or mapped expert residency deliberately keeps most weight bytes
+  unresident.
+- `crates/server`: `POST /v1/completions` validates cheap request fields
+  (`suffix`, `n`, sampling config, prompt shape) before resolving the
+  model, so a request the endpoint was always going to refuse can no longer
+  cause a heavyweight model open on a loading-enabled server before
+  returning 400.
+- `crates/ffi`, `crates/server`: documented that the bounded-resolution
+  executor and single-flight load coalescing limit concurrent work, not
+  cumulative residency; the residency policy is the bound.
+- `swift/TurboSparkApp`: a screen lock, sleep, or session deactivation can no
+  longer be undone by a profile unlock that was still authenticating when it
+  fired. Passphrase derivation and the Keychain prompt deliberately run
+  outside the vault store lock, but nothing invalidated an authentication
+  that had started before `lockVault` returned: the stale completion
+  reopened the encrypted database and the coordinator returned to the
+  unlocked state with a fresh AppModel. The vault now carries a lock
+  generation that `lockVault` bumps before clearing the session and every
+  unlock revalidates before installing its session, wiping the derived key
+  buffers when the install is rejected as stale; the coordinator also
+  invalidates unlock attempts on lock, so a superseded completion leaves the
+  vault cleanly locked instead of unlocking or erroring over the lock.
+
+### Changed
+- `crates/ffi`: with nothing attached, the embedded HTTP server now answers
+  503 for a named model unless `allowRequestModelLoad` is set (previously
+  the loader answered 404 with suggestions). Hosts attaching models
+  explicitly see no change.
+- `swift/TurboSparkApp`: browser automation authorizes subframe navigations
+  like main frames. An iframe, an iframe-targeted form or a script-driven
+  frame navigation to a loopback, LAN, metadata or otherwise unapproved
+  origin is now denied at the WebKit navigation boundary instead of loading
+  unchecked, and a frame's post-redirect response origin is revalidated, so
+  an approved outer page can no longer reach private services through a
+  subframe. `browser_screenshot` refuses to capture a page that embeds frame
+  content from an origin that never received a grant, keeping those pixels
+  out of model-visible tool results.
 - `swift/TurboSparkApp`: file tools resolve symlinks on the deepest existing
   ancestor before the containment check, so `write_file`, `apply_patch`,
   `multi_edit`, `notebook_edit` and the REPL can no longer create files
@@ -84,6 +137,36 @@ when this file gets updated relative to the version bump and the tag.
   adding RAII cleanup guards to prevent memory exhaustion and DoS on malformed audio.
 
 ### Added
+- `crates/server`, `crates/ffi`, `swift/TurboSpark`, `swift/TurboSparkApp`: Voice cloning
+  support on `POST /v1/audio/speech` with optional fields for `reference_audio`
+  (base64-encoded 24 kHz mono WAV/PCM), `reference_text`, `instruction`, and `language`.
+- `crates/ffi`, `crates/server`: In-process speech bridge (`SpeechBridge`, `BridgedAudioProvider`)
+  allowing HTTP speech requests to route into host Swift MLX models (such as Qwen3-TTS)
+  via C ABI entry points (`ts_server_attach_audio_speech_model`, `ts_server_detach_audio_speech_model`,
+  `ts_server_poll_audio_speech_events_json`, `ts_server_complete_audio_speech_request`).
+- `swift/TurboSpark`: Swift bindings for voice cloning (`VoiceCloneRequest`) and server speech
+  events (`ServerSpeechEvent`, `ServerSpeechRequest`) for bridging synthesis requests.
+- `swift/TurboSparkApp`: Audio API workspace destination (`AudioAPIPaneView`) in the server pane
+  providing attached model controls, curl examples with voice cloning parameters, an interactive
+  test form with reference audio recording/playback, and automated background event dispatch
+  to MLX Qwen3-TTS.
+- `crates/catalog`, `crates/image`, `crates/ffi`, Swift app: Qwen-Image-2.1-Turbo
+  (`qwen-image-2.1-turbo-mlx-mixed-4bit`, pinned `Sawfwair` export, 8 steps,
+  Qwen Research License, non-commercial) is a catalog row and a pinned model in
+  the app, generating through the vendored Swift MLX pipeline. The family is
+  scoped to the Turbo repository, not its publisher. The pipeline loads a
+  mixed 4-bit and 8-bit checkpoint by inferring each layer's width from its
+  tensor shapes, uses the published fixed sigma ladder, and releases the text
+  encoder, transformer and VAE in turn (`staged` residency). The app decodes
+  in bfloat16. Measured on one contended host, peak footprint at 1024 x 1024
+  was 11.2 GiB with a bfloat16 decode and 20.5 GiB with float32; see
+  `docs/QWEN_IMAGE_21_TURBO.md` for the conditions and open items.
+- `crates/ffi`, Swift app: image installs are found in the "Additional Model
+  Folders" the text models use. New `ts_image_installed_in_json` (and
+  `TurboSparkCatalog.imageInstalled(in:)`) scans a folder and its immediate
+  subdirectories, or one install bundle. Removing a found model from the list
+  excludes it and leaves its files, as for text models; only installs in the
+  shared store are deleted.
 - `crates/model-io`: chunk-observed hashing (`hash_file_observed`) with
   cooperative chunk-granularity cancellation for large file verification.
 - `crates/catalog`: observed audio profile verification (`verify_observed`)
@@ -391,6 +474,17 @@ when this file gets updated relative to the version bump and the tag.
   Later repack lines still read as packing because there is no end marker yet.
 
 ### Fixed
+- Swift app: the text-model folder scan no longer lists an image install as a
+  text model that cannot load.
+- `Vendor/QwenImage`: a module parameter with no checkpoint tensor now fails
+  the load. It used to log a warning and keep its random initialization, so
+  generation ran and returned noise.
+- `Vendor/QwenImage`: the VAE decode evaluates and releases each block
+  instead of holding the whole lazy graph. At 512 x 512 the peak fell from
+  18.2 to 8.3 GiB with a byte-identical image.
+- `turbospark-model pull-image --repo` now shares file selection with the app
+  installer. It had no `processor/` rule and could not pack any Qwen-Image
+  row.
 - `crates/catalog`: `pull-audio` for MiniMax Music 3 failed after a complete,
   hash-verified download with "unexpected repository pin" because the transfer
   returns the Hugging Face repo id lowercased and the check compared it

@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
+  <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#image-generation">Image Generation</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
 </p>
 
 ** This is a early work in progress. Expect bugs and breaking changes **
@@ -146,6 +146,7 @@ The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-c
 | Gemma 4 26B-A4B | INT4 (group 64) | MLX | ~13 GB | ~2.1 GB @ 4k ctx |
 | Gemma 4 26B-A4B | UD-Q3_K_M (IQ3 experts) | GGUF | ~13 GB | ~1.9 GB @ 4k ctx |
 | Gemma 4 26B-A4B | Q8_0 | GGUF | ~27 GB | - |
+| Humanizer 12B (dense Gemma 4, `humanizer-12b`) | INT8 (group 64) | MLX | ~12.7 GB | ~0.9 GB @ 8k ctx |
 | gpt-oss 20B | MXFP4 | GGUF | ~12 GB | ~5.4 GB @ 8k ctx |
 | DeepSeek-V2-Lite 16B (MLA) | Q8_0 | GGUF | ~17 GB | ~4.1 GB @ 8k ctx |
 | Mixtral 8x7B | Q4_K_M | GGUF | ~29 GB | - |
@@ -193,8 +194,26 @@ These rows are measured `phys_footprint` process peaks on one Apple M4 Max with 
 | Swift-1.5 Qwen3.8-Flash-Next, GGUF IQ2_XS | 2,048 | 1,634 MiB | 12.23-12.77 tok/s | about 69 GB reserved |
 | Qwen 3.8 27B, MLX INT4, dense | 4,096 | 661 MiB | 16.8-19.0 tok/s | about 15.2 GB |
 | gpt-oss 20B, GGUF MXFP4 | 8,192 | 5,422 MiB | 23.4-31.3 tok/s | about 12.2 GB |
+| Humanizer 12B, MLX INT8, dense (raw completion) | 8,192 | 774-924 MiB | 6.5-13.4 tok/s | about 12.7 GB |
 
 The low-memory result is primarily an MoE result. Dense models run, but they do not get the same routed-expert streaming benefit. For the complete measured rows, quality gates, cross-engine comparisons, and methodology, see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) and [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
+
+## Image generation
+
+The app generates images on your Mac with two models. Choose one from the Model menu on the Images screen, or download it from the model manager. Both run through Swift and MLX, and the same models can be served from the local API at `POST /v1/images/generations`.
+
+| Model | Alias | Steps | 1024 x 1024 on an M4 Max | Peak memory | License |
+| --- | --- | --- | --- | --- | --- |
+| Z-Image Turbo, 8-bit | `z-image-turbo-mlx-8bit` | 9 | about 1 to 1.5 minutes | 12.8 GiB | Apache-2.0 |
+| Qwen-Image 2.1 Turbo, mixed 4-bit and 8-bit | `qwen-image-2.1-turbo-mlx-mixed-4bit` | 8 | about 1.5 minutes | 11.2 GiB | Qwen Research License, non-commercial |
+
+Z-Image Turbo also has smaller 2-bit, 4-bit, and q4 exports for Macs with less memory. Qwen-Image 2.1 Turbo took 20 to 26 seconds for a 512 x 512 image.
+
+These are measurements from one machine, not promises. Z-Image Turbo is a median of three runs (58 s in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), 87 s in an earlier set). Qwen-Image 2.1 Turbo is a single run (96 s) and took 153 s once while the machine was busy. See [`docs/QWEN_IMAGE_21_TURBO.md`](docs/QWEN_IMAGE_21_TURBO.md) for the conditions.
+
+Models on an external drive or in another folder show up if you add the folder under Settings > Models > Additional Model Folders. Removing one from the list leaves its files where they are.
+
+The `turbospark-image` command uses the native Metal runtime, which supports only Z-Image Turbo and is far slower than the app: the recorded run took about an hour for one 1024 x 1024 image. Use the app for now.
 
 ## Supported features
 
@@ -206,7 +225,8 @@ The low-memory result is primarily an MoE result. Dense models run, but they do 
 | CLI generation | Interactive chat, raw prompts, JSON message files, reasoning output, cancellation, and model recommendations |
 | Local API | OpenAI-compatible and Anthropic-compatible endpoints from `turbospark-server` or the app |
 | Model intake | Catalog installs, Hugging Face header probes, GGUF intake, MLX quantized checkpoints, and `.gturbo` packing |
-| Vision and images | Supported vision checkpoints plus validated Z-Image-Turbo generation in the CLI and app |
+| Vision | Supported vision checkpoints, with the Qwen GDN and Qwen3-VL towers implemented |
+| Image generation | Z-Image Turbo and Qwen-Image 2.1 Turbo in the app, about 1 to 2 minutes per 1024 x 1024 image on an M4 Max. See [Image generation](#image-generation) |
 | Audio and STT | Unified portable audio crate (DSP, mel, WAV, FFT, neural ops), Whisper STT runner, Metal kernels, and STT FFI surface |
 | Performance controls | Context and load guards, expert-cache sizing, chunked prefill, KV-cache quantization, and eligible speculative decoding |
 | Steering | Directional residual steering for supported model flows, without modifying model weights |

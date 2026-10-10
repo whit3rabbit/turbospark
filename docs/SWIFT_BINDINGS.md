@@ -741,8 +741,10 @@ StderrCapture.shared.stop()                                    // restores the o
 It tees: each chunk still reaches the original stderr, so a terminal or Xcode
 console keeps working. It is process-wide and one at a time (a second `start`
 throws), the handler runs on a private queue and must not block it, and lines
-carry no level or source because the engine emits none. This is a Swift-side
-tool on purpose: capturing fd 2 from Rust would have needed a new dependency.
+carry no level or source because the engine emits none. Calling `stop()` from
+the handler is safe: stderr is restored immediately and buffered output drains
+after the callback returns. This is a Swift-side tool on purpose: capturing fd
+2 from Rust would have needed a new dependency.
 
 ### Telemetry
 
@@ -822,14 +824,28 @@ server.stop()                            // stops serving everything
 
 // Attach an embedding model (.safetensors directory or alias) for vector endpoints:
 let embId = try server.attachEmbeddingModel("~/models/snowflake-arctic-embed-m")
+
+// Attach an audio speech model (e.g. Qwen3-TTS) served through Swift MLX:
+try server.attachAudioSpeechModel(id: "qwen3-tts-base-12b")
+// Poll for incoming speech synthesis events and complete them:
+for event in server.pollAudioSpeechEvents() {
+    switch event {
+    case .started(let req):
+        // Run MLX synthesis with req.input, req.referenceAudio, req.referenceText, etc.
+        try server.completeAudioSpeechRequest(id: req.id, samples: pcmSamples, sampleRate: 24_000)
+    case .cancelled(let id):
+        break
+    }
+}
 ```
 
 Routes: OpenAI (`/v1/chat/completions`, `/v1/completions`, `/v1/responses`,
-`/v1/models`, `/v1/embeddings`), Anthropic (`/v1/messages`,
+`/v1/models`, `/v1/embeddings`, `/v1/audio/speech`), Anthropic (`/v1/messages`,
 `/v1/messages/count_tokens`), Ollama (`/api/tags`, `/api/version`, `/api/show`,
 `/api/chat`, `/api/generate`, `/api/embeddings`, `/api/embed`), and `GET /health`.
 Embeddings routes require an attached embedding model (via `attachEmbeddingModel(_:)`
-or `ServerOptions.embeddingModel`).
+or `ServerOptions.embeddingModel`). Speech synthesis routes require an attached audio
+model or bridged speech model (`attachAudioSpeechModel`).
 
 **Which model serves a request.** An exact `model` id wins. Failing that, if
 exactly ONE model is attached it serves the request whatever name was asked
@@ -1197,6 +1213,7 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_tokenizer_count_text_tokens(t, text, add_special, out_count)` | token count with no session |
 | `ts_tokenizer_tokenize_json(t, text, add_special, out)` / `ts_tokenizer_detokenize_json(t, tokens_json, skip_special, out)` | text to ids and back with no session |
 | `ts_generate(s, messages, options, cb, ud, out)` | blocks for the turn; `options.tools` offers functions, `toolCalls` reports the calls |
+| `ts_humanize(s, draft, options, cb, ud, out)` | blocks for the rewrite; raw-completion `humanizer-12b` flow with the wrapper, sampling recipe and EOS-only stop fixed inside; `options` takes only `maxNewTokens` and `seed` (any other key fails by name); `out` is `ts_generate`'s result plus `audit` |
 | `ts_server_start(s, options_json, out)` | start server; `s` may be NULL, `options_json` configures port, api_key, embedding, hf_endpoint, defaults |
 | `ts_server_attach_session(server, s, out_model_id)` | attach loaded session |
 | `ts_server_attach_embedding_model(server, model_path, out)` | attach embedding model for /v1/embeddings |
@@ -1209,6 +1226,7 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_installed_json(out)` | every platform |
 | `ts_image_catalog_json(out)` | curated image sources, every platform |
 | `ts_image_installed_json(out)` | installed image rows under the image namespace, every platform |
+| `ts_image_installed_in_json(root, out)` | image installs under a folder outside the store: the folder and its immediate subdirectories, or one install bundle. Read-only; fails if `root` is not a directory. Swift: `TurboSparkCatalog.imageInstalled(in:)` |
 | `ts_model_delete(alias)` | delete installed model directory and forget row |
 | `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL; each row also carries `evidence` (`discovered` / `caveat` / `runs` / `verified`) and `suspicious` |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |

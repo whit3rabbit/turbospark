@@ -153,6 +153,6 @@ clean-dist:
 	rm -rf dist
 
 clean-tmp:
-	find "$${TMPDIR:-/tmp}" -maxdepth 1 \( -name 'turbospark*' -o -name 'qwen*' -o -name 'TurboSparkTests*' \) -exec rm -rf {} + 2>/dev/null || true
+	find "$${TMPDIR:-/tmp}" -maxdepth 1 \( -name 'turbospark*' -o -name 'qwen*' -o -name 'catalog-audio*' -o -name 'review-*' -o -name 'debug-*' -o -name 'TurboSparkTests*' \) -exec rm -rf {} + 2>/dev/null || true
 
 clean: clean-cargo clean-swift clean-dist clean-tmp

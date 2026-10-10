@@ -524,7 +524,10 @@ attention) so it cannot rot silently; only the timings are advisory.
   threshold is unavoidable is the memory oracle, which is why it carries a
   documented headroom policy.
 - **Temp dirs** follow the repeated idiom: a `static AtomicU64` counter
-  plus `std::env::temp_dir().join(format!("<label>-{pid}-{n}"))`.
+  plus `std::env::temp_dir().join(format!("<label>-{pid}-{n}"))`. Always wrap
+  temporary directories in an RAII `TempDir` struct implementing `Drop` with
+  `std::fs::remove_dir_all` (e.g. `tests/common/mod.rs`), so failure, panic, or
+  cancellation never orphans model weights or cache trees in `$TMPDIR`.
 - **Metal tests run serially by shared device state** in practice; the
   Swift original runs `swift test --no-parallel` for the same reason. If a
   GPU test starts flaking under parallelism, that is the first thing to
