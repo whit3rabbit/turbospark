@@ -21,6 +21,8 @@ public enum BrowserNavigationCheckPhase: Equatable, Sendable {
     case formSubmission
     case redirect
     case mainFrameResponse
+    case subframeAction
+    case subframeResponse
 }
 
 public struct BrowserNavigationAuthorizationRequest: Equatable, Sendable {
@@ -155,6 +157,7 @@ public enum WebKitBrowserEngineError: Error, Equatable {
     case noRecoverableAddress
     case unavailableWebView
     case screenshotUnavailable
+    case unapprovedFrameOrigin(origin: String)
 }
 
 typealias BrowserWebViewSnapshotter = @MainActor (WKWebView) async throws -> NSImage?
@@ -241,6 +244,11 @@ private final class ManagedBrowserTab {
     var pendingResponseOrigins = Set<String>()
     var explicitNavigationURLs: [String: Int] = [:]
     var activeNavigationURL: String?
+    /// Frame origins whose loads passed destination authorization in this
+    /// tab, tracked so a screenshot can refuse to expose frame content from
+    /// any origin the agent never received a grant for. Only agent-owned
+    /// authorization contributes; user-takeover browsing never enters here.
+    var authorizedFrameOrigins = Set<String>()
 
     init(webView: BrowserTakeoverWebView) {
         self.webView = webView
@@ -347,6 +355,13 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
                webView.url == startingURL,
                let image,
                !autoreleasepool(invoking: { Self.isVisuallyBlank(image) }) {
+                // The composited viewport carries every visible frame's
+                // pixels, so the capture is discarded unless each frame
+                // origin present in the document passed authorization.
+                try await assertFrameOriginsAuthorized(
+                    for: managedTab,
+                    webView: webView
+                )
                 return image
             }
 
@@ -372,6 +387,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         try tabStore.startNavigation(in: tabID, to: destination.url.absoluteString)
         managedTab.screenshotRevision &+= 1
         managedTab.pendingResponseOrigins.removeAll()
+        managedTab.authorizedFrameOrigins = [destination.origin.canonicalString]
         managedTab.explicitNavigationURLs[destination.url.absoluteString, default: 0] += 1
         managedTab.activeNavigationURL = destination.url.absoluteString
         beginSnapshotNavigation(for: managedTab, origin: destination.origin)
@@ -477,7 +493,13 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
             return
         }
         guard targetFrame.isMainFrame else {
-            decisionHandler(.allow)
+            evaluateSubframeNavigationAction(
+                navigationAction,
+                webView: webView,
+                tabID: tabID,
+                managedTab: managedTab,
+                decisionHandler: decisionHandler
+            )
             return
         }
         guard let url = navigationAction.request.url,
@@ -525,6 +547,12 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
                 } else if shouldAllow {
                     managedTab.pendingResponseOrigins.insert(destination.origin.canonicalString)
                     managedTab.activeNavigationURL = destination.url.absoluteString
+                    self.noteAuthorizedFrameOrigin(
+                        destination.origin,
+                        tabID: tabID,
+                        managedTab: managedTab,
+                        resetsFrameWorld: true
+                    )
                     self.startLoadIfNeeded(tabID, destination: destination)
                     self.beginSnapshotNavigation(for: managedTab, origin: destination.origin)
                 } else {
@@ -533,6 +561,61 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
                         error: .blockedNavigation(origin: destination.origin.canonicalString),
                         message: "Navigation blocked by browser permission policy."
                     )
+                }
+                decisionHandler(shouldAllow ? .allow : .cancel)
+            }
+        )
+    }
+
+    /// Subframe destinations cross the same exact-origin authorization gate
+    /// as main frames. Without this, an approved outer page could embed an
+    /// iframe, aim a form at an iframe, or script a frame navigation toward
+    /// loopback, LAN, metadata, or any other origin that never received a
+    /// grant, and the request would leave the host unchecked.
+    private func evaluateSubframeNavigationAction(
+        _ navigationAction: WKNavigationAction,
+        webView: WKWebView,
+        tabID: BrowserTabID,
+        managedTab: ManagedBrowserTab,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        // An about: frame inherits its creator's origin and cannot reach
+        // anywhere the approved outer document cannot, so it loads without
+        // its own grant. Every other destination must parse as an HTTP(S)
+        // origin and pass destination authorization.
+        if url.scheme?.lowercased() == "about" {
+            decisionHandler(.allow)
+            return
+        }
+        guard let destination = BrowserNavigationDestination(url: url) else {
+            decisionHandler(.cancel)
+            return
+        }
+
+        let request = BrowserNavigationAuthorizationRequest(
+            tabID: tabID,
+            destination: destination.origin,
+            source: navigationAction.sourceFrame.request.url.flatMap(BrowserOrigin.init(url:)),
+            phase: .subframeAction
+        )
+        evaluatePolicy(
+            request,
+            tabID: tabID,
+            webView: webView,
+            gate: BrowserNavigationPolicyGate { [weak self, weak managedTab] shouldAllow in
+                guard let self, let managedTab else { return }
+                if shouldAllow {
+                    self.noteAuthorizedFrameOrigin(
+                        destination.origin,
+                        tabID: tabID,
+                        managedTab: managedTab,
+                        resetsFrameWorld: false
+                    )
+                    managedTab.pendingResponseOrigins.insert(destination.origin.canonicalString)
                 }
                 decisionHandler(shouldAllow ? .allow : .cancel)
             }
@@ -557,10 +640,8 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
-        guard navigationResponse.isForMainFrame else {
-            decisionHandler(.allow)
-            return
-        }
+        // Parse before branching so a subframe response with a non-HTTP(S)
+        // final URL fails closed instead of riding an unconditional allow.
         guard let tabID = tabID(for: webView),
               let managedTab = managedTabs[tabID],
               let url = navigationResponse.response.url,
@@ -569,9 +650,26 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
             return
         }
 
+        guard navigationResponse.isForMainFrame else {
+            evaluateSubframeNavigationResponse(
+                destination,
+                webView: webView,
+                tabID: tabID,
+                managedTab: managedTab,
+                decisionHandler: decisionHandler
+            )
+            return
+        }
+
         if tabStore.tab(id: tabID)?.owner == .agent,
            managedTab.pendingResponseOrigins.remove(destination.origin.canonicalString) != nil {
             managedTab.activeNavigationURL = destination.url.absoluteString
+            noteAuthorizedFrameOrigin(
+                destination.origin,
+                tabID: tabID,
+                managedTab: managedTab,
+                resetsFrameWorld: true
+            )
             startLoadIfNeeded(tabID, destination: destination)
             beginSnapshotNavigation(for: managedTab, origin: destination.origin)
             decisionHandler(.allow)
@@ -593,6 +691,12 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
                 if shouldAllow {
                     managedTab.pendingResponseOrigins.remove(destination.origin.canonicalString)
                     managedTab.activeNavigationURL = destination.url.absoluteString
+                    self.noteAuthorizedFrameOrigin(
+                        destination.origin,
+                        tabID: tabID,
+                        managedTab: managedTab,
+                        resetsFrameWorld: true
+                    )
                     self.startLoadIfNeeded(tabID, destination: destination)
                     self.beginSnapshotNavigation(for: managedTab, origin: destination.origin)
                 } else {
@@ -600,6 +704,54 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
                         tabID,
                         error: .blockedNavigation(origin: destination.origin.canonicalString),
                         message: "Navigation blocked by browser permission policy."
+                    )
+                }
+                decisionHandler(shouldAllow ? .allow : .cancel)
+            }
+        )
+    }
+
+    /// A subframe response's final URL is the result of any redirects the
+    /// frame followed, so it is reauthorized here even when its originating
+    /// action was approved: a same-origin frame must not be able to redirect
+    /// itself to an unapproved or private origin and commit unchecked.
+    private func evaluateSubframeNavigationResponse(
+        _ destination: BrowserNavigationDestination,
+        webView: WKWebView,
+        tabID: BrowserTabID,
+        managedTab: ManagedBrowserTab,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
+        if tabStore.tab(id: tabID)?.owner == .agent,
+           managedTab.pendingResponseOrigins.remove(destination.origin.canonicalString) != nil {
+            noteAuthorizedFrameOrigin(
+                destination.origin,
+                tabID: tabID,
+                managedTab: managedTab,
+                resetsFrameWorld: false
+            )
+            decisionHandler(.allow)
+            return
+        }
+
+        let request = BrowserNavigationAuthorizationRequest(
+            tabID: tabID,
+            destination: destination.origin,
+            source: webView.url.flatMap(BrowserOrigin.init(url:)),
+            phase: .subframeResponse
+        )
+        evaluatePolicy(
+            request,
+            tabID: tabID,
+            webView: webView,
+            gate: BrowserNavigationPolicyGate { [weak self, weak managedTab] shouldAllow in
+                guard let self, let managedTab else { return }
+                if shouldAllow {
+                    self.noteAuthorizedFrameOrigin(
+                        destination.origin,
+                        tabID: tabID,
+                        managedTab: managedTab,
+                        resetsFrameWorld: false
                     )
                 }
                 decisionHandler(shouldAllow ? .allow : .cancel)
@@ -743,6 +895,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         dismissPendingDialogs(for: tabID, resolution: .engineFailure)
         cancelPendingPolicyGates(for: tabID)
         managedTab.pendingResponseOrigins.removeAll()
+        managedTab.authorizedFrameOrigins.removeAll()
         managedTab.explicitNavigationURLs.removeAll()
         managedTab.activeNavigationURL = nil
         managedTab.snapshotGeneration = managedTab.snapshotService?.navigationStarted()
@@ -1118,6 +1271,80 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
             expectedOrigin: origin.canonicalString
         )
     }
+
+    /// Records that `origin` passed destination authorization for this tab.
+    /// Only agent-owned authorization counts: after a user takeover the tab
+    /// can hold privately addressed content the agent never received a grant
+    /// for, and that content must not become screenshot-eligible.
+    private func noteAuthorizedFrameOrigin(
+        _ origin: BrowserOrigin,
+        tabID: BrowserTabID,
+        managedTab: ManagedBrowserTab,
+        resetsFrameWorld: Bool
+    ) {
+        guard tabStore.tab(id: tabID)?.owner == .agent else { return }
+        if resetsFrameWorld {
+            // A new main-frame document replaces every frame the old one held.
+            managedTab.authorizedFrameOrigins = [origin.canonicalString]
+        } else {
+            managedTab.authorizedFrameOrigins.insert(origin.canonicalString)
+        }
+    }
+
+    /// Refuses a screenshot when the document embeds frame content from an
+    /// origin that never passed authorization. The navigation delegates are
+    /// the primary boundary; this scan is the sink-side check that keeps
+    /// unauthorized frame origins out of model-visible media even when a
+    /// frame element was created outside an agent-authorized load (for
+    /// example during a user takeover, or a denied frame whose element
+    /// remains in the DOM pointing at the refused destination).
+    private func assertFrameOriginsAuthorized(
+        for managedTab: ManagedBrowserTab,
+        webView: WKWebView
+    ) async throws {
+        let scannedOrigins = try await Self.scannedFrameOrigins(of: webView)
+        let mainOrigin = webView.url.flatMap(BrowserOrigin.init(url:))?.canonicalString
+        for scannedOrigin in scannedOrigins {
+            // A null (opaque) origin such as about:blank or srcdoc inherits
+            // its creator's origin and cannot reach further than the approved
+            // outer document already can.
+            guard scannedOrigin != Self.nullOriginMarker else { continue }
+            if scannedOrigin == mainOrigin { continue }
+            guard managedTab.authorizedFrameOrigins.contains(scannedOrigin) else {
+                throw WebKitBrowserEngineError.unapprovedFrameOrigin(origin: scannedOrigin)
+            }
+        }
+    }
+
+    /// Read-only frame inventory of the committed document. Frame `src`
+    /// attributes are readable from the host process regardless of the
+    /// frame's own origin, and the resolved origins never leave it.
+    private static func scannedFrameOrigins(of webView: WKWebView) async throws -> [String] {
+        let script = """
+        (function() {
+          var origins = [];
+          var frames = document.querySelectorAll('iframe, frame');
+          for (var i = 0; i < frames.length; i++) {
+            var raw = frames[i].getAttribute('src');
+            try {
+              origins.push(new URL(raw || '', document.baseURI).origin);
+            } catch (e) {
+              origins.push(null);
+            }
+          }
+          return JSON.stringify(origins);
+        })()
+        """
+        let result = try await webView.evaluateJavaScript(script)
+        guard let json = result as? String,
+              let data = json.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String?].self, from: data) else {
+            throw WebKitBrowserEngineError.screenshotUnavailable
+        }
+        return decoded.compactMap { $0 ?? Self.nullOriginMarker }
+    }
+
+    private static let nullOriginMarker = "null"
 
     private func recordNavigationFailure(
         _ tabID: BrowserTabID,

@@ -122,6 +122,8 @@ public enum BrowserToolExecutor {
                 case .unsupported(let command): return .unsupported(command: command)
                 case .invalidInput(let reason): return .invalidInput(reason: "Browser input was rejected: \(reason.rawValue).")
                 case .blockedNavigation(let origin): return .denied(reason: "Navigation to \(origin) was blocked.")
+                case .screenshotBlockedByPolicy(let origin):
+                    return .denied(reason: "Screenshot was blocked because the page shows frame content from unapproved origin \(origin).")
                 case .staleReference: return .failed(reason: "The browser element reference is stale. Read a new snapshot and retry.")
                 case .timeout: return .failed(reason: "The browser action timed out.")
                 case .navigationFailure: return .failed(reason: "The browser navigation failed.")

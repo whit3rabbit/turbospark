@@ -225,6 +225,7 @@ public enum BrowserControlErrorKind: String, Codable, Hashable, Sendable {
     case navigationFailure
     case engineCrashed
     case invalidInput
+    case screenshotBlockedByPolicy
 }
 
 public enum BrowserControlError: Error, Codable, Equatable, Sendable {
@@ -235,6 +236,7 @@ public enum BrowserControlError: Error, Codable, Equatable, Sendable {
     case navigationFailure(reason: BrowserNavigationFailureReason)
     case engineCrashed
     case invalidInput(reason: BrowserInputErrorReason)
+    case screenshotBlockedByPolicy(origin: String)
 
     public var kind: BrowserControlErrorKind {
         switch self {
@@ -245,6 +247,7 @@ public enum BrowserControlError: Error, Codable, Equatable, Sendable {
         case .navigationFailure: .navigationFailure
         case .engineCrashed: .engineCrashed
         case .invalidInput: .invalidInput
+        case .screenshotBlockedByPolicy: .screenshotBlockedByPolicy
         }
     }
 }

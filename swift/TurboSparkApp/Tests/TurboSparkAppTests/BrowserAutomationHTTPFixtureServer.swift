@@ -168,6 +168,27 @@ final class BrowserAutomationHTTPFixtureServer {
                 </body></html>
                 """
                 response = ("200 OK", ["Content-Type: text/html; charset=utf-8"], Data(html.utf8))
+            case "/frame-host":
+                let html = """
+                <!doctype html><html><head><title>Frame Host</title></head><body>
+                  <iframe id="f" src="http://localhost:\(self.port)/landing"></iframe>
+                </body></html>
+                """
+                response = ("200 OK", ["Content-Type: text/html; charset=utf-8"], Data(html.utf8))
+            case "/frame-same-origin":
+                let html = """
+                <!doctype html><html><head><title>Frame Same Origin</title></head><body>
+                  <iframe id="f" src="/ok"></iframe>
+                </body></html>
+                """
+                response = ("200 OK", ["Content-Type: text/html; charset=utf-8"], Data(html.utf8))
+            case "/frame-redirect":
+                let html = """
+                <!doctype html><html><head><title>Frame Redirect</title></head><body>
+                  <iframe id="f" src="/redirect"></iframe>
+                </body></html>
+                """
+                response = ("200 OK", ["Content-Type: text/html; charset=utf-8"], Data(html.utf8))
             case "/landing", "/submitted", "/popup-target", "/ok":
                 let title = path.dropFirst().capitalized
                 let html = "<!doctype html><html><head><title>\(title)</title></head><body>\(title)</body></html>"

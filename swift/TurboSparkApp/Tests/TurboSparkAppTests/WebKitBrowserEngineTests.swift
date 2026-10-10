@@ -172,6 +172,145 @@ final class WebKitBrowserEngineTests: XCTestCase {
         XCTAssertEqual(engine.webView(for: tabID)?.url?.host, "127.0.0.1")
     }
 
+    func testSubframeNavigationToUnapprovedOriginIsCheckedAtTheActionBoundary() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        let store = BrowserTabStore()
+        var checks: [BrowserNavigationAuthorizationRequest] = []
+        let engine = WebKitBrowserEngine(
+            tabStore: store,
+            authorizeNavigation: { request in
+                checks.append(request)
+                return request.destination.host == "127.0.0.1" ? .allow : .deny
+            }
+        )
+        let tabID = engine.createTab(owner: .agent)
+
+        try engine.navigate(to: server.url("/frame-host"), in: tabID)
+
+        let mainFrameLoaded = await waitUntil { engine.tabStates[tabID]?.loadState == .loaded }
+        XCTAssertTrue(mainFrameLoaded)
+        let subframeWasChecked = await waitUntil {
+            checks.contains {
+                $0.destination.canonicalString == "http://localhost:\(server.port)"
+                    && $0.phase == .subframeAction
+            }
+        }
+        XCTAssertTrue(subframeWasChecked, "The subframe destination must cross the navigation authorizer.")
+        XCTAssertEqual(server.requestCount(for: "/landing"), 0)
+        XCTAssertEqual(
+            store.tab(id: tabID)?.loadState,
+            .loaded,
+            "A denied subframe must not fail the approved main-frame load."
+        )
+    }
+
+    func testSubframeRedirectToUnapprovedOriginNeverReachesTheRedirectTarget() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        let store = BrowserTabStore()
+        var checks: [BrowserNavigationAuthorizationRequest] = []
+        let engine = WebKitBrowserEngine(
+            tabStore: store,
+            authorizeNavigation: { request in
+                checks.append(request)
+                return request.destination.host == "127.0.0.1" ? .allow : .deny
+            }
+        )
+        let tabID = engine.createTab(owner: .agent)
+
+        try engine.navigate(to: server.url("/frame-redirect"), in: tabID)
+
+        let mainFrameLoaded = await waitUntil { engine.tabStates[tabID]?.loadState == .loaded }
+        XCTAssertTrue(mainFrameLoaded)
+        let redirectWasChecked = await waitUntil {
+            checks.contains { request in
+                request.destination.canonicalString == "http://localhost:\(server.port)"
+                    && (request.phase == .subframeAction || request.phase == .subframeResponse)
+            }
+        }
+        XCTAssertTrue(redirectWasChecked, "The frame's redirect destination must cross the navigation authorizer.")
+        XCTAssertEqual(server.requestCount(for: "/landing"), 0)
+    }
+
+    func testSameOriginSubframeStillLoadsUnderSubframeAuthorization() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        let store = BrowserTabStore()
+        let engine = WebKitBrowserEngine(
+            tabStore: store,
+            authorizeNavigation: { request in
+                request.destination.host == "127.0.0.1" ? .allow : .deny
+            }
+        )
+        let tabID = engine.createTab(owner: .agent)
+
+        try engine.navigate(to: server.url("/frame-same-origin"), in: tabID)
+
+        let mainFrameLoaded = await waitUntil { engine.tabStates[tabID]?.loadState == .loaded }
+        XCTAssertTrue(mainFrameLoaded)
+        let webView = try XCTUnwrap(engine.webView(for: tabID))
+        var frameTitle: String?
+        for _ in 0..<200 {
+            if let title = try? await webView.evaluateJavaScript(
+                "document.getElementById('f').contentDocument && document.getElementById('f').contentDocument.title"
+            ) as? String, !title.isEmpty {
+                frameTitle = title
+                break
+            }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertEqual(frameTitle, "Ok", "An approved same-origin subframe must still load.")
+    }
+
+    func testScreenshotRefusesFrameContentFromAnOriginThatWasNeverAuthorized() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        let store = BrowserTabStore()
+        var checks: [BrowserNavigationAuthorizationRequest] = []
+        let engine = WebKitBrowserEngine(
+            tabStore: store,
+            authorizeNavigation: { request in
+                checks.append(request)
+                return request.destination.host == "127.0.0.1" ? .allow : .deny
+            }
+        )
+        engine.screenshotSnapshotter = { _ in self.makeScreenshotImage(hasContent: true) }
+        let tabID = engine.createTab(owner: .agent)
+        try engine.navigate(to: server.url("/frame-host"), in: tabID)
+        let mainFrameLoaded = await waitUntil { engine.tabStates[tabID]?.loadState == .loaded }
+        XCTAssertTrue(mainFrameLoaded)
+        let subframeWasDenied = await waitUntil {
+            checks.contains {
+                $0.destination.canonicalString == "http://localhost:\(server.port)"
+                    && $0.phase == .subframeAction
+            }
+        }
+        XCTAssertTrue(subframeWasDenied, "The unapproved frame must be denied before the capture is scanned.")
+
+        do {
+            _ = try await engine.captureScreenshot(for: tabID)
+            XCTFail("A screenshot must not expose a frame origin that failed authorization.")
+        } catch let error as WebKitBrowserEngineError {
+            XCTAssertEqual(error, .unapprovedFrameOrigin(origin: "http://localhost:\(server.port)"))
+        }
+    }
+
+    func testScreenshotAllowsFrameContentWhenEveryFrameOriginWasAuthorized() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        let store = BrowserTabStore()
+        let engine = WebKitBrowserEngine(
+            tabStore: store,
+            authorizeNavigation: { _ in .allow }
+        )
+        let expectedImage = makeScreenshotImage(hasContent: true)
+        engine.screenshotSnapshotter = { _ in expectedImage }
+        let tabID = engine.createTab(owner: .agent)
+        try engine.navigate(to: server.url("/frame-host"), in: tabID)
+        let frameWasAuthorized = await waitUntil { server.requestCount(for: "/landing") > 0 }
+        XCTAssertTrue(frameWasAuthorized, "The approved subframe must load before the capture is scanned.")
+
+        let image = try await engine.captureScreenshot(for: tabID)
+
+        XCTAssertTrue(image === expectedImage)
+    }
+
     func testApprovedCrossOriginRedirectCommitsAfterDestinationApproval() async throws {
         let server = try BrowserAutomationHTTPFixtureServer()
         let store = BrowserTabStore()

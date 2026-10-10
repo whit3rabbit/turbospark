@@ -175,6 +175,16 @@ public final class WebKitBrowserControlPort: BrowserControlPort, @unchecked Send
             }
         } catch let error as BrowserControlError {
             throw error
+        } catch let error as WebKitBrowserEngineError {
+            switch error {
+            case .unapprovedFrameOrigin(let origin):
+                throw BrowserControlError.screenshotBlockedByPolicy(origin: origin)
+            case .noRecoverableAddress, .unavailableWebView, .screenshotUnavailable:
+                if let navigationError = engine.tabStates[tabID]?.navigationError {
+                    throw navigationError
+                }
+                throw BrowserControlError.engineCrashed
+            }
         } catch let error as DOMSnapshotServiceError {
             throw Self.controlError(for: error)
         } catch is CancellationError {
@@ -258,7 +268,7 @@ public final class WebKitBrowserControlPort: BrowserControlPort, @unchecked Send
                 case .blockedNavigation(let origin): throw BrowserControlError.blockedNavigation(origin: origin)
                 case .navigationFailure(let reason): throw BrowserControlError.navigationFailure(reason: reason)
                 case .engineCrashed: throw BrowserControlError.engineCrashed
-                case .staleReference(_), .timeout, .unsupported(_), .invalidInput(_), .none: break
+                case .screenshotBlockedByPolicy, .staleReference(_), .timeout, .unsupported(_), .invalidInput(_), .none: break
                 }
                 if state.loadState == .crashed { throw BrowserControlError.engineCrashed }
                 if case .failed = state.loadState {
