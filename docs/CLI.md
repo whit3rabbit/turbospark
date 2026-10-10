@@ -11,6 +11,7 @@ The binaries are:
 - `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`, image models into `~/.turbospark/models/image`, and pinned MiniMax Music 3 profiles into `~/.turbospark/models/audio`. See [`docs/MODELS.md`](MODELS.md).
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
 - `turbospark-music` -- generate MiniMax Music 3 WAV files from an installed profile or local model directory. Full-size converted profiles use the Metal runner on macOS; tiny fixtures also support the portable CPU reference path.
+- `turbospark-clone` -- clone a voice from a short reference recording and speak new English text with MegaTTS3, from a local converted model directory (no catalog entry yet). See [`crates/audio/src/tts/megatts3/README.md`](../crates/audio/src/tts/megatts3/README.md).
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/AGENTS.md`](../crates/server/AGENTS.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
@@ -109,6 +110,30 @@ reuses the last guidance correction in between. Interval 3 cut DiT time by
 about 30 percent in an 8 s, 30-step measurement and changes the output; the
 default output is unchanged. The measurement and its limits are in the module
 README.
+
+### Voice cloning
+
+`turbospark-clone speak` clones the voice in a short reference recording and
+speaks new English text. The model is a converted MegaTTS3 directory (see
+`crates/audio/tools/convert_megatts3.py`); there is no catalog alias yet.
+
+```sh
+turbospark-clone speak \
+  --model ~/models/megatts3 \
+  --reference me.wav \
+  --text "Hello world, this is a short test." \
+  --seed 7 --consent \
+  --output cloned.wav
+```
+
+The reference can be any WAV (mono or multichannel, any sample rate); at most the
+first 28 seconds are used. `--steps` (default 32), `--p-w` (default 1.4) and
+`--t-w` (default 3.0) trade speed, intelligibility and similarity, and `--seed`
+makes a run repeatable. Output is 24 kHz mono. `--consent` is required: it states
+that you have the right to clone this voice, because the community WavVAE
+encoder this needs was deliberately withheld by the model's authors and its
+origin and license are unverified. The CPU reference path is slow: expect minutes
+for a few seconds of speech at the default step count.
 
 Metal execution is implemented; profile-specific quality and real-time
 performance qualification remain separate. See the [Music 3 verification

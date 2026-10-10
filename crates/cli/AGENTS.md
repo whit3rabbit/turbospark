@@ -1,6 +1,12 @@
 # turbospark-cli
 
-User-facing model, generation, and server command entry points.
+User-facing model, generation, image, music, voice cloning, and server command entry points:
+- `turbospark-check`: Text generation and interactive chat.
+- `turbospark-model`: Model discovery, probing, and local installation.
+- `turbospark-image`: Diffusion image generation.
+- `turbospark-music`: Music generation via MiniMax Music 3.
+- `turbospark-clone`: Zero-shot voice cloning and speech synthesis via MegaTTS3.
+- `turbospark`: Unified front end dispatcher.
 
 ## Read first
 

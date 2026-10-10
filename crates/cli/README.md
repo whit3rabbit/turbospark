@@ -8,6 +8,7 @@ Command-line binaries for [turbospark](https://github.com/whit3rabbit/turbospark
 - `turbospark-check`: Generates text and runs interactive chat.
 - `turbospark-image`: Generates native diffusion images via Z-Image-Turbo.
 - `turbospark-music`: Generates music audio via MiniMax Music 3 (autoregressive backbone, flow-matching DiT, and vocoder).
+- `turbospark-clone`: Zero-shot voice cloning and speech synthesis via MegaTTS3.
 - `turbospark`: Unified front end over all subcommands, the HTTP server, and external coding agents.
 
 Generation is macOS-only and requires a Metal-capable Apple Silicon device. On other platforms, the binaries parse arguments and validate configuration.
@@ -93,7 +94,19 @@ turbospark-music --model ~/models/minimax-music-0.3 \
   --output song.wav --steps 30
 ```
 
-### 5. `turbospark` (Unified Front End)
+### 5. `turbospark-clone`
+
+Zero-shot voice cloning and speech synthesis via MegaTTS3:
+
+```sh
+turbospark-clone speak \
+  --model ~/models/megatts3 \
+  --reference voice_sample.wav \
+  --text "Hello world, this is a cloned voice." \
+  --consent --output output.wav
+```
+
+### 6. `turbospark` (Unified Front End)
 
 Front end routing commands to peer binaries:
 
@@ -138,6 +151,7 @@ MoE expert weights stream from NVMe storage on demand. Setting the cache slot co
 - `bin/model.rs` & `bin/model_cmd/`: Subcommands for `turbospark-model`.
 - `bin/image.rs`: Entry point for `turbospark-image`.
 - `bin/music.rs`: Entry point for `turbospark-music`.
+- `bin/clone.rs`: Entry point for `turbospark-clone`.
 
 ## Development & Test Commands
 
