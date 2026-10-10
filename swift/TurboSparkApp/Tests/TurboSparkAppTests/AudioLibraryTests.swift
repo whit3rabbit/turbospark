@@ -199,7 +199,7 @@ extension AudioLibraryTests {
         controller.selectTask(AudioTask.textToSpeech.rawValue)
         let capabilities = try XCTUnwrap(controller.selectedProfile?.capabilities)
         XCTAssertTrue(capabilities.languages.contains(controller.recipe.language))
-        XCTAssertTrue(capabilities.voices.contains(controller.recipe.voice))
+        XCTAssertTrue(capabilities.voices.isEmpty || capabilities.voices.contains(controller.recipe.voice))
         controller.selectTask(AudioTask.speechToText.rawValue)
         XCTAssertEqual(controller.selectedProfile?.identity.task, .speechToText)
     }

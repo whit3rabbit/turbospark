@@ -32,6 +32,7 @@ extension AudioWorkspaceController {
         // an input to synthesis. Repeated takes of the same task retain lineage.
         if task == .textToSpeech || task == .music {
             guard selected.recipe.task == task.rawValue, selected.kind == kind else { return nil }
+            if task == .textToSpeech, (selected.recipe.speech?.mode ?? .customVoice) != (recipe.speech?.mode ?? .customVoice) { return nil }
         }
         return selected
     }
@@ -77,10 +78,11 @@ extension AudioWorkspaceController {
                 guard admitted else { throw CancellationError() }
                 try Task.checkCancellation()
                 self.status = String(localized: "Loading model", bundle: .module)
-                let session = try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
+                let session = profile.family == "qwen3_tts" ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
                 let request = Self.request(from: inputs, task: currentTask)
                 if currentTask == .speechToText {
                     guard let selected else { throw AudioWorkspaceError.message(String(localized: "Import or select a recording first.", bundle: .module)) }
+                    guard let session else { throw CancellationError() }
                     try await self.transcribe(item: selected, into: result.id, session: session, request: request, source: .final, token: token)
                 } else {
                     let pcm: [Float]
@@ -92,9 +94,18 @@ extension AudioWorkspaceController {
                         let assets = self.assets; let lifetime = self.lifetime
                         pcm = try await Task.detached { try AudioMediaIO.readMono16k(selected.clips, store: assets, start: 0, duration: selected.duration, cancel: lifetime.check) }.value
                     } else { pcm = [] }
-                    let output = try await session.execute(request, pcm: pcm) { [weak self] update in
-                        Task { @MainActor in
-                            self?.receiveProgress(update, runID: result.id, token: token)
+                    let report: @Sendable (AudioProgress) -> Void = { [weak self] update in
+                        Task { @MainActor in self?.receiveProgress(update, runID: result.id, token: token) }
+                    }
+                    let output: AudioResult
+                    if profile.family == "qwen3_tts" {
+                        output = try await self.synthesizeQwenSpeech(inputs, profile: profile, source: result, report: report)
+                    } else {
+                        guard let session else { throw CancellationError() }
+                        output = try await session.execute(request, pcm: pcm) { [weak self] update in
+                            Task { @MainActor in
+                                self?.receiveProgress(update, runID: result.id, token: token)
+                            }
                         }
                     }
                     try Task.checkCancellation()

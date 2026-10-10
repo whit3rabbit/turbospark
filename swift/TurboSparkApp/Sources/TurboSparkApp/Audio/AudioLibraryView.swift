@@ -166,6 +166,10 @@ struct AudioItemDetailView: View {
             }
             HStack(spacing: 12) {
                 if item.hasPlayableAudio { AudioSaveAsButton(controller: controller, item: item) }
+                if item.hasPlayableAudio && item.kind == .voiceover {
+                    Button { controller.reuseVoice(item) } label: { Text("Use as reference voice", bundle: .module) }
+                        .disabled(controller.isBusy || controller.hasRecordingActivity)
+                }
                 if item.preferredTranscript != nil { AudioExportMenu(controller: controller, item: item) }
                 Spacer(minLength: 8)
                 AudioDeleteButton(controller: controller, item: item)

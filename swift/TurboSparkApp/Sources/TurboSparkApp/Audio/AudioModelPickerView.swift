@@ -113,13 +113,15 @@ struct AudioModelPickerView: View {
 
     private func modelSummary(_ profile: AudioProfile) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(profile.displayName).themedFont(.base, weight: .medium).fixedSize(horizontal: false, vertical: true)
-            if !profile.identity.repository.isEmpty {
+            if controller.selectedLocalModelURL == nil {
+                Text(profile.displayName).themedFont(.base, weight: .medium).fixedSize(horizontal: false, vertical: true)
+            }
+            if controller.selectedLocalModelURL == nil, !profile.identity.repository.isEmpty {
                 Text(profile.identity.repository).foregroundStyle(.appSecondary)
                     .textSelection(.enabled).lineLimit(2).truncationMode(.middle)
             }
             HStack(spacing: 8) {
-                if profile.downloadBytes > 0 {
+                if controller.selectedLocalModelURL == nil, profile.downloadBytes > 0 {
                     Label { Text(MetricFormat.storage(profile.downloadBytes)) }
                         icon: { Image(systemName: "internaldrive") }
                 }

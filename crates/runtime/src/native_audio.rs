@@ -32,6 +32,8 @@ pub struct AudioRequest {
     pub duration_seconds: Option<f64>,
     pub steps: Option<usize>,
     pub seed: Option<u64>,
+    pub instruction: Option<String>,
+    pub reference_text: Option<String>,
 }
 impl Default for AudioRequest {
     fn default() -> Self {
@@ -46,6 +48,8 @@ impl Default for AudioRequest {
             duration_seconds: Some(10.0),
             steps: Some(30),
             seed: Some(0),
+            instruction: None,
+            reference_text: None,
         }
     }
 }
@@ -866,6 +870,7 @@ mod tests {
     }
     #[test]
     fn cancellation_is_visible_while_heavy_permit_is_owned() {
+        let _serial = crate::heavy::serial_test_lock();
         let permit = crate::heavy::HeavyWorkGuard::acquire();
         let cancel = AudioCancel::default();
         let signal = cancel.clone();
@@ -915,6 +920,7 @@ mod tests {
         let pcm = audio::read_wav_f32(Path::new(&wav)).unwrap();
         assert_eq!(pcm.sample_rate, 16000);
         assert_eq!(pcm.channels, 1);
+        let _serial = crate::heavy::serial_test_lock();
         let session = AudioSession::open(path.into(), AudioTask::SpeechToText, false).unwrap();
         let result = session
             .execute(
@@ -941,6 +947,7 @@ mod tests {
         let path = std::env::var_os("TURBOSPARK_AUDIO_QWEN_DIR").unwrap();
         let wav = std::env::var_os("TURBOSPARK_AUDIO_WAV").unwrap();
         let pcm = audio::read_wav_f32(Path::new(&wav)).unwrap();
+        let _serial = crate::heavy::serial_test_lock();
         let session =
             AudioSession::open_with_options(path.into(), AudioTask::SpeechToText, false, true)
                 .unwrap();
@@ -969,6 +976,7 @@ mod tests {
     #[ignore = "requires TURBOSPARK_AUDIO_KOKORO_DIR"]
     fn real_kokoro_portable_worker_generates_bounded_pcm() {
         let path = std::env::var_os("TURBOSPARK_AUDIO_KOKORO_DIR").unwrap();
+        let _serial = crate::heavy::serial_test_lock();
         let session = AudioSession::open(path.into(), AudioTask::TextToSpeech, true).unwrap();
         let request = AudioRequest {
             task: AudioTask::TextToSpeech,
@@ -1016,6 +1024,7 @@ mod tests {
     fn cooperative_controls_worker_cancels_during_flow_and_replays_stereo() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../audio/testdata/minimax_music3/converted_plain");
+        let _serial = crate::heavy::serial_test_lock();
         let session = AudioSession::open(path, AudioTask::Music, false).unwrap();
         let request = AudioRequest {
             task: AudioTask::Music,
@@ -1066,6 +1075,7 @@ mod tests {
     }
     #[test]
     fn opening_refuses_busy_device_instead_of_blocking_profile_teardown() {
+        let _serial = crate::heavy::serial_test_lock();
         let permit = crate::heavy::HeavyWorkGuard::acquire();
         let (tx, rx) = mpsc::channel();
         let worker = std::thread::spawn(move || {

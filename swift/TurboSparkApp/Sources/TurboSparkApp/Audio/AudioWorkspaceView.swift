@@ -173,6 +173,8 @@ struct AudioWorkspaceView: View {
         case .record: return "Record a meeting, add markers, and keep the original audio."
         case .transcribe: return "Turn a recording into editable text and subtitles."
         case .voiceover: return "Write a script in sections. Preview or regenerate each section as a new take."
+        case .voiceClone: return "Choose a reference voice, review its transcript, and generate new speech."
+        case .voiceDesign: return "Describe a voice and generate an audio clip. Reuse the clip as a cloning reference for a consistent voice."
         case .music: return "Describe a soundtrack and keep each take for comparison."
         case .cleanup: return "Create a cleaned recording or separate stems while keeping the original."
         case .advanced: return "Explore supported audio operations and inspect model details."
@@ -200,7 +202,7 @@ struct AudioWorkspaceView: View {
                 sourcePicker
             }
             switch controller.page {
-            case .voiceover: voiceoverInputs
+            case .voiceover, .voiceClone, .voiceDesign: voiceoverInputs
             case .music: musicInputs
             case .transcribe: languagePicker
             case .advanced:
@@ -310,6 +312,9 @@ struct AudioWorkspaceView: View {
             scriptEditor
             Text("Separate sections with a blank line.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
+            if controller.selectedProfile?.family == "qwen3_tts" {
+                Qwen3TTSInputsView(controller: controller)
+            }
             if let profile = controller.selectedProfile {
                 if !profile.capabilities.voices.isEmpty {
                     Picker(selection: $controller.recipe.voice) {
@@ -317,7 +322,7 @@ struct AudioWorkspaceView: View {
                     } label: { Text("Voice", bundle: .module) }
                 }
                 languagePicker
-                if controller.selectedProfile != nil {
+                if controller.selectedProfile?.family != "qwen3_tts" {
                     HStack {
                         Text("Speed", bundle: .module)
                         Slider(value: $controller.recipe.speed, in: 0.5...2, step: 0.05)
@@ -361,7 +366,7 @@ struct AudioWorkspaceView: View {
     @ViewBuilder private var languagePicker: some View {
         if let profile = controller.selectedProfile, !profile.capabilities.languages.isEmpty {
             Picker(selection: $controller.recipe.language) {
-                if controller.task == .speechToText {
+                if controller.task == .speechToText || profile.capabilities.languages.contains("auto") {
                     Text("Detect automatically", bundle: .module).tag("auto")
                 }
                 ForEach(profile.capabilities.languages.filter { $0 != "auto" }, id: \.self) { language in

@@ -85,6 +85,10 @@ final class AudioWorkspaceController: ObservableObject {
     var idleTask: Task<Void, Never>?
     var deletionCleanupTask: Task<Void, Never>?
     var opening: AudioModelOpening?
+    var qwenSpeechJob: Qwen3TTSSpeechJob?
+    var referencePreviewTask: Task<Void, Never>?
+    var referencePlayer: AVAudioPlayer?
+    @Published var referencePlaying = false
     var session: AudioSession?
     var sessionKey: String?
     var modelAccessURL: URL?
@@ -136,14 +140,14 @@ final class AudioWorkspaceController: ObservableObject {
     var task: AudioTask {
         switch page {
         case .record, .transcribe: return .speechToText
-        case .voiceover: return .textToSpeech
+        case .voiceover, .voiceClone, .voiceDesign: return .textToSpeech
         case .music: return .music
         case .cleanup: return recipe.task == AudioTask.separation.rawValue ? .separation : .enhancement
         case .library, .advanced: return AudioTask(rawValue: recipe.task) ?? .speechToText
         }
     }
     var availableProfiles: [AudioProfile] {
-        var choices = profiles.filter { $0.identity.task == task }
+        var choices = profiles.filter { $0.identity.task == task && speechProfileMatchesPage($0) }
         if page == .advanced && task == .speechToText { choices.append(Self.localQwenProfile) }
         return choices
     }
@@ -164,17 +168,17 @@ final class AudioWorkspaceController: ObservableObject {
         return try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale)
     }
     var selectedProfileIsRunnable: Bool {
-        selectedProfile?.capabilities.canRun == true
+        selectedProfile?.family == "qwen3_tts" || selectedProfile?.capabilities.canRun == true
             || (page == .advanced && allowPortableExperiment && ["kokoro", "qwen3_asr"].contains(selectedProfile?.family ?? ""))
             || (page == .advanced && allowExperimentalMetal && selectedProfile?.family == "qwen3_asr")
     }
     var canRun: Bool {
-        guard !isBusy, !isInstalling, !isShutDown, !hasRecordingActivity, modelInstalled else { return false }
+        guard !isBusy, !isInstalling, !isShutDown, !hasRecordingActivity, importTask == nil, modelInstalled else { return false }
         guard selectedProfileIsRunnable else { return false }
         switch task {
         case .speechToText, .enhancement, .separation, .alignment, .diarization, .speechDetection, .codec, .languageIdentification:
             return selectedItem?.clips.isEmpty == false
-        case .textToSpeech: return !recipe.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .textToSpeech: return !recipe.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && speechValidationMessage == nil
         case .music:
             return !recipe.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && recipe.durationSeconds.isFinite && recipe.durationSeconds > 0
@@ -197,6 +201,7 @@ final class AudioWorkspaceController: ObservableObject {
     }
     func tick() {
         if let capture, isRecording { recordingSeconds = capture.currentElapsed() }
+        referencePlaying = referencePlayer?.isPlaying == true
         if let player { playbackTime = player.currentTime; isPlaying = player.isPlaying }
         if !isBusy { startNextDraft() }
     }
@@ -211,7 +216,11 @@ final class AudioWorkspaceController: ObservableObject {
     }
     func flushPreferences() {
         preferences.page = page; preferences.recipe = recipe
-        if let model = recipe.modelID { preferences.selectedModels[task.rawValue] = model }
+        if task == .textToSpeech, let speech = recipe.speech {
+            if preferences.speechModes == nil { preferences.speechModes = [:] }
+            preferences.speechModes?[speech.mode.rawValue] = speech
+        }
+        if let model = recipe.modelID { preferences.selectedModels[modelSelectionKey] = model }
         do {
             try library.savePreferences(preferences)
             if !isBusy && error == nil { status = String(localized: "Saved in this profile", bundle: .module) }
@@ -221,12 +230,15 @@ final class AudioWorkspaceController: ObservableObject {
     func selectPage(_ page: AudioWorkspacePage) {
         guard self.page != page else { return }
         flushPreferences()
+        stopReferencePreview()
         self.page = page
         recipe.task = task.rawValue
-        recipe.modelID = preferences.selectedModels[task.rawValue]
+        recipe.modelID = preferences.selectedModels[modelSelectionKey]
         if page != .advanced { recipe.experimentalBackend = nil }
         restoreModelSelection()
         normalizeModelOptions()
+        if task == .textToSpeech, let mode = recipe.speech?.mode,
+           let saved = preferences.speechModes?[mode.rawValue] { recipe.speech = saved }
     }
     func selectTask(_ value: String) {
         flushPreferences()
@@ -239,12 +251,16 @@ final class AudioWorkspaceController: ObservableObject {
         // Catalog revisions can remove a saved choice. Keep the picker and
         // run request on the same task, with a usable fallback after refresh.
         if let id = recipe.modelID, availableProfiles.contains(where: { $0.identity.alias == id }) { return }
-        if let remembered = preferences.selectedModels[task.rawValue],
+        if let remembered = preferences.selectedModels[modelSelectionKey],
            availableProfiles.contains(where: { $0.identity.alias == remembered }) {
             recipe.modelID = remembered
         } else {
-            recipe.modelID = availableProfiles.first(where: { installedPaths[$0.identity.alias] != nil })?.identity.alias
-                ?? availableProfiles.first?.identity.alias
+            // A new speech workspace should start with an executable provider.
+            let preferred = task == .textToSpeech
+                ? availableProfiles.filter { $0.capabilities.canRun || $0.family == "qwen3_tts" }
+                : availableProfiles
+            recipe.modelID = preferred.first(where: { installedPaths[$0.identity.alias] != nil })?.identity.alias
+                ?? preferred.first?.identity.alias ?? availableProfiles.first?.identity.alias
         }
     }
     func selectModel(_ alias: String?) {
@@ -252,7 +268,16 @@ final class AudioWorkspaceController: ObservableObject {
         normalizeModelOptions()
     }
     func normalizeModelOptions() {
-        guard let capabilities = selectedProfile?.capabilities else { return }
+        guard let profile = selectedProfile else { return }
+        let capabilities = profile.capabilities
+        if profile.family == "qwen3_tts" {
+            var speech = recipe.speech ?? AudioSpeechSettings()
+            speech.mode = Self.speechMode(for: profile)
+            recipe.speech = speech
+            if !speechSupportsStyle { recipe.speech?.instruction = "" }
+        } else {
+            recipe.speech = nil
+        }
         if !capabilities.languages.isEmpty, !capabilities.languages.contains(recipe.language) {
             recipe.language = task == .speechToText ? "auto" : capabilities.languages[0]
         }
@@ -405,7 +430,7 @@ final class AudioWorkspaceController: ObservableObject {
         recipe = value
         if recipe.experimentalBackend != nil { page = .advanced; return }
         switch AudioTask(rawValue: recipe.task) {
-        case .textToSpeech: page = .voiceover
+        case .textToSpeech: page = value.speech?.mode == .clone ? .voiceClone : value.speech?.mode == .design ? .voiceDesign : .voiceover
         case .music: page = .music
         case .speechToText: page = .transcribe
         case .enhancement, .separation: page = .cleanup
@@ -544,7 +569,7 @@ final class AudioWorkspaceController: ObservableObject {
             oldAccess?.stopAccessingSecurityScopedResource()
         }
     }
-    func cancel() { jobTask?.cancel(); session?.cancel(); opening?.cancelOpen() }
+    func cancel() { jobTask?.cancel(); qwenSpeechJob?.cancel(); session?.cancel(); opening?.cancelOpen() }
     func shutdown() {
         guard !isShutDown else { return }
         preferencesTask?.cancel()
@@ -559,7 +584,8 @@ final class AudioWorkspaceController: ObservableObject {
         isShutDown = true; epoch = UUID()
         timer?.invalidate(); timer = nil; idleTask?.cancel(); deletionCleanupTask?.cancel(); cancel(); importTask?.cancel(); exportTask?.cancel()
         capture = nil; recordingID = nil; pendingRefinementIDs.removeAll(); isRecording = false
-        stopPlayback()
+        stopPlayback(); stopReferencePreview()
+        qwenSpeechJob?.stopAndDrain(); qwenSpeechJob = nil
         if let opening { DispatchQueue.global(qos: .userInitiated).sync { opening.stopAndDrain() } }
         opening = nil
         if let old = session { DispatchQueue.global(qos: .userInitiated).sync { old.close() } }

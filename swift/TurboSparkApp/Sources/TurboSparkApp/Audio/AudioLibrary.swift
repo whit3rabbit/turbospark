@@ -2,9 +2,9 @@ import Foundation
 import TurboSpark
 
 public enum AudioWorkspacePage: String, Codable, CaseIterable, Identifiable, Sendable {
-    case library, record, transcribe, voiceover, music, cleanup, advanced
+    case library, record, transcribe, voiceover, voiceClone, voiceDesign, music, cleanup, advanced
     public var id: String { rawValue }
-    static let destinations: [Self] = [.music, .transcribe, .voiceover]
+    static let destinations: [Self] = [.music, .transcribe, .voiceover, .voiceClone, .voiceDesign]
     /// Clean Up only appears when the runtime can open at least one of its
     /// tasks; otherwise the page would offer controls whose every run is
     /// refused at session open (`AudioTask.isRunnable`).
@@ -18,6 +18,8 @@ public enum AudioWorkspacePage: String, Codable, CaseIterable, Identifiable, Sen
         case .record: return "Record"
         case .transcribe: return "Speech-to-Text"
         case .voiceover: return "Text-to-Speech"
+        case .voiceClone: return "Voice Cloning"
+        case .voiceDesign: return "Voice Design"
         case .music: return "Music"
         case .cleanup: return "Clean Up"
         case .advanced: return "Advanced"
@@ -29,6 +31,8 @@ public enum AudioWorkspacePage: String, Codable, CaseIterable, Identifiable, Sen
         case .record: return "mic"
         case .transcribe: return "text.bubble"
         case .voiceover: return "waveform"
+        case .voiceClone: return "person.wave.2"
+        case .voiceDesign: return "slider.horizontal.3"
         case .music: return "music.note"
         case .cleanup: return "slider.horizontal.3"
         case .advanced: return "wrench.and.screwdriver"
@@ -49,6 +53,31 @@ struct AudioRecipe: Codable, Equatable, Sendable {
     var modelID: String?
     var task = "speech_to_text"
     var experimentalBackend: String? = nil
+    var speech: AudioSpeechSettings? = nil
+}
+
+struct AudioSpeechSettings: Codable, Equatable, Sendable {
+    enum Mode: String, Codable, Sendable { case customVoice, clone, design }
+    var mode: Mode = .customVoice
+    var instruction = ""
+    var reference: AudioVoiceReference?
+    var referenceText = ""
+    var embeddingOnly = false
+    var temperature: Float = 0.9
+    var maxTokens = 2048
+}
+
+struct AudioVoiceReference: Codable, Equatable, Sendable {
+    var sourceID: UUID
+    var title: String
+    var clips: [AudioLibraryClip]
+    var start: Double = 0
+    var duration: Double
+    var totalDuration: Double { clips.map { $0.offset + $0.duration }.max() ?? 0 }
+    var isValid: Bool {
+        start.isFinite && duration.isFinite && start >= 0 && (1...30).contains(duration)
+            && start + duration <= totalDuration + 0.001 && !clips.isEmpty
+    }
 }
 
 struct AudioLibraryClip: Codable, Equatable, Identifiable, Sendable {
@@ -121,7 +150,7 @@ struct AudioLibraryItem: Codable, Equatable, Identifiable, Sendable {
     var isEmptyGeneratedAttempt: Bool {
         (kind == .music || kind == .voiceover) && status != .draft && !hasPlayableAudio && transcripts.isEmpty
     }
-    var assetReferences: [String] { clips.map(\.assetReference) }
+    var assetReferences: [String] { clips.map(\.assetReference) + (recipe.speech?.reference?.clips.map(\.assetReference) ?? []) }
     func validate() throws {
         guard schemaVersion == 1, clips.count <= 100_000,
               clips.allSatisfy({ clip in
@@ -157,6 +186,7 @@ struct AudioWorkspacePreferences: Codable, Sendable {
     var page: AudioWorkspacePage = .library
     var recipe = AudioRecipe()
     var presets: [AudioPreset] = []
+    var speechModes: [String: AudioSpeechSettings]? = nil
     /// Security-scoped bookmarks retain user-selected local models without absolute paths.
     var localModels: [String: Data] = [:]
     var selectedModels: [String: String] = [:]
@@ -205,7 +235,12 @@ final class AudioLibraryStore: @unchecked Sendable {
     }
     func savePreferences(_ value: AudioWorkspacePreferences) throws {
         lock.lock(); defer { lock.unlock() }
-        try repository.save(value, key: "audio:preferences")
+        let recipes: [AudioRecipe] = [value.recipe] + value.presets.map(\.recipe)
+        var references: [String] = recipes.flatMap { $0.speech?.reference?.clips.map(\.assetReference) ?? [] }
+        for settings in value.speechModes?.values ?? Dictionary<String, AudioSpeechSettings>().values {
+            references.append(contentsOf: settings.reference?.clips.map(\.assetReference) ?? [])
+        }
+        try repository.saveAudioRecord(key: "audio:preferences", payload: JSONEncoder().encode(value), references: references)
     }
 }
 

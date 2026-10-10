@@ -46,6 +46,9 @@ final class AudioBackupTests: XCTestCase {
         let assets = ManagedAssetStore(vault: vault)
         let descriptor = try assets.store(data: Data([1, 2, 3]), fileName: "section.wav", mimeType: "audio/wav")
         var item = AudioLibraryItem(title: "Section", kind: .voiceover)
+        var speech = AudioSpeechSettings(); speech.mode = .clone
+        speech.reference = AudioVoiceReference(sourceID: UUID(), title: "Voice", clips: [AudioLibraryClip(assetReference: descriptor.storedReference, sampleRate: 24_000, channels: 1, frameCount: 24_000)], duration: 1)
+        item.recipe.speech = speech
         item.localModelBookmark = Data("private checkpoint bookmark".utf8)
         item.clips = [AudioLibraryClip(assetReference: descriptor.storedReference, sampleRate: 24_000, channels: 1, frameCount: 3)]
         let snapshot = ProfileExportSnapshot(profile: UserProfile(id: "audio", name: "Audio"), exportedAt: Date(), appVersion: "test", modelAlias: nil, chats: [], projects: .empty(), settingsFiles: [:], chatFiles: [], memoryFiles: [], audioItems: [item])
@@ -57,6 +60,7 @@ final class AudioBackupTests: XCTestCase {
         let portable = try encoder.decode(AudioLibraryItem.self, from: Data(result.stdout.utf8))
         XCTAssertNil(portable.localModelBookmark)
         XCTAssertTrue(portable.clips[0].assetReference.hasPrefix("../../assets/audio/"))
+        XCTAssertEqual(portable.recipe.speech?.reference?.clips[0].assetReference, portable.clips[0].assetReference)
         let assetPath = String(portable.clips[0].assetReference.dropFirst(6))
         let listing = try await ProcessExecutor.run(executableURL: ProfileBackupImport.zipinfoURL, arguments: ["-1", archive.path], timeoutSeconds: 30)
         XCTAssertTrue(try ProfileBackupImport.entries(from: listing).contains(assetPath))

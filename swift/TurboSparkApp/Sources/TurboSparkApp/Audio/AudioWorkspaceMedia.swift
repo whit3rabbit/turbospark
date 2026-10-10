@@ -14,7 +14,7 @@ extension AudioWorkspaceController {
         scratchURLs.insert(url)
         return url
     }
-    func importAudio() {
+    func importAudio(asVoiceReference: Bool = false) {
         guard importTask == nil, !isShutDown, !hasRecordingActivity else { return }
         let token = epoch
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.audio]; panel.canChooseDirectories = false
@@ -23,7 +23,7 @@ extension AudioWorkspaceController {
         var item = AudioLibraryItem(title: source.deletingPathExtension().lastPathComponent, kind: .imported)
         item.recipe = recipe; item.status = .processing
         do { try save(item) } catch { fail(error); return }
-        selectedID = item.id
+        if !asVoiceReference { selectedID = item.id }
         let id = item.id; let assets = self.assets; let library = self.library; let lifetime = self.lifetime
         status = String(localized: "Importing audio", bundle: .module)
         importTask = Task { [weak self] in
@@ -42,7 +42,9 @@ extension AudioWorkspaceController {
             guard let self, self.valid(token) else { return }
             self.importTask = nil
             switch outcome {
-            case .success(let saved): self.publish(saved)
+            case .success(let saved):
+                self.publish(saved)
+                if asVoiceReference { self.setVoiceReference(saved) }
             case .failure(let error):
                 self.update(id) { $0.status = .interrupted; $0.failure = error.localizedDescription }
                 self.error = error.localizedDescription
@@ -74,7 +76,7 @@ extension AudioWorkspaceController {
     func compare(with item: AudioLibraryItem) { play(item, at: playbackTime) }
     func play(_ item: AudioLibraryItem, at seconds: Double, autoplay: Bool = true) {
         guard !item.clips.isEmpty, !isShutDown, !hasRecordingActivity else { return }
-        stopPlayback()
+        stopPlayback(); stopReferencePreview()
         let token = epoch; let assets = self.assets; let lifetime = self.lifetime
         do {
             let destination = try scratchURL(extension: "wav")

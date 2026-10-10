@@ -53,6 +53,7 @@ use the same native service without changing their public result shape.
 | [stt/wav2vec](../crates/audio/src/stt/wav2vec/mod.rs) | `transcribe` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/whisper](../crates/audio/src/stt/whisper/mod.rs) | `transcribe`, `encode` | Implemented, checkpoint/quality unqualified |
 | [tts/kokoro](../crates/audio/src/tts/kokoro/mod.rs) | `synthesize` | Portable synthesis is callable only with explicit diagnostic opt-in; Metal synthesis is not implemented |
+| [Qwen3-TTS](QWEN3_TTS.md) | Swift MLX `synthesize` | Base cloning, CustomVoice, and VoiceDesign in the app; Rust session and HTTP execution remain unavailable |
 | [music/minimax_music3](../crates/audio/src/music/minimax_music3/mod.rs) | `generate_text` | Implemented, checkpoint/quality unqualified |
 | [sts/deepfilternet](../crates/audio/src/sts/deepfilternet/mod.rs) | `enhance` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [sts/dialogue_sidon](../crates/audio/src/sts/dialogue_sidon/mod.rs) | `extract_features`, `normalize_chunk`, `conditioning`, `sample_latents`, `decode_latents` | Concurrent source in progress; no complete separation entry point, native adapter or checkpoint qualification |

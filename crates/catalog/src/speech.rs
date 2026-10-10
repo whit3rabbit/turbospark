@@ -601,6 +601,32 @@ mod tests {
     }
 
     #[test]
+    fn probe_refuses_unbounded_source_positions_before_reading_weights() {
+        // An MLX checkpoint may omit encoder.positional_embedding, so no
+        // stored tensor caps the table the loader would generate from
+        // n_audio_ctx. The config alone must be refused.
+        let dir = std::env::temp_dir().join(format!("ts-speech-bomb-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let required: Vec<String> = ["config.json", "model.safetensors", "tokenizer.json"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        std::fs::write(
+            dir.join("config.json"),
+            r#"{"model_type":"whisper","n_mels":80,"n_audio_ctx":100000000,
+                "n_audio_state":64,"n_audio_head":4,"n_audio_layer":2,"n_vocab":51864,
+                "n_text_ctx":448,"n_text_state":64,"n_text_head":4,"n_text_layer":2,
+                "quantization":{"group_size":64,"bits":8}}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("tokenizer.json"), loadable_tokenizer_json()).unwrap();
+        std::fs::write(dir.join("model.safetensors"), b"").unwrap();
+        let error = probe_speech_dir(&dir, &required).unwrap_err();
+        assert!(error.contains("max_source_positions"), "{error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn probe_and_receipt_round_trip_on_a_real_layout() {
         // A synthetic whisper directory: tiny random tensors in real
         // safetensors framing, real config and tokenizer JSON. No

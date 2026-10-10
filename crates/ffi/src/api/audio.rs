@@ -8,6 +8,18 @@ type AbiResult<T> = Result<T, (c_int, String)>;
 fn invalid(e: impl ToString) -> (c_int, String) {
     (abi::TS_ERR_INVALID_ARGUMENT, e.to_string())
 }
+/// Classifies a failed audio install. The install's own cancel flag decides,
+/// not the message: the audio downloader words its cancellation several ways
+/// ("cancelled by the caller", "hub transfer cancelled by the caller",
+/// "audio verification cancelled"), none of them `catalog::INSTALL_CANCELLED`.
+/// Every other failure keeps its existing `TS_ERR_INVALID_ARGUMENT` code.
+fn install_failure(message: String, cancelled: bool) -> (c_int, String) {
+    if cancelled {
+        (abi::TS_ERR_CANCELLED, message)
+    } else {
+        invalid(message)
+    }
+}
 unsafe fn identity(json: *const c_char) -> AbiResult<AudioProfileIdentity> {
     serde_json::from_str(strings::required(json, "identity").map_err(invalid)?).map_err(invalid)
 }
@@ -113,6 +125,43 @@ pub unsafe extern "C" fn ts_audio_resolve(
         strings::emit(&path.to_string_lossy(), out).map_err(invalid)
     })
 }
+/// Verify a managed install before a host-owned provider loads it. This uses
+/// the same immutable byte gate as native audio session open.
+#[no_mangle]
+pub unsafe extern "C" fn ts_audio_verify(
+    identity_json: *const c_char,
+    token: *const TsAudioOpenToken,
+    callback: Option<
+        unsafe extern "C" fn(*mut c_void, c_int, *const c_char, usize, *const f32, usize),
+    >,
+    userdata: *mut c_void,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        clear_output(out)?;
+        let identity = identity(identity_json)?;
+        let cancelled = || {
+            token
+                .as_ref()
+                .is_some_and(|token| token.cancelled.load(std::sync::atomic::Ordering::Acquire))
+        };
+        let path = AudioCatalog::embedded().map_err(invalid)?.verify_observed(
+            &catalog::Store::default_store().map_err(invalid)?,
+            &identity,
+            &cancelled,
+            &mut |_, completed, total| {
+                if let Some(callback) = callback {
+                    let event = serde_json::json!({"stage":"verifying","completed":completed,"total":total});
+                    let json = event.to_string();
+                    callback(userdata, 1, json.as_ptr().cast(), json.len(), std::ptr::null(), 0);
+                }
+            },
+        ).map_err(|message| if message == catalog::VERIFY_CANCELLED {
+            (abi::TS_ERR_CANCELLED, message)
+        } else { invalid(message) })?;
+        strings::emit(&path.to_string_lossy(), out).map_err(invalid)
+    })
+}
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_delete(identity_json: *const c_char) -> c_int {
     guard_result(|| {
@@ -200,7 +249,7 @@ pub unsafe extern "C" fn ts_audio_install(
                 },
                 active.cancel_flag(),
             )
-            .map_err(invalid)?;
+            .map_err(|e| install_failure(e, active.cancel_flag().is_cancelled()))?;
         output(&row, out)
     })
 }
@@ -618,4 +667,75 @@ pub unsafe extern "C" fn ts_heavy_work_release(permit: *mut TsHeavyWorkPermit) -
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod install_cancel_tests {
+    use super::*;
+
+    #[test]
+    fn audio_verify_clears_output_before_rejecting_invalid_identity() {
+        let mut out = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+        let result = unsafe {
+            ts_audio_verify(
+                std::ptr::null(),
+                std::ptr::null(),
+                None,
+                std::ptr::null_mut(),
+                &mut out,
+            )
+        };
+        assert_eq!(result, abi::TS_ERR_INVALID_ARGUMENT);
+        assert!(out.is_null());
+    }
+
+    #[test]
+    fn a_cancelled_install_is_cancelled_whatever_the_downloader_wrote() {
+        for text in [
+            "cancelled by the caller",
+            "hub transfer cancelled by the caller",
+            "audio verification cancelled",
+        ] {
+            assert_eq!(
+                install_failure(text.into(), true).0,
+                abi::TS_ERR_CANCELLED,
+                "{text}"
+            );
+        }
+        // Without the flag the existing classification is unchanged.
+        assert_eq!(
+            install_failure("disk full".into(), false).0,
+            abi::TS_ERR_INVALID_ARGUMENT
+        );
+    }
+
+    /// The production installer, pre-cancelled so it stops before any network
+    /// or filesystem work, must come out of the classifier as a cancel.
+    #[test]
+    fn the_real_audio_installer_cancel_maps_to_cancelled() {
+        let audio = AudioCatalog::embedded().unwrap();
+        let identity = audio.get("whisper-base").unwrap().identity.clone();
+        let flag = catalog::CancelFlag::new();
+        flag.cancel();
+        let dir = std::env::temp_dir().join(format!("ts-audio-cancel-{}", std::process::id()));
+        let error = audio
+            .install(
+                &catalog::Client::new(),
+                &catalog::Catalog::embedded().unwrap(),
+                &catalog::Store::new(dir.clone()),
+                &identity,
+                &mut |_| {},
+                &flag,
+            )
+            .expect_err("a pre-cancelled install must not run");
+        assert_eq!(
+            install_failure(error.clone(), flag.is_cancelled()).0,
+            abi::TS_ERR_CANCELLED,
+            "{error}"
+        );
+        assert!(
+            !dir.exists(),
+            "a cancelled install must not touch the store"
+        );
+    }
 }

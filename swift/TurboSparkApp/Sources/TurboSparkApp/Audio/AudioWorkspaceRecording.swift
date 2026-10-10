@@ -86,7 +86,7 @@ extension AudioWorkspaceController {
             error = AudioCapture.CaptureError.noSource.localizedDescription
             return
         }
-        stopPlayback(); error = nil
+        stopPlayback(); stopReferencePreview(); error = nil
         var item = AudioLibraryItem(title: String(localized: "Meeting", bundle: .module) + " " + Date().formatted(date: .abbreviated, time: .shortened), kind: .recording)
         item.status = .draft; item.recipe = recipe; item.recipe.task = AudioTask.speechToText.rawValue
         if let profile = selectedProfile, profile.identity.task == .speechToText {

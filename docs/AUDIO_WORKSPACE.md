@@ -32,6 +32,13 @@ existing summary.
 
 ## Create and compare
 
+Text-to-Speech, Voice Cloning, and Voice Design have separate model choices and
+voice settings. [Qwen3-TTS](QWEN3_TTS.md) uses the native Swift MLX provider.
+Clone from an imported or saved 1 to 30 second reference region with its exact
+transcript, or explicitly choose voice embedding only. Voice Design accepts a
+voice description. Generated speech can become a reusable cloning reference.
+Reference playback and trim controls are separate from generated-take playback.
+
 Voiceover accepts a script split into sections. Generate section creates a new
 take; it does not replace an earlier section. Music retains description, lyrics,
 seed, and supported settings. Presets and Duplicate with changes make experiments
@@ -57,6 +64,8 @@ modules and internal codecs are not presented as runnable jobs.
   an explicit Advanced experiment.
 - Qwen3-ASR supports local checkpoints in Advanced. Packed Metal is an explicit
   experimental option; its audio encoder still runs on the CPU.
+- Qwen3-TTS runs Base, CustomVoice, and VoiceDesign MLX checkpoints in Swift.
+  The Rust session and HTTP Audio API do not execute this family.
 - Enhancement, separation, alignment, diarization, speech detection, codecs, and
   other transcription families stay unavailable until their native adapters and
   model gates exist. Their source implementations alone do not enable controls.
@@ -65,6 +74,7 @@ Downloads use the existing shared queue. Native text/audio and Swift MLX image
 execution share one heavyweight permit. An active operation retains the permit
 until cancellation has actually drained. The workspace keeps one audio model
 resident and unloads it after five idle minutes.
+Qwen3-TTS releases its model at the end of each speech job.
 
 ## Storage and qualification
 

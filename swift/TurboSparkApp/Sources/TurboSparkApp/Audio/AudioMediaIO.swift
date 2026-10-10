@@ -94,6 +94,21 @@ enum AudioMediaIO {
         return output
     }
 
+    /// Cloning must retain 24 kHz detail for both the speaker encoder and codec.
+    static func readMono24k(_ clips: [AudioLibraryClip], store: ManagedAssetStore = .shared,
+                            start: Double, duration: Double, cancel: () throws -> Void = {}) throws -> [Float] {
+        try readMono24k(clips, start: start, duration: duration, cancel: cancel, resolve: store.materializedURL(for:))
+    }
+    static func readMono24k(_ clips: [AudioLibraryClip], start: Double, duration: Double,
+                            cancel: () throws -> Void = {}, resolve: (String) throws -> URL) throws -> [Float] {
+        guard start.isFinite, start >= 0, duration.isFinite, (1...30).contains(duration) else { throw MediaError.tooLong }
+        var samples: [Float] = []
+        try streamMix(clips, resolve: resolve, sampleRate: 24_000, channels: 1, start: start, duration: duration, cancel: cancel) {
+            samples.append(contentsOf: $0)
+        }
+        return samples
+    }
+
     /// Render the common timeline in short blocks. Same-source chunks stay sequential;
     /// overlapping microphone and system tracks are mixed at their captured offsets.
     static func render(_ clips: [AudioLibraryClip], store: ManagedAssetStore = .shared, to url: URL, sampleRate: Double? = nil, cancel: () throws -> Void = {}) throws {
@@ -233,6 +248,9 @@ enum AudioMediaIO {
             guard let output = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: AVAudioChannelCount(channels), interleaved: false), let converter = AVAudioConverter(from: file.processingFormat, to: output) else { throw MediaError.conversion }
             self.converter = converter
             outputFormat = output
+            // The default converter channel map selects the left channel.
+            // Reference speech and transcription need all recorded channels.
+            converter.downmix = channels == 1 && file.processingFormat.channelCount > 1
             converter.primeMethod = .normal
             converter.sampleRateConverterQuality = AVAudioQuality.max.rawValue
         }

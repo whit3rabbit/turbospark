@@ -139,6 +139,17 @@ public enum AudioCatalog {
         let json = try audioEncode(identity)
         return try takeString { out in json.withCString { ts_audio_resolve($0, out) } }
     }
+    /// Full cancellable byte verification for a Swift-owned MLX provider.
+    public static func verify(_ identity: AudioProfileIdentity, token: AudioOpenToken,
+                              progress: @escaping @Sendable (AudioProgress) -> Void = { _ in }) throws -> String {
+        let json = try audioEncode(identity)
+        let box = AudioCallbackBox(progress: progress)
+        let context = Unmanaged.passUnretained(box).toOpaque()
+        defer { withExtendedLifetime(box) {} }
+        return try token.withRaw { handle in
+            try takeString { out in json.withCString { ts_audio_verify($0, handle, audioProgressTrampoline, context, out) } }
+        }
+    }
     public static func delete(_ identity: AudioProfileIdentity) throws {
         let json = try audioEncode(identity)
         let status = json.withCString { ts_audio_delete($0) }
@@ -180,6 +191,46 @@ private final class AudioDownloadBox {
     let callback: @Sendable (AudioDownloadProgress) -> Void
     init(_ callback: @escaping @Sendable (AudioDownloadProgress) -> Void) { self.callback = callback }
 }
+public struct VoiceCloneRequest: Codable, Sendable, Equatable {
+    public var text: String
+    public var referenceAudio: [Float]?
+    public var referenceText: String?
+    public var instruction: String?
+    public var language: String?
+    public var voice: String?
+    public var speed: Float
+    public var temperature: Float
+    public var maxTokens: Int
+    public var seed: UInt64
+    public var embeddingOnly: Bool
+
+    public init(
+        text: String = "",
+        referenceAudio: [Float]? = nil,
+        referenceText: String? = nil,
+        instruction: String? = nil,
+        language: String? = nil,
+        voice: String? = nil,
+        speed: Float = 1.0,
+        temperature: Float = 0.7,
+        maxTokens: Int = 2048,
+        seed: UInt64 = 0,
+        embeddingOnly: Bool = false
+    ) {
+        self.text = text
+        self.referenceAudio = referenceAudio
+        self.referenceText = referenceText
+        self.instruction = instruction
+        self.language = language
+        self.voice = voice
+        self.speed = speed
+        self.temperature = temperature
+        self.maxTokens = maxTokens
+        self.seed = seed
+        self.embeddingOnly = embeddingOnly
+    }
+}
+
 public struct AudioRequest: Codable, Sendable, Equatable {
     public var task: AudioTask
     public var language: String?
@@ -191,7 +242,24 @@ public struct AudioRequest: Codable, Sendable, Equatable {
     public var durationSeconds: Double? = 10
     public var steps: Int? = 30
     public var seed: UInt64? = 0
-    public init(task: AudioTask, language: String? = nil) { self.task = task; self.language = language }
+    public var instruction: String?
+    public var referenceText: String?
+
+    public init(task: AudioTask, language: String? = nil) {
+        self.task = task
+        self.language = language
+    }
+
+    public init(voiceClone: VoiceCloneRequest) {
+        self.task = .textToSpeech
+        self.text = voiceClone.text
+        self.language = voiceClone.language
+        self.voice = voiceClone.voice ?? "clone"
+        self.speed = voiceClone.speed
+        self.instruction = voiceClone.instruction
+        self.referenceText = voiceClone.referenceText
+        self.seed = voiceClone.seed
+    }
 }
 public struct AudioWord: Codable, Sendable, Equatable {
     public var text: String
@@ -237,6 +305,9 @@ public struct AudioProgress: Codable, Sendable, Equatable {
     public let stage: String
     public let completed: Int
     public let total: Int?
+    public init(stage: String, completed: Int, total: Int? = nil) {
+        self.stage = stage; self.completed = completed; self.total = total
+    }
 }
 private func audioEncode<T: Encodable>(_ value: T) throws -> String {
     let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
