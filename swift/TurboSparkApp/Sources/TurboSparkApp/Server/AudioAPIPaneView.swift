@@ -96,19 +96,19 @@ struct AudioAPIPaneView: View {
 
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Voice", bundle: .module).font(.caption).foregroundStyle(.secondary)
+                        Text("Voice", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
                         TextField("Voice", text: $voice)
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 160)
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Language", bundle: .module).font(.caption).foregroundStyle(.secondary)
+                        Text("Language", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
                         TextField("Language (en, zh, auto)", text: $language)
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 160)
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Style instruction", bundle: .module).font(.caption).foregroundStyle(.secondary)
+                        Text("Style instruction", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
                         TextField("e.g. Whisper, Cheerful", text: $instruction)
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 220)
@@ -116,7 +116,7 @@ struct AudioAPIPaneView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Reference transcript (optional)", bundle: .module).font(.caption).foregroundStyle(.secondary)
+                    Text("Reference transcript (optional)", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
                     TextField("Transcript of reference voice if cloning", text: $referenceText)
                         .textFieldStyle(.roundedBorder)
                 }

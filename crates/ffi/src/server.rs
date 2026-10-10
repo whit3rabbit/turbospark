@@ -149,7 +149,10 @@ impl turbospark_server::AudioProvider for BridgedAudioProvider {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<turbospark_server::Transcription, turbospark_server::AudioError>,
+                    Output = Result<
+                        turbospark_server::Transcription,
+                        turbospark_server::AudioError,
+                    >,
                 > + Send
                 + '_,
         >,
@@ -197,7 +200,10 @@ impl turbospark_server::AudioProvider for BridgedAudioProvider {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<turbospark_server::GeneratedAudio, turbospark_server::AudioError>,
+                    Output = Result<
+                        turbospark_server::GeneratedAudio,
+                        turbospark_server::AudioError,
+                    >,
                 > + Send
                 + '_,
         >,
@@ -219,7 +225,10 @@ impl turbospark_server::AudioProvider for BridgedAudioProvider {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<turbospark_server::AudioModelInfo, turbospark_server::AudioError>,
+                    Output = Result<
+                        turbospark_server::AudioModelInfo,
+                        turbospark_server::AudioError,
+                    >,
                 > + Send
                 + '_,
         >,
@@ -240,10 +249,7 @@ impl turbospark_server::AudioProvider for BridgedAudioProvider {
         id: String,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<
-                    Output = Result<(), turbospark_server::AudioError>,
-                > + Send
-                + '_,
+            dyn std::future::Future<Output = Result<(), turbospark_server::AudioError>> + Send + '_,
         >,
     > {
         if self.speech_bridge.model().as_deref() == Some(&id) {
@@ -261,7 +267,6 @@ impl turbospark_server::AudioProvider for BridgedAudioProvider {
         })
     }
 }
-
 
 impl Server {
     /// Spawns a background thread that binds `port` (0 for an OS-assigned
@@ -340,14 +345,15 @@ impl Server {
         let speech_bridge = Arc::new(crate::server_speech::SpeechBridge::default());
         #[cfg(target_os = "macos")]
         let audio_provider = Arc::new(turbospark_server::audio_real::RealAudioProvider::new());
-        let bridged_audio: Arc<dyn turbospark_server::AudioProvider> = Arc::new(BridgedAudioProvider {
-            #[cfg(target_os = "macos")]
-            real: Some(Arc::clone(&audio_provider)),
-            speech_bridge: Arc::clone(&speech_bridge),
-        });
+        let bridged_audio: Arc<dyn turbospark_server::AudioProvider> =
+            Arc::new(BridgedAudioProvider {
+                #[cfg(target_os = "macos")]
+                real: Some(Arc::clone(&audio_provider)),
+                speech_bridge: Arc::clone(&speech_bridge),
+            });
         let state = turbospark_server::ServerState::new(Arc::clone(&resolver))
             .with_image_provider(
-                Arc::clone(&image_bridge) as Arc<dyn turbospark_server::ImageProvider>,
+                Arc::clone(&image_bridge) as Arc<dyn turbospark_server::ImageProvider>
             )
             .with_audio_provider(bridged_audio);
 
