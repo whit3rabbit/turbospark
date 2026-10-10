@@ -54,7 +54,7 @@ public gates.
 | `stt/glmasr` | [Family port](src/stt/glmasr/README.md) | Pinned 4-bit checkpoint: selected MLX/Rust frontend, first/last encoder, and adapter values pass their tolerances; transcript matches on one English clip | Single clip up to 30 seconds; small f32 drift across deep encoder stages; broader quality, memory/performance, runtime/catalog, FFI and Swift gates remain open |
 | `tts/kokoro` | [Family port](src/tts/kokoro/mod.rs) | Deterministic-stage comparisons; phoneme-driven output transcribed as "Hello World" | Stochastic source prevents exact waveform parity; current example accepts phonemes and an external voice asset, with text frontend, language, profile, integration and quality gates still open |
 | `sts/deepfilternet` | [Family port](src/sts/deepfilternet/mod.rs) | v3 local tone/noise witness: waveform correlation `0.964`, max difference `0.021`; intermediate-stage comparisons reported | v2 shares a layout switch but lacks an independent checkpoint witness; v1 is uncovered; no unit tests in this module or task-quality qualification implied |
-| `music/minimax_music3` | [Family port](src/music/minimax_music3/mod.rs) | Tiny-config fixture parity against the pinned Python reference: MLX-compatible RNG bit-exact (keys, splits, uniforms, categorical tokens with recorded decision margins), AR codebooks token-exact over recorded short and long traces, prefill/depth/DiT/vocoder outputs within 1e-4 to 5e-4, two-chunk flow stitching on 4096 recorded waveform spots within 1e-4, official-tree conversion and affine 8-bit loading gates; nine mutation checks caught. Stress gates: request boundaries (steps 1/30, prompt at exactly MAX_PROMPT_TOKENS), 200/201/300/301-frame chunk schedules, the 9000-frame ceiling, the end-token-first-frame error path (patched-tree copy), and an early-end-token `generate()` fix. Regeneration determinism: two clean-tree generator runs reproduced all 44 content SHA-256 digests byte-identically, equal to the checked-in fixtures. Timing (Apple M4 Max, release, CPU f32, one test thread; the module [README](src/music/minimax_music3/README.md) owns the commands): tiny AR 9000 frames 64.3 s after the measured O(t^2) fixes (78-85 s before); reference on the same host, trees, and seeds: MLX CPU 28.2 s, MLX GPU 30.7 s; tiny flow per chunk 169.1 ms Rust CPU vs 38.5 ms MLX CPU and a 145-frame end-to-end at RTF 13-14; real-width AR (6 of 36 layers, vocab 8192, fp32 synthetic) 4.47 s/frame with the depth decoder expansions the dominant term, roughly 12 s/frame at full real dims by linear component composition (labeled projection, not a measurement); real-dims flow (real DiT and vocoder, latent length 689): 132.5 s per DiT forward, 530 s per 2-step chunk, vocoder 281 s for 8 s of audio, a 30-step chunk projects to about 2.3 hours (linear in steps) | Tiny random-init configuration for parity; synthetic enlarged trees for timing (seeded default-init weights, end token pushed out of the sampling mask; `tools/gen_minimax_music3_bench_tree.py`). All timing rows are CPU f32 software-path evidence, never Metal, quality, or real-checkpoint claims; the full MXFP8 checkpoint at `d00a12c3c7f80eb66379dd02dd0f30ed0ce2d96e` generated 25 frames and 44,032 finite non-silent stereo samples; controlled f32 MLX 0.32.3 comparison matches three emitted codebooks exactly, hiddens within 2e-4, and waveform within 2e-4; native BF16 activation equivalence and song quality remain open; official-tokenizer prompt generation, the seven pinned catalog rows, and tiny-fixture CLI output are implemented, full-size converted checkpoint generation now uses `runtime::Music3Runner` and resident packed Metal kernels on macOS; Metal kernels were then tiled and packed with byte-identical output (kernel hash oracle, 1 s and 8 s WAV hashes against the unmodified build): on the cached 4-bit profile 1 s at 2 flow steps went from 118 s to 12 s and resident weights fell 621 MB, measured on a busy host and not a frozen row (see the family README Metal performance section); opt-in flow guidance reuse (`FlowGuidance`, interval 3) measured DiT 0.59x to 0.70x of exact at 30 steps on the cached 4-bit profile (busy host, one prompt and seed), correlation 0.9947 and 1.13 dB log-band L1 to the exact waveform against 0.9548 and 1.48 dB for exact at the same 42 forwards (21 steps), with the default path still byte-identical (1 s WAV `29c340d1...`); fixture GPU parity is separate from real-checkpoint parity, song quality, memory/performance, catalog network-rot, FFI and Swift gates |
+| `music/minimax_music3` | [Family port](src/music/minimax_music3/mod.rs) | Tiny-config fixture parity against the pinned Python reference: MLX-compatible RNG bit-exact (keys, splits, uniforms, categorical tokens with recorded decision margins), AR codebooks token-exact over recorded short and long traces, prefill/depth/DiT/vocoder outputs within 1e-4 to 5e-4, two-chunk flow stitching on 4096 recorded waveform spots within 1e-4, official-tree conversion and affine 8-bit loading gates; nine mutation checks caught. Stress gates: request boundaries (steps 1/30, prompt at exactly MAX_PROMPT_TOKENS), 200/201/300/301-frame chunk schedules, the 9000-frame ceiling, the end-token-first-frame error path (patched-tree copy), and an early-end-token `generate()` fix. Regeneration determinism: two clean-tree generator runs reproduced all 44 content SHA-256 digests byte-identically, equal to the checked-in fixtures. Timing (Apple M4 Max, release, CPU f32, one test thread; the module [README](src/music/minimax_music3/README.md) owns the commands): tiny AR 9000 frames 64.3 s after the measured O(t^2) fixes (78-85 s before); reference on the same host, trees, and seeds: MLX CPU 28.2 s, MLX GPU 30.7 s; tiny flow per chunk 169.1 ms Rust CPU vs 38.5 ms MLX CPU and a 145-frame end-to-end at RTF 13-14; real-width AR (6 of 36 layers, vocab 8192, fp32 synthetic) 4.47 s/frame with the depth decoder expansions the dominant term, roughly 12 s/frame at full real dims by linear component composition (labeled projection, not a measurement); real-dims flow (real DiT and vocoder, latent length 689): 132.5 s per DiT forward, 530 s per 2-step chunk, vocoder 281 s for 8 s of audio, a 30-step chunk projects to about 2.3 hours (linear in steps) | Tiny random-init configuration for parity; synthetic enlarged trees for timing (seeded default-init weights, end token pushed out of the sampling mask; `tools/gen_minimax_music3_bench_tree.py`). All timing rows are CPU f32 software-path evidence, never Metal, quality, or real-checkpoint claims; the full MXFP8 checkpoint at `d00a12c3c7f80eb66379dd02dd0f30ed0ce2d96e` generated 25 frames and 44,032 finite non-silent stereo samples; controlled f32 MLX 0.32.3 comparison matches three emitted codebooks exactly, hiddens within 2e-4, and waveform within 2e-4; native BF16 activation equivalence and song quality remain open; official-tokenizer prompt generation, the seven pinned catalog rows, and tiny-fixture CLI output are implemented, full-size converted checkpoint generation now uses `runtime::Music3Runner` and resident packed Metal kernels on macOS; Metal kernels were then tiled and packed with byte-identical output (kernel hash oracle, 1 s and 8 s WAV hashes against the unmodified build): on the cached 4-bit profile 1 s at 2 flow steps went from 118 s to 12 s and resident weights fell 621 MB, measured on a busy host and not a frozen row (see the family README Metal performance section); opt-in flow guidance reuse (`FlowGuidance`, interval 3) measured DiT 0.59x to 0.70x of exact at 30 steps on the cached 4-bit profile (busy host, one prompt and seed), correlation 0.9947 and 1.13 dB log-band L1 to the exact waveform against 0.9548 and 1.48 dB for exact at the same 42 forwards (21 steps), with the default path still byte-identical (1 s WAV `29c340d1...`); a 64-aligned LM head window (16,448 of 200,000 rows, 1.50 GB less resident) and one Metal command buffer per depth step, LM decode step (device-resident KV cache), and DiT block, plus packed float-packed GEMV kernels, kept the 1 s and 8 s WAV hashes byte-identical on the 4-bit and MXFP8 profiles and the 8 s, 30-step WAV identical on 4-bit, with the 4-bit 8 s request at 32.5 s against 75.9 s (1 step) and 129.4 s against 323.1 s (30 steps) in an interleaved A/B on battery power (indicative only, see the family README); fixture GPU parity is separate from real-checkpoint parity, song quality, memory/performance, catalog network-rot, FFI and Swift gates |
 
 Infrastructure is also reported complete in local task 1. Op and quantization
 code exist in [ops.rs](src/ops.rs) and [quant.rs](src/quant.rs). A passing unit
@@ -245,49 +245,55 @@ CSM/MisoTTS belongs to `sesame`, despite the old local task 30 pointing
 to `llama`. MOSS delay/local directories re-export `moss_tts`; preserve their
 variant distinction without creating duplicate inference families.
 
+The dense LM backbones the reference families import from `mlx_audio.lm`
+(llama, qwen2, qwen3, rope constructions, KV cache) are ported once in
+[src/lm/](src/lm/README.md); TTS families consume them instead of carrying
+private transformer copies. gpt2, cohere2, bailing_moe, switch_layers, and
+falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
+
 | Source directory | Class | Local task(s) | Identity / profile notes | Current Rust path |
 |---|---|---|---|---|
-| `arktts` | Source | None | Default task-qualified family | None |
-| `bailingmm` | README | 42 | Ming Omni MoE | None |
-| `bark` | Source | None | Default task-qualified family | None |
-| `breeze_tts` | Source | None | Aliases `breeze`, `breeze-tts` | None |
+| `arktts` | Source | 79 | Default task-qualified family | None |
+| `bailingmm` | README | 42 | Ming Omni MoE | [Family port](src/tts/bailingmm/README.md) |
+| `bark` | Source | 65 | Default task-qualified family | None |
+| `breeze_tts` | Source | 66 | Aliases `breeze`, `breeze-tts` | [Family port](src/tts/breeze_tts/README.md); ends at codebook frames, waveform decode needs the unported Qwen3-TTS speech tokenizer |
 | `chatterbox` | README | 32 | Default task-qualified family | None |
-| `chatterbox_turbo` | Source | None | Default task-qualified family | None |
-| `confucius4` | Source | None | Default task-qualified family | None |
-| `dense` | README | 41 | Ming Omni Dense; generic config needs audio identity | None |
+| `chatterbox_turbo` | Source | 67 | Default task-qualified family | None |
+| `confucius4` | Source | 68 | Default task-qualified family | None |
+| `dense` | README | 41 | Ming Omni Dense; rides the bailingmm module per the alias policy | [Family port](src/tts/bailingmm/README.md) |
 | `dia` | README | 31 | Default task-qualified family | None |
-| `dramabox` | Source | None | Alias `dramabox-tts` | None |
-| `echo_tts` | Source | None | Default task-qualified family | None |
-| `fish_qwen3_omni` | Source | None | Default task-qualified family | None |
-| `higgs_audio` | README | 34 | Default task-qualified family | None |
-| `higgs_audio_v3` | README | 45 | Alias `higgs_multimodal_qwen3` | None |
-| `indextts` | Source | None | Default task-qualified family | None |
-| `irodori_tts` | Source | None | Default task-qualified family | None |
+| `dramabox` | Source | 69 | Alias `dramabox-tts` | None |
+| `echo_tts` | Source | 70 | Default task-qualified family | None |
+| `fish_qwen3_omni` | Source | 71 | Default task-qualified family | None |
+| `higgs_audio` | README | 34 | Default task-qualified family | [Family port](src/tts/higgs_audio/README.md) over the [codec port](src/codec/higgs_audio/README.md) |
+| `higgs_audio_v3` | README | 45 | Alias `higgs_multimodal_qwen3` | [Family port](src/tts/higgs_audio_v3/README.md) over the [codec port](src/codec/higgs_audio/README.md) |
+| `indextts` | Source | 72 | Default task-qualified family | [Family port](src/tts/indextts/README.md) over the [gpt2 backbone](src/lm/README.md) |
+| `irodori_tts` | Source | 73 | Default task-qualified family | None |
 | `kitten_tts` | README | 25 | Alias `kitten` | None |
 | `kokoro` | README | 24 | Default task-qualified family | [Flat port](src/tts/kokoro/mod.rs) |
 | `kugelaudio` | README | 40 | Default task-qualified family | None |
-| `llama` | Source | None | SNAC TTS wrapper over generic Llama backbone | None |
+| `llama` | Source | 63 | SNAC TTS wrapper over generic Llama backbone | [Family port](src/tts/llama/README.md) |
 | `longcat_audiodit` | README | 39 | Aliases `audiodit`, `longcat` | None |
 | `melotts` | README | 27 | Default task-qualified family | None |
 | `moss_tts` | README | 44 | Delay-pattern and local-transformer variants | None |
 | `moss_tts_delay` | Alias | 44 | Alias of `tts/moss_tts` | None |
 | `moss_tts_local` | Alias | 44 | Alias of `tts/moss_tts` | None |
-| `moss_tts_nano` | README | 33 | Default task-qualified family | None |
+| `moss_tts_nano` | README | 33 | Default task-qualified family | [Family port](src/tts/moss_tts_nano/README.md) |
 | `omnivoice` | README | 38 | Default task-qualified family | None |
-| `outetts` | README | 29 | Default task-qualified family | None |
-| `pocket_tts` | Source | None | Default task-qualified family | None |
-| `qwen3` | Source | None | SNAC TTS wrapper over generic Qwen3 backbone | None |
-| `qwen3_tts` | README | 35 | Default task-qualified family | None |
-| `rumik_oss` | README | 36 | Default task-qualified family | None |
-| `sesame` | README | 30 | CSM / MisoTTS; aliases `csm`, `marvis` | None |
-| `soprano` | README | 26 | Default task-qualified family | None |
+| `outetts` | README | 29 | Default task-qualified family | [Family port](src/tts/outetts/README.md) |
+| `pocket_tts` | Source | 74 | Default task-qualified family | None |
+| `qwen3` | Source | 64 | SNAC TTS wrapper over generic Qwen3 backbone | [Family port](src/tts/qwen3/README.md) |
+| `qwen3_tts` | Swift MLX | 35 | [Base cloning, CustomVoice, VoiceDesign](../../docs/QWEN3_TTS.md); no Rust inference module | Five pinned app profiles |
+| `rumik_oss` | README | 36 | Default task-qualified family | [Family port](src/tts/rumik_oss/README.md) |
+| `sesame` | README | 30 | CSM / MisoTTS; aliases `csm`, `marvis` | [Family port](src/tts/sesame/README.md) |
+| `soprano` | README | 26 | Default task-qualified family | [Family port](src/tts/soprano/README.md) |
 | `spark` | README | 28 | Default task-qualified family | None |
-| `tada` | Source | None | Default task-qualified family | None |
-| `vibevoice` | Source | None | Alias `vibevoice_streaming` | None |
-| `voxcpm` | Source | None | Alias `voxcpm1.5` | None |
+| `tada` | Source | 75 | Default task-qualified family | None |
+| `vibevoice` | Source | 76 | Alias `vibevoice_streaming` | None |
+| `voxcpm` | Source | 77 | Alias `voxcpm1.5` | None |
 | `voxcpm2` | README | 37 | Default task-qualified family | None |
 | `voxtral_tts` | README | 43 | Default task-qualified family | None |
-| `zonos2` | Source | None | Default task-qualified family | None |
+| `zonos2` | Source | 78 | Default task-qualified family | None |
 
 ## STT
 

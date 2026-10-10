@@ -347,7 +347,9 @@ impl AudioCatalog {
                     capabilities.max_input_seconds = metadata.max_input_seconds;
                     // New profiles stay closed until a specific runtime adapter is reviewed.
                     capabilities.can_run = false;
-                    capabilities.unavailable_reason = Some("This pinned profile has not been integrated and qualified for native execution".into());
+                    if metadata.family != "qwen3_tts" {
+                        capabilities.unavailable_reason = Some("This pinned profile has not been integrated and qualified for native execution".into());
+                    }
                     (
                         metadata.task,
                         source.repository,
@@ -838,6 +840,7 @@ fn delete_managed_audio_path(
 fn profile_capabilities(family: &str) -> AudioCapabilities {
     let (operation,backend,cancellation,can_run,reason,timing) = match family {
         "whisper" => ("transcribe","metal","decode_step",true,None,Some("window")),
+        "qwen3_tts" => ("synthesize","swift_mlx","decode_step",false,Some("Qwen3-TTS runs through the native Swift MLX provider; the Rust session API does not execute this family"),None),
         "kokoro" => ("synthesize","portable_cpu","sentence",false,Some("Kokoro Metal runtime is pending; CPU reference is available only with explicit portable opt-in"),None),
         "minimax_music3" => ("generate_music","metal","compute_operation",true,None,None),
         _ => ("inspect","unavailable","unavailable",false,Some("No native workspace runtime adapter is available"),None),
@@ -1740,7 +1743,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 3);
+        assert_eq!(catalog.entries().count(), 8);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::SpeechToText,
@@ -1833,6 +1836,40 @@ mod tests {
             serde_json::from_value::<AudioProfile>(json).unwrap(),
             *kokoro
         );
+    }
+
+    #[test]
+    fn qwen3_tts_profiles_pin_all_native_swift_components() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        let profiles: Vec<_> = catalog
+            .entries()
+            .filter(|p| p.family == "qwen3_tts")
+            .collect();
+        assert_eq!(profiles.len(), 5);
+        for profile in profiles {
+            assert_eq!(profile.identity.task, AudioTask::TextToSpeech);
+            assert_eq!(profile.capabilities.backend, "swift_mlx");
+            assert!(
+                !profile.capabilities.can_run,
+                "Rust sessions must not claim Swift inference"
+            );
+            assert_eq!(profile.pcm_format.sample_rate, 24_000);
+            assert_eq!(profile.assets.len(), 8);
+            assert!(profile
+                .assets
+                .iter()
+                .any(|f| f.path == "speech_tokenizer/model.safetensors"));
+            assert!(profile
+                .assets
+                .iter()
+                .any(|f| f.path == "speech_tokenizer/config.json"));
+            assert!(catalog.pinned_plan(&profile.identity).is_ok());
+            assert_eq!(profile.capabilities.languages.len(), 11);
+            assert_eq!(
+                profile.capabilities.voices.is_empty(),
+                !profile.identity.repository.contains("CustomVoice")
+            );
+        }
     }
 
     #[test]

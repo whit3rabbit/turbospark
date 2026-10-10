@@ -118,6 +118,42 @@ fn parity_matmul_dense_with_bias() {
 }
 
 #[test]
+fn parity_matmul_exact_buffers_with_partial_tiles() {
+    let mut context = MetalContext::new().expect("Metal device available");
+
+    // The final output tile contains columns past n. Exact-size buffers make
+    // this a direct exercise of the non-transposed column-tail load.
+    let (m, k, n) = (1usize, 16usize, 33usize);
+    let a: Vec<f32> = (0..m * k).map(|i| unit(i, 31)).collect();
+    let w: Vec<f32> = (0..n * k).map(|i| unit(i, 32)).collect();
+    let (column_tail_gpu, _) = run_matmul(&mut context, &a, &w, None, m, k, n, k, k, n, false, 1.0);
+    let column_tail_cpu = turbospark_compute::vision::matmul_bias(&a, &w, None, m, k, n);
+    assert!(
+        max_diff(&column_tail_cpu, &column_tail_gpu) < 2e-3,
+        "non-transposed output-column tail"
+    );
+
+    // The second reduction tile contains rows past k in the transposed path.
+    let (m, k, n) = (1usize, 17usize, 32usize);
+    let a: Vec<f32> = (0..m * k).map(|i| unit(i, 33)).collect();
+    let w: Vec<f32> = (0..k * n).map(|i| unit(i, 34)).collect();
+    let (reduction_tail_gpu, _) =
+        run_matmul(&mut context, &a, &w, None, m, k, n, k, n, n, true, 1.0);
+    let mut reduction_tail_cpu = vec![0.0f32; m * n];
+    for row in 0..m {
+        for col in 0..n {
+            for r in 0..k {
+                reduction_tail_cpu[row * n + col] += a[row * k + r] * w[r * n + col];
+            }
+        }
+    }
+    assert!(
+        max_diff(&reduction_tail_cpu, &reduction_tail_gpu) < 2e-3,
+        "transposed reduction tail"
+    );
+}
+
+#[test]
 fn parity_matmul_head_slice_with_transpose_and_scale() {
     let mut context = MetalContext::new().expect("Metal device available");
     // A head slice of a [seq, d] stream: rows are d_model apart while the

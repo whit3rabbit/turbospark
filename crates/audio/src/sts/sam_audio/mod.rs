@@ -25,6 +25,10 @@ type Result<T> = std::result::Result<T, SpeechError>;
 
 const ROPE_THETA_BASE: f32 = 10000.0;
 
+/// Sanity bound on layer counts read from an untrusted `config.json`.
+/// Shipped configs use 12 and 22.
+const MAX_LAYERS: usize = 1024;
+
 /// Nested configuration, matching `SAMAudioConfig`.
 #[derive(Debug, Clone)]
 pub struct SamAudioConfig {
@@ -140,7 +144,7 @@ impl SamAudioConfig {
             context_norm: boolean(&tr, "context_norm", false),
             out_channels: num(&tr, "out_channels", 256),
         };
-        Ok(Self {
+        let config = Self {
             in_channels: num(obj, "in_channels", 768),
             audio_codec: obj
                 .get("audio_codec")
@@ -150,7 +154,114 @@ impl SamAudioConfig {
             transformer,
             num_anchors: num(obj, "num_anchors", 3),
             anchor_embedding_dim: num(obj, "anchor_embedding_dim", 128),
-        })
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Rejects dimensions that would later be used as divisors, loop
+    /// bounds, or allocation sizes. `config.json` comes from the
+    /// checkpoint, so it is untrusted. `load` calls this again because
+    /// the config fields are public and callers can build one by hand.
+    pub fn validate(&self) -> Result<()> {
+        fn bad(field: &str, why: String) -> SpeechError {
+            SpeechError::BadConfig {
+                field: field.to_string(),
+                why,
+            }
+        }
+        let nonzero = |field: &str, value: usize| -> Result<()> {
+            if value == 0 {
+                return Err(bad(field, "must be nonzero".to_string()));
+            }
+            Ok(())
+        };
+        // `Vec::with_capacity(layers)` aborts on absurd values before the
+        // first missing tensor can fail the load.
+        let layers = |field: &str, value: usize| -> Result<()> {
+            if value == 0 || value > MAX_LAYERS {
+                return Err(bad(
+                    field,
+                    format!("must be in 1..={MAX_LAYERS}, got {value}"),
+                ));
+            }
+            Ok(())
+        };
+        let eps = |field: &str, value: f32| -> Result<()> {
+            if !value.is_finite() || value <= 0.0 {
+                return Err(bad(
+                    field,
+                    format!("must be finite and positive, got {value}"),
+                ));
+            }
+            Ok(())
+        };
+
+        let tc = &self.transformer;
+        nonzero("transformer.dim", tc.dim)?;
+        nonzero("transformer.n_heads", tc.n_heads)?;
+        if tc.dim % tc.n_heads != 0 {
+            return Err(bad(
+                "transformer.n_heads",
+                format!(
+                    "transformer.dim {} is not divisible by n_heads {}",
+                    tc.dim, tc.n_heads
+                ),
+            ));
+        }
+        layers("transformer.n_layers", tc.n_layers)?;
+        eps("transformer.norm_eps", tc.norm_eps)?;
+        if swiglu_hidden_dim(tc.dim, tc.ffn_exp, tc.ffn_dim_multiplier, tc.multiple_of).is_none() {
+            return Err(bad(
+                "transformer.multiple_of",
+                "multiple_of is zero or the feed-forward hidden size overflows".to_string(),
+            ));
+        }
+
+        // `frequency_embedding_dim` sizes the timestep embedding and
+        // `anchor_embedding_dim` divides in the anchor-id clamp.
+        nonzero(
+            "transformer.frequency_embedding_dim",
+            tc.frequency_embedding_dim,
+        )?;
+        nonzero("anchor_embedding_dim", self.anchor_embedding_dim)?;
+
+        let t5 = &self.text_encoder;
+        // `vocab_size` is the upper bound of a token-id clamp; zero makes
+        // the clamp range empty, which panics.
+        nonzero("t5_arch.vocab_size", t5.vocab_size)?;
+        nonzero("t5_arch.d_model", t5.d_model)?;
+        nonzero("t5_arch.num_heads", t5.num_heads)?;
+        nonzero("t5_arch.d_kv", t5.d_kv)?;
+        layers("t5_arch.num_layers", t5.num_layers)?;
+        eps("t5_arch.layer_norm_epsilon", t5.layer_norm_epsilon)?;
+        if t5.num_heads.checked_mul(t5.d_kv).is_none() {
+            return Err(bad(
+                "t5_arch.num_heads",
+                "num_heads * d_kv overflows".to_string(),
+            ));
+        }
+        // The relative-position bucketing divides by `buckets / 4` and
+        // takes the log of `max_distance / (buckets / 4)`, so it needs at
+        // least 4 buckets and a max distance beyond the exact range.
+        let buckets = t5.relative_attention_num_buckets;
+        if buckets < 4 {
+            return Err(bad(
+                "t5_arch.relative_attention_num_buckets",
+                format!("must be at least 4, got {buckets}"),
+            ));
+        }
+        if t5.relative_attention_max_distance <= buckets / 4 {
+            return Err(bad(
+                "t5_arch.relative_attention_max_distance",
+                format!(
+                    "must exceed num_buckets / 4 ({}), got {}",
+                    buckets / 4,
+                    t5.relative_attention_max_distance
+                ),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -373,10 +484,20 @@ impl Attention {
     }
 }
 
-fn swiglu_hidden_dim(dim: usize, ffn_exp: usize, multiplier: usize, multiple_of: usize) -> usize {
-    let hidden = 2 * dim * ffn_exp / 3;
-    let hidden = multiplier * hidden;
-    multiple_of * hidden.div_ceil(multiple_of)
+/// `None` on a zero `multiple_of` (divisor) or any overflow; the inputs
+/// come from the checkpoint config.
+fn swiglu_hidden_dim(
+    dim: usize,
+    ffn_exp: usize,
+    multiplier: usize,
+    multiple_of: usize,
+) -> Option<usize> {
+    if multiple_of == 0 {
+        return None;
+    }
+    let hidden = dim.checked_mul(2)?.checked_mul(ffn_exp)? / 3;
+    let hidden = multiplier.checked_mul(hidden)?;
+    multiple_of.checked_mul(hidden.div_ceil(multiple_of))
 }
 
 struct DiTBlock {
@@ -946,6 +1067,9 @@ impl SamAudio {
         file: &SafetensorsFile,
         codec_file: &SafetensorsFile,
     ) -> Result<Self> {
+        // Before any arithmetic on the dimensions: `dim / n_heads` below
+        // panics on a zero divisor.
+        config.validate()?;
         let f32_tensor = |name: &str| -> Result<Vec<f32>> {
             file.load_as_f32(name).map_err(|e| SpeechError::Tensor {
                 name: name.to_string(),
@@ -1016,6 +1140,13 @@ impl SamAudio {
                         name: name.to_string(),
                         why: "weight descriptor missing".to_string(),
                     })?;
+            // A 1-D tensor here would make the `shape[1]` index panic.
+            if desc.shape.len() != 2 {
+                return Err(SpeechError::Tensor {
+                    name: name.to_string(),
+                    why: format!("expected 2-D weight, got {:?}", desc.shape),
+                });
+            }
             Ok(Linear {
                 weight,
                 bias: None,
@@ -1134,7 +1265,11 @@ impl SamAudio {
                 n_kv_heads: tc.n_heads,
                 head_dim,
             };
-            let hidden = swiglu_hidden_dim(dim, tc.ffn_exp, tc.ffn_dim_multiplier, tc.multiple_of);
+            let hidden = swiglu_hidden_dim(dim, tc.ffn_exp, tc.ffn_dim_multiplier, tc.multiple_of)
+                .ok_or_else(|| SpeechError::BadConfig {
+                    field: "transformer.multiple_of".to_string(),
+                    why: "feed-forward hidden size overflows".to_string(),
+                })?;
             let feed_forward = ProjectionLayer {
                 w1: linear(&format!("{lp}.feed_forward.w1"), tc.fc_bias)?,
                 w2: linear(&format!("{lp}.feed_forward.w2"), tc.fc_bias)?,
@@ -1256,7 +1391,13 @@ impl SamAudio {
             embed: f32_tensor("embed_anchors.embed.weight")?,
             embedding_dim: config.anchor_embedding_dim,
             proj: linear("embed_anchors.proj", false)?,
-            gate: f32_tensor("embed_anchors.gate")?[0],
+            gate: f32_tensor("embed_anchors.gate")?
+                .first()
+                .copied()
+                .ok_or_else(|| SpeechError::Tensor {
+                    name: "embed_anchors.gate".to_string(),
+                    why: "empty tensor".to_string(),
+                })?,
         };
         let memory_proj = linear("memory_proj", true)?;
         if memory_proj.in_dim != config.text_encoder.dim {
@@ -1270,6 +1411,17 @@ impl SamAudio {
         let t_freqs = (0..dim / 2)
             .map(|i| (-ROPE_THETA_BASE.ln() * i as f32 / (dim / 2) as f32).exp())
             .collect();
+        // Every tensor against the config and the tensors it feeds, so
+        // inference never indexes past a buffer.
+        shapes::check(
+            &config,
+            codec.config.codebook_dim,
+            &text_encoder,
+            &transformer,
+            &sam_proj,
+            &embed_anchors,
+            &memory_proj,
+        )?;
         Ok(Self {
             config,
             codec,
@@ -1419,6 +1571,15 @@ impl SamAudio {
                 ),
             });
         }
+        if text_mask.len() != input_ids.len() {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "text mask length {} != {} token ids",
+                    text_mask.len(),
+                    input_ids.len()
+                ),
+            });
+        }
         let features = self.audio_features(samples)?;
         let text_len = input_ids.len();
         let text_features = self.encode_text(input_ids, text_mask);
@@ -1459,6 +1620,8 @@ impl SamAudio {
         Ok((target_wav, residual_wav))
     }
 }
+
+mod shapes;
 
 #[cfg(test)]
 mod tests;

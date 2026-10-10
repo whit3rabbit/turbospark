@@ -37,6 +37,9 @@ const N_FFT: usize = 400;
 const HOP_LENGTH: usize = 160;
 const N_MELS: usize = 128;
 const TARGET_SAMPLES: usize = 480_000; // the processor's 30 s window
+const TARGET_FRAMES: usize = TARGET_SAMPLES / HOP_LENGTH;
+// The audio tower's second k3 convolution has stride 2 and padding 1.
+const TOWER_POSITION_ROWS: usize = (TARGET_FRAMES - 1) / 2 + 1;
 const FRAMES_PER_MERGE: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -267,6 +270,34 @@ struct AudioTower {
 }
 
 impl AudioTower {
+    fn validate_positions(file: &SafetensorsFile, d_model: usize) -> Result<usize> {
+        const NAME: &str = "audio_tower.embed_positions.weight";
+        let expected_elements =
+            TOWER_POSITION_ROWS
+                .checked_mul(d_model)
+                .ok_or_else(|| SpeechError::Tensor {
+                    name: NAME.to_owned(),
+                    why: format!(
+                        "expected shape [{TOWER_POSITION_ROWS}, {d_model}] overflows element count"
+                    ),
+                })?;
+        let expected_shape = [TOWER_POSITION_ROWS, d_model];
+        let descriptor = file.descriptor(NAME).ok_or_else(|| SpeechError::Tensor {
+            name: NAME.to_owned(),
+            why: "tensor is missing".into(),
+        })?;
+        if descriptor.shape.as_slice() != expected_shape.as_slice() {
+            return Err(SpeechError::Tensor {
+                name: NAME.to_owned(),
+                why: format!(
+                    "expected shape {expected_shape:?}, got {:?}",
+                    descriptor.shape
+                ),
+            });
+        }
+        Ok(expected_elements)
+    }
+
     /// Loads a Conv1d k3 kernel: the checkpoint stores MLX `[out, k, in]`;
     /// the plain kernel consumes `[out, in, k]`.
     fn load_conv(
@@ -317,6 +348,7 @@ impl AudioTower {
     }
 
     fn load(file: &SafetensorsFile, config: &VoxtralConfig) -> Result<Self> {
+        let expected_positions = Self::validate_positions(file, config.d_model)?;
         let layers = (0..config.encoder_layers)
             .map(|index| {
                 let prefix = format!("audio_tower.layers.{index}");
@@ -383,7 +415,19 @@ impl AudioTower {
         Ok(Self {
             conv1: Self::load_conv(file, "audio_tower.conv1", N_MELS, config.d_model)?,
             conv2: Self::load_conv(file, "audio_tower.conv2", config.d_model, config.d_model)?,
-            positions: file.load_as_f32("audio_tower.embed_positions.weight")?,
+            positions: {
+                let positions = file.load_as_f32("audio_tower.embed_positions.weight")?;
+                if positions.len() != expected_positions {
+                    return Err(SpeechError::Tensor {
+                        name: "audio_tower.embed_positions.weight".into(),
+                        why: format!(
+                            "expected {expected_positions} elements, got {}",
+                            positions.len()
+                        ),
+                    });
+                }
+                positions
+            },
             layers,
             layer_norm: LayerNorm::load(file, "audio_tower.layer_norm", config.d_model)?,
             d_model: config.d_model,
@@ -441,6 +485,26 @@ impl AudioTower {
         );
         let mut rows = channels_first_to_rows(&hidden2, self.d_model, time2);
         ops::gelu_erf(&mut rows);
+        let position_elements =
+            time2
+                .checked_mul(self.d_model)
+                .ok_or_else(|| SpeechError::Tensor {
+                    name: "audio_tower.embed_positions.weight".into(),
+                    why: format!(
+                        "position length overflows for {time2} steps of width {}",
+                        self.d_model
+                    ),
+                })?;
+        if self.positions.len() < position_elements {
+            return Err(SpeechError::Tensor {
+                name: "audio_tower.embed_positions.weight".into(),
+                why: format!(
+                    "requires at least {position_elements} elements for {time2} steps of width {}, got {}",
+                    self.d_model,
+                    self.positions.len()
+                ),
+            });
+        }
         for step in 0..time2 {
             for dim in 0..self.d_model {
                 rows[step * self.d_model + dim] += self.positions[step * self.d_model + dim];
@@ -701,10 +765,38 @@ impl Voxtral {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_features, Voxtral, VOXTRAL_MINI_3B_BF16};
+    use super::{
+        compute_features, AudioTower, LayerNorm, Linear, Voxtral, VoxtralConfig,
+        VOXTRAL_MINI_3B_BF16,
+    };
     use crate::ops;
+    use crate::quant::QuantScheme;
+    use crate::stt::qwen3_asr::config::TextConfig;
+    use crate::SpeechError;
     use serde_json::Value;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "turbospark-voxtral-test-{}-{unique}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("create temporary test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     const FIXTURE: &str = include_str!("../../../testdata/voxtral_reference.json");
 
@@ -740,6 +832,95 @@ mod tests {
             "ab69f21c8e2c52b05335bf282898e141c8c42477"
         );
         assert_eq!(fixture["provenance"]["language"], "en");
+    }
+
+    #[test]
+    fn undersized_position_tensor_is_rejected_by_audio_tower_loader() {
+        use super::SafetensorsFile;
+
+        let temp_dir = TempDir::new();
+        let path = temp_dir.0.join("model.safetensors");
+        let header = br#"{"audio_tower.embed_positions.weight":{"dtype":"F32","shape":[1,1],"data_offsets":[0,4]}}"#;
+        let mut bytes = Vec::with_capacity(8 + header.len() + 4);
+        bytes.extend_from_slice(&(header.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(header);
+        bytes.extend_from_slice(&[0u8; 4]);
+        std::fs::write(&path, bytes).expect("write malformed-position checkpoint shard");
+
+        let file = SafetensorsFile::open(&path).expect("self-consistent shard opens");
+        let name = "audio_tower.embed_positions.weight";
+        assert_eq!(file.descriptor(name).unwrap().shape, [1, 1]);
+        assert_eq!(file.load_as_f32(name).unwrap().len(), 1);
+
+        let config = VoxtralConfig {
+            encoder_layers: 0,
+            d_model: 2,
+            encoder_heads: 1,
+            encoder_ffn_dim: 2,
+            intermediate_size: 2,
+            text: TextConfig {
+                vocab_size: 1,
+                hidden_size: 2,
+                intermediate_size: 2,
+                num_hidden_layers: 0,
+                num_attention_heads: 1,
+                num_key_value_heads: 1,
+                head_dim: 2,
+                rotary_dim: 2,
+                rms_norm_eps: 1.0e-5,
+                rope_theta: 10_000.0,
+                qk_norm: false,
+                tie_word_embeddings: false,
+            },
+            audio_token_id: 0,
+            scheme: QuantScheme {
+                bits: 16,
+                group_size: 1,
+            },
+        };
+        let error = match AudioTower::load(&file, &config) {
+            Err(error) => error,
+            Ok(_) => panic!("short positional embeddings must fail during tower loading"),
+        };
+        assert!(matches!(
+            error,
+            SpeechError::Tensor { name: tensor, why }
+                if tensor == name
+                    && why.contains("[1500, 2]")
+                    && why.contains("[1, 1]")
+        ));
+    }
+
+    #[test]
+    fn forward_returns_error_when_position_storage_is_short() {
+        let conv = || Linear {
+            weight: vec![0.0; 3],
+            bias: Some(vec![0.0]),
+            input: 1,
+            output: 1,
+        };
+        let tower = AudioTower {
+            conv1: conv(),
+            conv2: conv(),
+            positions: Vec::new(),
+            layers: Vec::new(),
+            layer_norm: LayerNorm {
+                weight: vec![1.0],
+                bias: vec![0.0],
+                width: 1,
+            },
+            d_model: 1,
+            n_mels: 1,
+        };
+
+        let error = tower
+            .forward(&[0.0], 1)
+            .expect_err("short position storage must return a tensor error");
+        assert!(matches!(
+            error,
+            SpeechError::Tensor { name, .. }
+                if name == "audio_tower.embed_positions.weight"
+        ));
     }
 
     #[test]

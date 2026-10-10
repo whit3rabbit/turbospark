@@ -24,6 +24,11 @@ use crate::{Result, SpeechError};
 /// Pinned mlx-audio commit this port was transcribed from.
 pub const REFERENCE_COMMIT: &str = "e1b19b9054bf163f5d812221a54fcc346f1890e9";
 
+/// Bounds on stage count and per-stage stride read from an untrusted
+/// config. Shipped configs use 4 stages with rates up to 12.
+const MAX_RATES: usize = 16;
+const MAX_RATE: usize = 1024;
+
 /// Codec geometry, one-to-one with the reference dataclass.
 #[derive(Debug, Clone)]
 pub struct DacvaeConfig {
@@ -61,15 +66,91 @@ impl DacvaeConfig {
                 }
             }
         };
-        Ok(DacvaeConfig {
+        // `as u32` would wrap 2^32 to zero, which `validate` then reports
+        // as a misleading "nonzero" error (or accepts, for 2^32 + 24000).
+        let sample_rate = u32::try_from(u("sample_rate")?.unwrap_or(48000)).map_err(|_| {
+            SpeechError::BadConfig {
+                field: "sample_rate".to_string(),
+                why: "does not fit in 32 bits".to_string(),
+            }
+        })?;
+        let config = DacvaeConfig {
             encoder_dim: u("encoder_dim")?.unwrap_or(64) as usize,
             encoder_rates: usize_vec("encoder_rates")?.unwrap_or_else(|| vec![2, 8, 10, 12]),
             latent_dim: u("latent_dim")?.unwrap_or(1024) as usize,
             decoder_dim: u("decoder_dim")?.unwrap_or(1536) as usize,
             decoder_rates: usize_vec("decoder_rates")?.unwrap_or_else(|| vec![12, 10, 8, 2]),
             codebook_dim: u("codebook_dim")?.unwrap_or(128) as usize,
-            sample_rate: u("sample_rate")?.unwrap_or(48000) as u32,
-        })
+            sample_rate,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Rejects geometry that would divide by zero, overflow, or shift out
+    /// of range later. The config comes from the checkpoint, so it is
+    /// untrusted; `Dacvae::load` calls this again because the fields are
+    /// public.
+    pub fn validate(&self) -> Result<()> {
+        let bad = |field: &str, why: String| SpeechError::BadConfig {
+            field: field.to_string(),
+            why,
+        };
+        for (field, value) in [
+            ("encoder_dim", self.encoder_dim),
+            ("latent_dim", self.latent_dim),
+            ("decoder_dim", self.decoder_dim),
+            // Divisor in encode/decode.
+            ("codebook_dim", self.codebook_dim),
+            ("sample_rate", self.sample_rate as usize),
+        ] {
+            if value == 0 {
+                return Err(bad(field, "must be nonzero".to_string()));
+            }
+        }
+        for (field, rates) in [
+            ("encoder_rates", &self.encoder_rates),
+            ("decoder_rates", &self.decoder_rates),
+        ] {
+            if rates.len() > MAX_RATES {
+                return Err(bad(
+                    field,
+                    format!("at most {MAX_RATES} stages, got {}", rates.len()),
+                ));
+            }
+            // A zero stride divides in the conv output-length math and
+            // zeroes the hop length used by `padded_len`.
+            if let Some(rate) = rates.iter().find(|&&r| r == 0 || r > MAX_RATE) {
+                return Err(bad(
+                    field,
+                    format!("each rate must be in 1..={MAX_RATE}, got {rate}"),
+                ));
+            }
+        }
+        if self
+            .encoder_rates
+            .iter()
+            .try_fold(1usize, |acc, &r| acc.checked_mul(r))
+            .is_none()
+        {
+            return Err(bad("encoder_rates", "hop length overflows".to_string()));
+        }
+        // The encoder doubles its channels per stage; the decoder halves
+        // them and needs a nonzero width at the end.
+        if self
+            .encoder_dim
+            .checked_mul(1usize << self.encoder_rates.len())
+            .is_none()
+        {
+            return Err(bad("encoder_dim", "channel width overflows".to_string()));
+        }
+        if self.decoder_dim >> self.decoder_rates.len() == 0 {
+            return Err(bad(
+                "decoder_dim",
+                "halves to zero across the decoder stages".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Total encoder downsampling.
@@ -183,6 +264,7 @@ impl Dacvae {
 
     /// Loads from a parsed config and a safetensors file.
     pub fn load(config: DacvaeConfig, file: &SafetensorsFile) -> Result<Dacvae> {
+        config.validate()?;
         let encoder = Self::load_encoder(&config, file)?;
         let decoder = Self::load_decoder(&config, file)?;
         let in_proj = WnConv1d::load(

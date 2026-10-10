@@ -168,23 +168,24 @@ pub fn append_keywords(prompt: &str, hotwords: &[&str]) -> String {
 }
 
 /// Parses speaker-attribution tags (`[Speaker N]: {text}`).
+///
+/// The input is tokenizer-decoded model output and is treated as
+/// untrusted: any valid UTF-8 must scan without panicking, and malformed
+/// rich output returns `SpeechError::Input`.
 pub fn parse_saa(text: &str) -> Result<Vec<GraniteSpeechSegment>> {
     let mut tag_positions = Vec::new();
-    let mut i = 0;
-    while i < text.len() {
-        if text[i..].starts_with("[Speaker ") {
-            let start = i;
-            if let Some(close) = text[i..].find("]:") {
-                let num_str = text[i + "[Speaker ".len()..i + close].trim();
-                if let Ok(spk_id) = num_str.parse::<usize>() {
-                    let end = i + close + "]:".len();
-                    tag_positions.push((start, end, spk_id));
-                    i = end;
-                    continue;
-                }
+    // match_indices only yields character-boundary offsets, so the scan
+    // stays panic-free across multibyte output (accented Latin, CJK,
+    // emoji) where byte stepping would slice inside a character.
+    for (start, _) in text.match_indices("[Speaker ") {
+        let rest = &text[start..];
+        if let Some(close) = rest.find("]:") {
+            let num_str = rest["[Speaker ".len()..close].trim();
+            if let Ok(spk_id) = num_str.parse::<usize>() {
+                let end = start + close + "]:".len();
+                tag_positions.push((start, end, spk_id));
             }
         }
-        i += 1;
     }
 
     if tag_positions.is_empty() {
@@ -264,26 +265,24 @@ fn resolve_timestamp_centiseconds(val: usize, prev: Option<usize>) -> Result<usi
 }
 
 /// Parses word-timestamp sequences (`{word} [T:{centiseconds}]`).
+///
+/// Like [`parse_saa`], the input is untrusted model output: any valid
+/// UTF-8 must scan without panicking, and malformed rich output returns
+/// `SpeechError::Input`.
 pub fn parse_timestamps(text: &str) -> Result<Vec<GraniteSpeechSegment>> {
     let mut parts = Vec::new();
-    let mut i = 0;
     let mut last_end = 0;
-    while i < text.len() {
-        if text[i..].starts_with("[T:") {
-            let tag_start = i;
-            if let Some(close) = text[i..].find(']') {
-                let num_str = text[i + "[T:".len()..i + close].trim();
-                if let Ok(cs) = num_str.parse::<usize>() {
-                    let tag_end = i + close + 1;
-                    let token = text[last_end..tag_start].trim();
-                    parts.push((token, cs));
-                    last_end = tag_end;
-                    i = tag_end;
-                    continue;
-                }
+    for (tag_start, _) in text.match_indices("[T:") {
+        let rest = &text[tag_start..];
+        if let Some(close) = rest.find(']') {
+            let num_str = rest["[T:".len()..close].trim();
+            if let Ok(cs) = num_str.parse::<usize>() {
+                let tag_end = tag_start + close + 1;
+                let token = text[last_end..tag_start].trim();
+                parts.push((token, cs));
+                last_end = tag_end;
             }
         }
-        i += 1;
     }
 
     if parts.is_empty() {
@@ -1306,5 +1305,58 @@ mod tests {
         let wrap_text = "start [T:990] wrapped [T:10]";
         let wrap_seg = super::parse_timestamps(wrap_text).expect("parses wrapped");
         assert_eq!(wrap_seg[0].words[1].end, 10.10);
+    }
+
+    /// Regression: tokenizer output is untrusted parser input, and
+    /// multibyte characters are ordinary transcription content. The scan
+    /// must stay on UTF-8 character boundaries, and malformed rich output
+    /// must return `SpeechError::Input` rather than panic. String escapes
+    /// keep this file ASCII: e-acute, Japanese, and emoji literals.
+    #[test]
+    fn parse_saa_scans_non_ascii_output_without_panicking() {
+        let accented = "caf\u{e9}";
+        let japanese = "\u{6771}\u{4eac}\u{3067}\u{3059}";
+        let party = "\u{1f389}";
+
+        let segments =
+            super::parse_saa(&format!("[Speaker 1]: {accented}")).expect("accented latin parses");
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].speaker_id, Some(1));
+        assert_eq!(segments[0].text, accented);
+
+        let two = super::parse_saa(&format!("[Speaker 1]: {accented} [Speaker 2]: {japanese}"))
+            .expect("multibyte text between tags parses");
+        assert_eq!(two.len(), 2);
+        assert_eq!(two[0].text, accented);
+        assert_eq!(two[1].text, japanese);
+
+        let emoji =
+            super::parse_saa(&format!("[Speaker 1]: party {party} time")).expect("emoji parses");
+        assert_eq!(emoji[0].text, format!("party {party} time"));
+
+        // Multibyte text before the first tag stays the unattributed
+        // prefix error instead of a character-boundary panic.
+        let err = super::parse_saa(&format!("{accented} [Speaker 1]: hello")).unwrap_err();
+        assert!(matches!(err, super::SpeechError::Input { .. }));
+    }
+
+    #[test]
+    fn parse_timestamps_scans_non_ascii_output_without_panicking() {
+        let text = "caf\u{e9} [T:45] \u{6771}\u{4eac} [T:90] \u{1f30d} [T:120]";
+        let segments = super::parse_timestamps(text).expect("multibyte words parse");
+        assert_eq!(segments.len(), 1);
+        let seg = &segments[0];
+        assert_eq!(seg.text, "caf\u{e9} \u{6771}\u{4eac} \u{1f30d}");
+        assert_eq!(seg.words.len(), 3);
+        assert_eq!(seg.words[0].word, "caf\u{e9}");
+        assert_eq!(seg.words[0].end, 0.45);
+        assert_eq!(seg.words[1].word, "\u{6771}\u{4eac}");
+        assert_eq!(seg.words[1].end, 0.90);
+        assert_eq!(seg.words[2].word, "\u{1f30d}");
+        assert_eq!(seg.words[2].end, 1.20);
+
+        // Malformed output stays an Input error around multibyte text.
+        let err = super::parse_timestamps("caf\u{e9} without any tags").unwrap_err();
+        assert!(matches!(err, super::SpeechError::Input { .. }));
     }
 }

@@ -14,6 +14,7 @@ use turbospark_audio::nemo_mel::{
 use turbospark_audio::stft::{StftOptions, StftPaddingMode};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::nn::json::{frontend_len, frontend_seconds_to_samples};
 use crate::nn::symmetric_hann;
 use crate::{Result, SpeechError};
 
@@ -126,15 +127,11 @@ impl NemotronAsrConfig {
 
         let sample_rate = positive(pre, "sample_rate")?;
         let num_mels = positive(pre, "features")?;
-        let n_fft = positive(pre, "n_fft")?;
-        let window_samples = (required(pre, "window_size")?
-            .as_f64()
-            .ok_or_else(|| bad("preprocessor.window_size", "must be a number"))?
-            * sample_rate as f64) as usize;
-        let hop_samples = (required(pre, "window_stride")?
-            .as_f64()
-            .ok_or_else(|| bad("preprocessor.window_stride", "must be a number"))?
-            * sample_rate as f64) as usize;
+        // Bound before symmetric_hann or the FFT plan allocates from
+        // untrusted config.json values.
+        let n_fft = frontend_len(pre, "n_fft")?;
+        let window_samples = frontend_seconds_to_samples(pre, "window_size", sample_rate as f64)?;
+        let hop_samples = frontend_seconds_to_samples(pre, "window_stride", sample_rate as f64)?;
         let preemphasis = required(pre, "preemph")?
             .as_f64()
             .filter(|value| value.is_finite() && *value >= 0.0)

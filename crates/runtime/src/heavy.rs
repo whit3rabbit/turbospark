@@ -65,6 +65,15 @@ impl Drop for HeavyWorkGuard {
     }
 }
 
+/// Unit tests run as threads in one process and share the permit above.
+/// Every test that holds it, or opens an `AudioSession` (which refuses a busy
+/// device), takes this lock first so it never observes another test's permit.
+#[cfg(test)]
+pub(crate) fn serial_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::HeavyWorkGuard;
@@ -74,6 +83,7 @@ mod tests {
 
     #[test]
     fn a_second_heavy_job_waits_until_the_first_releases() {
+        let _serial = super::serial_test_lock();
         let first = HeavyWorkGuard::acquire();
         let (started, received) = mpsc::channel();
         let worker = thread::spawn(move || {
@@ -88,6 +98,7 @@ mod tests {
     }
     #[test]
     fn queued_cancellation_does_not_release_active_permit() {
+        let _serial = super::serial_test_lock();
         let first = HeavyWorkGuard::acquire();
         let waiter = thread::spawn(|| HeavyWorkGuard::acquire_cancellable(|| true).is_none());
         assert!(waiter.join().unwrap());

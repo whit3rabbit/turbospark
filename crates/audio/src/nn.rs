@@ -270,6 +270,44 @@ pub mod json {
             .ok_or_else(|| bad(key, "must be a positive integer fitting usize"))
     }
 
+    /// Largest window, hop, or FFT length (in samples) a NeMo frontend config
+    /// may request. Real checkpoints use 200 to 1024; the cap only has to stop
+    /// a hostile `config.json` from sizing the Hann window or FFT plan, which
+    /// allocate before any weight is opened and abort the process on failure.
+    pub const MAX_FRONTEND_SAMPLES: usize = 1 << 15;
+
+    /// Reads a frontend length given in seconds (`window_size`,
+    /// `window_stride`) and converts it to samples. Truncates like the
+    /// reference. Rejects non-finite, non-positive, or oversized values before
+    /// the float-to-usize cast can saturate into an allocation size.
+    pub fn frontend_seconds_to_samples(pre: &Value, key: &str, sample_rate: f64) -> Result<usize> {
+        let field = format!("preprocessor.{key}");
+        let seconds = required(pre, key)?
+            .as_f64()
+            .ok_or_else(|| bad(&field, "must be numeric"))?;
+        let samples = seconds * sample_rate;
+        if !samples.is_finite() || seconds <= 0.0 || samples >= MAX_FRONTEND_SAMPLES as f64 {
+            return Err(bad(
+                &field,
+                &format!("must be positive and under {MAX_FRONTEND_SAMPLES} samples"),
+            ));
+        }
+        Ok(samples as usize)
+    }
+
+    /// Reads a positive frontend length in samples (`n_fft`) and bounds it by
+    /// [`MAX_FRONTEND_SAMPLES`].
+    pub fn frontend_len(pre: &Value, key: &str) -> Result<usize> {
+        let n = usize_field(pre, key)?;
+        if n > MAX_FRONTEND_SAMPLES {
+            return Err(bad(
+                &format!("preprocessor.{key}"),
+                &format!("must be at most {MAX_FRONTEND_SAMPLES} samples"),
+            ));
+        }
+        Ok(n)
+    }
+
     pub fn bool_field(v: &Value, key: &str) -> Result<bool> {
         required(v, key)?
             .as_bool()

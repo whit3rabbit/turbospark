@@ -125,3 +125,54 @@ fn real_checkpoint_gate() {
     assert_eq!(audio.len(), model.padded_len(wave.len()));
     assert!(audio.iter().all(|v| v.is_finite()));
 }
+
+fn tiny_config_with(key: &str, value: serde_json::Value) -> serde_json::Value {
+    let mut json = read_json("tiny_config.json");
+    json[key] = value;
+    json
+}
+
+#[test]
+fn config_rejects_degenerate_geometry() {
+    use serde_json::json;
+    let cases = [
+        ("encoder_dim", json!(0), "encoder_dim"),
+        ("latent_dim", json!(0), "latent_dim"),
+        ("decoder_dim", json!(0), "decoder_dim"),
+        // Divisor in encode/decode.
+        ("codebook_dim", json!(0), "codebook_dim"),
+        ("sample_rate", json!(0), "sample_rate"),
+        // `as u32` used to wrap this to 0.
+        ("sample_rate", json!(1u64 << 32), "sample_rate"),
+        // Zero stride zeroes the hop length and divides in the conv math.
+        ("encoder_rates", json!([2, 0]), "encoder_rates"),
+        ("decoder_rates", json!([0]), "decoder_rates"),
+        ("encoder_rates", json!([4096]), "encoder_rates"),
+        // `d >> i` and `ch *= 2` overflow for long stage lists.
+        ("encoder_rates", json!(vec![2; 64]), "encoder_rates"),
+        ("decoder_rates", json!(vec![2; 64]), "decoder_rates"),
+        // Halves to zero: decoder_dim 72 >> 8 == 0.
+        ("decoder_rates", json!(vec![2; 8]), "decoder_dim"),
+    ];
+    for (key, value, field) in cases {
+        let json = tiny_config_with(key, value.clone());
+        match DacvaeConfig::from_json(&json) {
+            Err(crate::SpeechError::BadConfig { field: got, .. }) => {
+                assert_eq!(got, field, "{key}={value}")
+            }
+            other => panic!("{key}={value}: expected BadConfig, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn load_revalidates_hand_built_config() {
+    let mut config = DacvaeConfig::from_json(&read_json("tiny_config.json")).unwrap();
+    config.codebook_dim = 0;
+    let file = SafetensorsFile::open(&testdata("tiny_weights.safetensors")).expect("weights");
+    let err = Dacvae::load(config, &file).err().expect("error");
+    assert!(
+        matches!(&err, crate::SpeechError::BadConfig { field, .. } if field == "codebook_dim"),
+        "{err:?}"
+    );
+}

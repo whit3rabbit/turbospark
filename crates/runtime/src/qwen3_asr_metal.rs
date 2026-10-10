@@ -134,9 +134,14 @@ fn raw(file: &SafetensorsFile, base: &str, suffix: &str) -> Result<Vec<u8>, Stri
         .map_err(|error| error.to_string())
 }
 
+/// Uploads one RMSNorm weight. The kernels index `weight[i]` for every
+/// `i < expected` with no bounds check, so a descriptor or byte range that
+/// disagrees with the config-derived width would become an out-of-bounds GPU
+/// read; refuse it before the buffer exists.
 fn bf16_norm(
     file: &SafetensorsFile,
     base: &str,
+    expected: usize,
     context: &MetalContext,
 ) -> Result<MetalBuffer, String> {
     let name = format!("{}.weight", resolve_base(file, base));
@@ -149,7 +154,23 @@ fn bf16_norm(
             desc.dtype
         ));
     }
-    Ok(context.new_buffer_with_data(file.raw_bytes(&name).map_err(|error| error.to_string())?))
+    if desc.shape != [expected] {
+        return Err(format!(
+            "Qwen3-ASR Metal norm {name} has shape {:?}, expected [{expected}]",
+            desc.shape
+        ));
+    }
+    let bytes = file.raw_bytes(&name).map_err(|error| error.to_string())?;
+    let expected_bytes = expected
+        .checked_mul(2)
+        .ok_or_else(|| format!("Qwen3-ASR Metal norm {name} width {expected} overflows"))?;
+    if bytes.len() != expected_bytes {
+        return Err(format!(
+            "Qwen3-ASR Metal norm {name} carries {} bytes, expected {expected_bytes}",
+            bytes.len()
+        ));
+    }
+    Ok(context.new_buffer_with_data(bytes))
 }
 
 fn load_packed_linear(
@@ -251,7 +272,19 @@ impl Qwen3AsrMetalEngine {
             AudioEncoder::load(&file, &config.audio).map_err(|error| error.to_string())?;
 
         let text = &config.text;
+        // The norm and attention dispatches take these as u32; a config that
+        // does not fit would truncate silently and desync from the buffers.
+        for (label, value) in [
+            ("hidden_size", text.hidden_size),
+            ("head_dim", text.head_dim),
+            ("num_attention_heads", text.num_attention_heads),
+            ("num_key_value_heads", text.num_key_value_heads),
+        ] {
+            u32::try_from(value)
+                .map_err(|_| format!("Qwen3-ASR Metal {label} {value} exceeds u32"))?;
+        }
         let hidden = text.hidden_size;
+        let head_dim = text.head_dim;
         let q_width = text.num_attention_heads * text.head_dim;
         let kv_width = text.num_key_value_heads * text.head_dim;
         let layers = (0..text.num_hidden_layers)
@@ -260,14 +293,20 @@ impl Qwen3AsrMetalEngine {
                 let attn = format!("{prefix}.self_attn");
                 let mlp = format!("{prefix}.mlp");
                 Ok(DecoderLayerWeights {
-                    input_norm: bf16_norm(&file, &format!("{prefix}.input_layernorm"), &context)?,
+                    input_norm: bf16_norm(
+                        &file,
+                        &format!("{prefix}.input_layernorm"),
+                        hidden,
+                        &context,
+                    )?,
                     post_attention_norm: bf16_norm(
                         &file,
                         &format!("{prefix}.post_attention_layernorm"),
+                        hidden,
                         &context,
                     )?,
-                    q_norm: bf16_norm(&file, &format!("{attn}.q_norm"), &context)?,
-                    k_norm: bf16_norm(&file, &format!("{attn}.k_norm"), &context)?,
+                    q_norm: bf16_norm(&file, &format!("{attn}.q_norm"), head_dim, &context)?,
+                    k_norm: bf16_norm(&file, &format!("{attn}.k_norm"), head_dim, &context)?,
                     q_proj: load_packed_linear(
                         &file,
                         &format!("{attn}.q_proj"),
@@ -320,7 +359,7 @@ impl Qwen3AsrMetalEngine {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let final_norm = bf16_norm(&file, "model.norm", &context)?;
+        let final_norm = bf16_norm(&file, "model.norm", hidden, &context)?;
         let embed_base = resolve_base(&file, "model.embed_tokens");
         let embed = EmbedTable {
             packed: load_packed_linear(
@@ -621,7 +660,9 @@ impl Qwen3AsrMetalEngine {
                     (&work.logits, 0),
                 )?;
             }
-            pass.commit_and_wait();
+            // Checked so a device fault surfaces before the logits read.
+            pass.commit_and_wait_checked()
+                .map_err(|error| error.to_string())?;
             Ok(())
         })?;
         Ok(if want_logits {
@@ -1184,10 +1225,8 @@ mod tests {
         let mut blob = Vec::<u8>::new();
         for (name, tensor) in tensors {
             let start = blob.len() as u64;
+            // No alignment padding: the loader requires contiguous ranges.
             blob.extend_from_slice(&tensor.bytes);
-            while blob.len() % 8 != 0 {
-                blob.push(0);
-            }
             header.insert(
                 name.clone(),
                 serde_json::json!({
@@ -1205,6 +1244,15 @@ mod tests {
     }
 
     fn write_synthetic_checkpoint(dir: &std::path::Path) {
+        write_synthetic_checkpoint_with(dir, |_| {});
+    }
+
+    /// `mutate` edits the tensor list before it hits disk, so a test can
+    /// corrupt exactly one tensor of an otherwise valid checkpoint.
+    fn write_synthetic_checkpoint_with(
+        dir: &std::path::Path,
+        mutate: impl FnOnce(&mut Vec<(String, SyntheticTensor)>),
+    ) {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join("tokenizer.json"), synthetic_tokenizer_json()).unwrap();
         std::fs::write(dir.join("config.json"), synthetic_config_json()).unwrap();
@@ -1452,6 +1500,7 @@ mod tests {
             );
         }
         constant_bf16(&mut tensors, "model.norm.weight", &[HIDDEN], 1.0);
+        mutate(&mut tensors);
         write_safetensors(&dir.join("model.safetensors"), &tensors);
     }
 
@@ -1484,5 +1533,55 @@ mod tests {
             metal, cpu,
             "Metal decode diverged from the CPU reference on synthetic weights"
         );
+    }
+
+    /// A norm whose descriptor or byte range disagrees with the config width
+    /// must be refused at open: the RMSNorm kernels read `weight[i]` for the
+    /// full config-derived width with no bounds check.
+    #[test]
+    fn open_rejects_undersized_norm_tensors() {
+        let norms = [
+            "model.layers.1.input_layernorm.weight",
+            "model.layers.1.post_attention_layernorm.weight",
+            "model.layers.1.self_attn.q_norm.weight",
+            "model.layers.1.self_attn.k_norm.weight",
+            "model.norm.weight",
+        ];
+        for name in norms {
+            for (case, shape, bytes) in [
+                // Internally consistent but too short: the reported exploit.
+                ("short shape", vec![1usize], 2usize),
+                // Right shape, truncated byte range.
+                ("short bytes", vec![64usize], 2usize),
+            ] {
+                let dir = std::env::temp_dir().join(format!(
+                    "turbospark-qwen3-asr-norm-{}-{}",
+                    std::process::id(),
+                    name.replace('.', "_")
+                ));
+                std::fs::remove_dir_all(&dir).ok();
+                write_synthetic_checkpoint_with(&dir, |tensors| {
+                    let entry = tensors
+                        .iter_mut()
+                        .find(|(tensor_name, _)| tensor_name == name)
+                        .expect("synthetic checkpoint carries the norm");
+                    entry.1 = SyntheticTensor {
+                        dtype: "BF16",
+                        shape: shape.clone(),
+                        bytes: vec![0; bytes],
+                    };
+                });
+                let result = Qwen3AsrMetalEngine::open(&dir);
+                std::fs::remove_dir_all(&dir).ok();
+                let error = match result {
+                    Ok(_) => panic!("{name} ({case}) was accepted"),
+                    Err(error) => error,
+                };
+                assert!(
+                    error.contains(name),
+                    "{name} ({case}) rejected for the wrong reason: {error}"
+                );
+            }
+        }
     }
 }

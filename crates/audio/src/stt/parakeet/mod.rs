@@ -15,7 +15,9 @@ use turbospark_audio::stft::StftOptions;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::models::vad::sortformer::{FastConformer, FcEncoderConfig};
-use crate::nn::json::{bool_field, required, text_field, usize_field};
+use crate::nn::json::{
+    bool_field, frontend_len, frontend_seconds_to_samples, required, text_field, usize_field,
+};
 use crate::nn::symmetric_hann;
 use crate::nn::Linear;
 use crate::stt::nemo::alignment::{
@@ -135,17 +137,12 @@ impl ParakeetConfig {
         }
         let subsampling_factor = usize_field(enc, "subsampling_factor")?;
         let feature_size = usize_field(pre, "features")?;
-        let n_fft = usize_field(pre, "n_fft")?;
-        let window_samples = ((required(pre, "window_size")?
-            .as_f64()
-            .ok_or_else(|| bad("preprocessor.window_size", "must be numeric"))?
-            * f64::from(sample_rate)) as usize)
-            .max(1);
-        let hop = ((required(pre, "window_stride")?
-            .as_f64()
-            .ok_or_else(|| bad("preprocessor.window_stride", "must be numeric"))?
-            * f64::from(sample_rate)) as usize)
-            .max(1);
+        // Bound before symmetric_hann or the FFT plan allocates from
+        // untrusted config.json values.
+        let n_fft = frontend_len(pre, "n_fft")?;
+        let window_samples =
+            frontend_seconds_to_samples(pre, "window_size", f64::from(sample_rate))?.max(1);
+        let hop = frontend_seconds_to_samples(pre, "window_stride", f64::from(sample_rate))?.max(1);
         if n_fft < window_samples || n_fft % 2 != 0 {
             return Err(bad(
                 "preprocessor.n_fft",

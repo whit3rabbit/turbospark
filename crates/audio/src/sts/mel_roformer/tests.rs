@@ -146,8 +146,6 @@ fn stft_matches_reference() {
 #[test]
 fn band_split_matches_reference() {
     let model = load_model();
-    let (_, wave) = read_npy("wave.npy");
-    let samples = wave.len() / 2;
     let (stft_shape, golden_real) = read_npy("stft_real.npy");
     let (_, golden_imag) = read_npy("stft_imag.npy");
     let freq_bins = stft_shape[1];

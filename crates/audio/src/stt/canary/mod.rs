@@ -454,6 +454,35 @@ mod tests {
         assert_eq!(config.mel.preemphasis, 0.97);
     }
 
+    /// A hostile config.json must fail with BadConfig before the Hann window
+    /// is sized from it; a 2^60-sample window aborts the process on allocation.
+    #[test]
+    fn config_refuses_unbounded_frontend_lengths() {
+        let base = fixture()["config"].clone();
+        let cases = [
+            // 72057594037927.94 s * 16 kHz is ~2^60 samples, with a matching n_fft.
+            ("window_size", serde_json::json!(72057594037927.94)),
+            ("window_size", serde_json::json!(1.0e300)),
+            ("window_size", serde_json::json!(-0.025)),
+            ("window_size", serde_json::json!(0.0)),
+            ("window_stride", serde_json::json!(1.0e300)),
+            ("n_fft", serde_json::json!(1152921504606846976u64)),
+            ("n_fft", serde_json::json!(9223372036854775808u64)),
+        ];
+        for (key, value) in cases {
+            let mut config = base.clone();
+            config["preprocessor"][key] = value.clone();
+            if key == "window_size" {
+                config["preprocessor"]["n_fft"] = serde_json::json!(1152921504606846976u64);
+            }
+            let result = CanaryConfig::from_json(&config);
+            assert!(
+                matches!(result, Err(SpeechError::BadConfig { .. })),
+                "{key}={value} must be refused as BadConfig, got {result:?}"
+            );
+        }
+    }
+
     #[test]
     fn config_refuses_unverified_graphs() {
         let base = fixture()["config"].clone();

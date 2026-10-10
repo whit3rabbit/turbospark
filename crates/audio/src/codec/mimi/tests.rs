@@ -42,49 +42,6 @@ fn read_npy(name: &str) -> (Vec<usize>, Vec<f32>) {
     (shape, data)
 }
 
-fn read_npy_abs(name: &str) -> (Vec<usize>, Vec<f32>) {
-    let bytes = std::fs::read(name).expect(name);
-    assert_eq!(&bytes[..6], b"\x93NUMPY");
-    let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
-    let header = std::str::from_utf8(&bytes[10..10 + header_len]).unwrap();
-    let start = header.find('(').unwrap() + 1;
-    let end = header[start..].find(')').unwrap() + start;
-    let shape: Vec<usize> = header[start..end]
-        .split(',')
-        .filter_map(|p| p.trim().parse::<usize>().ok())
-        .collect();
-    let data = bytes[10 + header_len..]
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect();
-    (shape, data)
-}
-
-fn floats(value: &serde_json::Value) -> Vec<f32> {
-    value
-        .as_array()
-        .expect("float array")
-        .iter()
-        .map(|v| v.as_f64().expect("f64") as f32)
-        .collect()
-}
-
-fn code_levels(value: &serde_json::Value) -> Vec<Vec<i32>> {
-    value
-        .as_array()
-        .expect("levels")
-        .iter()
-        .map(|level| {
-            level
-                .as_array()
-                .expect("level")
-                .iter()
-                .map(|v| v.as_i64().expect("i64") as i32)
-                .collect()
-        })
-        .collect()
-}
-
 fn max_diff(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(
         a.len(),

@@ -93,6 +93,27 @@ fn pinned_audio_asset_graph_matches_immutable_upstream() {
     }
 }
 
+struct TempDir(std::path::PathBuf);
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = std::path::Path;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
 #[test]
 #[ignore = "real checkpoint: TURBOSPARK_AUDIO_CHECKPOINTS points to a JSON map of exact cache directories"]
 fn exact_cached_checkpoints_publish_resolve_verify_and_delete() {
@@ -100,8 +121,9 @@ fn exact_cached_checkpoints_publish_resolve_verify_and_delete() {
         .expect("set TURBOSPARK_AUDIO_CHECKPOINTS to exact cache path JSON");
     let paths: serde_json::Value = serde_json::from_slice(&std::fs::read(paths).unwrap()).unwrap();
     let catalog = AudioCatalog::embedded().unwrap();
-    let root = std::env::temp_dir().join(format!("catalog-audio-real-{}", std::process::id()));
-    std::fs::create_dir(&root).unwrap();
+    let root =
+        TempDir(std::env::temp_dir().join(format!("catalog-audio-real-{}", std::process::id())));
+    std::fs::create_dir_all(&*root).unwrap();
     let result = std::panic::catch_unwind(|| {
         let store = Store::new(root.join("store"));
         for profile in catalog.entries() {
@@ -131,7 +153,7 @@ fn exact_cached_checkpoints_publish_resolve_verify_and_delete() {
             }
             let receipt = DownloadReceipt {
                 owner_id: plan.owner_id,
-                staging_root,
+                staging_root: staging_root.clone(),
                 sources: vec![VerifiedSourceGroup {
                     role: plan.sources[0].role.clone(),
                     repo: plan.sources[0].repo.clone(),
@@ -155,18 +177,19 @@ fn exact_cached_checkpoints_publish_resolve_verify_and_delete() {
             catalog.delete(&store, &profile.identity).unwrap();
             assert!(!installed.path.exists());
             assert!(catalog.installed(&store).unwrap().is_empty());
+            let _ = std::fs::remove_dir_all(&staging_root);
             println!("{}: exact bytes, atomic receipt publication, resolve/full verify/delete passed; no inference run",profile.identity.alias);
         }
     });
-    std::fs::remove_dir_all(root).unwrap();
     result.unwrap();
 }
 
 #[test]
 fn cancelled_audio_download_does_not_publish_or_contact_upstream() {
-    let root =
-        std::env::temp_dir().join(format!("catalog-audio-pre-cancel-{}", std::process::id()));
-    let store = Store::new(&root);
+    let root = TempDir(
+        std::env::temp_dir().join(format!("catalog-audio-pre-cancel-{}", std::process::id())),
+    );
+    let store = Store::new(&*root);
     let audio = AudioCatalog::embedded().unwrap();
     let profile = audio.get("kokoro-82m-bf16").unwrap();
     let cancel = CancelFlag::new();

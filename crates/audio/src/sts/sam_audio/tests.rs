@@ -89,6 +89,305 @@ fn config_parses() {
     assert_eq!(config.text_encoder.num_layers, 2);
 }
 
+fn config_with(section: &str, key: &str, value: serde_json::Value) -> serde_json::Value {
+    let mut json = read_json("config.json");
+    json[section][key] = value;
+    json
+}
+
+fn bad_config_field(json: &serde_json::Value) -> String {
+    match SamAudioConfig::from_json(json) {
+        Err(crate::error::SpeechError::BadConfig { field, .. }) => field,
+        other => panic!("expected BadConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn config_rejects_degenerate_dimensions() {
+    use serde_json::json;
+    let cases = [
+        ("transformer", "n_heads", json!(0), "transformer.n_heads"),
+        // 64 % 5 != 0, so head_dim would silently truncate.
+        ("transformer", "n_heads", json!(5), "transformer.n_heads"),
+        ("transformer", "dim", json!(0), "transformer.dim"),
+        // `div_ceil(multiple_of)` in the feed-forward sizing.
+        (
+            "transformer",
+            "multiple_of",
+            json!(0),
+            "transformer.multiple_of",
+        ),
+        (
+            "transformer",
+            "ffn_exp",
+            json!(u64::MAX),
+            "transformer.multiple_of",
+        ),
+        ("transformer", "n_layers", json!(0), "transformer.n_layers"),
+        (
+            "transformer",
+            "n_layers",
+            json!(u64::MAX),
+            "transformer.n_layers",
+        ),
+        (
+            "transformer",
+            "norm_eps",
+            json!(-1.0),
+            "transformer.norm_eps",
+        ),
+        ("t5_arch", "vocab_size", json!(0), "t5_arch.vocab_size"),
+        ("t5_arch", "d_model", json!(0), "t5_arch.d_model"),
+        (
+            "transformer",
+            "frequency_embedding_dim",
+            json!(0),
+            "transformer.frequency_embedding_dim",
+        ),
+        ("t5_arch", "num_heads", json!(0), "t5_arch.num_heads"),
+        ("t5_arch", "d_kv", json!(0), "t5_arch.d_kv"),
+        (
+            "t5_arch",
+            "num_layers",
+            json!(u64::MAX),
+            "t5_arch.num_layers",
+        ),
+        (
+            "t5_arch",
+            "relative_attention_num_buckets",
+            json!(0),
+            "t5_arch.relative_attention_num_buckets",
+        ),
+        (
+            "t5_arch",
+            "relative_attention_num_buckets",
+            json!(3),
+            "t5_arch.relative_attention_num_buckets",
+        ),
+        // Equal to buckets / 4 makes ln(max_distance / max_exact) zero.
+        (
+            "t5_arch",
+            "relative_attention_max_distance",
+            json!(8),
+            "t5_arch.relative_attention_max_distance",
+        ),
+        (
+            "t5_arch",
+            "layer_norm_epsilon",
+            json!(0.0),
+            "t5_arch.layer_norm_epsilon",
+        ),
+    ];
+    for (section, key, value, field) in cases {
+        let json = config_with(section, key, value.clone());
+        assert_eq!(bad_config_field(&json), field, "{section}.{key}={value}");
+    }
+}
+
+#[test]
+fn load_revalidates_hand_built_config() {
+    // The config fields are public, so `load` cannot trust that
+    // `from_json` ran. Zero heads must be an error, not a divide panic.
+    let mut config = SamAudioConfig::from_json(&read_json("config.json")).unwrap();
+    config.transformer.n_heads = 0;
+    let file = SafetensorsFile::open(&testdata("tiny_weights.safetensors")).expect("weights");
+    let codec = SafetensorsFile::open(&testdata("tiny_codec.safetensors")).expect("codec");
+    let err = SamAudio::load(config, &file, &codec).err().expect("error");
+    assert!(
+        matches!(&err, crate::error::SpeechError::BadConfig { field, .. } if field == "transformer.n_heads"),
+        "{err:?}"
+    );
+}
+
+/// Rewrites the tiny checkpoint with some tensors reshaped and/or cut to
+/// their first `keep` elements. Offsets are recomputed so the container
+/// stays valid: only the tensor/config contract is broken.
+fn write_mutated_weights(tag: &str, edits: &[(&str, &[usize], usize)]) -> PathBuf {
+    let bytes = std::fs::read(testdata("tiny_weights.safetensors")).unwrap();
+    let header_len = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+    let header: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(&bytes[8..8 + header_len]).unwrap();
+    let data = &bytes[8 + header_len..];
+    let mut entries: Vec<(String, serde_json::Value, usize, usize)> = header
+        .into_iter()
+        .filter(|(name, _)| name != "__metadata__")
+        .map(|(name, meta)| {
+            let start = meta["data_offsets"][0].as_u64().unwrap() as usize;
+            let end = meta["data_offsets"][1].as_u64().unwrap() as usize;
+            (name, meta, start, end)
+        })
+        .collect();
+    entries.sort_by_key(|entry| entry.2);
+
+    let mut applied = 0;
+    let mut new_header = serde_json::Map::new();
+    let mut new_data = Vec::new();
+    for (name, mut meta, start, end) in entries {
+        let mut chunk = &data[start..end];
+        if let Some((_, shape, keep)) = edits.iter().find(|(edit, ..)| *edit == name) {
+            chunk = &chunk[..keep * 4];
+            meta["shape"] = serde_json::json!(shape);
+            applied += 1;
+        }
+        let begin = new_data.len();
+        new_data.extend_from_slice(chunk);
+        meta["data_offsets"] = serde_json::json!([begin, new_data.len()]);
+        new_header.insert(name, meta);
+    }
+    assert_eq!(
+        applied,
+        edits.len(),
+        "an edit named a tensor that is absent"
+    );
+
+    let mut header_bytes = serde_json::to_vec(&serde_json::Value::Object(new_header)).unwrap();
+    while header_bytes.len() % 8 != 0 {
+        header_bytes.push(b' ');
+    }
+    let mut out = (header_bytes.len() as u64).to_le_bytes().to_vec();
+    out.extend_from_slice(&header_bytes);
+    out.extend_from_slice(&new_data);
+    let path = std::env::temp_dir().join(format!(
+        "turbospark-sam-audio-{tag}-{}.safetensors",
+        std::process::id()
+    ));
+    std::fs::write(&path, &out).unwrap();
+    path
+}
+
+#[test]
+fn load_rejects_tensors_that_disagree_with_the_config() {
+    // Each case is a container-valid checkpoint whose config is fine but
+    // whose tensor would index out of range during inference. Before the
+    // shape contract these loaded and panicked later.
+    let te = "text_encoder.model";
+    let bias = format!("{te}.encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight");
+    let shared = format!("{te}.shared.weight");
+    // (tensor, new shape, elements kept, text the error must mention)
+    let cases: Vec<(&str, &[usize], usize, &str)> = vec![
+        (
+            "transformer.layers.0.feed_forward.w2.weight",
+            &[176, 64],
+            64 * 176,
+            "transformer.layers.0.feed_forward.w2",
+        ),
+        ("transformer.norm.weight", &[32], 32, "transformer.norm"),
+        (
+            "transformer.layers.0.scale_shift_table",
+            &[6, 32],
+            6 * 32,
+            "transformer.layers.0.scale_shift_table",
+        ),
+        (
+            "transformer.layers.0.cross_attention.wk.weight",
+            &[64, 32],
+            64 * 32,
+            "transformer.layers.0.cross_attention.wk",
+        ),
+        (
+            "transformer.output.weight",
+            &[8, 64],
+            8 * 64,
+            "transformer.output",
+        ),
+        // The memory projection also trips the older `text_encoder.dim` check.
+        ("memory_proj.weight", &[32, 64], 32 * 64, "text_encoder.dim"),
+        // `gate[0]` on an empty tensor.
+        ("embed_anchors.gate", &[0], 0, "embed_anchors.gate"),
+        (&bias, &[2, 32], 64, "relative_attention_bias"),
+        (&shared, &[32, 32], 32 * 32, "shared.weight"),
+    ];
+    for (tensor, shape, keep, needle) in cases {
+        let path = write_mutated_weights("shape-contract", &[(tensor, shape, keep)]);
+        let config = SamAudioConfig::from_json(&read_json("config.json")).unwrap();
+        let file = SafetensorsFile::open(&path).expect("mutated weights open");
+        let codec = SafetensorsFile::open(&testdata("tiny_codec.safetensors")).expect("codec");
+        let result = SamAudio::load(config, &file, &codec);
+        let _ = std::fs::remove_file(&path);
+        let err = result
+            .err()
+            .unwrap_or_else(|| panic!("{tensor} {shape:?} should be rejected"));
+        assert!(
+            format!("{err:?}").contains(needle),
+            "{tensor}: error should mention {needle}, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn separate_rejects_mismatched_text_mask() {
+    let model = load_model();
+    let err = model
+        .separate(
+            &[0.0; 64],
+            &[1, 2, 3],
+            &[1.0],
+            &[],
+            OdeOptions {
+                midpoint: true,
+                step_size: 0.5,
+            },
+        )
+        .expect_err("mask shorter than ids must be an error, not an index panic");
+    assert!(
+        matches!(err, crate::error::SpeechError::Input { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn load_rejects_one_dimensional_t5_weight() {
+    // `t5_linear` reads `shape[0]` and `shape[1]`; a 1-D tensor used to
+    // panic on the second index. The codec loads first, so give it the
+    // fixture codec and put the bad tensor where the T5 loop reads first.
+    let name =
+        "text_encoder.model.encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight";
+    let header = format!(r#"{{"{name}":{{"dtype":"F32","shape":[4],"data_offsets":[0,16]}}}}"#);
+    let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+    bytes.extend_from_slice(header.as_bytes());
+    bytes.extend_from_slice(&[0u8; 16]);
+    let path = std::env::temp_dir().join(format!(
+        "turbospark-sam-audio-1d-t5-{}.safetensors",
+        std::process::id()
+    ));
+    std::fs::write(&path, &bytes).unwrap();
+
+    let config = SamAudioConfig::from_json(&read_json("config.json")).unwrap();
+    let file = SafetensorsFile::open(&path).expect("weights");
+    let codec = SafetensorsFile::open(&testdata("tiny_codec.safetensors")).expect("codec");
+    let result = SamAudio::load(config, &file, &codec);
+    let _ = std::fs::remove_file(&path);
+    let err = result.err().expect("1-D weight must be rejected");
+    assert!(
+        matches!(&err, crate::error::SpeechError::Tensor { why, .. } if why.contains("2-D")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn open_rejects_zero_heads_checkpoint_without_panicking() {
+    // Reproduces the reported checkpoint: only `n_heads: 0` plus two
+    // parseable but empty safetensors containers.
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-sam-audio-zero-heads-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("config.json"), br#"{"transformer":{"n_heads":0}}"#).unwrap();
+    let mut empty = 2u64.to_le_bytes().to_vec();
+    empty.extend_from_slice(b"{}");
+    std::fs::write(dir.join("model.safetensors"), &empty).unwrap();
+    std::fs::write(dir.join("tiny_codec.safetensors"), &empty).unwrap();
+
+    let result = SamAudio::open(&dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    let err = result.err().expect("zero n_heads must be rejected");
+    assert!(
+        matches!(&err, crate::error::SpeechError::BadConfig { field, .. } if field == "transformer.n_heads"),
+        "{err:?}"
+    );
+}
+
 #[test]
 fn t5_encoding_matches_reference() {
     let model = load_model();
@@ -117,12 +416,11 @@ fn audio_features_match_reference() {
 #[test]
 fn velocity_matches_reference() {
     let model = load_model();
-    let (ashape, features) = read_npy("audio_features.npy");
+    let (_, features) = read_npy("audio_features.npy");
     let (tshape, golden_text) = read_npy("text_features.npy");
     let (_, tokens) = read_npy("tokens.npy");
     let (_, mask) = read_npy("token_mask.npy");
     let ids: Vec<i32> = tokens.iter().map(|&v| v as i32).collect();
-    let frames = ashape[1];
     // Reference noisy input was default_rng(77) over the feature shape.
     let mut state: u64 = 0x853c_49e6_748f_ea9b;
     let mut noise = vec![0.0f32; features.len()];

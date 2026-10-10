@@ -10,7 +10,9 @@ use serde_json::Value;
 use turbospark_audio::nemo_mel::{NemoMelNormalization, NemoMelOptions};
 use turbospark_audio::stft::StftOptions;
 
-use crate::nn::json::{bool_field, required, text_field, usize_field};
+use crate::nn::json::{
+    bool_field, frontend_len, frontend_seconds_to_samples, required, text_field, usize_field,
+};
 use crate::nn::symmetric_hann;
 use crate::quant::QuantScheme;
 use crate::vad::sortformer::FcEncoderConfig;
@@ -71,17 +73,13 @@ impl CanaryConfig {
         // log_mel_spectrogram never reads it, so the port also ignores it
         // (as it ignores every config key outside the reference dataclass).
         let feature_size = usize_field(pre, "features")?;
-        let n_fft = usize_field(pre, "n_fft")?;
-        let window_samples = ((required(pre, "window_size")?
-            .as_f64()
-            .ok_or_else(|| bad("preprocessor.window_size", "must be numeric"))?
-            * f64::from(sample_rate)) as usize)
-            .max(1);
-        let hop = ((required(pre, "window_stride")?
-            .as_f64()
-            .ok_or_else(|| bad("preprocessor.window_stride", "must be numeric"))?
-            * f64::from(sample_rate)) as usize)
-            .max(1);
+        // Bound every frontend length before symmetric_hann or the FFT plan
+        // allocates from it: config.json is untrusted and read before any
+        // weight validation.
+        let n_fft = frontend_len(pre, "n_fft")?;
+        let window_samples =
+            frontend_seconds_to_samples(pre, "window_size", f64::from(sample_rate))?.max(1);
+        let hop = frontend_seconds_to_samples(pre, "window_stride", f64::from(sample_rate))?.max(1);
         if n_fft < window_samples || n_fft % 2 != 0 {
             return Err(bad(
                 "preprocessor.n_fft",

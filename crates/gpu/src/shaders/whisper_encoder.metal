@@ -95,10 +95,13 @@ kernel void whisper_matmul_bias_f32(
             uint bc = tid % WN;
             uint gn = group.x * WN + bc;
             uint gc = k0 + br;
-            float v = w_transposed != 0u
-                ? w[gc * w_stride + gn]
-                : w[gn * w_stride + gc];
-            bs[br][bc] = (gn < n && gc < k) ? v : 0.0;
+            float v = 0.0;
+            if (gn < n && gc < k) {
+                v = w_transposed != 0u
+                    ? w[gc * w_stride + gn]
+                    : w[gn * w_stride + gc];
+            }
+            bs[br][bc] = v;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         for (uint kk = 0; kk < BK; ++kk) {
