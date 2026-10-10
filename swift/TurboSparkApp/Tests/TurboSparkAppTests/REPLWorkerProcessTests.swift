@@ -38,14 +38,43 @@ final class REPLWorkerProcessTests: XCTestCase {
 
     private func makeWorker(
         artifacts: URL,
-        maximumRequestBytes: Int = 1_024 * 1_024
+        maximumRequestBytes: Int = 1_024 * 1_024,
+        beforeMailboxYieldForTesting: (() -> Void)? = nil
     ) throws -> REPLWorkerProcess {
         let worker = try REPLWorkerProcess(
             executableURL: makeExecutableURL(),
             configuration: REPLSessionConfiguration(artifactDirectory: artifacts),
-            limits: REPLLimits(maximumRequestBytes: maximumRequestBytes))
+            limits: REPLLimits(maximumRequestBytes: maximumRequestBytes),
+            beforeMailboxYieldForTesting: beforeMailboxYieldForTesting)
         addTeardownBlock { worker.terminateAndWait() }
         return worker
+    }
+
+    private func waitForSignal(_ semaphore: DispatchSemaphore) -> Bool {
+        semaphore.wait(timeout: .now() + 2) == .success
+    }
+
+    private final class EvaluationResultRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private let completion: XCTestExpectation
+        private var storedResult: REPLCallResult?
+
+        init(completion: XCTestExpectation) {
+            self.completion = completion
+        }
+
+        func record(_ result: REPLCallResult) {
+            lock.lock()
+            storedResult = result
+            lock.unlock()
+            completion.fulfill()
+        }
+
+        var result: REPLCallResult? {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedResult
+        }
     }
 
     // MARK: Bounded requests return one result each
@@ -162,6 +191,39 @@ final class REPLWorkerProcessTests: XCTestCase {
         XCTAssertTrue(
             (after.errorText ?? "").contains("not running"),
             "calls after termination must fail fast, got: " + (after.errorText ?? ""))
+    }
+
+    func testTerminationBetweenAdmissionCheckAndYieldResumesEvaluation() async throws {
+        let enteredYield = DispatchSemaphore(value: 0)
+        let allowYield = DispatchSemaphore(value: 0)
+        let worker = try makeWorker(
+            artifacts: try makeArtifactDirectory(),
+            beforeMailboxYieldForTesting: {
+                enteredYield.signal()
+                allowYield.wait()
+            })
+        let completed = expectation(description: "evaluation completes after mailbox termination")
+        let recorder = EvaluationResultRecorder(completion: completed)
+
+        Task.detached {
+            let result = await worker.evaluate(code: "1 + 1")
+            recorder.record(result)
+        }
+
+        XCTAssertTrue(waitForSignal(enteredYield), "evaluation should reach the yield boundary")
+        await Task.detached {
+            worker.terminateAndWait(grace: 0)
+        }.value
+        allowYield.signal()
+
+        await fulfillment(of: [completed], timeout: 2)
+        guard let result = recorder.result else {
+            return
+        }
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertTrue(
+            (result.errorText ?? "").contains("shut down"),
+            "a request rejected by a finished mailbox must fail locally")
     }
 }
 

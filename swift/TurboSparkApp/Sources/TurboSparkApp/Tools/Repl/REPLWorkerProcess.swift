@@ -59,13 +59,16 @@ final class REPLWorkerProcess: @unchecked Sendable {
     private var stdoutBuffer = Data()
     private let limits: REPLLimits
     private var mailboxContinuation: AsyncStream<PendingRequest>.Continuation?
+    private let beforeMailboxYieldForTesting: (() -> Void)?
 
     init(
         executableURL: URL,
         configuration: REPLSessionConfiguration,
-        limits: REPLLimits = REPLLimits()
+        limits: REPLLimits = REPLLimits(),
+        beforeMailboxYieldForTesting: (() -> Void)? = nil
     ) throws {
         self.limits = limits
+        self.beforeMailboxYieldForTesting = beforeMailboxYieldForTesting
         process.executableURL = executableURL
         process.arguments = Self.serveArguments
         process.standardInput = stdinPipe
@@ -148,10 +151,20 @@ final class REPLWorkerProcess: @unchecked Sendable {
         }
 
         return await withCheckedContinuation { continuation in
-            mailbox.yield(PendingRequest(
+            beforeMailboxYieldForTesting?()
+            switch mailbox.yield(PendingRequest(
                 line: line,
                 id: identifier,
-                continuation: continuation))
+                continuation: continuation)) {
+            case .enqueued(_):
+                break
+            case .dropped(_):
+                continuation.resume(returning: Self.localFailure(
+                    "the worker mailbox dropped the evaluation request"))
+            case .terminated:
+                continuation.resume(returning: Self.localFailure(
+                    "the worker supervisor shut down before the evaluation was queued"))
+            }
         }
     }
 

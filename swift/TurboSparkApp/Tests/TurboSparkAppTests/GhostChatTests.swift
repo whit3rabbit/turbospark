@@ -92,7 +92,7 @@ final class GhostChatTests: XCTestCase {
 
     /// Ending the ghost chat removes the row, wipes the sealed payload, and
     /// reselects a normal chat.
-    func testEndGhostChatRemovesRowAndPayload() {
+    func testEndGhostChatRemovesRowPayloadAndImageDerivatives() throws {
         let model = AppModel()
 
         var normal = AppChat(projectID: nil)
@@ -103,6 +103,10 @@ final class GhostChatTests: XCTestCase {
         model.mutateGhostPayload(for: ghostID) { payload in
             payload.messages.append(AppChatMessage(role: .user, content: "doomed turn"))
         }
+        let cache = EngineImageTranscoder.defaultCacheDirectory
+        let derivative = cache.appendingPathComponent("ghost-derivative.png")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try Data("ghost image pixels".utf8).write(to: derivative)
         XCTAssertTrue(model.isInGhostChat)
 
         model.endGhostChat()
@@ -111,6 +115,23 @@ final class GhostChatTests: XCTestCase {
         XCTAssertFalse(model.ghostVault.hasPayload(for: ghostID), "the sealed payload must be wiped")
         XCTAssertFalse(model.isInGhostChat)
         XCTAssertEqual(model.selectedChatID, normal.id, "selection must fall back to a real chat")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: derivative.path))
+    }
+
+    func testDeletingNormalChatPurgesImageDerivatives() throws {
+        let model = AppModel()
+        var chat = AppChat(projectID: nil)
+        chat.messages.append(AppChatMessage(role: .user, content: "remove this chat"))
+        model.chats.insert(chat, at: 0)
+
+        let cache = EngineImageTranscoder.defaultCacheDirectory
+        let derivative = cache.appendingPathComponent("deleted-chat-derivative.png")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try Data("image pixels".utf8).write(to: derivative)
+
+        model.deleteChat(id: chat.id)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: derivative.path))
     }
 
     /// Session-scoped by design: leaving the ghost chat for a normal one

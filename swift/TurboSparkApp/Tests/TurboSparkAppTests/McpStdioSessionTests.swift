@@ -48,10 +48,12 @@ final class McpStdioSessionTests: XCTestCase {
     /// slow calls overlap; every spawn and every `notifications/cancelled` is
     /// appended to MCP_LOG so tests can count processes without timing.
     private static let serverSource = """
-        import sys, os, json, time, threading
+        import sys, os, json, time, threading, subprocess
         log = os.environ["MCP_LOG"]
+        log_lock = threading.Lock()
         def note(s):
-            with open(log, "a") as f: f.write(s + "\\n")
+            with log_lock:
+                with open(log, "a") as f: f.write(s + "\\n")
         note("spawn %d" % os.getpid())
         out = threading.Lock()
         def send(o):
@@ -66,6 +68,12 @@ final class McpStdioSessionTests: XCTestCase {
                     sys.stderr.write("boom from fake server\\n"); sys.stderr.flush()
                     os._exit(3)
                 if p["name"] == "slow":
+                    marker = a.get("marker")
+                    if marker:
+                        note("started %s" % marker)
+                        code = "import pathlib,sys,time; time.sleep(float(sys.argv[2])); pathlib.Path(sys.argv[1]).write_text('side effect')"
+                        subprocess.Popen([sys.executable, "-c", code, marker, str(a.get("sideEffectDelay", 1))])
+                        note("spawned child %s" % marker)
                     time.sleep(float(a.get("delay", 1)))
                 send({"jsonrpc": "2.0", "id": m["id"], "result": {"content": [{"type": "text", "text": "%s:%s" % (os.getpid(), a.get("text", ""))}]}})
         for line in sys.stdin:
@@ -202,15 +210,30 @@ final class McpStdioSessionTests: XCTestCase {
         XCTAssertEqual(spawnCount, 2)
     }
 
-    func testCancelledCallDoesNotStickTheSession() async throws {
+    func testCancellingCallKillsSessionTreeAndFailsOtherCalls() async throws {
         let engine = McpClientEngine()
         defer { Task { await engine.shutdownAllSessions() } }
         let cfg = config()
-        _ = try await engine.callTool(config: cfg, toolName: "echo", arguments: [:], timeoutSeconds: 10)
+        let first = try await engine.callTool(config: cfg, toolName: "echo", arguments: [:], timeoutSeconds: 10)
+        let originalPID = pid_t(first.split(separator: ":").first.flatMap { Int($0) } ?? 0)
+        XCTAssertGreaterThan(originalPID, 0)
+        let firstMarker = dir.appendingPathComponent("cancelled-side-effect.txt")
+        let secondMarker = dir.appendingPathComponent("sibling-side-effect.txt")
         let slow = Task {
-            try await engine.callTool(config: cfg, toolName: "slow", arguments: ["delay": 30], timeoutSeconds: 60)
+            try await engine.callTool(config: cfg, toolName: "slow", arguments: [
+                "delay": 2, "text": "cancelled", "marker": firstMarker.path, "sideEffectDelay": 0.8
+            ], timeoutSeconds: 10)
         }
-        try await Task.sleep(nanoseconds: 300_000_000)
+        let sibling = Task {
+            try await engine.callTool(config: cfg, toolName: "slow", arguments: [
+                "delay": 2, "text": "sibling", "marker": secondMarker.path, "sideEffectDelay": 0.8
+            ], timeoutSeconds: 10)
+        }
+        await eventually("both calls reached the MCP server") {
+            let lines = self.logLines()
+            return lines.contains("spawned child \(firstMarker.path)")
+                && lines.contains("spawned child \(secondMarker.path)")
+        }
         slow.cancel()
         do {
             _ = try await slow.value
@@ -219,27 +242,55 @@ final class McpStdioSessionTests: XCTestCase {
         } catch {
             XCTFail("expected CancellationError, got \(error)")
         }
-        await eventually("notifications/cancelled reached the server") {
-            self.logLines().contains { $0.hasPrefix("cancelled ") }
+        do {
+            _ = try await sibling.value
+            XCTFail("terminating a shared session must fail its other in-flight calls")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("session closed"), error.localizedDescription)
         }
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: firstMarker.path), "cancelled work must not finish later")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: secondMarker.path), "sibling work must not outlive its session")
+        await eventually("cancelled server process exited") { kill(originalPID, 0) != 0 }
+
         let output = try await engine.callTool(config: cfg, toolName: "echo", arguments: ["text": "after"], timeoutSeconds: 10)
         XCTAssertTrue(output.hasSuffix(":after"))
-        XCTAssertEqual(spawnCount, 1, "cancelling one call must not restart the server")
+        let replacementPID = pid_t(output.split(separator: ":").first.flatMap { Int($0) } ?? 0)
+        XCTAssertNotEqual(replacementPID, originalPID)
+        XCTAssertEqual(spawnCount, 2, "a cancelled session must be replaced on the next call")
     }
 
-    func testTimeoutFailsOnlyThatCall() async throws {
+    func testTimeoutKillsSessionTreeAndTheNextCallRespawns() async throws {
         let engine = McpClientEngine()
         defer { Task { await engine.shutdownAllSessions() } }
         let cfg = config()
+        let first = try await engine.callTool(config: cfg, toolName: "echo", arguments: [:], timeoutSeconds: 10)
+        let originalPID = pid_t(first.split(separator: ":").first.flatMap { Int($0) } ?? 0)
+        XCTAssertGreaterThan(originalPID, 0)
+        let marker = dir.appendingPathComponent("timeout-side-effect.txt")
+        let timedOut = Task {
+            try await engine.callTool(config: cfg, toolName: "slow", arguments: [
+                "delay": 2, "marker": marker.path, "sideEffectDelay": 0.8
+            ], timeoutSeconds: 0.4)
+        }
+        await eventually("timeout side-effect subprocess spawned") {
+            self.logLines().contains("spawned child \(marker.path)")
+        }
         do {
-            _ = try await engine.callTool(config: cfg, toolName: "slow", arguments: ["delay": 30], timeoutSeconds: 0.4)
+            _ = try await timedOut.value
             XCTFail("expected a timeout")
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("Timed out"), error.localizedDescription)
         }
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "timed-out work must not finish later")
+        await eventually("timed-out server process exited") { kill(originalPID, 0) != 0 }
+
         let output = try await engine.callTool(config: cfg, toolName: "echo", arguments: ["text": "ok"], timeoutSeconds: 10)
         XCTAssertTrue(output.hasSuffix(":ok"))
-        XCTAssertEqual(spawnCount, 1)
+        let replacementPID = pid_t(output.split(separator: ":").first.flatMap { Int($0) } ?? 0)
+        XCTAssertNotEqual(replacementPID, originalPID)
+        XCTAssertEqual(spawnCount, 2)
     }
 
     func testIdleSessionIsTornDownAndRespawnedOnDemand() async throws {

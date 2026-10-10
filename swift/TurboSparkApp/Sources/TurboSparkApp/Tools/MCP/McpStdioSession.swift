@@ -205,8 +205,9 @@ actor McpStdioSession {
 
     // MARK: Requests
 
-    /// Sends one JSON-RPC request and returns the raw response line. Honors the
-    /// timeout and Task cancellation without disturbing other in-flight calls.
+    /// Sends one JSON-RPC request and returns the raw response line. A timeout
+    /// or cancellation stops the shared server session because MCP cancellation
+    /// notifications alone cannot stop work already running in the server.
     func request(method: String, params: [String: Any], timeoutSeconds: TimeInterval) async throws -> Data {
         try Task.checkCancellation()
         guard !closedFlag.isSet, process != nil else { throw McpSessionError.closedBeforeSend }
@@ -250,25 +251,26 @@ actor McpStdioSession {
     private func cancel(id: Int) {
         guard let entry = pending.removeValue(forKey: id) else { return }
         entry.timeout.cancel()
-        entry.waiter.fulfil(.failure(CancellationError()))
         try? send([
             "jsonrpc": "2.0", "method": "notifications/cancelled",
             "params": ["requestId": id, "reason": "cancelled by client"] as [String: Any]
         ])
-        afterSettle()
+        teardown(reason: "a request was cancelled", terminateProcessTreeSynchronously: true)
+        entry.waiter.fulfil(.failure(CancellationError()))
     }
 
     private func timeOut(id: Int, seconds: TimeInterval) {
         guard let entry = pending.removeValue(forKey: id) else { return }
         let tail = stderrTail?.text ?? ""
-        entry.waiter.fulfil(.failure(NSError(domain: "McpClientEngine", code: 5, userInfo: [
+        let error = NSError(domain: "McpClientEngine", code: 5, userInfo: [
             NSLocalizedDescriptionKey: "Timed out waiting for MCP response (id: \(id))."
-                + (tail.isEmpty ? "" : " Server stderr: \(tail)")])))
+                + (tail.isEmpty ? "" : " Server stderr: \(tail)")])
         try? send([
             "jsonrpc": "2.0", "method": "notifications/cancelled",
             "params": ["requestId": id, "reason": "timed out after \(Int(seconds))s"] as [String: Any]
         ])
-        afterSettle()
+        teardown(reason: "a request timed out", terminateProcessTreeSynchronously: true)
+        entry.waiter.fulfil(.failure(error))
     }
 
     // MARK: Reader
@@ -344,30 +346,41 @@ actor McpStdioSession {
         }
     }
 
-    private func teardown(reason: String) {
+    private func teardown(reason: String, terminateProcessTreeSynchronously: Bool = false) {
         let wasClosed = closedFlag.isSet
         closedFlag.set()
         idleTask?.cancel()
         idleGeneration += 1
+        if !wasClosed {
+            signal?.finish()
+            signal = nil
+            readerTask = nil
+        }
+        if let process {
+            if terminateProcessTreeSynchronously {
+                // A caller must not observe cancellation or timeout while an
+                // operation in this shared process tree can still run.
+                if process.isRunning {
+                    ProcessExecutor.terminateAndReap(process)
+                } else {
+                    ProcessExecutor.killTreeNow(process.processIdentifier)
+                }
+            } else if !wasClosed && process.isRunning {
+                // The ladder sleeps (SIGTERM, then SIGKILL after 2 s); keep it
+                // off the actor for ordinary idle/configuration teardown.
+                DispatchQueue.global(qos: .utility).async { ProcessExecutor.terminateAndReap(process) }
+            }
+            if !wasClosed { McpSessionProcessRegistry.remove(process.processIdentifier) }
+        }
+        if !wasClosed {
+            stdin = nil
+        }
         if !pending.isEmpty {
             let tail = stderrTail?.text ?? ""
             failAll(NSError(domain: "McpClientEngine", code: 7, userInfo: [
                 NSLocalizedDescriptionKey: "MCP server '\(key.serverName)' session closed: \(reason)."
                     + (tail.isEmpty ? "" : " stderr: \(tail)")]))
         }
-        guard !wasClosed else { return }
-        signal?.finish()
-        signal = nil
-        readerTask = nil
-        if let process {
-            McpSessionProcessRegistry.remove(process.processIdentifier)
-            // The ladder sleeps (SIGTERM, then SIGKILL after 2 s); keep it off
-            // the actor so other sessions are not stalled.
-            if process.isRunning {
-                DispatchQueue.global(qos: .utility).async { ProcessExecutor.terminateAndReap(process) }
-            }
-        }
-        stdin = nil
     }
 
     private func afterSettle() {
