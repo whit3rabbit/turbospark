@@ -137,6 +137,19 @@ when this file gets updated relative to the version bump and the tag.
   adding RAII cleanup guards to prevent memory exhaustion and DoS on malformed audio.
 
 ### Added
+- `crates/audio`: added MegaTTS3 zero-shot voice cloning pipeline (latent diffusion
+  transformer over WavVAE latents, prompt aligner, duration LM, relative transformer,
+  text G2P frontend subset, and `MegaTts3` facade) with full test fixtures.
+- `crates/audio`: added TTS model families: KittenTTS (`kitten_tts`), KugelAudio
+  (`kugelaudio`), MOSS-TTS (`moss_tts`), Spark-TTS (`spark`), and Zonos-v0.2 (`zonos2`).
+- `crates/audio`: added neural audio codecs: WavVAE (`wavvae`) and Spark BiCodec
+  (`spark_bicodec`), and refactored the Vocos backbone loader.
+- `crates/cli`: added `turbospark-clone` binary for zero-shot voice cloning from a
+  reference recording and English text prompt using MegaTTS3.
+- `swift/TurboSparkApp`: added Humanize advanced controls drawer and panel
+  (`HumanizeAdvancedPanel.swift`, `HumanizeChrome.swift`), custom word replacements,
+  avoid-words highlighting, protected terms integrity verification (`HumanizeRules.swift`),
+  and multi-segment draft splitting for long passages.
 - `crates/server`, `crates/ffi`, `swift/TurboSpark`, `swift/TurboSparkApp`: Voice cloning
   support on `POST /v1/audio/speech` with optional fields for `reference_audio`
   (base64-encoded 24 kHz mono WAV/PCM), `reference_text`, `instruction`, and `language`.
@@ -474,6 +487,15 @@ when this file gets updated relative to the version bump and the tag.
   Later repack lines still read as packing because there is no end marker yet.
 
 ### Fixed
+- `swift/TurboSparkApp`: the Settings window opens large. Its min/ideal frame
+  was ignored by the Settings scene, so it opened at the 940x660 floor on
+  every display. It now takes a fixed size from the visible frame (76% x 86%,
+  clamped to 940x660 through 1480x1000). Pane content shares one set of insets
+  (`SettingsLayout`) instead of each pane picking 16, 20, or 24pt, and the
+  sidebar rows and groups have more room. Form panes now use the theme's page
+  background instead of the system gray box.
+- `swift/TurboSparkApp`: fixed font propagation in `AudioAPIPaneView.swift`
+  by using `.themedFont(.small)` instead of hardcoded `.font(.caption)`.
 - Swift app: the text-model folder scan no longer lists an image install as a
   text model that cannot load.
 - `Vendor/QwenImage`: a module parameter with no checkpoint tensor now fails

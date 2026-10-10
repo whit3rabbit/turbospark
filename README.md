@@ -46,6 +46,9 @@ This installs `TurboSpark.app` in `/Applications` and puts these commands on you
 turbospark-check    generate text
 turbospark-model    find and install models
 turbospark-server   run the local API server
+turbospark-image    generate images
+turbospark-music    generate music
+turbospark-clone    clone voices
 ```
 
 For CLI tools only:
@@ -72,7 +75,7 @@ cd turbospark
 cargo build --workspace --release
 ```
 
-The source build produces the same three user-facing binaries under `target/release/`. See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the full build and test setup.
+The source build produces the user-facing binaries under `target/release/`. See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the full build and test setup.
 
 ### Manual DMG
 

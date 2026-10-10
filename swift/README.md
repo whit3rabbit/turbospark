@@ -30,6 +30,7 @@ swift/
     |   +-- Diagnostics/             # Inspector, telemetry, runner metrics, status HUD, fan control
     |   +-- Files/                   # AttachmentImporter, FilePreviewView, FilesSectionView
     |   +-- Generation/              # Chat sidebar, message pane, prompt composer, context ring
+    |   +-- Humanize/                # Text rewriting, diff calculation, custom rules, and audit
     |   +-- Installation/            # Model catalog downloader, ModelDetailPaneView, probe
     |   +-- Presentation/            # Markdown rendering, document text extraction (PDF/Word/Excel)
     |   +-- Resources/               # App prompts, bundled logos, command gate weights, soul prompts
