@@ -2,19 +2,45 @@ import AppKit
 import SwiftUI
 import TurboSpark
 
+/// Spacing shared by the settings window and every pane, so pane content
+/// starts on the same edge as the header title instead of each pane picking
+/// its own 16, 20 or 24pt inset.
+enum SettingsLayout {
+    /// Leading and trailing inset of the header title and of pane content.
+    static let horizontalInset: CGFloat = 36
+    /// Around a scrolling, non-Form pane's content.
+    static let contentInsets = EdgeInsets(
+        top: 28, leading: horizontalInset, bottom: 36, trailing: horizontalInset)
+    /// Around a `.grouped` Form. The Form adds its own section margin inside
+    /// its scroll view, so it takes a smaller outer inset than a ScrollView
+    /// pane. 16pt is what these panes already used.
+    static let formInsets = EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
+    /// Vertical padding of the full-width header bar on list/detail panes
+    /// (Skills, Plugins, Agents).
+    static let headerBarVerticalPadding: CGFloat = 14
+    /// Inset of a list/detail pane's detail column.
+    static let detailInset: CGFloat = 28
+}
+
 public struct AppSettingsView: View {
-    /// The Settings scene sizes its window to this view and the window is not
-    /// user-resizable, so the ideal size in `body` is the size the settings
-    /// window actually opens at. It is derived from the visible frame (same
-    /// approach as `TurboSparkApp.defaultWindowSize`) so a larger display gets
-    /// a roomier pane while a small display clamps to the minimum.
+    /// The Settings scene ignores `idealWidth`/`idealHeight` and opens at the
+    /// content's minimum, so a min/ideal frame left every display at the
+    /// 940x660 floor. A fixed frame is the size the window actually opens at
+    /// (and it is not user-resizable). Derived from the visible frame, same
+    /// approach as `TurboSparkApp.defaultWindowSize`: roughly three quarters
+    /// of a large display, clamped to a floor that still fits a 1280x800 one.
     static var defaultWindowSize: CGSize {
-        guard let visible = NSScreen.main?.visibleFrame else {
-            return CGSize(width: 1040, height: 720)
+        windowSize(forVisibleFrame: NSScreen.main?.visibleFrame)
+    }
+
+    /// Separate from `NSScreen` so the clamps are testable without a display.
+    static func windowSize(forVisibleFrame visible: CGRect?) -> CGSize {
+        guard let visible else {
+            return CGSize(width: 1180, height: 800)
         }
         return CGSize(
-            width: min(max(940, visible.width * 0.7), 1440),
-            height: min(max(660, visible.height * 0.8), 940)
+            width: min(max(940, visible.width * 0.76), 1480),
+            height: min(max(660, visible.height * 0.86), 1000)
         )
     }
 
@@ -25,6 +51,10 @@ public struct AppSettingsView: View {
     @State private var selectedTab: SettingsTab = .appearance
     @State private var highlightedControl: String?
     @State private var searchText: String = ""
+    /// Captured once: `body` re-evaluates on every model publish, and
+    /// re-reading `NSScreen.main` there would resize the open window whenever
+    /// the key window moved to another display.
+    @State private var windowSize = AppSettingsView.defaultWindowSize
 
     public init(model: AppModel) {
         self.model = model
@@ -33,7 +63,7 @@ public struct AppSettingsView: View {
     public var body: some View {
         HStack(spacing: 0) {
             settingsSidebar
-                .frame(width: 240)
+                .frame(width: 252)
                 .background(.appPage.opacity(0.85))
 
             Rectangle()
@@ -47,8 +77,8 @@ public struct AppSettingsView: View {
                         .font(theme.ui(.title3, weight: .semibold))
                     Spacer()
                 }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 16)
+                .padding(.horizontal, SettingsLayout.horizontalInset)
+                .padding(.vertical, 20)
                 .background(.appPage)
 
                 Rectangle()
@@ -86,12 +116,7 @@ public struct AppSettingsView: View {
             }
         }
         .font(theme.ui(.base))
-        .frame(
-            minWidth: 940,
-            idealWidth: Self.defaultWindowSize.width,
-            minHeight: 660,
-            idealHeight: Self.defaultWindowSize.height
-        )
+        .frame(width: windowSize.width, height: windowSize.height)
         .onReceive(NotificationCenter.default.publisher(for: .openSettingsTab)) { notification in
             if let tab = notification.object as? SettingsTab {
                 selectedTab = tab
@@ -109,9 +134,9 @@ public struct AppSettingsView: View {
 
     // MARK: - Sidebar
     private var settingsSidebar: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             // Search field
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.appSecondary)
                     .font(theme.ui(.small))
@@ -121,19 +146,19 @@ public struct AppSettingsView: View {
                     .font(theme.ui(.small))
                     .accessibilityLabel("Search settings")
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .background(.appSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(.appBorder.opacity(0.3), lineWidth: 1)
             )
-            .padding(.horizontal, 12)
-            .padding(.top, 14)
+            .padding(.horizontal, 16)
+            .padding(.top, 20)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 22) {
                     if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         controlSearchResults
                     }
@@ -146,8 +171,8 @@ public struct AppSettingsView: View {
                         tabs: SettingsTab.allCases.filter { $0.category == "Engine & Coding" }
                     )
                 }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 12)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 16)
             }
         }
     }
@@ -162,13 +187,13 @@ public struct AppSettingsView: View {
             tab.keywords.contains { $0.localizedCaseInsensitiveContains(searchText) }
         }
 
-        return VStack(alignment: .leading, spacing: 2) {
+        return VStack(alignment: .leading, spacing: 3) {
             if !filtered.isEmpty {
                 Text(title)
                     .font(theme.ui(.tiny, weight: .semibold))
                     .foregroundStyle(.appSecondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
                     .accessibilityAddTraits(.isHeader)
 
                 ForEach(filtered) { tab in
@@ -176,10 +201,10 @@ public struct AppSettingsView: View {
                     Button {
                         selectedTab = tab
                     } label: {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 10) {
                             Image(systemName: tab.systemImage)
                                 .font(theme.ui(.callout, weight: .medium))
-                                .frame(width: 18)
+                                .frame(width: 20)
                                 .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                                 .accessibilityHidden(true)
 
@@ -189,11 +214,13 @@ public struct AppSettingsView: View {
 
                             Spacer()
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        // The whole row, not just the glyphs, takes the click.
+                        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .background(
                             isSelected ? theme.selection : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                         )
                     }
                     .buttonStyle(.plain)

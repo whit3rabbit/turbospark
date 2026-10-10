@@ -40,7 +40,10 @@ struct ModelInstallView: View {
                 recommendationsSection
                 utilityActionsRow
             }
-            .frame(maxWidth: 680)
+            // Wide enough that the hardware stats and recommendation rows use
+            // the pane instead of sitting in a narrow strip; this screen only
+            // shows for an empty chat with nothing installed.
+            .frame(maxWidth: 920)
             .padding(.horizontal, 24)
             .padding(.vertical, 32)
             .frame(maxWidth: .infinity)
@@ -97,11 +100,11 @@ struct ModelInstallView: View {
                 .accessibilityHidden(true)
 
             Text("Welcome to TurboSpark", bundle: .module)
-                .themedFont(.title2, weight: .bold)
+                .themedFont(.title, weight: .bold)
                 .accessibilityAddTraits(.isHeader)
 
             Text("No local models found in ~/.turbospark. Choose a recommended model below to start.", bundle: .module)
-                .themedFont(.small)
+                .themedFont(.base)
                 .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
         }

@@ -33,7 +33,7 @@ struct EngineSettingsPaneView: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .background(.appPage)
-        .padding(16)
+        .padding(SettingsLayout.formInsets)
     }
 
     private var generationDefaultsSection: some View {

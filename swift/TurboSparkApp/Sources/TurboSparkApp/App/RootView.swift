@@ -375,7 +375,7 @@ struct RootView: View {
         case .files:
             FilesSectionView(model: model)
         case .chat:
-            if model.requiresModelInstallation && !model.isInstallingModel {
+            if model.showsModelSetupScreen {
                 ModelInstallView(model: model)
             } else if model.splitPaneChats.isEmpty {
                 conversationView

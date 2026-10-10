@@ -69,7 +69,7 @@ public struct McpSettingsPaneView: View {
                 }
             }
         }
-        .padding(16)
+        .padding(SettingsLayout.contentInsets)
         .sheet(isPresented: $showingEditorSheet) {
             McpServerEditorSheet(
                 existingConfig: editingServer,

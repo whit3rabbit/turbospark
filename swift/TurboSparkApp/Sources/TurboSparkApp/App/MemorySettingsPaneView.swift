@@ -25,7 +25,10 @@ struct MemorySettingsPaneView: View {
             reflectionsSection
         }
         .formStyle(.grouped)
-        .padding(16)
+        // The grouped Form paints its own system gray, which ignores the theme.
+        .scrollContentBackground(.hidden)
+        .background(.appPage)
+        .padding(SettingsLayout.formInsets)
         .onAppear { reloadLedger() }
         .sheet(item: $editingClaim) { claim in
             VStack(alignment: .leading, spacing: 12) {

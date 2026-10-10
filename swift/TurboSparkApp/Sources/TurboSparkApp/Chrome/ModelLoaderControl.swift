@@ -427,7 +427,7 @@ struct ModelLoaderControl: View {
 /// thing in this control and it is state-driven rather than per token, which
 /// is what lets it sit directly under a streaming transcript without paying a
 /// redraw per decoded token.
-private struct ModelStatusDot: View {
+struct ModelStatusDot: View {
     let state: ModelLoaderControl.LoaderState
     let accent: Color
 
@@ -487,7 +487,7 @@ private struct ModelStatusDot: View {
 /// padding and a minimum width that both break a 34pt pill, and the
 /// indeterminate variant cannot be tinted to `theme.accent` without an
 /// appearance override.
-private struct ModelLoadProgressBar: View {
+struct ModelLoadProgressBar: View {
     /// `nil` renders the indeterminate sweep.
     let fraction: Double?
     let tint: Color

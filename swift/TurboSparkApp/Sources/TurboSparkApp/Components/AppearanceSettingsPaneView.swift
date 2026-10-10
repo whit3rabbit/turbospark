@@ -55,7 +55,7 @@ public struct AppearanceSettingsPaneView: View {
 
                 resetSection
             }
-            .padding(20)
+            .padding(SettingsLayout.contentInsets)
         }
         .background(.appPage.opacity(0.6))
         .onChange(of: settingsTarget, initial: true) { _, target in

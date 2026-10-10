@@ -95,7 +95,7 @@ public struct AgentsSettingsPaneView: View {
             }
             .foregroundStyle(.appSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
+            .padding(.horizontal, SettingsLayout.horizontalInset)
             .padding(.vertical, 8)
             .background(.appSurface.opacity(0.5))
         }
@@ -118,7 +118,7 @@ public struct AgentsSettingsPaneView: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, SettingsLayout.horizontalInset)
             .padding(.vertical, 6)
             .background(.appSurface.opacity(0.3))
         }
@@ -128,8 +128,8 @@ public struct AgentsSettingsPaneView: View {
         VStack(spacing: 0) {
             // Header bar
             headerControlBar
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                .padding(.horizontal, SettingsLayout.horizontalInset)
+                .padding(.vertical, SettingsLayout.headerBarVerticalPadding)
                 .background(.appPage)
 
             Rectangle()
@@ -438,7 +438,7 @@ public struct AgentsSettingsPaneView: View {
                     }
                 }
             }
-            .padding(24)
+            .padding(SettingsLayout.detailInset)
         }
     }
 

@@ -90,7 +90,7 @@ struct BrowserSettingsPaneView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(24)
+            .padding(SettingsLayout.contentInsets)
         }
         .alert("Enable browser automation", isPresented: $showingFirstEnableOnboarding) {
             Button("Cancel", role: .cancel) {

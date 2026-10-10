@@ -41,8 +41,8 @@ public struct PluginSettingsPaneView: View {
         VStack(spacing: 0) {
             ExtensionScopePicker(model: model, projectID: $projectID)
             headerControlBar
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                .padding(.horizontal, SettingsLayout.horizontalInset)
+                .padding(.vertical, SettingsLayout.headerBarVerticalPadding)
                 .background(.appPage)
 
             Rectangle()
@@ -227,7 +227,7 @@ public struct PluginSettingsPaneView: View {
                     }
                 }
             }
-            .padding(20)
+            .padding(SettingsLayout.detailInset)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

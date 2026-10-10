@@ -24,7 +24,10 @@ struct KeyboardShortcutsSettingsPaneView: View {
             }
         }
         .formStyle(.grouped)
-        .padding(16)
+        // The grouped Form paints its own system gray, which ignores the theme.
+        .scrollContentBackground(.hidden)
+        .background(.appPage)
+        .padding(SettingsLayout.formInsets)
     }
 
     private func shortcutRow(label: String, shortcut: String, alt: String?) -> some View {

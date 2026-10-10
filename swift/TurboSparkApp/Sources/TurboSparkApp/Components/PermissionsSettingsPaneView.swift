@@ -30,7 +30,7 @@ public struct PermissionsSettingsPaneView: View {
                 AgentModeHintsSectionView(model: model)
                 securityModelCallout
             }
-            .padding(16)
+            .padding(SettingsLayout.contentInsets)
         }
     }
 

@@ -17,7 +17,8 @@ struct ExtensionScopePicker: View {
             .frame(maxWidth: 320)
             Spacer()
         }
-        .padding(12)
+        .padding(.horizontal, SettingsLayout.horizontalInset)
+        .padding(.vertical, 12)
     }
 }
 

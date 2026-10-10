@@ -80,8 +80,8 @@ public struct SkillsSettingsPaneView: View {
             ExtensionScopePicker(model: model, projectID: $projectID)
             // Header bar
             headerControlBar
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                .padding(.horizontal, SettingsLayout.horizontalInset)
+                .padding(.vertical, SettingsLayout.headerBarVerticalPadding)
                 .background(.appPage)
 
             Rectangle()
@@ -511,7 +511,7 @@ public struct SkillsSettingsPaneView: View {
                         )
                 }
             }
-            .padding(20)
+            .padding(SettingsLayout.detailInset)
         }
     }
 

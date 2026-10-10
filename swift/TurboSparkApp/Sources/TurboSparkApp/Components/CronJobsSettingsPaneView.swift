@@ -96,7 +96,7 @@ struct CronJobsSettingsPaneView: View {
                 .themedFont(.tiny)
                 .foregroundStyle(.tertiary)
         }
-        .padding(16)
+        .padding(SettingsLayout.contentInsets)
     }
 
     /// Composed OUTSIDE `Text` so the call stays a catalog-key call; these

@@ -61,7 +61,10 @@ struct ProfilesSettingsPaneView: View {
             notesSection
         }
         .formStyle(.grouped)
-        .padding(16)
+        // The grouped Form paints its own system gray, which ignores the theme.
+        .scrollContentBackground(.hidden)
+        .background(.appPage)
+        .padding(SettingsLayout.formInsets)
         .sheet(item: $renameTarget) { profile in
             renameSheet(profile)
         }

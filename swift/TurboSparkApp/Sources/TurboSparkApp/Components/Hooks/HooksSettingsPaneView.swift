@@ -94,7 +94,7 @@ public struct HooksSettingsPaneView: View {
                 }
             }
         }
-        .padding(16)
+        .padding(SettingsLayout.contentInsets)
         .onAppear {
             hookStore.refresh(projectDirectory: model.selectedProject?.rootDirectoryPath)
         }

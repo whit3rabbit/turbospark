@@ -164,6 +164,9 @@ final class REPLWorkerProcess: @unchecked Sendable {
             case .terminated:
                 continuation.resume(returning: Self.localFailure(
                     "the worker supervisor shut down before the evaluation was queued"))
+            @unknown default:
+                continuation.resume(returning: Self.localFailure(
+                    "the worker mailbox encountered an unexpected state"))
             }
         }
     }

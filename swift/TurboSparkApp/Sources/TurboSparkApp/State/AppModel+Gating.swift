@@ -21,6 +21,36 @@ extension AppModel {
     /// Whether no models are installed and initial installation is required.
     public var requiresModelInstallation: Bool { installed.isEmpty }
 
+    /// Whether the chat pane shows the first-run model setup screen instead
+    /// of the conversation.
+    ///
+    /// **ONLY FOR A CHAT WITH NOTHING TO SHOW.** Gating on
+    /// `requiresModelInstallation` alone replaced every chat with the setup
+    /// screen, so saved history was unreachable until a model was installed.
+    /// A chat with a transcript stays readable and carries the
+    /// `showsNoModelInstalledBanner` warning instead. An install in flight
+    /// also keeps the conversation, whose loader pill reports the download.
+    public var showsModelSetupScreen: Bool {
+        Self.showsModelSetupScreenTerms(
+            requiresInstall: requiresModelInstallation,
+            installing: isInstallingModel,
+            hasTranscript: hasOutputTranscript)
+    }
+
+    /// Whether the conversation chrome warns that no model can reply.
+    /// Hidden while an install runs, which the loader pill already reports.
+    public var showsNoModelInstalledBanner: Bool {
+        requiresModelInstallation && !isInstallingModel
+    }
+
+    /// `showsModelSetupScreen`'s terms, pure so the routing table is testable
+    /// without a populated model store.
+    static func showsModelSetupScreenTerms(
+        requiresInstall: Bool, installing: Bool, hasTranscript: Bool
+    ) -> Bool {
+        requiresInstall && !installing && !hasTranscript
+    }
+
     /// Whether a model session is currently loaded into memory.
     public var isModelAvailable: Bool { session != nil }
 

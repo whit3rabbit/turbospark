@@ -92,6 +92,39 @@ as a supplementary category shortcut. Controls inside item editors require
 selecting an item first; the source manifest is not a claim that every
 conditional editor can be opened from a bare search result.
 
+## Window and layout
+
+The Settings scene ignores a `minWidth`/`idealWidth` frame and opens at the
+content's minimum. The window used one, so it opened at the 940x660 floor on
+every display, about half the width of a full-screen main window on a
+1728pt display. `AppSettingsView` now applies a fixed frame from
+`defaultWindowSize`: 76% x 86% of the visible frame, clamped to 940x660
+through 1480x1000. The size is captured once per window in `@State`, so the
+window does not resize when another display becomes main. The window is not
+user-resizable.
+
+Pane spacing comes from `SettingsLayout` in `AppSettingsView.swift`. A new
+pane uses one of these values instead of a literal:
+
+| Constant | Value | Used by |
+|---|---|---|
+| `horizontalInset` | 36pt | Window header title; header bars and banners on Skills, Plugins, Agents |
+| `contentInsets` | 28 top, 36 sides, 36 bottom | ScrollView and stacked panes: Appearance, Models, Permissions, Browser, MCP, Hooks, Scheduled Tasks |
+| `formInsets` | 16pt | Grouped Form panes: General, Profiles, Shortcuts, Engine, Safety, Memory, Soul. 16pt is what these panes already used, and Safety had none |
+| `headerBarVerticalPadding` | 14pt | List/detail header bars |
+| `detailInset` | 28pt | List/detail detail column |
+
+Skills and Plugins are also embedded in the project settings sheet, so their
+header bars use the same insets there. `ExtensionScopePicker` (the Scope row on
+Skills, Plugins, and MCP) uses `horizontalInset` too.
+
+A `.grouped` Form caps its sections at about 700pt and centers them. That is
+the system style, not a frame in our code, and it was measured at 703pt in a
+1314pt window on macOS 26. The centered column is kept on purpose. Every Form
+pane sets `.scrollContentBackground(.hidden)` and `.background(.appPage)`,
+because the Form's own system gray ignores the theme and showed as a gray box
+in dark mode.
+
 ## Verification evidence
 
 - `SettingsScopeTests`: actual AppModel project enablement, scoped uninstall,

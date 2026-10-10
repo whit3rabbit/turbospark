@@ -57,7 +57,7 @@ public struct ModelsSettingsPaneView: View {
                 // guideline.
                 LocalModelDefaultsSectionView(model: model)
             }
-            .padding(20)
+            .padding(SettingsLayout.contentInsets)
         }
         .sheet(isPresented: $showingStoreMigration) {
             ModelStoreMigrationSheet(model: model)
