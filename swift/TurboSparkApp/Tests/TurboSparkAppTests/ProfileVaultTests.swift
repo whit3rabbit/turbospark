@@ -542,6 +542,67 @@ final class ProfileVaultTests: XCTestCase {
         XCTAssertEqual(try assets.store(fileURL: target).id, descriptor.id)
     }
 
+    func testTranscoderCacheUsesPrivateDecryptedDirectory() throws {
+        let profileID = "image-cache-\(UUID().uuidString)"
+        let vault = makeStore(id: profileID)
+        _ = try vault.prepareForLaunch()
+        let assets = ManagedAssetStore(vault: vault)
+        defer {
+            try? FileManager.default.removeItem(
+                at: ManagedAssetStore.decryptedCachePath(profileID: profileID))
+        }
+
+        let cache = try XCTUnwrap(assets.imageTranscoderCacheDirectory())
+        let cacheMode = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: cache.path)[.posixPermissions] as? NSNumber)
+        let parentMode = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: cache.deletingLastPathComponent().path)[
+                .posixPermissions] as? NSNumber)
+
+        XCTAssertEqual(cache, ManagedAssetStore.imageTranscoderCachePath(profileID: profileID))
+        XCTAssertEqual(cacheMode.intValue & 0o777, 0o700)
+        XCTAssertEqual(parentMode.intValue & 0o777, 0o700)
+    }
+
+    func testManagedAssetReleaseRemovesItsTranscodedDerivative() throws {
+        let profileID = "image-release-\(UUID().uuidString)"
+        let vault = makeStore(id: profileID)
+        _ = try vault.prepareForLaunch()
+        let assets = ManagedAssetStore(vault: vault)
+        let descriptor = try assets.store(data: Data("source image".utf8), fileName: "source.tiff")
+        let cache = ManagedAssetStore.imageTranscoderCachePath(profileID: profileID)
+        defer {
+            try? FileManager.default.removeItem(
+                at: ManagedAssetStore.decryptedCachePath(profileID: profileID))
+        }
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let derivative = cache.appendingPathComponent("\(descriptor.id).png")
+        try Data("decoded pixels".utf8).write(to: derivative)
+
+        try assets.release(reference: descriptor.storedReference)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: derivative.path))
+    }
+
+    func testDecryptedCachePurgeRemovesTranscodedDerivatives() throws {
+        let profileID = "image-purge-\(UUID().uuidString)"
+        let vault = makeStore(id: profileID)
+        _ = try vault.prepareForLaunch()
+        let assets = ManagedAssetStore(vault: vault)
+        let cache = ManagedAssetStore.imageTranscoderCachePath(profileID: profileID)
+        defer {
+            try? FileManager.default.removeItem(
+                at: ManagedAssetStore.decryptedCachePath(profileID: profileID))
+        }
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let derivative = cache.appendingPathComponent("fixture.png")
+        try Data("decoded pixels".utf8).write(to: derivative)
+
+        assets.purgeDecryptedCache()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: derivative.path))
+    }
+
     private func makeStore(id: String) -> ProfileVaultStore {
         let vault = root.appendingPathComponent(id, isDirectory: true)
         return ProfileVaultStore(

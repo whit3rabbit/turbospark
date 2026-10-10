@@ -4,6 +4,8 @@ import SwiftUI
 @MainActor
 struct TypeSafeAPIPaneView: View {
     @ObservedObject var model: AppModel
+    @State private var copiedKey = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 12) {
@@ -20,9 +22,37 @@ struct TypeSafeAPIPaneView: View {
                         Text(url.absoluteString).textSelection(.enabled)
                     }
                 }
-                SecureField("TypeSafe API key", text: $model.typeSafeAPIKeyInput)
+                HStack(spacing: 6) {
+                    SecureField("TypeSafe API key", text: $model.typeSafeAPIKeyInput)
+                        .disabled(model.typeSafeServer != nil)
+                        .accessibilityLabel(Text("TypeSafe API key", bundle: .module))
+
+                    Button {
+                        model.typeSafeAPIKeyInput = TypeSafeKeychain.generateKey()
+                    } label: {
+                        Image(systemName: "wand.and.stars")
+                    }
+                    .buttonStyle(.borderless)
                     .disabled(model.typeSafeServer != nil)
-                    .accessibilityLabel(Text("TypeSafe API key", bundle: .module))
+                    .help("Generate a random key")
+                    .accessibilityLabel("Generate a random API key")
+
+                    Button {
+                        let key = model.typeSafeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !key.isEmpty else { return }
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(key, forType: .string)
+                        copiedKey = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            copiedKey = false
+                        }
+                    } label: {
+                        Image(systemName: copiedKey ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Copy API key to clipboard")
+                    .accessibilityLabel("Copy API key to clipboard")
+                }
                 HStack {
                     Button {
                         Task {
@@ -34,7 +64,12 @@ struct TypeSafeAPIPaneView: View {
                         else { Text("Stop", bundle: .module) }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.typeSafeBusy || (model.typeSafeServer == nil && model.typeSafeBaseURL == nil))
+                    .disabled(
+                        model.typeSafeBusy
+                        || (model.typeSafeServer == nil
+                            && (model.typeSafeBaseURL == nil
+                                || model.typeSafeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    )
                     Button {
                         Task { await model.refreshTypeSafeModels() }
                     } label: { Text("Refresh", bundle: .module) }

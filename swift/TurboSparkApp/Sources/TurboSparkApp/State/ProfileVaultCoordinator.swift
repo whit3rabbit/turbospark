@@ -47,6 +47,11 @@ public final class ProfileVaultCoordinator: ObservableObject {
     @Published public private(set) var lastAuthenticationAt: Date?
 
     private let store: ProfileVaultStore
+    /// Incremented by lockNow and by each new unlock attempt. A detached
+    /// unlock whose store call was superseded (the store already refuses to
+    /// install its session) must also leave the state the superseding
+    /// operation left behind instead of unlocking or erroring over it.
+    private var unlockAttemptID = 0
 
     init(store: ProfileVaultStore = .shared) {
         self.store = store
@@ -70,12 +75,16 @@ public final class ProfileVaultCoordinator: ObservableObject {
     public func unlock(passphrase: String) async {
         guard state != .unlocking else { return }
         state = .unlocking
+        unlockAttemptID &+= 1
+        let attempt = unlockAttemptID
         do {
             try await Task.detached(priority: .userInitiated) { [store] in
                 _ = try store.unlock(passphrase: passphrase)
             }.value
+            guard unlockAttemptID == attempt else { return }
             finishUnlock()
         } catch {
+            guard unlockAttemptID == attempt else { return }
             state = .error(error.localizedDescription)
         }
     }
@@ -83,12 +92,16 @@ public final class ProfileVaultCoordinator: ObservableObject {
     public func unlockWithSystemAuthentication() async {
         guard state != .unlocking, quickUnlockEnabled else { return }
         state = .unlocking
+        unlockAttemptID &+= 1
+        let attempt = unlockAttemptID
         do {
             try await Task.detached(priority: .userInitiated) { [store] in
                 _ = try store.unlockWithSystemAuthentication(context: LAContext())
             }.value
+            guard unlockAttemptID == attempt else { return }
             finishUnlock()
         } catch {
+            guard unlockAttemptID == attempt else { return }
             state = .error(error.localizedDescription)
         }
     }
@@ -153,6 +166,10 @@ public final class ProfileVaultCoordinator: ObservableObject {
 
     public func lockNow() {
         guard store.isProtected else { return }
+        // Invalidate an unlock that is still authenticating: the store
+        // refuses its session and this attempt id keeps its continuation
+        // from touching the state this call is about to leave at .locked.
+        unlockAttemptID &+= 1
         model?.shutdown()
         AppShutdownCoordinator.shared.onTerminate = nil
         ManagedAssetStore.shared.purgeDecryptedCache()

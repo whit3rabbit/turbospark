@@ -241,6 +241,11 @@ final class ProfileVaultStore: @unchecked Sendable {
     private var prepared = false
     private var manifestStorage: ProfileSecurityManifest?
     private var sessionStorage: ProfileVaultSession?
+    /// Bumped by every lock. An unlock snapshots it together with the
+    /// manifest and `installSession` refuses to open a session unless it
+    /// still matches, so an authentication that was still running (PBKDF2,
+    /// the Keychain prompt) when `lockVault` returned stays stale.
+    private var lockGeneration = 0
 
     /// Passphrase key derivation, injectable so tests can observe that it
     /// never runs under the vault lock.
@@ -316,25 +321,35 @@ final class ProfileVaultStore: @unchecked Sendable {
 
     @discardableResult
     func unlock(passphrase: String) throws -> ProfileVaultSession {
-        let manifest = try preparedManifest()
+        let (manifest, generation) = try preparedManifestAndGeneration()
         guard manifest.protectionMode == .passphrase,
               let kdf = manifest.kdf,
               let envelope = manifest.wrappedMasterKey
         else { throw VaultError.missingKey }
         // PBKDF2 takes a few hundred milliseconds; running it under the
         // store lock froze every reader of `manifest` (the SwiftUI body).
-        let wrappingKey = try passphraseKeyDeriver(passphrase, kdf.salt, kdf.rounds)
-        let masterKey = try ProfileVaultCrypto.unwrapMasterKey(envelope, with: wrappingKey)
-        let previousKey = try manifest.wrappedPreviousKey.map {
+        var wrappingKey = try passphraseKeyDeriver(passphrase, kdf.salt, kdf.rounds)
+        defer { wrappingKey.wipe() }
+        var masterKey = try ProfileVaultCrypto.unwrapMasterKey(envelope, with: wrappingKey)
+        var previousKey = try manifest.wrappedPreviousKey.map {
             try ProfileVaultCrypto.unwrapMasterKey(
                 $0, with: wrappingKey, context: Self.previousKeyContext)
         }
-        return try installSession(masterKey: masterKey, previousKey: previousKey)
+        do {
+            return try installSession(
+                masterKey: masterKey, previousKey: previousKey, generation: generation)
+        } catch {
+            // No session was built, so nothing else holds these copies. A
+            // stale unlock (the vault locked while we derived) lands here.
+            masterKey.wipe()
+            previousKey?.wipe()
+            throw error
+        }
     }
 
     @discardableResult
     func unlockWithSystemAuthentication(context: LAContext) throws -> ProfileVaultSession {
-        let manifest = try preparedManifest()
+        let (manifest, generation) = try preparedManifestAndGeneration()
         // An interrupted rotation needs the passphrase: the Keychain copy
         // may still hold the key the data is being moved away from.
         guard manifest.protectionMode == .passphrase,
@@ -343,8 +358,14 @@ final class ProfileVaultStore: @unchecked Sendable {
         else { throw VaultError.locked }
         // The system authentication prompt can wait on the person for as
         // long as they like; never hold the store lock across it.
-        let masterKey = try keychain.load(profileID: manifest.profileID, context: context)
-        return try installSession(masterKey: masterKey, previousKey: nil)
+        var masterKey = try keychain.load(profileID: manifest.profileID, context: context)
+        do {
+            return try installSession(
+                masterKey: masterKey, previousKey: nil, generation: generation)
+        } catch {
+            masterKey.wipe()
+            throw error
+        }
     }
 
     func protect(passphrase: String, enableQuickUnlock: Bool) throws {
@@ -486,6 +507,10 @@ final class ProfileVaultStore: @unchecked Sendable {
         gate.beginExclusive(cancelInFlight: true)
         defer { gate.endExclusive() }
         lock.withLock {
+            // Invalidate every unlock that captured the older generation:
+            // its authentication may still be running outside the gate and
+            // must not install a session after this lock has returned.
+            lockGeneration &+= 1
             sessionStorage?.close()
             sessionStorage = nil
         }
@@ -495,6 +520,7 @@ final class ProfileVaultStore: @unchecked Sendable {
         gate.beginExclusive(cancelInFlight: true)
         defer { gate.endExclusive() }
         lock.withLock {
+            lockGeneration &+= 1
             sessionStorage?.close()
             sessionStorage = nil
             manifestStorage = nil
@@ -502,25 +528,38 @@ final class ProfileVaultStore: @unchecked Sendable {
         }
     }
 
-    private func preparedManifest() throws -> ProfileSecurityManifest {
+    /// Snapshots the manifest and the lock generation under one acquisition
+    /// of the store lock. The generation captured here is what
+    /// `installSession` later requires to still hold.
+    private func preparedManifestAndGeneration()
+        throws -> (manifest: ProfileSecurityManifest, generation: Int)
+    {
         try lock.withLock {
+            () -> (manifest: ProfileSecurityManifest, generation: Int) in
             try prepareLocked()
             guard let manifest = manifestStorage else { throw VaultError.malformedManifest }
-            return manifest
+            return (manifest, lockGeneration)
         }
     }
 
     /// Installs the session once the key is known. Everything slow (PBKDF2,
     /// the Keychain prompt) already happened without the store lock; only
     /// the database open and integrity check remain under it.
+    ///
+    /// `generation` must still be the current lock generation. Authentication
+    /// runs outside both the operation gate and the store lock, so
+    /// `lockVault` can complete in between; if it did, this unlock is stale
+    /// and must not reopen the vault. Callers wipe their key buffers when
+    /// this throws.
     private func installSession(
-        masterKey: Data, previousKey: Data?
+        masterKey: Data, previousKey: Data?, generation: Int
     ) throws -> ProfileVaultSession {
         if previousKey != nil {
             gate.beginExclusive(cancelInFlight: false)
         }
         defer { if previousKey != nil { gate.endExclusive() } }
         return try lock.withLock {
+            guard lockGeneration == generation else { throw VaultError.locked }
             let session: ProfileVaultSession
             if let previousKey {
                 session = try resumeRotationLocked(newKey: masterKey, previousKey: previousKey)

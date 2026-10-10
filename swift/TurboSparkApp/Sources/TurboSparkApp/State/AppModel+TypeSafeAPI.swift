@@ -17,6 +17,10 @@ extension AppModel {
         defer { typeSafeBusy = false }
         typeSafeError = nil
         let typed = typeSafeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty || typeSafeKeyLoadFailed else {
+            typeSafeError = "TypeSafe API key is required to start the daemon."
+            return
+        }
         // Same rule as the server key: an unreadable Keychain must not turn
         // an empty field into a delete of the stored key.
         var effectiveKey = typed
@@ -31,16 +35,18 @@ extension AppModel {
             }
             typeSafeKeyLoadFailed = false
         case .delete:
-            guard TypeSafeKeychain.saveKey("") else {
-                typeSafeError = "Could not save the TypeSafe API key to Keychain."
-                return
-            }
+            typeSafeError = "TypeSafe API key is required to start the daemon."
+            return
         case let .adopt(value):
             typeSafeAPIKeyInput = value
             typeSafeKeyLoadFailed = false
             effectiveKey = value
         }
         let key = effectiveKey
+        guard !key.isEmpty else {
+            typeSafeError = "TypeSafe API key is required to start the daemon."
+            return
+        }
         let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/openkindd")
         let override = ProcessInfo.processInfo.environment["OPENKINDD_BINARY"]
         let binary = override ?? bundled.path
@@ -53,7 +59,7 @@ extension AppModel {
                 binary: binary,
                 httpAddress: "127.0.0.1:\(url.port ?? 0)",
                 models: ["mock"],
-                apiKey: key.isEmpty ? nil : key,
+                apiKey: key,
                 extraArguments: ["--playground", "on"])
             try await service.start()
             typeSafeServer = service
