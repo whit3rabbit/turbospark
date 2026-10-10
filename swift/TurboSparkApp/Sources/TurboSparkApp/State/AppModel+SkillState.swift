@@ -104,7 +104,8 @@ extension AppModel {
                     images: task.imagePaths.map {
                         ChatImage.path(
                                 EngineImageTranscoder.enginePath(
-                                    for: AppStorageRoot.resolveStoredPath($0)))
+                                    for: AppStorageRoot.resolveStoredPath($0),
+                                    storedReference: $0))
                     }))
         }
 

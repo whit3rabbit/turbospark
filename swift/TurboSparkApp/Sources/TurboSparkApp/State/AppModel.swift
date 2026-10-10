@@ -31,6 +31,23 @@ public final class AppModel: ObservableObject {
         }
         return workspace
     }()
+    lazy var humanizeWorkspace: HumanizeController = {
+        let controller = HumanizeController()
+        controller.installedPath = { [weak self] in
+            self?.installed.first { $0.alias == HumanizeController.modelAlias }?.path
+        }
+        controller.installHandler = { [weak self] in
+            self?.installModel(alias: HumanizeController.modelAlias)
+        }
+        controller.baseOptions = { [weak self] in
+            var options = OpenOptions()
+            guard let self else { return options }
+            options.powerProfile = self.runtimeOptions.powerProfile.powerProfile
+            options.loadGuard = self.activeLoadGuard
+            return options
+        }
+        return controller
+    }()
     @Published public var activeSection: AppNavigationSection = .chat
 
     /// Attachment currently shown in the right-hand preview pane, if any.
@@ -107,6 +124,12 @@ public final class AppModel: ObservableObject {
     /// Explicit image install path. Image installs are not text catalog rows,
     /// so an empty value must never fall back to the selected text model.
     @Published public var imageModelPathText: String = ""
+    /// Image installs the app manages (the shared store). The rest of
+    /// `imageModels` was found by scanning the user's additional model
+    /// folders, which the app never installed and must not delete.
+    var managedImageModels: [ImageInstalledModel] = []
+    /// Image installs found in the additional model folders by the last scan.
+    var scannedImageModels: [ImageInstalledModel] = []
     /// Empty means choose a fresh random seed for each new request.
     @Published public var imageSeedText: String = ""
     /// Multiple outputs run serially under one admission, keeping batch-one memory use.
@@ -130,6 +153,9 @@ public final class AppModel: ObservableObject {
     @Published public var serverImageAttachedModel: ImageInstalledModel?
     @Published public var serverImageProgress: String = "Idle"
     var serverImageTasks: [UInt64: Task<Void, Never>] = [:]
+    @Published public var serverSpeechAttachedModel: AudioInstalledRecord?
+    @Published public var serverSpeechProgress: String = "Idle"
+    var serverSpeechTasks: [UInt64: Task<Void, Never>] = [:]
     var imageGenerationTask: Task<Void, Never>?
     var imageInstallTask: Task<Void, Never>?
     @Published public var isInstallingImageModel: Bool = false
@@ -150,13 +176,14 @@ public final class AppModel: ObservableObject {
     @Published public var typeSafeServer: OpenKindServer?
     @Published public var typeSafeBusy = false
     @Published public var typeSafePort = "18080"
-    /// One launch-time read feeds both the field and the failure flag below, so
-    /// a denied Keychain prompt is shown once, not twice.
-    private static let initialTypeSafeKeyRead = TypeSafeKeychain.readKey()
-    @Published public var typeSafeAPIKeyInput = AppModel.initialTypeSafeKeyRead.value ?? ""
+    /// One launch-time read/provisioning feeds both the field and the failure
+    /// flag below, generating a fresh random key on first run so the daemon
+    /// always starts authenticated by default.
+    private static let initialTypeSafeKeyRead = TypeSafeKeychain.loadOrCreateKey()
+    @Published public var typeSafeAPIKeyInput = AppModel.initialTypeSafeKeyRead.key
     /// True when the launch-time Keychain read failed (locked or denied): the
     /// empty field then means "unknown", so Start must not delete the item.
-    var typeSafeKeyLoadFailed = AppModel.initialTypeSafeKeyRead.isError
+    var typeSafeKeyLoadFailed = AppModel.initialTypeSafeKeyRead.loadFailed
     @Published public var typeSafeHealth = "Stopped"
     @Published public var typeSafeModels: [LocalModel] = []
     @Published public var typeSafeError: String?

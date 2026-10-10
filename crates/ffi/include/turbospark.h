@@ -787,6 +787,50 @@ int32_t ts_generate(const TsSession *s, const char *messages_json,
                     const char *options_json, TsEventCallback cb,
                     void *userdata, char **result_json);
 
+/*
+ * Rewrites a draft with the humanizer model (alias "humanizer-12b") so it
+ * reads like a person wrote it. Blocks for the whole rewrite; call it from a
+ * background thread, exactly as ts_generate().
+ *
+ * The model is a RAW-COMPLETION rewriter, not a chat model, so this is NOT
+ * ts_generate with a prompt: the byte-exact instruction wrapper, the model's
+ * own sampling recipe (temperature 1.0, top_p 0.95, top_k off) and an
+ * EOS-only stop are applied inside the library and cannot be set from here.
+ * Open the session with maxContext 8192, the model's window.
+ *
+ * `draft` is the plain text to rewrite (required, non-blank). `options_json`
+ * may be NULL or "{}" and accepts ONLY:
+ *   maxNewTokens  integer. The output budget. Absent takes about 2.5x the
+ *                   draft's tokens, floored at 256 and capped at 2048; either
+ *                   way it is clamped to what the 8,192 window leaves after
+ *                   the wrapped prompt.
+ *   seed          integer. Fixes the sampler's stream. Absent samples fresh,
+ *                   so a repeat call is a new rewrite.
+ * Any other key (temperature, topK, stop, ...) fails the call with TS_ERR_JSON
+ * naming it, rather than being ignored into the recipe.
+ *
+ * `cb` streams like ts_generate's: TS_EVENT_PREFILL, then TS_EVENT_CONTENT
+ * carrying the rewrite, then TS_EVENT_FINISH. `*result_json` is
+ * ts_generate's result object with one more field, `audit`:
+ *
+ *   "audit": { "droppedNumbers": [...], "inventedNumbers": [...],
+ *              "languageDrift": bool, "reuseRatio": number,
+ *              "reuseFlagged": bool, "warnings": [...] }
+ *
+ * The rewrite is `content`. The audit points a proofreader at the likely
+ * fact slips (digit runs the rewrite dropped or invented, a switch of
+ * script, verbatim reuse of the draft); every field is a WARNING, never a
+ * correction. `warnings` is the same findings pre-rendered in English, empty
+ * when the rewrite is clean.
+ *
+ * ts_session_cancel() ends the call with TS_OK and stopReason "cancelled".
+ * It does not check which model the session holds: on a chat model this
+ * produces fluent nonsense, not an error.
+ */
+int32_t ts_humanize(const TsSession *s, const char *draft,
+                    const char *options_json, TsEventCallback cb,
+                    void *userdata, char **result_json);
+
 /* ---- in-process HTTP server ---- */
 
 /*
@@ -1026,6 +1070,17 @@ int32_t ts_server_complete_image_request(const TsServer *server, uint64_t reques
                                          const uint8_t *png, size_t png_len,
                                          const char *error_message);
 
+/* One Swift-owned audio speech / voice cloning model can be attached to the same
+ * listener. Speech events are drained by the host worker, which sends PCM samples
+ * or an error back by request id. A disconnect emits a cancel event. */
+int32_t ts_server_attach_audio_speech_model(const TsServer *server, const char *model_id);
+int32_t ts_server_detach_audio_speech_model(const TsServer *server);
+int32_t ts_server_poll_audio_speech_events_json(const TsServer *server, uint32_t max,
+                                                char **out);
+int32_t ts_server_complete_audio_speech_request(const TsServer *server, uint64_t request_id,
+                                                const float *pcm, size_t sample_count,
+                                                uint32_t sample_rate, const char *error_message);
+
 /* Registers an audio model (STT, TTS, or music) on the running server.
  * model_path can be an install directory or installed catalog alias.
  * task can be "stt", "tts", "music", or NULL/empty for automatic detection.
@@ -1059,6 +1114,11 @@ int32_t ts_installed_json(char **out);
 
 /* What valid image-generation installs are present in ~/.turbospark. */
 int32_t ts_image_installed_json(char **out);
+
+/* Valid image-generation installs under a folder outside ~/.turbospark: the
+ * folder and its immediate subdirectories, or one install bundle passed
+ * directly. Read-only. Fails if `root` is not a directory. */
+int32_t ts_image_installed_in_json(const char *root, char **out);
 
 /* Deletes one valid image-generation install by path or unambiguous alias. */
 int32_t ts_image_delete(const char *identifier);
@@ -1492,6 +1552,13 @@ typedef struct TsAudioOpenToken TsAudioOpenToken;
 int ts_audio_open_token_new(TsAudioOpenToken **out);
 int ts_audio_open_token_cancel(const TsAudioOpenToken *token);
 int ts_audio_open_token_free(TsAudioOpenToken *token);
+/* Verify a managed install for a host-owned audio provider. `token` and
+ * `callback` may be NULL. Progress uses the borrowed kind 1 JSON byte span
+ * described below, valid only for the callback's duration. On success *out
+ * owns a resolved path string (free with ts_string_free); on any failure it
+ * is NULL. Cancellation returns TS_ERR_CANCELLED. No model is constructed. */
+int ts_audio_verify(const char *identity_json, const TsAudioOpenToken *token,
+                    TsAudioCallback callback, void *userdata, char **out);
 /* ts_audio_session_open that can be stopped and can report progress. `token`
  * and `cb` may be NULL. A managed model's files are SHA-256 verified before
  * the engine loads; `cb` receives kind 1 JSON

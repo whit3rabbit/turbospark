@@ -88,7 +88,7 @@ enum OpenProfileExport {
             compactEncoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
 
             let assetRows = try buildAssetIndex(
-                chats: snapshot.chats, audio: snapshot.audioItems, included: included, store: assets)
+                chats: snapshot.chats, audio: snapshot.audioItems, audioPreferences: snapshot.audioPreferences, included: included, store: assets)
             let assetPathByReference = Dictionary(
                 uniqueKeysWithValues: assetRows.map { ($0.managedReference, $0.exportedPath) })
 
@@ -127,11 +127,21 @@ enum OpenProfileExport {
                         }
                         item.clips[index].assetReference = "../../" + path
                     }
+                    try exportVoiceReference(&item.recipe, paths: assetPathByReference, prefix: "../../")
                     checksums.append(try zip.add(
                         path: "audio/projects/\(item.id.uuidString.lowercased()).json", data: encoder.encode(item)))
                 }
                 if var preferences = snapshot.audioPreferences {
                     preferences.localModels = [:]
+                    try exportVoiceReference(&preferences.recipe, paths: assetPathByReference, prefix: "../")
+                    for index in preferences.presets.indices {
+                        try exportVoiceReference(&preferences.presets[index].recipe, paths: assetPathByReference, prefix: "../")
+                    }
+                    for key in Array(preferences.speechModes?.keys ?? Dictionary<String, AudioSpeechSettings>().keys) {
+                        var recipe = AudioRecipe(); recipe.speech = preferences.speechModes?[key]
+                        try exportVoiceReference(&recipe, paths: assetPathByReference, prefix: "../")
+                        preferences.speechModes?[key] = recipe.speech
+                    }
                     checksums.append(try zip.add(path: "audio/preferences.json", data: encoder.encode(preferences)))
                 }
             }
@@ -189,9 +199,19 @@ enum OpenProfileExport {
         }
     }
 
+    private static func exportVoiceReference(_ recipe: inout AudioRecipe, paths: [String: String], prefix: String) throws {
+        guard var reference = recipe.speech?.reference else { return }
+        for index in reference.clips.indices {
+            guard let path = paths[reference.clips[index].assetReference] else { throw ManagedAssetStore.AssetError.missing }
+            reference.clips[index].assetReference = prefix + path
+        }
+        recipe.speech?.reference = reference
+    }
+
     private static func buildAssetIndex(
         chats: [AppChat],
         audio: [AudioLibraryItem],
+        audioPreferences: AudioWorkspacePreferences?,
         included: Set<String>,
         store: ManagedAssetStore
     ) throws -> [AssetIndexRow] {
@@ -219,7 +239,12 @@ enum OpenProfileExport {
         if !included.contains("generated-images") { generated.removeAll() }
         if !included.contains("attachments") { attachments.removeAll() }
         attachments.subtract(generated)
-        let audioReferences = included.contains("audio") ? Set(audio.flatMap(\.assetReferences)).subtracting(generated).subtracting(attachments) : []
+        let recipes = audioPreferences.map { [$0.recipe] + $0.presets.map(\.recipe) } ?? []
+        var voiceReferences: [String] = recipes.flatMap { $0.speech?.reference?.clips.map(\.assetReference) ?? [] }
+        for settings in audioPreferences?.speechModes?.values ?? Dictionary<String, AudioSpeechSettings>().values {
+            voiceReferences.append(contentsOf: settings.reference?.clips.map(\.assetReference) ?? [])
+        }
+        let audioReferences = included.contains("audio") ? Set(audio.flatMap(\.assetReferences) + voiceReferences).subtracting(generated).subtracting(attachments) : []
         var rows: [AssetIndexRow] = []
         for (category, references) in [
             ("generated-images", generated), ("attachments", attachments), ("audio", audioReferences),

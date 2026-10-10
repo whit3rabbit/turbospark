@@ -67,7 +67,7 @@ pub use hub_validation::{
 };
 pub use image::{
     image_family_for_model_id, materialize_image_source, normalize_mflux_source,
-    validate_krea2_ram_bits, ImageCatalog, ImageCatalogEntry,
+    validate_krea2_ram_bits, ImageCatalog, ImageCatalogEntry, QWEN_IMAGE_21_TURBO_PREFIX,
 };
 pub use install::{
     gate, human_bytes, install, install_variant, install_with_byte_progress, record,

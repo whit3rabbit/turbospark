@@ -63,6 +63,7 @@ mod dequant_2bit_gemv;
 mod dequant_int4_batch;
 #[cfg(target_os = "macos")]
 mod dequant_int4_gemv;
+mod dequant_int8_batch;
 #[cfg(target_os = "macos")]
 mod dequant_int8_gemv;
 #[cfg(target_os = "macos")]
@@ -208,9 +209,14 @@ pub use dequant_int4_gemv::{
     encode_embed_lookup_int4, Int4AffineRowGpu, Int4ResidentMatrix,
 };
 #[cfg(target_os = "macos")]
+pub use dequant_int8_batch::{
+    best_row_block_int8, encode_dequant_int8_gemm_resident,
+    encode_dequant_int8_gemm_resident_blocked, INT8_MAX_BATCH_ROWS, INT8_MAX_GEMM_ROW_BLOCK,
+};
+#[cfg(target_os = "macos")]
 pub use dequant_int8_gemv::{
     dequant_int8_gemv, dequant_int8_gemv_resident, encode_dequant_int8_gemv_resident,
-    Int8AffineRowGpu, Int8ResidentMatrix,
+    encode_embed_lookup_int8, Int8AffineRowGpu, Int8ResidentMatrix,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_iq_gemv::{
@@ -335,7 +341,7 @@ pub use power_state::{
 #[cfg(target_os = "macos")]
 pub use prefill_scratch::{
     BatchAttentionScratchLayout, BatchAttentionScratchLayoutError, PrefillChunkScratchBuffers,
-    PrefillChunkScratchLayout,
+    PrefillChunkScratchLayout, MAX_BATCH_ATTENTION_SCRATCH_BYTES,
 };
 #[cfg(target_os = "macos")]
 pub use qsa_indexer::{
@@ -404,4 +410,7 @@ pub use minimax_router::encode_minimax_router;
 #[cfg(target_os = "macos")]
 mod music3;
 #[cfg(target_os = "macos")]
-pub use music3::{Music3DType, Music3Device, Music3Encoding, Music3Weight};
+pub use music3::{
+    Music3Buffer, Music3DType, Music3Device, Music3Encoding, Music3Sequence, Music3Slot,
+    Music3Table, Music3Weight,
+};

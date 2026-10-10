@@ -13,6 +13,7 @@ public struct ManagedAssetDescriptor: Codable, Equatable, Hashable, Sendable {
 public final class ManagedAssetStore: @unchecked Sendable {
     public static let shared = ManagedAssetStore()
     static let referencePrefix = "turbospark-asset:"
+    static let imageTranscoderCacheDirectoryName = "image-transcoder"
 
     private static let magic = Data("TSASET01".utf8)
     private static let chunkSize = 1_048_576
@@ -247,6 +248,36 @@ public final class ManagedAssetStore: @unchecked Sendable {
         }
     }
 
+    /// A private cache inside the same purgeable directory as decrypted
+    /// attachments. The transcoder uses this only while an unlocked profile
+    /// session is available.
+    func imageTranscoderCacheDirectory() -> URL? {
+        do {
+            return try lock.withLock {
+                try withOperation { operation in
+                    let decrypted = try decryptedCacheURL(profileID: operation.profileID)
+                    let cache = decrypted.appendingPathComponent(
+                        Self.imageTranscoderCacheDirectoryName, isDirectory: true)
+                    try FileManager.default.createDirectory(
+                        at: cache, withIntermediateDirectories: true,
+                        attributes: [.posixPermissions: 0o700])
+                    try FileManager.default.setAttributes(
+                        [.posixPermissions: 0o700], ofItemAtPath: cache.path)
+                    return cache
+                }
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    /// Removes converted image pixels for the currently unlocked profile.
+    /// Source attachments remain encrypted and are materialized on demand.
+    func purgeImageTranscoderCache() {
+        guard let profileID = vault.session?.profileID else { return }
+        try? FileManager.default.removeItem(at: Self.imageTranscoderCachePath(profileID: profileID))
+    }
+
     /// Decrypts one managed asset into a bounded consumer. Export uses this
     /// path so plaintext bytes flow directly into the ZIP entry and never
     /// exist as a staging file.
@@ -304,20 +335,36 @@ public final class ManagedAssetStore: @unchecked Sendable {
         where item.lastPathComponent.hasPrefix(prefix) {
             try? FileManager.default.removeItem(at: item)
         }
+        // Managed derivatives use the immutable asset ID as their filename,
+        // so releasing the last reference removes them with the materialized
+        // source copy above.
+        try? FileManager.default.removeItem(
+            at: Self.imageTranscoderCachePath(profileID: profileID)
+                .appendingPathComponent("\(id).png"))
     }
 
     public func purgeDecryptedCache() {
+        EngineImageTranscoder.purgeTransientCache()
         guard let profileID = vault.session?.profileID else { return }
         Self.purgeDecryptedCache(profileID: profileID)
     }
 
     static func purgeDecryptedCache(profileID: String) {
-        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-        else { return }
-        let cache = caches.appendingPathComponent("TurboSpark", isDirectory: true)
+        try? FileManager.default.removeItem(at: decryptedCachePath(profileID: profileID))
+        EngineImageTranscoder.purgeTransientCache()
+        EngineImageTranscoder.purgeLegacyPersistentCache(profileID: profileID)
+    }
+
+    static func decryptedCachePath(profileID: String) -> URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("TurboSpark", isDirectory: true)
             .appendingPathComponent(profileID, isDirectory: true)
             .appendingPathComponent("decrypted", isDirectory: true)
-        try? FileManager.default.removeItem(at: cache)
+    }
+
+    static func imageTranscoderCachePath(profileID: String) -> URL {
+        decryptedCachePath(profileID: profileID)
+            .appendingPathComponent(imageTranscoderCacheDirectoryName, isDirectory: true)
     }
 
     public static func assetID(from reference: String) -> String? {
@@ -546,10 +593,7 @@ public final class ManagedAssetStore: @unchecked Sendable {
     }
 
     private func decryptedCacheURL(profileID: String) throws -> URL {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("TurboSpark", isDirectory: true)
-            .appendingPathComponent(profileID, isDirectory: true)
-            .appendingPathComponent("decrypted", isDirectory: true)
+        let base = Self.decryptedCachePath(profileID: profileID)
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: base.path)
         return base

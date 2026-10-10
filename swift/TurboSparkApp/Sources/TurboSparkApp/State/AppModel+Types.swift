@@ -30,6 +30,7 @@ extension AppModel {
         case modelHub
         case server
         case audio
+        case humanize
 
         public var id: String { rawValue }
         public var title: String {
@@ -41,6 +42,7 @@ extension AppModel {
             case .modelHub: return "Discover"
             case .server: return "API"
             case .audio: return "Audio"
+            case .humanize: return "Humanize"
             }
         }
         public var systemImage: String {
@@ -52,6 +54,7 @@ extension AppModel {
             case .modelHub: return "shippingbox"
             case .server: return "server.rack"
             case .audio: return "waveform"
+            case .humanize: return "text.badge.checkmark"
             }
         }
         /// Filled variant used when the section is the active one.
@@ -64,6 +67,15 @@ extension AppModel {
             case .modelHub: return "shippingbox.fill"
             case .server: return "server.rack"
             case .audio: return "waveform"
+            case .humanize: return "text.badge.checkmark"
+            }
+        }
+        /// Full-bleed sections that replace the chat window, so the chat's
+        /// artifact, output and browser panes stay hidden while one is active.
+        public var hidesChatPanes: Bool {
+            switch self {
+            case .images, .audio, .humanize: return true
+            case .chat, .files, .modelManager, .modelHub, .server: return false
             }
         }
         /// Keyboard shortcut character shown in the rail tooltip.
@@ -76,6 +88,7 @@ extension AppModel {
             case .modelHub: return "5"
             case .server: return "6"
             case .audio: return "7"
+            case .humanize: return "8"
             }
         }
     }

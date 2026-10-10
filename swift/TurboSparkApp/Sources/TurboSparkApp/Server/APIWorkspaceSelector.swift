@@ -1,19 +1,20 @@
 import SwiftUI
 
 enum APIWorkspaceTab: Int, CaseIterable, Identifiable {
-    case text, image, typeSafe
+    case text, image, audio, typeSafe
 
     var id: Int { rawValue }
     var title: String {
         switch self {
         case .text: return String(localized: "Text", bundle: .module)
         case .image: return String(localized: "Image", bundle: .module)
+        case .audio: return String(localized: "Audio", bundle: .module)
         case .typeSafe: return String(localized: "TypeSafe", bundle: .module)
         }
     }
 
     func moved(_ offset: Int) -> Self {
-        Self(rawValue: min(max(rawValue + offset, 0), 2)) ?? self
+        Self(rawValue: min(max(rawValue + offset, 0), 3)) ?? self
     }
 }
 

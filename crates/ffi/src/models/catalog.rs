@@ -114,6 +114,54 @@ fn image_row_for_delete(
     Ok(row)
 }
 
+/// Valid image installs under a user-chosen folder, for locations outside the
+/// managed store (an external drive, a shared models directory).
+///
+/// Looks at `root` and its immediate subdirectories only. A folder like this
+/// can be a whole drive, and the text-model scan's recursive walk is the cost
+/// to avoid repeating. `root` may also be an install bundle itself, so a
+/// folder picked by hand resolves to that one install. Rows go through the
+/// same manifest validation as the managed store and report the retained MLX
+/// source tree when the `.{alias}.{revision}.image-source` sibling exists, so
+/// an install copied with its source runs and one copied without it is
+/// reported without a source path.
+pub(crate) fn image_installed_in_json(root: &Path) -> Result<String, String> {
+    if !root.is_dir() {
+        return Err(format!("{} is not a directory", root.display()));
+    }
+    let mut rows = Vec::new();
+    let is_bundle = |path: &Path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".gturbo"))
+    };
+    if is_bundle(root) {
+        if let Some(parent) = root.parent() {
+            rows.extend(
+                image_installed_rows(parent)
+                    .into_iter()
+                    .filter(|row| row.path == root),
+            );
+        }
+    } else {
+        rows.extend(image_installed_rows(root));
+        if let Ok(children) = std::fs::read_dir(root) {
+            for child in children.filter_map(Result::ok) {
+                let path = child.path();
+                let hidden = child.file_name().to_string_lossy().starts_with('.');
+                // Bundles were listed above, and the dot-directories are the
+                // retained source trees, which hold no installs.
+                if path.is_dir() && !hidden && !is_bundle(&path) {
+                    rows.extend(image_installed_rows(&path));
+                }
+            }
+        }
+    }
+    rows.sort_by(|a, b| a.alias.cmp(&b.alias).then_with(|| a.path.cmp(&b.path)));
+    rows.dedup_by(|a, b| a.path == b.path);
+    serde_json::to_string(&rows).map_err(|e| e.to_string())
+}
+
 fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
     let Ok(entries) = std::fs::read_dir(models) else {
         return Vec::new();
@@ -137,11 +185,7 @@ fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
             let source = manifest.source.as_object()?;
             let model_id = source.get("model_id")?.as_str()?.to_string();
             let revision = source.get("model_revision")?.as_str()?.to_string();
-            let source_path = if model_id.starts_with("andrevp/")
-                || model_id.starts_with("deepsweet/")
-                || model_id.starts_with("mlx-community/")
-                || model_id.starts_with("baa-ai/Krea-2-Turbo")
-            {
+            let source_path = if super::image_install::retains_mlx_source_tree(&model_id) {
                 path.parent()
                     .map(|parent| parent.join(format!(".{alias}.{revision}.image-source")))
                     .filter(|source| source.is_dir())
@@ -223,6 +267,174 @@ mod tests {
         .unwrap();
 
         assert!(image_installed_rows(&models).is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A minimal valid source tree: the production builder packs it, so the
+    /// scan below runs against a manifest the engine itself wrote.
+    fn write_synthetic_source(source: &Path) {
+        use std::fs;
+        fs::create_dir_all(source.join("tokenizer")).unwrap();
+        fs::create_dir_all(source.join("scheduler")).unwrap();
+        fs::write(source.join("tokenizer/tokenizer.json"), b"tokenizer").unwrap();
+        fs::write(
+            source.join("tokenizer/tokenizer_config.json"),
+            b"{\"chat_template\": \"test\"}",
+        )
+        .unwrap();
+        fs::write(
+            source.join("scheduler/scheduler_config.json"),
+            b"{\"shift\": 3.0}",
+        )
+        .unwrap();
+        for (component, index) in [
+            ("text_encoder", "model.safetensors.index.json"),
+            (
+                "transformer",
+                "diffusion_pytorch_model.safetensors.index.json",
+            ),
+            ("vae", "diffusion_pytorch_model.safetensors.index.json"),
+        ] {
+            let dir = source.join(component);
+            fs::create_dir_all(&dir).unwrap();
+            let file = index.strip_suffix(".index.json").unwrap();
+            let mut payload = Vec::new();
+            for value in std::iter::repeat_n(0.25f32, 64).chain(std::iter::repeat_n(1.0f32, 64)) {
+                payload.extend_from_slice(&value.to_le_bytes());
+            }
+            let header = serde_json::json!({
+                "linear.weight": {"dtype": "F32", "shape": [1, 64], "data_offsets": [0, 256]},
+                "norm.weight": {"dtype": "F32", "shape": [64], "data_offsets": [256, 512]}
+            });
+            let header = serde_json::to_vec(&header).unwrap();
+            let mut shard = (header.len() as u64).to_le_bytes().to_vec();
+            shard.extend_from_slice(&header);
+            shard.extend_from_slice(&payload);
+            fs::write(dir.join(file), shard).unwrap();
+            if component != "vae" {
+                fs::write(
+                    dir.join(index),
+                    serde_json::to_vec(&serde_json::json!({
+                        "weight_map": {"linear.weight": file, "norm.weight": file}
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    fn build_synthetic_install(root: &Path, alias: &str) -> PathBuf {
+        build_synthetic_install_for(root, alias, "Tongyi-MAI/Z-Image-Turbo")
+    }
+
+    fn build_synthetic_install_for(root: &Path, alias: &str, model_id: &str) -> PathBuf {
+        let source = root.join(format!("source-{alias}"));
+        write_synthetic_source(&source);
+        let output = root.join(format!("{alias}.gturbo"));
+        image::build_image_install(&image::ImageInstallSpec {
+            source_root: source.clone(),
+            output_root: output.clone(),
+            model_id: model_id.to_string(),
+            model_revision: "synthetic-revision".to_string(),
+        })
+        .expect("build synthetic image install");
+        std::fs::remove_dir_all(source).unwrap();
+        output.canonicalize().unwrap()
+    }
+
+    fn scanned_paths(root: &Path) -> Vec<PathBuf> {
+        let json = image_installed_in_json(root).expect("scan");
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+        rows.iter()
+            .map(|row| PathBuf::from(row["path"].as_str().unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn scanning_a_folder_finds_valid_installs_at_depth_zero_and_one_only() {
+        let root = temp_root("image-scan");
+        let drive = root.join("drive");
+        let nested = drive.join("models");
+        let too_deep = nested.join("archive");
+        std::fs::create_dir_all(&too_deep).unwrap();
+        let top = build_synthetic_install(&drive, "top-level");
+        let child = build_synthetic_install(&nested, "one-down");
+        let _buried = build_synthetic_install(&too_deep, "two-down");
+        // A broken manifest is not an install.
+        std::fs::create_dir_all(drive.join("broken.gturbo")).unwrap();
+        std::fs::write(drive.join("broken.gturbo/manifest.json"), "{}").unwrap();
+
+        let found = scanned_paths(&drive.canonicalize().unwrap());
+        assert!(found.contains(&top), "{found:?}");
+        assert!(found.contains(&child), "{found:?}");
+        assert_eq!(
+            found.len(),
+            2,
+            "depth two and broken installs stay out: {found:?}"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scanning_an_install_bundle_directly_returns_just_that_install() {
+        let root = temp_root("image-scan-bundle");
+        let one = build_synthetic_install(&root, "one");
+        let _two = build_synthetic_install(&root, "two");
+
+        assert_eq!(scanned_paths(&one), vec![one.clone()]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scanning_reports_the_retained_source_only_when_it_sits_beside_the_install() {
+        let root = temp_root("image-scan-source");
+        // Z-Image rows from `andrevp/` keep their source; this synthetic row
+        // is `Tongyi-MAI/`, which does not, so a stray sibling directory must
+        // not be reported as one either.
+        let install = build_synthetic_install(&root, "plain");
+        std::fs::create_dir_all(root.join(".plain.synthetic-revision.image-source")).unwrap();
+
+        let json = image_installed_in_json(&root.canonicalize().unwrap()).unwrap();
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["path"].as_str().unwrap(), install.to_str().unwrap());
+        assert!(rows[0]["sourcePath"].is_null(), "{}", rows[0]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scanning_reports_the_retained_source_for_a_family_that_keeps_it() {
+        let root = temp_root("image-scan-kept");
+        // `andrevp/` rows keep their MLX source tree beside the install, the
+        // layout an install copied to another drive carries with it.
+        let install = build_synthetic_install_for(&root, "kept", "andrevp/Z-Image-Turbo-MLX-4bit");
+        let source = root.join(".kept.synthetic-revision.image-source");
+        std::fs::create_dir_all(&source).unwrap();
+
+        let json = image_installed_in_json(&root.canonicalize().unwrap()).unwrap();
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["path"].as_str().unwrap(), install.to_str().unwrap());
+        assert_eq!(
+            rows[0]["sourcePath"].as_str().map(PathBuf::from),
+            Some(source.canonicalize().unwrap()),
+        );
+        // Without the source beside it, the same install reports none.
+        std::fs::remove_dir_all(&source).unwrap();
+        let json = image_installed_in_json(&root.canonicalize().unwrap()).unwrap();
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+        assert!(rows[0]["sourcePath"].is_null(), "{}", rows[0]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scanning_a_missing_or_file_path_is_an_error_not_an_empty_list() {
+        let root = temp_root("image-scan-missing");
+        assert!(image_installed_in_json(&root.join("nope")).is_err());
+        let file = root.join("file");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(image_installed_in_json(&file).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 

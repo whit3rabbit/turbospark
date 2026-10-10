@@ -2516,7 +2516,7 @@ extension ProfileDatabase {
     /// The payload and reference graph must commit together, or a chat save
     /// could collect a chunk whose manifest update failed.
     func saveAudioRecord(key: String, payload: Data, references: [String]) throws {
-        guard key.hasPrefix("audio:item:") else { throw CocoaError(.coderInvalidValue) }
+        guard key.hasPrefix("audio:item:") || key == "audio:preferences" else { throw CocoaError(.coderInvalidValue) }
         let ids = try Set(references.map { reference in
             guard let id = ManagedAssetStore.assetID(from: reference) else { throw CocoaError(.coderInvalidValue) }
             return id

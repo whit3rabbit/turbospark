@@ -311,6 +311,8 @@ extension AppModel {
         stopServerPolling()
         cancelServerImageJobs()
         serverImageAttachedModel = nil
+        cancelServerSpeechJobs()
+        serverSpeechAttachedModel = nil
         // A final unbounded drain, so whatever the last tick missed still
         // reaches the console before the handle goes.
         ingestServerEvents(server.poll(max: 0))
@@ -442,6 +444,7 @@ extension AppModel {
     private func pollServerOnce() {
         guard let server else { return }
         handleServerImageEvents(server)
+        handleServerSpeechEvents(server)
         ingestServerEvents(server.poll(max: 256))
         // The uptime moves on its own, so the snapshot is refreshed on the
         // timer as well as on the events that change the model list.

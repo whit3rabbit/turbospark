@@ -8,7 +8,7 @@ enum SidebarNavigationGroup: CaseIterable, Identifiable {
 
     var sections: [AppModel.AppNavigationSection] {
         switch self {
-        case .creation: return [.chat, .images, .audio]
+        case .creation: return [.chat, .images, .audio, .humanize]
         case .models: return [.modelManager, .modelHub]
         case .utilities: return [.server, .files]
         }

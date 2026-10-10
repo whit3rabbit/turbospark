@@ -4,6 +4,7 @@ import SwiftUI
 
 private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        EngineImageTranscoder.purgeLegacyPersistentCaches()
         // Before the first view builds: the font pickers narrow their options
         // to what `NSFontManager` reports, so a bundled family that is not yet
         // registered would be filtered out of its own menu.
@@ -304,6 +305,12 @@ struct TurboSparkModelCommands: Commands {
                     Text("Audio", bundle: .module)
                 }
                 .keyboardShortcut("7", modifiers: .command)
+                Button {
+                    model.activeSection = .humanize
+                } label: {
+                    Text("Humanize", bundle: .module)
+                }
+                .keyboardShortcut("8", modifiers: .command)
                 Menu {
                     AudioDestinationMenu(model: model)
                 } label: {

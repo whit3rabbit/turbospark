@@ -91,10 +91,10 @@ struct TopBarView: View {
                     }
                 }
                 unloadButton
-                if model.browserSettings.enabled && model.activeSection != .images && model.activeSection != .audio {
+                if model.browserSettings.enabled && !model.activeSection.hidesChatPanes {
                     browserToggle
                 }
-                if model.activeSection != .images && model.activeSection != .audio {
+                if !model.activeSection.hidesChatPanes {
                     inspectorToggle
                 }
             }

@@ -30,6 +30,8 @@ struct ServerPaneView: View {
                             } label: { Text("Connect an app", bundle: .module) }
                         case .image:
                             ImageAPIPaneView(model: model)
+                        case .audio:
+                            AudioAPIPaneView(model: model)
                         case .typeSafe:
                             TypeSafeAPIPaneView(model: model)
                         }

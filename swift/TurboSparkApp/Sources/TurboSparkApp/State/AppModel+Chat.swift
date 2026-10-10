@@ -286,6 +286,9 @@ extension AppModel {
                 style: .error)
             return
         }
+        // Converted pixels are disposable and may outlive the chat's model
+        // references; remove them as part of the user's deletion action.
+        EngineImageTranscoder.purgeCache()
         // Captured before the removal below: `SessionEnd` describes the chat
         // that is going away, and after `chats.remove` there is no row left
         // to resolve its project from (state#67).
