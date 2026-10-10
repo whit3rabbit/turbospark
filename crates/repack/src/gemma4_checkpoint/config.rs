@@ -81,6 +81,15 @@ impl From<DownloadError> for Gemma4Error {
 /// (`full_attention` = 1, anything else = 0), the two `rope_parameters`
 /// sub-objects supply the full/SWA thetas and the partial rotary factor,
 /// and every family-extension field takes Gemma 4's fixed value.
+///
+/// The MoE keys are the family's one dense/MoE switch, and the dense form is
+/// real: `cowWhySo/humanizer-12b-mlx-8bit` (@ baea046b, a Gemma 4 12B trunk
+/// fine-tune) ships `num_experts`/`top_k_experts`/`moe_intermediate_size` as
+/// JSON `null` under `enable_moe_block: false`, with the hybrid attention
+/// schedule and per-kind `rope_parameters` the 26B-A4B carries. A `null`
+/// MoE key parses as zero, and a present `enable_moe_block` must agree with
+/// `num_experts`, so a config claiming both a dense trunk and experts is
+/// refused rather than resolved to whichever key the parser saw last.
 pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
@@ -95,11 +104,32 @@ pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
             .and_then(|v| v.as_i64())
             .ok_or_else(|| Gemma4Error::Config(format!("missing {k}")))
     };
+    // The MoE keys are nullable where the shape keys are not: JSON `null`
+    // (and absence) means the component does not exist, which is zero.
+    let i_or_zero = |k: &str| -> Result<i64, Gemma4Error> {
+        match tc.get(k) {
+            None | Some(serde_json::Value::Null) => Ok(0),
+            Some(v) => v
+                .as_i64()
+                .ok_or_else(|| Gemma4Error::Config(format!("{k} is neither an integer nor null"))),
+        }
+    };
     let d = |k: &str| -> Result<f64, Gemma4Error> {
         tc.get(k)
             .and_then(|v| v.as_f64())
             .ok_or_else(|| Gemma4Error::Config(format!("missing {k}")))
     };
+
+    let num_experts = i_or_zero("num_experts")?;
+    let enable_moe_block = tc.get("enable_moe_block").and_then(|v| v.as_bool());
+    if let Some(moe) = enable_moe_block {
+        if moe != (num_experts > 0) {
+            return Err(Gemma4Error::Config(format!(
+                "enable_moe_block is {moe} but num_experts is {num_experts}; a config \
+                 cannot claim both a dense trunk and routed experts"
+            )));
+        }
+    }
 
     let mask: Vec<u8> = tc
         .get("layer_types")
@@ -133,7 +163,7 @@ pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     Ok(ArchConfig {
         hidden_size: i("hidden_size")?,
         intermediate_size: i("intermediate_size")?,
-        moe_intermediate_size: i("moe_intermediate_size")?,
+        moe_intermediate_size: i_or_zero("moe_intermediate_size")?,
         num_heads: i("num_attention_heads")?,
         num_kv_heads: i("num_key_value_heads")?,
         num_full_kv_heads: i("num_global_key_value_heads")?,
@@ -148,8 +178,8 @@ pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         num_layers: i("num_hidden_layers")?,
         dense_lead_intermediate_size: 0,
         num_dense_leading_layers: 0,
-        num_experts: i("num_experts")?,
-        top_k_experts: i("top_k_experts")?,
+        num_experts,
+        top_k_experts: i_or_zero("top_k_experts")?,
         tie_word_embeddings: b("tie_word_embeddings"),
         attention_k_eq_v: b("attention_k_eq_v"),
         full_attention_layer_mask: mask,

@@ -327,6 +327,47 @@ impl RealForwardRunner {
             &layer_tensor(layer, "pre_feedforward_layernorm.weight"),
             hidden,
         )?;
+        let real = self.real.as_ref().expect("real state present");
+
+        if real.dense {
+            // THE DENSE TAIL: the attention residual add and the dense
+            // FFN's pre-norm, per token row, and nothing router-shaped.
+            // Mirrors `encode_gemma4_layer_tail_dense` at row offsets --
+            // the per-token form's structure with `x_off` varying.
+            for t in 0..m {
+                let x_off = (t * hidden * 2) as u64;
+                gpu::encode_rms_norm_bf16w(
+                    &mut self.context,
+                    pass,
+                    (&b_o, x_off),
+                    post_attn,
+                    (&self.scratch.o_normed, 0),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+                gpu::encode_residual_add(
+                    &mut self.context,
+                    pass,
+                    (&self.scratch.x, x_off),
+                    (&self.scratch.o_normed, 0),
+                    hidden as u32,
+                )
+                .map_err(gpu_err)?;
+                gpu::encode_rms_norm_bf16w(
+                    &mut self.context,
+                    pass,
+                    (&self.scratch.x, x_off),
+                    pre_ffn,
+                    (&real.dense_x, x_off),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+            }
+            return Ok(());
+        }
+
         let pre_ffn2 = norm_view(
             &self.weights,
             &self.index,
@@ -337,7 +378,6 @@ impl RealForwardRunner {
         let (router_w, router_scale, router_bias) =
             self.router_offsets_gemma4(&router_name, num_experts, hidden)?;
 
-        let real = self.real.as_ref().expect("real state present");
         for t in 0..m {
             let x_off = (t * hidden * 2) as u64;
             let logits_off = (t * num_experts * 4) as u64;

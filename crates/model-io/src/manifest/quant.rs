@@ -113,9 +113,17 @@ pub const EXECUTABLE_GGUF_TYPES: [&str; 17] = [
 /// dispatch, by name -- the same weaker footing Q6_K and the IQ types stand
 /// on, stated in [`EXECUTABLE_GGUF_TYPES`]'s doc.
 pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
+    // Embedding and attention admit 8 as well as 4: the INT8 affine GEMV is
+    // kernel-backed (`crates/gpu`'s `dequant_int8_gemv`, group 64, BF16
+    // companions), and the first carrier is the dense humanizer Gemma 4 12B
+    // checkpoint, which is 8-bit everywhere. The MoE slots keep their lists:
+    // a dense install's router/shared/routed slots MIRROR the attention slot
+    // (`manifest_quant_for` with `has_experts = false`), so they either
+    // structurally equal it and are skipped as defaulted, or name a real
+    // 8-bit component the existing lists already admit.
     let slots: [(&str, &ManifestQuantSlot, &[i64]); 5] = [
-        ("embedding", &quant.embedding, &[4]),
-        ("attention", &quant.attention, &[4]),
+        ("embedding", &quant.embedding, &[4, 8]),
+        ("attention", &quant.attention, &[4, 8]),
         ("router", &quant.router, &[8]),
         ("sharedExpert", &quant.shared_expert, &[4, 8]),
         // Routed experts additionally allow 2-bit: the DeepSeek-V4-Flash

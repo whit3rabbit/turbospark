@@ -157,7 +157,8 @@ pub use synthetic_qwen::{
     QWEN4_DECODE_NUM_KV_HEADS, QWEN4_DECODE_NUM_LAYERS, QWEN4_DECODE_PLE_LAYER, TOP_K,
 };
 pub use synthetic_real::{
-    build_synthetic_gemma4_real_install, build_synthetic_gemma4_real_install_at_shared_bits,
+    build_synthetic_gemma4_dense_real_install, build_synthetic_gemma4_real_install,
+    build_synthetic_gemma4_real_install_at_shared_bits,
 };
 pub use synthetic_spark::{build_synthetic_spark_install, tiny_spark_arch};
 /// The checkpoint's own trained context length: read it out of either

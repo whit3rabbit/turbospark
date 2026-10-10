@@ -477,29 +477,30 @@ fn a_batched_projection_that_straddles_the_ring_wrap_still_matches_sequential() 
 }
 
 #[test]
-fn a_shared_expert_with_no_batched_kernel_is_refused_by_name() {
-    // AGENTS.md Gotcha 35 at the dispatch: `encode_gemm_any` covers the
-    // INT4-affine and 1-/2-bit affine batched kernels, and a sequential
-    // fallback for anything else would be numerically identical -- so a
-    // caller who asked for the batched engine would measure the unbatched
-    // one and report it as batched. The DEFAULT fixture writes its shared
-    // MLP at eight bits, so it is exactly the install that has to be
-    // refused rather than looped.
+fn an_int8_shared_expert_batches_and_stays_byte_identical() {
+    // This test used to assert the OPPOSITE refusal: `encode_gemm_any`
+    // covered INT4-affine and 1-/2-bit only, and the DEFAULT fixture's
+    // 8-bit shared MLP had to be refused by name rather than looped
+    // (AGENTS.md Gotcha 35's reasoning, which still holds for every width
+    // without a batched kernel). The dense humanizer Gemma 4 12B made INT8
+    // affine a FIRST-CLASS prefill width -- `dequant_int8_gemm_simd` and
+    // its `encode_gemm_any` 5-arm -- so this fixture now exercises the
+    // batched INT8 path and must stay byte-identical to the sequential
+    // walk, exactly as the INT4 cases above assert for theirs.
     let dir = temp_dir();
     let arch = build_install(&dir, 16);
+    let mut sequential = RealForwardRunner::open_with_options(&dir, arch.clone(), 4096, 16)
+        .expect("real-naming install opens");
+    let expected = chunked_prefill(&mut sequential, &PROMPT, 16);
+
     let mut runner = RealForwardRunner::open_with_options(&dir, arch, 4096, 16)
         .expect("real-naming install opens");
     runner.set_routed_batch_prefill(true);
     runner.set_batched_gemv_prefill(true);
-
-    runner.reset();
-    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
-    let err = runner
-        .prefill_chunk(&PROMPT, 0, &mut logits)
-        .expect_err("an INT8 shared expert has no batched kernel");
-    assert!(
-        err.contains("mlp.gate_proj.weight") && err.contains("no BATCHED kernel"),
-        "the refusal must name the tensor and the reason: {err}"
+    let both = chunked_prefill(&mut runner, &PROMPT, 16);
+    assert_eq!(
+        both, expected,
+        "the INT8 shared expert's batched GEMM must match the sequential one byte for byte"
     );
 }
 

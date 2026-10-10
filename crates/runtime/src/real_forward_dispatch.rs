@@ -243,6 +243,43 @@ pub(crate) fn encode_embed_any(
             )
             .map_err(RealForwardError::Gpu)
         }
+        5 => {
+            // The INT8-affine table: one byte per element, so the resident
+            // byte run IS `rows * hidden` exactly, and the row count falls
+            // straight out of the size. First carrier: the dense humanizer
+            // Gemma 4 12B, whose embedding is INT8 at group 64 like every
+            // other quantized tensor in the checkpoint.
+            let d = hidden as usize;
+            if d == 0 || e.size_bytes as usize % d != 0 {
+                return Err(RealForwardError::Unsupported(format!(
+                    "embedding table {name}: {} INT8 bytes is not a whole number of \
+                     {d}-element rows",
+                    e.size_bytes
+                )));
+            }
+            let rows = e.size_bytes as usize / d;
+            let group_size = affine_group_size(e, name, rows, d, 8)?;
+            if group_size != 64 {
+                return Err(RealForwardError::Unsupported(format!(
+                    "embedding table {name}: INT8 group size {group_size} does not match kernel \
+                     group size 64"
+                )));
+            }
+            let scales = (weights.buffer(), weights.gpu_offset(e.scale_offset - base));
+            let biases = (weights.buffer(), weights.gpu_offset(e.bias_offset - base));
+            gpu::encode_embed_lookup_int8(
+                context,
+                pass,
+                table,
+                scales,
+                biases,
+                out,
+                token,
+                hidden,
+                embed_scale,
+            )
+            .map_err(RealForwardError::Gpu)
+        }
         4 => {
             // Resolved inside this arm on purpose: a GGUF entry carries no
             // companions, so its `scale_offset` is 0 and subtracting the
@@ -618,6 +655,29 @@ pub(crate) fn encode_gemm_any(
             gpu::encode_dequant_int4_gemm_resident(context, pass, &w, x, y, batch)
                 .map_err(RealForwardError::Gpu)
         }
+        // The INT8-affine batched kernel, the dense humanizer's width. The
+        // same refusal logic `encode_gemv_any`'s 5-arm carries, applied to
+        // the batched pair: group 64 only, because that is what the kernel
+        // is compiled against.
+        5 => {
+            let group_size = affine_group_size(e, name, rows, cols, 8)?;
+            if group_size != 64 {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: INT8 group size {group_size} does not match kernel \
+                     group size 64"
+                )));
+            }
+            let w = gpu::Int8ResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                scales_offset: weights.gpu_offset(e.scale_offset - base),
+                biases_offset: weights.gpu_offset(e.bias_offset - base),
+                rows,
+                cols,
+            };
+            gpu::encode_dequant_int8_gemm_resident(context, pass, &w, x, y, batch)
+                .map_err(RealForwardError::Gpu)
+        }
         // The sub-byte affine pair (ROADMAP P3.3), mirroring
         // `encode_gemv_any`'s arms beside them: the companions are FP16 and
         // the group size is the checkpoint's, so it is DERIVED from the
@@ -654,9 +714,9 @@ pub(crate) fn encode_gemm_any(
         }
         other => Err(RealForwardError::Unsupported(format!(
             "tensor {name}: dtype {other} has no BATCHED kernel; INT4-affine (4), \
-             1-bit affine (15) and 2-bit affine (16) do. Refused rather than looped: \
-             a sequential fallback here is numerically identical and would silently \
-             measure the unbatched engine"
+             INT8-affine (5), 1-bit affine (15) and 2-bit affine (16) do. Refused \
+             rather than looped: a sequential fallback here is numerically \
+             identical and would silently measure the unbatched engine"
         ))),
     }
 }

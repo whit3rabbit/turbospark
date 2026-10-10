@@ -197,3 +197,50 @@ pub fn dequant_int8_gemv_resident(
 
     Ok(read_half_buffer(&y_buffer, w.rows))
 }
+
+/// Encoder-level `embed_lookup_int8`: dequantizes one row of the INT8-affine
+/// embedding table (bound in place, normally offsets into the resident
+/// buffer) into `out` (`d` halfs), scaled by `out_scale` (pass `sqrt(hidden)`
+/// for Gemma's scaled embeddings, `1.0` otherwise).
+///
+/// PORT-LOCAL kernel (see the shader's own comment): the CPU reference is
+/// `turbospark_compute::quant::embed_lookup_int8`, which returns the RAW
+/// dequant -- `out_scale` is applied by this kernel and by the caller's math
+/// alike, never by the reference.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_embed_lookup_int8(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    table: (&metal::Buffer, u64),
+    scales: (&metal::Buffer, u64),
+    biases: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    token_id: u32,
+    d: u32,
+    out_scale: f32,
+) -> Result<(), GpuError> {
+    assert_eq!(d % 64, 0);
+    let pipeline = context.pipeline(
+        SOURCE,
+        "embed_lookup_int8",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[
+            (table.0, 0, table.1),
+            (scales.0, 1, scales.1),
+            (biases.0, 2, biases.1),
+            (out.0, 3, out.1),
+        ],
+        &[
+            (u32_bytes(&token_id), 4),
+            (u32_bytes(&d), 5),
+            (crate::bytes::f32_bytes(&out_scale), 6),
+        ],
+        (d as u64, 1, 1),
+        (64, 1, 1),
+    );
+    Ok(())
+}

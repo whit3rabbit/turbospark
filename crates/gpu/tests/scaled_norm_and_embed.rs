@@ -409,3 +409,63 @@ fn embed_lookup_int4_matches_cpu_reference() {
         );
     }
 }
+
+#[test]
+fn embed_lookup_int8_matches_cpu_reference() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let vocab = 16usize;
+    let d = 64usize;
+    let token = 7usize;
+    let out_scale = (d as f32).sqrt();
+
+    // Quantize a deterministic table row set at INT8 affine, group 64.
+    let mut packed = Vec::new();
+    let mut scales = Vec::new();
+    let mut biases = Vec::new();
+    for r in 0..vocab {
+        let row: Vec<f32> = (0..d)
+            .map(|i| (((r * 131 + i) as f32) * 0.13).sin() * 4.0)
+            .collect();
+        let q = turbospark_compute::quantize_int8_affine(&row);
+        packed.extend_from_slice(&q.packed);
+        scales.extend_from_slice(&q.scales);
+        biases.extend_from_slice(&q.biases);
+    }
+
+    // The CPU reference returns the RAW dequant (no out_scale); the kernel
+    // applies `out_scale` itself, so the expected vector is scaled here.
+    let raw = turbospark_compute::quant::embed_lookup_int8(&packed, &scales, &biases, token, d);
+    let expected: Vec<f32> = raw.iter().map(|v| v * out_scale).collect();
+
+    let u16_le = |v: &[u16]| -> Vec<u8> { v.iter().flat_map(|b| b.to_le_bytes()).collect() };
+    let table_buf = context.new_buffer_with_data(&packed);
+    let scales_buf = context.new_buffer_with_data(&u16_le(&scales));
+    let biases_buf = context.new_buffer_with_data(&u16_le(&biases));
+    let out_buf = context.new_output_buffer((d * 2) as u64);
+
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_embed_lookup_int8(
+        &mut context,
+        &pass,
+        (&table_buf, 0),
+        (&scales_buf, 0),
+        (&biases_buf, 0),
+        (&out_buf, 0),
+        token as u32,
+        d as u32,
+        out_scale,
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+
+    let got = read_halfs(&out_buf, d);
+    for i in 0..d {
+        let diff = (got[i] - expected[i]).abs();
+        assert!(
+            diff <= 5e-3_f32.max(expected[i].abs() * 1e-2),
+            "i={i}: got {} want {}",
+            got[i],
+            expected[i]
+        );
+    }
+}

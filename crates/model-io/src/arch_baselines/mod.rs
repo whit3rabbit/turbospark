@@ -14,7 +14,7 @@ mod spark;
 
 pub use deepseek::deepseek_v4_flash_284b_a13b;
 pub use deepseek2::deepseek_v2_lite_16b;
-pub use gemma::gemma4_26b_a4b;
+pub use gemma::{gemma4_12b_dense, gemma4_26b_a4b};
 pub use gpt_oss::gpt_oss_20b;
 pub use llama::mixtral_8x7b;
 pub use minimax::minimax_m2;

@@ -253,6 +253,28 @@ impl RealForwardRunner {
             &layer_tensor(layer, "pre_feedforward_layernorm.weight"),
             hidden,
         )?;
+        let real = self.real.as_ref().expect("real state present");
+        if real.dense {
+            // The dense trunk stops after the two norms it carries: the
+            // attention residual add and the dense FFN's pre-norm. There is
+            // no `pre_feedforward_layernorm_2` and no `router.proj` in a
+            // dense checkpoint, so neither the routed pre-norm nor the
+            // router GEMV nor the pilot probe (which borrows a router)
+            // has anything to read.
+            encode_gemma4_layer_tail_dense(
+                &mut self.context,
+                pass,
+                &self.scratch,
+                (&real.dense_x, x_off),
+                (&self.scratch.o, 0),
+                x_off,
+                hidden,
+                post_attn,
+                pre_ffn,
+            )?;
+            return Ok(());
+        }
+
         let pre_ffn2 = norm_view(
             &self.weights,
             &self.index,
@@ -263,7 +285,6 @@ impl RealForwardRunner {
         let (router_w, router_scale, router_bias) =
             self.router_offsets_gemma4(&router_name, num_experts, hidden)?;
 
-        let real = self.real.as_ref().expect("real state present");
         encode_gemma4_layer_tail(
             &mut self.context,
             pass,
@@ -381,6 +402,57 @@ impl RealForwardRunner {
             router_entry.bias_offset,
         ))
     }
+}
+
+/// The DENSE trunk's attention tail: the attention residual add and the
+/// dense FFN's pre-norm, and nothing else. This is
+/// [`encode_gemma4_layer_tail`] minus everything router-shaped -- the
+/// no-scale router norm, the routed pre-norm (`pre_feedforward_layernorm_2`
+/// does not exist in a dense checkpoint), and the router GEMV -- read off
+/// the real dense carrier's four-norm inventory rather than derived.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_gemma4_layer_tail_dense(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &crate::real_forward_types::DecodeScratch,
+    dense_x: (&gpu::MetalBuffer, u64),
+    o: (&gpu::MetalBuffer, u64),
+    x_off: u64,
+    hidden: usize,
+    post_attn: (&gpu::MetalBuffer, u64),
+    pre_ffn: (&gpu::MetalBuffer, u64),
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    gpu::encode_rms_norm_bf16w(
+        context,
+        pass,
+        o,
+        post_attn,
+        (&scratch.o_normed, 0),
+        hidden as u32,
+        RMS_EPS,
+    )
+    .map_err(gpu_err)?;
+    gpu::encode_residual_add(
+        context,
+        pass,
+        (&scratch.x, x_off),
+        (&scratch.o_normed, 0),
+        hidden as u32,
+    )
+    .map_err(gpu_err)?;
+    let (dense_x_buf, dense_x_off) = dense_x;
+    gpu::encode_rms_norm_bf16w(
+        context,
+        pass,
+        (&scratch.x, x_off),
+        pre_ffn,
+        (dense_x_buf, dense_x_off),
+        hidden as u32,
+        RMS_EPS,
+    )
+    .map_err(gpu_err)?;
+    Ok(())
 }
 
 /// The trailing norms, residual add, and router GEMV shared between the

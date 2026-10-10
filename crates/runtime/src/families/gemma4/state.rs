@@ -8,6 +8,11 @@ use crate::real_forward_utils::{layer_tensor, read_bf16_host};
 
 /// Per-layer real-checkpoint state built once at open.
 pub(crate) struct RealGemmaState {
+    /// True when the install has no routed experts (`num_experts == 0`),
+    /// read off the arch the way `RealLlamaState::dense` is. Decides the
+    /// dense arm in the attention tail, the FFN encoders and the produce
+    /// loop; every router-shaped field below is then left unwritten.
+    pub(crate) dense: bool,
     /// BF16 `[hidden]` per layer: the checkpoint's `router.scale` with
     /// `1/sqrt(hidden)` pre-folded (the Swift effective-scale buffers).
     pub(crate) effective_scale: Vec<gpu::MetalBuffer>,
@@ -141,17 +146,24 @@ impl RealGemmaState {
                     .to_string(),
             ));
         }
-        if arch.num_experts <= 0 || arch.top_k_experts <= 0 {
-            return Err(RealForwardError::Unsupported(
-                "real Gemma 4 installs are MoE; num_experts/top_k must be positive".to_string(),
-            ));
-        }
-        if arch.top_k_experts as usize > gpu::MAX_STREAMED_EXPERTS {
-            return Err(RealForwardError::Unsupported(format!(
-                "top_k {} exceeds the {}-slot MoE kernels",
-                arch.top_k_experts,
-                gpu::MAX_STREAMED_EXPERTS
-            )));
+        // The dense/MoE switch, keyed on the arch field and never on tensor
+        // names. A dense install keeps the family's sandwich norms and
+        // `layer_scalar` (the real dense carrier carries both) and drops
+        // only the router-shaped reads.
+        let dense = arch.num_experts == 0;
+        if !dense {
+            if arch.top_k_experts <= 0 {
+                return Err(RealForwardError::Unsupported(
+                    "real Gemma 4 MoE installs need a positive top_k_experts".to_string(),
+                ));
+            }
+            if arch.top_k_experts as usize > gpu::MAX_STREAMED_EXPERTS {
+                return Err(RealForwardError::Unsupported(format!(
+                    "top_k {} exceeds the {}-slot MoE kernels",
+                    arch.top_k_experts,
+                    gpu::MAX_STREAMED_EXPERTS
+                )));
+            }
         }
 
         let hidden = arch.hidden_size as usize;
@@ -163,6 +175,16 @@ impl RealGemmaState {
         let mut per_expert_scale = Vec::with_capacity(num_layers);
         let mut layer_scalar = Vec::with_capacity(num_layers);
         for layer in 0..num_layers {
+            // `layer_scalar` is not router-shaped: the dense Gemma 4 trunk
+            // carries it per layer, and the dense FFN arm scales the
+            // residual with it exactly as the MoE tail does.
+            let scalar = read_bf16_host(weights, index, &layer_tensor(layer, "layer_scalar"))?;
+            layer_scalar.push(*scalar.first().ok_or_else(|| {
+                RealForwardError::Unsupported(format!("layer_scalar layer {layer} is empty"))
+            })?);
+            if dense {
+                continue;
+            }
             // Pre-fold 1/sqrt(D) into router.scale once per open, as the
             // Swift runner does per generation.
             let scale = read_bf16_host(weights, index, &layer_tensor(layer, "router.scale"))?;
@@ -192,20 +214,20 @@ impl RealGemmaState {
                 )));
             }
             per_expert_scale.push(pes);
-
-            let scalar = read_bf16_host(weights, index, &layer_tensor(layer, "layer_scalar"))?;
-            layer_scalar.push(*scalar.first().ok_or_else(|| {
-                RealForwardError::Unsupported(format!("layer_scalar layer {layer} is empty"))
-            })?);
         }
 
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
+            dense,
+            // The router-shaped buffers keep their field sizes (floored at
+            // one element) when dense: the dense arms never bind them, and
+            // a one-element buffer is the honest size of a field the flow
+            // does not use.
             router_logits_f32: context
-                .new_output_buffer((num_experts * 4 * MAX_PREFILL_BATCH) as u64),
+                .new_output_buffer((num_experts.max(1) * 4 * MAX_PREFILL_BATCH) as u64),
             // One token's worth only: the probe is a decode-path diagnostic
             // and the batched prefill encoders never fill it.
-            pilot_logits_f32: context.new_output_buffer((num_experts * 4) as u64),
+            pilot_logits_f32: context.new_output_buffer((num_experts.max(1) * 4) as u64),
             dense_x: halfs(hidden * MAX_PREFILL_BATCH),
             routed_x: halfs(hidden * MAX_PREFILL_BATCH),
             router_x: halfs(hidden),
@@ -233,9 +255,15 @@ impl RealGemmaState {
             return Ok(());
         }
         let use_silu = arch.hidden_activation.contains("silu");
+        // The wide routed-blob argument buffer is allocated even on a dense
+        // install: it is a pointer-array argument buffer (bytes, not the
+        // expert payloads), the dense arms never bind it, and a second
+        // constructor for a handle nothing would read is worse than the
+        // allocation. The routed SIZE axes below are floored at one for the
+        // same reason.
         let wide_blobs =
             gpu::RoutedBlobsWideBuffer::new(context, use_silu).map_err(RealForwardError::Gpu)?;
-        let top_k = arch.top_k_experts as usize;
+        let top_k = arch.top_k_experts.max(1) as usize;
         let hidden = arch.hidden_size as usize;
         let moe_inter = arch.moe_intermediate_size.max(1) as usize;
         let inter = arch.intermediate_size as usize;

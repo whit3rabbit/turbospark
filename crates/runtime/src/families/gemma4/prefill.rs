@@ -30,16 +30,37 @@ impl RealForwardRunner {
                 "prefill_chunk called with an empty chunk".to_string(),
             ));
         }
-        // The ONE place the batched scratch is allocated, and it is here
-        // rather than at open so a run that never chunks its prefill never
-        // pays for it (`BatchedPrefillScratch`). Idempotent, and ahead of the
-        // loop so every `RealGemmaState::batched()` below it is infallible.
+        // The batched scratch the dense FFN's M-row GEMMs write into is
+        // allocated HERE for both arms, exactly once per chunk and never at
+        // open (`BatchedPrefillScratch`).
         let arch = self.arch.clone();
         let context = &mut self.context;
         self.real
             .as_mut()
             .expect("real state present")
             .ensure_batched(context, &arch)?;
+
+        // THE DENSE TRUNK: one micro-batch pass with no host readback
+        // between the halves -- embed, batched attention, batched INT8 FFN,
+        // steering and capture, head -- because nothing in a dense layer is
+        // read back until the logits themselves. The MoE driver below
+        // commits per layer for its router readbacks; dense has nothing to
+        // wait on.
+        if self.real.as_ref().expect("real state present").dense {
+            let mut offset = 0usize;
+            while offset < tokens.len() {
+                let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);
+                let last = offset + take == tokens.len();
+                self.prefill_micro_batch_gemma4_dense(
+                    &tokens[offset..offset + take],
+                    start_position + offset,
+                    last,
+                    logits,
+                )?;
+                offset += take;
+            }
+            return Ok(());
+        }
         let mut offset = 0usize;
         while offset < tokens.len() {
             let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);
@@ -52,6 +73,210 @@ impl RealForwardRunner {
             )?;
             offset += take;
         }
+        Ok(())
+    }
+
+    /// One DENSE micro-batch, in ONE command buffer: the embed lookups, per
+    /// layer the attention half (batched or per-token, the same seam the MoE
+    /// driver honors), the FFN half as M-row INT8 GEMMs, steering and
+    /// residual capture at every token's row, then the head on the last
+    /// token. Nothing is read back until the head's logits, which is what
+    /// lets a whole layer live in one pass -- the MoE driver commits per
+    /// layer because its router logits come back to the host, and dense has
+    /// no such readback.
+    ///
+    /// Bit-exactness is the chunk-equals-N-steps contract: this must land on
+    /// the same logits as the sequential produce walk, and
+    /// `dense_chunked_prefill_matches_all_produce` is the assertion.
+    fn prefill_micro_batch_gemma4_dense(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        want_head: bool,
+        logits: &mut [LogitValue],
+    ) -> Result<(), RealForwardError> {
+        let started = Instant::now();
+        let result =
+            self.prefill_micro_batch_gemma4_dense_inner(tokens, start_position, want_head, logits);
+        // One forward pass per TOKEN, matching the MoE driver's accounting.
+        self.phases.calls += tokens.len() as u64;
+        self.phases.total_nanos += started.elapsed().as_nanos() as u64;
+        result
+    }
+
+    fn prefill_micro_batch_gemma4_dense_inner(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        want_head: bool,
+        logits: &mut [LogitValue],
+    ) -> Result<(), RealForwardError> {
+        let arch = self.arch.clone();
+        let hidden = arch.hidden_size as usize;
+        let inter = arch.intermediate_size as usize;
+        let vocab = arch.vocab_size as usize;
+        let use_silu = arch.hidden_activation.contains("silu");
+        let embed_scale = if arch.embedding_scaled_by_sqrt_hidden {
+            (hidden as f32).sqrt()
+        } else {
+            1.0
+        };
+        let gpu_err = RealForwardError::Gpu;
+        let m = tokens.len();
+
+        if start_position != self.kv.position() {
+            return Err(RealForwardError::Unsupported(format!(
+                "non-sequential chunk start {start_position}; KV cache is at {}",
+                self.kv.position()
+            )));
+        }
+        if let Some(&bad) = tokens.iter().find(|&&t| (t as usize) >= vocab) {
+            return Err(RealForwardError::Unsupported(format!(
+                "token id {bad} outside vocab {vocab}"
+            )));
+        }
+
+        let embed_name = "language_model.model.embed_tokens.weight";
+        let base = self.index.header.index_size;
+
+        let pass = self.context.begin_pass_labeled("chunk cb (dense)");
+        for (t, &token) in tokens.iter().enumerate() {
+            encode_embed_any(
+                &mut self.context,
+                &pass,
+                &self.weights,
+                &self.index,
+                embed_name,
+                (&self.scratch.x, (t * hidden * 2) as u64),
+                token as u32,
+                hidden as u32,
+                vocab,
+                embed_scale,
+            )?;
+        }
+
+        for layer in 0..arch.num_layers as usize {
+            if self.batched_gemv_prefill {
+                // The four attention projections as M-row GEMMs; everything
+                // else in the half stays per token (`TURBOSPARK_BATCHED_GEMV`).
+                self.encode_gemma4_layer_attn_and_router_batched(
+                    &pass,
+                    layer,
+                    start_position,
+                    base,
+                    m,
+                )?;
+            } else {
+                for t in 0..m {
+                    let position = start_position + t;
+                    self.encode_gemma4_layer_attn_and_router(
+                        &pass,
+                        layer,
+                        position,
+                        (position + 1) as u32,
+                        base,
+                        t,
+                    )?;
+                }
+            }
+            // THE FFN HALF AS M-ROW GEMMs: gate/up on the attention tail's
+            // `dense_x` rows, activation and the sandwich tail per row. The
+            // weight bytes move once for the whole micro-batch, which is the
+            // entire reason this driver exists.
+            self.encode_gemma4_dense_ffn_batched(&pass, layer, hidden, inter, use_silu, m)?;
+            for t in 0..m {
+                let x_off = (t * hidden * 2) as u64;
+                encode_steering(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.steering.as_ref(),
+                    layer,
+                    hidden,
+                    1,
+                    x_off,
+                )?;
+                encode_resid_capture(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.resid_capture.as_ref(),
+                    layer,
+                    hidden,
+                    x_off,
+                )?;
+            }
+        }
+
+        if want_head {
+            pass.relabel("final cb (dense head)");
+            let last_off = ((m - 1) * hidden * 2) as u64;
+            let final_norm = norm_view(
+                &self.weights,
+                &self.index,
+                "language_model.model.norm.weight",
+                hidden,
+            )?;
+            gpu::encode_rms_norm_bf16w(
+                &mut self.context,
+                &pass,
+                (&self.scratch.x, last_off),
+                final_norm,
+                (&self.scratch.normed, 0),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+            let head_name = if arch.tie_word_embeddings {
+                embed_name.to_string()
+            } else {
+                "language_model.lm_head.weight".to_string()
+            };
+            encode_gemv_any(
+                &mut self.context,
+                &pass,
+                &self.weights,
+                &self.index,
+                &head_name,
+                vocab,
+                hidden,
+                (&self.scratch.normed, 0),
+                (&self.scratch.logits, 0),
+            )?;
+            if arch.final_logit_softcap > 0.0 {
+                gpu::encode_logit_softcap(
+                    &mut self.context,
+                    &pass,
+                    (&self.scratch.logits, 0),
+                    arch.final_logit_softcap as f32,
+                    vocab as u32,
+                )
+                .map_err(gpu_err)?;
+            }
+        } else {
+            pass.relabel("final cb (dense chunk, no head)");
+        }
+        let t_wait = Instant::now();
+        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+        self.kv.advance_by(m);
+        let skip_head = !want_head || !self.prefill_chunk_is_final;
+        let last_position = start_position + m - 1;
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(last_position, skip_head);
+        }
+
+        if !want_head {
+            return Ok(());
+        }
+        if vocab != logits.len() {
+            return Err(RealForwardError::Unsupported(format!(
+                "vocab mismatch: model has {}, caller expected {}",
+                vocab,
+                logits.len()
+            )));
+        }
+        gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
         Ok(())
     }
 

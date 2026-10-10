@@ -155,6 +155,17 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     ("minimax_m2", ModelFamily::MiniMaxM2),
     ("gemma4", ModelFamily::Gemma4),
     ("gemma4_text", ModelFamily::Gemma4),
+    // The dense Gemma 4 12B "unified" naming. Read off
+    // `cowWhySo/humanizer-12b-mlx-8bit` @ baea046b43eb77516e270ffea17869bbe9110fc8,
+    // whose root `model_type` is `gemma4_unified` and whose
+    // `text_config.model_type` is `gemma4_unified_text` (an
+    // `enable_moe_block: false` DENSE trunk with `num_experts: null`; the
+    // hybrid 5:1 sliding/full schedule and the per-kind `rope_parameters`
+    // match the 26B-A4B rows above). Same prefix-match hazard as the
+    // `qwen3_5` pair below: the lookup is exact equality, so `gemma4` never
+    // absorbs these and these never absorb `gemma4`.
+    ("gemma4_unified", ModelFamily::Gemma4),
+    ("gemma4_unified_text", ModelFamily::Gemma4),
     ("qwen3_5_moe", ModelFamily::QwenGdnMoe),
     ("qwen3_5_moe_text", ModelFamily::QwenGdnMoe),
     // ROADMAP's 1-bit entry. Read off `prism-ml/Bonsai-27B-mlx-1bit`

@@ -233,3 +233,145 @@ pub fn build_synthetic_gemma4_real_install_at_shared_bits(
     write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
     Ok(arch)
 }
+
+/// Writes a tiny DENSE Gemma 4 install through the real checkpoint pipeline:
+/// the same `language_model.` naming as [`build_synthetic_gemma4_real_install`]
+/// with the routed half absent entirely -- no `router.*`, no
+/// `.experts.switch_glu.`, a plain `mlp.{gate,up,down}_proj` triple, and only
+/// the four per-layer norms the dense trunk carries (the `_1`/`_2` variants
+/// are the MoE split's). This is the fixture for the dense arm of the real
+/// Gemma 4 decode flow.
+///
+/// EVERYTHING QUANTIZED IS 8-BIT (`default_bits: 8`, no overrides), read off
+/// the first real dense carrier, `cowWhySo/humanizer-12b-mlx-8bit`: that
+/// checkpoint is INT8 affine at group 64 everywhere, embedding included, so
+/// this fixture is the repo's only whole-forward coverage of the INT8
+/// resident GEMV plus the INT8 embedding lookup. `v_proj` ships on sliding
+/// layers only, matching the real inventory -- a full layer takes V from its
+/// K projection under `attention_k_eq_v`, and the real 12B carries no
+/// `v_proj` tensor for them at all.
+///
+/// The mask keeps the real 5:1 schedule (`full_attention` at layer index
+/// 5, 11, ...), so a fixture with `num_layers >= 6` exercises both layer
+/// kinds; with fewer layers everything is sliding except a final full one.
+pub fn build_synthetic_gemma4_dense_real_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    sliding_window: i64,
+    model_id: &str,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    let mut arch = tiny_gemma4_arch(vocab_size, num_layers);
+    arch.num_experts = 0;
+    arch.top_k_experts = 0;
+    arch.moe_intermediate_size = 0;
+    arch.sliding_window = sliding_window;
+    arch.full_attention_layer_mask = (0..num_layers).map(|l| (l % 6 == 5) as u8).collect();
+
+    let vocab = vocab_size as usize;
+    let qk_dim = NUM_HEADS * HEAD_DIM;
+
+    let mut ts: Vec<Tensor> = Vec::new();
+    ts.extend(int8_triple(
+        "language_model.model.embed_tokens.weight",
+        vocab,
+        HIDDEN,
+        1,
+    ));
+    for l in 0..num_layers as usize {
+        let p = format!("language_model.model.layers.{l}");
+        let full = l % 6 == 5;
+        let seed = 1000 * (l as u64 + 1);
+        ts.extend(int8_triple(
+            &format!("{p}.self_attn.q_proj.weight"),
+            qk_dim,
+            HIDDEN,
+            seed + 1,
+        ));
+        ts.extend(int8_triple(
+            &format!("{p}.self_attn.k_proj.weight"),
+            qk_dim,
+            HIDDEN,
+            seed + 2,
+        ));
+        // A sliding layer carries a real v_proj; a full layer takes V from
+        // its K projection (attention_k_eq_v) and ships no v tensor.
+        if !full {
+            ts.extend(int8_triple(
+                &format!("{p}.self_attn.v_proj.weight"),
+                qk_dim,
+                HIDDEN,
+                seed + 7,
+            ));
+        }
+        ts.extend(int8_triple(
+            &format!("{p}.self_attn.o_proj.weight"),
+            HIDDEN,
+            qk_dim,
+            seed + 3,
+        ));
+        ts.push(bf16_vector(
+            &format!("{p}.self_attn.q_norm.weight"),
+            HEAD_DIM,
+            1.0,
+            seed + 20,
+        ));
+        ts.push(bf16_vector(
+            &format!("{p}.self_attn.k_norm.weight"),
+            HEAD_DIM,
+            1.0,
+            seed + 21,
+        ));
+        for (i, role) in ["gate_proj", "up_proj", "down_proj"].iter().enumerate() {
+            let (rows, cols) = if *role == "down_proj" {
+                (HIDDEN, INTER)
+            } else {
+                (INTER, HIDDEN)
+            };
+            ts.extend(int8_triple(
+                &format!("{p}.mlp.{role}.weight"),
+                rows,
+                cols,
+                seed + 30 + i as u64,
+            ));
+        }
+        // The DENSE norm inventory: four per layer, no MoE split variants.
+        for (i, norm) in [
+            "input_layernorm",
+            "post_attention_layernorm",
+            "pre_feedforward_layernorm",
+            "post_feedforward_layernorm",
+        ]
+        .iter()
+        .enumerate()
+        {
+            ts.push(bf16_vector(
+                &format!("{p}.{norm}.weight"),
+                HIDDEN,
+                1.0,
+                seed + 40 + i as u64,
+            ));
+        }
+        // The real dense checkpoint carries `layer_scalar` on every layer
+        // even with the MoE block off; ship it so the fixture matches the
+        // inventory the classifier and any reader will meet.
+        ts.push(bf16_vector(&format!("{p}.layer_scalar"), 1, 1.0, seed + 50));
+    }
+    ts.push(bf16_vector(
+        "language_model.model.norm.weight",
+        HIDDEN,
+        1.0,
+        7,
+    ));
+
+    let blob = assemble_safetensors(&ts);
+    let source = MemoryRangeSource::new(&blob);
+    let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
+    let quant = Gemma4Quant {
+        default_bits: 8,
+        group_size: 64,
+        bits_overrides: std::collections::HashMap::new(),
+    };
+    write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
+    Ok(arch)
+}

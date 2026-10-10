@@ -12,7 +12,6 @@ using namespace metal;
 //
 // Fused dequant + GEMV for the router and shared expert projections.
 // ============================================================================
-
 constant constexpr uint kInt8GroupSize = 64;
 constant constexpr uint kRowsPerTGInt8 = 8;
 constant uint FC_INT8_M [[function_constant(70)]];
@@ -161,4 +160,35 @@ kernel void shared_int8_gate_up_act_simd(
         float up_half = float(half(up_acc));
         act[row] = half(int8_hidden_activation(gate_half) * up_half);
     }
+}
+
+// ----------------------------------------------------------------------------
+// PORT-LOCAL kernel: there is no Swift original for an INT8 embedding
+// lookup (the Swift engine has no INT8-affine table to look up), so this
+// mirrors `dequant_int4.metal`'s `embed_lookup_int4` one element per thread
+// with the nibble unpack dropped. Its only contract is the CPU reference
+// `turbospark_compute::quant::embed_lookup_int8` (out scaled by `out_scale`
+// at the call site, which the host encoder applies and the parity test
+// multiplies in). First carrier: the dense humanizer Gemma 4 12B, whose
+// 262144 x 3840 embedding table is INT8 affine at group 64.
+// ----------------------------------------------------------------------------
+kernel void embed_lookup_int8(
+    device const uint8_t* table   [[buffer(0)]],   // [V, D] unsigned bytes
+    device const bfloat*  scales  [[buffer(1)]],   // [V, D/64] BF16
+    device const bfloat*  biases  [[buffer(2)]],   // [V, D/64] BF16
+    device half*          out     [[buffer(3)]],   // [D] FP16
+    constant uint&        token_id [[buffer(4)]],
+    constant uint&        D       [[buffer(5)]],
+    constant float&       out_scale [[buffer(6)]], // pass 1.0 to disable
+    uint                  gid     [[thread_position_in_grid]]
+) {
+    if (gid >= D) return;
+    const uint groups_per_row = D / kInt8GroupSize;
+    device const uint8_t* row_q = table  + uint(token_id) * D;
+    device const bfloat*  row_s = scales + uint(token_id) * groups_per_row;
+    device const bfloat*  row_b = biases + uint(token_id) * groups_per_row;
+    float q = float(uint(row_q[gid]));
+    float s = float(row_s[gid / kInt8GroupSize]);
+    float b = float(row_b[gid / kInt8GroupSize]);
+    out[gid] = half((q * s + b) * out_scale);
 }

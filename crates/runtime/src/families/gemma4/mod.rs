@@ -116,88 +116,132 @@ impl RealForwardRunner {
 
         let mut pending_routed = PendingRouted::default();
 
+        let dense = self.real.as_ref().expect("real state present").dense;
         let sequential = moe::RoutedSlot::sequential();
         let h1 = self.real.as_ref().expect("real state present").h1.clone();
-        for layer in 0..arch.num_layers as usize {
-            self.encode_gemma4_layer_attn_and_router(&pass, layer, position, seq_len, base, 0)?;
 
-            let cb1 = pass.commit().waiting_on_drop();
-            let _shared_pass = if self.shared_cb_overlap {
-                Some(self.encode_shared_expert_branch(
+        if dense {
+            // THE DENSE TRUNK: attention (tail without the router pieces),
+            // then one FFN pass. The pass shape mirrors the MoE loop's
+            // non-pipelined form -- cb1 commits and waits (the tail's
+            // readbacks, if any, sit behind it), the FFN pass stays open
+            // and carries the next layer's attention, the head rides the
+            // last one. No routed pipeline, no expert cache: there is
+            // nothing to overlap. The FFN pass's GPU time lands in
+            // `final_cb` because it commits with the head's command buffer;
+            // `TURBOSPARK_PHASES` on a dense install reads accordingly.
+            for layer in 0..arch.num_layers as usize {
+                self.encode_gemma4_layer_attn_and_router(&pass, layer, position, seq_len, base, 0)?;
+
+                let cb1 = pass.commit().waiting_on_drop();
+                let t_wait = Instant::now();
+                self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
+                self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+
+                pass = self.context.begin_pass_labeled("dense ffn cb");
+                self.encode_gemma4_dense_ffn(&pass, layer, hidden, inter, use_silu)?;
+                encode_steering(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.steering.as_ref(),
+                    layer,
+                    hidden,
+                    1,
+                    0,
+                )?;
+                encode_resid_capture(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.resid_capture.as_ref(),
+                    layer,
+                    hidden,
+                    0,
+                )?;
+            }
+        } else {
+            for layer in 0..arch.num_layers as usize {
+                self.encode_gemma4_layer_attn_and_router(&pass, layer, position, seq_len, base, 0)?;
+
+                let cb1 = pass.commit().waiting_on_drop();
+                let _shared_pass = if self.shared_cb_overlap {
+                    Some(self.encode_shared_expert_branch(
+                        layer,
+                        hidden,
+                        inter,
+                        use_silu,
+                        &sequential,
+                        (&h1, 0),
+                    )?)
+                } else {
+                    None
+                };
+
+                let t_wait = Instant::now();
+                self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
+                self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+
+                if let Some(pending) = pending_routed.take() {
+                    let t_retire = Instant::now();
+                    self.phases.routed_cb_gpu_nanos += (pending.wait_with_gpu_time() * 1e9) as u64;
+                    self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
+                }
+
+                pass = self.context.begin_pass_labeled("routed cb");
+
+                self.encode_gemma4_layer_routed_moe(
+                    &pass,
                     layer,
                     hidden,
                     inter,
+                    moe_inter,
+                    num_experts,
+                    top_k,
                     use_silu,
                     &sequential,
-                    (&h1, 0),
-                )?)
-            } else {
-                None
-            };
+                )?;
+                // The layer's OUTPUT, on the SAME "routed cb" pass the routed
+                // tail just encoded into: `encode_gemma4_layer_routed_moe`
+                // ends with `layer_scalar`'s `encode_scalar_mul` over the
+                // whole accumulated residual, which is the true end of this
+                // layer's contribution and what the next layer's attention
+                // reads. The sequential decode path is always token 0 of
+                // `scratch.x`, so the offset is 0; the chunked-prefill driver
+                // (`prefill.rs`) and the batched-routed tail
+                // (`moe_batch.rs`) are the other two call sites, each at
+                // their own token's offset.
+                encode_steering(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.steering.as_ref(),
+                    layer,
+                    hidden,
+                    1,
+                    0,
+                )?;
+                encode_resid_capture(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.resid_capture.as_ref(),
+                    layer,
+                    hidden,
+                    0,
+                )?;
 
-            let t_wait = Instant::now();
-            self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
-            self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+                if self.routed_pipeline {
+                    pending_routed.set(pass.commit().waiting_on_drop());
+                    pass = self.context.begin_pass_labeled("cb1 (attn+router)");
+                }
+            }
 
             if let Some(pending) = pending_routed.take() {
                 let t_retire = Instant::now();
                 self.phases.routed_cb_gpu_nanos += (pending.wait_with_gpu_time() * 1e9) as u64;
                 self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
             }
-
-            pass = self.context.begin_pass_labeled("routed cb");
-
-            self.encode_gemma4_layer_routed_moe(
-                &pass,
-                layer,
-                hidden,
-                inter,
-                moe_inter,
-                num_experts,
-                top_k,
-                use_silu,
-                &sequential,
-            )?;
-            // The layer's OUTPUT, on the SAME "routed cb" pass the routed
-            // tail just encoded into: `encode_gemma4_layer_routed_moe`
-            // ends with `layer_scalar`'s `encode_scalar_mul` over the
-            // whole accumulated residual, which is the true end of this
-            // layer's contribution and what the next layer's attention
-            // reads. The sequential decode path is always token 0 of
-            // `scratch.x`, so the offset is 0; the chunked-prefill driver
-            // (`prefill.rs`) and the batched-routed tail
-            // (`moe_batch.rs`) are the other two call sites, each at
-            // their own token's offset.
-            encode_steering(
-                &mut self.context,
-                &pass,
-                &self.scratch,
-                self.steering.as_ref(),
-                layer,
-                hidden,
-                1,
-                0,
-            )?;
-            encode_resid_capture(
-                &mut self.context,
-                &pass,
-                &self.scratch,
-                self.resid_capture.as_ref(),
-                layer,
-                hidden,
-                0,
-            )?;
-
-            if self.routed_pipeline {
-                pending_routed.set(pass.commit().waiting_on_drop());
-                pass = self.context.begin_pass_labeled("cb1 (attn+router)");
-            }
-        }
-
-        if let Some(pending) = pending_routed.take() {
-            let t_retire = Instant::now();
-            self.phases.routed_cb_gpu_nanos += (pending.wait_with_gpu_time() * 1e9) as u64;
-            self.phases.pipeline_wait_nanos += t_retire.elapsed().as_nanos() as u64;
         }
 
         if !self.skip_head {
