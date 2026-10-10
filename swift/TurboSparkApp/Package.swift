@@ -65,6 +65,8 @@ let package = Package(
                     "-L../TurboSpark/Sources/CTurboSpark",
                     "-Xlinker", "-force_load",
                     "-Xlinker", "../TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a",
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", "@executable_path/../Frameworks",
                 ])
             ]
         ),
