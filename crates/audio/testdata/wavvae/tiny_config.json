@@ -1,0 +1,20 @@
+{
+  "dec_in": 12,
+  "dec_ratios": [
+    2,
+    3,
+    2
+  ],
+  "enc_dim": 16,
+  "enc_filters": 4,
+  "enc_ratios": [
+    2,
+    2,
+    3
+  ],
+  "latent_up": 4,
+  "lstm_layers": 2,
+  "ngf": 4,
+  "sample_rate": 24000,
+  "z_dim": 6
+}

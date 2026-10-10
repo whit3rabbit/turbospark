@@ -1,0 +1,59 @@
+{
+  "files": {
+    "mel_ref.npy": "3c9282bb6d29a624f429d3e8790f1abafd514a74d11ee70f4595f8a3fe42d57d",
+    "mel_wav.npy": "e268e2f5af2dd6e283adddfb764a92b3314cfd582878e57e831d4c7922c16ed9",
+    "s1_mel2ph.npy": "fe03ad8070e96ceaf463ef9e15f57a3f05325987d6e3763b7b31d58f97de1aaf",
+    "s1_ph.npy": "b15c9b175d123628c69d72b8fc8f1aa839ba9aba57e7452ad3d1b4ab3eef2d10",
+    "s1_stream.npy": "09cf6f58dcd0041b45b1683f3e91c3ece28323ed9f345e76f6d43278fdc422fb",
+    "s1_tone.npy": "ac1b20737498bbada2cc860156c56da5cf10c1d4a05e14bf7620c101c6dd71c6",
+    "s2_mel2ph.npy": "00ffe88d19fb70f1c1333899194fc7c3fefa7feaeab427f410a101f083e0a54b",
+    "s2_ph.npy": "0b187a2bae3a5a3ca96c43723090f5e380d32104a41c6cd9bb0822e1276ee0e9",
+    "s2_stream.npy": "6491bfeaadb5cf3466c01451cd11ac57da4f917aaed2408290471ba3ff9504f6",
+    "s2_tone.npy": "819c38482de4f987f5cc82e5e26cf329a4bb9cd6154c155a6692aede0bb828cd",
+    "s3_mel2ph.npy": "e060a394671d02e97e8fbf80ce2eeb9bd1ec235b35fb27ff7ec53f1c9edbf24b",
+    "s3_ph.npy": "8b70abe5fce20e48a64e26ad66db93701e83f3021b420bd7d97cef38da85c855",
+    "s3_stream.npy": "56b313b5051dcdc4f71e23bfb335d631b2a64628e833b90bfc1daabba6af5a63",
+    "s3_tone.npy": "d9adfa2802d21c6422bb43777649b307c6571d927d7343333d060d26a6cc9835",
+    "s4_mel2ph.npy": "5a8ac7fb20c3c19b6766c525adab780a44c79e5180c9d163d5123093bb0f0e97",
+    "s4_ph.npy": "70a36c540809e9b6c583ee71d32024feffd064471cfeecfae3eac8603e5f2394",
+    "s4_stream.npy": "4080f8fe1c2ac4c7882e98f4d60b708d3307219ab0c9ef9dc87729374a2ee33b",
+    "s4_tone.npy": "7df231fdc614f8867c26bad627f080eac886900646388f79d0ad156a326f0b94",
+    "tiny_config.json": "81a81b9cafcba39e6df699181c5917bc29e095ebb32cf0110928fa7542b77432",
+    "tiny_feats.npy": "0633adb92596ee92c7fe31d9005106a714c5c7164df20eb4c41c8531c7243d28",
+    "tiny_greedy.npy": "1d87837b69f20d658da38b8b882dc17985e67721190158673113134a138f4770",
+    "tiny_mel.npy": "517f8f98e7e9a45e0c65cbe94efda24700066619e8a6e0b2b667fbb9ebfb962a",
+    "tiny_tf_logits.npy": "56c733f6316adf50ecf0a69cbe156d5a9595826b73b56fdef97d9ba4bb9977bf",
+    "tiny_tf_tokens.npy": "a013678eeadb26de6c0b2b45e317981ec58a782d0fa507fb4bfad3f3ff78051b",
+    "tiny_weights.safetensors": "5011cbc1caa2de8d22c9f370bd396525c9c847e3d9275926aaa0872ee84ae8f4"
+  },
+  "info": {
+    "mel": {
+      "mel_frames": 337,
+      "pmf": 336
+    },
+    "model": {
+      "greedy_min_margin": 0.014661073684692383,
+      "greedy_steps": 24
+    },
+    "parse": {
+      "s1": {
+        "mel2ph_len": 200,
+        "phones": 6
+      },
+      "s2": {
+        "mel2ph_len": 200,
+        "phones": 7
+      },
+      "s3": {
+        "mel2ph_len": 200,
+        "phones": 4
+      },
+      "s4": {
+        "mel2ph_len": 200,
+        "phones": 3
+      }
+    }
+  },
+  "reference": "bytedance/MegaTTS3 aligner + frontend_function.align; openai-whisper 20240930 audio.py",
+  "torch": "2.14.1"
+}

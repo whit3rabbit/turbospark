@@ -1,0 +1,16 @@
+{
+  "channels": 8,
+  "ctx_mask_dim": 4,
+  "dim": 32,
+  "ffn_hidden": 256,
+  "heads": 2,
+  "layers": 2,
+  "local_cond_dim": 24,
+  "ph_filter": 64,
+  "ph_heads": 2,
+  "ph_kernel": 3,
+  "ph_layers": 2,
+  "phone_vocab": 20,
+  "time_freq_dim": 16,
+  "tone_vocab": 8
+}

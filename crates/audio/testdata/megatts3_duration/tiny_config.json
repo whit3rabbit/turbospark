@@ -1,0 +1,13 @@
+{
+  "code_size": 20,
+  "enc_filter": 64,
+  "enc_heads": 2,
+  "enc_kernel": 3,
+  "enc_layers": 2,
+  "ffn_hidden": 128,
+  "heads": 8,
+  "hidden": 32,
+  "layers": 2,
+  "phone_vocab": 170,
+  "tone_vocab": 10
+}

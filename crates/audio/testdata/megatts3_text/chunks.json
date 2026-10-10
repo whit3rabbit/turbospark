@@ -1,0 +1,622 @@
+[
+ {
+  "chunks": [
+   "Hello world."
+  ],
+  "max_chars": 130,
+  "text": "Hello world."
+ },
+ {
+  "chunks": [
+   "Hello world."
+  ],
+  "max_chars": 20,
+  "text": "Hello world."
+ },
+ {
+  "chunks": [
+   "Hello world."
+  ],
+  "max_chars": 40,
+  "text": "Hello world."
+ },
+ {
+  "chunks": [
+   "Hello world."
+  ],
+  "max_chars": 300,
+  "text": "Hello world."
+ },
+ {
+  "chunks": [],
+  "max_chars": 130,
+  "text": ""
+ },
+ {
+  "chunks": [],
+  "max_chars": 20,
+  "text": ""
+ },
+ {
+  "chunks": [],
+  "max_chars": 40,
+  "text": ""
+ },
+ {
+  "chunks": [],
+  "max_chars": 300,
+  "text": ""
+ },
+ {
+  "chunks": [
+   ""
+  ],
+  "max_chars": 130,
+  "text": "   "
+ },
+ {
+  "chunks": [
+   ""
+  ],
+  "max_chars": 20,
+  "text": "   "
+ },
+ {
+  "chunks": [
+   ""
+  ],
+  "max_chars": 40,
+  "text": "   "
+ },
+ {
+  "chunks": [
+   ""
+  ],
+  "max_chars": 300,
+  "text": "   "
+ },
+ {
+  "chunks": [
+   "One sentence without terminal punctuation"
+  ],
+  "max_chars": 130,
+  "text": "One sentence without terminal punctuation"
+ },
+ {
+  "chunks": [
+   "One sentence without terminal punctuation"
+  ],
+  "max_chars": 20,
+  "text": "One sentence without terminal punctuation"
+ },
+ {
+  "chunks": [
+   "One sentence without terminal punctuation"
+  ],
+  "max_chars": 40,
+  "text": "One sentence without terminal punctuation"
+ },
+ {
+  "chunks": [
+   "One sentence without terminal punctuation"
+  ],
+  "max_chars": 300,
+  "text": "One sentence without terminal punctuation"
+ },
+ {
+  "chunks": [
+   "First. Second! Third? Fourth; fifth: sixth, seventh."
+  ],
+  "max_chars": 130,
+  "text": "First. Second! Third? Fourth; fifth: sixth, seventh."
+ },
+ {
+  "chunks": [
+   "First. Second!",
+   "Third? Fourth;",
+   "fifth: sixth,",
+   "seventh."
+  ],
+  "max_chars": 20,
+  "text": "First. Second! Third? Fourth; fifth: sixth, seventh."
+ },
+ {
+  "chunks": [
+   "First. Second! Third? Fourth; fifth:",
+   "sixth, seventh."
+  ],
+  "max_chars": 40,
+  "text": "First. Second! Third? Fourth; fifth: sixth, seventh."
+ },
+ {
+  "chunks": [
+   "First. Second! Third? Fourth; fifth: sixth, seventh."
+  ],
+  "max_chars": 300,
+  "text": "First. Second! Third? Fourth; fifth: sixth, seventh."
+ },
+ {
+  "chunks": [
+   "A very long sentence that keeps going and going without any punctuation at all so that the chunker cannot split it anywhere and must emit it whole even though it is far longer than the limit"
+  ],
+  "max_chars": 130,
+  "text": "A very long sentence that keeps going and going without any punctuation at all so that the chunker cannot split it anywhere and must emit it whole even though it is far longer than the limit"
+ },
+ {
+  "chunks": [
+   "A very long sentence that keeps going and going without any punctuation at all so that the chunker cannot split it anywhere and must emit it whole even though it is far longer than the limit"
+  ],
+  "max_chars": 20,
+  "text": "A very long sentence that keeps going and going without any punctuation at all so that the chunker cannot split it anywhere and must emit it whole even though it is far longer than the limit"
+ },
+ {
+  "chunks": [
+   "A very long sentence that keeps going and going without any punctuation at all so that the chunker cannot split it anywhere and must emit it whole even though it is far longer than the limit"
+  ],
+  "max_chars": 40,
+  "text": "A very long sentence that keeps going and going without any punctuation at all so that the chunker cannot split it anywhere and must emit it whole even though it is far longer than the limit"
+ },
+ {
+  "chunks": [
+   "A very long sentence that keeps going and going without any punctuation at all so that the chunker cannot split it anywhere and must emit it whole even though it is far longer than the limit"
+  ],
+  "max_chars": 300,
+  "text": "A very long sentence that keeps going and going without any punctuation at all so that the chunker cannot split it anywhere and must emit it whole even though it is far longer than the limit"
+ },
+ {
+  "chunks": [
+   "Washington CNN When President Donald Trump declared in the House Chamber this week that executives at the nation\u2019s top automakers were \u201cso excited\u201d about their prospects amid his new tariff regime,",
+   "it did not entirely reflect the conversation he\u2019d held with them earlier that day."
+  ],
+  "max_chars": 130,
+  "text": "Washington CNN When President Donald Trump declared in the House Chamber this week that executives at the nation\u2019s top automakers were \u201cso excited\u201d about their prospects amid his new tariff regime, it did not entirely reflect the conversation he\u2019d held with them earlier that day."
+ },
+ {
+  "chunks": [
+   "Washington CNN When President Donald Trump declared in the House Chamber this week that executives at the nation\u2019s top automakers were \u201cso excited\u201d about their prospects amid his new tariff regime,",
+   "it did not entirely reflect the conversation he\u2019d held with them earlier that day."
+  ],
+  "max_chars": 20,
+  "text": "Washington CNN When President Donald Trump declared in the House Chamber this week that executives at the nation\u2019s top automakers were \u201cso excited\u201d about their prospects amid his new tariff regime, it did not entirely reflect the conversation he\u2019d held with them earlier that day."
+ },
+ {
+  "chunks": [
+   "Washington CNN When President Donald Trump declared in the House Chamber this week that executives at the nation\u2019s top automakers were \u201cso excited\u201d about their prospects amid his new tariff regime,",
+   "it did not entirely reflect the conversation he\u2019d held with them earlier that day."
+  ],
+  "max_chars": 40,
+  "text": "Washington CNN When President Donald Trump declared in the House Chamber this week that executives at the nation\u2019s top automakers were \u201cso excited\u201d about their prospects amid his new tariff regime, it did not entirely reflect the conversation he\u2019d held with them earlier that day."
+ },
+ {
+  "chunks": [
+   "Washington CNN When President Donald Trump declared in the House Chamber this week that executives at the nation\u2019s top automakers were \u201cso excited\u201d about their prospects amid his new tariff regime, it did not entirely reflect the conversation he\u2019d held with them earlier that day."
+  ],
+  "max_chars": 300,
+  "text": "Washington CNN When President Donald Trump declared in the House Chamber this week that executives at the nation\u2019s top automakers were \u201cso excited\u201d about their prospects amid his new tariff regime, it did not entirely reflect the conversation he\u2019d held with them earlier that day."
+ },
+ {
+  "chunks": [
+   "Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one.",
+   "Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one.",
+   "Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one."
+  ],
+  "max_chars": 130,
+  "text": "Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. "
+ },
+ {
+  "chunks": [
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one.",
+   "Short one."
+  ],
+  "max_chars": 20,
+  "text": "Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. "
+ },
+ {
+  "chunks": [
+   "Short one. Short one. Short one.",
+   "Short one. Short one. Short one.",
+   "Short one. Short one. Short one.",
+   "Short one. Short one. Short one.",
+   "Short one. Short one. Short one.",
+   "Short one. Short one. Short one.",
+   "Short one. Short one. Short one.",
+   "Short one. Short one. Short one.",
+   "Short one. Short one. Short one.",
+   "Short one. Short one. Short one."
+  ],
+  "max_chars": 40,
+  "text": "Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. "
+ },
+ {
+  "chunks": [
+   "Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one.",
+   "Short one. Short one. Short one."
+  ],
+  "max_chars": 300,
+  "text": "Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. Short one. "
+ },
+ {
+  "chunks": [
+   "Line one. Line two. Line three! Line four? Tabbed."
+  ],
+  "max_chars": 130,
+  "text": "Line one.\nLine two.\n\nLine three!   Line four?\tTabbed."
+ },
+ {
+  "chunks": [
+   "Line one. Line two.",
+   "Line three!",
+   "Line four? Tabbed."
+  ],
+  "max_chars": 20,
+  "text": "Line one.\nLine two.\n\nLine three!   Line four?\tTabbed."
+ },
+ {
+  "chunks": [
+   "Line one. Line two. Line three!",
+   "Line four? Tabbed."
+  ],
+  "max_chars": 40,
+  "text": "Line one.\nLine two.\n\nLine three!   Line four?\tTabbed."
+ },
+ {
+  "chunks": [
+   "Line one. Line two. Line three! Line four? Tabbed."
+  ],
+  "max_chars": 300,
+  "text": "Line one.\nLine two.\n\nLine three!   Line four?\tTabbed."
+ },
+ {
+  "chunks": [
+   "Trailing space after stop."
+  ],
+  "max_chars": 130,
+  "text": "Trailing space after stop. "
+ },
+ {
+  "chunks": [
+   "Trailing space after stop."
+  ],
+  "max_chars": 20,
+  "text": "Trailing space after stop. "
+ },
+ {
+  "chunks": [
+   "Trailing space after stop."
+  ],
+  "max_chars": 40,
+  "text": "Trailing space after stop. "
+ },
+ {
+  "chunks": [
+   "Trailing space after stop."
+  ],
+  "max_chars": 300,
+  "text": "Trailing space after stop. "
+ },
+ {
+  "chunks": [
+   "Ends with a curly quote \u201cfinished.\u201d"
+  ],
+  "max_chars": 130,
+  "text": "Ends with a curly quote \u201cfinished.\u201d"
+ },
+ {
+  "chunks": [
+   "Ends with a curly quote \u201cfinished.\u201d"
+  ],
+  "max_chars": 20,
+  "text": "Ends with a curly quote \u201cfinished.\u201d"
+ },
+ {
+  "chunks": [
+   "Ends with a curly quote \u201cfinished.\u201d"
+  ],
+  "max_chars": 40,
+  "text": "Ends with a curly quote \u201cfinished.\u201d"
+ },
+ {
+  "chunks": [
+   "Ends with a curly quote \u201cfinished.\u201d"
+  ],
+  "max_chars": 300,
+  "text": "Ends with a curly quote \u201cfinished.\u201d"
+ },
+ {
+  "chunks": [
+   "Ends with a wide stop\u3002 Then more text follows here, and more, and more, and more, and more, and more, and more, and more."
+  ],
+  "max_chars": 130,
+  "text": "Ends with a wide stop\u3002 Then more text follows here, and more, and more, and more, and more, and more, and more, and more."
+ },
+ {
+  "chunks": [
+   "Ends with a wide stop\u3002",
+   "Then more text follows here,",
+   "and more, and more,",
+   "and more, and more,",
+   "and more, and more,",
+   "and more."
+  ],
+  "max_chars": 20,
+  "text": "Ends with a wide stop\u3002 Then more text follows here, and more, and more, and more, and more, and more, and more, and more."
+ },
+ {
+  "chunks": [
+   "Ends with a wide stop\u3002",
+   "Then more text follows here, and more,",
+   "and more, and more, and more, and more,",
+   "and more, and more."
+  ],
+  "max_chars": 40,
+  "text": "Ends with a wide stop\u3002 Then more text follows here, and more, and more, and more, and more, and more, and more, and more."
+ },
+ {
+  "chunks": [
+   "Ends with a wide stop\u3002 Then more text follows here, and more, and more, and more, and more, and more, and more, and more."
+  ],
+  "max_chars": 300,
+  "text": "Ends with a wide stop\u3002 Then more text follows here, and more, and more, and more, and more, and more, and more, and more."
+ },
+ {
+  "chunks": [
+   "Wide\uff0cmid\uff1bsentence\uff1atokens\uff01and\uff1fmore\u3002"
+  ],
+  "max_chars": 130,
+  "text": "Wide\uff0cmid\uff1bsentence\uff1atokens\uff01and\uff1fmore\u3002"
+ },
+ {
+  "chunks": [
+   "Wide\uff0cmid\uff1b",
+   "sentence\uff1atokens\uff01",
+   "and\uff1fmore\u3002"
+  ],
+  "max_chars": 20,
+  "text": "Wide\uff0cmid\uff1bsentence\uff1atokens\uff01and\uff1fmore\u3002"
+ },
+ {
+  "chunks": [
+   "Wide\uff0cmid\uff1bsentence\uff1atokens\uff01and\uff1f",
+   "more\u3002"
+  ],
+  "max_chars": 40,
+  "text": "Wide\uff0cmid\uff1bsentence\uff1atokens\uff01and\uff1fmore\u3002"
+ },
+ {
+  "chunks": [
+   "Wide\uff0cmid\uff1bsentence\uff1atokens\uff01and\uff1fmore\u3002"
+  ],
+  "max_chars": 300,
+  "text": "Wide\uff0cmid\uff1bsentence\uff1atokens\uff01and\uff1fmore\u3002"
+ },
+ {
+  "chunks": [
+   "caf\u00e9, na\u00efve; r\u00e9sum\u00e9: \u00fcber! Mixed accents, again, and again, and again, and again, and again, and again, and again, and again."
+  ],
+  "max_chars": 130,
+  "text": "caf\u00e9, na\u00efve; r\u00e9sum\u00e9: \u00fcber! Mixed accents, again, and again, and again, and again, and again, and again, and again, and again."
+ },
+ {
+  "chunks": [
+   "caf\u00e9, na\u00efve;",
+   "r\u00e9sum\u00e9: \u00fcber!",
+   "Mixed accents,",
+   "again, and again,",
+   "and again,",
+   "and again,",
+   "and again,",
+   "and again,",
+   "and again,",
+   "and again."
+  ],
+  "max_chars": 20,
+  "text": "caf\u00e9, na\u00efve; r\u00e9sum\u00e9: \u00fcber! Mixed accents, again, and again, and again, and again, and again, and again, and again, and again."
+ },
+ {
+  "chunks": [
+   "caf\u00e9, na\u00efve; r\u00e9sum\u00e9: \u00fcber!",
+   "Mixed accents, again, and again,",
+   "and again, and again, and again,",
+   "and again, and again, and again."
+  ],
+  "max_chars": 40,
+  "text": "caf\u00e9, na\u00efve; r\u00e9sum\u00e9: \u00fcber! Mixed accents, again, and again, and again, and again, and again, and again, and again, and again."
+ },
+ {
+  "chunks": [
+   "caf\u00e9, na\u00efve; r\u00e9sum\u00e9: \u00fcber! Mixed accents, again, and again, and again, and again, and again, and again, and again, and again."
+  ],
+  "max_chars": 300,
+  "text": "caf\u00e9, na\u00efve; r\u00e9sum\u00e9: \u00fcber! Mixed accents, again, and again, and again, and again, and again, and again, and again, and again."
+ },
+ {
+  "chunks": [
+   "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a."
+  ],
+  "max_chars": 130,
+  "text": "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a."
+ },
+ {
+  "chunks": [
+   "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a."
+  ],
+  "max_chars": 20,
+  "text": "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a."
+ },
+ {
+  "chunks": [
+   "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a."
+  ],
+  "max_chars": 40,
+  "text": "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a."
+ },
+ {
+  "chunks": [
+   "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a."
+  ],
+  "max_chars": 300,
+  "text": "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a."
+ },
+ {
+  "chunks": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",
+   "y"
+  ],
+  "max_chars": 130,
+  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+ },
+ {
+  "chunks": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",
+   "y"
+  ],
+  "max_chars": 20,
+  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+ },
+ {
+  "chunks": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",
+   "y"
+  ],
+  "max_chars": 40,
+  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+ },
+ {
+  "chunks": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+  ],
+  "max_chars": 300,
+  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+ },
+ {
+  "chunks": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",
+   "y"
+  ],
+  "max_chars": 130,
+  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+ },
+ {
+  "chunks": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",
+   "y"
+  ],
+  "max_chars": 20,
+  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+ },
+ {
+  "chunks": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",
+   "y"
+  ],
+  "max_chars": 40,
+  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+ },
+ {
+  "chunks": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+  ],
+  "max_chars": 300,
+  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. y"
+ },
+ {
+  "chunks": [
+   "Dr. Smith went to Washington. He arrived at 5 p.m. on Tuesday, and left the next day; nobody noticed, which was the point."
+  ],
+  "max_chars": 130,
+  "text": "Dr. Smith went to Washington. He arrived at 5 p.m. on Tuesday, and left the next day; nobody noticed, which was the point."
+ },
+ {
+  "chunks": [
+   "Dr.",
+   "Smith went to Washington.",
+   "He arrived at 5 p.m.",
+   "on Tuesday,",
+   "and left the next day;",
+   "nobody noticed,",
+   "which was the point."
+  ],
+  "max_chars": 20,
+  "text": "Dr. Smith went to Washington. He arrived at 5 p.m. on Tuesday, and left the next day; nobody noticed, which was the point."
+ },
+ {
+  "chunks": [
+   "Dr. Smith went to Washington.",
+   "He arrived at 5 p.m. on Tuesday,",
+   "and left the next day; nobody noticed,",
+   "which was the point."
+  ],
+  "max_chars": 40,
+  "text": "Dr. Smith went to Washington. He arrived at 5 p.m. on Tuesday, and left the next day; nobody noticed, which was the point."
+ },
+ {
+  "chunks": [
+   "Dr. Smith went to Washington. He arrived at 5 p.m. on Tuesday, and left the next day; nobody noticed, which was the point."
+  ],
+  "max_chars": 300,
+  "text": "Dr. Smith went to Washington. He arrived at 5 p.m. on Tuesday, and left the next day; nobody noticed, which was the point."
+ },
+ {
+  "chunks": [
+   "Ellipsis... and more... and even more... until the limit is reached, finally, after a very long run of words that goes on."
+  ],
+  "max_chars": 130,
+  "text": "Ellipsis... and more... and even more... until the limit is reached, finally, after a very long run of words that goes on."
+ },
+ {
+  "chunks": [
+   "Ellipsis...",
+   "and more...",
+   "and even more...",
+   "until the limit is reached,",
+   "finally,",
+   "after a very long run of words that goes on."
+  ],
+  "max_chars": 20,
+  "text": "Ellipsis... and more... and even more... until the limit is reached, finally, after a very long run of words that goes on."
+ },
+ {
+  "chunks": [
+   "Ellipsis... and more... and even more...",
+   "until the limit is reached, finally,",
+   "after a very long run of words that goes on."
+  ],
+  "max_chars": 40,
+  "text": "Ellipsis... and more... and even more... until the limit is reached, finally, after a very long run of words that goes on."
+ },
+ {
+  "chunks": [
+   "Ellipsis... and more... and even more... until the limit is reached, finally, after a very long run of words that goes on."
+  ],
+  "max_chars": 300,
+  "text": "Ellipsis... and more... and even more... until the limit is reached, finally, after a very long run of words that goes on."
+ }
+]

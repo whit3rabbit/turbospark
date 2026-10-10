@@ -1,0 +1,31 @@
+{
+  "files": {
+    "a_audio.npy": "cea3cb804fa7952ff067b12d0ca14839d8254e39f896892c76335391c0c02041",
+    "a_audio_mean.npy": "cbab9a562eaeb3369eade683b4443816199967da131ebcc639c00749ec715ccd",
+    "a_enc_out.npy": "f7324cd98e46d18f23876a49272d631ab00293dffa2718773a55ee48cc3dca6c",
+    "a_eps.npy": "cafeac6a5d40336ae0583046b7f6dc059f7905849c74f0ac25da92ca7dd5c26e",
+    "a_latent.npy": "a7b9bc2d8e74809e2b24f2e4f3fd44de2999956e6f0c3563691d1479184cef3b",
+    "a_logvar.npy": "b5905b111ec2715671ba8ef351f08226b7de51965af6a48d36764f6beba9e21d",
+    "a_mean.npy": "87a88bdad466f3e23f41da287452680a81f27a9dab052feb7dcc95beabe683f6",
+    "a_up.npy": "d8cd826ee3adb40509e2dc70c4e1b85f99c4042814d3ea3ab4959f6ec35c67f6",
+    "a_wav.npy": "6ade3734934781f93a1cf62e1dbbc8f6ddc4c7c178064ed5ba7467916f59c0a8",
+    "b_audio.npy": "2ee96969bbad3ac465213b0b591097a83ea8f15db9b7ecfa46c8d58bacc0c937",
+    "b_audio_mean.npy": "37588b0324574c13a505e061e388962db25944ad7b30b8f7e22410d88f20d577",
+    "b_enc_out.npy": "779b47b2e7c322ccf88f8953e4b5098f1d843708e7088add8d3a2bd189d143f9",
+    "b_eps.npy": "7b77b3900d7ced92a0030f3ad2ac9b4fdd4399d97d0c9143445393dd5d8e4c0b",
+    "b_latent.npy": "4eddb5eccc25cbd3669818abea5d89ec30b2ae2e2062c97f7bfba32b465db7fa",
+    "b_logvar.npy": "5c7aa9dd722682de189fd3749373a34ae08d46e24fa64d461b8057953fcb5965",
+    "b_mean.npy": "584bb8b9afd6761e084ce3463d53178d2631c3dce1b9c933f46844109e1006b0",
+    "b_up.npy": "40267f3867e7538d7bb44fd7acde21f51a18eba8f7defa6d07103e3550b00f92",
+    "b_wav.npy": "8a6e30a622fba4a9df3658721f21c3ab5fbb9f0a30f67d7c1e90a254aef6228a",
+    "tiny_config.json": "faa17e924ac2afb867d710e96a4d81f87fb7002126acd77164e2123566dae04b",
+    "tiny_weights.safetensors": "3694b433ca5cc68131a146a7cc0ad880740f30b21ec3327c5d4a72fdb7d8dfdd"
+  },
+  "hop": 12,
+  "peaks": {
+    "a": 0.6742384433746338,
+    "b": 0.5319241881370544
+  },
+  "reference": "bytedance/MegaTTS3 tts/modules/wavvae (Apache-2.0)",
+  "torch": "2.14.1"
+}

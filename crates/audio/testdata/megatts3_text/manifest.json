@@ -1,0 +1,14 @@
+{
+  "chunk_cases": 76,
+  "files": {
+    "chunks.json": "957f32e99f434ee7c004942c6b34778fd8db548eb23bafbfd7506e76076f923c",
+    "tiny_g2p/config.json": "cc772614dddfc419a31ea6db4c1a7cccbbcb595974207b6c5da9eaa6efcb8444",
+    "tiny_g2p/generation_config.json": "57ef3923597f292316b0875ee75fc7ba832862116bddbc18cce16a8b139e642e",
+    "tiny_g2p/model.safetensors": "624a06405b91966c28ebbfd297edd762be9adfd8fd971da13901d12b3bf36296",
+    "tiny_g2p/tokenizer.json": "1fe6075e436088077968aadd9edef2af91cc946aa237645e1c28e2254f120bda",
+    "tiny_g2p_cases.json": "692fb62f7b5a87c94aa3549ba0c5d6f88c05a54afdcd933429a9e0d87053d22f"
+  },
+  "g2p_cases": 12,
+  "reference": "bytedance/MegaTTS3 split_text.py + frontend_function.g2p",
+  "torch": "2.14.1"
+}

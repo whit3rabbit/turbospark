@@ -1,0 +1,53 @@
+{
+  "cases": {
+    "a": {
+      "frames": 10,
+      "n": 12,
+      "p_w": 1.4,
+      "peak": 4.3330817222595215,
+      "prompt_frames": 4,
+      "steps": 4,
+      "t_w": 3.0
+    },
+    "b": {
+      "frames": 6,
+      "n": 3,
+      "p_w": 2.0,
+      "peak": 5.822221279144287,
+      "prompt_frames": 2,
+      "steps": 3,
+      "t_w": 2.5
+    }
+  },
+  "files": {
+    "a_draw_00.npy": "b9b6ab183a638a57685317d614f89d99ca8fe8e50c2294aa4ffb0b9c284b0f79",
+    "a_draw_01.npy": "60012e6080e41245cdf9dc59f3b768c6b564a2a6d1d717dc53c8cb596c6c74a1",
+    "a_draw_02.npy": "42619a4cf5314a8348f6893c222bddd34ec46fb3f9336558337d86838e6121dd",
+    "a_draw_03.npy": "93e7c8e86de7f51594e807d5172b681fdcac82b000e2681c61c46c7000d4f197",
+    "a_draw_04.npy": "3980c03a4457ffa9c94566aa035c5b8ea52a80a6a4c5b32c766ca3c5bf78c8f0",
+    "a_mel2ph.npy": "965d0d9eb36243453756b92cffe9fc2c4f9c860a291a1359133f57f7fce6926e",
+    "a_ph_enc.npy": "b80bfb7bb4bf5bdb17f3bc9aa8baf1b47d956a773c3dfcc1d4236646af9ccb5b",
+    "a_phone.npy": "0c683fe0b9f36621ec0e78553ed50cc34dbd2732b8059c0391187b7f925f7a82",
+    "a_prompt.npy": "f52a0c08b580cf3d20fef386ee090d6f9ed617f8764dca447c4aa16dd4e40051",
+    "a_tone.npy": "efa34b0c0e41c0d7d72c3401cbfe9e8270ea57fa29d473a01835c21d2175ac39",
+    "a_vel_first.npy": "c3830cf68f508891f865a3fcdd9f8b0d49626b28094a76477fb79feac895c042",
+    "a_x_final.npy": "cdd072d1f9fc332e294f1f6df93d6c53dcde8d0237305cf3954f4e4f15525631",
+    "a_x_ling.npy": "5bb86e09c970d5db743b6483aa3f73737f76ceaca119c253979eb64a81fc412d",
+    "b_draw_00.npy": "67ea6697b868a7e27e9c4404acdbb2f4ce4464148699e946ddd311a306cdf726",
+    "b_draw_01.npy": "af4a0348ce66f82d0725f8888f05f19efcd52fdb0f46280dd52ab6bd32398edd",
+    "b_draw_02.npy": "c2c178cf38f5083836baacf4725875ce419e18e51013ded1345f58770b8247a1",
+    "b_draw_03.npy": "944d7c2d0a5d12bf2f1cc97620742df01b01ca18a2767c236ea0864c9f4bb8c7",
+    "b_mel2ph.npy": "a005d127a31fad92d27939cadf6e84eea8f23009d2630164b3b85576b9a7928f",
+    "b_ph_enc.npy": "09d19b322cd18e2cf92cf5b7f1b14194a1c0412daba39df568d521f41462f998",
+    "b_phone.npy": "b69df8488aa36c97d528dcbc52ec58a59f125be66d353188e032eed67216d752",
+    "b_prompt.npy": "38a22ae88673b2c50dc9fed16a4ba0526dcb351e5ec8419cff82b6048c46c6e8",
+    "b_tone.npy": "21c84fa2544fd95f330001623e9471abfbb3737ce567012b068c8c6884ea9a62",
+    "b_vel_first.npy": "18b511ec3d6c2d950b22d9b3f2b86be2f621ea64a672d32c91f92d6cd5b366a0",
+    "b_x_final.npy": "55ea992e0419cc1794a9aebdce369bb6872c20c02205cc5f7aafbe7434e8b0f8",
+    "b_x_ling.npy": "31041163870f34baa068a1d39f32b2869602d47985de9614048a9c6f25dfa3bf",
+    "tiny_config.json": "cf4c79173f519b8bb554c2350319e14482062a5c7275f8c9a6e5daeb72eb5513",
+    "tiny_weights.safetensors": "ed925eb674a630d7d95355e530319dee352490a6130342f9aa35ba6b50ab329c"
+  },
+  "reference": "bytedance/MegaTTS3 tts/modules/llm_dit (Apache-2.0)",
+  "torch": "2.14.1"
+}

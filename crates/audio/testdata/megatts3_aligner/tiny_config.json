@@ -1,0 +1,10 @@
+{
+  "dec_ctx": 800,
+  "dec_layers": 2,
+  "enc_ctx": 64,
+  "enc_layers": 2,
+  "heads": 2,
+  "n_mels": 80,
+  "state": 32,
+  "vocab": 810
+}
