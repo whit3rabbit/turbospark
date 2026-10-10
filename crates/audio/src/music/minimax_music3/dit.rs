@@ -50,8 +50,41 @@ struct DiTBlock {
     ff_out_b: Tensor,
 }
 
+/// Logical dtype of every stage of one block, shared by the per-operation
+/// path and the device sequence so both round identically.
+#[derive(Clone, Copy)]
+struct BlockDtypes {
+    /// Input norm, and the q/k/v projection input.
+    norm: DType,
+    /// Rotary, attention, and the output projection input.
+    attention: DType,
+    residual: DType,
+    /// Post-attention norm, and the feed-forward input projection input.
+    post_norm: DType,
+    /// Feed-forward input projection output and its gated activation.
+    ff: DType,
+    ff_out: DType,
+    output: DType,
+}
+
+impl BlockDtypes {
+    fn all(&self, dtype: DType) -> bool {
+        [
+            self.norm,
+            self.attention,
+            self.residual,
+            self.post_norm,
+            self.ff,
+            self.ff_out,
+            self.output,
+        ]
+        .iter()
+        .all(|d| *d == dtype)
+    }
+}
+
 impl DiTBlock {
-    fn output_dtype(&self, input: DType) -> DType {
+    fn dtypes(&self, input: DType) -> BlockDtypes {
         let norm = input.promote(self.ln1_w.dtype).promote(self.ln1_b.dtype);
         let attention = self
             .attn
@@ -60,9 +93,21 @@ impl DiTBlock {
             .promote(self.attn.to_k.output_dtype(norm))
             .promote(self.attn.to_v.output_dtype(norm));
         let residual = input.promote(self.attn.to_out.output_dtype(attention));
-        let norm = residual.promote(self.ln2_w.dtype).promote(self.ln2_b.dtype);
-        let fused = self.ff_in_b.promote(self.ff_in_w.output_dtype(norm));
-        residual.promote(self.ff_out_b.promote(self.ff_out_w.output_dtype(fused)))
+        let post_norm = residual.promote(self.ln2_w.dtype).promote(self.ln2_b.dtype);
+        let ff = self.ff_in_b.promote(self.ff_in_w.output_dtype(post_norm));
+        let ff_out = self.ff_out_b.promote(self.ff_out_w.output_dtype(ff));
+        BlockDtypes {
+            norm,
+            attention,
+            residual,
+            post_norm,
+            ff,
+            ff_out,
+            output: residual.promote(ff_out),
+        }
+    }
+    fn output_dtype(&self, input: DType) -> DType {
+        self.dtypes(input).output
     }
 }
 
@@ -373,7 +418,12 @@ impl FlowMatchingTransformer {
             &[len, dims.rotary_dim / 2],
         );
         for (layer_index, block) in self.blocks.iter().enumerate() {
-            sequence = self.block_forward(block, &sequence, len, &cos, &sin, dtype, layer_index)?;
+            sequence = match self.block_sequence(block, &sequence, len, &cos, &sin, dtype)? {
+                Some(out) => out,
+                None => {
+                    self.block_forward(block, &sequence, len, &cos, &sin, dtype, layer_index)?
+                }
+            };
             dtype = block.output_dtype(dtype);
         }
 
@@ -408,6 +458,157 @@ impl FlowMatchingTransformer {
         Ok(channel_major)
     }
 
+    /// One block as a single device submission: the per-operation path's
+    /// device kernels in the same order, with the host rotary, residual adds,
+    /// and gated activation replaced by device forms that reproduce host
+    /// BF16 rounding. `None` when the backend has no sequences, a stage is
+    /// not BF16, a bias would be added on the host, or the device met a case
+    /// it cannot round like the host; the caller then runs `block_forward`.
+    fn block_sequence(
+        &self,
+        block: &DiTBlock,
+        x: &[f32],
+        len: usize,
+        cos: &[f32],
+        sin: &[f32],
+        input_dtype: DType,
+    ) -> Result<Option<Vec<f32>>> {
+        let Some(device) = &self.backend else {
+            return Ok(None);
+        };
+        let t = block.dtypes(input_dtype);
+        let dims = &self.dims;
+        let inner = dims.heads * dims.head_dim;
+        if input_dtype != DType::Bf16
+            || !t.all(DType::Bf16)
+            || !backend::bias_in_kernel(&block.ff_in_w, Some(&block.ff_in_b), t.post_norm)
+            || !backend::bias_in_kernel(&block.ff_out_w, Some(&block.ff_out_b), t.ff)
+        {
+            return Ok(None);
+        }
+        let Some(mut seq) = device.sequence("dit_block", &[len, inner]) else {
+            return Ok(None);
+        };
+        let project = |seq: &mut dyn backend::Sequence,
+                       x,
+                       w: &Weight,
+                       bias: Option<&Tensor>,
+                       inn,
+                       out,
+                       dtype| {
+            backend::sequence_linear_bias(seq, x, w, bias, len, inn, out, dtype)
+        };
+        let input = seq.upload(x)?;
+        let normed = seq.layer_norm(
+            input,
+            &block.ln1_w,
+            Some(&block.ln1_b),
+            len,
+            inner,
+            LN_EPS,
+            t.norm,
+        )?;
+        let q = project(
+            seq.as_mut(),
+            normed,
+            &block.attn.to_q,
+            None,
+            inner,
+            inner,
+            t.norm,
+        )?;
+        let k = project(
+            seq.as_mut(),
+            normed,
+            &block.attn.to_k,
+            None,
+            inner,
+            inner,
+            t.norm,
+        )?;
+        let v = project(
+            seq.as_mut(),
+            normed,
+            &block.attn.to_v,
+            None,
+            inner,
+            inner,
+            t.norm,
+        )?;
+        let (cos, sin) = (seq.upload(cos)?, seq.upload(sin)?);
+        let rope = |seq: &mut dyn backend::Sequence, x| {
+            seq.partial_rope(
+                x,
+                cos,
+                sin,
+                len,
+                dims.heads,
+                dims.head_dim,
+                dims.rotary_dim,
+                t.attention,
+            )
+        };
+        let q = rope(seq.as_mut(), q)?;
+        let k = rope(seq.as_mut(), k)?;
+        let attention = seq.attention(
+            q,
+            k,
+            v,
+            AttentionShape {
+                batch: 1,
+                queries: len,
+                keys: len,
+                heads: dims.heads,
+                kv_heads: dims.heads,
+                dim: dims.head_dim,
+                kv_time_major: false,
+                causal: false,
+                offset: 0,
+            },
+            t.attention,
+        )?;
+        let projected = project(
+            seq.as_mut(),
+            attention,
+            &block.attn.to_out,
+            None,
+            inner,
+            inner,
+            t.attention,
+        )?;
+        let residual = seq.add_round(input, projected, t.residual)?;
+        let normed = seq.layer_norm(
+            residual,
+            &block.ln2_w,
+            Some(&block.ln2_b),
+            len,
+            inner,
+            LN_EPS,
+            t.post_norm,
+        )?;
+        let ff = project(
+            seq.as_mut(),
+            normed,
+            &block.ff_in_w,
+            Some(&block.ff_in_b),
+            inner,
+            2 * dims.ff_inner,
+            t.post_norm,
+        )?;
+        let gated = seq.gated_silu(ff, len, dims.ff_inner, t.ff)?;
+        let out = project(
+            seq.as_mut(),
+            gated,
+            &block.ff_out_w,
+            Some(&block.ff_out_b),
+            dims.ff_inner,
+            inner,
+            t.ff,
+        )?;
+        let output = seq.add_round(residual, out, t.output)?;
+        Ok(seq.finish(&[output])?.map(|mut values| values.remove(0)))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn block_forward(
         &self,
@@ -432,9 +633,8 @@ impl FlowMatchingTransformer {
         let inner = dims.heads * dims.head_dim;
         let head_dim = dims.head_dim;
         trace("input", x, input_dtype, &[len, inner]);
-        let mut dtype = input_dtype
-            .promote(block.ln1_w.dtype)
-            .promote(block.ln1_b.dtype);
+        let t = block.dtypes(input_dtype);
+        let mut dtype = t.norm;
         let normed = backend::layer_norm(
             &self.backend,
             x,
@@ -452,12 +652,7 @@ impl FlowMatchingTransformer {
         trace("k", &k, dtype, &[len, inner]);
         let v = backend::linear(&normed, &block.attn.to_v, None, len, inner, inner, dtype)?;
         trace("v", &v, dtype, &[len, inner]);
-        dtype = block
-            .attn
-            .to_q
-            .output_dtype(dtype)
-            .promote(block.attn.to_k.output_dtype(dtype))
-            .promote(block.attn.to_v.output_dtype(dtype));
+        dtype = t.attention;
         let scale = 1.0 / (head_dim as f32).sqrt();
         let attn_rows = if self.backend.is_some() || dtype != DType::F32 {
             // Rotary touches only the leading features of each head. Apply
@@ -533,21 +728,11 @@ impl FlowMatchingTransformer {
         )?;
         let mut residual = x.to_vec();
         for (r, p) in residual.iter_mut().zip(proj) {
-            *r = input_dtype
-                .promote(block.attn.to_out.output_dtype(dtype))
-                .round(*r + p);
+            *r = t.residual.round(*r + p);
         }
 
-        trace(
-            "residual",
-            &residual,
-            input_dtype.promote(block.attn.to_out.output_dtype(dtype)),
-            &[len, inner],
-        );
-        dtype = input_dtype
-            .promote(block.attn.to_out.output_dtype(dtype))
-            .promote(block.ln2_w.dtype)
-            .promote(block.ln2_b.dtype);
+        trace("residual", &residual, t.residual, &[len, inner]);
+        dtype = t.post_norm;
         let normed = backend::layer_norm(
             &self.backend,
             &residual,
@@ -568,7 +753,7 @@ impl FlowMatchingTransformer {
             2 * dims.ff_inner,
             dtype,
         )?;
-        dtype = block.ff_in_b.promote(block.ff_in_w.output_dtype(dtype));
+        dtype = t.ff;
         trace("ff", &ff, dtype, &[len, 2 * dims.ff_inner]);
         let mut gated = vec![0.0f32; len * dims.ff_inner];
         for t in 0..len {
@@ -588,17 +773,12 @@ impl FlowMatchingTransformer {
             inner,
             dtype,
         )?;
-        dtype = block.ff_out_b.promote(block.ff_out_w.output_dtype(dtype));
+        dtype = t.ff_out;
         trace("ff_out", &out, dtype, &[len, inner]);
         for (r, o) in residual.iter_mut().zip(out) {
-            *r = block.output_dtype(input_dtype).round(*r + o);
+            *r = t.output.round(*r + o);
         }
-        trace(
-            "output",
-            &residual,
-            block.output_dtype(input_dtype),
-            &[len, inner],
-        );
+        trace("output", &residual, t.output, &[len, inner]);
         Ok(residual)
     }
 }

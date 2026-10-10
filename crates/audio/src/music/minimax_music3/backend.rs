@@ -2,6 +2,7 @@
 //! a device owns resident weights and the expensive tensor operations.
 
 use super::precision::{self, DType};
+use super::weights::Tensor;
 use crate::{ops, Result, SpeechError};
 use std::rc::Rc;
 
@@ -102,6 +103,104 @@ pub trait DeviceWeight {
             why: "backend does not implement audio LSTM recurrence".into(),
         })
     }
+    /// The concrete weight, for a device [`Sequence`] that binds its buffers.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+}
+
+/// A persistent device f32 buffer that outlives one [`Sequence`] (the AR KV
+/// cache). The host writes and reads it only between submissions.
+pub trait DeviceBuffer {
+    fn write(&self, first: usize, data: &[f32]) -> Result<()>;
+    fn read(&self, first: usize, len: usize) -> Result<Vec<f32>>;
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// A tensor inside a [`Sequence`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slot(pub usize);
+
+/// Device operations recorded together and read back once, so a device can
+/// run a whole depth step in one submission. Every operation must produce
+/// exactly what the matching per-operation call produces.
+pub trait Sequence {
+    fn upload(&mut self, data: &[f32]) -> Result<Slot>;
+    /// A persistent buffer as a slot, without a copy.
+    fn bind(&mut self, buffer: &dyn DeviceBuffer) -> Result<Slot>;
+    /// `len` elements of `slot` starting at element `first`, without a copy.
+    fn view(&mut self, slot: Slot, first: usize, len: usize) -> Result<Slot>;
+    /// Copy `src` into the existing `dst` bit for bit.
+    fn copy(&mut self, src: Slot, dst: Slot) -> Result<()>;
+    /// [`ComputeBackend::rope`] on a slot.
+    fn rope(&mut self, x: Slot, shape: RopeShape, dtype: DType) -> Result<Slot>;
+    /// A projection; `bias` and `dtype` (the output dtype) as passed to
+    /// [`DeviceWeight::linear`].
+    #[allow(clippy::too_many_arguments)]
+    fn linear(
+        &mut self,
+        x: Slot,
+        weight: &dyn DeviceWeight,
+        bias: Option<&[f32]>,
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        dtype: DType,
+    ) -> Result<Slot>;
+    /// [`ComputeBackend::layer_norm`] on a slot.
+    #[allow(clippy::too_many_arguments)]
+    fn layer_norm(
+        &mut self,
+        x: Slot,
+        w: &[f32],
+        bias: Option<&[f32]>,
+        rows: usize,
+        cols: usize,
+        eps: f32,
+        dtype: DType,
+    ) -> Result<Slot>;
+    /// The DiT's typed partial NeoX rotary (`dit::partial_rope_typed`) over
+    /// `[len, heads * head_dim]` with `[len, rotary / 2]` tables.
+    #[allow(clippy::too_many_arguments)]
+    fn partial_rope(
+        &mut self,
+        x: Slot,
+        cos: Slot,
+        sin: Slot,
+        len: usize,
+        heads: usize,
+        head_dim: usize,
+        rotary: usize,
+        dtype: DType,
+    ) -> Result<Slot>;
+    /// `dtype.round(state * dtype.silu(gate))` over rows of `[state | gate]`,
+    /// each `half` wide.
+    fn gated_silu(&mut self, x: Slot, rows: usize, half: usize, dtype: DType) -> Result<Slot>;
+    fn rms_norm(
+        &mut self,
+        x: Slot,
+        w: &[f32],
+        rows: usize,
+        cols: usize,
+        eps: f32,
+        dtype: DType,
+    ) -> Result<Slot>;
+    fn attention(
+        &mut self,
+        q: Slot,
+        k: Slot,
+        v: Slot,
+        shape: AttentionShape,
+        dtype: DType,
+    ) -> Result<Slot>;
+    /// `dtype.round(a + b)`.
+    fn add_round(&mut self, a: Slot, b: Slot, dtype: DType) -> Result<Slot>;
+    /// `fused.round(gate.silu(g) * u)`.
+    fn swiglu(&mut self, g: Slot, u: Slot, gate: DType, fused: DType) -> Result<Slot>;
+    /// Run everything and read `read` back. `Ok(None)` means an operation met
+    /// a case the device cannot round exactly like the host; the caller
+    /// recomputes on the per-operation path.
+    fn finish(self: Box<Self>, read: &[Slot]) -> Result<Option<Vec<Vec<f32>>>>;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -239,6 +338,16 @@ pub trait ComputeBackend {
         })
     }
     fn trace(&self, _stage: &str, _data: &[f32], _dtype: DType, _shape: &[usize]) {}
+    /// A [`Sequence`] for one `op` of geometry `shape`, or `None` to keep the
+    /// per-operation path (the default, and any time traces are observed).
+    fn sequence(&self, _op: &'static str, _shape: &[usize]) -> Option<Box<dyn Sequence + '_>> {
+        None
+    }
+    /// A persistent buffer of `len` f32 values for sequences to bind, or
+    /// `None` when the backend has no sequences.
+    fn buffer(&self, _len: usize) -> Option<Result<Rc<dyn DeviceBuffer>>> {
+        None
+    }
 }
 
 pub(crate) fn rotary_tables(len: usize, rotary_dim: usize, theta: f32) -> (Vec<f32>, Vec<f32>) {
@@ -509,6 +618,75 @@ impl Weight {
             }
         }
         Ok(output)
+    }
+}
+
+/// [`linear`] without bias, recorded into `sequence`: the same output dtype
+/// and the same device call as the per-operation path.
+pub(crate) fn sequence_linear(
+    sequence: &mut dyn Sequence,
+    x: Slot,
+    weight: &Weight,
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    input_dtype: DType,
+) -> Result<Slot> {
+    sequence_linear_bias(
+        sequence,
+        x,
+        weight,
+        None,
+        rows,
+        input_dim,
+        output_dim,
+        input_dtype,
+    )
+}
+
+/// Whether [`linear`] passes `bias` to the device kernel rather than adding
+/// it on the host: the bias dtype matches the projection's output dtype (or
+/// there is no bias). Only then can a sequence reproduce it.
+pub(crate) fn bias_in_kernel(weight: &Weight, bias: Option<&Tensor>, input_dtype: DType) -> bool {
+    let projection = weight.output_dtype(input_dtype);
+    bias.filter(|b| !b.is_empty())
+        .is_none_or(|b| projection.promote(b.dtype) == projection)
+}
+
+/// [`linear`] with an in-kernel bias (see [`bias_in_kernel`]), recorded into
+/// `sequence`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sequence_linear_bias(
+    sequence: &mut dyn Sequence,
+    x: Slot,
+    weight: &Weight,
+    bias: Option<&Tensor>,
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    input_dtype: DType,
+) -> Result<Slot> {
+    let bias = bias.filter(|b| !b.is_empty());
+    match weight {
+        Weight::Device { weight: device, .. }
+            if weight.len() == input_dim * output_dim
+                && bias.is_none_or(|b| b.len() == output_dim)
+                && bias_in_kernel(weight, bias, input_dtype) =>
+        {
+            let dtype = weight.output_dtype(input_dtype);
+            sequence.linear(
+                x,
+                device.as_ref(),
+                bias.map(|b| b.data.as_slice()),
+                rows,
+                input_dim,
+                output_dim,
+                dtype,
+            )
+        }
+        _ => Err(SpeechError::Input {
+            why: "sequence linear needs a matching device weight and kernel bias".into(),
+        }),
     }
 }
 

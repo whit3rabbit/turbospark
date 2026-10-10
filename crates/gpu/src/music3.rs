@@ -1,6 +1,6 @@
 //! Resident Music 3 matrices and typed tensor operations in f32 storage. Quantized matrices
 //! remain in checkpoint packing and decode inside the projection kernel.
-use crate::{autorelease_pool, read_f32_buffer, GpuError, MetalBuffer, MetalContext};
+use crate::{autorelease_pool, read_f32_buffer, GpuError, MetalBuffer, MetalContext, PassEncoder};
 use half::{bf16, f16};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -30,6 +30,15 @@ static NATIVE_SCALES_BF16_SOURCE: &str = concat!(
     include_str!("shaders/music3.metal"),
     include_str!("shaders/music3_attention_fallback.metal")
 );
+// Elementwise steps of a `Music3Sequence` (residual add, SwiGLU, non-finite
+// scan) with the shared helpers; precise math like the other native sources.
+static SEQUENCE_SOURCE: &str = concat!(
+    "// turbospark: precise-math\n",
+    include_str!("shaders/music3.metal"),
+    include_str!("shaders/music3_sequence.metal")
+);
+mod sequence;
+pub use sequence::{Music3Buffer, Music3Sequence, Music3Slot, Music3Table};
 /// Source for a kernel that reads a weight's scales and offsets.
 fn weight_source(dtype: Music3DType, scales_bf16: bool) -> &'static str {
     match (dtype == Music3DType::F32, scales_bf16) {
@@ -99,6 +108,14 @@ pub struct Music3Weight {
     resident: usize,
     /// Scales and offsets are stored as bf16 (bit-identical widening).
     scales_bf16: bool,
+}
+/// Planned projection: kernel, packed parameters, and threadgroup count.
+struct LinearPlan {
+    source: &'static str,
+    kernel: &'static str,
+    params: Vec<u8>,
+    groups: u64,
+    count: usize,
 }
 impl Drop for Music3Weight {
     fn drop(&mut self) {
@@ -337,143 +354,30 @@ impl Music3Device {
         offset: usize,
         dtype: Music3DType,
     ) -> Result<Vec<f32>, GpuError> {
-        let qcount = product(&[batch, queries, heads, dim])?;
-        let kcount = product(&[batch, keys, kv_heads, dim])?;
-        if batch == 0
-            || queries == 0
-            || keys == 0
-            || kv_heads == 0
-            || heads == 0
-            || heads % kv_heads != 0
-            || dim == 0
-            || dim > 256
-            || q.len() != qcount
-            || k.len() != kcount
-            || v.len() != kcount
-            || offset.checked_add(queries).is_none()
-        {
-            return Err(bad("Music 3 attention geometry mismatch"));
-        }
-        let vector =
-            dtype != Music3DType::F32 && queries <= 8 && matches!(dim, 64 | 96 | 128 | 256);
-        let mma = dtype != Music3DType::F32 && queries > 8 && matches!(dim, 64 | 128);
-        let fallback = dtype != Music3DType::F32 && !vector && !mma;
-        let threads = if vector {
-            1024
-        } else if mma {
-            32
-        } else {
-            dim.next_power_of_two().max(32)
-        };
-        let p = bytes(&params(&[
+        let plan = attention_plan(
+            [q.len(), k.len(), v.len()],
             batch,
             queries,
             keys,
             heads,
             kv_heads,
             dim,
-            time_major as usize,
-            causal as usize,
+            time_major,
+            causal,
             offset,
-            threads,
-            dtype as usize,
-            ((1.0 / (dim as f64).sqrt()) as f32).to_bits() as usize,
-        ])?);
+            dtype,
+        )?;
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
-            if fallback {
-                let threads = keys.div_ceil(4).div_ceil(32).min(32) * 32;
-                let mut fp = p.clone();
-                fp[36..40].copy_from_slice(&(threads as u32).to_le_bytes());
-                let constants = crate::rms_norm::unused_function_constants();
-                let qk = c.pipeline(
-                    NATIVE_SOURCE,
-                    "music3_attention_fallback_qk",
-                    &constants,
-                    b"",
-                )?;
-                let softmax = c.pipeline(
-                    NATIVE_SOURCE,
-                    "music3_attention_fallback_softmax",
-                    &constants,
-                    b"",
-                )?;
-                let pv = c.pipeline(
-                    NATIVE_SOURCE,
-                    "music3_attention_fallback_pv",
-                    &constants,
-                    b"",
-                )?;
-                let qb = c.new_buffer_with_data(q);
-                let kb = c.new_buffer_with_data(k);
-                let vb = c.new_buffer_with_data(v);
-                let out = c.new_output_buffer((qcount * 4) as u64);
-                let size = (product(&[batch, heads, queries, keys])? * 4) as u64;
-                let scores = c.new_output_buffer(size);
-                let probabilities = c.new_output_buffer(size);
-                let pass = c.begin_pass();
-                pass.encode_threadgroups(
-                    &qk,
-                    &[(&qb, 0, 0), (&kb, 1, 0), (&scores, 2, 0)],
-                    &[(&fp, 3)],
-                    (batch * heads * queries.div_ceil(8) * keys.div_ceil(8)) as u64,
-                    32,
-                );
-                pass.encode_threadgroups(
-                    &softmax,
-                    &[(&scores, 0, 0), (&probabilities, 1, 0)],
-                    &[(&fp, 2)],
-                    (batch * heads * queries) as u64,
-                    threads as u64,
-                );
-                pass.encode_threadgroups(
-                    &pv,
-                    &[(&probabilities, 0, 0), (&vb, 1, 0), (&out, 2, 0)],
-                    &[(&fp, 3)],
-                    (batch * heads * queries.div_ceil(8) * dim.div_ceil(8)) as u64,
-                    32,
-                );
-                pass.commit_and_wait_checked()?;
-                return finite_output(&out, qcount);
-            }
-            let pipeline = c.pipeline(
-                source(dtype),
-                if vector {
-                    "music3_attention_vector"
-                } else if mma {
-                    "music3_attention_mma"
-                } else {
-                    "music3_attention"
-                },
-                &crate::rms_norm::unused_function_constants(),
-                b"",
-            )?;
             let qb = c.new_buffer_with_data(q);
             let kb = c.new_buffer_with_data(k);
             let vb = c.new_buffer_with_data(v);
-            let out = c.new_output_buffer((qcount * 4) as u64);
-            let scratch =
-                c.new_output_buffer((product(&[batch, queries, heads, keys])? * 4) as u64);
+            let out = c.new_output_buffer((plan.count * 4) as u64);
             let pass = c.begin_pass();
-            pass.encode_threadgroups(
-                &pipeline,
-                &[
-                    (&qb, 0, 0),
-                    (&kb, 1, 0),
-                    (&vb, 2, 0),
-                    (&out, 3, 0),
-                    (&scratch, 5, 0),
-                ],
-                &[(&p, 4)],
-                if mma {
-                    (batch * queries.div_ceil(8) * heads) as u64
-                } else {
-                    (batch * queries * heads) as u64
-                },
-                threads as u64,
-            );
+            let _scratch =
+                encode_attention(&mut c, &pass, &plan, (&qb, 0), (&kb, 0), (&vb, 0), &out)?;
             pass.commit_and_wait_checked()?;
-            finite_output(&out, qcount)
+            finite_output(&out, plan.count)
         })
     }
     pub fn rms_norm(
@@ -751,51 +655,27 @@ impl Music3Device {
         layer: bool,
         kokoro: bool,
     ) -> Result<Vec<f32>, GpuError> {
-        let count = product(&[rows, cols])?;
-        if rows == 0
-            || cols == 0
-            || cols > 8192
-            || x.len() != count
-            || w.len() != cols
-            || bias.is_some_and(|b| b.len() != cols)
-            || !eps.is_finite()
-            || eps < 0.0
-        {
-            return Err(bad("Music 3 norm geometry mismatch"));
-        }
-        let reads = if layer { 8 } else { 4 };
-        let threads = cols.div_ceil(reads).div_ceil(32).clamp(1, 32) * 32;
-        let p = bytes(&[
-            cols as u32,
-            dtype as u32,
-            layer as u32,
-            bias.is_some() as u32,
-            reads as u32,
-            threads as u32,
-            eps.to_bits(),
-        ]);
+        let plan = norm_plan(
+            x.len(),
+            w.len(),
+            bias.map(<[f32]>::len),
+            rows,
+            cols,
+            eps,
+            dtype,
+            layer,
+            kokoro,
+        )?;
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
-            let pipeline = c.pipeline(
-                if kokoro { KOKORO_SOURCE } else { source(dtype) },
-                "music3_norm",
-                &crate::rms_norm::unused_function_constants(),
-                b"",
-            )?;
             let xb = c.new_buffer_with_data(x);
             let wb = c.new_buffer_with_data(w);
             let bb = c.new_buffer_with_data(bias.unwrap_or(&[0.0]));
-            let out = c.new_output_buffer((count * 4) as u64);
+            let out = c.new_output_buffer((plan.count * 4) as u64);
             let pass = c.begin_pass();
-            pass.encode_threadgroups(
-                &pipeline,
-                &[(&xb, 0, 0), (&wb, 1, 0), (&bb, 2, 0), (&out, 3, 0)],
-                &[(&p, 4)],
-                rows as u64,
-                threads as u64,
-            );
+            encode_norm(&mut c, &pass, &plan, (&xb, 0), &wb, &bb, &out)?;
             pass.commit_and_wait_checked()?;
-            finite_output(&out, count)
+            finite_output(&out, plan.count)
         })
     }
     #[allow(clippy::too_many_arguments)]
@@ -810,29 +690,8 @@ impl Music3Device {
         theta: f32,
         dtype: Music3DType,
     ) -> Result<Vec<f32>, GpuError> {
-        let count = product(&[batch, seq, heads, dim])?;
-        if count == 0
-            || dim % 2 != 0
-            || x.len() != count
-            || !theta.is_finite()
-            || theta <= 0.0
-            || offset.checked_add(seq).is_none()
-        {
-            return Err(bad("Music 3 rotary geometry mismatch"));
-        }
-        // Kernel positions are u32; reject truncation before encoding.
-        if u32::try_from(offset + seq).is_err() {
-            return Err(bad("Music 3 rotary positions exceed Metal indexing"));
-        }
-        let p = bytes(&[
-            seq as u32,
-            heads as u32,
-            dim as u32,
-            offset as u32,
-            theta.log2().to_bits(),
-            dtype as u32,
-        ]);
-        self.unary("music3_rope", x, &p, count / 2, dtype)
+        let (p, threads) = rope_params(x.len(), batch, seq, heads, dim, offset, theta, dtype)?;
+        self.unary("music3_rope", x, &p, threads, dtype)
     }
     pub fn normal_from_uniform(&self, x: &[f32], dtype: Music3DType) -> Result<Vec<f32>, GpuError> {
         if x.is_empty() || x.iter().any(|v| !v.is_finite() || *v <= -1.0 || *v >= 1.0) {
@@ -1002,26 +861,331 @@ impl Music3Device {
     ) -> Result<Vec<f32>, GpuError> {
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
-            let pipeline = c.pipeline(
-                source(dtype),
-                name,
-                &crate::rms_norm::unused_function_constants(),
-                b"",
-            )?;
             let xb = c.new_buffer_with_data(x);
             let out = c.new_output_buffer((x.len() * 4) as u64);
             let pass = c.begin_pass();
-            pass.encode_threads_3d(
-                &pipeline,
-                &[(&xb, 0, 0), (&out, 1, 0)],
-                &[(p, 2)],
-                (threads as u64, 1, 1),
-                (128, 1, 1),
-            );
+            encode_unary(&mut c, &pass, name, dtype, p, threads, (&xb, 0), &out)?;
             pass.commit_and_wait_checked()?;
             finite_output(&out, x.len())
         })
     }
+}
+/// Parameters and thread count of `music3_rope` over `len` values, shared by
+/// the synchronous path and `Music3Sequence`.
+#[allow(clippy::too_many_arguments)]
+fn rope_params(
+    len: usize,
+    batch: usize,
+    seq: usize,
+    heads: usize,
+    dim: usize,
+    offset: usize,
+    theta: f32,
+    dtype: Music3DType,
+) -> Result<(Vec<u8>, usize), GpuError> {
+    let count = product(&[batch, seq, heads, dim])?;
+    if count == 0
+        || dim % 2 != 0
+        || len != count
+        || !theta.is_finite()
+        || theta <= 0.0
+        || offset.checked_add(seq).is_none()
+    {
+        return Err(bad("Music 3 rotary geometry mismatch"));
+    }
+    // Kernel positions are u32; reject truncation before encoding.
+    if u32::try_from(offset + seq).is_err() {
+        return Err(bad("Music 3 rotary positions exceed Metal indexing"));
+    }
+    let p = bytes(&[
+        seq as u32,
+        heads as u32,
+        dim as u32,
+        offset as u32,
+        theta.log2().to_bits(),
+        dtype as u32,
+    ]);
+    Ok((p, count / 2))
+}
+/// Append one `(x, out, params)` unary kernel to `pass`.
+#[allow(clippy::too_many_arguments)]
+fn encode_unary(
+    c: &mut MetalContext,
+    pass: &PassEncoder,
+    name: &'static str,
+    dtype: Music3DType,
+    p: &[u8],
+    threads: usize,
+    x: (&MetalBuffer, u64),
+    out: &MetalBuffer,
+) -> Result<(), GpuError> {
+    let pipeline = c.pipeline(
+        source(dtype),
+        name,
+        &crate::rms_norm::unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(x.0, 0, x.1), (out, 1, 0)],
+        &[(p, 2)],
+        (threads as u64, 1, 1),
+        (128, 1, 1),
+    );
+    Ok(())
+}
+/// Planned RMS or layer norm (`music3_norm`).
+struct NormPlan {
+    source: &'static str,
+    params: Vec<u8>,
+    rows: u64,
+    threads: u64,
+    count: usize,
+}
+/// Validation and parameters of one norm, shared by the synchronous path
+/// and `Music3Sequence`.
+#[allow(clippy::too_many_arguments)]
+fn norm_plan(
+    x_len: usize,
+    w_len: usize,
+    bias_len: Option<usize>,
+    rows: usize,
+    cols: usize,
+    eps: f32,
+    dtype: Music3DType,
+    layer: bool,
+    kokoro: bool,
+) -> Result<NormPlan, GpuError> {
+    let count = product(&[rows, cols])?;
+    if rows == 0
+        || cols == 0
+        || cols > 8192
+        || x_len != count
+        || w_len != cols
+        || bias_len.is_some_and(|b| b != cols)
+        || !eps.is_finite()
+        || eps < 0.0
+    {
+        return Err(bad("Music 3 norm geometry mismatch"));
+    }
+    let reads = if layer { 8 } else { 4 };
+    let threads = cols.div_ceil(reads).div_ceil(32).clamp(1, 32) * 32;
+    let p = bytes(&[
+        cols as u32,
+        dtype as u32,
+        layer as u32,
+        bias_len.is_some() as u32,
+        reads as u32,
+        threads as u32,
+        eps.to_bits(),
+    ]);
+    Ok(NormPlan {
+        source: if kokoro { KOKORO_SOURCE } else { source(dtype) },
+        params: p,
+        rows: rows as u64,
+        threads: threads as u64,
+        count,
+    })
+}
+#[allow(clippy::too_many_arguments)]
+fn encode_norm(
+    c: &mut MetalContext,
+    pass: &PassEncoder,
+    plan: &NormPlan,
+    x: (&MetalBuffer, u64),
+    w: &MetalBuffer,
+    bias: &MetalBuffer,
+    out: &MetalBuffer,
+) -> Result<(), GpuError> {
+    let pipeline = c.pipeline(
+        plan.source,
+        "music3_norm",
+        &crate::rms_norm::unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(x.0, 0, x.1), (w, 1, 0), (bias, 2, 0), (out, 3, 0)],
+        &[(&plan.params, 4)],
+        plan.rows,
+        plan.threads,
+    );
+    Ok(())
+}
+
+/// Planned attention: one kernel, or the three-pass fallback.
+struct AttentionPlan {
+    source: &'static str,
+    kernel: &'static str,
+    fallback: bool,
+    params: Vec<u8>,
+    /// Threadgroup counts in dispatch order (one entry unless fallback).
+    groups: Vec<u64>,
+    threads: u64,
+    /// Bytes of the scratch row, or of each fallback score matrix.
+    scratch_bytes: u64,
+    count: usize,
+}
+/// Validation, parameters, and kernel choice of batched attention, shared by
+/// the synchronous path and `Music3Sequence`.
+#[allow(clippy::too_many_arguments)]
+fn attention_plan(
+    lengths: [usize; 3],
+    batch: usize,
+    queries: usize,
+    keys: usize,
+    heads: usize,
+    kv_heads: usize,
+    dim: usize,
+    time_major: bool,
+    causal: bool,
+    offset: usize,
+    dtype: Music3DType,
+) -> Result<AttentionPlan, GpuError> {
+    let qcount = product(&[batch, queries, heads, dim])?;
+    let kcount = product(&[batch, keys, kv_heads, dim])?;
+    if batch == 0
+        || queries == 0
+        || keys == 0
+        || kv_heads == 0
+        || heads == 0
+        || heads % kv_heads != 0
+        || dim == 0
+        || dim > 256
+        || lengths[0] != qcount
+        || lengths[1] != kcount
+        || lengths[2] != kcount
+        || offset.checked_add(queries).is_none()
+    {
+        return Err(bad("Music 3 attention geometry mismatch"));
+    }
+    let vector = dtype != Music3DType::F32 && queries <= 8 && matches!(dim, 64 | 96 | 128 | 256);
+    let mma = dtype != Music3DType::F32 && queries > 8 && matches!(dim, 64 | 128);
+    let fallback = dtype != Music3DType::F32 && !vector && !mma;
+    let threads = if vector {
+        1024
+    } else if mma {
+        32
+    } else {
+        dim.next_power_of_two().max(32)
+    };
+    let p = bytes(&params(&[
+        batch,
+        queries,
+        keys,
+        heads,
+        kv_heads,
+        dim,
+        time_major as usize,
+        causal as usize,
+        offset,
+        threads,
+        dtype as usize,
+        ((1.0 / (dim as f64).sqrt()) as f32).to_bits() as usize,
+    ])?);
+    if fallback {
+        let threads = keys.div_ceil(4).div_ceil(32).min(32) * 32;
+        let mut fp = p.clone();
+        fp[36..40].copy_from_slice(&(threads as u32).to_le_bytes());
+        return Ok(AttentionPlan {
+            source: NATIVE_SOURCE,
+            kernel: "",
+            fallback,
+            params: fp,
+            groups: vec![
+                (batch * heads * queries.div_ceil(8) * keys.div_ceil(8)) as u64,
+                (batch * heads * queries) as u64,
+                (batch * heads * queries.div_ceil(8) * dim.div_ceil(8)) as u64,
+            ],
+            threads: threads as u64,
+            scratch_bytes: (product(&[batch, heads, queries, keys])? * 4) as u64,
+            count: qcount,
+        });
+    }
+    Ok(AttentionPlan {
+        source: source(dtype),
+        kernel: if vector {
+            "music3_attention_vector"
+        } else if mma {
+            "music3_attention_mma"
+        } else {
+            "music3_attention"
+        },
+        fallback,
+        params: p,
+        groups: vec![if mma {
+            (batch * queries.div_ceil(8) * heads) as u64
+        } else {
+            (batch * queries * heads) as u64
+        }],
+        threads: threads as u64,
+        scratch_bytes: (product(&[batch, queries, heads, keys])? * 4) as u64,
+        count: qcount,
+    })
+}
+/// Append planned attention to `pass`. Returns the scratch buffers, which the
+/// caller keeps until the pass completes.
+#[allow(clippy::too_many_arguments)]
+fn encode_attention(
+    c: &mut MetalContext,
+    pass: &PassEncoder,
+    plan: &AttentionPlan,
+    q: (&MetalBuffer, u64),
+    k: (&MetalBuffer, u64),
+    v: (&MetalBuffer, u64),
+    out: &MetalBuffer,
+) -> Result<Vec<MetalBuffer>, GpuError> {
+    let constants = crate::rms_norm::unused_function_constants();
+    if plan.fallback {
+        let qk = c.pipeline(plan.source, "music3_attention_fallback_qk", &constants, b"")?;
+        let softmax = c.pipeline(
+            plan.source,
+            "music3_attention_fallback_softmax",
+            &constants,
+            b"",
+        )?;
+        let pv = c.pipeline(plan.source, "music3_attention_fallback_pv", &constants, b"")?;
+        let scores = c.new_output_buffer(plan.scratch_bytes);
+        let probabilities = c.new_output_buffer(plan.scratch_bytes);
+        pass.encode_threadgroups(
+            &qk,
+            &[(q.0, 0, q.1), (k.0, 1, k.1), (&scores, 2, 0)],
+            &[(&plan.params, 3)],
+            plan.groups[0],
+            32,
+        );
+        pass.encode_threadgroups(
+            &softmax,
+            &[(&scores, 0, 0), (&probabilities, 1, 0)],
+            &[(&plan.params, 2)],
+            plan.groups[1],
+            plan.threads,
+        );
+        pass.encode_threadgroups(
+            &pv,
+            &[(&probabilities, 0, 0), (v.0, 1, v.1), (out, 2, 0)],
+            &[(&plan.params, 3)],
+            plan.groups[2],
+            32,
+        );
+        return Ok(vec![scores, probabilities]);
+    }
+    let pipeline = c.pipeline(plan.source, plan.kernel, &constants, b"")?;
+    let scratch = c.new_output_buffer(plan.scratch_bytes);
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (q.0, 0, q.1),
+            (k.0, 1, k.1),
+            (v.0, 2, v.1),
+            (out, 3, 0),
+            (&scratch, 5, 0),
+        ],
+        &[(&plan.params, 4)],
+        plan.groups[0],
+        plan.threads,
+    );
+    Ok(vec![scratch])
 }
 fn finite_output(out: &MetalBuffer, count: usize) -> Result<Vec<f32>, GpuError> {
     let values = read_f32_buffer(out, count);
@@ -1089,18 +1253,52 @@ impl Music3Weight {
         dtype: Music3DType,
         kokoro: bool,
     ) -> Result<Vec<f32>, GpuError> {
+        let plan = self.linear_plan(
+            input.len(),
+            bias.map(<[f32]>::len),
+            rows,
+            input_dim,
+            output_dim,
+            dtype,
+            kokoro,
+        )?;
+        autorelease_pool(|| {
+            let mut c = self.state.context.borrow_mut();
+            let x = c.new_buffer_with_data(input);
+            let b = c.new_buffer_with_data(bias.unwrap_or(&[0.0]));
+            let out = c.new_output_buffer((plan.count * 4) as u64);
+            let pass = c.begin_pass();
+            self.encode_linear(&mut c, &pass, &plan, (&x, 0), &b, &out)?;
+            pass.commit_and_wait_checked()?;
+            finite_output(&out, plan.count)
+        })
+    }
+    /// Validation, parameters, and kernel choice of one projection. The
+    /// synchronous path and `Music3Sequence` share it, so both dispatch the
+    /// same kernel with the same parameters.
+    #[allow(clippy::too_many_arguments)]
+    fn linear_plan(
+        &self,
+        input_len: usize,
+        bias_len: Option<usize>,
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        dtype: Music3DType,
+        kokoro: bool,
+    ) -> Result<LinearPlan, GpuError> {
         let count = product(&[rows, output_dim])?;
         if self.shape != [output_dim, input_dim]
-            || input.len() != product(&[rows, input_dim])?
+            || input_len != product(&[rows, input_dim])?
             || rows == 0
-            || bias.is_some_and(|b| b.len() != output_dim)
+            || bias_len.is_some_and(|b| b != output_dim)
         {
             return Err(bad("Music 3 linear geometry mismatch"));
         }
         let mut p = self.parameters();
         p.extend([
             output_dim as u32,
-            bias.is_some() as u32,
+            bias_len.is_some() as u32,
             dtype as u32,
             rows as u32,
         ]);
@@ -1205,60 +1403,86 @@ impl Music3Weight {
             && wide
             && group % 8 == 0
             && input_dim % group == 0;
+        // The two float-packed GEMV branches of `music3_linear`, packed several
+        // pairs per threadgroup (same conditions as those branches).
+        let fp_gemv = mode >= 4 && dtype != Music3DType::F32 && rows < limit && !kokoro;
+        let fp_wide = fp_gemv && wide;
+        let fp_vector = fp_gemv && !wide && values_per_lane != 0;
         p.push((kokoro) as u32);
         let p = bytes(&p);
-        autorelease_pool(|| {
-            let mut c = self.state.context.borrow_mut();
-            let pipeline = c.pipeline(
-                if kokoro {
-                    KOKORO_SOURCE
-                } else {
-                    weight_source(dtype, self.scales_bf16)
-                },
-                if mma && rows <= 16 {
-                    "music3_linear_tiled_16x64"
-                } else if mma {
-                    "music3_linear_tiled_32x32"
-                } else if packed_wide {
-                    "music3_linear_wide"
-                } else if vector {
-                    "audio_vector_linear"
-                } else {
-                    "music3_linear"
-                },
-                &crate::rms_norm::unused_function_constants(),
-                b"",
-            )?;
-            let x = c.new_buffer_with_data(input);
-            let b = c.new_buffer_with_data(bias.unwrap_or(&[0.0]));
-            let out = c.new_output_buffer((count * 4) as u64);
-            let pass = c.begin_pass();
-            pass.encode_threadgroups(
-                &pipeline,
-                &[
-                    (&self.bytes, 0, 0),
-                    (&self.scales, 1, 0),
-                    (&self.offsets, 2, 0),
-                    (&self.block_scales, 3, 0),
-                    (&x, 4, 0),
-                    (&b, 5, 0),
-                    (&out, 6, 0),
-                ],
-                &[(&p, 7)],
-                if mma && rows <= 16 {
-                    (rows.div_ceil(16) * output_dim.div_ceil(64)) as u64
-                } else if mma {
-                    (rows.div_ceil(32) * output_dim.div_ceil(32)) as u64
-                } else if packed_wide {
-                    count.div_ceil(16) as u64
-                } else {
-                    count as u64
-                },
-                128,
-            );
-            pass.commit_and_wait_checked()?;
-            finite_output(&out, count)
+        // The Music 3 LM head window (`logit_window` in the audio crate)
+        // is exact only while every output tile is at most 64 wide and
+        // divides 64: a 64-aligned window then reproduces each tile.
+        Ok(LinearPlan {
+            source: if kokoro {
+                KOKORO_SOURCE
+            } else {
+                weight_source(dtype, self.scales_bf16)
+            },
+            kernel: if mma && rows <= 16 {
+                "music3_linear_tiled_16x64"
+            } else if mma {
+                "music3_linear_tiled_32x32"
+            } else if packed_wide {
+                "music3_linear_wide"
+            } else if fp_wide {
+                "music3_linear_fp_wide"
+            } else if fp_vector {
+                "music3_linear_fp_vector"
+            } else if vector {
+                "audio_vector_linear"
+            } else {
+                "music3_linear"
+            },
+            params: p,
+            groups: if mma && rows <= 16 {
+                (rows.div_ceil(16) * output_dim.div_ceil(64)) as u64
+            } else if mma {
+                (rows.div_ceil(32) * output_dim.div_ceil(32)) as u64
+            } else if packed_wide {
+                count.div_ceil(16) as u64
+            } else if fp_wide {
+                count.div_ceil(8) as u64
+            } else if fp_vector {
+                count.div_ceil(4) as u64
+            } else {
+                count as u64
+            },
+            count,
         })
+    }
+    /// Append one planned projection to `pass`. `x` is `(buffer, byte offset)`.
+    fn encode_linear(
+        &self,
+        c: &mut MetalContext,
+        pass: &PassEncoder,
+        plan: &LinearPlan,
+        x: (&MetalBuffer, u64),
+        bias: &MetalBuffer,
+        out: &MetalBuffer,
+    ) -> Result<(), GpuError> {
+        let pipeline = c.pipeline(
+            plan.source,
+            plan.kernel,
+            &crate::rms_norm::unused_function_constants(),
+            b"",
+        )?;
+        pass.encode_threadgroups(
+            &pipeline,
+            &[
+                (&self.bytes, 0, 0),
+                (&self.scales, 1, 0),
+                (&self.offsets, 2, 0),
+                (&self.block_scales, 3, 0),
+                (x.0, 4, x.1),
+                (bias, 5, 0),
+                (out, 6, 0),
+            ],
+            &[(&plan.params, 7)],
+            plan.groups,
+            128,
+        );
+        Ok(())
     }
     pub fn embedding(&self, ids: &[i32], width: usize) -> Result<Vec<f32>, GpuError> {
         if self.shape.len() != 2

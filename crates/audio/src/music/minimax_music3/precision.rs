@@ -98,6 +98,16 @@ impl DType {
     }
 }
 
+/// `DType::Bf16.silu` of the bf16 value with bits `i << 16`, for every
+/// 16-bit pattern `i`. A device indexes it by a BF16 gate's high bits, so its
+/// SwiGLU activation is the host value by construction rather than through a
+/// device `exp`.
+pub fn bf16_silu_table() -> Vec<f32> {
+    (0..=u16::MAX)
+        .map(|bits| DType::Bf16.silu(f32::from_bits(u32::from(bits) << 16)))
+        .collect()
+}
+
 impl Music3Precision {
     pub(crate) fn dtype(self, dtype: DType) -> DType {
         if self == Self::Float32 {
@@ -402,6 +412,21 @@ mod tests {
         }
         assert!(checked >= 18, "missing portable fixture coverage");
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn bf16_silu_table_is_indexed_by_the_gate_high_bits() {
+        let table = bf16_silu_table();
+        assert_eq!(table.len(), 1 << 16);
+        for gate in [0.0f32, -0.0, 1.0, -1.0, 0.5, -3.25, 7.0, f32::INFINITY] {
+            let bits = gate.to_bits();
+            assert_eq!(bits & 0xffff, 0, "{gate} is a bf16 value");
+            assert_eq!(
+                table[(bits >> 16) as usize].to_bits(),
+                DType::Bf16.silu(gate).to_bits(),
+                "silu({gate})"
+            );
+        }
     }
 
     #[test]

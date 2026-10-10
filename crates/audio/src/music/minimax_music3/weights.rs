@@ -384,6 +384,78 @@ impl WeightStore {
         }
     }
 
+    /// Upload only `rows` of the dense `[out, in]` matrix `{base}.weight` and
+    /// consume the whole tensor. `None` when there is no device, the store is
+    /// an official map, or the matrix is packed or biased: the caller then
+    /// loads it whole with [`Self::linear`].
+    pub(crate) fn device_linear_rows(
+        &mut self,
+        base: &str,
+        rows: std::ops::Range<usize>,
+        full: [usize; 2],
+    ) -> Result<Option<Weight>> {
+        let Self::File {
+            files,
+            backend: Some(backend),
+            consumed,
+            precision,
+            ..
+        } = self
+        else {
+            return Ok(None);
+        };
+        let name = format!("{base}.weight");
+        let file = files
+            .iter()
+            .find(|f| f.contains_tensor(&name))
+            .ok_or_else(|| missing(&name))?;
+        if file.contains_tensor(&format!("{base}.scales"))
+            || file.contains_tensor(&format!("{base}.bias"))
+        {
+            return Ok(None);
+        }
+        let desc = file.descriptor(&name).ok_or_else(|| missing(&name))?;
+        let encoding = dense_encoding(&desc.dtype, &name)?;
+        let width = match encoding {
+            WeightEncoding::F32 => 4,
+            _ => 2,
+        };
+        let bytes = file.raw_bytes(&name)?;
+        if desc.shape != full
+            || rows.is_empty()
+            || rows.end > full[0]
+            || bytes.len() != full[0] * full[1] * width
+        {
+            return Err(SpeechError::Tensor {
+                name,
+                why: format!("row window {rows:?} does not fit matrix {:?}", desc.shape),
+            });
+        }
+        let dtype = precision.dtype(DType::from_checkpoint(&desc.dtype)?);
+        let row_bytes = full[1] * width;
+        let shape = [rows.len(), full[1]];
+        let weight = backend.load_weight(WeightData {
+            name: &name,
+            shape: &shape,
+            bytes: &bytes[rows.start * row_bytes..rows.end * row_bytes],
+            encoding,
+            dtype,
+            scales_dtype: None,
+            offsets_dtype: None,
+            scales: &[],
+            offsets: &[],
+            block_scales: &[],
+        })?;
+        consumed.insert(name);
+        Ok(Some(Weight::Device {
+            elements: rows.len() * full[1],
+            dtype,
+            packed: false,
+            dynamic: false,
+            weight,
+        }))
+    }
+
     /// Fail when any source tensor was not consumed.
     pub(crate) fn finish(self) -> Result<()> {
         match self {
@@ -940,7 +1012,10 @@ mod tests {
         while header_bytes.len() % 8 != 0 {
             header_bytes.push(b' ');
         }
-        let payload = bytes.split_off(8 + header_len);
+        let mut payload = bytes.split_off(8 + header_len);
+        // The injected bias claims bytes 17..18; the file must really contain
+        // them or the opener rejects it before `linear` can refuse the bias.
+        payload.push(0);
         let mut file = std::fs::File::create(&path).unwrap();
         file.write_all(&(header_bytes.len() as u64).to_le_bytes())
             .unwrap();
@@ -948,7 +1023,9 @@ mod tests {
         file.write_all(&payload).unwrap();
         let safetensors = SafetensorsFile::open(&path).unwrap();
         let mut store = WeightStore::from_files(vec![safetensors], LinearQuantization::MxFp4);
-        assert!(store.linear("layer").is_err());
+        // Pin the reason: a bare `is_err()` also passes on a corrupt fixture.
+        let err = store.linear("layer").err().expect("bias must be refused");
+        assert!(err.to_string().contains("affine biases"), "{err}");
         std::fs::remove_dir_all(root).unwrap();
     }
 }
@@ -973,6 +1050,130 @@ mod device_validation {
             unreachable!()
         }
     }
+    /// Records each upload's shape and bytes; the weight itself is never used.
+    #[derive(Default)]
+    struct RecordUpload(std::cell::RefCell<Vec<(Vec<usize>, Vec<u8>)>>);
+    struct Unused;
+    impl DeviceWeight for Unused {
+        fn linear(
+            &self,
+            _input: &[f32],
+            _bias: Option<&[f32]>,
+            _rows: usize,
+            _input_dim: usize,
+            _output_dim: usize,
+            _dtype: DType,
+        ) -> Result<Vec<f32>> {
+            unreachable!()
+        }
+        fn embedding(&self, _ids: &[i32], _width: usize) -> Result<Vec<f32>> {
+            unreachable!()
+        }
+        fn convolution(
+            &self,
+            _input: &[f32],
+            _bias: Option<&[f32]>,
+            _shape: super::super::backend::ConvShape,
+            _dtype: DType,
+        ) -> Result<Vec<f32>> {
+            unreachable!()
+        }
+    }
+    impl ComputeBackend for RecordUpload {
+        fn load_weight(&self, data: WeightData<'_>) -> Result<Rc<dyn DeviceWeight>> {
+            self.0
+                .borrow_mut()
+                .push((data.shape.to_vec(), data.bytes.to_vec()));
+            Ok(Rc::new(Unused))
+        }
+        fn attention(
+            &self,
+            _q: &[f32],
+            _k: &[f32],
+            _v: &[f32],
+            _s: AttentionShape,
+            _dtype: DType,
+        ) -> Result<Vec<f32>> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn head_rows_upload_exactly_the_window_bytes_and_consume_the_head() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/minimax_music3/precision/bf16");
+        let name = "language_model.lm_head.weight";
+        let full_bytes = open_converted_shards(&dir)
+            .unwrap()
+            .iter()
+            .find(|f| f.contains_tensor(name))
+            .unwrap()
+            .raw_bytes(name)
+            .unwrap()
+            .to_vec();
+        let backend = Rc::new(RecordUpload::default());
+        let mut store = WeightStore::from_files_with_backend(
+            open_converted_shards(&dir).unwrap(),
+            LinearQuantization::Dense,
+            backend.clone(),
+        );
+        let (vocab, hidden) = (512, 64);
+        let weight = store
+            .device_linear_rows("language_model.lm_head", 192..320, [vocab, hidden])
+            .unwrap()
+            .expect("a dense head with a device loads as a window");
+        assert_eq!(weight.len(), 128 * hidden);
+        let uploads = backend.0.borrow();
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(uploads[0].0, vec![128, hidden]);
+        let row = hidden * 2;
+        assert_eq!(uploads[0].1, full_bytes[192 * row..320 * row]);
+        let WeightStore::File { consumed, .. } = &store else {
+            unreachable!()
+        };
+        assert!(consumed.contains(name));
+
+        for (rows, full) in [
+            (0..0, [vocab, hidden]),
+            (448..513, [vocab, hidden]),
+            (0..64, [vocab + 1, hidden]),
+        ] {
+            assert!(store
+                .device_linear_rows("language_model.lm_head", rows, full)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn head_rows_fall_back_without_a_device_or_for_packed_matrices() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/minimax_music3");
+        let mut store = WeightStore::from_files(
+            open_converted_shards(&root.join("precision/bf16")).unwrap(),
+            LinearQuantization::Dense,
+        );
+        assert!(store
+            .device_linear_rows("language_model.lm_head", 192..320, [512, 64])
+            .unwrap()
+            .is_none());
+        // RejectUpload panics if the packed matrix reaches the device.
+        let mut store = WeightStore::from_files_with_backend(
+            open_converted_shards(&root.join("converted_q8")).unwrap(),
+            LinearQuantization::Affine(QuantScheme {
+                bits: 8,
+                group_size: 64,
+            }),
+            Rc::new(RejectUpload),
+        );
+        assert!(store
+            .device_linear_rows(
+                "language_model.model.layers.0.self_attn.q_proj",
+                0..64,
+                [64, 64]
+            )
+            .unwrap()
+            .is_none());
+    }
+
     #[test]
     fn oversized_affine_group_is_refused_before_upload() {
         let dir =

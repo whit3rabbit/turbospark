@@ -1,15 +1,19 @@
 //! MiniMax Music 3 runner. Uses the portable pipeline with packed resident
 //! Metal weights, typed attention, and device vocoder convolutions.
 use audio::music::minimax_music3::backend::{
-    AttentionShape, ComputeBackend, ConvShape, DeviceWeight, RopeShape, WeightData, WeightEncoding,
+    AttentionShape, ComputeBackend, ConvShape, DeviceBuffer, DeviceWeight, RopeShape, Sequence,
+    Slot, WeightData, WeightEncoding,
 };
-use audio::music::minimax_music3::precision::DType;
+use audio::music::minimax_music3::precision::{bf16_silu_table, DType};
 use audio::music::minimax_music3::{
     Control, GenerateRequest, Generation, Model, ModelConfig, Music3Precision, Progress,
     SamplingTrace, StageTimings, TextGenerateRequest,
 };
 use audio::{Result, SpeechError};
-use gpu::{Music3DType, Music3Device, Music3Encoding, Music3Weight};
+use gpu::{
+    Music3Buffer, Music3DType, Music3Device, Music3Encoding, Music3Sequence, Music3Slot,
+    Music3Table, Music3Weight,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
@@ -74,6 +78,258 @@ struct Backend {
     observer: Observer,
     cancellation: Cancellation,
     profile: Profile,
+    /// BF16 SiLU of every 16-bit pattern, uploaded on first use.
+    silu: RefCell<Option<Rc<Music3Table>>>,
+}
+
+impl Backend {
+    fn silu_table(&self) -> Result<Rc<Music3Table>> {
+        if let Some(table) = self.silu.borrow().as_ref() {
+            return Ok(table.clone());
+        }
+        let table = Rc::new(
+            self.device
+                .table(&bf16_silu_table())
+                .map_err(device_error)?,
+        );
+        *self.silu.borrow_mut() = Some(table.clone());
+        Ok(table)
+    }
+}
+
+/// A persistent Metal buffer (the AR KV cache) behind [`DeviceBuffer`].
+struct KvBuffer(Music3Buffer);
+impl DeviceBuffer for KvBuffer {
+    fn write(&self, first: usize, data: &[f32]) -> Result<()> {
+        self.0.write(first, data).map_err(device_error)
+    }
+    fn read(&self, first: usize, len: usize) -> Result<Vec<f32>> {
+        self.0.read(first, len).map_err(device_error)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// A Metal [`Sequence`]: one command buffer per step. Cancellation is
+/// checked at every recorded operation and before commit; a cancelled
+/// sequence is dropped uncommitted. One `dispatch_profile` row per finish.
+struct MetalSequence<'a> {
+    backend: &'a Backend,
+    inner: Music3Sequence,
+    slots: Vec<Music3Slot>,
+    op: &'static str,
+    shape: Vec<usize>,
+    started: Instant,
+}
+
+impl MetalSequence<'_> {
+    fn slot(&self, slot: Slot) -> Result<Music3Slot> {
+        self.slots
+            .get(slot.0)
+            .copied()
+            .ok_or_else(|| SpeechError::Input {
+                why: "Music 3 sequence slot does not exist".into(),
+            })
+    }
+    fn push(&mut self, result: std::result::Result<Music3Slot, gpu::GpuError>) -> Result<Slot> {
+        self.slots.push(result.map_err(device_error)?);
+        Ok(Slot(self.slots.len() - 1))
+    }
+}
+
+fn require_bf16(op: &str, dtypes: &[DType]) -> Result<()> {
+    if dtypes.iter().all(|d| *d == DType::Bf16) {
+        Ok(())
+    } else {
+        Err(SpeechError::Unsupported {
+            why: format!("Music 3 Metal sequence {op} reproduces BF16 rounding only"),
+        })
+    }
+}
+
+impl Sequence for MetalSequence<'_> {
+    fn upload(&mut self, data: &[f32]) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let result = self.inner.upload(data);
+        self.push(result)
+    }
+    fn bind(&mut self, buffer: &dyn DeviceBuffer) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let buffer =
+            buffer
+                .as_any()
+                .downcast_ref::<KvBuffer>()
+                .ok_or_else(|| SpeechError::Unsupported {
+                    why: "Music 3 Metal sequence needs a Metal-resident buffer".into(),
+                })?;
+        let result = self.inner.bind(&buffer.0);
+        self.push(result)
+    }
+    fn view(&mut self, slot: Slot, first: usize, len: usize) -> Result<Slot> {
+        let slot = self.slot(slot)?;
+        let result = self.inner.view(slot, first, len);
+        self.push(result)
+    }
+    fn copy(&mut self, src: Slot, dst: Slot) -> Result<()> {
+        checkpoint(&self.backend.cancellation)?;
+        let (src, dst) = (self.slot(src)?, self.slot(dst)?);
+        self.inner.copy(src, dst).map_err(device_error)
+    }
+    fn rope(&mut self, x: Slot, s: RopeShape, d: DType) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let x = self.slot(x)?;
+        let result = self.inner.rope(
+            x,
+            s.batch,
+            s.seq,
+            s.heads,
+            s.dim,
+            s.offset,
+            s.theta,
+            dtype(d),
+        );
+        self.push(result)
+    }
+    fn linear(
+        &mut self,
+        x: Slot,
+        weight: &dyn DeviceWeight,
+        bias: Option<&[f32]>,
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        d: DType,
+    ) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let weight = weight
+            .as_any()
+            .and_then(|w| w.downcast_ref::<Weight>())
+            .ok_or_else(|| SpeechError::Unsupported {
+                why: "Music 3 Metal sequence needs a Metal-resident weight".into(),
+            })?;
+        let x = self.slot(x)?;
+        let result = self
+            .inner
+            .linear(x, &weight.0, bias, rows, input_dim, output_dim, dtype(d));
+        self.push(result)
+    }
+    fn layer_norm(
+        &mut self,
+        x: Slot,
+        w: &[f32],
+        bias: Option<&[f32]>,
+        rows: usize,
+        cols: usize,
+        eps: f32,
+        d: DType,
+    ) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let x = self.slot(x)?;
+        let result = self.inner.layer_norm(x, w, bias, rows, cols, eps, dtype(d));
+        self.push(result)
+    }
+    fn partial_rope(
+        &mut self,
+        x: Slot,
+        cos: Slot,
+        sin: Slot,
+        len: usize,
+        heads: usize,
+        head_dim: usize,
+        rotary: usize,
+        d: DType,
+    ) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        require_bf16("partial rotary", &[d])?;
+        let (x, cos, sin) = (self.slot(x)?, self.slot(cos)?, self.slot(sin)?);
+        let result = self
+            .inner
+            .partial_rope_bf16(x, cos, sin, len, heads, head_dim, rotary);
+        self.push(result)
+    }
+    fn gated_silu(&mut self, x: Slot, rows: usize, half: usize, d: DType) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        require_bf16("gated SiLU", &[d])?;
+        let table = self.backend.silu_table()?;
+        let x = self.slot(x)?;
+        let result = self.inner.gated_silu_bf16(x, rows, half, &table);
+        self.push(result)
+    }
+    fn rms_norm(
+        &mut self,
+        x: Slot,
+        w: &[f32],
+        rows: usize,
+        cols: usize,
+        eps: f32,
+        d: DType,
+    ) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let x = self.slot(x)?;
+        let result = self.inner.rms_norm(x, w, rows, cols, eps, dtype(d));
+        self.push(result)
+    }
+    fn attention(
+        &mut self,
+        q: Slot,
+        k: Slot,
+        v: Slot,
+        s: AttentionShape,
+        d: DType,
+    ) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let (q, k, v) = (self.slot(q)?, self.slot(k)?, self.slot(v)?);
+        let result = self.inner.attention(
+            q,
+            k,
+            v,
+            s.batch,
+            s.queries,
+            s.keys,
+            s.heads,
+            s.kv_heads,
+            s.dim,
+            s.kv_time_major,
+            s.causal,
+            s.offset,
+            dtype(d),
+        );
+        self.push(result)
+    }
+    fn add_round(&mut self, a: Slot, b: Slot, d: DType) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        require_bf16("residual add", &[d])?;
+        let (a, b) = (self.slot(a)?, self.slot(b)?);
+        let result = self.inner.add_round_bf16(a, b);
+        self.push(result)
+    }
+    fn swiglu(&mut self, g: Slot, u: Slot, gate: DType, fused: DType) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        require_bf16("SwiGLU", &[gate, fused])?;
+        let table = self.backend.silu_table()?;
+        let (g, u) = (self.slot(g)?, self.slot(u)?);
+        let result = self.inner.swiglu_bf16(g, u, &table);
+        self.push(result)
+    }
+    fn finish(self: Box<Self>, read: &[Slot]) -> Result<Option<Vec<Vec<f32>>>> {
+        checkpoint(&self.backend.cancellation)?;
+        let read = read
+            .iter()
+            .map(|slot| self.slot(*slot))
+            .collect::<Result<Vec<_>>>()?;
+        let Self {
+            backend,
+            inner,
+            op,
+            shape,
+            started,
+            ..
+        } = *self;
+        let result = inner.finish(&read).map_err(device_error);
+        record(&backend.profile, op, &shape, started);
+        result
+    }
 }
 fn dtype(d: DType) -> Music3DType {
     match d {
@@ -252,6 +508,29 @@ impl ComputeBackend for Backend {
             });
         }
     }
+    fn sequence(&self, op: &'static str, shape: &[usize]) -> Option<Box<dyn Sequence + '_>> {
+        // Trace observers need host values between operations, so observed
+        // runs keep the per-operation path.
+        if self.observer.borrow().is_some() {
+            return None;
+        }
+        Some(Box::new(MetalSequence {
+            backend: self,
+            inner: self.device.sequence(op),
+            slots: Vec::new(),
+            op,
+            shape: shape.to_vec(),
+            started: Instant::now(),
+        }))
+    }
+    fn buffer(&self, len: usize) -> Option<Result<Rc<dyn DeviceBuffer>>> {
+        Some(
+            self.device
+                .buffer(len)
+                .map(|buffer| Rc::new(KvBuffer(buffer)) as Rc<dyn DeviceBuffer>)
+                .map_err(device_error),
+        )
+    }
 }
 impl DeviceWeight for Weight {
     fn linear(
@@ -315,6 +594,9 @@ impl DeviceWeight for Weight {
         );
         result
     }
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 /// A converted MiniMax Music 3 checkpoint, resident on the Metal device.
@@ -340,6 +622,7 @@ impl Music3Runner {
             observer: observer.clone(),
             cancellation: cancellation.clone(),
             profile: profile.clone(),
+            silu: RefCell::new(None),
         });
         let model = Model::load_converted_with_backend_and_precision(path, backend, precision)?;
         Ok(Self {

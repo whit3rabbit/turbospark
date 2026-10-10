@@ -243,6 +243,93 @@ kernel void music3_linear_wide(device const uchar *w [[buffer(0)]],
     if(live && lane==0) y[pair]=music_round(music_round(result,p[6])+(p[5] ? bias[uint(pair%out)] : 0),p[6]);
 }
 
+// Packed forms of the two float-packed (MXFP4, MXFP8, NVFP4) GEMV branches
+// of music3_linear. Each (row, output) pair keeps its lanes, loop order,
+// float4 `dot`, and reduction exactly; only the number of pairs per
+// threadgroup changes. The branches ran one pair per 128-thread threadgroup
+// with 16 (wide) or 32 (vector) lanes working.
+//
+// fp_qmv_wide: sixteen lanes per pair, eight pairs per threadgroup. Lane 0's
+// shuffle-down tree (8, 4, 2, 1) reads only lanes 0..15 of its own pair.
+kernel void music3_linear_fp_wide(device const uchar *w [[buffer(0)]],
+ device const float *sc [[buffer(1)]], device const float *off [[buffer(2)]],
+ device const uchar *bs [[buffer(3)]], device const float *x [[buffer(4)]],
+ device const float *bias [[buffer(5)]], device float *y [[buffer(6)]],
+ constant uint *p [[buffer(7)]], uint tid [[thread_index_in_threadgroup]],
+ uint tg [[threadgroup_position_in_grid]]) {
+    uint out=p[4], cols=p[1];
+    // MXFP8: decode the 256 codes once with music_e4m3 itself (each value
+    // is the one the per-element call produced) instead of an exp2 per
+    // weight. Every thread reaches the barrier.
+    threadgroup float e4m3[256];
+    if(p[0]==5) {
+        for(uint i=tid;i<256;i+=128) e4m3[i]=music_e4m3(i);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    ulong pair=ulong(tg)*8+tid/16;
+    uint lane=tid%16;
+    bool live=pair<ulong(p[7])*out;
+    float result=0;
+    if(live) {
+        uint row=uint(pair/out), o=uint(pair%out);
+        for(uint g=lane;g<cols/p[3];g+=16) {
+            float scale=p[0]==6 ? music_e4m3(bs[ulong(o)*(cols/p[3])+g]) : exp2(float(int(bs[ulong(o)*(cols/p[3])+g])-127));
+            float acc=0;
+            for(uint c=g*p[3];c<(g+1)*p[3];c+=4) {
+                float4 weights,inputs;
+                for(uint i=0;i<4;i++) {
+                    uint bit=(c+i)*p[2],shift=bit%32;device const uint *u=(device const uint*)w+ulong(o)*((cols*p[2]+31)/32);
+                    uint code=(u[bit/32]>>shift)&((1u<<p[2])-1);
+                    weights[i]=p[0]==5 ? e4m3[code] : music_unscaled(p[0],code);
+                    inputs[i]=x[ulong(row)*cols+c+i];
+                }
+                acc+=dot(weights,inputs);
+            }
+            result+=scale*acc;
+        }
+    }
+    result+=simd_shuffle_down(result,ushort(8));result+=simd_shuffle_down(result,ushort(4));
+    result+=simd_shuffle_down(result,ushort(2));result+=simd_shuffle_down(result,ushort(1));
+    if(live && lane==0) y[pair]=music_round(music_round(result,p[6])+(p[5] ? bias[uint(pair%out)] : 0),p[6]);
+}
+
+// fp_qmv[_fast]: thirty-two lanes (one simdgroup) per pair, four pairs per
+// threadgroup, so simd_sum reduces exactly the pair's lanes.
+kernel void music3_linear_fp_vector(device const uchar *w [[buffer(0)]],
+ device const float *sc [[buffer(1)]], device const float *off [[buffer(2)]],
+ device const uchar *bs [[buffer(3)]], device const float *x [[buffer(4)]],
+ device const float *bias [[buffer(5)]], device float *y [[buffer(6)]],
+ constant uint *p [[buffer(7)]], uint tid [[thread_index_in_threadgroup]],
+ uint tg [[threadgroup_position_in_grid]]) {
+    uint out=p[4], cols=p[1];
+    // MXFP8 codes decoded once per threadgroup, as in music3_linear_fp_wide.
+    threadgroup float e4m3[256];
+    if(p[0]==5) {
+        for(uint i=tid;i<256;i+=128) e4m3[i]=music_e4m3(i);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    ulong pair=ulong(tg)*4+tid/32;
+    uint lane=tid%32;
+    bool live=pair<ulong(p[7])*out;
+    float result=0;
+    if(live) {
+        uint row=uint(pair/out), o=uint(pair%out);
+        for(uint c=lane*p[11];c<cols;c+=32*p[11]) {
+            float acc=0;
+            for(uint i=0;i<p[11] && c+i<cols;i++) {
+                uint bit=(c+i)*p[2],shift=bit%32;device const uint *u=(device const uint*)w+ulong(o)*((cols*p[2]+31)/32);
+                uint code=(u[bit/32]>>shift)&((1u<<p[2])-1);
+                acc+=x[ulong(row)*cols+c+i]*(p[0]==5 ? e4m3[code] : music_unscaled(p[0],code));
+            }
+            uint group=ulong(o)*(cols/p[3])+c/p[3];
+            float scale=p[0]==6 ? music_e4m3(bs[group]) : exp2(float(int(bs[group])-127));
+            result+=scale*acc;
+        }
+    }
+    result=simd_sum(result);
+    if(live && lane==0) y[pair]=music_round(music_round(result,p[6])+(p[5] ? bias[uint(pair%out)] : 0),p[6]);
+}
+
 kernel void music3_embedding(device const uchar *w [[buffer(0)]],
  device const float *sc [[buffer(1)]], device const float *off [[buffer(2)]],
  device const uchar *bs [[buffer(3)]], device const int *ids [[buffer(4)]],

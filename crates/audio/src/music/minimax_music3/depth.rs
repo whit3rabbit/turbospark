@@ -43,22 +43,73 @@ struct DepthBlock {
     down_w: Weight,
 }
 
+/// Logical dtype of every stage of one block, shared by the per-operation
+/// path and the device sequence so both round identically.
+#[derive(Clone, Copy)]
+struct BlockDtypes {
+    /// Input norm, and the q/k/v projection input.
+    norm: DType,
+    q: DType,
+    k: DType,
+    v: DType,
+    /// Attention, and the output projection input.
+    attention: DType,
+    residual: DType,
+    /// Post-attention norm, and the gate/up projection input.
+    post_norm: DType,
+    gate: DType,
+    /// SwiGLU, and the down projection input.
+    fused: DType,
+    output: DType,
+}
+
+impl BlockDtypes {
+    fn all(&self, dtype: DType) -> bool {
+        [
+            self.norm,
+            self.q,
+            self.k,
+            self.v,
+            self.attention,
+            self.residual,
+            self.post_norm,
+            self.gate,
+            self.fused,
+            self.output,
+        ]
+        .iter()
+        .all(|d| *d == dtype)
+    }
+}
+
 impl DepthBlock {
-    fn output_dtype(&self, input: DType) -> DType {
+    fn dtypes(&self, input: DType) -> BlockDtypes {
         let norm = input.promote(self.input_ln_w.dtype);
-        let attention = self
-            .attn
-            .to_q
-            .output_dtype(norm)
-            .promote(self.attn.to_k.output_dtype(norm))
-            .promote(self.attn.to_v.output_dtype(norm));
+        let (q, k, v) = (
+            self.attn.to_q.output_dtype(norm),
+            self.attn.to_k.output_dtype(norm),
+            self.attn.to_v.output_dtype(norm),
+        );
+        let attention = q.promote(k).promote(v);
         let residual = input.promote(self.attn.to_out.output_dtype(attention));
-        let norm = residual.promote(self.post_ln_w.dtype);
-        let fused = self
-            .gate_w
-            .output_dtype(norm)
-            .promote(self.up_w.output_dtype(norm));
-        residual.promote(self.down_w.output_dtype(fused))
+        let post_norm = residual.promote(self.post_ln_w.dtype);
+        let gate = self.gate_w.output_dtype(post_norm);
+        let fused = gate.promote(self.up_w.output_dtype(post_norm));
+        BlockDtypes {
+            norm,
+            q,
+            k,
+            v,
+            attention,
+            residual,
+            post_norm,
+            gate,
+            fused,
+            output: residual.promote(self.down_w.output_dtype(fused)),
+        }
+    }
+    fn output_dtype(&self, input: DType) -> DType {
+        self.dtypes(input).output
     }
 }
 
@@ -196,6 +247,7 @@ impl DepthDecoder {
             self.projection.output_dtype(self.dtype()),
         )
     }
+    #[cfg(test)]
     pub(crate) fn forward_typed(
         &self,
         embeddings: &[f32],
@@ -203,6 +255,19 @@ impl DepthDecoder {
         len: usize,
         input_dtype: DType,
     ) -> Result<Vec<f32>> {
+        let (h, dtype) = self.position(embeddings, batch, len, input_dtype)?;
+        self.layers(h, batch, len, dtype)
+    }
+
+    /// Validate `[batch, len, hidden]` embeddings and add the positional
+    /// embedding on the host. Returns the sum and its dtype.
+    fn position(
+        &self,
+        embeddings: &[f32],
+        batch: usize,
+        len: usize,
+        input_dtype: DType,
+    ) -> Result<(Vec<f32>, DType)> {
         let dims = &self.dims;
         let hidden = dims.hidden;
         if embeddings.len() != batch * len * hidden {
@@ -221,7 +286,7 @@ impl DepthDecoder {
                 ),
             });
         }
-        let mut dtype = input_dtype.promote(self.pos_embedding.dtype);
+        let dtype = input_dtype.promote(self.pos_embedding.dtype);
         let mut h = vec![0.0f32; embeddings.len()];
         for b in 0..batch {
             for t in 0..len {
@@ -239,6 +304,200 @@ impl DepthDecoder {
             dtype,
             &[batch, len, hidden],
         );
+        Ok((h, dtype))
+    }
+
+    /// One depth step: the forward over `[batch, len, hidden]` embeddings,
+    /// then audio head `head` on each row's last position, one row at a time
+    /// (a rows=1 projection, as the reference does per CFG row). Returns the
+    /// last-position hiddens `[batch, hidden]` and logits `[batch, vocab]`.
+    pub(crate) fn step(
+        &self,
+        embeddings: &[f32],
+        batch: usize,
+        len: usize,
+        input_dtype: DType,
+        head: usize,
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
+        let (h, dtype) = self.position(embeddings, batch, len, input_dtype)?;
+        if let Some(step) = self.step_sequence(&h, batch, len, dtype, head)? {
+            return Ok(step);
+        }
+        let hidden = self.dims.hidden;
+        let out = self.layers(h, batch, len, dtype)?;
+        let head_dtype = self.output_dtype(input_dtype);
+        let mut last_rows = Vec::with_capacity(batch * hidden);
+        let mut logits = Vec::with_capacity(batch * self.dims.audio_vocab);
+        for b in 0..batch {
+            let base = (b * len + len - 1) * hidden;
+            last_rows.extend_from_slice(&out[base..base + hidden]);
+        }
+        for row in last_rows.chunks_exact(hidden) {
+            logits.extend(backend::linear(
+                row,
+                &self.audio_heads[head],
+                None,
+                1,
+                hidden,
+                self.dims.audio_vocab,
+                head_dtype,
+            )?);
+        }
+        Ok((last_rows, logits))
+    }
+
+    /// [`Self::step`] after the positional add as one device submission.
+    /// `None` when the backend offers no sequence, a stage is not BF16 (the
+    /// device elementwise steps reproduce the host BF16 rounding only), or
+    /// the device met a case it cannot round like the host; the caller then
+    /// runs the per-operation path, which gives the same values.
+    fn step_sequence(
+        &self,
+        h: &[f32],
+        batch: usize,
+        len: usize,
+        dtype: DType,
+        head: usize,
+    ) -> Result<Option<(Vec<f32>, Vec<f32>)>> {
+        let Some(device) = &self.backend else {
+            return Ok(None);
+        };
+        let mut stages = Vec::with_capacity(self.layers.len());
+        let mut stage = dtype;
+        for layer in &self.layers {
+            let t = layer.dtypes(stage);
+            stages.push(t);
+            stage = t.output;
+        }
+        let final_dtype = stage.promote(self.norm_w.dtype);
+        if dtype != DType::Bf16
+            || final_dtype != DType::Bf16
+            || !stages.iter().all(|t| t.all(DType::Bf16))
+        {
+            return Ok(None);
+        }
+        let Some(mut seq) = device.sequence("depth_step", &[batch, len]) else {
+            return Ok(None);
+        };
+        let dims = &self.dims;
+        let (hidden, heads, eps) = (dims.hidden, dims.heads, dims.eps);
+        let rows = batch * len;
+        let mut x = seq.upload(h)?;
+        for (layer, t) in self.layers.iter().zip(&stages) {
+            let normed = seq.rms_norm(x, &layer.input_ln_w, rows, hidden, eps, t.norm)?;
+            let project = |seq: &mut dyn backend::Sequence, x, w: &Weight, inn, out, dtype| {
+                backend::sequence_linear(seq, x, w, rows, inn, out, dtype)
+            };
+            let q = project(
+                seq.as_mut(),
+                normed,
+                &layer.attn.to_q,
+                hidden,
+                hidden,
+                t.norm,
+            )?;
+            let k = project(
+                seq.as_mut(),
+                normed,
+                &layer.attn.to_k,
+                hidden,
+                hidden,
+                t.norm,
+            )?;
+            let v = project(
+                seq.as_mut(),
+                normed,
+                &layer.attn.to_v,
+                hidden,
+                hidden,
+                t.norm,
+            )?;
+            let attention = seq.attention(
+                q,
+                k,
+                v,
+                AttentionShape {
+                    batch,
+                    queries: len,
+                    keys: len,
+                    heads,
+                    kv_heads: heads,
+                    dim: hidden / heads,
+                    kv_time_major: false,
+                    causal: true,
+                    offset: 0,
+                },
+                t.attention,
+            )?;
+            let projected = project(
+                seq.as_mut(),
+                attention,
+                &layer.attn.to_out,
+                hidden,
+                hidden,
+                t.attention,
+            )?;
+            let residual = seq.add_round(x, projected, t.residual)?;
+            let normed =
+                seq.rms_norm(residual, &layer.post_ln_w, rows, hidden, eps, t.post_norm)?;
+            let gate = project(
+                seq.as_mut(),
+                normed,
+                &layer.gate_w,
+                hidden,
+                dims.intermediate,
+                t.post_norm,
+            )?;
+            let up = project(
+                seq.as_mut(),
+                normed,
+                &layer.up_w,
+                hidden,
+                dims.intermediate,
+                t.post_norm,
+            )?;
+            let fused = seq.swiglu(gate, up, t.gate, t.fused)?;
+            let down = project(
+                seq.as_mut(),
+                fused,
+                &layer.down_w,
+                dims.intermediate,
+                hidden,
+                t.fused,
+            )?;
+            x = seq.add_round(residual, down, t.output)?;
+        }
+        let normed = seq.rms_norm(x, &self.norm_w, rows, hidden, eps, final_dtype)?;
+        let mut read = Vec::with_capacity(2 * batch);
+        for b in 0..batch {
+            read.push(seq.view(normed, (b * len + len - 1) * hidden, hidden)?);
+        }
+        for b in 0..batch {
+            read.push(backend::sequence_linear(
+                seq.as_mut(),
+                read[b],
+                &self.audio_heads[head],
+                1,
+                hidden,
+                dims.audio_vocab,
+                final_dtype,
+            )?);
+        }
+        Ok(seq
+            .finish(&read)?
+            .map(|values| (values[..batch].concat(), values[batch..].concat())))
+    }
+
+    /// The blocks and the final norm, one device call per operation.
+    fn layers(
+        &self,
+        mut h: Vec<f32>,
+        batch: usize,
+        len: usize,
+        mut dtype: DType,
+    ) -> Result<Vec<f32>> {
+        let dims = &self.dims;
+        let hidden = dims.hidden;
         for (layer_index, layer) in self.layers.iter().enumerate() {
             h = self.block_forward(layer, &h, batch, len, dtype, layer_index)?;
             dtype = layer.output_dtype(dtype);
@@ -285,7 +544,7 @@ impl DepthDecoder {
         let head_dim = hidden / heads;
         let eps = dims.eps;
         trace("input", x, input_dtype, &[batch, len, hidden]);
-        let mut dtype = input_dtype.promote(block.input_ln_w.dtype);
+        let t = block.dtypes(input_dtype);
         let normed = backend::rms_norm(
             &self.backend,
             x,
@@ -293,9 +552,9 @@ impl DepthDecoder {
             batch * len,
             hidden,
             eps,
-            dtype,
+            t.norm,
         )?;
-        trace("input_norm", &normed, dtype, &[batch, len, hidden]);
+        trace("input_norm", &normed, t.norm, &[batch, len, hidden]);
         let q = backend::linear(
             &normed,
             &block.attn.to_q,
@@ -303,14 +562,9 @@ impl DepthDecoder {
             batch * len,
             hidden,
             hidden,
-            dtype,
+            t.norm,
         )?;
-        trace(
-            "q",
-            &q,
-            block.attn.to_q.output_dtype(dtype),
-            &[batch, len, hidden],
-        );
+        trace("q", &q, t.q, &[batch, len, hidden]);
         let k = backend::linear(
             &normed,
             &block.attn.to_k,
@@ -318,14 +572,9 @@ impl DepthDecoder {
             batch * len,
             hidden,
             hidden,
-            dtype,
+            t.norm,
         )?;
-        trace(
-            "k",
-            &k,
-            block.attn.to_k.output_dtype(dtype),
-            &[batch, len, hidden],
-        );
+        trace("k", &k, t.k, &[batch, len, hidden]);
         let v = backend::linear(
             &normed,
             &block.attn.to_v,
@@ -333,26 +582,15 @@ impl DepthDecoder {
             batch * len,
             hidden,
             hidden,
-            dtype,
+            t.norm,
         )?;
-        trace(
-            "v",
-            &v,
-            block.attn.to_v.output_dtype(dtype),
-            &[batch, len, hidden],
-        );
-        dtype = block
-            .attn
-            .to_q
-            .output_dtype(dtype)
-            .promote(block.attn.to_k.output_dtype(dtype))
-            .promote(block.attn.to_v.output_dtype(dtype));
+        trace("v", &v, t.v, &[batch, len, hidden]);
         let scale = 1.0 / (head_dim as f32).sqrt();
         // Causal additive mask over the full sequence.
         let mask: Vec<f32> = (0..len)
             .flat_map(|qi| (0..len).map(move |ki| if ki <= qi { 0.0 } else { f32::NEG_INFINITY }))
             .collect();
-        let attn_out = if self.backend.is_some() || dtype != DType::F32 {
+        let attn_out = if self.backend.is_some() || t.attention != DType::F32 {
             let rows = backend::attention(
                 &self.backend,
                 &q,
@@ -369,9 +607,9 @@ impl DepthDecoder {
                     causal: true,
                     offset: 0,
                 },
-                dtype,
+                t.attention,
             )?;
-            trace("attention", &rows, dtype, &[batch, len, hidden]);
+            trace("attention", &rows, t.attention, &[batch, len, hidden]);
             backend::linear(
                 &rows,
                 &block.attn.to_out,
@@ -379,7 +617,7 @@ impl DepthDecoder {
                 batch * len,
                 hidden,
                 hidden,
-                dtype,
+                t.attention,
             )?
         } else {
             let mut attn_out = Vec::with_capacity(x.len());
@@ -413,7 +651,7 @@ impl DepthDecoder {
                     len,
                     hidden,
                     hidden,
-                    dtype,
+                    t.attention,
                 )?);
             }
             attn_out
@@ -421,19 +659,9 @@ impl DepthDecoder {
 
         let mut residual = x.to_vec();
         for (r, a) in residual.iter_mut().zip(&attn_out) {
-            *r = input_dtype
-                .promote(block.attn.to_out.output_dtype(dtype))
-                .round(*r + *a);
+            *r = t.residual.round(*r + *a);
         }
-        trace(
-            "residual",
-            &residual,
-            input_dtype.promote(block.attn.to_out.output_dtype(dtype)),
-            &[batch, len, hidden],
-        );
-        dtype = input_dtype
-            .promote(block.attn.to_out.output_dtype(dtype))
-            .promote(block.post_ln_w.dtype);
+        trace("residual", &residual, t.residual, &[batch, len, hidden]);
         let normed = backend::rms_norm(
             &self.backend,
             &residual,
@@ -441,9 +669,9 @@ impl DepthDecoder {
             batch * len,
             hidden,
             eps,
-            dtype,
+            t.post_norm,
         )?;
-        trace("post_norm", &normed, dtype, &[batch, len, hidden]);
+        trace("post_norm", &normed, t.post_norm, &[batch, len, hidden]);
         let gate = backend::linear(
             &normed,
             &block.gate_w,
@@ -451,9 +679,9 @@ impl DepthDecoder {
             batch * len,
             hidden,
             dims.intermediate,
-            dtype,
+            t.post_norm,
         )?;
-        trace("gate", &gate, dtype, &[batch, len, dims.intermediate]);
+        trace("gate", &gate, t.post_norm, &[batch, len, dims.intermediate]);
         let up = backend::linear(
             &normed,
             &block.up_w,
@@ -461,21 +689,14 @@ impl DepthDecoder {
             batch * len,
             hidden,
             dims.intermediate,
-            dtype,
+            t.post_norm,
         )?;
-        trace("up", &up, dtype, &[batch, len, dims.intermediate]);
+        trace("up", &up, t.post_norm, &[batch, len, dims.intermediate]);
         let mut fused = gate;
         for (g, u) in fused.iter_mut().zip(up) {
-            let gate_dtype = block.gate_w.output_dtype(dtype);
-            *g = gate_dtype
-                .promote(block.up_w.output_dtype(dtype))
-                .round(gate_dtype.silu(*g) * u);
+            *g = t.fused.round(t.gate.silu(*g) * u);
         }
-        dtype = block
-            .gate_w
-            .output_dtype(dtype)
-            .promote(block.up_w.output_dtype(dtype));
-        trace("swiglu", &fused, dtype, &[batch, len, dims.intermediate]);
+        trace("swiglu", &fused, t.fused, &[batch, len, dims.intermediate]);
         let down = backend::linear(
             &fused,
             &block.down_w,
@@ -483,18 +704,13 @@ impl DepthDecoder {
             batch * len,
             dims.intermediate,
             hidden,
-            dtype,
+            t.fused,
         )?;
-        trace("down", &down, dtype, &[batch, len, hidden]);
+        trace("down", &down, t.fused, &[batch, len, hidden]);
         for (r, d) in residual.iter_mut().zip(down) {
-            *r = block.output_dtype(input_dtype).round(*r + d);
+            *r = t.output.round(*r + d);
         }
-        trace(
-            "output",
-            &residual,
-            block.output_dtype(input_dtype),
-            &[batch, len, hidden],
-        );
+        trace("output", &residual, t.output, &[batch, len, hidden]);
         Ok(residual)
     }
 }

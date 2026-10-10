@@ -668,6 +668,7 @@ impl Model {
                 eps: config.rms_norm_eps,
                 rope_theta: config.rope_theta,
                 tie_embeddings: config.tie_word_embeddings,
+                logit_rows: logit_window(config),
             },
         )?;
         let depth = DepthDecoder::load(
@@ -990,8 +991,9 @@ impl Model {
         }
         let prefill_started = Instant::now();
         let embeddings = self.lm.embed_ids(&pair, 2, prompt_len)?;
+        // The prefill plus one decode step per AR iteration (`0..=max_frames`).
         let mut cache: Vec<KvCache> = (0..config.num_hidden_layers)
-            .map(|_| KvCache::new())
+            .map(|_| KvCache::with_capacity(prompt_len + max_frames + 1))
             .collect();
         let mut hidden_state = self
             .lm
@@ -1014,30 +1016,10 @@ impl Model {
             let (next_key, subkey) = rng::split(key);
             key = next_key;
             let lap = Instant::now();
-            let logits = self.lm.logits(&last_hidden)?;
+            let (start, width, logits) = self.lm.window_logits(&last_hidden)?;
             self.stage.borrow_mut().lm_head += lap.elapsed();
             let lap = Instant::now();
-            // Semantic mask: audio codes plus the end token.
-            let mut guided = vec![0.0f32; vocab];
-            let mut conditional_row = vec![0.0f32; vocab];
-            for v in 0..vocab {
-                let allowed = (v >= config.audio_code_offset
-                    && v < config.audio_code_offset + config.semantic_vocab_size)
-                    || v == config.audio_end_token_id;
-                let conditional = if allowed { logits[v] } else { -1e9 };
-                let unconditional = if allowed { logits[vocab + v] } else { -1e9 };
-                conditional_row[v] = conditional;
-                guided[v] = unconditional + AR_CFG_SCALE * (conditional - unconditional);
-            }
-            let threshold = rng::kth_largest(&conditional_row, AR_CFG_TOP_K.min(vocab));
-            for v in 0..vocab {
-                let allowed = (v >= config.audio_code_offset
-                    && v < config.audio_code_offset + config.semantic_vocab_size)
-                    || v == config.audio_end_token_id;
-                if conditional_row[v] < threshold || !allowed {
-                    guided[v] = -1e9;
-                }
-            }
+            let guided = semantic_guided(config, start, width, &logits);
             let (sampled, mut rng_key) = rng::sample_top_k(&guided, subkey, AR_SAMPLING_TOP_K);
             self.stage.borrow_mut().sampling += lap.elapsed();
             observe(SamplingTrace {
@@ -1118,28 +1100,10 @@ impl Model {
                             .copy_from_slice(&extra_embeddings[src..src + hidden]);
                     }
                 }
-                let depth_out =
+                // Last-position rows for both CFG halves and their head logits.
+                let (last_rows, head_logits) =
                     self.depth
-                        .forward_typed(&depth_in, 2, seq_len, depth_input_dtype)?;
-                // Last-position rows for both CFG halves.
-                let mut last_rows = Vec::with_capacity(2 * hidden);
-                for b in 0..2 {
-                    let base = (b * seq_len + seq_len - 1) * hidden;
-                    last_rows.extend_from_slice(&depth_out[base..base + hidden]);
-                }
-                let head = &self.depth.audio_heads[index - 1];
-                let mut head_logits = vec![0.0f32; 2 * config.audio_vocab_size];
-                for b in 0..2 {
-                    let out = ops_linear_no_bias(
-                        &last_rows[b * hidden..(b + 1) * hidden],
-                        head,
-                        hidden,
-                        config.audio_vocab_size,
-                        self.depth.output_dtype(depth_input_dtype),
-                    )?;
-                    head_logits[b * config.audio_vocab_size..(b + 1) * config.audio_vocab_size]
-                        .copy_from_slice(&out);
-                }
+                        .step(&depth_in, 2, seq_len, depth_input_dtype, index - 1)?;
                 let mut guided_d = vec![0.0f32; config.audio_vocab_size];
                 for v in 0..config.audio_vocab_size {
                     let conditional = head_logits[v];
@@ -1527,6 +1491,51 @@ fn load_tokenizer(dir: &Path) -> Result<Option<Tokenizer>> {
             field: path.display().to_string(),
             why: format!("loading MiniMax Music 3 tokenizer: {error}"),
         })
+}
+
+/// Widest output tile of the Metal projection kernels
+/// (`music3_linear_tiled_16x64`). A head window that starts on a multiple of
+/// it gives every tile the same weight rows as the full head, so each kept
+/// logit is computed from identical operands in the same SIMD lane. A gather
+/// of only the allowed rows would move logits between tile columns.
+const LOGIT_TILE: usize = 64;
+
+/// Contiguous LM head rows covering every id sampling can return (the end
+/// token and the semantic codes), widened to `LOGIT_TILE` boundaries.
+fn logit_window(config: &ModelConfig) -> std::ops::Range<usize> {
+    let lo = config.audio_end_token_id.min(config.audio_code_offset);
+    let hi =
+        (config.audio_end_token_id + 1).max(config.audio_code_offset + config.semantic_vocab_size);
+    lo / LOGIT_TILE * LOGIT_TILE..(hi.div_ceil(LOGIT_TILE) * LOGIT_TILE).min(config.vocab_size)
+}
+
+/// Guided semantic logits over the full vocabulary, from `[2, width]` head
+/// logits (conditional row first) whose first column is vocab id `start`.
+/// The full-vocab mask set every id outside the audio codes and the end
+/// token to exactly -1e9 in both the conditional and the guided row, so only
+/// the allowed ids read logits. The sampler still gets the full-length vector
+/// because its categorical index is a vocab position.
+fn semantic_guided(config: &ModelConfig, start: usize, width: usize, logits: &[f32]) -> Vec<f32> {
+    let vocab = config.vocab_size;
+    let allowed = || {
+        std::iter::once(config.audio_end_token_id)
+            .chain(config.audio_code_offset..config.audio_code_offset + config.semantic_vocab_size)
+    };
+    let mut guided = vec![-1e9f32; vocab];
+    let mut conditional_row = vec![-1e9f32; vocab];
+    for v in allowed() {
+        let conditional = logits[v - start];
+        let unconditional = logits[width + v - start];
+        conditional_row[v] = conditional;
+        guided[v] = unconditional + AR_CFG_SCALE * (conditional - unconditional);
+    }
+    let threshold = rng::kth_largest(&conditional_row, AR_CFG_TOP_K.min(vocab));
+    for v in allowed() {
+        if conditional_row[v] < threshold {
+            guided[v] = -1e9;
+        }
+    }
+    guided
 }
 
 /// `x [1, rows] @ w.T` with no bias, `w` stored `[out, in]`.

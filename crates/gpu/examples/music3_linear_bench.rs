@@ -225,6 +225,143 @@ fn main() {
                     .unwrap();
                 println!("wide bits=4 rows={rows} {:016x}", fnv(&out));
             }
+            // Every row count below the M-series split-K limits on the
+            // packed wide kernel: a ragged output tail (100 is not a
+            // multiple of 16) for several widths, and the depth decoder's
+            // real projection shapes.
+            for bits in [3u32, 4, 8] {
+                let case = build(&device, bits, 64, 512, 100, 31 + u64::from(bits));
+                for rows in 2usize..=12 {
+                    let x = input(&case, rows);
+                    let out = case
+                        .weight
+                        .linear_typed(&x, Some(&case.bias), rows, 512, 100, Music3DType::Bf16)
+                        .unwrap();
+                    println!("wide ragged bits={bits} rows={rows} {:016x}", fnv(&out));
+                }
+            }
+            for (input_dim, output_dim) in [(4096usize, 4096usize), (4096, 6144), (6144, 4096)] {
+                let case = build(&device, 4, 64, input_dim, output_dim, 41);
+                for rows in 2usize..=12 {
+                    let x = input(&case, rows);
+                    let out = case
+                        .weight
+                        .linear_typed(&x, None, rows, input_dim, output_dim, Music3DType::Bf16)
+                        .unwrap();
+                    println!(
+                        "wide depth {input_dim}x{output_dim} rows={rows} {:016x}",
+                        fnv(&out)
+                    );
+                }
+            }
+            // Float-packed formats (MXFP4, MXFP8, NVFP4): every GEMV branch
+            // below the split-K limits, one row and several, both dtypes, a
+            // ragged width and the real depth width.
+            for (label, encoding, bits, group) in [
+                ("mxfp4", Music3Encoding::MxFp4, 4u32, 32usize),
+                ("mxfp8", Music3Encoding::MxFp8, 8, 32),
+                ("nvfp4", Music3Encoding::NvFp4, 4, 16),
+            ] {
+                for (input_dim, output_dim) in [(512usize, 100usize), (4096, 1024)] {
+                    let mut rng = Rng(u64::from(bits) * 1000 + group as u64 + output_dim as u64);
+                    let codes: Vec<u32> = (0..output_dim * input_dim)
+                        .map(|_| {
+                            let code = (rng.next() as u32) & ((1u32 << bits) - 1);
+                            // 0x7f and 0xff are the E4M3 NaN codes.
+                            if bits == 8 && code & 127 == 127 {
+                                code ^ 1
+                            } else {
+                                code
+                            }
+                        })
+                        .collect();
+                    let block_scales: Vec<u8> = (0..output_dim * input_dim / group)
+                        .map(|_| {
+                            if label == "nvfp4" {
+                                0x30 + (rng.next() % 16) as u8
+                            } else {
+                                120 + (rng.next() % 10) as u8
+                            }
+                        })
+                        .collect();
+                    let weight = device
+                        .load_weight(
+                            &[output_dim, input_dim],
+                            &pack(&codes, output_dim, input_dim, bits),
+                            encoding,
+                            &[],
+                            &[],
+                            &block_scales,
+                        )
+                        .unwrap();
+                    let bias: Vec<f32> = (0..output_dim)
+                        .map(|_| bf16_trunc(rng.unit() - 0.5))
+                        .collect();
+                    for dtype in [Music3DType::F32, Music3DType::Bf16] {
+                        for rows in [1usize, 2, 3, 5, 8, 9, 12, 13, 16] {
+                            let x: Vec<f32> = (0..rows * input_dim)
+                                .map(|_| bf16_trunc(2.0 * rng.unit() - 1.0))
+                                .collect();
+                            let out = weight
+                                .linear_typed(
+                                    &x,
+                                    (rows % 2 == 1).then_some(bias.as_slice()),
+                                    rows,
+                                    input_dim,
+                                    output_dim,
+                                    dtype,
+                                )
+                                .unwrap();
+                            println!(
+                                "fp {label} {input_dim}x{output_dim} {dtype:?} rows={rows} {:016x}",
+                                fnv(&out)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // Device time without host transfers: ten copies of one projection
+        // encoded into a single command buffer that reads nothing back, so
+        // the per-call figure is kernel time plus encoding, next to `timing`'s
+        // synchronous upload, wait, and readback.
+        "sequence_timing" => {
+            for (rows, input_dim, output_dim) in [
+                (2usize, 4096usize, 4096usize),
+                (2, 4096, 12288),
+                (12, 4096, 6144),
+                (691, 2048, 2048),
+                (691, 2048, 16384),
+                (691, 8192, 2048),
+            ] {
+                let case = build(&device, 4, 64, input_dim, output_dim, 5);
+                let x = input(&case, rows);
+                let run = || {
+                    let mut sequence = device.sequence("bench");
+                    let input = sequence.upload(&x).unwrap();
+                    for _ in 0..10 {
+                        sequence
+                            .linear(
+                                input,
+                                &case.weight,
+                                None,
+                                rows,
+                                input_dim,
+                                output_dim,
+                                Music3DType::Bf16,
+                            )
+                            .unwrap();
+                    }
+                    sequence.finish(&[]).unwrap();
+                };
+                run();
+                let started = Instant::now();
+                for _ in 0..3 {
+                    run();
+                }
+                let per_call = started.elapsed().as_secs_f64() * 1e3 / 30.0;
+                println!("sequence rows={rows} in={input_dim} out={output_dim} per_call_ms={per_call:.3}");
+            }
         }
         "timing" => {
             for (rows, input_dim, output_dim) in [

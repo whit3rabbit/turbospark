@@ -141,13 +141,23 @@ projection and embedding kernels. Convolution weights are uploaded once in
 the portable layout. Batched f32 attention handles the AR time-major CFG cache,
 the causal depth sequence, and the DiT's partial rotary sequence. Sampling,
 norms, rotary tables, flow integration, and stitching retain the CPU reference
-implementation. Activations and caches cross the host/device seam at operation
-boundaries; this implementation does not claim fused or real-time execution.
+implementation. Outside the depth step, activations and caches cross the
+host/device seam at operation boundaries. This implementation does not claim
+fused or real-time execution.
+
+The AR stage and the DiT blocks avoid that seam (see "LM head window and AR
+command buffers" and "DiT block command buffers and float-packed GEMV kernels"
+below). The LM head keeps only a 64-aligned window of rows on the device. Each
+depth decoder step, each LM decode step, and each DiT block with BF16 stages
+runs as one command buffer through `backend::Sequence`, and the LM KV cache
+stays on the device between decode steps. Traced runs, F32 precision, and any non-BF16 stage keep
+the per-operation path.
 
 Each request creates fresh KV and overlap state. Every device dispatch drains
 an autorelease pool, checks command-buffer completion before reading outputs,
-and rejects non-finite results. Resident weight bytes are observable through
-`Music3Runner::resident_weight_bytes`.
+and rejects non-finite results. A depth step command buffer scans every
+operation output, read or not, before readback. Resident weight bytes are
+observable through `Music3Runner::resident_weight_bytes`.
 
 Run the focused device gates serially:
 
@@ -258,9 +268,10 @@ What changed, all verified bit-identical against the previous kernels:
 Verification instruments, kept in the tree:
 
 - `crates/gpu/examples/music3_linear_bench.rs`: `hashes` and `conv_hashes`
-  print an FNV-1a hash of kernel output bits over 847 linear/embedding and 20
+  print an FNV-1a hash of kernel output bits over 913 linear/embedding and 20
   convolution configurations (bit widths, groups, row counts, dtypes, ragged
-  tile tails, split-K). Diff the output before and after a kernel change; any
+  tile tails, split-K, and every row count from 2 to 12 on the packed wide
+  kernel at a ragged width and the real depth shapes). Diff the output before and after a kernel change; any
   difference means the arithmetic changed. `timing` and `conv_timing` use the
   real checkpoint shapes.
 - `crates/runtime/examples/music3_bench.rs`: per-stage timings, the runtime
@@ -278,9 +289,163 @@ Tried and not kept (no demonstrated gain on a busy host, so no code):
 - Skipping the zero-padded taps of transposed convolution: it can flip the sign
   of a zero accumulator, which is observable in the output, so it is not
   bit-preserving.
-- Restricting the LM head to the 16,385 audio rows and replacing the full
-  sorts in sampling: exact, but the head is about 5 percent and sampling under
-  1 percent of the 8 s run. Candidates, not done.
+- Replacing the two full-vocab sorts in sampling with a partial selection:
+  exact, but sampling is under 1 percent of the 8 s run. Candidate, not done.
+- Decoding each 4-bit weight once for up to eight rows in
+  `music3_linear_wide` (one running total per row per thread, same lane and
+  chunk order): bit-identical (all 913 oracle lines), but slower in an
+  interleaved kernel A/B on a quiet host. Two rows, 4096 to 12288: 0.82 to
+  0.85 ms before, 1.19 ms after; twelve rows, 4096 to 6144: 1.21 to 1.24 ms
+  before, 1.43 to 1.45 ms after. These GEMVs reach about 30 GB/s of 4-bit
+  weight traffic, so they are latency-bound, not bandwidth-bound, and the
+  row-per-threadgroup layout keeps more loads in flight. Reverted.
+- Loading each lane's eight 4-bit words of a group as two 16-byte vector
+  loads in `music3_linear_wide`, then the same chunks in the same order:
+  bit-identical, but slower in GPU time per call (`music3_linear_bench
+  sequence_timing`, quiet repeats): two rows 4096 to 4096, 0.08 ms before and
+  0.10 ms after; twelve rows 4096 to 6144, 0.48 ms before and 0.59 ms after.
+  Reverted. Without GPU counter profiling, further restructuring of this
+  kernel is guesswork.
+- Decoding MXFP8 codes once per threadgroup (see below) instead of an `exp2`
+  per weight: kept because it is exact and cheap, but it moved the 8 s MXFP8
+  depth stage only from about 47.6 s to 45.0 s. MXFP8 GEMVs read twice the
+  bytes of 4-bit and are not decode-bound.
+
+### LM head window and AR command buffers
+
+These changes keep the default output byte-identical by construction, and the
+WAV hashes confirm it (`29c340d1...` and `16c5db73...`, every sample).
+
+- LM head window. Sampling reads only the end token and the semantic codes.
+  Every other id was already exactly -1e9 in both the conditional and the
+  guided row. The device keeps rows [151616, 168064) of the head (16,448 rows,
+  64-aligned) and `semantic_guided` scatters them into a -1e9 vector, so the
+  sampler still sees the full vocabulary. The window starts on a multiple of
+  64 because `music3_linear_tiled_16x64` places output `o` at tile column
+  `o mod 64`: an aligned window gives every tile the same weight rows as the
+  full head. A gather of only the allowed rows would move logits between tile
+  columns, so its exactness would rest on the hardware. Metal no longer
+  uploads the 200k-row head (1,503,657,984 bytes less resident). The CPU path
+  keeps the full head for `Qwen3::logits`.
+- One command buffer per depth step. `crates/gpu/src/music3.rs` splits
+  projections, norms, and attention into `*_plan` (validation and kernel
+  choice) and `encode_*`, so the synchronous call and `Music3Sequence` share
+  one kernel selection (kernel hash oracle unchanged). The host steps between
+  projections become `music3_add_round_bf16` (one f32 add, then the shared bf16
+  rounding) and `music3_swiglu_bf16`, which indexes a 64K table of the host
+  `DType::Bf16.silu` by the gate's bf16 bits instead of evaluating a Metal
+  `exp`. The device may flush denormals, so a subnormal operand or result sets
+  an `inexact` flag and that step is recomputed on the per-operation path.
+  The two head projections stay rows=1 each, as in the per-operation path
+  (rows=2 would select the tiled kernel). The profile records one
+  `depth_step` row per step instead of about 43 operations.
+- One command buffer per LM decode step. All 36 layers and the final norm of
+  a one-position step run the per-operation path's device kernels in the same
+  order (norms, projections, q/k norms, `music3_rope` with the synchronous
+  parameters, time-major attention), plus the same BF16 residual add and
+  SwiGLU. The KV cache moves to per-layer device buffers sized for the prompt
+  plus every decode step of the request, and each step bit-copies its k and v
+  rows into place (a one-position step is already in the time-major row
+  layout). A step that cannot use the sequence (a trace observer, an `inexact`
+  flag, a full cache) reads the history back to the host and runs per
+  operation; offsets advance only after a successful submission. Prefill stays
+  per operation. The device cache is allocated at full request size on the
+  first decode step: 576 KB per position across the 36 layers, about 0.9 GB
+  for a default 60 s request and about 8 GB at the 360 s, 5000-token ceiling.
+  The host cache used to reach the same size by the end of the request.
+- No depth decoder KV cache. Linear kernel choice depends on the row count:
+  the recompute runs 2 x seq_len rows (4 to 16), and on M4 rows 14 and 16 take
+  the split-K tiled kernels while a cache would always run 2. That changes the
+  arithmetic, and MLX also recomputes.
+
+Gates: `crates/gpu/tests/music3_sequence.rs` covers window columns, sequence
+against synchronous projections at rows 4 to 16 for affine 4-bit and MXFP8,
+norm, three attention kernels, add rounding over 1M pairs, SwiGLU over every
+finite bf16 gate, the non-finite scan, rope and the KV row copy into a bound
+cache with attention over it, bit-exact copies of NaN and subnormal patterns,
+and geometry refusals. The runtime adds `sequence_and_per_op_ar_paths_are_bit_identical`
+over the seven tiny native profiles,
+`kv_cache_returns_to_the_host_mid_request_without_changing_output`, and
+`cancellation_inside_depth_sequence_resets_for_the_next_request`. Audio unit
+tests cover the window, the scatter, and the inexact fallback of both the depth
+step and the LM decode step. Each subtle guard was mutation-checked.
+
+Indicative only: Apple M4 Max, release build, the cached 4-bit profile, the
+fixed benchmark prompt, seed 7, interleaved A/B (`benchmark_music3.py`) of the
+unmodified build against all the changes in this section and the next (LM
+head window, AR and DiT command buffers, float-packed GEMV kernels). The host
+was on **battery power** with load average 5 to 8, which breaks the AC
+protocol, so these are directions, not numbers. Medians of three runs, except
+the 30-step row (one run each):
+
+| Scenario | Before | After |
+|---|---|---|
+| 8 s, 1 flow step, generate | 75.9 s (RTF 9.49) | 32.5 s (RTF 4.06) |
+| 8 s, depth stage | 31.3 s | 15.7 s |
+| 8 s, LM decode stage | 24.8 s | 6.1 s |
+| 8 s, LM head stage | 3.75 s | 0.42 s |
+| 8 s, DiT stage (1 step) | 8.6 s | 3.2 s |
+| 8 s, 30 flow steps, generate | 323.1 s (RTF 40.4) | 129.4 s (RTF 16.2) |
+| 8 s, 30 flow steps, DiT stage | 257.2 s | 100.3 s |
+| 8 s, peak `phys_footprint` | 11.67 GiB | 10.16 GiB |
+| 1 s, 2 flow steps, generate | 11.8 s | 5.6 s |
+| resident weights | 9.31 GB | 7.80 GB |
+
+Both 30-step runs wrote the same WAV (`361ad4d6...`), which extends the
+byte-identity check to the default step count. For scale, the mlx-audio
+reference measured about 56 s for the same 8 s, 30-step request in an earlier
+session on this host (MLX 0.31.2, BF16 activations, also not a frozen row).
+
+The pinned MXFP8 profile (`d00a12c3...`) also reproduces the unmodified
+build's WAVs byte for byte (`ec2c4a6c...` for 1 s and `0dd4ef5a...` for 8 s)
+with every change, and its resident weights fall from 13.96 GB to 12.46 GB.
+Its 8 s, 1-step request went from 219 s to about 77 s (single runs on a busy
+host, a direction only). MXFP8 is still about twice as slow as 4-bit: its
+8-bit GEMVs read twice the bytes per weight.
+
+The depth step's time grows with the sequence (about 6 ms at length 3 to
+19 ms at length 8 for both CFG rows). Sharing decoded weights across rows did
+not help (see "Tried and not kept"): the affine GEMVs are latency-bound. A
+faster depth step needs a kernel that keeps each output's lane and chunk order
+while improving memory access (for example staging weight tiles through
+threadgroup memory), or the DiT and vocoder first, which now cost more.
+
+### DiT block command buffers and float-packed GEMV kernels
+
+- One command buffer per DiT block. Each of the 36 blocks of a flow forward
+  runs as one submission: the layer norms with their biases, the q, k, v, and
+  output projections, the typed partial rotary as `music3_partial_rope_bf16`
+  (the host formula `round(round(a * c) - round(b * s))` and its pair, with the
+  tables rounded to BF16), attention, the feed-forward projections with their
+  biases in the kernel, the gated activation as `music3_gated_silu_bf16` (the
+  host SiLU table), and both residual adds. A bias goes into the sequence only
+  when its dtype matches the projection's, which is when the per-operation
+  path also adds it in the kernel. The same `inexact` fallback applies. The
+  input conv, timestep MLP, input and output projections, and output conv stay
+  per operation (once per forward). The profile records one `dit_block` row
+  per block.
+- Float-packed GEMVs (MXFP4, MXFP8, NVFP4). The two GEMV branches of
+  `music3_linear` for these formats ran one (row, output) pair per 128-thread
+  threadgroup with 16 or 32 lanes working. `music3_linear_fp_wide` (eight pairs
+  of sixteen lanes) and `music3_linear_fp_vector` (four pairs of thirty-two
+  lanes) keep each pair's lanes, loop order, float4 `dot`, and reduction
+  verbatim; only the pairs per threadgroup change. MXFP8 codes are decoded once
+  per threadgroup into threadgroup memory by `music_e4m3` itself.
+
+Gates: the kernel hash oracle now has 1,021 lines (108 float-packed cases at a
+ragged and the real width, rows 1 to 16, both dtypes, with and without bias),
+identical before and after. These kernels run only at BF16, where final
+rounding hides most single-ulp f32 changes, so the oracle is a backstop there:
+a reordered reduction changed 9 of its lines, a halved result changed exactly
+the six one-row lines. `mxfp8_gemv_decodes_every_code_exactly` pushes all 254
+non-NaN MXFP8 codes through one-hot GEMVs at 1, 2, and 5 rows and requires the
+exact E4M3 value of each, before and after the decode table.
+`dit_block_ops_match_synchronous_and_host_bitwise` covers the DiT operations
+at the real shapes (691 positions, 32 heads of 64, rotary 32, feed-forward
+8192), `dit_elementwise_ops_flag_cases_the_device_may_round_differently` the
+`inexact` cases, and the runtime test
+`dit_block_sequences_match_the_per_op_flow_bitwise` the whole flow stage on
+the seven tiny native profiles. Every guard was mutation-checked.
 
 ## Flow guidance reuse (opt-in)
 
@@ -341,8 +506,9 @@ It is a flow-stage saving only: the AR stage and vocoder are unchanged, and a
   leaves the last frames uncovered (a 1500-frame request needs 10 chunks, not
   9). There is no objective metric here that could validate that change.
 - Quantizing the depth decoder harder: audio.cpp finds it weight-bandwidth
-  bound on CUDA. Ours is dispatch-bound (about 830 synchronous dispatches per
-  AR frame), so it would not help.
+  bound on CUDA. Ours was dispatch-bound (about 830 synchronous dispatches per
+  AR frame) when this was evaluated, so it would not help. The depth step now
+  runs as one command buffer. Revisit only with a measurement.
 - Candidates still open and unmeasured: batching several takes through one AR
   pass (extra rows are nearly free when dispatch-bound), overlapping AR with
   flow (needs a `Send` backend), and a full on-device depth frame (needs a
@@ -377,12 +543,13 @@ performance rows, durations beyond the 16 s memory probe, the other pinned
 profiles (8-bit, MXFP8, and the rest), real-time performance, and FFI/Swift
 integration require separate qualification.
 
-The next structural cost is dispatch count: about 830 synchronous Metal
-dispatches per AR frame at roughly 0.2 to 0.3 ms of fixed round-trip each, a
-floor that tuning individual kernels cannot remove. Removing it needs
-device-resident layer execution (residual adds, dtype rounding, and SiLU on
-the device with the same arithmetic as the host code), then a depth-decoder KV
-cache. Both must keep the byte-identical-output check. The standalone command
-now routes full-size converted checkpoints through Metal on macOS and keeps the
-CPU reference path for tiny fixtures. Existing CPU timing rows in `MODELS.md`
-remain CPU evidence only.
+The AR stage now runs about nine command buffers per frame (seven depth steps,
+one LM decode step, the head) plus the depth projections between steps, and a
+DiT forward runs 36 block command buffers. The remaining costs are kernel time:
+the DiT's tiled projections (about 2.5 TFLOPS on the 691 x 2048 x 16384 shape,
+about 37 ms of each 51 ms block), the latency-bound affine GEMVs of the depth
+steps, the vocoder's convolutions, and on MXFP8 the 8-bit GEMV traffic. Each
+needs GPU counter profiling before another exact restructuring is tried. A depth decoder KV cache cannot be bit-exact (see
+"LM head window and AR command buffers"). The standalone command now routes full-size converted checkpoints through Metal on
+macOS and keeps the CPU reference path for tiny fixtures. Existing CPU timing
+rows in `MODELS.md` remain CPU evidence only.

@@ -379,3 +379,208 @@ fn music3_cancellation_during_compute_resets_for_the_next_request() {
     assert!(!fresh.waveform.is_empty());
     assert!(fresh.waveform.iter().all(|v| v.is_finite()));
 }
+
+/// Every sampling decision of one AR run, as exact bits.
+type TraceBits = Vec<(usize, usize, (u32, u32), Vec<u32>, Vec<u32>, usize)>;
+
+fn traced_bits(
+    runner: &Music3Runner,
+    ids: &[i32],
+    frames: usize,
+    seed: u64,
+) -> (TraceBits, Vec<u32>, Vec<Vec<i32>>) {
+    let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+    let mut trace = Vec::new();
+    let (hidden, codes) = runner
+        .generate_frame_hiddens_traced(ids, frames, seed, |t| {
+            trace.push((
+                t.frame,
+                t.codebook,
+                t.key,
+                bits(t.hiddens),
+                bits(t.guided_logits),
+                t.sampled,
+            ));
+        })
+        .unwrap();
+    (trace, bits(&hidden), codes)
+}
+
+fn sequence_calls(runner: &Music3Runner, op: &str) -> u64 {
+    runner
+        .dispatch_profile()
+        .iter()
+        .filter(|stat| stat.op == op)
+        .map(|stat| stat.calls)
+        .sum()
+}
+
+fn depth_steps(runner: &Music3Runner) -> u64 {
+    sequence_calls(runner, "depth_step")
+}
+
+/// One command buffer per depth step and per LM decode step must reproduce
+/// the per-operation path bit for bit. A trace observer forces the
+/// per-operation path, so the same runner runs both; the dispatch profile
+/// proves which path ran.
+#[test]
+fn sequence_and_per_op_ar_paths_are_bit_identical() {
+    use audio::music::minimax_music3::Music3Precision;
+    for encoding in [
+        "bf16", "affine8", "affine6", "affine4", "mxfp8", "mxfp4", "nvfp4",
+    ] {
+        let path = fixture("precision").join(encoding);
+        let request: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.join("request.json")).unwrap()).unwrap();
+        let ids = serde_json::from_value::<Vec<i32>>(request["ids"].clone()).unwrap();
+        let frames = request["frames"].as_u64().unwrap() as usize;
+        let seed = request["seed"].as_u64().unwrap();
+        let runner = Music3Runner::open_with_precision(&path, Music3Precision::Checkpoint).unwrap();
+
+        runner.set_trace_observer(|_| {});
+        runner.reset_dispatch_profile();
+        let per_op = traced_bits(&runner, &ids, frames, seed);
+        assert_eq!(
+            depth_steps(&runner),
+            0,
+            "{encoding}: observed run stays per-op"
+        );
+        assert_eq!(sequence_calls(&runner, "lm_decode_step"), 0);
+
+        runner.clear_trace_observer();
+        runner.reset_dispatch_profile();
+        let sequence = traced_bits(&runner, &ids, frames, seed);
+        assert!(depth_steps(&runner) > 0, "{encoding}: depth sequence ran");
+        assert!(
+            sequence_calls(&runner, "lm_decode_step") > 0,
+            "{encoding}: LM decode sequence ran"
+        );
+        assert!(per_op == sequence, "{encoding}: paths differ");
+    }
+}
+
+/// Cancellation is checked inside a depth step's command buffer: a flag set
+/// before codebook 3 stops that step before it is committed.
+#[test]
+fn cancellation_inside_depth_sequence_resets_for_the_next_request() {
+    use audio::music::minimax_music3::{Control, Music3Precision, Progress};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let runner =
+        Music3Runner::open_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint)
+            .unwrap();
+    let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+    request.duration_seconds = Some(0.12);
+    request.steps = Some(1);
+    request.seed = Some(7);
+    let expected = runner.generate_text(&request).unwrap();
+    runner.reset_dispatch_profile();
+    let flag = Arc::new(AtomicBool::new(false));
+    let cancel = flag.clone();
+    let error = runner
+        .generate_text_controlled(&request, flag, |event| {
+            if matches!(
+                event,
+                Progress::DepthStep {
+                    frame: 0,
+                    codebook: 3,
+                    ..
+                }
+            ) {
+                cancel.store(true, Ordering::Release);
+            }
+            Control::Continue
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("cancelled"), "{error}");
+    assert_eq!(depth_steps(&runner), 2, "codebooks 1 and 2 only");
+    let fresh = runner
+        .generate_text_cancellable(&request, Arc::new(AtomicBool::new(false)))
+        .unwrap();
+    assert_eq!(fresh.waveform, expected.waveform);
+}
+
+/// Turning a trace observer on mid-request moves the LM KV cache back from
+/// the device; the remaining steps run per operation on the host copy and the
+/// waveform stays byte-identical to an all-sequence and an all-per-op run.
+#[test]
+fn kv_cache_returns_to_the_host_mid_request_without_changing_output() {
+    use audio::music::minimax_music3::{Control, Music3Precision, Progress};
+    use std::sync::{atomic::AtomicBool, Arc};
+    let runner =
+        Music3Runner::open_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint)
+            .unwrap();
+    let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+    request.duration_seconds = Some(0.24);
+    request.steps = Some(1);
+    request.seed = Some(7);
+    runner.reset_dispatch_profile();
+    let sequence = runner.generate_text(&request).unwrap();
+    let all_decode = sequence_calls(&runner, "lm_decode_step");
+    assert!(all_decode > 3);
+
+    runner.reset_dispatch_profile();
+    let switched = runner
+        .generate_text_controlled(&request, Arc::new(AtomicBool::new(false)), |event| {
+            if matches!(event, Progress::ArFrame { emitted: 3, .. }) {
+                runner.set_trace_observer(|_| {});
+            }
+            Control::Continue
+        })
+        .unwrap();
+    let partial = sequence_calls(&runner, "lm_decode_step");
+    assert!(
+        partial > 0 && partial < all_decode,
+        "{partial} of {all_decode}"
+    );
+
+    runner.reset_dispatch_profile();
+    let per_op = runner.generate_text(&request).unwrap();
+    assert_eq!(sequence_calls(&runner, "lm_decode_step"), 0);
+    runner.clear_trace_observer();
+
+    let bits = |w: &[f32]| w.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&switched.waveform), bits(&sequence.waveform));
+    assert_eq!(bits(&per_op.waveform), bits(&sequence.waveform));
+}
+
+/// One command buffer per DiT block must reproduce the per-operation flow
+/// stage bit for bit on every tiny native profile, and the profile must
+/// show which path ran.
+#[test]
+fn dit_block_sequences_match_the_per_op_flow_bitwise() {
+    use audio::music::minimax_music3::Music3Precision;
+    for encoding in [
+        "bf16", "affine8", "affine6", "affine4", "mxfp8", "mxfp4", "nvfp4",
+    ] {
+        let path = fixture("precision").join(encoding);
+        let request: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.join("request.json")).unwrap()).unwrap();
+        let hiddens = read_f32(&path.join("hiddens.f32"));
+        let frames = request["frames"].as_u64().unwrap() as usize;
+        let steps = request["steps"].as_u64().unwrap() as usize;
+        let seed = request["seed"].as_u64().unwrap();
+        let runner = Music3Runner::open_with_precision(&path, Music3Precision::Checkpoint).unwrap();
+        let bits = |w: &[f32]| w.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+
+        runner.set_trace_observer(|_| {});
+        runner.reset_dispatch_profile();
+        let per_op = runner.run_flow(&hiddens, frames, steps, seed).unwrap();
+        assert_eq!(sequence_calls(&runner, "dit_block"), 0, "{encoding}");
+
+        runner.clear_trace_observer();
+        runner.reset_dispatch_profile();
+        let sequence = runner.run_flow(&hiddens, frames, steps, seed).unwrap();
+        assert!(
+            sequence_calls(&runner, "dit_block") > 0,
+            "{encoding}: DiT sequence ran"
+        );
+        assert_eq!(
+            bits(&sequence),
+            bits(&per_op),
+            "{encoding}: flow paths differ"
+        );
+    }
+}

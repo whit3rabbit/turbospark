@@ -170,6 +170,111 @@ fn short_text_ids() -> Vec<i32> {
 }
 
 // ---------------------------------------------------------------------------
+// LM head window
+// ---------------------------------------------------------------------------
+
+/// The full-vocab semantic mask as it was before the head window, kept as
+/// the oracle for `semantic_guided`. `logits` is `[2, vocab]`.
+fn full_vocab_guided(config: &ModelConfig, logits: &[f32]) -> Vec<f32> {
+    let vocab = config.vocab_size;
+    let mut guided = vec![0.0f32; vocab];
+    let mut conditional_row = vec![0.0f32; vocab];
+    for v in 0..vocab {
+        let allowed = (v >= config.audio_code_offset
+            && v < config.audio_code_offset + config.semantic_vocab_size)
+            || v == config.audio_end_token_id;
+        let conditional = if allowed { logits[v] } else { -1e9 };
+        let unconditional = if allowed { logits[vocab + v] } else { -1e9 };
+        conditional_row[v] = conditional;
+        guided[v] = unconditional + AR_CFG_SCALE * (conditional - unconditional);
+    }
+    let threshold = rng::kth_largest(&conditional_row, AR_CFG_TOP_K.min(vocab));
+    for v in 0..vocab {
+        let allowed = (v >= config.audio_code_offset
+            && v < config.audio_code_offset + config.semantic_vocab_size)
+            || v == config.audio_end_token_id;
+        if conditional_row[v] < threshold || !allowed {
+            guided[v] = -1e9;
+        }
+    }
+    guided
+}
+
+/// Deterministic logits in [-8, 8) on a 1/64 grid, so ties around the
+/// top-k threshold occur.
+fn grid_logits(count: usize, seed: u64) -> Vec<f32> {
+    let mut state = seed;
+    (0..count)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((state >> 33) % 1024) as f32 / 64.0 - 8.0
+        })
+        .collect()
+}
+
+#[test]
+fn logit_window_is_tile_aligned_and_covers_every_sampleable_id() {
+    for (config, want) in [
+        (ModelConfig::tiny(), 192..320),
+        (ModelConfig::default(), 151_616..168_064),
+    ] {
+        let window = logit_window(&config);
+        assert_eq!(window, want);
+        assert_eq!(window.start % LOGIT_TILE, 0);
+        assert_eq!(window.len() % LOGIT_TILE, 0);
+        assert!(window.contains(&config.audio_end_token_id));
+        assert!(window.contains(&config.audio_code_offset));
+        assert!(window.contains(&(config.audio_code_offset + config.semantic_vocab_size - 1)));
+    }
+    // A vocabulary that is not a tile multiple clips the last tile.
+    let mut config = ModelConfig::tiny();
+    config.vocab_size = 500;
+    config.audio_code_offset = 436;
+    config.audio_end_token_id = 435;
+    assert_eq!(logit_window(&config), 384..500);
+}
+
+#[test]
+fn semantic_guided_window_matches_the_full_vocab_mask_bitwise() {
+    let tiny = ModelConfig::tiny();
+    let mut end_inside_codes = ModelConfig::tiny();
+    end_inside_codes.audio_end_token_id = end_inside_codes.audio_code_offset + 3;
+    for (config, seed) in [
+        (tiny, 1u64),
+        (end_inside_codes, 2),
+        (ModelConfig::default(), 3),
+    ] {
+        let vocab = config.vocab_size;
+        let full = grid_logits(2 * vocab, seed);
+        let want = full_vocab_guided(&config, &full);
+        let whole = semantic_guided(&config, 0, vocab, &full);
+        assert!(
+            whole
+                .iter()
+                .zip(&want)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "full head differs"
+        );
+        let window = logit_window(&config);
+        let mut slice = Vec::with_capacity(2 * window.len());
+        for row in 0..2 {
+            slice.extend_from_slice(&full[row * vocab + window.start..row * vocab + window.end]);
+        }
+        let windowed = semantic_guided(&config, window.start, window.len(), &slice);
+        assert!(
+            windowed
+                .iter()
+                .zip(&want)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "head window differs"
+        );
+        assert_eq!(windowed.len(), vocab);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // RNG parity
 // ---------------------------------------------------------------------------
 
@@ -1517,4 +1622,301 @@ fn flow_guidance_reuse_is_opt_in_and_gated_by_warmup() {
         model.run_flow(&hiddens, frames, steps, 7).unwrap(),
         reference
     );
+}
+
+// ---------------------------------------------------------------------------
+// Depth step sequence fallback
+// ---------------------------------------------------------------------------
+
+/// A host-computed "device": weights decode to f32 and project on the CPU.
+/// Its sequence records nothing and always reports an inexact case, so the
+/// depth step must fall back to the per-operation path.
+struct HostDevice {
+    offer_sequence: bool,
+    sequences: std::cell::Cell<usize>,
+}
+struct HostWeight(Vec<f32>);
+impl backend::DeviceWeight for HostWeight {
+    fn linear(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        dtype: precision::DType,
+    ) -> crate::Result<Vec<f32>> {
+        let mut out = ops::linear(input, &self.0, bias, rows, input_dim, output_dim);
+        dtype.round_slice(&mut out);
+        Ok(out)
+    }
+    fn embedding(&self, ids: &[i32], width: usize) -> crate::Result<Vec<f32>> {
+        Ok(ops::embedding(&self.0, width, ids))
+    }
+    fn convolution(
+        &self,
+        _input: &[f32],
+        _bias: Option<&[f32]>,
+        _shape: backend::ConvShape,
+        _dtype: precision::DType,
+    ) -> crate::Result<Vec<f32>> {
+        unreachable!("the depth step does not convolve")
+    }
+}
+/// Host memory standing in for a persistent device buffer.
+struct HostBuffer(std::cell::RefCell<Vec<f32>>);
+impl backend::DeviceBuffer for HostBuffer {
+    fn write(&self, first: usize, data: &[f32]) -> crate::Result<()> {
+        self.0.borrow_mut()[first..first + data.len()].copy_from_slice(data);
+        Ok(())
+    }
+    fn read(&self, first: usize, len: usize) -> crate::Result<Vec<f32>> {
+        Ok(self.0.borrow()[first..first + len].to_vec())
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+struct InexactSequence;
+impl backend::Sequence for InexactSequence {
+    fn upload(&mut self, _data: &[f32]) -> crate::Result<backend::Slot> {
+        Ok(backend::Slot(0))
+    }
+    fn bind(&mut self, _: &dyn backend::DeviceBuffer) -> crate::Result<backend::Slot> {
+        Ok(backend::Slot(0))
+    }
+    fn view(&mut self, slot: backend::Slot, _: usize, _: usize) -> crate::Result<backend::Slot> {
+        Ok(slot)
+    }
+    fn copy(&mut self, _: backend::Slot, _: backend::Slot) -> crate::Result<()> {
+        Ok(())
+    }
+    fn rope(
+        &mut self,
+        x: backend::Slot,
+        _: backend::RopeShape,
+        _: precision::DType,
+    ) -> crate::Result<backend::Slot> {
+        Ok(x)
+    }
+    fn linear(
+        &mut self,
+        x: backend::Slot,
+        _: &dyn backend::DeviceWeight,
+        _: Option<&[f32]>,
+        _: usize,
+        _: usize,
+        _: usize,
+        _: precision::DType,
+    ) -> crate::Result<backend::Slot> {
+        Ok(x)
+    }
+    fn layer_norm(
+        &mut self,
+        x: backend::Slot,
+        _: &[f32],
+        _: Option<&[f32]>,
+        _: usize,
+        _: usize,
+        _: f32,
+        _: precision::DType,
+    ) -> crate::Result<backend::Slot> {
+        Ok(x)
+    }
+    fn partial_rope(
+        &mut self,
+        x: backend::Slot,
+        _: backend::Slot,
+        _: backend::Slot,
+        _: usize,
+        _: usize,
+        _: usize,
+        _: usize,
+        _: precision::DType,
+    ) -> crate::Result<backend::Slot> {
+        Ok(x)
+    }
+    fn gated_silu(
+        &mut self,
+        x: backend::Slot,
+        _: usize,
+        _: usize,
+        _: precision::DType,
+    ) -> crate::Result<backend::Slot> {
+        Ok(x)
+    }
+    fn rms_norm(
+        &mut self,
+        x: backend::Slot,
+        _: &[f32],
+        _: usize,
+        _: usize,
+        _: f32,
+        _: precision::DType,
+    ) -> crate::Result<backend::Slot> {
+        Ok(x)
+    }
+    fn attention(
+        &mut self,
+        q: backend::Slot,
+        _: backend::Slot,
+        _: backend::Slot,
+        _: backend::AttentionShape,
+        _: precision::DType,
+    ) -> crate::Result<backend::Slot> {
+        Ok(q)
+    }
+    fn add_round(
+        &mut self,
+        a: backend::Slot,
+        _: backend::Slot,
+        _: precision::DType,
+    ) -> crate::Result<backend::Slot> {
+        Ok(a)
+    }
+    fn swiglu(
+        &mut self,
+        g: backend::Slot,
+        _: backend::Slot,
+        _: precision::DType,
+        _: precision::DType,
+    ) -> crate::Result<backend::Slot> {
+        Ok(g)
+    }
+    fn finish(self: Box<Self>, _: &[backend::Slot]) -> crate::Result<Option<Vec<Vec<f32>>>> {
+        Ok(None)
+    }
+}
+impl backend::ComputeBackend for HostDevice {
+    fn load_weight(
+        &self,
+        data: backend::WeightData<'_>,
+    ) -> crate::Result<std::rc::Rc<dyn backend::DeviceWeight>> {
+        let values = match data.encoding {
+            backend::WeightEncoding::F32 => data
+                .bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .collect(),
+            backend::WeightEncoding::Bf16 => data
+                .bytes
+                .chunks_exact(2)
+                .map(|b| f32::from_bits(u32::from(u16::from_le_bytes([b[0], b[1]])) << 16))
+                .collect(),
+            other => panic!("host device loads dense weights only, not {other:?}"),
+        };
+        Ok(std::rc::Rc::new(HostWeight(values)))
+    }
+    fn attention(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        shape: backend::AttentionShape,
+        dtype: precision::DType,
+    ) -> crate::Result<Vec<f32>> {
+        backend::attention(&None, q, k, v, shape, dtype)
+    }
+    fn sequence(
+        &self,
+        _op: &'static str,
+        _shape: &[usize],
+    ) -> Option<Box<dyn backend::Sequence + '_>> {
+        self.offer_sequence.then(|| {
+            self.sequences.set(self.sequences.get() + 1);
+            Box::new(InexactSequence) as Box<dyn backend::Sequence>
+        })
+    }
+    fn buffer(&self, len: usize) -> Option<crate::Result<std::rc::Rc<dyn backend::DeviceBuffer>>> {
+        self.offer_sequence.then(|| {
+            Ok(
+                std::rc::Rc::new(HostBuffer(std::cell::RefCell::new(vec![f32::NAN; len])))
+                    as std::rc::Rc<dyn backend::DeviceBuffer>,
+            )
+        })
+    }
+}
+
+#[test]
+fn depth_step_falls_back_to_per_operation_values_when_the_device_is_inexact() {
+    let step = |offer_sequence: bool| {
+        let device = std::rc::Rc::new(HostDevice {
+            offer_sequence,
+            sequences: std::cell::Cell::new(0),
+        });
+        let model = Model::load_converted_with_backend_and_precision(
+            &testdata("precision/bf16"),
+            device.clone(),
+            Music3Precision::Checkpoint,
+        )
+        .unwrap();
+        let hidden = model.config.hidden_size;
+        let len = 3;
+        let embeddings: Vec<f32> = grid_logits(2 * len * hidden, 9)
+            .into_iter()
+            .map(|v| precision::DType::Bf16.round(v / 8.0))
+            .collect();
+        let out = model
+            .depth
+            .step(&embeddings, 2, len, precision::DType::Bf16, 1)
+            .unwrap();
+        (out, device.sequences.get())
+    };
+    let (per_op, offered) = step(false);
+    assert_eq!(offered, 0);
+    let (fallback, offered) = step(true);
+    assert_eq!(offered, 1, "the BF16 step asked for a sequence");
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&fallback.0), bits(&per_op.0));
+    assert_eq!(bits(&fallback.1), bits(&per_op.1));
+}
+
+/// An inexact LM decode submission must leave the step to the per-operation
+/// path with the KV history it had: the cache comes back from the device and
+/// the step's values equal a run that never offered a sequence.
+#[test]
+fn lm_decode_falls_back_to_per_operation_values_when_the_device_is_inexact() {
+    let run = |offer_sequence: bool| {
+        let device = std::rc::Rc::new(HostDevice {
+            offer_sequence,
+            sequences: std::cell::Cell::new(0),
+        });
+        let model = Model::load_converted_with_backend_and_precision(
+            &testdata("precision/bf16"),
+            device.clone(),
+            Music3Precision::Checkpoint,
+        )
+        .unwrap();
+        let (hidden, prompt, steps) = (model.config.hidden_size, 5, 3);
+        let ids: Vec<i32> = (0..2 * prompt as i32).map(|i| 10 + i).collect();
+        let embeddings = model.lm.embed_ids(&ids, 2, prompt).unwrap();
+        let mut cache: Vec<qwen3::KvCache> = (0..model.config.num_hidden_layers)
+            .map(|_| qwen3::KvCache::with_capacity(prompt + steps))
+            .collect();
+        let mut outputs = vec![model
+            .lm
+            .hidden_forward(&embeddings, 2, prompt, &mut cache)
+            .unwrap()];
+        for step in 0..steps {
+            let feedback: Vec<f32> = grid_logits(2 * hidden, 20 + step as u64)
+                .into_iter()
+                .map(|v| precision::DType::Bf16.round(v / 8.0))
+                .collect();
+            outputs.push(
+                model
+                    .lm
+                    .hidden_forward(&feedback, 2, 1, &mut cache)
+                    .unwrap(),
+            );
+        }
+        (outputs, device.sequences.get())
+    };
+    let (per_op, offered) = run(false);
+    assert_eq!(offered, 0);
+    let (fallback, offered) = run(true);
+    assert_eq!(offered, 3, "every BF16 decode step asked for a sequence");
+    for (a, b) in fallback.iter().zip(&per_op) {
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(a), bits(b));
+    }
 }
