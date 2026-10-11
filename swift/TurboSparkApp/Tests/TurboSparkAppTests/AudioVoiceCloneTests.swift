@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import TurboSpark
 import XCTest
@@ -118,5 +119,64 @@ final class AudioVoiceCloneTests: XCTestCase {
         // The voiceover page does not offer a model that needs a reference.
         controller.selectPage(.voiceover)
         XCTAssertFalse(controller.availableProfiles.contains { $0.family == "megatts3" })
+    }
+
+    /// The Voice Clone page clones a real voice end to end: the catalog
+    /// profile, a local model folder, an imported reference, consent, the
+    /// native session on the CPU the catalog declares, and the encrypted take.
+    /// Set TURBOSPARK_TEST_MEGATTS3 (a converted model folder) and
+    /// TURBOSPARK_TEST_VOICE_REFERENCE (a WAV of 1 to 28 seconds).
+    @MainActor func testRealVoiceClonePageClonesWithMegaTTS3() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let modelPath = environment["TURBOSPARK_TEST_MEGATTS3"],
+              let referencePath = environment["TURBOSPARK_TEST_VOICE_REFERENCE"] else {
+            throw XCTSkip("Set TURBOSPARK_TEST_MEGATTS3 and TURBOSPARK_TEST_VOICE_REFERENCE for the real MegaTTS3 app gate")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = ProfileVaultStore(rootProvider: { root }, profileIDProvider: { "real-megatts3" }, migrateLegacyData: false)
+        _ = try vault.prepareForLaunch()
+        let assets = ManagedAssetStore(vault: vault)
+        let library = AudioLibraryStore(repository: ProfileRepository(store: vault))
+        let controller = AudioWorkspaceController(library: library, assets: assets)
+        defer { controller.shutdown() }
+        var clips: [AudioLibraryClip] = []
+        try AudioMediaIO.importFile(URL(fileURLWithPath: referencePath)) { chunk in
+            let asset = try assets.store(data: chunk.wav, fileName: "reference.wav")
+            clips.append(AudioLibraryClip(assetReference: asset.storedReference, sampleRate: chunk.sampleRate,
+                channels: chunk.channels, frameCount: chunk.frameCount, offset: chunk.offset, source: chunk.source))
+        }
+        let duration = clips.map { $0.offset + $0.duration }.max() ?? 0
+
+        controller.profiles = try AudioCatalog.profiles()
+        controller.selectPage(.voiceClone)
+        let mega = try XCTUnwrap(controller.availableProfiles.first { $0.family == "megatts3" })
+        controller.selectModel(mega.identity.alias)
+        controller.preferences.localModels[mega.identity.alias] = try URL(fileURLWithPath: modelPath)
+            .bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+        controller.recipe.text = "Hello world, this is a short test."
+        controller.recipe.seed = 7
+        controller.speechSettings.reference = AudioVoiceReference(sourceID: UUID(), title: "Local reference",
+                                                                  clips: clips, duration: min(28, duration))
+        controller.speechSettings.cloneOptions?.steps = 4
+        XCTAssertFalse(controller.canRun, "consent is required before a clone runs")
+        controller.setCloneConsent(true)
+        XCTAssertNil(controller.speechValidationMessage)
+        XCTAssertTrue(controller.canRun)
+
+        controller.run()
+        await controller.jobTask?.value
+        XCTAssertNil(controller.error)
+        let take = try XCTUnwrap(controller.items.first { $0.modelFamily == "megatts3" })
+        XCTAssertEqual(take.status, .completed)
+        XCTAssertEqual(take.resolvedSeed, 7)
+        let clip = try XCTUnwrap(take.clips.first)
+        XCTAssertEqual(clip.sampleRate, 24_000)
+        XCTAssertEqual(clip.channels, 1)
+        XCTAssertGreaterThan(clip.duration, 1)
+        XCTAssertEqual(try library.load().first { $0.id == take.id }?.recipe.speech?.reference, controller.speechSettings.reference)
+        let export = root.appendingPathComponent("clone.wav")
+        try AudioMediaIO.render(take.clips, store: assets, to: export)
+        XCTAssertEqual(try AVAudioFile(forReading: export).length, clip.frameCount)
     }
 }

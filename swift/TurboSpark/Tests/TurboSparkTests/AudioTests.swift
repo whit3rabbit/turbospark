@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import TurboSpark
 
@@ -134,4 +135,70 @@ final class AudioTests: XCTestCase {
         next.release()
     }
 
+    /// A real MegaTTS3 clone through this binding, the C ABI and the runtime.
+    /// Set TURBOSPARK_TEST_MEGATTS3 (a converted or installed model folder) and
+    /// TURBOSPARK_TEST_VOICE_REFERENCE (a mono WAV). With
+    /// TURBOSPARK_TEST_MEGATTS3_EXPECTED, the WAV `turbospark-clone speak
+    /// --steps 4 --seed 7 --wav-format float32` wrote for the same reference and
+    /// text, the binding must reproduce the CLI sample for sample: the reference
+    /// goes in at its own rate, so both resample it the same way.
+    func testRealMegaTTS3CloneThroughTheBinding() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let model = environment["TURBOSPARK_TEST_MEGATTS3"],
+              let referencePath = environment["TURBOSPARK_TEST_VOICE_REFERENCE"] else {
+            throw XCTSkip("Set TURBOSPARK_TEST_MEGATTS3 and TURBOSPARK_TEST_VOICE_REFERENCE for the real MegaTTS3 gate")
+        }
+        let (reference, rate) = try Self.monoWAV(URL(fileURLWithPath: referencePath))
+        let session = try AudioSession(modelPath: model, task: .textToSpeech, allowPortable: true, expectedFamily: "megatts3")
+        defer { session.close() }
+        var request = AudioRequest(task: .textToSpeech)
+        request.text = "Hello world, this is a short test."
+        request.steps = 4
+        request.seed = 7
+        request.referenceSampleRate = UInt32(rate)
+        do {
+            _ = try await session.execute(request, pcm: reference)
+            XCTFail("cloning without consent must be refused")
+        } catch let error as TurboSparkError {
+            XCTAssertTrue(error.localizedDescription.contains("consent"), error.localizedDescription)
+        }
+        request.consent = true
+        let steps = StepCounter()
+        let result = try await session.execute(request, pcm: reference) { if $0.stage == "diffusion" { steps.add() } }
+        let pcm = try XCTUnwrap(result.pcm)
+        XCTAssertEqual(pcm.format.sampleRate, 24_000)
+        XCTAssertEqual(pcm.format.channels, 1)
+        XCTAssertTrue(pcm.samples.allSatisfy(\.isFinite))
+        XCTAssertGreaterThan(pcm.samples.map(abs).max() ?? 0, 0.01, "the clone is silent")
+        XCTAssertGreaterThan(steps.count, 0, "no diffusion progress reached Swift")
+        if let expected = environment["TURBOSPARK_TEST_MEGATTS3_EXPECTED"] {
+            let (cli, cliRate) = try Self.monoWAV(URL(fileURLWithPath: expected))
+            XCTAssertEqual(cliRate, 24_000)
+            XCTAssertEqual(pcm.samples.count, cli.count)
+            XCTAssertTrue(pcm.samples == cli, "the binding and the CLI disagree")
+        }
+    }
+
+    private static func monoWAV(_ url: URL) throws -> ([Float], Int) {
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertEqual(file.processingFormat.channelCount, 1, "use a mono WAV")
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 16_384))
+        var samples: [Float] = []
+        // One read can stop short of the buffer (44,032 of 44,715 frames here).
+        while file.framePosition < file.length {
+            try file.read(into: buffer)
+            guard buffer.frameLength > 0 else { break }
+            let channel = try XCTUnwrap(buffer.floatChannelData)[0]
+            samples += UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength))
+        }
+        XCTAssertEqual(Int64(samples.count), file.length)
+        return (samples, Int(file.processingFormat.sampleRate))
+    }
+}
+
+private final class StepCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+    func add() { lock.lock(); value += 1; lock.unlock() }
 }
