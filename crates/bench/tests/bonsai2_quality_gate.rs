@@ -55,12 +55,22 @@ const BASELINES: &[quality_common::ChipQuality] = &[
     // rules out is the family's characteristic silent failure: a missing or
     // misordered Hadamard transform does not error anywhere, it produces a
     // fluent-looking model with a perplexity in the hundreds or thousands.
+    //
+    // RE-FROZEN 2026-10-11 for the GQA-shared decode attention partial,
+    // this family's default since then (`qwen38_quality_gate.rs` has the
+    // same note). Perplexity 5.8134 -> 5.8141; greedy digest unchanged; the
+    // sampled text keeps its first 564 of ~1310 characters, then reads "This
+    // drag converts kinetic energy into heat" where it read "This
+    // conversion of kinetic energy into heat". Two fresh processes agreed
+    // on all three values. The old row still reproduces exactly under
+    // `TURBOSPARK_ATTN_DECODE_KERNEL=barrier`: perplexity 5.8134, sampled
+    // ee1d1bf7120d87d4f16536504b859b132ec0b81c2c8252e0b8fd0093fd6494c7.
     quality_common::ChipQuality {
         brand_substr: "Apple M4 Max",
-        perplexity: 5.8134,
+        perplexity: 5.8141,
         greedy_digest: "55ad97a5a53b99b9851d70bb002857fbf6d9d95cd64f1254c6ad05df467606de",
-        sampled_digest: "ee1d1bf7120d87d4f16536504b859b132ec0b81c2c8252e0b8fd0093fd6494c7",
-        source: "this port, 2026-09-19, Apple M4 Max, AC, 16 slots",
+        sampled_digest: "12a8df4d9de02c173d1dc9e814ec02086859d1a57e59be1c5d406bc510168cf9",
+        source: "this port, 2026-09-19, re-frozen 2026-10-11 for GQA decode attention, Apple M4 Max, AC, 16 slots",
     },
 ];
 

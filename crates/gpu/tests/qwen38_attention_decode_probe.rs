@@ -48,7 +48,7 @@ fn qwen38_decode_attention_time_by_context() {
     let kv_width = (NUM_KV_HEADS * HEAD_DIM) as usize;
     let q_width = (NUM_Q_HEADS * HEAD_DIM) as usize;
     let q = context.new_buffer_with_data(&le(
-        (0..q_width).map(|i| f16::from_f32(((i as f32) * 0.019).sin() * 0.5)),
+        (0..q_width).map(|i| f16::from_f32(((i as f32) * 0.019).sin() * 0.5))
     ));
     let kv: Vec<_> = (0..LAYERS)
         .map(|layer| {
@@ -80,13 +80,41 @@ fn qwen38_decode_attention_time_by_context() {
                     for (k, v) in &kv {
                         match arm {
                             Arm::Barrier => encode_attention_decode(
-                                &mut context, &pass, (&q, 0), k, v, &scratch, (&out, 0),
-                                HEAD_DIM, NUM_Q_HEADS, NUM_KV_HEADS, seq_len, 0, 0, scale, None,
+                                &mut context,
+                                &pass,
+                                (&q, 0),
+                                k,
+                                v,
+                                &scratch,
+                                (&out, 0),
+                                HEAD_DIM,
+                                NUM_Q_HEADS,
+                                NUM_KV_HEADS,
+                                seq_len,
+                                0,
+                                0,
+                                scale,
+                                None,
                             ),
                             Arm::Gqa(sg, chunks, unroll) => encode_attention_decode_gqa(
-                                &mut context, &pass, (&q, 0), k, v, &scratch, (&out, 0),
-                                HEAD_DIM, NUM_Q_HEADS, NUM_KV_HEADS, seq_len, 0, 0, scale, None,
-                                sg, chunks.min(seq_len.next_power_of_two()), unroll,
+                                &mut context,
+                                &pass,
+                                (&q, 0),
+                                k,
+                                v,
+                                &scratch,
+                                (&out, 0),
+                                HEAD_DIM,
+                                NUM_Q_HEADS,
+                                NUM_KV_HEADS,
+                                seq_len,
+                                0,
+                                0,
+                                scale,
+                                None,
+                                sg,
+                                chunks.min(seq_len.next_power_of_two()),
+                                unroll,
                             ),
                         }
                         .expect("encode");
@@ -104,7 +132,10 @@ fn qwen38_decode_attention_time_by_context() {
             s[s.len() / 2]
         };
         let base = median(&mut samples[0]);
-        println!("seq_len {seq_len}: unique K/V {:.0} MB per token", kv_bytes / 1e6);
+        println!(
+            "seq_len {seq_len}: unique K/V {:.0} MB per token",
+            kv_bytes / 1e6
+        );
         for (a, arm) in arms.iter().enumerate() {
             let m = median(&mut samples[a]);
             println!(

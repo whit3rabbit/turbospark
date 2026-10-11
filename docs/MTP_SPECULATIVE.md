@@ -112,8 +112,23 @@ shard, which removes both an Apache-2.0 weights dependency and the
 "calibrated against a different trunk" caveat.
 
 At INT4 group 64 the head is ~226 MB against the trunk's 15.13 GB resident
-region, i.e. **1.5% of the weight bytes**, so a draft step costs ~0.015
-decode-steps. That is the entire appeal of MTP over a separate drafter.
+region, i.e. **1.5% of the weight bytes**. That is the entire appeal of MTP
+over a separate drafter.
+
+**Correction (2026-10-11): a draft step is ~0.065 decode-steps, not ~0.015.**
+The head has no output projection, so every step that produces logits also
+reads the trunk's full-vocab lm_head, ~0.7 GB of the ~14.4 GB a token reads
+(`docs/DECODE_BUDGET.md`'s byte split). That makes a logits step ~0.95 GB,
+three quarters of it the lm_head. Two consequences in the code: the
+row-only last step of each round now goes through `prime_drafter` and skips
+the head entirely (`crates/runtime/src/speculative.rs`, test
+`the_row_only_draft_step_skips_the_drafter_head`), which removes one of a
+block-2 round's three head reads with output unchanged. A draft-only
+vocabulary (open-jet's 32K-row draft head) is the remaining lever on what
+is left. The first 32K / 64K / 98K token ids cover 93.0% / 97.8% / 99.9% of
+a code-and-docs corpus here, so an id-prefix head would need ~98K rows. A
+frequency-ranked list needs a gather kernel and a shipped list per
+tokenizer, and was not built.
 
 ## The dense compute split
 

@@ -47,7 +47,11 @@ fn fixture(case: &Case) -> Fixture {
             .wrapping_add(1_442_695_040_888_963_407);
         ((state >> 33) as f32 / (1u64 << 31) as f32) * 2.0 - 1.0
     };
-    let rows = if case.ring > 0 { case.ring } else { case.seq_len };
+    let rows = if case.ring > 0 {
+        case.ring
+    } else {
+        case.seq_len
+    };
     let kv_width = case.num_kv_heads * case.head_dim;
     let q = (0..case.num_q_heads * case.head_dim)
         .map(|_| f16::from_f32(next() * 1.5))
@@ -78,9 +82,7 @@ fn reference(case: &Case, fx: &Fixture, scale: f32) -> Vec<f64> {
         let scores: Vec<f64> = (case.kv_start..case.seq_len)
             .map(|p| {
                 let r = row_of(p);
-                let dot: f64 = (0..hd)
-                    .map(|i| q[i].to_f64() * fx.k[r + i].to_f64())
-                    .sum();
+                let dot: f64 = (0..hd).map(|i| q[i].to_f64() * fx.k[r + i].to_f64()).sum();
                 dot * scale as f64
             })
             .collect();
@@ -120,7 +122,11 @@ fn run(
     let q = context.new_buffer_with_data(&bytes(&fx.q));
     let k = context.new_buffer_with_data(&bytes(&fx.k));
     let v = context.new_buffer_with_data(&bytes(&fx.v));
-    let sink_bytes: Vec<u8> = fx.sinks.iter().flat_map(|x| x.to_bits().to_le_bytes()).collect();
+    let sink_bytes: Vec<u8> = fx
+        .sinks
+        .iter()
+        .flat_map(|x| x.to_bits().to_le_bytes())
+        .collect();
     let sinks = context.new_buffer_with_data(&sink_bytes);
     let out = context.new_output_buffer((case.num_q_heads * case.head_dim * 2) as u64);
     let scratch = AttentionScratch::new(context, case.num_q_heads as u32, case.head_dim as u32)
@@ -183,12 +189,32 @@ fn check(case: Case, configs: &[(u32, u32, u32)]) {
     let scale = 1.0 / (case.head_dim as f32).sqrt();
     let fx = fixture(&case);
     let want = reference(&case, &fx, scale);
-    let barrier = run(&mut context, &case, &fx, scale, None, DecodeAttentionKernel::Barrier);
+    let barrier = run(
+        &mut context,
+        &case,
+        &fx,
+        scale,
+        None,
+        DecodeAttentionKernel::Barrier,
+    );
     let barrier_err = max_err(&barrier, &want);
-    assert!(barrier_err < TOL, "barrier kernel vs reference: {barrier_err}");
+    assert!(
+        barrier_err < TOL,
+        "barrier kernel vs reference: {barrier_err}"
+    );
     for &config in configs {
-        let got = run(&mut context, &case, &fx, scale, Some(config), DecodeAttentionKernel::Barrier);
-        assert!(got.iter().all(|x| x.to_f32().is_finite()), "non-finite output at {config:?}");
+        let got = run(
+            &mut context,
+            &case,
+            &fx,
+            scale,
+            Some(config),
+            DecodeAttentionKernel::Barrier,
+        );
+        assert!(
+            got.iter().all(|x| x.to_f32().is_finite()),
+            "non-finite output at {config:?}"
+        );
         let err = max_err(&got, &want);
         assert!(err < TOL, "gqa {config:?} vs reference: {err}");
         let vs_barrier = got
@@ -196,7 +222,10 @@ fn check(case: Case, configs: &[(u32, u32, u32)]) {
             .zip(&barrier)
             .map(|(a, b)| (a.to_f64() - b.to_f64()).abs())
             .fold(0.0, f64::max);
-        assert!(vs_barrier < TOL, "gqa {config:?} vs barrier kernel: {vs_barrier}");
+        assert!(
+            vs_barrier < TOL,
+            "gqa {config:?} vs barrier kernel: {vs_barrier}"
+        );
     }
 }
 
@@ -332,11 +361,36 @@ fn encoder_routes_on_the_scratch_kernel_choice() {
     let mut context = MetalContext::new().expect("Metal device");
     let scale = 1.0 / (case.head_dim as f32).sqrt();
     let fx = fixture(&case);
-    let explicit_gqa = run(&mut context, &case, &fx, scale, Some((8, 8, 4)), DecodeAttentionKernel::Barrier);
-    let routed_gqa = run(&mut context, &case, &fx, scale, None, DecodeAttentionKernel::GqaShared);
-    let routed_barrier = run(&mut context, &case, &fx, scale, None, DecodeAttentionKernel::Barrier);
+    let explicit_gqa = run(
+        &mut context,
+        &case,
+        &fx,
+        scale,
+        Some((8, 8, 4)),
+        DecodeAttentionKernel::Barrier,
+    );
+    let routed_gqa = run(
+        &mut context,
+        &case,
+        &fx,
+        scale,
+        None,
+        DecodeAttentionKernel::GqaShared,
+    );
+    let routed_barrier = run(
+        &mut context,
+        &case,
+        &fx,
+        scale,
+        None,
+        DecodeAttentionKernel::Barrier,
+    );
     let bits = |v: &[f16]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-    assert_eq!(bits(&routed_gqa), bits(&explicit_gqa), "GqaShared scratch did not run the GQA launch");
+    assert_eq!(
+        bits(&routed_gqa),
+        bits(&explicit_gqa),
+        "GqaShared scratch did not run the GQA launch"
+    );
     assert_ne!(
         bits(&routed_gqa),
         bits(&routed_barrier),

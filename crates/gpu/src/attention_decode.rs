@@ -732,13 +732,13 @@ impl AttentionScratch {
 fn decode_kernel_override() -> Option<DecodeAttentionKernel> {
     static OVERRIDE: std::sync::OnceLock<Option<DecodeAttentionKernel>> =
         std::sync::OnceLock::new();
-    *OVERRIDE.get_or_init(|| {
-        match std::env::var("TURBOSPARK_ATTN_DECODE_KERNEL").as_deref() {
+    *OVERRIDE.get_or_init(
+        || match std::env::var("TURBOSPARK_ATTN_DECODE_KERNEL").as_deref() {
             Ok("barrier") => Some(DecodeAttentionKernel::Barrier),
             Ok("gqa") => Some(DecodeAttentionKernel::GqaShared),
             _ => None,
-        }
-    })
+        },
+    )
 }
 
 /// Encode both batch-only split-KV attention passes for row-major Q/output.
@@ -1107,7 +1107,11 @@ pub fn encode_attention_decode_gqa(
     num_chunks: u32,
     unroll: u32,
 ) -> Result<(), GpuError> {
-    assert!(attention_decode_gqa_supported(head_dim, num_q_heads, num_kv_heads));
+    assert!(attention_decode_gqa_supported(
+        head_dim,
+        num_q_heads,
+        num_kv_heads
+    ));
     assert!((1..=16).contains(&simdgroups));
     assert!((1..=4).contains(&unroll));
     assert!(num_chunks.is_power_of_two() && num_chunks <= MAX_CHUNKS);
@@ -1140,7 +1144,11 @@ pub fn encode_attention_decode_gqa(
     // number of Q rows or lanes' elements (`crates/gpu` Gotcha 1).
     let constants = attention_function_constants(scale, ring_capacity, num_chunks, has_sinks);
     for (value, index) in [(group, 71), (simdgroups, 72), (head_dim, 73), (unroll, 74)] {
-        constants.set_constant_value_at_index((&value as *const u32).cast(), MTLDataType::UInt, index);
+        constants.set_constant_value_at_index(
+            (&value as *const u32).cast(),
+            MTLDataType::UInt,
+            index,
+        );
     }
     let base_key = attention_constants_key(scale, ring_capacity, num_chunks, has_sinks);
     let mut partial_key = base_key.to_vec();
