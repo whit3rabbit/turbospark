@@ -1475,7 +1475,7 @@ exactly three tasks:
 | Task (`AudioTask`) | Family reached today | Notes |
 |---|---|---|
 | `.speechToText` | Whisper | Catalog install (`whisper-base`) or a chosen folder. Qwen3-ASR also opens, from the app's Advanced page, behind an explicit portable or experimental-Metal opt-in and a local folder. |
-| `.textToSpeech` | Kokoro | Portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. |
+| `.textToSpeech` | Kokoro, MegaTTS3 | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 clones a voice: see [Voice cloning](#voice-cloning). |
 | `.music` | MiniMax Music 3 | Catalog install covers `minimax-music3-4bit`. |
 
 `AudioTask` has ten cases because the catalog and capability rows describe
@@ -1514,6 +1514,37 @@ last closure parameter), turning a progress callback into a PCM one without a
 compile error; `executeStreaming(_:pcm:progress:onPCM:)` and `stream(_:pcm:)`
 are the live-output entry points. The full audio is still returned in the
 result.
+
+### Voice cloning
+
+A profile whose `capabilities.supportsVoiceClone` is true (operation
+`voice_clone`; MegaTTS3) clones from reference audio passed as the job's PCM.
+The request names its rate and carries the user's consent; the runtime refuses
+a cloning request without `consent`, a reference outside 1 to 30 seconds, or a
+`referenceText` or `instruction` (the model aligns the reference itself).
+
+```swift
+var request = AudioRequest(task: .textToSpeech, language: "en")
+request.text = "Hello there."
+request.referenceSampleRate = 24_000
+request.consent = true                 // the user has the right to use this voice
+request.steps = 32                     // send it: an omitted steps is the request type's 30
+request.pW = 1.4; request.tW = 3.0     // intelligibility and similarity weights
+request.speed = 1.0                    // scales durations
+let result = try await session.execute(request, pcm: reference24k) { progress in ... }
+```
+
+Progress stages are `reference` (preparing the voice; skipped when the session
+already prepared this exact reference and seed) and `diffusion` (completed of
+total steps across text chunks). MegaTTS3's declared backend is `portable_cpu`,
+so a session opens it with the portable opt-in; experimental Metal is
+`allowExperimentalMetal`.
+
+Some catalog profiles list install terms in `requiredAcknowledgments` (MegaTTS3:
+its encoder's unverified provenance). Show them and pass the accepted ids:
+`AudioCatalog.install(identity, acknowledged: ids)`. The native installer
+refuses before any download when an id is missing, and `install(identity)`
+passes none.
 
 ### Installs: installed, adopt, delete
 

@@ -35,7 +35,12 @@ existing summary.
 Text-to-Speech, Voice Cloning, and Voice Design have separate model choices and
 voice settings. [Qwen3-TTS](QWEN3_TTS.md) uses the native Swift MLX provider.
 Clone from an imported or saved 1 to 30 second reference region with its exact
-transcript, or explicitly choose voice embedding only. Voice Design accepts a
+transcript, or explicitly choose voice embedding only. A model with the
+`voice_clone` capability ([MegaTTS3](../crates/audio/src/tts/megatts3/README.md))
+clones through the native session instead: it needs no transcript, asks you to
+confirm you have the right to use the voice (retrimming the reference withdraws
+the confirmation), and exposes steps, intelligibility, similarity and seed under
+Cloning settings. Voice Design accepts a
 voice description. Generated speech can become a reusable cloning reference.
 Reference playback and trim controls are separate from generated-take playback.
 

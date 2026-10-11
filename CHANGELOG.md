@@ -146,6 +146,18 @@ when this file gets updated relative to the version bump and the tag.
   (`spark_bicodec`), and refactored the Vocos backbone loader.
 - `crates/cli`: added `turbospark-clone` binary for zero-shot voice cloning from a
   reference recording and English text prompt using MegaTTS3.
+- `crates/runtime`, `crates/ffi`, `crates/server`, `swift/TurboSparkApp`: MegaTTS3 voice
+  cloning end to end. The native audio session opens family `megatts3` and takes the
+  reference voice as the job's PCM; `POST /v1/audio/speech` accepts a base64 WAV
+  `reference_audio` with `consent`, `steps`, `seed`, `p_w` and `t_w`; the app's Voice
+  Clone page follows the catalog's `voice_clone` capability. Every cloning request
+  requires consent, and catalog profiles can list install terms that
+  `ts_audio_install_with_options` must acknowledge before any download.
+- `crates/audio`, `crates/runtime`: experimental Metal path for MegaTTS3 (the diffusion
+  transformer and the WavVAE decoder on the GPU), opt-in through
+  `allow_experimental_metal` and `turbospark-clone --metal`.
+- `crates/audio`: `convert_megatts3.py` writes a root `config.json`, `LICENSE`,
+  `NOTICE.md` and a model card, so its output can be published as is.
 - `swift/TurboSparkApp`: added Humanize advanced controls drawer and panel
   (`HumanizeAdvancedPanel.swift`, `HumanizeChrome.swift`), custom word replacements,
   avoid-words highlighting, protected terms integrity verification (`HumanizeRules.swift`),
