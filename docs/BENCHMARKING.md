@@ -130,6 +130,35 @@ music and no quality statistic applies to it.
 CPU timing profiles for the portable path remain in the family README and are
 never Metal or quality claims.
 
+## MegaTTS3 voice cloning (Metal)
+
+Build the runtime example and run the audio crate's driver against a converted
+or installed MegaTTS3 directory:
+
+```sh
+cargo build --release -p turbospark-runtime --example megatts3_bench
+python3 crates/audio/scripts/benchmark_megatts3.py <model-dir> \
+  --reference crates/audio/testdata/qwen3_forced_aligner_reference.wav \
+  --scenario metal-16=16:metal --scenario metal-32=32:metal \
+  --scenario cpu-32=32:cpu --runs 3 --output /tmp/megatts3-benchmark.json
+```
+
+Each sample is a fresh `megatts3_bench` process under `/usr/bin/time -l`. It
+discards one in-process warmup request (1 step), then times one cloning
+request from reference preparation to the decoded audio, and reports the
+time to the first diffusion step (`front_ms`), the whole request
+(`total_ms`), RTF, and process peak `phys_footprint`. It also reports what
+runtime admission would check before the request (footprint plus the
+request's activation reserve) and whether the measured peak stayed within it.
+
+Every run visits every scenario, alternating the order, so drift hits each
+arm alike. The text and seed are pinned, and each scenario must write
+byte-identical WAVs across runs. The driver refuses a host that is not on AC
+power with a low load average, unless `--allow-busy` says to record the load
+and run anyway. Read each arm's `spread` before comparing arms: a tight spread on
+identical runs licenses a ratio, and only a quiet host licenses an absolute
+row. The family README holds the measured readings and their conditions.
+
 ## Image generation (macOS, MLX)
 
 The release benchmark executable uses the same vendored `ZImagePipeline` as
