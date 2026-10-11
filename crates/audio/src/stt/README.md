@@ -39,6 +39,13 @@ The [central inventory](../../MODELS.md#stt) tracks upstream source families, ch
 - **[MOSS-Music 8B Thinking](moss_music/README.md)**: music understanding and lyrics ASR over a conv-downsampling whisper-family encoder, deepstack mergers, and the shared Qwen3 decoder; pins an explicit transcription prompt because the upstream default describes music.
 
 - **[Voxtral Mini 3B](voxtral/README.md)**: Mistral's speech understanding model over the whisper-large-v3 audio tower, a 4-frame window projector, and a llama-style text model.
+- **[Whistle](whistle/README.md)**: Cactus Compute native CPU speech recognition over CQ2/CQ4 quantization, Needle `.cact` container, 8-block Conformer encoder, and 8-block text decoder with engrams.
+
+## Server & Runtime Integration
+
+Whisper and Qwen3-ASR are integrated end-to-end with the native execution engine (`runtime::native_audio::AudioSession`), FFI (`crates/ffi`), server flags (`turbospark serve --stt-model <alias|dir>`), and HTTP endpoints (`POST /v1/audio/transcriptions` and WebSocket `GET /v1/audio/transcriptions/realtime`).
+
+Other model families provide pure-Rust in-crate APIs and standalone runnable examples in `crates/audio/examples/` (e.g. `whistle_transcribe.rs`, `parakeet_transcribe.rs`, `moonshine_transcribe.rs`, `nemotron_transcribe.rs`, `granite5_transcribe.rs`).
 
 ## Layout and Conventions
 

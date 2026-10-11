@@ -25,14 +25,23 @@ cargo run --release -p turbospark-server --bin turbospark-server -- \
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo --model ~/models/qwen38-27b.gturbo
 
+# Launch server with Speech-to-Text models (Whisper, Qwen3-ASR)
+cargo run --release -p turbospark-server --bin turbospark-server -- \
+  --stt-model whisper-base-en --port 8080
+
+# Launch audio-only server (no text generation model required)
+cargo run --release -p turbospark-server --bin turbospark-server -- \
+  --stt-model whisper-base-en --tts-model ~/models/kokoro-82m --music-model minimax-music3-4bit
+
 # Launch scripted server (canned completions, for client integration testing)
 cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 ```
 
 ## Key Modules
 
-- `main.rs` & `args.rs`: Binary entry point and command-line flag parser (`--model`, repeatable for distinct installs, `--bind`, `--port`, `--pool-size`, `--api-key`, `--max-queue-depth`).
+- `main.rs` & `args.rs`: Binary entry point and command-line flag parser (`--model`, repeatable for distinct installs, `--stt-model`, `--tts-model`, `--music-model`, `--bind`, `--port`, `--pool-size`, `--api-key`, `--max-queue-depth`).
 - `handler/`: Core handlers for `/v1/chat/completions`, `/v1/models`, and `/health`, and generation orchestration (`plan`, `run_full`, `stream_blocking`).
+- `audio/` & `audio_real.rs`: Dedicated audio worker threads, queues, and handlers for STT (`/v1/audio/transcriptions`, realtime WebSocket), TTS (`/v1/audio/speech`), Music (`/v1/audio/generate`), async jobs (`/v1/audio/jobs`), and model lifecycle (`/v1/audio/models`).
 - `messages.rs`: Handler for Anthropic `/v1/messages` and `/v1/messages/count_tokens`, translating Anthropic messages to/from the OpenAI pipeline.
 - `completions.rs`: Handler for legacy OpenAI `/v1/completions` (raw prompts without chat templates).
 - `responses/`: Handler for the OpenAI `/v1/responses` endpoint.
@@ -67,10 +76,11 @@ This crate contains 22 integration test suites in `tests/`:
 - Security and transport: `auth.rs`, `streaming_error_framing.rs`.
 - Tool calling and guardrails: `guardrails.rs`, `system_prompt.rs`, `harmony_channels.rs`, `reasoning_channels.rs`.
 - Multimodal and real model tests: `images.rs`, `real_backend.rs`, `observe.rs`.
+- Audio API: `audio_api.rs`.
 
 ## Crate Gotchas
 
 1. **Serialized Real Backend & Concurrency Pools**: A single `RealChatModel` instance processes requests serially because Metal forward passes require mutable GPU buffers and KV cache state. For concurrent request processing, configure `--pool-size N` to instantiate multiple runner instances managed by `PoolRegistry`.
 2. **Anthropic SSE Framing Differences**: Anthropic SSE streams use explicit `event:` header lines (e.g. `content_block_delta`, `message_delta`) and terminate with a `message_stop` event rather than the OpenAI `data: [DONE]` sentinel.
 3. **Tailnet Binding Security**: Setting `--bind tailnet` binds exclusively to the Tailscale IPv4 carrier grade interface (100.64.0.0/10) with mandatory API key authentication.
-4. **Speech Installs Refused on `--model`**: Speech (Whisper) installs carry a typed speech receipt and are refused by `turbospark-server --model`. Generation `--model` paths serve `.gturbo` text and vision models only; speech models are consumed via the STT FFI API (`ts_stt_open`).
+4. **Speech Installs Refused on `--model`**: Speech (Whisper, Qwen3-ASR) installs carry a typed speech receipt and are refused by `turbospark-server --model`, which serves `.gturbo` text and vision models. Attach speech models via `--stt-model <install-dir|alias>` (repeatable), TTS models via `--tts-model`, and music models via `--music-model`. With no `--model`, the server runs in audio-only mode. Audio models can also be dynamically attached at runtime via `POST /v1/audio/models`.

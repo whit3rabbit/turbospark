@@ -45,11 +45,13 @@ Catalog discovery, remote Hugging Face inspection, and streaming install:
 
 ```sh
 turbospark-model list                         # Browse curated catalog
-turbospark-model list-speech                  # Browse bundled speech models (STT installs)
+turbospark-model list-speech                  # Browse bundled speech models (Whisper & Qwen3-ASR)
 turbospark-model list-music                   # Browse bundled music models and assets
 turbospark-model info gemma4                  # Inspect catalog entry details
 turbospark-model probe Qwen/Qwen3-30B-A3B-GGUF # Probe remote HF repo (reads KB, no download)
 turbospark-model pull gemma4                  # Stream and repack directly into ~/.turbospark/models
+turbospark-model pull whisper-base-en         # Install a speech model into ~/.turbospark/models
+turbospark-model pull-audio minimax-music-0.3 # Install a pinned music profile
 turbospark-model recommend --context 8192     # Rank models that fit system memory
 turbospark-model path gemma4                  # Print resolved filesystem path
 turbospark-model rm gemma4                    # Delete local install
@@ -115,6 +117,7 @@ turbospark run gemma4                         # Alias for turbospark-check --cha
 turbospark run gemma4 "hello"                 # Alias for turbospark-check --prompt
 turbospark image --prompt "mars"              # Alias for turbospark-image
 turbospark serve                              # Launches turbospark-server
+turbospark serve --stt-model whisper-base-en  # Serves STT alongside chat or standalone
 turbospark start                              # Starts background server daemon
 turbospark stop / restart / status            # Manages daemon lifecycle
 turbospark start claude                       # Configures Claude Code to use local server
@@ -123,6 +126,8 @@ turbospark bench                              # Runs turbospark-bench
 ```
 
 The `start <agent>` subcommand connects external coding agents (`claude`, `codex`, `opencode`, `hermes`, `openclaw`, `dsh`) directly to the local server via `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`.
+
+Audio serving: `turbospark serve` accepts `--stt-model` (Whisper, Qwen3-ASR), `--tts-model` (Kokoro, MegaTTS3), and `--music-model` (MiniMax Music 3). With no `--model`, the server runs in audio-only mode, serving `/v1/audio/{transcriptions,speech,generate,jobs,models}`.
 
 ---
 

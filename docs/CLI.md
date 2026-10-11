@@ -422,10 +422,15 @@ turbospark-model <command> [flags...]
 | Command | Args | Flags | What it does |
 | --- | --- | --- | --- |
 | `list` | none | `--filter TEXT` | prints every curated catalog row, marks installed ones |
+| `list-speech` | none | none | prints bundled speech models (Whisper entries and Qwen3-ASR) for Speech-to-Text |
+| `list-audio` | none | none | prints pinned audio models (MiniMax Music 3 profiles and assets) |
 | `info` | `<alias>` | none | prints one catalog row in full, including its gate targets |
 | `probe` | `<repo>[@rev]` | `--file NAME.gguf`, `--sidecar-repo REPO[@rev]` | reads a Hugging Face repo's headers only, no download; reports whether this engine would run it |
 | `recommend` | none | `--context N`, `--budget BYTES`, `--load-guard TIER`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--load-guard` MUST match what the session will open with, since the ranking and the loader's refusal share one memory budget; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
 | `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
+| `pull-audio` | `<alias>` | `--out DIR` | installs one pinned MiniMax Music 3 audio profile |
+| `pull-image` | `--alias NAME`, or `--repo REPO[@rev]` | `--source DIR`, `--model-id ID`, `--model-revision REV` | downloads and installs a pinned image model export |
+| `pull-vision` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--file NAME.gguf` | installs a curated or custom vision-tower sidecar |
 | `path` | `<alias>` | none | prints the install directory (fails loudly if not installed) |
 | `rm` | `<alias>` | `--yes` / `-y` | deletes an install; without `--yes`, prompts for the alias name to confirm |
 | `auth` | none | `--clear`, `--status`, `--set` | inspects, saves, or clears Hugging Face credentials in `~/.turbospark/hf_token`; `--set` reads from a non-echoing prompt when interactive, or from stdin when piped |
@@ -447,7 +452,7 @@ turbospark-server <tokenizer-dir> [port]   # legacy scripted mode, see below
 Serves OpenAI `/v1/chat/completions`, OpenAI's legacy raw-prompt
 `/v1/completions`, OpenAI's `/v1/responses`, Anthropic `/v1/messages` and
 `/v1/messages/count_tokens` (no generation, just the prefill token count),
-`/v1/models`, and `GET /health` from one open install, one request at a
+`/v1/models`, audio endpoints (`/v1/audio/{transcriptions,speech,generate,jobs,models}`), and `GET /health` from one open install, one request at a
 time (one runner per process). `/health` takes no lock and answers even
 while a generation is in flight. `/v1/responses` is stateless: it refuses
 `previous_response_id` rather than faking continuity across requests.
@@ -463,6 +468,9 @@ unimplemented and uses `GET /health` for liveness.
 | Flag | Takes | Default | Meaning |
 | --- | --- | --- | --- |
 | `--model` | path or alias, repeatable | optional | attach one or more generation installs; exact ids and aliases route requests to the matching install. A single model keeps the legacy unknown-name fallback |
+| `--stt-model` | path or alias, repeatable | none | attach one or more Speech-to-Text installs (Whisper or Qwen3-ASR); enables `POST /v1/audio/transcriptions` and WebSocket realtime transcription. With no `--model`, runs an audio-only server |
+| `--tts-model` | path or alias, repeatable | none | attach Text-to-Speech install (Kokoro or MegaTTS3); enables `POST /v1/audio/speech` |
+| `--music-model` | path or alias, repeatable | none | attach MiniMax Music 3 install; enables `POST /v1/audio/generate` (macOS and Metal only) |
 | `--model-dir` | path | none | directory containing `.gturbo` models; enables auto-discovery (omlx compatibility) |
 | `--port` | u16 | `8080` | listen port |
 | `--max-context` | integer, or `auto` | `auto` | same semantics as `turbospark-check`'s |
