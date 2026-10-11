@@ -396,6 +396,8 @@ class ConvertTests(unittest.TestCase):
         self.assertIn("| 459.0M | 1.84 GB |", card)
         self.assertIn("hf download someone/MegaTTS3-TurboSpark --local-dir MegaTTS3-TurboSpark", card)
         self.assertIn("not an MLX model", card)
+        self.assertIn("MLX-layout", card.split("\n\n")[1], "MLX is named in the title")
+        self.assertIn("## Benchmarks", card)
         self.assertIn(cv.SOURCES["mrfakename/MegaTTS3-VoiceCloning"], card)
         self.assertNotIn("<", card.split("```")[1], "no unfilled placeholder in the commands")
         self.assertEqual(card, cv.model_card("community", files, "someone/MegaTTS3-TurboSpark"))
@@ -406,6 +408,7 @@ class ConvertTests(unittest.TestCase):
         self.assertIn("cannot", official)
         self.assertNotIn("turbospark-clone", official)
         self.assertNotIn("mrfakename", official)
+        self.assertNotIn("## Benchmarks", official, "clone measurements do not describe it")
 
     def test_dict_json_validation(self):
         with open(self.p("d.json"), "w", encoding="utf-8-sig") as fh:

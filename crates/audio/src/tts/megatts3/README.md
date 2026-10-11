@@ -153,7 +153,7 @@ It reproduces the CPU path across 8 speakers and two multi-chunk passages at 32
 steps, with an RMS difference of at most 2.3e-5, so it inherits the CPU path's
 parity with the reference. The largest single-sample difference was 1.8e-3, on
 a 13 s passage. Runtime admission bounded every measured peak. And it is about five
-times faster than the CPU on a short request. It does hold 1.3 to 2.9 GiB more
+times faster than the CPU on a short request. It does hold 1.4 to 2.9 GiB more
 than the CPU path, because the uploaded weights keep their host copies (see
 [Not done](#not-done)).
 
@@ -211,7 +211,7 @@ durations and the WavVAE decode. A 3 s sentence on Metal took 12.7 s at 8 steps,
   frame), which set aside 5.2 GiB for a request that grew by 1.3 GiB on Metal.
   Tightening it needs measurements over more request shapes.
 - **Duplicate weights on Metal.** The uploaded DiT projections and WavVAE
-  decoder weights keep their host copies, so the Metal path peaks 1.3 to 2.9
+  decoder weights keep their host copies, so the Metal path peaks 1.4 to 2.9
   GiB above the CPU path. Freeing them means keying the uploads by layer
   instead of by host address.
 - **Metal follow-ups.** An F32 MMA attention kernel (attention is about half a
