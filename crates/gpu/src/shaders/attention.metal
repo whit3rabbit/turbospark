@@ -231,6 +231,200 @@ void attention_decode_partial(
     }
 }
 
+// ============================================================================
+// GQA-shared one-row partial pass (attention_decode_gqa_partial).
+//
+// attention_decode_partial above runs one threadgroup per (Q head, chunk) and
+// pays two threadgroup barriers per KV position, so a threadgroup walks its
+// chunk at memory latency and every K/V row is read once per Q head of its
+// group. At Qwen3.8's shape (24 Q over 4 KV heads, head_dim 256) that is
+// latency-bound from a few hundred positions up.
+//
+// Here one threadgroup serves EVERY Q head of one KV head over one chunk, so
+// each K/V row is loaded once for the whole group (the layout open-jet's CUDA
+// decoder uses). Simdgroups take interleaved positions and run independent
+// online-softmax states, so the position loop has no threadgroup barrier;
+// the per-simdgroup states merge once at the end. Lane l holds elements
+// [l * PER, l * PER + PER) of each row, PER = head_dim / 32 (4 or 8).
+//
+// Grid = num_kv_heads * NC threadgroups of FC_ATTN_GQA_SIMDGROUPS * 32
+// threads. Output is the same un-normalized (m, d, o) partial layout as
+// attention_decode_partial, indexed by Q head and chunk, so
+// attention_decode_combine (sinks included) is shared unchanged. Summation
+// order differs from the barrier kernel (per-lane then simd_sum, and
+// positions split across simdgroups), so results are close, not identical.
+// ============================================================================
+
+constant uint FC_ATTN_GQA_GROUP      [[function_constant(71)]];
+constant uint FC_ATTN_GQA_SIMDGROUPS [[function_constant(72)]];
+constant uint FC_ATTN_GQA_HEAD_DIM   [[function_constant(73)]];
+// Positions each simdgroup loads per iteration, 1..=kGqaMaxUnroll.
+constant uint FC_ATTN_GQA_UNROLL     [[function_constant(74)]];
+
+constant constexpr uint kGqaMaxPerLane   = 8;   // head_dim <= 256
+constant constexpr uint kGqaMaxGroup     = 8;
+constant constexpr uint kGqaMaxSimdgroups = 16;
+constant constexpr uint kGqaMaxUnroll = 4;
+
+[[kernel, max_total_threads_per_threadgroup(kGqaMaxSimdgroups * 32)]]
+void attention_decode_gqa_partial(
+    device const half*  Q             [[buffer(0)]],   // [num_q_heads, head_dim]
+    device const half*  K             [[buffer(1)]],   // [position, num_kv_heads, head_dim]
+    device const half*  V             [[buffer(2)]],
+    device       float* m_out         [[buffer(3)]],   // [num_q_heads * NC]
+    device       float* d_out         [[buffer(4)]],
+    device       float* o_out         [[buffer(5)]],   // [num_q_heads * NC * head_dim]
+    constant     uint&  num_kv_heads  [[buffer(6)]],
+    constant     uint&  seq_len       [[buffer(7)]],
+    constant     uint&  kv_start      [[buffer(8)]],
+    constant     uint&  chunk_len     [[buffer(9)]],
+    uint tg_id           [[threadgroup_position_in_grid]],
+    uint lid             [[thread_position_in_threadgroup]],
+    uint simd_lane_id    [[thread_index_in_simdgroup]],
+    uint simd_group_id   [[simdgroup_index_in_threadgroup]]
+) {
+    threadgroup float tg_m[kGqaMaxSimdgroups * kGqaMaxGroup];
+    threadgroup float tg_d[kGqaMaxSimdgroups * kGqaMaxGroup];
+    threadgroup float tg_o[kGqaMaxSimdgroups * kGqaMaxPerLane * 32];
+
+    const uint HD  = FC_ATTN_GQA_HEAD_DIM;
+    const uint PER = HD / 32;
+    const uint G   = FC_ATTN_GQA_GROUP;
+    const uint NSG = FC_ATTN_GQA_SIMDGROUPS;
+    const uint U   = FC_ATTN_GQA_UNROLL;
+    const uint NC  = FC_ATTN_NUM_CHUNKS;
+    const uint NKV = num_kv_heads;
+    const float scale = FC_ATTN_SCALE;
+
+    const uint kv_head = tg_id / NC;
+    const uint chunk   = tg_id % NC;
+    const uint p_start = kv_start + chunk * chunk_len;
+    const uint p_end   = min(p_start + chunk_len, seq_len);
+    const uint e0      = simd_lane_id * PER;
+
+    // Loops run to the compile-time maxima and test the specialized bound,
+    // so they fully unroll and the arrays stay in registers.
+    float q[kGqaMaxGroup][kGqaMaxPerLane];
+    float o[kGqaMaxGroup][kGqaMaxPerLane];
+    float m[kGqaMaxGroup];
+    float d[kGqaMaxGroup];
+    for (uint g = 0; g < kGqaMaxGroup; ++g) {
+        if (g >= G) { break; }
+        device const half4* q4 = (device const half4*)(Q + (kv_head * G + g) * HD + e0);
+        for (uint j = 0; j < kGqaMaxPerLane / 4; ++j) {
+            if (j * 4 >= PER) { break; }
+            const float4 qv = float4(q4[j]);
+            q[g][4 * j + 0] = qv.x; q[g][4 * j + 1] = qv.y;
+            q[g][4 * j + 2] = qv.z; q[g][4 * j + 3] = qv.w;
+        }
+        for (uint i = 0; i < kGqaMaxPerLane; ++i) { o[g][i] = 0.0f; }
+        m[g] = -INFINITY;
+        d[g] = 0.0f;
+    }
+
+    // U positions per iteration (p, p + NSG, ...) so each
+    // simdgroup has that many K/V row loads in flight; positions past the
+    // chunk end are masked to zero weight (and read a live row instead).
+    for (uint p0 = p_start + simd_group_id; p0 < p_end; p0 += U * NSG) {
+        float k[kGqaMaxUnroll][kGqaMaxPerLane];
+        float v[kGqaMaxUnroll][kGqaMaxPerLane];
+        bool live[kGqaMaxUnroll];
+        for (uint u = 0; u < kGqaMaxUnroll; ++u) {
+            if (u >= U) { break; }
+            const uint p = p0 + u * NSG;
+            live[u] = p < p_end;
+            const uint row = (attn_ring_slot(live[u] ? p : p0) * NKV + kv_head) * HD + e0;
+            device const half4* k4 = (device const half4*)(K + row);
+            device const half4* v4 = (device const half4*)(V + row);
+            for (uint j = 0; j < kGqaMaxPerLane / 4; ++j) {
+                if (j * 4 >= PER) { break; }
+                const float4 kv = float4(k4[j]);
+                const float4 vv = float4(v4[j]);
+                k[u][4 * j + 0] = kv.x; k[u][4 * j + 1] = kv.y;
+                k[u][4 * j + 2] = kv.z; k[u][4 * j + 3] = kv.w;
+                v[u][4 * j + 0] = vv.x; v[u][4 * j + 1] = vv.y;
+                v[u][4 * j + 2] = vv.z; v[u][4 * j + 3] = vv.w;
+            }
+        }
+        for (uint g = 0; g < kGqaMaxGroup; ++g) {
+            if (g >= G) { break; }
+            float s[kGqaMaxUnroll];
+            float m_new = m[g];
+            for (uint u = 0; u < kGqaMaxUnroll; ++u) {
+                if (u >= U) { break; }
+                float partial = 0.0f;
+                for (uint i = 0; i < kGqaMaxPerLane; ++i) {
+                    if (i >= PER) { break; }
+                    partial = fma(q[g][i], k[u][i], partial);
+                }
+                s[u] = live[u] ? simd_sum(partial) * scale : -INFINITY;
+                m_new = max(m_new, s[u]);
+            }
+            const float alpha = attn_softmax_exp(m[g] - m_new);
+            float e[kGqaMaxUnroll];
+            float e_sum = 0.0f;
+            for (uint u = 0; u < kGqaMaxUnroll; ++u) {
+                if (u >= U) { break; }
+                e[u] = live[u] ? attn_softmax_exp(s[u] - m_new) : 0.0f;
+                e_sum += e[u];
+            }
+            d[g] = d[g] * alpha + e_sum;
+            for (uint i = 0; i < kGqaMaxPerLane; ++i) {
+                if (i >= PER) { break; }
+                float acc = o[g][i] * alpha;
+                for (uint u = 0; u < kGqaMaxUnroll; ++u) {
+                    if (u >= U) { break; }
+                    acc = fma(e[u], v[u][i], acc);
+                }
+                o[g][i] = acc;
+            }
+            m[g] = m_new;
+        }
+    }
+
+    // Merge the simdgroup states, one Q head at a time. A simdgroup that saw
+    // no position has m = -inf and is weighted to exactly zero; a chunk no
+    // simdgroup saw keeps (-inf, 0, 0), the barrier kernel's empty-chunk
+    // output, which the combine weights to zero.
+    if (simd_lane_id == 0) {
+        for (uint g = 0; g < kGqaMaxGroup; ++g) {
+            if (g >= G) { break; }
+            tg_m[simd_group_id * G + g] = m[g];
+            tg_d[simd_group_id * G + g] = d[g];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint g = 0; g < kGqaMaxGroup; ++g) {
+        if (g >= G) { break; }
+        float m_glob = -INFINITY;
+        for (uint s = 0; s < NSG; ++s) { m_glob = max(m_glob, tg_m[s * G + g]); }
+        const float f = (m[g] == -INFINITY) ? 0.0f : attn_softmax_exp(m[g] - m_glob);
+        for (uint i = 0; i < kGqaMaxPerLane; ++i) {
+            if (i >= PER) { break; }
+            tg_o[simd_group_id * HD + e0 + i] = o[g][i] * f;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        const uint base = (kv_head * G + g) * NC + chunk;
+        if (lid == 0) {
+            float d_sum = 0.0f;
+            for (uint s = 0; s < NSG; ++s) {
+                const float ms = tg_m[s * G + g];
+                if (ms != -INFINITY) { d_sum += tg_d[s * G + g] * attn_softmax_exp(ms - m_glob); }
+            }
+            m_out[base] = m_glob;
+            d_out[base] = d_sum;
+        }
+        device float* o_row = o_out + base * HD;
+        for (uint i = lid; i < HD; i += NSG * 32) {
+            float acc = 0.0f;
+            for (uint s = 0; s < NSG; ++s) { acc += tg_o[s * HD + i]; }
+            o_row[i] = acc;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+}
+
 // Batch-only split-KV partial pass. The grid is [ceil(live_rows / 4) * NQ * NC],
 // with one four-query tile/head/chunk per threadgroup. Each row keeps an
 // independent online-softmax state and reads its own interval from buffer 9;

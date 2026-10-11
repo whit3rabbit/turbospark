@@ -277,7 +277,19 @@ impl DecodeScratch {
                 gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; hidden.max(1) as usize * 2]);
                 buffer
             },
-            attn: gpu::AttentionScratch::new(context, arch.num_heads as u32, max_head_dim as u32),
+            // The dense GDN family (Qwen3.8-27B: 24 Q over 4 KV heads at
+            // head_dim 256) runs the GQA-shared decode partial: one K/V
+            // read per group instead of per Q head and no per-position
+            // barrier, 3-13x faster from 512 to 32K positions at that
+            // shape (`crates/gpu/tests/qwen38_attention_decode_probe.rs`).
+            // Other families keep the barrier kernel until their own gates
+            // run on it.
+            attn: gpu::AttentionScratch::new(context, arch.num_heads as u32, max_head_dim as u32)
+                .with_decode_kernel(if arch.family == model_io::ModelFamily::QwenGdnDense {
+                    gpu::DecodeAttentionKernel::GqaShared
+                } else {
+                    gpu::DecodeAttentionKernel::Barrier
+                }),
             kv_stage: kv_quant.is_on().then(|| KvStage::new(context, full_kv_dim)),
             tq_attn: kv_quant.is_on().then(|| {
                 gpu::TqAttentionScratch::new(

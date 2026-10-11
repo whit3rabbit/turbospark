@@ -5,17 +5,34 @@
 //! key_head_dim]`) and a causal-conv tail of the last `conv_kernel_size -
 //! 1` pre-activation rows (FP16 `[conv_kernel_size - 1, qkv_dim]`).
 
-use metal::{Device, MTLResourceOptions};
+use std::sync::{Arc, Mutex};
+
+use metal::{CommandQueue, Device, MTLResourceOptions};
 use model_io::ArchConfig;
 
 const FP32_SIZE: usize = 4;
 const FP16_SIZE: usize = 2;
 
-/// A host copy of every linear layer's recurrent state, taken by
-/// [`GdnStateManager::snapshot`]. `None` at indices that are not linear
-/// layers, so the index is the model's layer index.
+/// GPU-private copies of every linear layer's (state, conv tail), `None`
+/// at indices that are not linear layers, so the index is the layer index.
+type Mirror = Vec<Option<(metal::Buffer, metal::Buffer)>>;
+
+/// A copy of every linear layer's recurrent state, taken by
+/// [`GdnStateManager::snapshot`] into GPU-private buffers. Dropping it
+/// returns its buffers to the manager's pool, so a speculative loop that
+/// takes one per round allocates once rather than every round.
 pub struct GdnSnapshot {
-    layers: Vec<Option<(Vec<u8>, Vec<u8>)>>,
+    layers: Mirror,
+    pool: Arc<Mutex<Vec<Mirror>>>,
+}
+
+impl Drop for GdnSnapshot {
+    fn drop(&mut self) {
+        let layers = std::mem::take(&mut self.layers);
+        if let Ok(mut pool) = self.pool.lock() {
+            pool.push(layers);
+        }
+    }
 }
 
 /// Manages fixed-size recurrent state buffers for gated-DeltaNet linear attention layers.
@@ -27,6 +44,9 @@ pub struct GdnStateManager {
     pub state_bytes_per_layer: usize,
     /// Number of bytes allocated for the conv tail buffer per linear layer.
     pub conv_tail_bytes_per_layer: usize,
+    /// Snapshot buffer sets no live [`GdnSnapshot`] holds. Grows to the
+    /// most snapshots ever alive at once (one in the speculative loop).
+    snapshot_pool: Arc<Mutex<Vec<Mirror>>>,
 }
 
 impl GdnStateManager {
@@ -85,6 +105,7 @@ impl GdnStateManager {
             conv_tail_buffers: tails,
             state_bytes_per_layer: state_bytes,
             conv_tail_bytes_per_layer: conv_tail_bytes,
+            snapshot_pool: Arc::new(Mutex::new(Vec::new())),
         };
         manager.reset();
         manager
@@ -109,7 +130,7 @@ impl GdnStateManager {
         self.state_buffers[layer].is_some()
     }
 
-    /// Copies every linear layer's recurrent state out to the host.
+    /// Copies every linear layer's recurrent state into a snapshot.
     ///
     /// A KV cache can be rolled back by moving a cursor, because it keeps
     /// one row per position. This cannot: `S` and the conv tail are the
@@ -118,44 +139,91 @@ impl GdnStateManager {
     /// to keep a copy from before the block and replay the accepted prefix
     /// over it.
     ///
-    /// Cheap enough to do per verify round: the state is
-    /// `num_v_heads * value_head_dim * key_head_dim` FP32 plus a `K-1` row
-    /// conv tail, which on Qwen 3.6 is 2 MiB per linear layer and 60 MiB
-    /// over its 30, all `storageModeShared`, so this is a memcpy and not a
-    /// GPU round trip. It is O(1) in context, unlike the KV cache.
+    /// The copy is a GPU blit on `queue`, committed WITHOUT waiting. It was
+    /// a host memcpy into fresh `Vec`s: on Qwen3.8-27B (48 linear layers,
+    /// 147 MiB) that measured ~3.7 ms per verify round with the GPU idle,
+    /// ~6% of a block-2 MTP round. Same-queue command buffers execute in
+    /// commit order (`crates/gpu` Gotcha 8), so the blit reads the state
+    /// before any later pass on `queue` writes it; the caller's next pass
+    /// (the verify) is what the copy overlaps with.
     ///
-    /// Only valid once the pass that last advanced the state has completed.
-    pub fn snapshot(&self) -> GdnSnapshot {
+    /// Only valid once the pass that last advanced the state has been
+    /// committed to `queue`. Host writes to the live state ([`Self::reset`])
+    /// must wait until a command buffer committed after this one has
+    /// completed, or they race the pending copy.
+    pub fn snapshot(&self, queue: &CommandQueue) -> GdnSnapshot {
+        let mirror = self
+            .snapshot_pool
+            .lock()
+            .ok()
+            .and_then(|mut pool| pool.pop())
+            .unwrap_or_else(|| self.new_mirror(queue.device()));
+        crate::autorelease_pool(|| {
+            let command_buffer = queue.new_command_buffer();
+            let blit = command_buffer.new_blit_command_encoder();
+            for (layer, saved) in mirror.iter().enumerate() {
+                let Some((state, conv)) = saved else { continue };
+                let state_bytes = self.state_bytes_per_layer as u64;
+                let conv_bytes = self.conv_tail_bytes_per_layer as u64;
+                blit.copy_from_buffer(self.state_buffer(layer), 0, state, 0, state_bytes);
+                blit.copy_from_buffer(self.conv_tail_buffer(layer), 0, conv, 0, conv_bytes);
+            }
+            blit.end_encoding();
+            command_buffer.commit();
+        });
         GdnSnapshot {
-            layers: self
-                .state_buffers
-                .iter()
-                .zip(self.conv_tail_buffers.iter())
-                .map(|(state, conv)| match (state, conv) {
-                    (Some(state), Some(conv)) => Some((
-                        crate::context::read_buffer_bytes(state, 0, self.state_bytes_per_layer),
-                        crate::context::read_buffer_bytes(conv, 0, self.conv_tail_bytes_per_layer),
-                    )),
-                    _ => None,
-                })
-                .collect(),
+            layers: mirror,
+            pool: Arc::clone(&self.snapshot_pool),
         }
     }
 
-    /// Writes a [`Self::snapshot`] back. The caller then replays whatever
-    /// tokens it decided to keep; this restores the state as of BEFORE the
-    /// snapshot's block, not as of any position inside it.
-    pub fn restore(&mut self, snapshot: &GdnSnapshot) {
+    /// Writes a [`Self::snapshot`] back with a GPU blit on `queue`, and
+    /// waits for it, so the state is restored when this returns. The caller
+    /// then replays whatever tokens it decided to keep; this restores the
+    /// state as of BEFORE the snapshot's block, not as of any position
+    /// inside it.
+    pub fn restore(&mut self, snapshot: &GdnSnapshot, queue: &CommandQueue) {
         assert_eq!(
             snapshot.layers.len(),
             self.state_buffers.len(),
             "snapshot is from a different model"
         );
-        for (layer, saved) in snapshot.layers.iter().enumerate() {
-            let Some((state, conv)) = saved else { continue };
-            crate::context::write_buffer_bytes(self.state_buffer(layer), 0, state);
-            crate::context::write_buffer_bytes(self.conv_tail_buffer(layer), 0, conv);
-        }
+        crate::autorelease_pool(|| {
+            let command_buffer = queue.new_command_buffer();
+            let blit = command_buffer.new_blit_command_encoder();
+            for (layer, saved) in snapshot.layers.iter().enumerate() {
+                let Some((state, conv)) = saved else { continue };
+                let state_bytes = self.state_bytes_per_layer as u64;
+                let conv_bytes = self.conv_tail_bytes_per_layer as u64;
+                blit.copy_from_buffer(state, 0, self.state_buffer(layer), 0, state_bytes);
+                blit.copy_from_buffer(conv, 0, self.conv_tail_buffer(layer), 0, conv_bytes);
+            }
+            blit.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+    }
+
+    /// One snapshot's worth of GPU-private buffers, matching the live
+    /// layout. Private, because only blits ever touch them.
+    fn new_mirror(&self, device: &metal::DeviceRef) -> Mirror {
+        self.state_buffers
+            .iter()
+            .map(|state| {
+                state.as_ref().map(|_| {
+                    (
+                        device.new_buffer(
+                            self.state_bytes_per_layer as u64,
+                            MTLResourceOptions::StorageModePrivate,
+                        ),
+                        device.new_buffer(
+                            self.conv_tail_bytes_per_layer as u64,
+                            MTLResourceOptions::StorageModePrivate,
+                        ),
+                    )
+                })
+            })
+            .collect()
     }
 
     /// Resets all recurrent state to the empty-context value (zeros): both

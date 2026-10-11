@@ -106,6 +106,9 @@ struct ScriptedTarget {
     supports_headless: bool,
     retaining_rollback_calls: Cell<usize>,
     headless_prefill_calls: Cell<usize>,
+    /// Steps that produced drafter logits (the head ran), as opposed to
+    /// row-only `prime_drafter` steps.
+    draft_step_calls: Cell<usize>,
     recorded_committed: Cell<Vec<(Vec<i32>, usize)>>,
 }
 
@@ -126,6 +129,7 @@ impl ScriptedTarget {
             supports_headless: false,
             retaining_rollback_calls: Cell::new(0),
             headless_prefill_calls: Cell::new(0),
+            draft_step_calls: Cell::new(0),
             recorded_committed: Cell::new(Vec::new()),
         }
     }
@@ -258,6 +262,7 @@ impl SpeculativeProducer for ScriptedTarget {
             position, self.drafter_cursor,
             "drafter stepped off its cursor"
         );
+        self.draft_step_calls.set(self.draft_step_calls.get() + 1);
         // A proposal produced at `position` is checked against what the
         // target says after the token at `position + 1`.
         let id = match self.drafter {
@@ -560,6 +565,45 @@ fn every_drafter_quality_reproduces_the_sequential_stream() {
                 "{drafter:?} block {block} left a different cache"
             );
         }
+    }
+}
+
+/// A step-wise round takes `round_block + 1` drafter steps, but only the
+/// first `round_block` offer a proposal; the last is for its cache row.
+/// That last step must not run the drafter's head (on the real MTP drafter,
+/// a full-vocab GEMV and logits readback whose result nobody reads), so
+/// the head-producing steps are exactly one per offered proposal, which is
+/// the verified rows minus the one confirmed row each verify carries. The
+/// target keeps rows on rollback, so the budget-capped last round never
+/// re-verifies and every verified row past the first was a proposal.
+#[test]
+fn the_row_only_draft_step_skips_the_drafter_head() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(12);
+    for block in [1usize, 2, 4] {
+        let mut producer =
+            ScriptedTarget::new(vocab, truth.to_vec(), Drafter::Perfect).with_retaining_rollback();
+        run_raw_completion_speculative(
+            &mut producer,
+            &tokenizer,
+            &prompt,
+            &config,
+            4096,
+            vocab,
+            block,
+            |_| {},
+        )
+        .expect("speculative run");
+        let offered = producer.verify_rows.get() - producer.verify_calls.get();
+        assert!(offered > 0, "block {block}: no proposal was offered");
+        assert_eq!(
+            producer.draft_step_calls.get(),
+            offered,
+            "block {block}: head-producing drafter steps should equal offered proposals"
+        );
     }
 }
 

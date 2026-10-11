@@ -491,7 +491,7 @@ impl RealForwardRunner {
     ///
     /// A live `GdnStateManager` swap rather than the `GdnSnapshot`/
     /// `snapshot()`/`restore()` pair `RollbackPoint` uses for speculative
-    /// rollback: that pair is a real host memcpy (tens to ~150 MiB
+    /// rollback: that pair is a real copy (GPU blits of tens to ~150 MiB
     /// depending on family, `crates/gpu/src/gdn_state.rs`'s own doc), which
     /// would reintroduce for GDN state exactly the per-switch cost a
     /// swap-based pool exists to avoid paying for KV. A second LIVE

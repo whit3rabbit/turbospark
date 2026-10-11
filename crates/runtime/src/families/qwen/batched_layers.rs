@@ -138,8 +138,10 @@ pub(crate) fn encode_full_attention_block_batched(
     // written. `scratch.attn` is reused across the M queries because command
     // buffers on one queue execute in commit order (`crates/gpu` Gotcha 8) --
     // it is a GPU-only intermediate, so the reuse serializes the queries and
-    // cannot corrupt them. Attention is 0.6% of this family's decode compute;
-    // widening it is measured to be not worth a kernel.
+    // cannot corrupt them. Attention is 0.6% of this family's decode compute
+    // at short context, where widening it measured not worth a kernel; its
+    // long-context cost is what the GQA-shared partial behind
+    // `encode_attention_decode` addresses (`real_forward_types.rs`).
     for m in 0..batch {
         gpu::encode_attention_decode(
             context,

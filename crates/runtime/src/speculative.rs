@@ -302,6 +302,23 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         } else {
             let mut chained = next;
             for d in 0..=round_block {
+                if d == round_block {
+                    // The row-only step: its proposal is never offered, so
+                    // it goes through `prime_drafter`, which writes the same
+                    // drafter row without the full-vocab head, the logits
+                    // readback or a selection nobody reads. On Qwen3.8 that
+                    // head is ~0.7 GB of the ~0.95 GB a draft step reads.
+                    // A sampled run still advances `draw_step` once here, as
+                    // the step that drew and discarded a token did, so the
+                    // sampled stream stays byte-identical to that path.
+                    producer
+                        .prime_drafter(chained, base - 1 + d)
+                        .map_err(RuntimeError::Producer)?;
+                    if sampled {
+                        draw_step += 1;
+                    }
+                    break;
+                }
                 producer
                     .draft_step(chained, base - 1 + d, &mut draft_logits)
                     .map_err(RuntimeError::Producer)?;

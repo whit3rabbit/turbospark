@@ -689,6 +689,22 @@ pub struct AttentionScratch {
     pub m: metal::Buffer,
     pub d: metal::Buffer,
     pub o: metal::Buffer,
+    decode_kernel: DecodeAttentionKernel,
+}
+
+/// Which partial pass [`encode_attention_decode`] runs. The choice lives on
+/// the per-runner scratch so a family opts in where its runner is built,
+/// without widening the encoder's signature or any other family's path.
+/// `TURBOSPARK_ATTN_DECODE_KERNEL=barrier|gqa` overrides it process-wide,
+/// for A/B runs and as a kill switch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodeAttentionKernel {
+    /// `attention_decode_partial`: one threadgroup per (Q head, chunk), two
+    /// threadgroup barriers per position. The default.
+    Barrier,
+    /// `attention_decode_gqa_partial` where [`attention_decode_gqa_supported`]
+    /// accepts the shape, otherwise `Barrier`.
+    GqaShared,
 }
 
 impl AttentionScratch {
@@ -698,8 +714,31 @@ impl AttentionScratch {
             m: context.new_output_buffer(slots * 4),
             d: context.new_output_buffer(slots * 4),
             o: context.new_output_buffer(slots * head_dim as u64 * 4),
+            decode_kernel: DecodeAttentionKernel::Barrier,
         }
     }
+
+    pub fn with_decode_kernel(mut self, kernel: DecodeAttentionKernel) -> Self {
+        self.decode_kernel = kernel;
+        self
+    }
+
+    /// The kernel this scratch's dispatches run, after the env override.
+    pub fn decode_kernel(&self) -> DecodeAttentionKernel {
+        decode_kernel_override().unwrap_or(self.decode_kernel)
+    }
+}
+
+fn decode_kernel_override() -> Option<DecodeAttentionKernel> {
+    static OVERRIDE: std::sync::OnceLock<Option<DecodeAttentionKernel>> =
+        std::sync::OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        match std::env::var("TURBOSPARK_ATTN_DECODE_KERNEL").as_deref() {
+            Ok("barrier") => Some(DecodeAttentionKernel::Barrier),
+            Ok("gqa") => Some(DecodeAttentionKernel::GqaShared),
+            _ => None,
+        }
+    })
 }
 
 /// Encode both batch-only split-KV attention passes for row-major Q/output.
@@ -915,6 +954,31 @@ pub fn encode_attention_decode(
     assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
 
     let range = seq_len - kv_start;
+    if scratch.decode_kernel() == DecodeAttentionKernel::GqaShared
+        && attention_decode_gqa_supported(head_dim, num_q_heads, num_kv_heads)
+    {
+        let (simdgroups, num_chunks, unroll) = gqa_launch(range, num_kv_heads);
+        return encode_attention_decode_gqa(
+            context,
+            pass,
+            q,
+            k_buffer,
+            v_buffer,
+            scratch,
+            out,
+            head_dim,
+            num_q_heads,
+            num_kv_heads,
+            seq_len,
+            kv_start,
+            ring_capacity,
+            scale,
+            sinks,
+            simdgroups,
+            num_chunks,
+            unroll,
+        );
+    }
     let num_chunks = chunks_for(range);
     // Ceiling division, so the last chunk is the short one and every
     // earlier chunk is full. Flooring would leave a tail of positions
@@ -959,6 +1023,163 @@ pub fn encode_attention_decode(
         "attention_decode_combine",
         &constants,
         &constants_key,
+    )?;
+    let mut combine_buffers: Vec<(&metal::Buffer, u64, u64)> = vec![
+        (&scratch.m, 0, 0),
+        (&scratch.d, 1, 0),
+        (&scratch.o, 2, 0),
+        (out.0, 3, out.1),
+    ];
+    if let Some((buf, off)) = sinks {
+        combine_buffers.push((buf, 6, off));
+    }
+    pass.encode_threadgroups(
+        &combine_pipeline,
+        &combine_buffers,
+        &[(u32_bytes(&head_dim), 4), (u32_bytes(&num_chunks), 5)],
+        num_q_heads as u64,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// The GQA partial's production launch: (simdgroups, chunks, unroll).
+///
+/// Swept at Qwen3.8's shape (head_dim 256, 4 KV heads) on an M4 Max over 16
+/// distinct layer K/V buffers per sample, interleaved
+/// (`tests/qwen38_attention_decode_probe.rs`): 8 simdgroups x 4 positions in
+/// flight beat 1 and 2 positions from 4K up and tied them below; 8 chunks
+/// (32 threadgroups) won below 16K and 16 (64 threadgroups) at 32K, and 32
+/// or 64 chunks were slower at every length. The chunk count is scaled to
+/// that threadgroup target by the KV head count, so the grid stays the
+/// same size for other groupings, and capped at [`MAX_CHUNKS`] so the
+/// scratch is the barrier kernel's size.
+fn gqa_launch(range: u32, num_kv_heads: u32) -> (u32, u32, u32) {
+    let target_threadgroups = if range >= 16 * 1024 { 64 } else { 32 };
+    let chunks = (target_threadgroups / num_kv_heads).clamp(1, MAX_CHUNKS);
+    (8, 1 << chunks.ilog2(), 4)
+}
+
+/// Largest Q-heads-per-KV-head group the GQA partial holds in registers
+/// (`kGqaMaxGroup` in `attention.metal`).
+pub const MAX_GQA_GROUP: u32 = 8;
+
+/// Whether [`encode_attention_decode_gqa`] supports this head shape: the
+/// kernel gives each lane `head_dim / 32` elements as `half4` loads, up to
+/// 8 (`kGqaMaxPerLane`), and keeps a whole group's Q and O in registers.
+pub fn attention_decode_gqa_supported(head_dim: u32, num_q_heads: u32, num_kv_heads: u32) -> bool {
+    num_kv_heads > 0
+        && num_q_heads % num_kv_heads == 0
+        && num_q_heads / num_kv_heads <= MAX_GQA_GROUP
+        && (head_dim == 128 || head_dim == 256)
+}
+
+/// [`encode_attention_decode`] through the GQA-shared partial kernel
+/// (`attention_decode_gqa_partial`): one threadgroup per (KV head, chunk)
+/// serves every Q head of the group from one K/V read, and its simdgroups
+/// take interleaved positions with no per-position barrier. Same scratch
+/// layout and the same combine pass (sinks included) as the barrier kernel,
+/// so the two are interchangeable at a call site; summation order differs.
+///
+/// `simdgroups` (1..=16), `num_chunks` (a power of two, 1..=[`MAX_CHUNKS`])
+/// and `unroll` (positions in flight per simdgroup, 1..=4) are explicit so
+/// a benchmark can sweep them; [`encode_attention_decode`] uses
+/// `gqa_launch`'s values.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn encode_attention_decode_gqa(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    scratch: &AttentionScratch,
+    out: (&metal::Buffer, u64),
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    seq_len: u32,
+    kv_start: u32,
+    ring_capacity: u32,
+    scale: f32,
+    sinks: Option<(&metal::Buffer, u64)>,
+    simdgroups: u32,
+    num_chunks: u32,
+    unroll: u32,
+) -> Result<(), GpuError> {
+    assert!(attention_decode_gqa_supported(head_dim, num_q_heads, num_kv_heads));
+    assert!((1..=16).contains(&simdgroups));
+    assert!((1..=4).contains(&unroll));
+    assert!(num_chunks.is_power_of_two() && num_chunks <= MAX_CHUNKS);
+    assert!(kv_start < seq_len);
+    assert!(
+        ring_capacity == 0 || seq_len - kv_start <= ring_capacity,
+        "attention window larger than ring capacity: rows would alias"
+    );
+    let stored_tokens = if ring_capacity > 0 {
+        ring_capacity
+    } else {
+        seq_len
+    };
+    let kv_bytes = stored_tokens as u64 * num_kv_heads as u64 * head_dim as u64 * 2;
+    assert!(k_buffer.length() >= kv_bytes, "K buffer too small");
+    assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
+    assert!(
+        scratch.m.length() >= num_q_heads as u64 * num_chunks as u64 * 4,
+        "attention scratch holds fewer partials than the chunk count"
+    );
+
+    let range = seq_len - kv_start;
+    let chunk_len = range.div_ceil(num_chunks);
+    let group = num_q_heads / num_kv_heads;
+    let has_sinks = sinks.is_some();
+
+    // The partial bakes group, simdgroups and head_dim on top of the shared
+    // (scale, ring, chunks, sinks) set, and all three are in its cache key:
+    // a pipeline reused across groups or head dims would read the wrong
+    // number of Q rows or lanes' elements (`crates/gpu` Gotcha 1).
+    let constants = attention_function_constants(scale, ring_capacity, num_chunks, has_sinks);
+    for (value, index) in [(group, 71), (simdgroups, 72), (head_dim, 73), (unroll, 74)] {
+        constants.set_constant_value_at_index((&value as *const u32).cast(), MTLDataType::UInt, index);
+    }
+    let base_key = attention_constants_key(scale, ring_capacity, num_chunks, has_sinks);
+    let mut partial_key = base_key.to_vec();
+    for value in [group, simdgroups, head_dim, unroll] {
+        partial_key.extend_from_slice(&value.to_le_bytes());
+    }
+    let partial_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_gqa_partial",
+        &constants,
+        &partial_key,
+    )?;
+    pass.encode_threadgroups(
+        &partial_pipeline,
+        &[
+            (q.0, 0, q.1),
+            (k_buffer, 1, 0),
+            (v_buffer, 2, 0),
+            (&scratch.m, 3, 0),
+            (&scratch.d, 4, 0),
+            (&scratch.o, 5, 0),
+        ],
+        &[
+            (u32_bytes(&num_kv_heads), 6),
+            (u32_bytes(&seq_len), 7),
+            (u32_bytes(&kv_start), 8),
+            (u32_bytes(&chunk_len), 9),
+        ],
+        (num_kv_heads * num_chunks) as u64,
+        (simdgroups * 32) as u64,
+    );
+
+    let combine_constants =
+        attention_function_constants(scale, ring_capacity, num_chunks, has_sinks);
+    let combine_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_combine",
+        &combine_constants,
+        &base_key,
     )?;
     let mut combine_buffers: Vec<(&metal::Buffer, u64, u64)> = vec![
         (&scratch.m, 0, 0),

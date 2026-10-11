@@ -77,12 +77,25 @@ const BASELINES: &[quality_common::ChipQuality] = &[
     // the MoE families show, which is the mechanism rather than a surprise:
     // `--expert-cache-slots` sizes a routed-expert cache, and a DENSE model
     // has no routed experts, so the two arms differ only in noise.
+    //
+    // RE-FROZEN 2026-10-11 for the GQA-shared decode attention partial
+    // (`attention_decode_gqa_partial`, the family's default since then),
+    // which sums each score per lane before the simd reduction and splits
+    // positions across simdgroups. Perplexity 4.9432 -> 4.9444 (+0.024%);
+    // sampled digest unchanged; the greedy text keeps its first 825 of
+    // ~1350 characters, then takes the other side of a near-tie ("By
+    // maintaining a gentle slope" + " rather than a sharp drop-off" became
+    // " between the ocean and inland areas") and rejoins the old text
+    // within the sentence. Two fresh processes agreed on all three values.
+    // The old row still reproduces exactly under
+    // `TURBOSPARK_ATTN_DECODE_KERNEL=barrier`: perplexity 4.9432, greedy
+    // c3df0095926caeffd24439a04f71ca3f7bff80df4e71813418625d0590187c0a.
     quality_common::ChipQuality {
         brand_substr: "Apple M4 Max",
-        perplexity: 4.9432,
-        greedy_digest: "c3df0095926caeffd24439a04f71ca3f7bff80df4e71813418625d0590187c0a",
+        perplexity: 4.9444,
+        greedy_digest: "c8db31c57672950250e73475c1e6026dfe6a6b816804578b9cf3fd25b87773bb",
         sampled_digest: "f272437c378f65225abe9de1bfb1df4c8fd54eb238bb6de400109161a53de145",
-        source: "this port, 2026-08-14, Apple M4 Max, AC, 16 slots",
+        source: "this port, 2026-08-14, re-frozen 2026-10-11 for GQA decode attention, Apple M4 Max, AC, 16 slots",
     },
 ];
 

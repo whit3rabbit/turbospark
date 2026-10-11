@@ -24,6 +24,18 @@ threadgroup shape, or normalization convention on the device.
   correctness bug.
 - Gated GDN normalization uses exactly 128 threads per threadgroup. Preserve
   the kernel's layout contract.
+- Split-KV decode attention: the GQA-shared partial (`attention_decode_gqa_partial`)
+  serves all Q heads in a group from one K/V load. Its function constants
+  (group, simdgroups, head_dim, unroll) MUST be appended to the pipeline cache
+  key to prevent silent pipeline reuse across shapes.
+- GQA decode attention supports head_dim 128 or 256 and groups up to 8
+  (`MAX_GQA_GROUP`). Its chunk count is capped at `MAX_CHUNKS`, so it shares
+  the barrier kernel's `AttentionScratch` size (more chunks measured slower).
+  A family opts in on its scratch (`with_decode_kernel`), and
+  `TURBOSPARK_ATTN_DECODE_KERNEL=barrier|gqa` overrides it process-wide.
+- GDN snapshots are GPU blits into pooled private buffers. `snapshot` does
+  not wait, so no host write to the live state may land before a later
+  command buffer on the same queue has completed.
 - Keep tensor normalization conventions attached to the tensor path, not
   inferred from the model family.
 - Validate numerical kernel changes with a real model, sampled output, and an

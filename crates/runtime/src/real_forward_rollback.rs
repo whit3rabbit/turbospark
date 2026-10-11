@@ -48,7 +48,10 @@ impl RealForwardRunner {
         );
         RollbackPoint {
             position: self.kv.position(),
-            gdn: self.real_qwen.as_ref().map(|qwen| qwen.gdn.snapshot()),
+            gdn: self
+                .real_qwen
+                .as_ref()
+                .map(|qwen| qwen.gdn.snapshot(self.context.queue())),
         }
     }
 
@@ -78,7 +81,7 @@ impl RealForwardRunner {
         // cache no longer holds.
         self.kv_prefix.rewind_to(point.position);
         if let (Some(qwen), Some(snapshot)) = (self.real_qwen.as_mut(), point.gdn.as_ref()) {
-            qwen.gdn.restore(snapshot);
+            qwen.gdn.restore(snapshot, self.context.queue());
         }
         // The verify tape described a state this just undid. A retaining
         // rollback replays from the snapshot directly; nothing else should
@@ -180,7 +183,7 @@ impl RealForwardRunner {
                 .real_qwen
                 .as_mut()
                 .ok_or_else(|| "retaining rollback needs a GDN install".to_string())?;
-            qwen.gdn.restore(snapshot);
+            qwen.gdn.restore(snapshot, self.context.queue());
         }
         let qwen = self
             .real_qwen

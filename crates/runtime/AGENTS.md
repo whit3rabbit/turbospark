@@ -30,6 +30,9 @@ policy.
   KV ring capacity in pipeline specialization.
 - Memory guard decisions must distinguish resident allocations, expert slot
   capacity, KV, and streamed on-disk weights.
+- MegaTTS3 sessions open on Metal by default on macOS; the portable CPU
+  reference path runs only as an opt-in fallback when Metal cannot open. Memory
+  admission must size for Metal device allocations.
 - Real-model validation needs greedy, sampled, and memory-oracle coverage. A
   compile or synthetic fixture is not a runtime parity claim.
 
