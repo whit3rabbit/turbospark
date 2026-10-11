@@ -20,6 +20,26 @@ extension AudioWorkspaceController {
         request.durationSeconds = recipe.durationSeconds; request.steps = recipe.steps; request.seed = recipe.seed
         return request
     }
+    /// A natively cloning run (MegaTTS3): its reference arrives as the
+    /// session PCM at 24 kHz, and consent holds only for that exact region.
+    nonisolated static func nativeCloneRequest(_ base: AudioRequest, speech: AudioSpeechSettings?) -> AudioRequest {
+        var request = base
+        let options = speech?.cloneOptions ?? AudioCloneOptions()
+        request.steps = options.steps
+        request.pW = options.intelligibility
+        request.tW = options.similarity
+        request.referenceSampleRate = 24_000
+        request.consent = speech?.reference != nil && options.consentedReference == speech?.reference
+        // The engine aligns the reference itself and takes no style prompt.
+        request.instruction = nil
+        request.referenceText = nil
+        return request
+    }
+    /// The catalog declares the CPU as this profile's runtime, so running on
+    /// it is the qualified path, not a silent fallback from Metal.
+    nonisolated static func runsOnDeclaredCPU(_ profile: AudioProfile) -> Bool {
+        profile.capabilities.canRun && profile.capabilities.backend == "portable_cpu"
+    }
     func runSection(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         var section = recipe; section.text = text
@@ -62,7 +82,9 @@ extension AudioWorkspaceController {
         activeRunID = result.id
         generationProgress = task == .music ? AudioGenerationProgress() : nil
         status = String(localized: "Waiting for background work", bundle: .module)
-        let token = epoch; let currentTask = task; let portable = page == .advanced && allowPortableExperiment
+        let token = epoch; let currentTask = task
+        let portable = (page == .advanced && allowPortableExperiment) || Self.runsOnDeclaredCPU(profile)
+        let clonesNatively = currentTask == .textToSpeech && Self.clonesNatively(profile)
         let experimentalMetal = page == .advanced && allowExperimentalMetal
         jobTask = Task { [weak self] in
             guard let self else { return }
@@ -79,7 +101,8 @@ extension AudioWorkspaceController {
                 try Task.checkCancellation()
                 self.status = String(localized: "Loading model", bundle: .module)
                 let session = profile.family == "qwen3_tts" ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
-                let request = Self.request(from: inputs, task: currentTask)
+                var request = Self.request(from: inputs, task: currentTask)
+                if clonesNatively { request = Self.nativeCloneRequest(request, speech: inputs.speech) }
                 if currentTask == .speechToText {
                     guard let selected else { throw AudioWorkspaceError.message(String(localized: "Import or select a recording first.", bundle: .module)) }
                     guard let session else { throw CancellationError() }
@@ -93,6 +116,16 @@ extension AudioWorkspaceController {
                         }
                         let assets = self.assets; let lifetime = self.lifetime
                         pcm = try await Task.detached { try AudioMediaIO.readMono16k(selected.clips, store: assets, start: 0, duration: selected.duration, cancel: lifetime.check) }.value
+                    } else if clonesNatively {
+                        guard let reference = inputs.speech?.reference, reference.isValid else {
+                            throw AudioWorkspaceError.message(String(localized: "Choose 1 to 30 seconds of reference speech.", bundle: .module))
+                        }
+                        guard request.consent else {
+                            throw AudioWorkspaceError.message(String(localized: "Confirm you have the right to use this voice.", bundle: .module))
+                        }
+                        self.status = String(localized: "Preparing reference audio", bundle: .module)
+                        let assets = self.assets; let lifetime = self.lifetime
+                        pcm = try await Task.detached { try AudioMediaIO.readMono24k(reference.clips, store: assets, start: reference.start, duration: reference.duration, cancel: lifetime.check) }.value
                     } else { pcm = [] }
                     let report: @Sendable (AudioProgress) -> Void = { [weak self] update in
                         Task { @MainActor in self?.receiveProgress(update, runID: result.id, token: token) }

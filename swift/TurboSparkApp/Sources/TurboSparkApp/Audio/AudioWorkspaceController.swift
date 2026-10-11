@@ -71,7 +71,9 @@ final class AudioWorkspaceController: ObservableObject {
     var summaryHandler: ((AudioLibraryItem) async throws -> AudioMeetingSummary)?
     var summaryAvailable: (() -> Bool)?
     var canSummarizeMeeting: Bool { selectedItem?.preferredTranscript != nil && summaryAvailable?() == true }
-    var installHandler: ((AudioProfile) -> Bool)?
+    /// Queues a managed download. The second argument lists the ids of the
+    /// profile's acknowledgments the user accepted.
+    var installHandler: ((AudioProfile, [String]) -> Bool)?
     let library: AudioLibraryStore
     let assets: ManagedAssetStore
     let profileID: String?
@@ -275,6 +277,13 @@ final class AudioWorkspaceController: ObservableObject {
             speech.mode = Self.speechMode(for: profile)
             recipe.speech = speech
             if !speechSupportsStyle { recipe.speech?.instruction = "" }
+        } else if Self.clonesNatively(profile) {
+            // Keep the reference across model switches; it is the voice.
+            var speech = recipe.speech ?? AudioSpeechSettings()
+            speech.mode = .clone
+            speech.instruction = ""
+            if speech.cloneOptions == nil { speech.cloneOptions = AudioCloneOptions() }
+            recipe.speech = speech
         } else {
             recipe.speech = nil
         }
@@ -503,15 +512,17 @@ final class AudioWorkspaceController: ObservableObject {
             flushPreferences()
         } catch { fail(error) }
     }
-    func installSelectedModel() {
+    /// `acknowledged` lists the accepted ids of the profile's
+    /// `requiredAcknowledgments`; the native installer refuses a missing one.
+    func installSelectedModel(acknowledged: [String] = []) {
         guard let profile = selectedProfile, !profile.identity.repository.isEmpty, !isBusy else { return }
-        if let installHandler { _ = installHandler(profile); return }
+        if let installHandler { _ = installHandler(profile, acknowledged); return }
         guard !isInstalling else { return }
         isInstalling = true; error = nil
         status = String(localized: "Downloading audio model", bundle: .module)
         let token = epoch
         Task { [weak self] in
-            let result = await Task.detached { Result { try AudioCatalog.install(profile.identity) } }.value
+            let result = await Task.detached { Result { try AudioCatalog.install(profile.identity, acknowledged: acknowledged) } }.value
             guard let self, self.valid(token) else { return }
             self.isInstalling = false
             switch result {

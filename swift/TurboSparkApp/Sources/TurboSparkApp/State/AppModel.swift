@@ -23,7 +23,9 @@ public final class AppModel: ObservableObject {
     var audioSummaryInFlight = false
     lazy var audioWorkspace: AudioWorkspaceController = {
         let workspace = AudioWorkspaceController()
-        workspace.installHandler = { [weak self] profile in self?.enqueueAudioDownload(profile: profile) ?? false }
+        workspace.installHandler = { [weak self] profile, acknowledged in
+            self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged) ?? false
+        }
         workspace.summaryAvailable = { [weak self] in self?.canSummarizeAudio == true }
         workspace.summaryHandler = { [weak self] item in
             guard let self else { throw CancellationError() }
@@ -967,6 +969,11 @@ public final class AppModel: ObservableObject {
     /// Prevent a stale install consumer from changing a newer install's state.
     /// Cancellation keeps its consumer alive until the native writer exits.
     var installEpoch: Int = 0
+
+    /// Install terms the user accepted, keyed by the audio profile's asset
+    /// fingerprint. In memory only: a queued download that outlives a relaunch
+    /// is refused by the native installer until the terms are accepted again.
+    var acceptedAudioTerms: [String: [String]] = [:]
 
     /// Consecutive times a `Stop` hook has blocked and re-entered the
     /// current turn (`AppModel+Generation.swift`'s

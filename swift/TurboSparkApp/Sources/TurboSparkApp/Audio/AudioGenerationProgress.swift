@@ -92,7 +92,8 @@ extension AudioWorkspaceController {
             switch update.stage {
             case "Preparing reference audio": status = String(localized: "Preparing reference audio", bundle: .module)
             case "Loading speech model": status = String(localized: "Loading speech model", bundle: .module)
-            case "Generating speech": status = String(localized: "Generating speech", bundle: .module)
+            case "Generating speech", "diffusion": status = String(localized: "Generating speech", bundle: .module)
+            case "reference": status = String(localized: "Preparing reference audio", bundle: .module)
             default: status = update.stage
             }
             progress = update.total.flatMap { $0 > 0 ? Double(max(0, min($0, update.completed))) / Double($0) : nil }

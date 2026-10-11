@@ -314,6 +314,8 @@ struct AudioWorkspaceView: View {
                 .themedFont(.small).foregroundStyle(.appSecondary)
             if controller.selectedProfile?.family == "qwen3_tts" {
                 Qwen3TTSInputsView(controller: controller)
+            } else if controller.selectedProfileClonesNatively {
+                VoiceCloneInputsView(controller: controller)
             }
             if let profile = controller.selectedProfile {
                 if !profile.capabilities.voices.isEmpty {

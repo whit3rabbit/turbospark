@@ -28,10 +28,11 @@ extension AppModel {
     }
 
     @discardableResult
-    func enqueueAudioDownload(profile: AudioProfile) -> Bool {
+    func enqueueAudioDownload(profile: AudioProfile, acknowledged: [String] = []) -> Bool {
         guard !profile.identity.repository.isEmpty,
               Self.isSafeInstallAlias(profile.identity.alias),
               !isModelAlreadyInstalled(.audio(identity: profile.identity)) else { return false }
+        if !acknowledged.isEmpty { acceptedAudioTerms[profile.identity.assetFingerprint] = acknowledged }
         return enqueueModelDownload(.audio(identity: profile.identity))
     }
 
@@ -91,10 +92,12 @@ extension AppModel {
     /// The native transfer owns the shared install slot until its blocking call exits.
     func startAudioModelInstall(
         identity: AudioProfileIdentity,
-        install: @escaping @Sendable (AudioProfileIdentity, @escaping @Sendable (AudioDownloadProgress) -> Void) throws -> Void = { identity, progress in
-            _ = try AudioCatalog.install(identity, progress: progress)
-        }
+        install override: (@Sendable (AudioProfileIdentity, @escaping @Sendable (AudioDownloadProgress) -> Void) throws -> Void)? = nil
     ) {
+        let acknowledged = acceptedAudioTerms[identity.assetFingerprint] ?? []
+        let install = override ?? { identity, progress in
+            _ = try AudioCatalog.install(identity, acknowledged: acknowledged, progress: progress)
+        }
         Self.modelInstallOwner = self
         installingAlias = identity.alias
         installEpoch += 1

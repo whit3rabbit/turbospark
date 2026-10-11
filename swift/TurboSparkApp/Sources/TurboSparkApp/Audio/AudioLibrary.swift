@@ -65,6 +65,21 @@ struct AudioSpeechSettings: Codable, Equatable, Sendable {
     var embeddingOnly = false
     var temperature: Float = 0.9
     var maxTokens = 2048
+    /// Options of a natively cloning engine (MegaTTS3). Optional so settings
+    /// saved before it existed still decode.
+    var cloneOptions: AudioCloneOptions?
+}
+
+struct AudioCloneOptions: Codable, Equatable, Sendable {
+    /// Diffusion steps; fewer is faster.
+    var steps = 32
+    /// Intelligibility guidance weight (`p_w`).
+    var intelligibility: Float = 1.4
+    /// Similarity guidance weight (`t_w`).
+    var similarity: Float = 3.0
+    /// The exact reference region the user confirmed they may clone. Consent
+    /// lapses when the reference or its trim changes.
+    var consentedReference: AudioVoiceReference?
 }
 
 struct AudioVoiceReference: Codable, Equatable, Sendable {

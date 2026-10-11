@@ -19,11 +19,20 @@ extension AudioWorkspaceController {
         // Picker routing uses catalog metadata. Execution validates config.json independently.
         if profile.identity.repository.contains("VoiceDesign") { return .design }
         if profile.family == "qwen3_tts" && profile.identity.repository.contains("-Base-") { return .clone }
+        if clonesNatively(profile) { return .clone }
         return .customVoice
     }
+    /// A Rust session clones from reference audio passed as its PCM (MegaTTS3).
+    /// Qwen3-TTS clones in the Swift MLX provider instead.
+    nonisolated static func clonesNatively(_ profile: AudioProfile?) -> Bool {
+        guard let profile else { return false }
+        return profile.family != "qwen3_tts" && profile.capabilities.supportsVoiceClone
+    }
+    var selectedProfileClonesNatively: Bool { Self.clonesNatively(selectedProfile) }
     func speechProfileMatchesPage(_ profile: AudioProfile) -> Bool {
         switch page {
-        case .voiceClone: return profile.family == "qwen3_tts" && Self.speechMode(for: profile) == .clone
+        case .voiceClone:
+            return (profile.family == "qwen3_tts" || Self.clonesNatively(profile)) && Self.speechMode(for: profile) == .clone
         case .voiceDesign: return profile.family == "qwen3_tts" && Self.speechMode(for: profile) == .design
         case .voiceover: return Self.speechMode(for: profile) == .customVoice
         default: return true
@@ -36,7 +45,21 @@ extension AudioWorkspaceController {
     var speechSupportsStyle: Bool {
         speechSettings.mode == .design || selectedProfile?.identity.repository.contains("1.7B-CustomVoice") == true
     }
+    var cloneOptions: AudioCloneOptions {
+        get { speechSettings.cloneOptions ?? AudioCloneOptions() }
+        set { var settings = speechSettings; settings.cloneOptions = newValue; speechSettings = settings }
+    }
+    /// Consent covers one exact reference region.
+    var cloneConsentGiven: Bool {
+        guard let reference = speechSettings.reference else { return false }
+        return cloneOptions.consentedReference == reference
+    }
+    func setCloneConsent(_ granted: Bool) {
+        cloneOptions.consentedReference = granted ? speechSettings.reference : nil
+        persistPreferences()
+    }
     var speechValidationMessage: String? {
+        if selectedProfileClonesNatively { return nativeCloneValidationMessage }
         guard selectedProfile?.family == "qwen3_tts" else { return nil }
         if recipe.text.count > 6000 { return String(localized: "Split speech text longer than 6,000 characters into sections.", bundle: .module) }
         if speechSettings.mode == .clone {
@@ -49,6 +72,16 @@ extension AudioWorkspaceController {
         }
         if speechSettings.mode == .design && speechSettings.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return String(localized: "Describe the voice before generating speech.", bundle: .module)
+        }
+        return nil
+    }
+    private var nativeCloneValidationMessage: String? {
+        if recipe.text.count > 6000 { return String(localized: "Split speech text longer than 6,000 characters into sections.", bundle: .module) }
+        guard let reference = speechSettings.reference, reference.isValid else {
+            return String(localized: "Choose 1 to 30 seconds of reference speech.", bundle: .module)
+        }
+        if cloneOptions.consentedReference != reference {
+            return String(localized: "Confirm you have the right to use this voice.", bundle: .module)
         }
         return nil
     }

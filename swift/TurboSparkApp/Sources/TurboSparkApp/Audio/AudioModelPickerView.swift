@@ -7,6 +7,8 @@ struct AudioModelPickerView: View {
     @ObservedObject var controller: AudioWorkspaceController
 
     @State private var confirmingDelete = false
+    /// A profile whose install terms are on screen awaiting acceptance.
+    @State private var acknowledging: AudioProfile?
 
     private var download: ModelDownload? {
         controller.selectedProfile.flatMap { model.audioDownload(for: $0) }
@@ -151,12 +153,25 @@ struct AudioModelPickerView: View {
                 .buttonStyle(.borderedProminent).controlSize(.large)
                 .disabled(!model.canRetryModelDownload(download))
             } else {
-                Button { controller.installSelectedModel() } label: {
+                Button {
+                    if profile.requiredAcknowledgments.isEmpty { controller.installSelectedModel() }
+                    else { acknowledging = profile }
+                } label: {
                     Label { Text("Download model", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large)
                 .disabled(!model.canQueueModelDownload(.audio(identity: profile.identity)) || controller.isBusy)
+                .alert(Text("Before downloading", bundle: .module),
+                       isPresented: Binding(get: { acknowledging != nil }, set: { if !$0 { acknowledging = nil } }),
+                       presenting: acknowledging) { terms in
+                    Button { controller.installSelectedModel(acknowledged: terms.requiredAcknowledgments.map(\.id)) } label: {
+                        Text("Accept and download", bundle: .module)
+                    }
+                    Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+                } message: { terms in
+                    Text(Self.acknowledgmentText(terms))
+                }
             }
         }
         if let folder = controller.selectedLocalModelURL {
@@ -232,6 +247,21 @@ struct AudioModelPickerView: View {
                 }
             }.padding(.top, 10)
         } label: { Text("Model details", bundle: .module) }
+    }
+}
+
+extension AudioModelPickerView {
+    /// The terms a profile asks the user to accept, localized for ids this
+    /// app knows and the catalog's own summary otherwise.
+    static func acknowledgmentText(_ profile: AudioProfile) -> String {
+        profile.requiredAcknowledgments.map { term in
+            switch term.id {
+            case "megatts3_community_encoder":
+                return String(localized: "The voice-cloning encoder in this model is a community re-upload. Its origin and license have not been verified.", bundle: .module)
+            default:
+                return term.summary
+            }
+        }.joined(separator: "\n\n")
     }
 }
 
