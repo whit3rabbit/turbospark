@@ -51,9 +51,9 @@ enum Work {
         reply: oneshot::Sender<Result<Transcription, AudioError>>,
     },
     Speak {
-        text: String,
-        voice: String,
-        speed: f32,
+        request: runtime::native_audio::AudioRequest,
+        /// The reference voice when cloning, else empty.
+        samples: Vec<f32>,
         chunks: mpsc::Sender<Result<Vec<f32>, AudioError>>,
     },
     Generate {
@@ -96,6 +96,67 @@ use runtime::native_audio::qwen_language_name;
 
 fn failed(e: impl std::fmt::Display) -> AudioError {
     AudioError::Failed(e.to_string())
+}
+
+use runtime::native_audio::MEGATTS3_FAMILY;
+
+/// A MegaTTS3 request: the reference voice decoded at its own rate (the
+/// runtime resamples it), the model's step default, and the clone options.
+async fn clone_request(
+    request: SpeechRequest,
+) -> Result<(runtime::native_audio::AudioRequest, Vec<f32>, u32), AudioError> {
+    let encoded = request.reference_audio.ok_or_else(|| {
+        AudioError::Invalid("voice cloning needs reference_audio (a base64 WAV)".into())
+    })?;
+    let (samples, rate) = tokio::task::spawn_blocking(move || decode_reference(&encoded))
+        .await
+        .map_err(|_| failed("decoding the reference audio stopped"))??;
+    let defaults = turbospark_audio::tts::megatts3::SynthParams::default();
+    let native = runtime::native_audio::AudioRequest {
+        task: native_task(AudioTask::TextToSpeech),
+        text: request.text,
+        speed: request.speed,
+        language: request.language,
+        steps: Some(request.steps.unwrap_or(defaults.steps)),
+        seed: Some(request.seed.unwrap_or(0)),
+        p_w: request.p_w,
+        t_w: request.t_w,
+        reference_sample_rate: Some(rate),
+        consent: request.consent,
+        instruction: request.instruction,
+        reference_text: request.reference_text,
+        ..runtime::native_audio::AudioRequest::default()
+    };
+    Ok((
+        native,
+        samples,
+        turbospark_audio::tts::megatts3::SAMPLE_RATE,
+    ))
+}
+
+/// Base64 WAV (an optional `data:...;base64,` prefix is accepted) to mono f32
+/// at the file's own rate.
+fn decode_reference(encoded: &str) -> Result<(Vec<f32>, u32), AudioError> {
+    use base64::Engine;
+    let payload = match encoded.split_once(";base64,") {
+        Some((prefix, rest)) if prefix.starts_with("data:") => rest,
+        _ => encoded,
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload.trim())
+        .map_err(|e| AudioError::Invalid(format!("reference_audio is not valid base64: {e}")))?;
+    let wave = turbospark_audio::wav::read_wav_f32_bytes(&bytes).map_err(|e| {
+        AudioError::Invalid(format!(
+            "reference_audio: {e}; only WAV (PCM or float) is supported"
+        ))
+    })?;
+    let channels = usize::from(wave.channels).max(1);
+    let mono = wave
+        .samples
+        .chunks_exact(channels)
+        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+        .collect();
+    Ok((mono, wave.sample_rate))
 }
 
 fn run(engine: Engine, queue: Receiver<Work>) {
@@ -150,33 +211,33 @@ fn run(engine: Engine, queue: Receiver<Work>) {
                 let _ = reply.send(result);
             }
             Work::Speak {
-                text,
-                voice,
-                speed,
+                request,
+                samples,
                 chunks,
             } => {
+                if chunks.is_closed() {
+                    continue;
+                }
                 let cancel = runtime::native_audio::AudioCancel::default();
                 let signal = cancel.clone();
-                let outcome = engine.execute(
-                    AudioRequest {
-                        task: native_task(AudioTask::TextToSpeech),
-                        text,
-                        voice,
-                        speed,
-                        ..AudioRequest::default()
-                    },
-                    vec![],
-                    cancel,
-                    |event| {
-                        if let AudioEvent::Pcm(pcm) = event {
-                            if chunks.blocking_send(Ok(pcm)).is_err() {
-                                signal.cancel();
-                            }
+                // Cloning runs long stretches with no audio, so a client that
+                // went away is noticed at progress events too.
+                let outcome = engine.execute(request, samples, cancel, |event| match event {
+                    AudioEvent::Pcm(pcm) => {
+                        if chunks.blocking_send(Ok(pcm)).is_err() {
+                            signal.cancel();
                         }
-                    },
-                );
+                    }
+                    AudioEvent::Progress(_) => {
+                        if chunks.is_closed() {
+                            signal.cancel();
+                        }
+                    }
+                });
+                // The request was validated before it was queued, so what is
+                // left is the engine's failure, not the caller's.
                 if let Err(e) = outcome {
-                    let _ = chunks.blocking_send(Err(AudioError::Invalid(e)));
+                    let _ = chunks.blocking_send(Err(failed(e)));
                 }
             }
             Work::Generate {
@@ -231,12 +292,12 @@ fn spawn_worker(id: &str, task: AudioTask, dir: PathBuf) -> Result<Arc<Worker>, 
         AudioTask::Music => MUSIC_QUEUE,
     };
     let (tx, rx) = sync_channel::<Work>(depth);
-    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<String, String>>();
     std::thread::Builder::new()
         .name(format!("audio-{id}"))
         .spawn(move || match open_engine(task, &dir) {
             Ok(engine) => {
-                let _ = ready_tx.send(Ok(()));
+                let _ = ready_tx.send(Ok(engine.family().to_string()));
                 run(engine, rx);
             }
             Err(e) => {
@@ -244,13 +305,14 @@ fn spawn_worker(id: &str, task: AudioTask, dir: PathBuf) -> Result<Arc<Worker>, 
             }
         })
         .map_err(|e| format!("could not start the audio worker: {e}"))?;
-    ready_rx
+    let family = ready_rx
         .recv()
         .map_err(|_| "the audio worker exited while opening the model".to_string())??;
     Ok(Arc::new(Worker {
         info: AudioModelInfo {
             id: id.to_string(),
             task,
+            family: Some(family),
         },
         tx,
     }))
@@ -411,21 +473,46 @@ impl AudioProvider for RealAudioProvider {
     fn speak(&self, request: SpeechRequest) -> Fut<'_, Result<SpeechStream, AudioError>> {
         Box::pin(async move {
             let worker = self.worker(&request.model, AudioTask::TextToSpeech)?;
-            request
-                .voice
-                .parse::<Voice>()
-                .map_err(|e| AudioError::Invalid(e.to_string()))?;
+            let family = worker.info.family.clone().unwrap_or_default();
+            let (native, samples, sample_rate) = if family == MEGATTS3_FAMILY {
+                clone_request(request).await?
+            } else {
+                if request.reference_audio.is_some() {
+                    return Err(AudioError::Invalid(format!(
+                        "model {:?} does not clone voices",
+                        request.model
+                    )));
+                }
+                request
+                    .voice
+                    .parse::<Voice>()
+                    .map_err(|e| AudioError::Invalid(e.to_string()))?;
+                let native = runtime::native_audio::AudioRequest {
+                    task: native_task(AudioTask::TextToSpeech),
+                    text: request.text,
+                    voice: request.voice,
+                    speed: request.speed,
+                    ..runtime::native_audio::AudioRequest::default()
+                };
+                (
+                    native,
+                    vec![],
+                    turbospark_audio::tts::kokoro::OUTPUT_SAMPLE_RATE,
+                )
+            };
+            // Refuse the caller's mistakes as 400 before a minutes-long job queues.
+            runtime::native_audio::validate_request(&family, &native, &samples)
+                .map_err(AudioError::Invalid)?;
             // Two chunks of look-ahead: synthesis stays a step ahead of the
             // socket without buffering a whole paragraph.
             let (chunks, rx) = mpsc::channel(2);
             worker.submit(Work::Speak {
-                text: request.text,
-                voice: request.voice,
-                speed: request.speed,
+                request: native,
+                samples,
                 chunks,
             })?;
             Ok(SpeechStream {
-                sample_rate: turbospark_audio::tts::kokoro::OUTPUT_SAMPLE_RATE,
+                sample_rate,
                 chunks: rx,
             })
         })
@@ -521,6 +608,27 @@ impl AudioProvider for RealAudioProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reference_decoding_downmixes_keeps_the_rate_and_refuses_garbage() {
+        use base64::Engine;
+        let stereo = turbospark_audio::Waveform::new(48_000, 2, vec![0.2, 0.4, -0.2, 0.0]).unwrap();
+        let wav = turbospark_audio::write_wav_f32(&stereo);
+        let plain = base64::engine::general_purpose::STANDARD.encode(&wav);
+        let (mono, rate) = decode_reference(&plain).unwrap();
+        assert_eq!(rate, 48_000);
+        assert_eq!(mono.len(), 2);
+        assert!((mono[0] - 0.3).abs() < 1e-6 && (mono[1] + 0.1).abs() < 1e-6);
+        // A data URL prefix is accepted.
+        let url = format!("data:audio/wav;base64,{plain}");
+        assert_eq!(decode_reference(&url).unwrap().1, 48_000);
+        for bad in ["not base64 !!", "aGVsbG8="] {
+            assert!(
+                matches!(decode_reference(bad), Err(AudioError::Invalid(_))),
+                "{bad}"
+            );
+        }
+    }
 
     /// The HTTP load route reaches `valid_alias` first. A path-shaped name
     /// must never get as far as the store, which would happily open it.

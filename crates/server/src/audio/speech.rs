@@ -1,7 +1,10 @@
 //! `POST /v1/audio/speech`: text in, audio out.
 //!
-//! Kokoro is the only TTS family, English only, with one voice pack, so the
-//! voice list is the provider's to enforce and the route only bounds shape.
+//! The provider enforces each family's voices and options; the route bounds
+//! shape and applies the rules that depend only on the family. Voice cloning
+//! (`reference_audio`, a base64 WAV) is refused for a family that cannot
+//! clone, and MegaTTS3 requires both the reference and `consent: true`, the
+//! caller's statement that it has the right to use the voice.
 //! `wav` is the default (OpenAI defaults to mp3, which this server cannot
 //! encode, and refuses by name). `stream=true` is `pcm` only: a chunked body
 //! with one chunk per synthesized segment, so the first audio leaves before
@@ -14,14 +17,16 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use super::{
-    audio_error, error, pcm_s16le, timed, unavailable, wav_bytes, AudioError, AudioTask,
-    SpeechRequest,
+    audio_error, clones_voices, error, pcm_s16le, timed, unavailable, wav_bytes, AudioError,
+    AudioTask, SpeechRequest,
 };
 use crate::ServerState;
 
 const MAX_INPUT_CHARS: usize = 4096;
 const MIN_SPEED: f32 = 0.5;
 const MAX_SPEED: f32 = 2.0;
+/// Base64 of a 30 s reference: 48 kHz stereo f32 WAV is about 15.4 MB.
+const MAX_REFERENCE_BASE64: usize = 24 << 20;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,6 +42,11 @@ struct SpeechInput {
     reference_audio: Option<String>,
     reference_text: Option<String>,
     instruction: Option<String>,
+    consent: Option<bool>,
+    steps: Option<usize>,
+    seed: Option<u64>,
+    p_w: Option<f32>,
+    t_w: Option<f32>,
 }
 
 pub(crate) async fn speech(
@@ -94,8 +104,45 @@ pub(crate) async fn speech(
                 Some("stream"),
             );
         }
-        if let Err(r) = audio.model_for(&input.model, AudioTask::TextToSpeech) {
-            return r;
+        let info = match audio.model_for(&input.model, AudioTask::TextToSpeech) {
+            Ok(info) => info,
+            Err(r) => return r,
+        };
+        let family = info.family.as_deref();
+        if let Some(reference) = &input.reference_audio {
+            if family.is_some_and(|f| !clones_voices(f)) {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "model {:?} does not clone voices; reference_audio needs a voice-cloning model",
+                        input.model
+                    ),
+                    Some("reference_audio"),
+                );
+            }
+            if reference.len() > MAX_REFERENCE_BASE64 {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "reference_audio is limited to a 30 second WAV",
+                    Some("reference_audio"),
+                );
+            }
+        }
+        if family == Some("megatts3") {
+            if input.reference_audio.is_none() {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "voice cloning needs reference_audio: a base64 WAV of 1 to 30 seconds",
+                    Some("reference_audio"),
+                );
+            }
+            if input.consent != Some(true) {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "voice cloning needs consent: true, stating you have the right to use the reference voice",
+                    Some("consent"),
+                );
+            }
         }
         let request = SpeechRequest {
             model: input.model,
@@ -106,6 +153,11 @@ pub(crate) async fn speech(
             reference_audio: input.reference_audio,
             reference_text: input.reference_text,
             instruction: input.instruction,
+            consent: input.consent.unwrap_or(false),
+            steps: input.steps,
+            seed: input.seed,
+            p_w: input.p_w,
+            t_w: input.t_w,
         };
         let mut synthesized = match audio.provider.speak(request).await {
             Ok(s) => s,

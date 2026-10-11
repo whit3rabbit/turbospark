@@ -643,9 +643,14 @@ cloning models (e.g. Qwen3-TTS).
 | `response_format` | string | `wav` (default) or `pcm` |
 | `stream` | boolean | Chunked PCM delivery (requires `response_format: pcm`) |
 | `language` | string | Optional language tag |
-| `reference_audio` | string | Optional base64-encoded WAV/PCM audio for voice cloning |
-| `reference_text` | string | Optional transcript of reference audio |
-| `instruction` | string | Optional style, emotion, or pacing instruction |
+| `reference_audio` | string | Base64-encoded WAV of the voice to clone; required by MegaTTS3 (1 to 30 s), refused by a model that cannot clone |
+| `consent` | boolean | MegaTTS3 requires `true`: the caller has the right to use the reference voice |
+| `steps` | integer | MegaTTS3 diffusion steps, 1 to 100 (default 32) |
+| `seed` | integer | Makes a MegaTTS3 run repeatable (default 0) |
+| `p_w` | number | MegaTTS3 intelligibility weight, 0.1 to 5 (default 1.4) |
+| `t_w` | number | MegaTTS3 similarity weight, 0.1 to 10 (default 3.0) |
+| `reference_text` | string | Transcript of the reference clip (Qwen3-TTS only) |
+| `instruction` | string | Style, emotion, or pacing instruction (Qwen3-TTS only) |
 
 ### POST /v1/audio/generate
 

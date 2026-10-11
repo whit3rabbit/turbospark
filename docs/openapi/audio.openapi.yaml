@@ -341,9 +341,14 @@ components:
         response_format: { type: string, enum: [wav, pcm], default: wav, description: pcm is 16-bit little-endian mono. }
         stream: { type: boolean, default: false, description: Requires pcm. }
         language: { type: string, description: Language tag for synthesis. }
-        reference_audio: { type: string, description: Base64-encoded reference audio clip for voice cloning. }
-        reference_text: { type: string, description: Transcript of reference audio clip. }
-        instruction: { type: string, description: Emotion, style, or delivery guidance. }
+        reference_audio: { type: string, description: 'Base64-encoded WAV of the voice to clone (a data: URL prefix is accepted). Required by MegaTTS3, 1 to 30 seconds; refused by a model that cannot clone.' }
+        reference_text: { type: string, description: 'Transcript of the reference clip (Qwen3-TTS; MegaTTS3 aligns the reference itself and refuses it).' }
+        instruction: { type: string, description: 'Emotion, style, or delivery guidance (Qwen3-TTS; MegaTTS3 refuses it).' }
+        consent: { type: boolean, description: 'MegaTTS3 requires true: the caller states it has the right to use the reference voice.' }
+        steps: { type: integer, minimum: 1, maximum: 100, description: MegaTTS3 diffusion steps (default 32); fewer is faster. }
+        seed: { type: integer, minimum: 0, description: Makes a MegaTTS3 run repeatable (default 0). }
+        p_w: { type: number, minimum: 0.1, maximum: 5, description: MegaTTS3 intelligibility weight (default 1.4). }
+        t_w: { type: number, minimum: 0.1, maximum: 10, description: MegaTTS3 similarity weight (default 3.0). }
     GenerateRequest:
       type: object
       required: [model, prompt]

@@ -80,12 +80,32 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -o hello.wav
 ```
 
-Kokoro, US English, voice `af_heart` only, or attached bridged speech models
-such as Qwen3-TTS. `input` (alias `text`) is at most 4096 characters, `speed` 0.5
-to 2.0. Optional voice cloning fields include:
-- `reference_audio`: base64-encoded WAV or PCM reference audio to clone.
-- `reference_text`: transcript of the reference audio clip.
-- `instruction`: emotion, style, or pacing guidance for synthesis.
+Kokoro (US English, voice `af_heart` only), MegaTTS3 (English voice cloning),
+or attached bridged speech models such as Qwen3-TTS. `input` (alias `text`) is
+at most 4096 characters, `speed` 0.5 to 2.0. Voice cloning fields:
+- `reference_audio`: base64-encoded WAV of the voice to clone (a `data:` URL
+  prefix is accepted). MegaTTS3 requires 1 to 30 seconds and uses at most 28.
+  A model that cannot clone (Kokoro) refuses it.
+- `consent`: MegaTTS3 requires `true`, the caller's statement that it has the
+  right to use the reference voice.
+- `steps` (1 to 100, default 32), `seed` (default 0), `p_w` (intelligibility,
+  0.1 to 5, default 1.4) and `t_w` (similarity, 0.1 to 10, default 3.0):
+  MegaTTS3 options. `speed` scales its durations.
+- `reference_text` and `instruction`: Qwen3-TTS only; MegaTTS3 aligns the
+  reference itself and refuses both.
+
+MegaTTS3 runs on the CPU for now: a short sentence takes tens of seconds and a
+long reference makes every step slower. With `stream=true` audio arrives one
+text chunk at a time. A client that disconnects cancels the job at the next
+diffusion step. With `--tts-model ~/models/megatts3` the model id is `megatts3`:
+
+```sh
+curl http://127.0.0.1:8080/v1/audio/speech \
+  -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d "{\"model\":\"megatts3\",\"input\":\"Hello there.\",\"consent\":true,
+       \"reference_audio\":\"$(base64 -i me.wav)\"}" \
+  -o cloned.wav
+```
 
 Output is 24 kHz mono: `wav` (default) or `pcm` (16-bit little-endian).
 OpenAI's default is mp3. This server cannot encode it and refuses by name.

@@ -90,6 +90,14 @@ impl AudioTask {
 pub struct AudioModelInfo {
     pub id: String,
     pub task: AudioTask,
+    /// The engine family (`kokoro`, `megatts3`, `qwen3_tts`, ...) when the
+    /// provider knows it; routes use it for family-specific rules.
+    pub family: Option<String>,
+}
+
+/// Families whose speech request carries `reference_audio`.
+pub(crate) fn clones_voices(family: &str) -> bool {
+    matches!(family, "megatts3" | "qwen3_tts")
 }
 
 /// Mono 16 kHz f32 PCM, already decoded and resampled by the route.
@@ -125,6 +133,14 @@ pub struct SpeechRequest {
     pub reference_audio: Option<String>,
     pub reference_text: Option<String>,
     pub instruction: Option<String>,
+    /// The caller has the right to use the reference voice; required to clone.
+    pub consent: bool,
+    pub steps: Option<usize>,
+    pub seed: Option<u64>,
+    /// Intelligibility guidance weight (MegaTTS3).
+    pub p_w: Option<f32>,
+    /// Similarity guidance weight (MegaTTS3).
+    pub t_w: Option<f32>,
 }
 
 /// Synthesized audio arriving one segment at a time. Dropping the receiver

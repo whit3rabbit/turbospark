@@ -216,8 +216,13 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -o speech.wav
 ```
 
-For voice cloning models, optional fields include `reference_audio` (base64-encoded
-WAV/PCM), `reference_text`, `instruction`, and `language`.
+For voice cloning, `reference_audio` is a base64-encoded WAV of the voice to
+clone. MegaTTS3 requires it (1 to 30 seconds) together with `consent: true`,
+the caller's statement that it has the right to use the voice, and accepts
+`steps` (1 to 100, default 32), `seed`, `p_w` (intelligibility, default 1.4)
+and `t_w` (similarity, default 3.0). `reference_text` and `instruction` apply
+to Qwen3-TTS only; MegaTTS3 refuses them. A model that cannot clone refuses
+`reference_audio`.
 
 Output: 24 kHz mono audio (`wav` or raw `pcm`).
 

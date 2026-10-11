@@ -35,6 +35,7 @@ struct Fake {
     models: Mutex<Vec<AudioModelInfo>>,
     transcribed: Mutex<Vec<TranscribeRequest>>,
     generated: Mutex<Vec<GenerateRequest>>,
+    spoken: Mutex<Vec<SpeechRequest>>,
     /// `*-slow` models wait for a permit before answering.
     gate: Semaphore,
     started: AtomicUsize,
@@ -46,6 +47,7 @@ impl Fake {
         let m = |id: &str, task| AudioModelInfo {
             id: id.into(),
             task,
+            family: None,
         };
         Arc::new(Self {
             models: Mutex::new(vec![
@@ -54,9 +56,18 @@ impl Fake {
                 m("stt-slow", AudioTask::SpeechToText),
                 m("tts-test", AudioTask::TextToSpeech),
                 m("music-test", AudioTask::Music),
+                AudioModelInfo {
+                    family: Some("megatts3".into()),
+                    ..m("clone-test", AudioTask::TextToSpeech)
+                },
+                AudioModelInfo {
+                    family: Some("kokoro".into()),
+                    ..m("kokoro-test", AudioTask::TextToSpeech)
+                },
             ]),
             transcribed: Mutex::default(),
             generated: Mutex::default(),
+            spoken: Mutex::default(),
             gate: Semaphore::new(0),
             started: AtomicUsize::new(0),
             dropped: Arc::new(AtomicBool::new(false)),
@@ -104,7 +115,10 @@ impl AudioProvider for Fake {
 
     fn speak(&self, request: SpeechRequest) -> Fut<'_, Result<SpeechStream, AudioError>> {
         Box::pin(async move {
-            if request.voice != "af_heart" {
+            let cloning = request.model == "clone-test";
+            self.spoken.lock().unwrap().push(request.clone());
+            // A cloning model takes its voice from the reference, not `voice`.
+            if !cloning && request.voice != "af_heart" {
                 return Err(AudioError::Invalid(format!(
                     "unknown voice {:?}",
                     request.voice
@@ -146,6 +160,7 @@ impl AudioProvider for Fake {
             let info = AudioModelInfo {
                 id: alias,
                 task: AudioTask::SpeechToText,
+                family: None,
             };
             self.models.lock().unwrap().push(info.clone());
             Ok(info)
@@ -918,6 +933,75 @@ async fn speech_validation() {
 }
 
 #[tokio::test]
+async fn speech_voice_cloning_rules() {
+    let fake = Fake::new();
+    let base = spawn(&fake).await;
+    let reference = "UklGRg=="; // the route does not decode; the provider does
+    let refused = [
+        (
+            "clone without reference",
+            serde_json::json!({"model": "clone-test", "input": "a", "consent": true}),
+            "reference_audio",
+        ),
+        (
+            "clone without consent",
+            serde_json::json!({"model": "clone-test", "input": "a", "reference_audio": reference}),
+            "consent",
+        ),
+        (
+            "clone with consent false",
+            serde_json::json!({"model": "clone-test", "input": "a", "reference_audio": reference, "consent": false}),
+            "consent",
+        ),
+        (
+            "reference to a family that cannot clone",
+            serde_json::json!({"model": "kokoro-test", "input": "a", "reference_audio": reference}),
+            "reference_audio",
+        ),
+        (
+            "oversized reference",
+            serde_json::json!({"model": "clone-test", "input": "a", "consent": true,
+                               "reference_audio": "A".repeat((24 << 20) + 1)}),
+            "reference_audio",
+        ),
+    ];
+    for (name, body, param) in refused {
+        let (status, body) = error_of(post_json(&base, "/v1/audio/speech", body).await).await;
+        assert_eq!(status, 400, "{name}: {body}");
+        assert_eq!(body["error"]["param"], param, "{name}: {body}");
+    }
+    assert!(
+        fake.spoken.lock().unwrap().is_empty(),
+        "refusals must not reach the provider"
+    );
+
+    // Accepted: options pass through, and an OpenAI-style voice is ignored.
+    let r = post_json(
+        &base,
+        "/v1/audio/speech",
+        serde_json::json!({"model": "clone-test", "input": "Hello.", "voice": "alloy",
+                           "reference_audio": reference, "consent": true, "steps": 8,
+                           "seed": 3, "p_w": 2.0, "t_w": 2.5}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let spoken = fake.spoken.lock().unwrap().pop().unwrap();
+    assert!(spoken.consent);
+    assert_eq!(spoken.reference_audio.as_deref(), Some(reference));
+    assert_eq!((spoken.steps, spoken.seed), (Some(8), Some(3)));
+    assert_eq!((spoken.p_w, spoken.t_w), (Some(2.0), Some(2.5)));
+
+    // A provider that does not report a family keeps the old pass-through.
+    let r = post_json(
+        &base,
+        "/v1/audio/speech",
+        serde_json::json!({"model": "tts-test", "input": "a", "reference_audio": reference}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+}
+
+#[tokio::test]
 async fn generate_sync_and_async() {
     let fake = Fake::new();
     let base = spawn(&fake).await;
@@ -1126,7 +1210,7 @@ async fn metrics_count_requests_by_endpoint_and_status() {
         "turbospark_audio_requests_total{endpoint=\"transcriptions\",status=\"429\"} 1",
         "turbospark_audio_requests_total{endpoint=\"transcriptions\",status=\"404\"} 1",
         "turbospark_audio_busy_total 1",
-        "turbospark_audio_models_loaded 5",
+        "turbospark_audio_models_loaded 7",
         "turbospark_audio_jobs{status=\"running\"} 0",
     ] {
         assert!(text.contains(want), "missing {want:?} in\n{text}");

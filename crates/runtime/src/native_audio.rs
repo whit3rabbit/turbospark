@@ -340,7 +340,14 @@ pub const MEGATTS3_FAMILY: &str = "megatts3";
 const CLONE_REFERENCE_SECONDS: std::ops::RangeInclusive<f64> = 1.0..=30.0;
 const CLONE_REFERENCE_RATES: std::ops::RangeInclusive<u32> = 8_000..=192_000;
 
-fn validate_request(family: &str, request: &AudioRequest, samples: &[f32]) -> Result<(), String> {
+/// The checks a session runs before queueing a job, for hosts that refuse a
+/// request as the caller's mistake before submitting it. `family` is the
+/// loaded engine's ([`AudioSession::family`]).
+pub fn validate_request(
+    family: &str,
+    request: &AudioRequest,
+    samples: &[f32],
+) -> Result<(), String> {
     if request.task == AudioTask::TextToSpeech && family == MEGATTS3_FAMILY {
         return megatts3_request(request, samples).map(|_| ());
     }

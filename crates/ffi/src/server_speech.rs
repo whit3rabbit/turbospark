@@ -177,6 +177,8 @@ impl AudioProvider for SpeechBridge {
             .map(|id| AudioModelInfo {
                 id,
                 task: AudioTask::TextToSpeech,
+                // The bridge hands speech to the host's Qwen3-TTS (Swift MLX).
+                family: Some("qwen3_tts".into()),
             })
             .into_iter()
             .collect()
