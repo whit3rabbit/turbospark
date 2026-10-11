@@ -307,7 +307,8 @@ pub(crate) fn stream_mlx(
     // ROADMAP P2.9: a probe-driven pull of a combined VLM checkpoint keeps its
     // tower. `enable_requested_vision` above only fires on catalog-row intent,
     // which a `--repo` pull never has; the shard headers are the other half of
-    // the answer and they are in hand by this line.
+    // the answer and they are in hand by this line. A catalog row's `false`
+    // is an answer too, so this is gated on `plan.vision_from_bytes`.
     enable_bytes_detected_vision(plan, family, &mut arch, &headers, &config_text)?;
     if arch.vision.is_active() {
         install_vision_preprocessor(plan, dir, client)?;
@@ -447,7 +448,12 @@ fn enable_requested_vision(
 /// on the architecture passed to the streamed writer (ROADMAP P2.9).
 ///
 /// [`enable_requested_vision`] answers a catalog row's INTENT; this answers
-/// what the artifact actually ships. The trunk parsers deliberately return a
+/// what the artifact actually ships, and only for a plan with no intent of
+/// its own ([`InstallPlan::vision_from_bytes`]). Ungated, it turned the
+/// text-only `qwen38-27b` and `qwen38-27b-mtp` rows vision-active, because
+/// `mlx-community/Qwen3.8-27B-4bit` ships its tower in the trunk's shards,
+/// and the MTP install then had every speculative verify refused at
+/// runtime. The trunk parsers deliberately return a
 /// text-only architecture because `config.json` alone cannot be trusted to:
 /// `ornith-ai/Ornith-1.5-35B-A3B` declares a tower in its config and ships no
 /// `vision_tower.` tensors, so the config gate must stay insufficient. The
@@ -467,8 +473,9 @@ fn enable_bytes_detected_vision(
     headers: &[SafetensorsHeader],
     config_text: &str,
 ) -> Result<(), String> {
-    if arch.vision.is_active() {
-        // Catalog intent already decided, and its parse + width check ran.
+    if arch.vision.is_active() || !plan.vision_from_bytes {
+        // Catalog intent already decided, either way. When it enabled the
+        // tower, its parse + width check ran.
         return Ok(());
     }
     // The same family gate `classify_for_family` applies to `VisionTower`:
@@ -1044,22 +1051,93 @@ mod tests {
 
     fn probe_plan() -> InstallPlan {
         // A probe-driven plan is the shape that has no catalog intent to lean
-        // on: `include_vision` is false by construction, exactly as
-        // `InstallPlan::from_probe` builds it.
-        InstallPlan {
-            alias: "probe-vlm".to_string(),
-            weights: crate::hf::RepoRef::new("example/vlm", "main"),
-            file: None,
-            kind: crate::entry::SourceKind::Mlx,
-            sidecars: crate::hf::RepoRef::new("example/vlm", "main"),
-            sidecar_files: Vec::new(),
-            include_vision: false,
-            install_bytes: 0,
-            status: "unlisted".to_string(),
-            mtp: None,
-            reuse_trunk_from: None,
-            vision_only: false,
-            vision_file: None,
+        // on. Built through `InstallPlan::from_probe` itself, so these tests
+        // also hold that constructor to `vision_from_bytes: true`; the probe
+        // report's verdict does not matter to the plan.
+        let repo = crate::hf::RepoRef::new("example/vlm", "main");
+        let report = crate::evaluate_config("{}", &repo, None).unwrap();
+        InstallPlan::from_probe("probe-vlm", &report, repo)
+    }
+
+    /// The `stream_mlx` order: catalog intent first, then the shard bytes.
+    fn vision_after_stream_decisions(
+        plan: &InstallPlan,
+        headers: &[SafetensorsHeader],
+    ) -> model_io::ArchConfig {
+        let mut arch = model_io::qwen_gdn_dense_27b();
+        assert!(!arch.vision.is_active());
+        enable_requested_vision(
+            plan,
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            &vision_config_text(),
+        )
+        .unwrap();
+        enable_bytes_detected_vision(
+            plan,
+            ModelFamily::QwenGdnDense,
+            &mut arch,
+            headers,
+            &vision_config_text(),
+        )
+        .unwrap();
+        arch
+    }
+
+    /// The 2026-10-11 regression: a fresh `qwen38-27b-mtp` pull came out
+    /// vision-active (`visionDepth: 27`, `packed_vision/`, a 98,526,976-byte
+    /// larger `model_weights.bin`) because its trunk repo ships
+    /// `vision_tower.*` and bytes detection ignored the row's text-only
+    /// intent. The runtime then refused every speculative verify on it.
+    /// The headers here are that trunk's shape: tower tensors beside the
+    /// language model, which is exactly what the real shards carry.
+    #[test]
+    fn an_mtp_row_without_vision_intent_stays_text_only_over_tower_bytes() {
+        let catalog = Catalog::embedded().unwrap();
+        let entry = catalog.get("qwen38-27b-mtp").unwrap();
+        let plan = InstallPlan::from_entry(entry);
+        assert!(plan.mtp.is_some(), "the row must still carry its MTP head");
+        assert!(!plan.include_vision);
+        let headers = [header_with(&[
+            "language_model.model.embed_tokens.weight",
+            &format!("{VISION_PREFIX}blocks.0.norm1.weight"),
+            &format!("{VISION_PREFIX}merger.norm.weight"),
+        ])];
+        let arch = vision_after_stream_decisions(&plan, &headers);
+        assert!(
+            !arch.vision.is_active(),
+            "qwen38-27b-mtp must install text-only, or its drafter never runs"
+        );
+    }
+
+    /// The same rule for every curated model row: absent `include_vision`
+    /// means text-only (`CatalogEntry::include_vision`), whatever the shards
+    /// ship. `qwen38-27b` backs frozen oracle and quality numbers that a
+    /// silently added tower would invalidate.
+    #[test]
+    fn no_catalog_row_without_vision_intent_enables_a_tower_from_bytes() {
+        let catalog = Catalog::embedded().unwrap();
+        let headers = [header_with(&[
+            "language_model.model.embed_tokens.weight",
+            &format!("{VISION_PREFIX}blocks.0.norm1.weight"),
+        ])];
+        let mut checked = Vec::new();
+        for entry in catalog.entries() {
+            if entry.include_vision || entry.kind != crate::entry::EntryKind::Model {
+                continue;
+            }
+            let plan = InstallPlan::from_entry(entry);
+            assert!(!plan.vision_from_bytes, "{}", entry.alias);
+            let arch = vision_after_stream_decisions(&plan, &headers);
+            assert!(
+                !arch.vision.is_active(),
+                "{} turned vision-active from shard bytes alone",
+                entry.alias
+            );
+            checked.push(entry.alias.as_str());
+        }
+        for alias in ["qwen38-27b", "qwen38-27b-mtp"] {
+            assert!(checked.contains(&alias), "{alias} was not checked");
         }
     }
 

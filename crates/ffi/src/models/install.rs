@@ -248,6 +248,7 @@ mod cancel_tests {
             // question never comes up; every other hand-built plan in
             // `crates/catalog` defaults this false too.
             include_vision: false,
+            vision_from_bytes: false,
         };
         let flag = CancelFlag::new();
         flag.cancel();

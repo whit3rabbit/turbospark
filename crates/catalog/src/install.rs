@@ -57,6 +57,14 @@ pub struct InstallPlan {
     pub sidecar_files: Vec<String>,
     /// Include the checkpoint's vision tower in this combined model install.
     pub include_vision: bool,
+    /// Let the shard headers enable a combined tower the plan did not ask
+    /// for (ROADMAP P2.9). True only for a probe-driven plan, which has no
+    /// curated answer. A catalog row already answered through
+    /// `include_vision`, where absent means text-only: `qwen38-27b` and
+    /// `qwen38-27b-mtp` exclude the tower their repository ships, and an
+    /// MTP install that turned vision-active would have its speculation
+    /// refused at runtime.
+    pub vision_from_bytes: bool,
     pub install_bytes: u64,
     /// The catalog status, or `unlisted`.
     pub status: String,
@@ -98,6 +106,7 @@ impl InstallPlan {
             sidecars: RepoRef::new(entry.sidecar_repo(), entry.sidecar_revision()),
             sidecar_files: entry.sidecars.files.clone(),
             include_vision: entry.include_vision,
+            vision_from_bytes: false,
             install_bytes: entry.install_bytes,
             status: entry.status.as_str().to_string(),
             mtp: entry
@@ -122,6 +131,7 @@ impl InstallPlan {
             sidecars,
             sidecar_files: report.sidecars_present.clone(),
             include_vision: false,
+            vision_from_bytes: true,
             // No catalog estimate exists, so use the download size as a
             // stand-in. It is the right order of magnitude either way: the
             // walk copies quantized bytes through rather than re-quantizing.
@@ -151,6 +161,7 @@ impl InstallPlan {
             kind: SourceKind::Mlx,
             sidecar_files: VISION_SIDECAR_FILES.iter().map(|s| s.to_string()).collect(),
             include_vision: false,
+            vision_from_bytes: false,
             install_bytes: 0,
             status: "unlisted".to_string(),
             mtp: None,

@@ -736,9 +736,14 @@ on the written install (`catalog::stream::enable_bytes_detected_vision`):
 the gate is the checkpoint's BYTES, not its `config.json`, because Ornith
 declares a tower it does not ship. Tower bytes beside an unusable tower
 config refuse the pull by name instead of silently writing a text-only
-install. Catalog rows keep their explicit `include_vision` precedence, and
-the HF-native `model.visual.` spelling remains a `pull-vision`-only
-convenience.
+install. Catalog rows keep their explicit `include_vision` precedence in
+BOTH directions: only a probe-driven plan sets
+`InstallPlan::vision_from_bytes`, so a row without `include_vision` stays
+text-only whatever its shards carry. Until 2026-10-11 only the `true`
+direction held, and fresh `qwen38-27b` and `qwen38-27b-mtp` pulls came out
+vision-active from `mlx-community/Qwen3.8-27B-4bit`'s own tower tensors.
+The MTP install then had every speculative verify refused. The HF-native
+`model.visual.` spelling remains a `pull-vision`-only convenience.
 
 `turbospark-model pull-vision <ALIAS>` (an alias already in `models.json`,
 kind `vision-tower`) or `pull-vision --repo R[@rev] --alias NAME [--file F]
