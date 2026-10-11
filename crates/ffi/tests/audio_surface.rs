@@ -416,3 +416,74 @@ fn external_heavy_permit_serializes_and_releases() {
         assert_eq!(ts_heavy_work_release(ptr::null_mut()), 0);
     }
 }
+
+/// The real MegaTTS3 install the app performs: refused without its terms,
+/// downloaded with them (about 4.4 GB), then opened through the managed-path
+/// check that re-hashes every file. Needs `TURBOSPARK_AUDIO_REAL_INSTALL=1`
+/// and an explicit `TURBOSPARK_HOME`, so it never writes to the real store.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "network: downloads megatts3-f32 into $TURBOSPARK_HOME"]
+fn real_megatts3_install_needs_its_terms_then_opens_verified() {
+    if std::env::var_os("TURBOSPARK_AUDIO_REAL_INSTALL").is_none()
+        || std::env::var_os("TURBOSPARK_HOME").is_none()
+    {
+        eprintln!("set TURBOSPARK_AUDIO_REAL_INSTALL=1 and a scratch TURBOSPARK_HOME");
+        return;
+    }
+    let _serial = HEAVY_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    unsafe {
+        let mut out = ptr::null_mut();
+        assert_eq!(ts_audio_catalog_json(&mut out), 0);
+        let rows: serde_json::Value =
+            serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
+        ts_string_free(out);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["identity"]["alias"] == "megatts3-f32")
+            .unwrap()
+            .clone();
+        let identity = CString::new(row["identity"].to_string()).unwrap();
+
+        let mut out = ptr::dangling_mut();
+        assert_ne!(
+            ts_audio_install(identity.as_ptr(), None, ptr::null_mut(), &mut out),
+            0
+        );
+        assert!(out.is_null());
+        assert!(
+            last_error_text().contains("megatts3_community_encoder"),
+            "{}",
+            last_error_text()
+        );
+
+        let options = CString::new(r#"{"acknowledged":["megatts3_community_encoder"]}"#).unwrap();
+        let mut out = ptr::null_mut();
+        let rc = ts_audio_install_with_options(
+            identity.as_ptr(),
+            options.as_ptr(),
+            None,
+            ptr::null_mut(),
+            &mut out,
+        );
+        assert_eq!(rc, 0, "{}", last_error_text());
+        let record: serde_json::Value =
+            serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
+        ts_string_free(out);
+        assert_eq!(record["family"], "megatts3");
+        let path = CString::new(record["path"].as_str().unwrap()).unwrap();
+
+        let options = CString::new(
+            r#"{"task":"text_to_speech","allow_portable":true,"expected_family":"megatts3"}"#,
+        )
+        .unwrap();
+        let mut session = ptr::null_mut();
+        let rc = ts_audio_session_open(path.as_ptr(), options.as_ptr(), &mut session);
+        assert_eq!(rc, 0, "{}", last_error_text());
+        assert!(!session.is_null());
+        assert_eq!(ts_audio_session_close(session), 0);
+        eprintln!("installed and opened {}", record["path"]);
+    }
+}

@@ -1860,7 +1860,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 8);
+        assert_eq!(catalog.entries().count(), 9);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::SpeechToText,
@@ -1885,6 +1885,14 @@ mod tests {
                 "c7ea32923b245fe5afc22d740a1936ad2ac590f3",
                 44100,
                 2,
+            ),
+            (
+                AudioTask::TextToSpeech,
+                "megatts3-f32",
+                "cowWhySo/MegaTTS3-TurboSpark",
+                "a55e74f50cbb88ca72658b4999a0ba85a567e466",
+                24000,
+                1,
             ),
         ] {
             let profile = catalog.get(alias).unwrap();
@@ -1952,6 +1960,56 @@ mod tests {
         assert_eq!(
             serde_json::from_value::<AudioProfile>(json).unwrap(),
             *kokoro
+        );
+    }
+
+    #[test]
+    fn megatts3_profile_pins_every_file_the_runtime_opens_and_its_terms() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        let profile = catalog.get("megatts3-f32").unwrap();
+        assert_eq!(profile.family, "megatts3");
+        // What `MegaTts3::open` reads, plus the license and provenance notice.
+        let mut paths: Vec<_> = profile.assets.iter().map(|a| a.path.as_str()).collect();
+        paths.sort_unstable();
+        assert_eq!(
+            paths,
+            [
+                "LICENSE",
+                "NOTICE.md",
+                "aligner_lm/model.safetensors",
+                "config.json",
+                "diffusion_transformer/model.safetensors",
+                "duration_lm/model.safetensors",
+                "g2p/config.json",
+                "g2p/model.safetensors",
+                "g2p/tokenizer.json",
+                "wavvae/model.safetensors",
+            ]
+        );
+        assert!(profile.capabilities.can_run);
+        assert!(profile
+            .capabilities
+            .operations
+            .iter()
+            .any(|o| o == "voice_clone"));
+        assert_eq!(profile.capabilities.languages, ["en"]);
+        assert_eq!(profile.capabilities.max_input_seconds, Some(28));
+        assert_eq!(profile.readiness, AudioReadiness::ImplementedUnqualified);
+        let terms: Vec<_> = profile
+            .acknowledgments
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect();
+        assert_eq!(terms, ["megatts3_community_encoder"]);
+        // The G2P pin is the upstream file, byte for byte.
+        let g2p = profile
+            .assets
+            .iter()
+            .find(|a| a.path == "g2p/model.safetensors")
+            .unwrap();
+        assert_eq!(
+            g2p.sha256,
+            "0f9d70d454ee35d023a9a54552716a8ccf2411c967abc6a857160527046f62a2"
         );
     }
 

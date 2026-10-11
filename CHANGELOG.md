@@ -158,6 +158,9 @@ when this file gets updated relative to the version bump and the tag.
   `allow_experimental_metal` and `turbospark-clone --metal`.
 - `crates/audio`: `convert_megatts3.py` writes a root `config.json`, `LICENSE`,
   `NOTICE.md` and a model card, so its output can be published as is.
+- `crates/catalog`: catalog row `megatts3-f32`, the converter output pinned at
+  `cowWhySo/MegaTTS3-TurboSpark` revision `a55e74f5`. Installing it requires
+  accepting the `megatts3_community_encoder` term.
 - `swift/TurboSparkApp`: added Humanize advanced controls drawer and panel
   (`HumanizeAdvancedPanel.swift`, `HumanizeChrome.swift`), custom word replacements,
   avoid-words highlighting, protected terms integrity verification (`HumanizeRules.swift`),

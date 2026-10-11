@@ -534,39 +534,211 @@ def notice_text(wavvae_variant):
     return "\n".join(lines)
 
 
-def model_card(wavvae_variant):
+TURBOSPARK_URL = "https://github.com/whit3rabbit/turbospark"
+PORT_README = TURBOSPARK_URL + "/blob/main/crates/audio/src/tts/megatts3/README.md"
+CONVERTER = "crates/audio/tools/convert_megatts3.py"
+
+# path -> what it is, for the model card's file table.
+CARD_ROWS = [
+    ("config.json", "Root config. TurboSpark dispatches on `model_type: megatts3`, and `voice_clone` says whether the WavVAE encoder is present."),
+    ("aligner_lm/", "Whisper-style aligner. Finds the phones and their timing in the reference recording."),
+    ("duration_lm/", "Duration model. Predicts how long each phone of the new text lasts."),
+    ("diffusion_transformer/", "24-layer latent diffusion transformer. Generates the speech latents in the reference voice."),
+    ("wavvae/", "WavVAE codec. The encoder turns the reference into a latent, and the decoder turns latents into 24 kHz audio."),
+    ("g2p/", "Qwen2-0.5B grapheme-to-phoneme model and tokenizer, copied unchanged (bf16)."),
+    ("frontend/dict.json", "Upstream phone and tone dictionary. Kept for reference, TurboSpark does not read it."),
+    ("manifest.json", "sha256, size, and tensor count of every file, plus the upstream sources."),
+    ("NOTICE.md", "Exact upstream sources, their sha256, and where the encoder came from."),
+    ("LICENSE", "Apache-2.0, from the upstream MegaTTS3 code."),
+]
+
+
+def _human_size(n):
+    for unit, scale in (("GB", 10**9), ("MB", 10**6), ("KB", 10**3)):
+        if n >= scale:
+            return f"{n / scale:.3g} {unit}"
+    return f"{n} B"
+
+
+def _row_numbers(path, files):
+    """Parameter count and size of a table row, from the manifest."""
+    if path.endswith("/"):
+        weights = files.get(path + "model.safetensors", {})
+        size = sum(v["size"] for k, v in files.items() if k.startswith(path))
+        params = weights.get("params")
+        return (f"{params / 1e6:.1f}M" if params else ""), _human_size(size)
+    entry = files.get(path)
+    return "", (_human_size(entry["size"]) if entry else "")
+
+
+def model_card(wavvae_variant, files, hub_repo=None):
+    """README.md for the Hugging Face repo. Deterministic: sizes and parameter
+    counts come from the manifest, so a rerun writes the same bytes."""
     clone = wavvae_variant == "community"
-    lines = [
+    folder = hub_repo.split("/")[-1] if hub_repo else "MegaTTS3-TurboSpark"
+    table = ["| Path | What it is | Params | Size |", "|---|---|---|---|"]
+    for path, what in CARD_ROWS:
+        if path == "wavvae/" and not clone:
+            what = "WavVAE decoder only (ByteDance's release). It turns latents into 24 kHz audio but cannot encode a reference."
+        params, size = _row_numbers(path, files)
+        table.append(f"| `{path}` | {what} | {params} | {size} |")
+    tags = ["- megatts3", "- text-to-speech", "- safetensors", "- turbospark"]
+    if clone:
+        tags.insert(1, "- voice-cloning")
+    head = [
         "---",
         "license: apache-2.0",
         "base_model: ByteDance/MegaTTS3",
         "pipeline_tag: text-to-speech",
+        "language:",
+        "- en",
         "tags:",
-        "- megatts3",
-        "- safetensors",
-    ]
-    if clone:
-        lines.append("- voice-cloning")
-    lines += [
+        *tags,
         "---",
         "",
         "# MegaTTS3 for TurboSpark",
         "",
-        "MegaTTS3 (ByteDance) converted to safetensors for TurboSpark's Rust runtime.",
-        "Each component lives in its own folder (`aligner_lm/`, `diffusion_transformer/`,",
-        "`duration_lm/`, `wavvae/`, `g2p/`); `manifest.json` lists every file's sha256.",
+    ]
+    if clone:
+        intro = [
+            "This is ByteDance's MegaTTS3 zero-shot voice cloning model, converted to safetensors",
+            f"so [TurboSpark]({TURBOSPARK_URL}) can install it and run it locally. Give it 1 to 30",
+            "seconds of someone's voice and some English text, and it speaks the text in that voice",
+            "at 24 kHz. The weights are the upstream values in a new file format, not a retrain or a",
+            "fine-tune.",
+        ]
+    else:
+        intro = [
+            "This is ByteDance's MegaTTS3 model, converted to safetensors for",
+            f"[TurboSpark]({TURBOSPARK_URL}). It carries ByteDance's decoder-only WavVAE, so it cannot",
+            "clone a voice from a recording, and TurboSpark's runtime refuses it for that reason. The",
+            "weights are the upstream values in a new file format, not a retrain or a fine-tune.",
+        ]
+    body = [
+        *intro,
         "",
-        "See `NOTICE.md` for the exact sources and their hashes."
-        + (" The WavVAE encoder's origin and license are unverified; read the notice"
-           " before redistributing." if clone else ""),
+        "If you are not using TurboSpark, you probably want the",
+        "[upstream release](https://huggingface.co/ByteDance/MegaTTS3) instead. These files are",
+        "not an MLX model and will not load in mlx-audio, which has no MegaTTS3 port. The",
+        "upstream PyTorch code cannot load them either without reversing the conversion.",
         "",
-        "Clone only voices you have the right to use.",
+        "## Why this exists",
+        "",
+        "TurboSpark is a hobby project: a native macOS app and Rust workspace for running local",
+        "models on Apple Silicon. Its runtime reads safetensors only, and its model catalog",
+        "installs only files pinned to a commit and a sha256. MegaTTS3 ships as PyTorch pickle",
+        "checkpoints, which TurboSpark will not load, because opening a pickle can run code.",
+        "",
+        "Converting once and publishing the result lets the app install MegaTTS3 like any other",
+        "model and check every byte before it runs. It also means you can rerun the converter",
+        "and compare hashes rather than trusting this upload.",
+        "",
+        "## What is in the repo",
+        "",
+        *table,
+        "",
+        "Each component folder also has a `config.json` with the upstream hyperparameters and the",
+        "sha256 of the checkpoint it came from.",
+        "",
+        "## How it was converted",
+        "",
+        f"Every file here comes from `{CONVERTER}` in the TurboSpark repo.",
+        "",
+        "- It checks each upstream file against a pinned sha256 before reading it.",
+        "- It parses the checkpoints with an allowlisted unpickler and never imports torch.",
+        "- It widens f16 and bf16 tensors to f32, which loses nothing.",
+        "- It stores conv weights as `[out, kernel, in]`, the layout MLX uses, and keeps weight",
+        "  norm as separate `weight_g` and `weight_v` tensors.",
+        "- It writes the same bytes for the same inputs, so `manifest.json` doubles as a",
+        "  reproducibility check.",
+        "",
+        "Sources, also listed with their hashes in `NOTICE.md`:",
+        "",
+        f"- [ByteDance/MegaTTS3](https://huggingface.co/ByteDance/MegaTTS3/tree/{SOURCES['ByteDance/MegaTTS3']})"
+        f" at `{SOURCES['ByteDance/MegaTTS3'][:8]}`: the aligner, duration model, diffusion transformer, and G2P.",
+    ]
+    if clone:
+        body.append(
+            "- [mrfakename/MegaTTS3-VoiceCloning]"
+            f"(https://huggingface.co/mrfakename/MegaTTS3-VoiceCloning/tree/{SOURCES['mrfakename/MegaTTS3-VoiceCloning']})"
+            f" at `{SOURCES['mrfakename/MegaTTS3-VoiceCloning'][:8]}`: the WavVAE with its encoder."
+        )
+    else:
+        body.append("- The WavVAE is ByteDance's decoder-only release from the same repo.")
+    if clone:
+        download = (
+            [f"hf download {hub_repo} --local-dir {folder}"] if hub_repo else []
+        )
+        body += [
+            "",
+            "## Using it with TurboSpark",
+            "",
+            "Voice cloning is on TurboSpark's `main` branch and not in a release yet. Every entry",
+            "point asks you to confirm that you have the right to use the voice.",
+            "",
+            "- **App.** In Audio Studio, open Voice Clone, pick MegaTTS3, accept the download notice,",
+            "  and choose or record a reference.",
+            "- **Command line.** `turbospark-clone` takes this folder or the installed alias:",
+            "",
+            "```sh",
+            *download,
+            f"turbospark-clone speak --model {folder} --reference me.wav \\",
+            "  --text \"Hello there.\" --consent --output hello.wav",
+            "```",
+            "",
+            "- **HTTP.** `turbospark-server --tts-model` serves it on the OpenAI-style speech route,",
+            "  with the reference as a base64 WAV:",
+            "",
+            "```sh",
+            f"turbospark-server --tts-model {folder}",
+            "curl http://127.0.0.1:8080/v1/audio/speech -H 'content-type: application/json' \\",
+            f"  -d \"{{\\\"model\\\":\\\"{folder}\\\",\\\"input\\\":\\\"Hello there.\\\",\\\"consent\\\":true,"
+            "\\\"reference_audio\\\":\\\"$(base64 -i me.wav)\\\"}\" \\",
+            "  -o hello.wav",
+            "```",
+            "",
+            "Optional settings are `steps` (default 32, fewer is faster), `p_w` (intelligibility,",
+            "default 1.4), `t_w` (similarity to the reference, default 3.0), `seed`, and `speed`.",
+            "",
+            "## Consent and the encoder",
+            "",
+            "ByteDance withheld the WavVAE encoder, the part that turns a recording into a voice the",
+            "model can imitate, over misuse concerns. The encoder here is a third-party re-upload by",
+            "mrfakename, credited to ModelScope ACoderPassBy/MegaTTS-SFT. Its origin and license were",
+            "not independently verified, and the re-upload's repository declares Apache-2.0.",
+            "",
+            "TurboSpark asks you to accept that before it downloads these files, and asks on every",
+            "request whether you have the right to use the voice. Please only clone your own voice or",
+            "the voice of someone who agreed to it.",
+        ]
+    body += [
+        "",
+        "## Limits",
+        "",
+        "- English only. TurboSpark's text normalizer covers a documented subset of upstream's, and",
+        "  non-Latin text is refused.",
+        "- The reference can be 1 to 30 seconds, and only the first 28 are used. Shorter",
+        "  references synthesize faster.",
+        "- Output is mono 24 kHz.",
+        "- It is not fast. On an M4 Max, one reading each, a 3 second sentence at 8 steps took",
+        "  35 s on the CPU and about 10 s on TurboSpark's experimental Metal path.",
+        "- TurboSpark's port tracks the PyTorch reference on these weights to within about 1e-3",
+        "  per sample. Nobody has run a listening test or a speaker-similarity study on it yet.",
+        "",
+        f"The measurements behind these numbers are in the [port's README]({PORT_README}).",
+        "",
+        "## Credits",
+        "",
+        "MegaTTS3 is ByteDance's work: [paper](https://arxiv.org/abs/2502.18924),",
+        "[code](https://github.com/bytedance/MegaTTS3), and",
+        "[weights](https://huggingface.co/ByteDance/MegaTTS3). Thanks to them for releasing it",
+        "under Apache-2.0" + (", and to mrfakename for the encoder re-upload." if clone else "."),
         "",
     ]
-    return "\n".join(lines)
+    return "\n".join(head + body)
 
 
-def write_root_files(out, wavvae_variant, license_path, manifest):
+def write_root_files(out, wavvae_variant, license_path, manifest, hub_repo=None):
     with open(license_path, encoding="utf-8") as fh:
         if "Apache License" not in fh.read(4096):
             raise ConvertError(f"{license_path} does not look like the Apache-2.0 LICENSE")
@@ -574,7 +746,7 @@ def write_root_files(out, wavvae_variant, license_path, manifest):
     with open(os.path.join(out, "config.json"), "w", encoding="utf-8") as fh:
         json.dump(root_config(wavvae_variant), fh, indent=2, sort_keys=True)
     for name, text in (("NOTICE.md", notice_text(wavvae_variant)),
-                       ("README.md", model_card(wavvae_variant))):
+                       ("README.md", model_card(wavvae_variant, manifest["files"], hub_repo))):
         with open(os.path.join(out, name), "w", encoding="utf-8") as fh:
             fh.write(text)
     for name in ("config.json", "LICENSE", "NOTICE.md", "README.md"):
@@ -600,6 +772,10 @@ def main(argv=None):
     ap.add_argument(
         "--license",
         help="upstream LICENSE text (Apache-2.0, from the MegaTTS3 code repo), copied to LICENSE",
+    )
+    ap.add_argument(
+        "--hub-repo",
+        help="Hugging Face repo the output will be published to; the model card's download example names it",
     )
     ap.add_argument("--inventory", action="store_true", help="print tensors, write nothing")
     ap.add_argument(
@@ -647,6 +823,7 @@ def main(argv=None):
         with open(os.path.join(out_dir, "config.json"), "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, indent=2, sort_keys=True)
         manifest["files"][f"{comp}/model.safetensors"] = {
+            "params": n_params,
             "sha256": sha256_file(st_path),
             "size": os.path.getsize(st_path),
             "tensors": len(converted),
@@ -681,7 +858,7 @@ def main(argv=None):
         "size": os.path.getsize(os.path.join(args.out, "frontend", "dict.json")),
     }
 
-    write_root_files(args.out, args.wavvae, args.license, manifest)
+    write_root_files(args.out, args.wavvae, args.license, manifest, args.hub_repo)
     with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2, sort_keys=True)
     print(f"wrote {args.out}")

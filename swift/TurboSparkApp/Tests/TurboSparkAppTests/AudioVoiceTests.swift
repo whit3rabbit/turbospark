@@ -16,9 +16,11 @@ final class AudioVoiceTests: XCTestCase {
         defer { controller.shutdown() }
         controller.profiles = try AudioCatalog.profiles()
         controller.selectPage(.voiceClone)
-        XCTAssertEqual(controller.availableProfiles.count, 2)
+        // Two Qwen3-TTS Base profiles clone in Swift MLX; MegaTTS3 clones natively.
+        XCTAssertEqual(controller.availableProfiles.count, 3)
+        XCTAssertEqual(controller.availableProfiles.filter { $0.family == "megatts3" }.count, 1)
         XCTAssertTrue(controller.availableProfiles.allSatisfy { AudioWorkspaceController.speechMode(for: $0) == .clone })
-        let base = try XCTUnwrap(controller.availableProfiles.last)
+        let base = try XCTUnwrap(controller.availableProfiles.last { $0.family == "qwen3_tts" })
         controller.selectModel(base.identity.alias)
         controller.recipe.text = "A new take."
         XCTAssertNotNil(controller.speechValidationMessage)

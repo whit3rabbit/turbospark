@@ -385,6 +385,28 @@ class ConvertTests(unittest.TestCase):
         with self.assertRaises(cv.ConvertError):
             cv.write_root_files(self.p("c"), "community", self.p("bad"), {"files": {}})
 
+    def test_model_card_uses_manifest_numbers_and_names_the_repo(self):
+        files = {
+            "diffusion_transformer/model.safetensors": {"params": 459037376, "size": 1836204936},
+            "diffusion_transformer/config.json": {"size": 2995},
+            "LICENSE": {"size": 11341},
+        }
+        card = cv.model_card("community", files, "someone/MegaTTS3-TurboSpark")
+        self.assertTrue(card.startswith("---\nlicense: apache-2.0\n"))
+        self.assertIn("| 459.0M | 1.84 GB |", card)
+        self.assertIn("hf download someone/MegaTTS3-TurboSpark --local-dir MegaTTS3-TurboSpark", card)
+        self.assertIn("not an MLX model", card)
+        self.assertIn(cv.SOURCES["mrfakename/MegaTTS3-VoiceCloning"], card)
+        self.assertNotIn("<", card.split("```")[1], "no unfilled placeholder in the commands")
+        self.assertEqual(card, cv.model_card("community", files, "someone/MegaTTS3-TurboSpark"))
+        # Without a repo there is no download line to get wrong.
+        self.assertNotIn("hf download", cv.model_card("community", files))
+        # The decoder-only variant says it cannot clone and drops the clone usage.
+        official = cv.model_card("official", files)
+        self.assertIn("cannot", official)
+        self.assertNotIn("turbospark-clone", official)
+        self.assertNotIn("mrfakename", official)
+
     def test_dict_json_validation(self):
         with open(self.p("d.json"), "w", encoding="utf-8-sig") as fh:
             json.dump({"phone": ["a", "b"], "tone": ["x"]}, fh)

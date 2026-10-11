@@ -608,6 +608,95 @@
         "voices": [],
         "max_input_seconds": 30
       }
+    },
+    {
+      "alias": "megatts3-f32",
+      "assets": [
+        {
+          "path": "config.json",
+          "size": 133,
+          "sha256": "38d1044bbb80ec16021e720ad14e079a98c412188bc21760e8472baf15c6979d"
+        },
+        {
+          "path": "LICENSE",
+          "size": 11341,
+          "sha256": "36679eae1aa975ac54642758cd1c9e5dcadf3bfec582071e8f7100e0d3d262bd"
+        },
+        {
+          "path": "NOTICE.md",
+          "size": 1627,
+          "sha256": "430913ca90f4fa540d45b64db56a3fe1b2bbd4c00e078560daedae5f955bfd7e"
+        },
+        {
+          "path": "aligner_lm/model.safetensors",
+          "size": 218410336,
+          "sha256": "12bbaf9127959318aadad35c556614a1ae8cfa1dc67fbe93ba05f939a7415472"
+        },
+        {
+          "path": "diffusion_transformer/model.safetensors",
+          "size": 1836204936,
+          "sha256": "fae2d3f593c7c03a8a6ac2ba4ae7a4d1c1b1e84f6ec72705ea54fc61785265bd"
+        },
+        {
+          "path": "duration_lm/model.safetensors",
+          "size": 267882908,
+          "sha256": "daeda90ed37fec744eee8fd29ca1217e97c1c24bbf94f5f6d0b7ff01a09e5fb2"
+        },
+        {
+          "path": "wavvae/model.safetensors",
+          "size": 1022333968,
+          "sha256": "82f42b86f673d7cdbcd28a564305e031c83b7ac335a5a555bd21e671e6f8c884"
+        },
+        {
+          "path": "g2p/config.json",
+          "size": 757,
+          "sha256": "9b2dffb112a7f74b63855a5d5cf7ebd4dffbf501f67b0b0f5cd548a8d3562610"
+        },
+        {
+          "path": "g2p/model.safetensors",
+          "size": 1018490136,
+          "sha256": "0f9d70d454ee35d023a9a54552716a8ccf2411c967abc6a857160527046f62a2"
+        },
+        {
+          "path": "g2p/tokenizer.json",
+          "size": 14796960,
+          "sha256": "18bf578a236efa19e36ee7be04c327ba4abc23aed0213a31d3199a55ea7d2411"
+        }
+      ],
+      "source": {
+        "repository": "cowWhySo/MegaTTS3-TurboSpark",
+        "revision": "a55e74f50cbb88ca72658b4999a0ba85a567e466"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "megatts3",
+        "display_name": "MegaTTS3 voice cloning (F32)",
+        "required_files": [
+          "config.json",
+          "LICENSE",
+          "NOTICE.md",
+          "aligner_lm/model.safetensors",
+          "diffusion_transformer/model.safetensors",
+          "duration_lm/model.safetensors",
+          "wavvae/model.safetensors",
+          "g2p/config.json",
+          "g2p/model.safetensors",
+          "g2p/tokenizer.json"
+        ],
+        "sample_rate": 24000,
+        "channels": 1,
+        "languages": [
+          "en"
+        ],
+        "voices": [],
+        "max_input_seconds": 28,
+        "acknowledgments": [
+          {
+            "id": "megatts3_community_encoder",
+            "summary": "The voice-cloning encoder in this model is a community re-upload of a component ByteDance withheld. Its origin and license have not been verified. Only clone voices you have the right to use."
+          }
+        ]
+      }
     }
   ]
 }

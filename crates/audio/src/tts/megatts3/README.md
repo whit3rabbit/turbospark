@@ -5,9 +5,10 @@ latent diffusion transformer generates 25 Hz WavVAE latents conditioned on
 phonemes, predicted durations, and the prompt latent. The whole pipeline is
 ported and gated against the reference on real weights, and it is wired through
 the runtime (family `megatts3`), the FFI, the HTTP speech route and the Swift
-app; every cloning request needs explicit consent. The catalog row waits for
-hosted weights. See [Pipeline](#pipeline), [Metal](#metal) and
-[Not done](#not-done).
+app; every cloning request needs explicit consent. The app installs it from
+the catalog as `megatts3-f32`, the converter output pinned at
+[cowWhySo/MegaTTS3-TurboSpark](https://huggingface.co/cowWhySo/MegaTTS3-TurboSpark).
+See [Pipeline](#pipeline), [Metal](#metal) and [Not done](#not-done).
 
 ## Upstream References and URLs
 
@@ -32,7 +33,7 @@ hosted weights. See [Pipeline](#pipeline), [Metal](#metal) and
 | 4 | Aligner (Whisper-style) and prompt token parser | Done (`aligner.rs`) |
 | 5 | G2P (Qwen2) and English text frontend | Done (`g2p.rs`, `text.rs`); the English normalizer is a documented subset |
 | 6 | `MegaTts3` facade, post-processing, CLI | Done (`facade.rs`, `postprocess.rs`, `rng.rs`, `turbospark-clone`) |
-| 7 | Runtime, FFI, server, Swift | Done (`runtime::megatts3`, `ts_audio_install_with_options`, `POST /v1/audio/speech`, the Voice Clone page); the catalog row needs hosted weights |
+| 7 | Runtime, FFI, server, Swift | Done (`runtime::megatts3`, `ts_audio_install_with_options`, `POST /v1/audio/speech`, the Voice Clone page, catalog row `megatts3-f32`) |
 | 8 | Metal | Experimental (`execution.rs`, `runtime::megatts3::Device::Metal`); see [Metal](#metal) |
 
 ## DiT (`dit.rs`, `sampler.rs`)
@@ -146,11 +147,10 @@ The runtime opens Metal only with `allow_experimental_metal`; `turbospark-clone
 
 ## Not done
 
-- **Catalog row.** It needs the repository and revision the converted weights
-  are uploaded to, and the sha256 of every file (`manifest.json` from the
-  converter lists them). Until then a local folder works everywhere: the app's
-  "Choose local model folder", `turbospark-clone --model DIR`, and
-  `turbospark-server --tts-model DIR`.
+- **CLI install.** `turbospark-model pull-audio` installs Music 3 profiles
+  only. Install `megatts3-f32` from the app, or download the repository and
+  pass the folder (`turbospark-clone --model DIR`,
+  `turbospark-server --tts-model DIR`). Once installed, both take the alias.
 - **Chinese.** The Chinese normalizer, chunker and `langdetect` routing.
 - **Metal qualification.** Metal stays opt-in until a quiet-host benchmark,
   a memory gate on 16 GB hardware, and a longer quality check. Follow-ups:
@@ -260,6 +260,7 @@ at inference and are ignored.
 | Streaming join | `Crossfader` against the original one-shot join on six shapes, including middle segments shorter than two fades: bitwise equal, and audio is released before the end whenever it is longer than one fade. A mutant holding back half a fade fails it and the reference `combine_audio_segments` fixtures. |
 | Regenerated goldens | The e2e goldens were regenerated with torch 2.14.1 and transformers 4.57.6 (the originals' versions were not recorded): case 0 max diff 5.4e-5, case 1 1.07e-3, correlation 1.000000 for both. Case 1 exceeds the 1e-3 default tolerance; the code before and after the batching change gives exactly the same diffs, so the shift is in the reference build, not the port. The tolerance was not widened. |
 | Memory (one reading each) | Peak process footprint, which runtime admission reads: 6.6 GB at about 120 latent frames (3.3 s reference), 11.1 GB at about 730 (27.5 s reference, short text), 13.8 GB at about 880 (27.5 s reference, 7.6 s of speech); the Metal path peaked at 13.7 GB on the last case. About 5.8 GB is resident weights (the bf16 G2P widens to 2 GB); the rest is at most about 9.5 MiB per frame, mostly the WavVAE. `activation_reserve_bytes` uses 10 MiB per frame. Max RSS reads lower (6.3 to 8.6 GB) and is not what admission measures. |
+| Catalog install (network, ignored test) | `real_megatts3_install_needs_its_terms_then_opens_verified` in `crates/ffi/tests/audio_surface.rs`, with `TURBOSPARK_AUDIO_REAL_INSTALL=1` and a scratch `TURBOSPARK_HOME`: the plain install is refused naming `megatts3_community_encoder`; with it accepted, all 10 pinned files (4.38 GB) download, verify and publish, and the session opens as family `megatts3`. `turbospark-clone --model megatts3-f32` from that store wrote a WAV byte-identical to the local converter output's (same seed, 4 steps), and `turbospark-server --tts-model megatts3-f32` answered 400 without `consent` and 200 with it. |
 | Metal parity | Against the CPU path: tiny DiT velocity 2.2e-6 at peak 3.6 (bound 1e-5 relative); tiny WavVAE decode 5e-7; real DiT velocity 1.1e-4 at peak 7.6 (250 frames) and 5.8e-4 at peak 9.1 (1000 frames); whole pipeline with the same seed, 8 steps: max sample difference 8e-5, cosine 1.000000 (3 s output) and 0.999999998 (7.6 s output). The Metal WAV transcribes through the server's Qwen3-ASR as the target sentence. Mutants: RoPE skipped on keys (device plumbing), and the device conv dispatch counts. |
 | Metal speed (indicative, one reading each, M4 Max, host busy with other work) | One DiT step at 250 frames 0.51 s (CPU 3.2 to 4.6 s), at 1000 frames 2.7 s (CPU 13 to 17 s), where attention is about half. A 3 s sentence at 8 steps: 10.4 s warm (CPU 35.2 s); a 27.5 s reference with 7.6 s of speech: 80 s (CPU about 270 s). Not benchmark rows: see `docs/BENCHMARKING.md` before quoting. |
 | Mutation checks (DiT) | Swapped `p_w`/`t_w`, neox rotary, swapped final adaLN scale/shift, uncond row using real phones, unmasked prompt region, zeroed ctx-mask embedding, dropped relative-value term, off-by-one key window, zero AMO noise, and a skipped per-step draw each fail the tiny-fixture test. |
