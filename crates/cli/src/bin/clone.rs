@@ -14,7 +14,7 @@ turbospark-clone: clone a voice from a short recording and speak new English tex
 USAGE:
     turbospark-clone speak --model MODEL --reference WAV (--text TEXT | --text-file PATH) \\
         --output WAV --consent [--steps N] [--p-w X] [--t-w X] [--seed N] \\
-        [--wav-format pcm16|float32]
+        [--wav-format pcm16|float32] [--metal]
 
 --model is an installed audio alias or a converted MegaTTS3 directory (aligner_lm/,
 diffusion_transformer/, duration_lm/, wavvae/, g2p/) produced by
@@ -24,6 +24,8 @@ sample rate; at most the first 28 seconds are used. Text is English only.
 --steps (default 32, 1 through 100) trades speed for quality. --p-w (default 1.4,
 0.1 through 5) raises intelligibility and --t-w (default 3.0, 0.1 through 10)
 raises similarity to the reference. --seed (default 0) makes a run repeatable.
+--metal (macOS, experimental) runs the diffusion transformer and the WavVAE
+decoder on the GPU; the default is the CPU reference path.
 
 Voice cloning needs the community WavVAE encoder, which ByteDance chose not to
 release; its origin and license are unverified. Only clone a voice you have the
@@ -41,6 +43,7 @@ struct SpeakOptions {
     t_w: f32,
     seed: u64,
     wav_format: WavFormat,
+    metal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +114,7 @@ fn parse_args(args: &[String]) -> Result<SpeakOptions, Error> {
         (None, None, None, None, None);
     let (mut steps, mut p_w, mut t_w, mut seed, mut wav_format) = (None, None, None, None, None);
     let mut consent = false;
+    let mut metal = false;
     let mut index = 1usize;
     while index < args.len() {
         let flag = args[index].as_str();
@@ -119,6 +123,14 @@ fn parse_args(args: &[String]) -> Result<SpeakOptions, Error> {
                 return Err(Error::Usage("--consent may be specified only once".into()));
             }
             consent = true;
+            index += 1;
+            continue;
+        }
+        if flag == "--metal" {
+            if metal {
+                return Err(Error::Usage("--metal may be specified only once".into()));
+            }
+            metal = true;
             index += 1;
             continue;
         }
@@ -207,6 +219,7 @@ fn parse_args(args: &[String]) -> Result<SpeakOptions, Error> {
         t_w: t_w.unwrap_or(defaults.t_w),
         seed: seed.unwrap_or(0),
         wav_format: wav_format.unwrap_or(WavFormat::Pcm16),
+        metal,
     })
 }
 
@@ -251,28 +264,96 @@ fn resolve_model(model: &Path) -> Result<PathBuf, Error> {
     })
 }
 
-fn speak(options: &SpeakOptions) -> Result<(), Error> {
-    let reference = load_reference(&options.reference)?;
-    let model = resolve_model(&options.model)?;
+/// The CPU reference path, straight through the audio crate.
+fn synthesize_cpu(
+    model: &Path,
+    reference: &[f32],
+    options: &SpeakOptions,
+    params: &SynthParams,
+) -> Result<Vec<f32>, Error> {
     let started = Instant::now();
-    let mut tts = MegaTts3::open(&model)
+    let mut tts = MegaTts3::open(model)
         .map_err(|e| Error::Failed(format!("opening {}: {e}", model.display())))?;
     let opened = started.elapsed();
     let mut rng = SeededRng::new(options.seed);
     let prompt = tts
-        .prepare_prompt(&reference, &mut rng)
+        .prepare_prompt(reference, &mut rng)
         .map_err(|e| Error::Failed(format!("preparing the reference voice: {e}")))?;
     let prepared = started.elapsed();
+    let samples = tts
+        .synthesize(&prompt, &options.text, params, &mut rng)
+        .map_err(|e| Error::Failed(format!("synthesis failed: {e}")))?;
+    let total = started.elapsed();
+    eprintln!(
+        "open {:.1}s, prepare reference {:.1}s, synthesize {:.1}s",
+        opened.as_secs_f64(),
+        (prepared - opened).as_secs_f64(),
+        (total - prepared).as_secs_f64()
+    );
+    Ok(samples)
+}
+
+/// The runtime's Metal path: the DiT and the WavVAE decoder on the GPU. The
+/// same seed draws the same random values as the CPU path; the audio differs
+/// only by the device's rounding.
+#[cfg(target_os = "macos")]
+fn synthesize_metal(
+    model: &Path,
+    reference: &[f32],
+    options: &SpeakOptions,
+    params: &SynthParams,
+) -> Result<Vec<f32>, Error> {
+    use runtime::megatts3::{CloneRequest, Device, MegaTts3Runner};
+    let started = Instant::now();
+    let mut runner = MegaTts3Runner::open(model, Device::Metal)
+        .map_err(|e| Error::Failed(format!("opening {}: {e}", model.display())))?;
+    let opened = started.elapsed();
+    let request = CloneRequest {
+        text: &options.text,
+        reference,
+        reference_rate: SAMPLE_RATE,
+        seed: options.seed,
+        params: params.clone(),
+    };
+    let mut samples = Vec::new();
+    runner
+        .synthesize_controlled(&request, &mut |_| Ok(()), &mut |pcm| {
+            samples.extend(pcm);
+            true
+        })
+        .map_err(|e| Error::Failed(format!("synthesis failed: {e}")))?;
+    eprintln!(
+        "open {:.1}s, prepare reference and synthesize {:.1}s (Metal)",
+        opened.as_secs_f64(),
+        (started.elapsed() - opened).as_secs_f64()
+    );
+    Ok(samples)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn synthesize_metal(
+    _model: &Path,
+    _reference: &[f32],
+    _options: &SpeakOptions,
+    _params: &SynthParams,
+) -> Result<Vec<f32>, Error> {
+    Err(Error::Usage("--metal needs macOS".to_string()))
+}
+
+fn speak(options: &SpeakOptions) -> Result<(), Error> {
+    let reference = load_reference(&options.reference)?;
+    let model = resolve_model(&options.model)?;
     let params = SynthParams {
         steps: options.steps,
         p_w: options.p_w,
         t_w: options.t_w,
         ..SynthParams::default()
     };
-    let samples = tts
-        .synthesize(&prompt, &options.text, &params, &mut rng)
-        .map_err(|e| Error::Failed(format!("synthesis failed: {e}")))?;
-    let total = started.elapsed();
+    let samples = if options.metal {
+        synthesize_metal(&model, &reference, options, &params)?
+    } else {
+        synthesize_cpu(&model, &reference, options, &params)?
+    };
     let wave = Waveform::mono(SAMPLE_RATE, samples)
         .map_err(|e| Error::Failed(format!("assembling the output: {e}")))?;
     let encoded = match options.wav_format {
@@ -281,12 +362,6 @@ fn speak(options: &SpeakOptions) -> Result<(), Error> {
     };
     std::fs::write(&options.output, encoded)
         .map_err(|e| Error::Failed(format!("writing {}: {e}", options.output.display())))?;
-    eprintln!(
-        "open {:.1}s, prepare reference {:.1}s, synthesize {:.1}s",
-        opened.as_secs_f64(),
-        (prepared - opened).as_secs_f64(),
-        (total - prepared).as_secs_f64()
-    );
     println!(
         "wrote {:.2} s of audio ({} samples at {} Hz, mono) to {}",
         wave.duration_seconds(),
@@ -359,6 +434,15 @@ mod tests {
     }
 
     #[test]
+    fn metal_is_an_opt_in_switch() {
+        assert!(
+            !parse_args(&with_text(&[])).unwrap().metal,
+            "CPU is the default"
+        );
+        assert!(parse_args(&with_text(&["--metal"])).unwrap().metal);
+    }
+
+    #[test]
     fn rejects_bad_arguments() {
         for bad in [
             vec!["--steps", "0"],
@@ -370,6 +454,7 @@ mod tests {
             vec!["--seed", "-1"],
             vec!["--wav-format", "mp3"],
             vec!["--steps", "5", "--steps", "6"],
+            vec!["--metal", "--metal"],
             vec!["--bogus", "1"],
             vec!["stray"],
         ] {
@@ -422,6 +507,7 @@ mod tests {
             t_w: 3.0,
             seed: 0,
             wav_format: WavFormat::Pcm16,
+            metal: false,
         };
         // Neither a directory nor an installed alias: refused before loading.
         let err = speak(&options).unwrap_err();

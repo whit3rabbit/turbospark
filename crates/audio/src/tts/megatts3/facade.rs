@@ -109,15 +109,30 @@ impl MegaTts3 {
     /// A root `config.json`, when present, must name [`MODEL_TYPE`] and
     /// declare `voice_clone` matching whether the WavVAE has its encoder.
     pub fn open(dir: &Path) -> Result<Self> {
-        let wavvae = WavVae::open(&dir.join("wavvae"))?;
+        Self::open_with_backend(dir, None)
+    }
+
+    /// [`open`](Self::open) with the DiT's projections and attention and the
+    /// WavVAE decoder's convolutions on `backend` (a runtime's device). The
+    /// aligner, duration LM, G2P and WavVAE encoder stay on the host.
+    pub fn open_with_backend(
+        dir: &Path,
+        backend: Option<std::rc::Rc<dyn crate::backend::ComputeBackend>>,
+    ) -> Result<Self> {
+        let wavvae = WavVae::open(&dir.join("wavvae"))?.with_backend(backend.clone());
         check_root_config(dir, wavvae.has_encoder())?;
         Ok(Self {
             aligner: Aligner::open(&dir.join("aligner_lm"))?,
             wavvae,
-            dit: Dit::open(&dir.join("diffusion_transformer"))?,
+            dit: Dit::open(&dir.join("diffusion_transformer"))?.with_backend(backend),
             duration: DurationLm::open(&dir.join("duration_lm"))?,
             g2p: G2p::open(&dir.join("g2p"))?,
         })
+    }
+
+    /// Whether the DiT runs on a device backend.
+    pub fn using_device(&self) -> bool {
+        self.dit.on_device()
     }
 
     /// Assembles a pipeline from already-loaded parts.
@@ -342,16 +357,19 @@ pub fn plan_chunks(text: &str, max_chunk_bytes: usize) -> Result<Vec<String>> {
 /// synthesis: a prompt of `prompt_samples` at 24 kHz, a longest text chunk of
 /// `longest_chunk_bytes`, and duration factor `dur_alpha`.
 ///
-/// Peak RSS grows with the latent frames of a chunk (prompt plus target):
-/// measured on the CPU path at about 3.2 MiB per frame (6.3 GB at about 160
-/// frames, 8.6 GB at about 880). The target length is bounded at 3 latent
-/// frames per text byte, above the 1.5 to 2.2 observed.
+/// Measured as peak process footprint (what runtime admission reads), one
+/// reading each on an M4 Max: 6.6 GB at about 120 latent frames (prompt plus
+/// target), 11.1 GB at about 730 and 13.8 GB at about 880, over about 5.8 GB
+/// of resident weights; the Metal path peaked no higher. That is at most
+/// about 9.5 MiB per frame, mostly the WavVAE (encoder on the reference,
+/// decoder on prompt plus target). The target is bounded at 3 latent frames
+/// per text byte, above the 1.5 to 2.2 observed.
 pub fn activation_reserve_bytes(
     prompt_samples: usize,
     longest_chunk_bytes: usize,
     dur_alpha: f32,
 ) -> u64 {
-    const PER_FRAME: u64 = 3_670_016; // 3.5 MiB, above the measured 3.2
+    const PER_FRAME: u64 = 10 << 20; // above the measured 9.5 MiB
     const SLACK: u64 = 256 << 20;
     let used = prompt_samples.min(MAX_PROMPT_SECONDS * SAMPLE_RATE as usize);
     let prompt_frames = used.div_ceil(SAMPLES_PER_LATENT);

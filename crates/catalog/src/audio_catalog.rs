@@ -436,8 +436,8 @@ impl AudioCatalog {
                 .ok_or("audio weight size overflow")?;
             let (resident_memory_bytes,resident_memory_evidence)=match task {
                 // f32 weights, the bf16 G2P widened, and a reserve covering the
-                // measured activations of a 28 s reference.
-                AudioTask::TextToSpeech if family == "megatts3" => (weight_bytes.saturating_add(g2p_bytes).saturating_add(3<<30),"measured CPU peak 6.3 GB (3 s reference) to 8.6 GB (28 s reference); estimate: weights, widened G2P and 3 GiB working reserve"),
+                // measured peak footprint of a 28 s reference.
+                AudioTask::TextToSpeech if family == "megatts3" => (weight_bytes.saturating_add(g2p_bytes).saturating_add(17<<29),"measured peak footprint 6.6 GB (3 s reference) to 13.8 GB (28 s reference, 7.6 s of speech), CPU and Metal alike; estimate: weights, widened G2P and 8.5 GiB working reserve"),
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
@@ -2258,8 +2258,8 @@ mod tests {
         assert_eq!(p.capabilities.max_input_seconds, Some(28));
         assert_eq!(p.readiness, AudioReadiness::ImplementedUnqualified);
         assert_eq!(p.acknowledgments[0].id, "megatts3_community_encoder");
-        // f32 weights (20 bytes), the widened G2P (10 more) and the 3 GiB reserve.
-        assert_eq!(p.resident_memory_bytes, 20 + 10 + (3 << 30));
+        // f32 weights (20 bytes), the widened G2P (10 more) and the 8.5 GiB reserve.
+        assert_eq!(p.resident_memory_bytes, 20 + 10 + (17 << 29));
 
         // The same row under an unreviewed family stays closed with a reason.
         let closed =

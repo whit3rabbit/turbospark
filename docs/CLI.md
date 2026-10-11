@@ -133,7 +133,10 @@ makes a run repeatable. Output is 24 kHz mono. `--consent` is required: it state
 that you have the right to clone this voice, because the community WavVAE
 encoder this needs was deliberately withheld by the model's authors and its
 origin and license are unverified. The CPU reference path is slow: expect minutes
-for a few seconds of speech at the default step count.
+for a few seconds of speech at the default step count. `--metal` (macOS,
+experimental) runs the diffusion transformer and the WavVAE decoder on the GPU;
+the same seed draws the same random values, and the audio differs from the CPU
+path only by rounding.
 
 Metal execution is implemented; profile-specific quality and real-time
 performance qualification remain separate. See the [Music 3 verification

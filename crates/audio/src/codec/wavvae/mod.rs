@@ -21,10 +21,14 @@
 //! (`posterior.sample()`), so [`Posterior`] exposes the mean and takes the
 //! normal draw from the caller.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::backend::{ComputeBackend, ConvShape, DType, DeviceWeight, WeightData, WeightEncoding};
 use crate::codec::conv::{Conv1d, ConvTranspose1d};
 use crate::codec::wnconv::load_f32_shaped;
 use crate::nn::Linear;
@@ -472,6 +476,84 @@ impl Posterior {
 
 // ----------------------------------------------------------------- decoder
 
+/// Where the decoder's convolutions run. With a backend (the runtime's Metal
+/// device) every ungrouped conv goes there, and so does every transposed conv
+/// without output padding, which the device contract cannot express; the
+/// elementwise work and the encoder stay on the host.
+#[derive(Default)]
+struct ConvExec {
+    backend: Option<Rc<dyn ComputeBackend>>,
+    /// Uploaded weights keyed by their host buffer, which the model owns.
+    weights: RefCell<HashMap<usize, Rc<dyn DeviceWeight>>>,
+}
+
+impl ConvExec {
+    fn weight(
+        &self,
+        backend: &dyn ComputeBackend,
+        values: &[f32],
+        dims: &[usize],
+    ) -> Result<Rc<dyn DeviceWeight>> {
+        let key = values.as_ptr() as usize;
+        if let Some(weight) = self.weights.borrow().get(&key) {
+            return Ok(weight.clone());
+        }
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let weight = backend.load_weight(WeightData {
+            name: "wavvae_decoder",
+            shape: dims,
+            bytes: &bytes,
+            encoding: WeightEncoding::F32,
+            dtype: DType::F32,
+            scales_dtype: None,
+            offsets_dtype: None,
+            scales: &[],
+            offsets: &[],
+            block_scales: &[],
+        })?;
+        self.weights.borrow_mut().insert(key, weight.clone());
+        Ok(weight)
+    }
+
+    fn conv(&self, c: &Conv1d, x: &[f32]) -> Result<Vec<f32>> {
+        match &self.backend {
+            Some(backend) if c.groups == 1 => {
+                let shape = ConvShape {
+                    input_channels: c.in_ch,
+                    output_channels: c.out_ch,
+                    kernel: c.kernel,
+                    stride: c.stride,
+                    padding: c.padding,
+                    dilation: c.dilation,
+                    transpose: false,
+                };
+                self.weight(backend.as_ref(), &c.weight, &[c.out_ch, c.in_ch, c.kernel])?
+                    .convolution_grouped(x, c.bias.as_deref(), shape, 1, DType::F32)
+            }
+            _ => Ok(c.forward(x)),
+        }
+    }
+
+    fn conv_transpose(&self, c: &ConvTranspose1d, x: &[f32]) -> Result<Vec<f32>> {
+        match &self.backend {
+            Some(backend) if c.groups == 1 && c.output_padding == 0 => {
+                let shape = ConvShape {
+                    input_channels: c.in_ch,
+                    output_channels: c.out_ch,
+                    kernel: c.kernel,
+                    stride: c.stride,
+                    padding: c.padding,
+                    dilation: 1,
+                    transpose: true,
+                };
+                self.weight(backend.as_ref(), &c.weight, &[c.in_ch, c.out_ch, c.kernel])?
+                    .convolution_grouped(x, c.bias.as_deref(), shape, 1, DType::F32)
+            }
+            _ => Ok(c.forward(x)),
+        }
+    }
+}
+
 /// Padding of a "same" dilated conv: `(k*d - d) / 2`.
 fn same_pad(kernel: usize, dilation: usize) -> usize {
     (kernel * dilation - dilation) / 2
@@ -513,17 +595,17 @@ impl ResBlockMrf {
         Ok(Self { convs1, convs2 })
     }
 
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
+    fn forward(&self, exec: &ConvExec, x: &[f32]) -> Result<Vec<f32>> {
         let mut x = x.to_vec();
         for (c1, c2) in self.convs1.iter().zip(&self.convs2) {
             let mut xt = x.clone();
             leaky_relu(&mut xt, 0.2);
-            let mut xt = c1.forward(&xt);
+            let mut xt = exec.conv(c1, &xt)?;
             leaky_relu(&mut xt, 0.2);
-            let xt = c2.forward(&xt);
+            let xt = exec.conv(c2, &xt)?;
             add_in_place(&mut x, &xt);
         }
-        x
+        Ok(x)
     }
 }
 
@@ -542,15 +624,15 @@ impl ResInter {
         Ok(Self { blocks })
     }
 
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        let mut acc = self.blocks[0].forward(x);
+    fn forward(&self, exec: &ConvExec, x: &[f32]) -> Result<Vec<f32>> {
+        let mut acc = self.blocks[0].forward(exec, x)?;
         for b in &self.blocks[1..] {
-            add_in_place(&mut acc, &b.forward(x));
+            add_in_place(&mut acc, &b.forward(exec, x)?);
         }
         for v in acc.iter_mut() {
             *v /= 3.0;
         }
-        acc
+        Ok(acc)
     }
 }
 
@@ -592,7 +674,7 @@ impl UpBlock {
         Ok(Self { ratio, conv, convt })
     }
 
-    fn forward(&self, x: &[f32], len: usize) -> (Vec<f32>, usize) {
+    fn forward(&self, exec: &ConvExec, x: &[f32], len: usize) -> Result<(Vec<f32>, usize)> {
         let ch = self.conv.in_ch;
         let x: Vec<f32> = x.iter().map(|v| v + v.sin()).collect();
         let up_len = len * self.ratio;
@@ -604,13 +686,13 @@ impl UpBlock {
         }
         leaky_relu(&mut nearest, 0.2);
         let padded = pad_reflect(&nearest, ch, up_len, 3, 3);
-        let mut out = self.conv.forward(&padded);
+        let mut out = exec.conv(&self.conv, &padded)?;
         let mut t2 = x;
         leaky_relu(&mut t2, 0.2);
-        let b2 = self.convt.forward(&t2);
+        let b2 = exec.conv_transpose(&self.convt, &t2)?;
         debug_assert_eq!(out.len(), b2.len());
         add_in_place(&mut out, &b2);
-        (out, up_len)
+        Ok((out, up_len))
     }
 }
 
@@ -677,6 +759,7 @@ pub struct WavVae {
     config: WavVaeConfig,
     encoder: Option<Encoder>,
     decoder: Decoder,
+    exec: ConvExec,
 }
 
 impl WavVae {
@@ -698,7 +781,18 @@ impl WavVae {
             config,
             encoder,
             decoder,
+            exec: ConvExec::default(),
         })
+    }
+
+    /// Runs the decoder's convolutions on `backend` (the runtime's device);
+    /// `None` keeps the host path. The encoder always runs on the host.
+    pub fn with_backend(mut self, backend: Option<Rc<dyn ComputeBackend>>) -> Self {
+        self.exec = ConvExec {
+            backend,
+            weights: RefCell::new(HashMap::new()),
+        };
+        self
     }
 
     pub fn config(&self) -> &WavVaeConfig {
@@ -768,16 +862,17 @@ impl WavVae {
         let d = &self.decoder;
         let proj = d.proj_to_decoder.forward(latent, frames);
         let x = transpose(&proj, frames, self.config.dec_in);
-        let (mut x, mut len) = d.latent_up.forward(&x, frames);
+        let exec = &self.exec;
+        let (mut x, mut len) = d.latent_up.forward(exec, &x, frames)?;
         let padded = pad_reflect(&x, self.config.dec_in / 2, len, 3, 3);
-        x = d.conv_in.forward(&padded);
+        x = exec.conv(&d.conv_in, &padded)?;
         for (up, res) in &d.stages {
-            (x, len) = up.forward(&x, len);
-            x = res.forward(&x);
+            (x, len) = up.forward(exec, &x, len)?;
+            x = res.forward(exec, &x)?;
         }
         leaky_relu(&mut x, 0.2);
         let padded = pad_reflect(&x, self.config.ngf, len, 3, 3);
-        let mut out = d.conv_out.forward(&padded);
+        let mut out = exec.conv(&d.conv_out, &padded)?;
         for v in out.iter_mut() {
             *v = v.tanh();
         }
@@ -793,6 +888,6 @@ impl WavVae {
         let d = &self.decoder;
         let proj = d.proj_to_decoder.forward(latent, frames);
         let x = transpose(&proj, frames, self.config.dec_in);
-        d.latent_up.forward(&x, frames)
+        d.latent_up.forward(&self.exec, &x, frames).unwrap()
     }
 }

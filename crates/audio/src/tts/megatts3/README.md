@@ -3,9 +3,11 @@
 MegaTTS3 (ByteDance) clones a voice from a short prompt: a sparse-alignment
 latent diffusion transformer generates 25 Hz WavVAE latents conditioned on
 phonemes, predicted durations, and the prompt latent. The whole pipeline is
-ported and gated against the reference on real weights; the product surfaces
-(catalog, runtime, FFI, server, Swift) are not wired yet. See
-[Pipeline](#pipeline) and [Not done](#not-done).
+ported and gated against the reference on real weights, and it is wired through
+the runtime (family `megatts3`), the FFI, the HTTP speech route and the Swift
+app; every cloning request needs explicit consent. The catalog row waits for
+hosted weights. See [Pipeline](#pipeline), [Metal](#metal) and
+[Not done](#not-done).
 
 ## Upstream References and URLs
 
@@ -29,7 +31,9 @@ ported and gated against the reference on real weights; the product surfaces
 | 3 | Duration LM and chunk post-processing | Done (`duration.rs`, reuses [`rel_transformer`](rel_transformer.rs)) |
 | 4 | Aligner (Whisper-style) and prompt token parser | Done (`aligner.rs`) |
 | 5 | G2P (Qwen2) and English text frontend | Done (`g2p.rs`, `text.rs`); the English normalizer is a documented subset |
-| 6 | `MegaTts3` facade, post-processing, CLI | Done (`facade.rs`, `postprocess.rs`, `rng.rs`, `turbospark-clone`); catalog, runtime, FFI, server, Swift are not done |
+| 6 | `MegaTts3` facade, post-processing, CLI | Done (`facade.rs`, `postprocess.rs`, `rng.rs`, `turbospark-clone`) |
+| 7 | Runtime, FFI, server, Swift | Done (`runtime::megatts3`, `ts_audio_install_with_options`, `POST /v1/audio/speech`, the Voice Clone page); the catalog row needs hosted weights |
+| 8 | Metal | Experimental (`execution.rs`, `runtime::megatts3::Device::Metal`); see [Metal](#metal) |
 
 ## DiT (`dit.rs`, `sampler.rs`)
 
@@ -126,19 +130,33 @@ frontend); the prompt is cut to 28 s like the Space; output is f32 (the
 reference writes int16); a chunk shorter than the 0.16 s crossfade is an error
 where the reference's broadcast would fail.
 
+## Metal
+
+With a device backend (the runtime's `gpu::Music3Device`), the DiT's per-block
+projections (q, k and v stacked into one call) and attention, and the WavVAE
+decoder's convolutions run on the GPU in F32. Norms, modulation, RoPE,
+activations, the small projections, the aligner, the duration LM, G2P and the
+WavVAE encoder stay on the CPU, and so do the two decoder transposed convs with
+output padding (odd upsampling ratios), which the device contract cannot
+express. The device path computes RoPE and attention position-major, the layout
+the projections produce; with the host kernels behind the device interface it
+reproduces the host path bit for bit (`device_path_with_host_kernels_matches_*`).
+The runtime opens Metal only with `allow_experimental_metal`; `turbospark-clone
+--metal` selects it on macOS.
+
 ## Not done
 
-- **Catalog, runtime, FFI, server, Swift.** No catalog alias exists because the
-  converted weights are not hosted anywhere yet: a catalog row needs the
-  repository and revision you upload them to, and a published sha256 for every
-  file (`manifest.json` from the converter lists them). The runtime also has no
-  reference-audio request shape: its TTS validation rejects input PCM and is
-  Kokoro-specific, so cloning needs a request change across runtime, FFI, the
-  server's speech route and the Swift workspace. `turbospark-clone` is the
-  supported entry point until then.
+- **Catalog row.** It needs the repository and revision the converted weights
+  are uploaded to, and the sha256 of every file (`manifest.json` from the
+  converter lists them). Until then a local folder works everywhere: the app's
+  "Choose local model folder", `turbospark-clone --model DIR`, and
+  `turbospark-server --tts-model DIR`.
 - **Chinese.** The Chinese normalizer, chunker and `langdetect` routing.
-- **Speed.** The CPU reference is slow (one DiT step at 250 latent frames took
-  about 4.4 s). A Metal path is a separate piece of work.
+- **Metal qualification.** Metal stays opt-in until a quiet-host benchmark,
+  a memory gate on 16 GB hardware, and a longer quality check. Follow-ups:
+  an F32 MMA attention kernel (attention is about half a step at 1000 frames),
+  keeping activations on the device across a block, and the encoder, aligner
+  and G2P on the GPU.
 - **Quality.** Parity with the reference is gated, and one short sentence
   passed an ASR round trip. No listening evaluation, speaker-similarity
   measure, or broader intelligibility (WER) study has been done.
@@ -241,7 +259,9 @@ at inference and are ignored.
 | CFG batching | `stacked_cfg_rows_match_rows_run_alone_bit_for_bit` on the tiny DiT; a mutant that lets attention cross rows fails it. On real weights the `turbospark-clone` WAVs (one chunk, 4 steps; two chunks with the crossfade, 2 steps) are byte-identical before and after the change. |
 | Streaming join | `Crossfader` against the original one-shot join on six shapes, including middle segments shorter than two fades: bitwise equal, and audio is released before the end whenever it is longer than one fade. A mutant holding back half a fade fails it and the reference `combine_audio_segments` fixtures. |
 | Regenerated goldens | The e2e goldens were regenerated with torch 2.14.1 and transformers 4.57.6 (the originals' versions were not recorded): case 0 max diff 5.4e-5, case 1 1.07e-3, correlation 1.000000 for both. Case 1 exceeds the 1e-3 default tolerance; the code before and after the batching change gives exactly the same diffs, so the shift is in the reference build, not the port. The tolerance was not widened. |
-| Memory (CPU path, one reading) | Peak RSS 6.3 GB for a 3.3 s reference and 3 s output, 8.6 GB for a 27.5 s reference and 7.6 s output: about 5.8 GB resident (the bf16 G2P widens to 2 GB) plus about 3.2 MiB per latent frame. `activation_reserve_bytes` uses 3.5 MiB per frame. |
+| Memory (one reading each) | Peak process footprint, which runtime admission reads: 6.6 GB at about 120 latent frames (3.3 s reference), 11.1 GB at about 730 (27.5 s reference, short text), 13.8 GB at about 880 (27.5 s reference, 7.6 s of speech); the Metal path peaked at 13.7 GB on the last case. About 5.8 GB is resident weights (the bf16 G2P widens to 2 GB); the rest is at most about 9.5 MiB per frame, mostly the WavVAE. `activation_reserve_bytes` uses 10 MiB per frame. Max RSS reads lower (6.3 to 8.6 GB) and is not what admission measures. |
+| Metal parity | Against the CPU path: tiny DiT velocity 2.2e-6 at peak 3.6 (bound 1e-5 relative); tiny WavVAE decode 5e-7; real DiT velocity 1.1e-4 at peak 7.6 (250 frames) and 5.8e-4 at peak 9.1 (1000 frames); whole pipeline with the same seed, 8 steps: max sample difference 8e-5, cosine 1.000000 (3 s output) and 0.999999998 (7.6 s output). The Metal WAV transcribes through the server's Qwen3-ASR as the target sentence. Mutants: RoPE skipped on keys (device plumbing), and the device conv dispatch counts. |
+| Metal speed (indicative, one reading each, M4 Max, host busy with other work) | One DiT step at 250 frames 0.51 s (CPU 3.2 to 4.6 s), at 1000 frames 2.7 s (CPU 13 to 17 s), where attention is about half. A 3 s sentence at 8 steps: 10.4 s warm (CPU 35.2 s); a 27.5 s reference with 7.6 s of speech: 80 s (CPU about 270 s). Not benchmark rows: see `docs/BENCHMARKING.md` before quoting. |
 | Mutation checks (DiT) | Swapped `p_w`/`t_w`, neox rotary, swapped final adaLN scale/shift, uncond row using real phones, unmasked prompt region, zeroed ctx-mask embedding, dropped relative-value term, off-by-one key window, zero AMO noise, and a skipped per-step draw each fail the tiny-fixture test. |
 | Mutation checks (pipeline) | A trim off by one latent frame, a prompt latent not restored over the sampler output, and swapped first/final chunk flags each fail the whole-pipeline test: the first on output length, the second on the audio comparison, the third on a replay draw-size mismatch (the changed flags change the draw order). |
 | Mutation checks (G2P and chunker) | EOS never recognised, BOS marker dropped from the prompt, final token kept, `sil` token dropped, wrong prompt speech token, chunk budget off by one, joining space after wide characters, splitting on any ASCII stop, and a dropped last chunk each fail a test. The argmax tie rule is equivalent in the tests (no ties occur). |
@@ -253,5 +273,5 @@ against PyTorch, and bf16/fp16 profiles.
 
 Speed (indicative, one reading, release build, Apple M4 Max CPU, host not
 verified quiet): one CFG step at 250 latent frames (10 s of audio including the
-prompt) took about 4.4 s, so 32 steps is roughly 2.4 minutes. This is a CPU
-reference; it is not a Metal or throughput claim.
+prompt) took about 4.4 s, so 32 steps is roughly 2.4 minutes on the CPU. See the
+Metal rows above for the device path.

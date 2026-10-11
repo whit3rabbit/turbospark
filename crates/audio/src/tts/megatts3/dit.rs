@@ -25,7 +25,9 @@ use std::path::Path;
 
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use super::execution::{rope_rows, Execution};
 use super::rel_transformer::{sinusoid_positions, RelTransformer, RelTransformerConfig};
+use crate::backend::ComputeBackend;
 use crate::codec::conv::{load_bias, load_mlx_conv_weight, BiasMode, Conv1d};
 use crate::codec::wnconv::load_f32_shaped;
 use crate::nn::Linear;
@@ -185,6 +187,8 @@ pub struct Dit {
     ph_encoder: RelTransformer,
     tone_embed: Vec<f32>,
     ling_pre_net: [Conv1d; 2],
+    /// Where the per-block projections and attention run.
+    exec: Execution,
 }
 
 /// Everything about one request that does not change between sampler steps.
@@ -270,8 +274,21 @@ impl Dit {
             ph_encoder: RelTransformer::load(file, "ph_encoder", cfg.ph_config())?,
             tone_embed: load_f32_shaped(file, "tone_embed.weight", &[cfg.tone_vocab, d])?,
             ling_pre_net: [conv(0)?, conv(1)?],
+            exec: Execution::default(),
             cfg,
         })
+    }
+
+    /// Runs the per-block projections and attention on `backend` (the
+    /// runtime's Metal device); `None` keeps the host path. Host and device
+    /// results differ only by the device's summation order.
+    pub fn with_backend(mut self, backend: Option<std::rc::Rc<dyn ComputeBackend>>) -> Self {
+        self.exec = Execution::new(backend);
+        self
+    }
+
+    pub fn on_device(&self) -> bool {
+        self.exec.on_device()
     }
 
     pub fn config(&self) -> &DitConfig {
@@ -442,7 +459,7 @@ impl Dit {
         mut x: Vec<f32>,
         batch: usize,
         temb_silu: &[f32],
-    ) -> Vec<f32> {
+    ) -> Result<Vec<f32>> {
         let frames = cond.frames;
         let rows = batch * frames;
         let d = self.cfg.dim;
@@ -474,23 +491,38 @@ impl Dit {
             let mut n = x.clone();
             ops::layernorm(&mut n, rows, d, &ones, None, LN_EPS);
             modulate(&mut n, scale_a, shift_a, d);
-            let mut q = split(&block.wq.forward(&n, rows));
-            let mut k = split(&block.wk.forward(&n, rows));
-            let v = split(&block.wv.forward(&n, rows));
-            ops::rope_interleaved(&mut q, batch * heads, frames, hd, cos, sin);
-            ops::rope_interleaved(&mut k, batch * heads, frames, hd, cos, sin);
-            let a = ops::mha(
-                &q,
-                &k,
-                &v,
-                None,
-                batch * heads,
-                frames,
-                frames,
-                hd,
-                1.0 / (hd as f32).sqrt(),
-            );
-            let o = block.wo.forward(&merge(&a), rows);
+            let o = if self.exec.on_device() {
+                // Position-major throughout: the device attention reads the
+                // projections' own layout, so no head split is needed.
+                let mut qkv =
+                    self.exec
+                        .linear_stacked(&[&block.wq, &block.wk, &block.wv], &n, rows)?;
+                let v = qkv.pop().expect("three projections");
+                let mut k = qkv.pop().expect("three projections");
+                let mut q = qkv.pop().expect("three projections");
+                rope_rows(&mut q, frames, heads, hd, cos, sin);
+                rope_rows(&mut k, frames, heads, hd, cos, sin);
+                let a = self.exec.attention(&q, &k, &v, batch, frames, heads, hd)?;
+                self.exec.linear(&block.wo, &a, rows)?
+            } else {
+                let mut q = split(&block.wq.forward(&n, rows));
+                let mut k = split(&block.wk.forward(&n, rows));
+                let v = split(&block.wv.forward(&n, rows));
+                ops::rope_interleaved(&mut q, batch * heads, frames, hd, cos, sin);
+                ops::rope_interleaved(&mut k, batch * heads, frames, hd, cos, sin);
+                let a = ops::mha(
+                    &q,
+                    &k,
+                    &v,
+                    None,
+                    batch * heads,
+                    frames,
+                    frames,
+                    hd,
+                    1.0 / (hd as f32).sqrt(),
+                );
+                block.wo.forward(&merge(&a), rows)
+            };
             for (row, orow) in x.chunks_exact_mut(d).zip(o.chunks_exact(d)) {
                 for j in 0..d {
                     row[j] += gate_a[j] * orow[j];
@@ -500,9 +532,9 @@ impl Dit {
             let mut n = x.clone();
             ops::layernorm(&mut n, rows, d, &ones, None, LN_EPS);
             modulate(&mut n, scale_m, shift_m, d);
-            let mut h = block.w1.forward(&n, rows);
+            let mut h = self.exec.linear(&block.w1, &n, rows)?;
             ops::silu(&mut h);
-            let f = block.w2.forward(&h, rows);
+            let f = self.exec.linear(&block.w2, &h, rows)?;
             for (row, frow) in x.chunks_exact_mut(d).zip(f.chunks_exact(d)) {
                 for j in 0..d {
                     row[j] += gate_m[j] * frow[j];
@@ -513,7 +545,7 @@ impl Dit {
         let m = self.final_ada.forward(temb_silu, 1);
         ops::layernorm(&mut x, rows, d, &ones, None, LN_EPS);
         modulate(&mut x, &m[..d], &m[d..], d);
-        self.postnet.forward(&self.out_proj.forward(&x, rows), rows)
+        Ok(self.postnet.forward(&self.out_proj.forward(&x, rows), rows))
     }
 
     /// Stacks `x_prenet(x) + base[r]` for the requested CFG rows.
@@ -552,7 +584,7 @@ impl Dit {
         let mut temb = self.time_embedding(sigma);
         ops::silu(&mut temb);
         let h = self.stacked_input(cond, &xp, &[0, 1, 2]);
-        let out = self.run_rows(cond, h, 3, &temb);
+        let out = self.run_rows(cond, h, 3, &temb)?;
         let n = frames * ch;
         let (spk_txt, txt, uncond) = (&out[..n], &out[n..2 * n], &out[2 * n..]);
         Ok((0..n)
@@ -568,7 +600,10 @@ impl Dit {
         let mut temb = self.time_embedding(sigma);
         ops::silu(&mut temb);
         (0..3)
-            .flat_map(|r| self.run_rows(cond, self.stacked_input(cond, &xp, &[r]), 1, &temb))
+            .flat_map(|r| {
+                self.run_rows(cond, self.stacked_input(cond, &xp, &[r]), 1, &temb)
+                    .unwrap()
+            })
             .collect()
     }
 
@@ -578,6 +613,7 @@ impl Dit {
         let mut temb = self.time_embedding(sigma);
         ops::silu(&mut temb);
         self.run_rows(cond, self.stacked_input(cond, &xp, &[0, 1, 2]), 3, &temb)
+            .unwrap()
     }
 }
 

@@ -1119,7 +1119,15 @@ fn attention_plan(
             (batch * queries * heads) as u64
         }],
         threads: threads as u64,
-        scratch_bytes: (product(&[batch, queries, heads, keys])? * 4) as u64,
+        // The kernel writes scratch only for its non-F32 rounding fallback.
+        // An F32 plan would otherwise allocate a never-used
+        // batch*queries*heads*keys buffer on every call (3.2 GB for a
+        // MegaTTS3 step at 4096 frames).
+        scratch_bytes: if dtype == Music3DType::F32 {
+            4
+        } else {
+            (product(&[batch, queries, heads, keys])? * 4) as u64
+        },
         count: qcount,
     })
 }

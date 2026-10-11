@@ -123,6 +123,156 @@ fn latent_upsampler_trace_matches() {
     assert!(max_diff(&up, &want) < 2e-5);
 }
 
+/// A device that runs the crate's own conv kernels, so the decoder's device
+/// plumbing (which convs are dispatched, weight layouts, transposed convs
+/// with output padding kept on the host) can be checked bit for bit.
+mod host_conv_backend {
+    use crate::backend::{
+        AttentionShape, ComputeBackend, ConvShape, DType, DeviceWeight, WeightData,
+    };
+    use crate::{ops, Result, SpeechError};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    #[derive(Default)]
+    pub(super) struct Counts {
+        pub(super) conv: Cell<usize>,
+        pub(super) transposed: Cell<usize>,
+    }
+    pub(super) struct HostConv {
+        pub(super) counts: Rc<Counts>,
+    }
+    struct Weight {
+        values: Vec<f32>,
+        counts: Rc<Counts>,
+    }
+    impl DeviceWeight for Weight {
+        fn linear(
+            &self,
+            _: &[f32],
+            _: Option<&[f32]>,
+            _: usize,
+            _: usize,
+            _: usize,
+            _: DType,
+        ) -> Result<Vec<f32>> {
+            Err(SpeechError::Unsupported {
+                why: "unused".into(),
+            })
+        }
+        fn embedding(&self, _: &[i32], _: usize) -> Result<Vec<f32>> {
+            Err(SpeechError::Unsupported {
+                why: "unused".into(),
+            })
+        }
+        fn convolution(
+            &self,
+            x: &[f32],
+            b: Option<&[f32]>,
+            s: ConvShape,
+            d: DType,
+        ) -> Result<Vec<f32>> {
+            self.convolution_grouped(x, b, s, 1, d)
+        }
+        fn convolution_grouped(
+            &self,
+            x: &[f32],
+            b: Option<&[f32]>,
+            s: ConvShape,
+            groups: usize,
+            _: DType,
+        ) -> Result<Vec<f32>> {
+            if s.transpose {
+                self.counts.transposed.set(self.counts.transposed.get() + 1);
+                Ok(ops::conv_transpose1d(
+                    x,
+                    &self.values,
+                    b,
+                    s.input_channels,
+                    s.output_channels,
+                    s.kernel,
+                    s.stride,
+                    s.padding,
+                    0,
+                    groups,
+                ))
+            } else {
+                self.counts.conv.set(self.counts.conv.get() + 1);
+                Ok(ops::conv1d(
+                    x,
+                    &self.values,
+                    b,
+                    s.input_channels,
+                    s.output_channels,
+                    s.kernel,
+                    s.stride,
+                    s.padding,
+                    s.dilation,
+                    groups,
+                ))
+            }
+        }
+    }
+    impl ComputeBackend for HostConv {
+        fn load_weight(&self, data: WeightData<'_>) -> Result<Rc<dyn DeviceWeight>> {
+            let values = data
+                .bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            Ok(Rc::new(Weight {
+                values,
+                counts: self.counts.clone(),
+            }))
+        }
+        fn attention(
+            &self,
+            _: &[f32],
+            _: &[f32],
+            _: &[f32],
+            _: AttentionShape,
+            _: DType,
+        ) -> Result<Vec<f32>> {
+            Err(SpeechError::Unsupported {
+                why: "unused".into(),
+            })
+        }
+    }
+}
+
+#[test]
+fn decoder_device_path_with_host_kernels_matches_bit_for_bit() {
+    let counts = std::rc::Rc::new(host_conv_backend::Counts::default());
+    let backend = std::rc::Rc::new(host_conv_backend::HostConv {
+        counts: counts.clone(),
+    });
+    let host = load_tiny();
+    let device = load_tiny().with_backend(Some(backend));
+    let latent = npy("a_latent.npy");
+    let want = host.decode(&latent).unwrap();
+    let got = device.decode(&latent).unwrap();
+    assert!(
+        got.iter()
+            .zip(&want)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "device plumbing changed the decoded audio"
+    );
+    let cfg = host.config();
+    // Every ungrouped conv: one per upsampler, conv_in, conv_out, and 18 per
+    // multi-receptive-field stage.
+    let stages = cfg.dec_ratios.len();
+    assert_eq!(counts.conv.get(), (1 + stages) + 2 + 18 * stages);
+    // Transposed convs go to the device only without output padding (even ratios).
+    let even = std::iter::once(cfg.latent_up)
+        .chain(cfg.dec_ratios.iter().copied())
+        .filter(|r| r % 2 == 0)
+        .count();
+    assert_eq!(counts.transposed.get(), even);
+    // The encoder never goes to the device.
+    assert!(device.encode(&npy("a_wav.npy")).is_ok());
+    assert_eq!(counts.conv.get(), (1 + stages) + 2 + 18 * stages);
+}
+
 #[test]
 fn decoded_length_is_frames_times_upsampling() {
     let model = load_tiny();

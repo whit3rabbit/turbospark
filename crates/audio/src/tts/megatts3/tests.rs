@@ -355,6 +355,69 @@ fn velocity_checks_latent_shape() {
 }
 
 #[test]
+fn position_major_rope_matches_the_head_major_kernel_bit_for_bit() {
+    let (frames, heads, dim, batch) = (5, 3, 8, 2);
+    let (cos, sin) = crate::ops::rope_tables(frames, dim, 10_000.0);
+    let rows: Vec<f32> = (0..batch * frames * heads * dim)
+        .map(|i| ((i * 31 % 97) as f32 - 48.0) / 17.0)
+        .collect();
+    let mut position_major = rows.clone();
+    super::execution::rope_rows(&mut position_major, frames, heads, dim, &cos, &sin);
+    let row = frames * heads * dim;
+    for b in 0..batch {
+        let mut planes = crate::ops::split_heads(&rows[b * row..(b + 1) * row], frames, heads, dim);
+        crate::ops::rope_interleaved(&mut planes, heads, frames, dim, &cos, &sin);
+        let want = crate::ops::merge_heads(&planes, frames, heads, dim);
+        let got = &position_major[b * row..(b + 1) * row];
+        assert!(
+            got.iter()
+                .zip(&want)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "batch {b}"
+        );
+    }
+}
+
+/// The device path's plumbing (position-major layout, batch rows, RoPE
+/// placement, which ops are dispatched) with a backend that runs the host
+/// kernels: it must reproduce the host path exactly.
+#[test]
+fn device_path_with_host_kernels_matches_the_host_path_bit_for_bit() {
+    let dir = testdata();
+    let host = load_tiny();
+    let backend = super::execution::host_backend::HostBackend::new();
+    let device = load_tiny().with_backend(Some(backend.clone()));
+    assert!(device.on_device() && !host.on_device());
+    let inputs = |dit: &Dit| {
+        dit.prepare(
+            &i32s(&dir, "a_phone.npy"),
+            &i32s(&dir, "a_tone.npy"),
+            &i32s(&dir, "a_mel2ph.npy"),
+            &f32s(&dir, "a_prompt.npy"),
+        )
+        .unwrap()
+    };
+    let (hc, dc) = (inputs(&host), inputs(&device));
+    let n = hc.frames * host.config().channels;
+    let x: Vec<f32> = (0..n)
+        .map(|i| ((i * 37 % 101) as f32 - 50.0) / 25.0)
+        .collect();
+    let want = host.velocity(&hc, &x, 0.37, 1.4, 3.0).unwrap();
+    let got = device.velocity(&dc, &x, 0.37, 1.4, 3.0).unwrap();
+    assert!(
+        got.iter()
+            .zip(&want)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "device plumbing changed the velocity"
+    );
+    assert_eq!(
+        backend.attentions.get(),
+        host.config().layers,
+        "one batched attention per layer"
+    );
+}
+
+#[test]
 fn stacked_cfg_rows_match_rows_run_alone_bit_for_bit() {
     let dit = load_tiny();
     let dir = testdata();

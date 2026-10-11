@@ -185,7 +185,7 @@ impl AudioSession {
                     let _permit = crate::heavy::HeavyWorkGuard::try_acquire().ok_or(
                         "audio device is busy; retry opening the model after the current job finishes",
                     )?;
-                    admit_memory(estimate_open_bytes(&path, task)?)?;
+                    admit_memory(estimate_open_bytes(&path, task, allow_experimental_metal)?)?;
                     Engine::open(&path, task, allow_portable, allow_experimental_metal)
                 }))
                 .unwrap_or_else(|_| Err("audio model opening panicked".into()));
@@ -534,10 +534,17 @@ impl Engine {
             // Declared family first: a MegaTTS3 directory must never fall
             // through to the Kokoro loader.
             AudioTask::TextToSpeech if tts_model_type(path).as_deref() == Some(MEGATTS3_FAMILY) => {
-                if !allow_portable {
-                    return Err("MegaTTS3 runs on the CPU until its Metal path is qualified; portable execution requires explicit opt-in".into());
-                }
-                crate::megatts3::MegaTts3Runner::open(path)
+                use crate::megatts3::Device;
+                // Metal is opt-in until its quality and memory gates qualify;
+                // the CPU path is the portable reference.
+                let device = if allow_experimental_metal {
+                    Device::Metal
+                } else if allow_portable {
+                    Device::Cpu
+                } else {
+                    return Err("MegaTTS3 needs explicit opt-in: the portable CPU path or experimental Metal".into());
+                };
+                crate::megatts3::MegaTts3Runner::open(path, device)
                     .map(|m| Self::MegaTts3(std::cell::RefCell::new(Box::new(m))))
                     .map_err(|e| e.to_string())
             }
@@ -567,6 +574,8 @@ impl Engine {
                 let prompt_24k = (samples.len() as u64
                     * u64::from(audio::tts::megatts3::SAMPLE_RATE)
                     / u64::from(c.reference_rate)) as usize;
+                // The Metal path peaked no higher than the CPU path (its device
+                // weights are counted when it opens).
                 Ok(audio::tts::megatts3::activation_reserve_bytes(
                     prompt_24k,
                     longest,
@@ -969,9 +978,9 @@ fn tts_model_type(path: &Path) -> Option<String> {
     let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     value.get("model_type")?.as_str().map(str::to_owned)
 }
-fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
+fn estimate_open_bytes(path: &Path, task: AudioTask, metal: bool) -> Result<u64, String> {
     if task == AudioTask::TextToSpeech && tts_model_type(path).as_deref() == Some(MEGATTS3_FAMILY) {
-        return megatts3_open_bytes(path);
+        return megatts3_open_bytes(path, metal);
     }
     fn weights(path: &Path) -> Result<u64, String> {
         let mut total = 0u64;
@@ -992,8 +1001,11 @@ fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
 }
 /// MegaTTS3 keeps each component in its own subdirectory, loaded as f32. The
 /// G2P checkpoint is bf16 on disk and doubles when widened. Measured resident
-/// size on the CPU path is about 5.8 GB for 4.4 GB of safetensors.
-fn megatts3_open_bytes(path: &Path) -> Result<u64, String> {
+/// size on the CPU path is about 5.8 GB for 4.4 GB of safetensors. On Metal
+/// the DiT's projections and the WavVAE decoder are uploaded once more as
+/// device buffers while the host copies stay (the WavVAE file also holds the
+/// encoder, so counting all of it is an upper bound).
+fn megatts3_open_bytes(path: &Path, metal: bool) -> Result<u64, String> {
     let mut total = 0u64;
     for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
         let dir = entry.map_err(|e| e.to_string())?.path();
@@ -1008,11 +1020,11 @@ fn megatts3_open_bytes(path: &Path) -> Result<u64, String> {
                 .is_some_and(|ext| ext == "safetensors")
             {
                 let len = file.metadata().map_err(|e| e.to_string())?.len();
-                let widen = if dir.file_name().is_some_and(|n| n == "g2p") {
-                    2
-                } else {
-                    1
-                };
+                let name = dir.file_name();
+                let twice = name.is_some_and(|n| n == "g2p")
+                    || (metal
+                        && name.is_some_and(|n| n == "diffusion_transformer" || n == "wavvae"));
+                let widen = if twice { 2 } else { 1 };
                 total = total.saturating_add(len.saturating_mul(widen));
             }
         }
@@ -1173,6 +1185,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("g2p")).unwrap();
         std::fs::create_dir_all(dir.join("diffusion_transformer")).unwrap();
+        std::fs::create_dir_all(dir.join("wavvae")).unwrap();
         assert_eq!(tts_model_type(&dir), None);
         std::fs::write(dir.join("config.json"), r#"{"istftnet":{}}"#).unwrap();
         assert_eq!(
@@ -1188,10 +1201,16 @@ mod tests {
             vec![0u8; 300],
         )
         .unwrap();
+        std::fs::write(dir.join("wavvae/model.safetensors"), vec![0u8; 50]).unwrap();
         // Subdirectory weights count, and the bf16 G2P doubles when widened.
         assert_eq!(
-            estimate_open_bytes(&dir, AudioTask::TextToSpeech).unwrap(),
-            2 * 1000 + 300 + (512 << 20)
+            estimate_open_bytes(&dir, AudioTask::TextToSpeech, false).unwrap(),
+            2 * 1000 + 300 + 50 + (512 << 20)
+        );
+        // Metal keeps the host DiT and WavVAE and uploads them again.
+        assert_eq!(
+            estimate_open_bytes(&dir, AudioTask::TextToSpeech, true).unwrap(),
+            2 * 1000 + 2 * 300 + 2 * 50 + (512 << 20)
         );
         // Opening without the portable opt-in is refused before any load.
         let err = Engine::open(&dir, AudioTask::TextToSpeech, false, false)

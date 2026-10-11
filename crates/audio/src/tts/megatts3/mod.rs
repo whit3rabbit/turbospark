@@ -21,6 +21,7 @@
 pub mod aligner;
 pub mod dit;
 pub mod duration;
+mod execution;
 pub mod facade;
 pub mod g2p;
 pub mod postprocess;
