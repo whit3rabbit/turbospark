@@ -73,12 +73,22 @@ const BASELINES: &[quality_common::ChipQuality] = &[
     // cache and a dense model has none, so the two arms differ only in run
     // order and thermal state. Its digest is byte-identical to the 16-slot
     // one, which is the assertion that matters (crate Gotcha 9).
+    //
+    // RE-FROZEN 2026-10-11 for the GQA-shared decode attention partial,
+    // this family's default since then (`qwen38_quality_gate.rs` has the
+    // same note). Perplexity 6.8350 -> 6.8351; greedy digest unchanged; the
+    // sampled text keeps its first 1185 of ~1216 characters and then names
+    // its second item "Spatial and Ecological Constraints" where it read
+    // "Spatial Extent and Connectivity". Two fresh processes agreed on all
+    // three values. The old row still reproduces exactly under
+    // `TURBOSPARK_ATTN_DECODE_KERNEL=barrier`: perplexity 6.8350, sampled
+    // 7ea1f8d93c63ab38159b514a9b85697dba23fea5a5effa3742173e4d8dce9523.
     quality_common::ChipQuality {
         brand_substr: "Apple M4 Max",
-        perplexity: 6.8350,
+        perplexity: 6.8351,
         greedy_digest: "6a99d87023f889002c21f97b447783c122cb14194f7cfd97e691608a1f010239",
-        sampled_digest: "7ea1f8d93c63ab38159b514a9b85697dba23fea5a5effa3742173e4d8dce9523",
-        source: "this port, 2026-08-15, Apple M4 Max, AC, 16 slots",
+        sampled_digest: "241ebb489e4f014944ce8d8c25e470f51fe925e38b6c341c085685a7ca0b40aa",
+        source: "this port, 2026-08-15, re-frozen 2026-10-11 for GQA decode attention, Apple M4 Max, AC, 16 slots",
     },
 ];
 
