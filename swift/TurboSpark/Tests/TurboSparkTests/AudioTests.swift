@@ -19,6 +19,61 @@ final class AudioTests: XCTestCase {
         XCTAssertTrue(families.contains { $0.family == "sts/mel_roformer" && !$0.canRun })
         XCTAssertTrue(families.filter(\.component).allSatisfy { !$0.canRun })
     }
+    func testCloneRequestFieldsCrossTheWireInSnakeCase() throws {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        func wire(_ request: AudioRequest) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(request)) as? [String: Any])
+        }
+        var request = AudioRequest(task: .textToSpeech)
+        request.pW = 1.5
+        request.tW = 3
+        request.referenceSampleRate = 24_000
+        request.consent = true
+        let json = try wire(request)
+        XCTAssertEqual((json["p_w"] as? NSNumber)?.floatValue, 1.5)
+        XCTAssertEqual((json["t_w"] as? NSNumber)?.floatValue, 3)
+        XCTAssertEqual(json["reference_sample_rate"] as? Int, 24_000)
+        XCTAssertEqual(json["consent"] as? Bool, true)
+        // Unset options are omitted so the runtime applies its own defaults.
+        let plain = try wire(AudioRequest(task: .textToSpeech))
+        XCTAssertNil(plain["p_w"])
+        XCTAssertNil(plain["t_w"])
+        XCTAssertNil(plain["reference_sample_rate"])
+        XCTAssertEqual(plain["consent"] as? Bool, false)
+    }
+    func testVoiceCloneCapabilityAndAcknowledgmentsDecode() throws {
+        let clone = AudioCapabilities(operations: ["synthesize", "voice_clone"], backend: "portable_cpu",
+                                      cancellation: "diffusion_step", canRun: true)
+        XCTAssertTrue(clone.supportsVoiceClone)
+        XCTAssertFalse(AudioCapabilities(operations: ["synthesize"], backend: "metal",
+                                         cancellation: "sentence", canRun: true).supportsVoiceClone)
+        let family = try XCTUnwrap(AudioCatalog.capabilities().first { $0.family == "tts/megatts3" })
+        XCTAssertTrue(family.canRun)
+        XCTAssertEqual(family.operations, ["synthesize", "voice_clone"])
+        // The native catalog always sends the list; an older payload without it still decodes.
+        XCTAssertTrue(try AudioCatalog.profiles().allSatisfy { $0.acknowledgments != nil })
+        let profile = AudioProfile(
+            identity: AudioProfileIdentity(task: .textToSpeech, alias: "x", repository: "", revision: "", assetFingerprint: ""),
+            family: "megatts3", displayName: "X", capabilities: clone,
+            pcmFormat: AudioPCMFormat(sampleRate: 24_000, channels: 1), readiness: "implemented_unqualified",
+            acknowledgments: [AudioAcknowledgment(id: "terms", summary: "Accept the terms.")])
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(profile)) as? [String: Any])
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let round = try decoder.decode(AudioProfile.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(round.requiredAcknowledgments.map(\.id), ["terms"])
+        object.removeValue(forKey: "acknowledgments")
+        let old = try decoder.decode(AudioProfile.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(old.requiredAcknowledgments, [])
+    }
+    func testInstallWithOptionsRefusesAStaleIdentityBeforeDownloading() {
+        let stale = AudioProfileIdentity(task: .textToSpeech, alias: "no-such-profile", repository: "x/y",
+                                         revision: String(repeating: "0", count: 40), assetFingerprint: "none")
+        XCTAssertThrowsError(try AudioCatalog.install(stale, acknowledged: ["anything"]))
+    }
     func testTranscriptPersistencePreservesAbsentMetadataAndTiming() throws {
         let original = AudioTranscript(text: "Example", language: "English", segments: [AudioSegment(startSeconds: 1, endSeconds: 2, text: "Example", timing: "clip")], tokenLogprobs: [-0.5])
         let copy = try JSONDecoder().decode(AudioTranscript.self, from: JSONEncoder().encode(original))

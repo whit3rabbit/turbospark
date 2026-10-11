@@ -69,6 +69,17 @@ pub struct AudioFrontendResource {
     pub bundled_sha256: String,
 }
 
+/// Terms an installer must accept before a profile downloads, such as the
+/// unverified provenance of a community-sourced weight. Clients show
+/// `summary` (or a localized text for a known `id`) and pass the accepted ids
+/// to [`AudioCatalog::install_acknowledged`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioAcknowledgment {
+    pub id: String,
+    pub summary: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioCapabilities {
     pub languages: Vec<String>,
@@ -117,6 +128,9 @@ pub struct AudioProfile {
     pub evidence: Vec<String>,
     pub assets: Vec<AudioAsset>,
     pub frontend: Option<AudioFrontendProvenance>,
+    /// Accepted before download; empty for most profiles.
+    #[serde(default)]
+    pub acknowledgments: Vec<AudioAcknowledgment>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +189,8 @@ struct ProfileMetadata {
     languages: Vec<String>,
     voices: Vec<String>,
     max_input_seconds: Option<u32>,
+    #[serde(default)]
+    acknowledgments: Vec<AudioAcknowledgment>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -246,6 +262,7 @@ impl AudioCatalog {
                 channels,
                 capabilities,
                 readiness,
+                acknowledgments,
             ) = match row.alias.as_str() {
                 "whisper-base" => {
                     if row.source.is_some() || row.frontend.is_some() {
@@ -269,6 +286,7 @@ impl AudioCatalog {
                             ..profile_capabilities("whisper")
                         },
                         AudioReadiness::ImplementedUnqualified,
+                        vec![],
                     )
                 }
                 "kokoro-82m-bf16" => {
@@ -300,6 +318,7 @@ impl AudioCatalog {
                             ..profile_capabilities("kokoro")
                         },
                         AudioReadiness::RuntimePending,
+                        vec![],
                     )
                 }
                 "minimax-music3-4bit" => {
@@ -324,6 +343,7 @@ impl AudioCatalog {
                             ..profile_capabilities("minimax_music3")
                         },
                         AudioReadiness::ImplementedUnqualified,
+                        vec![],
                     )
                 }
                 alias => {
@@ -341,14 +361,30 @@ impl AudioCatalog {
                     {
                         return Err("invalid audio profile metadata".into());
                     }
+                    for ack in &metadata.acknowledgments {
+                        let plain = |v: &str| {
+                            !v.is_empty()
+                                && v.bytes().all(|b| {
+                                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'
+                                })
+                        };
+                        if !plain(&ack.id) || ack.summary.trim().is_empty() {
+                            return Err(format!(
+                                "{alias} has an acknowledgment without a plain id and a summary"
+                            ));
+                        }
+                    }
                     let mut capabilities = profile_capabilities(&metadata.family);
                     capabilities.languages = metadata.languages;
                     capabilities.voices = metadata.voices;
                     capabilities.max_input_seconds = metadata.max_input_seconds;
+                    let reviewed = REVIEWED_ADAPTERS.contains(&metadata.family.as_str());
                     // New profiles stay closed until a specific runtime adapter is reviewed.
-                    capabilities.can_run = false;
-                    if metadata.family != "qwen3_tts" {
-                        capabilities.unavailable_reason = Some("This pinned profile has not been integrated and qualified for native execution".into());
+                    if !reviewed {
+                        capabilities.can_run = false;
+                        if metadata.family != "qwen3_tts" {
+                            capabilities.unavailable_reason = Some("This pinned profile has not been integrated and qualified for native execution".into());
+                        }
                     }
                     (
                         metadata.task,
@@ -360,7 +396,12 @@ impl AudioCatalog {
                         metadata.sample_rate,
                         metadata.channels,
                         capabilities,
-                        AudioReadiness::RuntimePending,
+                        if reviewed {
+                            AudioReadiness::ImplementedUnqualified
+                        } else {
+                            AudioReadiness::RuntimePending
+                        },
+                        metadata.acknowledgments,
                     )
                 }
             };
@@ -387,7 +428,16 @@ impl AudioCatalog {
                 .filter(|a| a.path.ends_with(".safetensors") && !a.path.starts_with("voices/"))
                 .try_fold(0u64, |n, a| n.checked_add(a.size))
                 .ok_or("audio weight size overflow")?;
+            let g2p_bytes = row
+                .assets
+                .iter()
+                .filter(|a| a.path.starts_with("g2p/") && a.path.ends_with(".safetensors"))
+                .try_fold(0u64, |n, a| n.checked_add(a.size))
+                .ok_or("audio weight size overflow")?;
             let (resident_memory_bytes,resident_memory_evidence)=match task {
+                // f32 weights, the bf16 G2P widened, and a reserve covering the
+                // measured activations of a 28 s reference.
+                AudioTask::TextToSpeech if family == "megatts3" => (weight_bytes.saturating_add(g2p_bytes).saturating_add(3<<30),"measured CPU peak 6.3 GB (3 s reference) to 8.6 GB (28 s reference); estimate: weights, widened G2P and 3 GiB working reserve"),
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
@@ -406,7 +456,7 @@ impl AudioCatalog {
                 download_bytes, resident_memory_bytes,
                 resident_memory_evidence: resident_memory_evidence.into(), readiness,
                 evidence: vec!["Immutable source asset plan; runtime/reference and measured resident gates remain unqualified".into()],
-                assets: row.assets, frontend: row.frontend,
+                assets: row.assets, frontend: row.frontend, acknowledgments,
             });
         }
         Ok(Self { entries })
@@ -453,6 +503,7 @@ impl AudioCatalog {
     }
 
     /// Download alone never constructs or loads a runtime model.
+    /// Profiles with acknowledgments refuse here; use [`Self::install_acknowledged`].
     pub fn install(
         &self,
         client: &Client,
@@ -462,6 +513,24 @@ impl AudioCatalog {
         progress: &mut dyn FnMut(HubDownloadProgress),
         cancel: &CancelFlag,
     ) -> Result<InstalledModel, String> {
+        self.install_acknowledged(client, catalog, store, identity, &[], progress, cancel)
+    }
+
+    /// [`Self::install`] for a caller that has shown the profile's
+    /// acknowledgments and collected the accepted ids. Every acknowledgment
+    /// must be accepted; the check runs before any network or store work.
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_acknowledged(
+        &self,
+        client: &Client,
+        catalog: &Catalog,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        acknowledged: &[String],
+        progress: &mut dyn FnMut(HubDownloadProgress),
+        cancel: &CancelFlag,
+    ) -> Result<InstalledModel, String> {
+        check_acknowledged(self.profile(identity)?, acknowledged)?;
         let plan = self.pinned_plan(identity)?;
         cancel.checkpoint().map_err(|e| e.to_string())?;
         if store.audio_install_path(&identity.alias).exists() {
@@ -671,6 +740,12 @@ impl AudioCatalog {
         cancel: &CancelFlag,
     ) -> Result<InstalledModel, String> {
         let profile = self.profile(identity)?;
+        if !profile.acknowledgments.is_empty() {
+            return Err(format!(
+                "{} needs its terms accepted at install; delete the folder and install it from the catalog",
+                identity.alias
+            ));
+        }
         cancel.checkpoint().map_err(|e| e.to_string())?;
         let mut matching: Vec<_> = store
             .audio_records()
@@ -837,7 +912,43 @@ fn delete_managed_audio_path(
     Ok(())
 }
 
+/// Families whose generic catalog rows may run: a runtime adapter for them
+/// exists and was reviewed. Every other new row stays closed.
+const REVIEWED_ADAPTERS: &[&str] = &["megatts3"];
+
+fn check_acknowledged(profile: &AudioProfile, acknowledged: &[String]) -> Result<(), String> {
+    let missing: Vec<&str> = profile
+        .acknowledgments
+        .iter()
+        .filter(|a| !acknowledged.contains(&a.id))
+        .map(|a| a.id.as_str())
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "installing {} requires accepting: {}",
+            profile.identity.alias,
+            missing.join(", ")
+        ))
+    }
+}
+
 fn profile_capabilities(family: &str) -> AudioCapabilities {
+    if family == "megatts3" {
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["synthesize".into(), "voice_clone".into()],
+            timing: None,
+            backend: "portable_cpu".into(),
+            cancellation: "diffusion_step".into(),
+            can_run: true,
+            unavailable_reason: None,
+        };
+    }
     let (operation,backend,cancellation,can_run,reason,timing) = match family {
         "whisper" => ("transcribe","metal","decode_step",true,None,Some("window")),
         "qwen3_tts" => ("synthesize","swift_mlx","decode_step",false,Some("Qwen3-TTS runs through the native Swift MLX provider; the Rust session API does not execute this family"),None),
@@ -2104,6 +2215,125 @@ mod tests {
             .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
             .is_err());
     }
+    fn megatts3_manifest(family: &str, acknowledgments: serde_json::Value) -> String {
+        let files = [
+            "config.json",
+            "g2p/model.safetensors",
+            "diffusion_transformer/model.safetensors",
+        ];
+        let assets: Vec<_> = files
+            .iter()
+            .enumerate()
+            .map(|(i, path)| serde_json::json!({"path": path, "size": 10, "sha256": format!("{:064x}", i + 1)}))
+            .collect();
+        serde_json::json!({
+            "schema_version": 1,
+            "profiles": [{
+                "alias": "megatts3-test",
+                "assets": assets,
+                "source": {"repository": "someone/MegaTTS3-TurboSpark", "revision": "0".repeat(40)},
+                "metadata": {
+                    "task": "text_to_speech", "family": family, "display_name": "MegaTTS3",
+                    "required_files": files, "sample_rate": 24000, "channels": 1,
+                    "languages": ["en"], "voices": [], "max_input_seconds": 28,
+                    "acknowledgments": acknowledgments
+                }
+            }]
+        })
+        .to_string()
+    }
+    fn encoder_ack() -> serde_json::Value {
+        serde_json::json!([{"id": "megatts3_community_encoder", "summary": "The voice-cloning encoder is a community re-upload of unverified origin and license."}])
+    }
+
+    #[test]
+    fn reviewed_megatts3_row_runs_clones_and_carries_its_acknowledgments() {
+        let catalog =
+            AudioCatalog::from_manifest(&megatts3_manifest("megatts3", encoder_ack())).unwrap();
+        let p = catalog.get("megatts3-test").unwrap();
+        assert!(p.capabilities.can_run);
+        assert_eq!(p.capabilities.unavailable_reason, None);
+        assert_eq!(p.capabilities.operations, vec!["synthesize", "voice_clone"]);
+        assert_eq!(p.capabilities.backend, "portable_cpu");
+        assert_eq!(p.capabilities.max_input_seconds, Some(28));
+        assert_eq!(p.readiness, AudioReadiness::ImplementedUnqualified);
+        assert_eq!(p.acknowledgments[0].id, "megatts3_community_encoder");
+        // f32 weights (20 bytes), the widened G2P (10 more) and the 3 GiB reserve.
+        assert_eq!(p.resident_memory_bytes, 20 + 10 + (3 << 30));
+
+        // The same row under an unreviewed family stays closed with a reason.
+        let closed =
+            AudioCatalog::from_manifest(&megatts3_manifest("spark_tts", serde_json::json!([])))
+                .unwrap();
+        let p = closed.get("megatts3-test").unwrap();
+        assert!(!p.capabilities.can_run);
+        assert!(p.capabilities.unavailable_reason.is_some());
+        assert_eq!(p.readiness, AudioReadiness::RuntimePending);
+
+        for bad in [
+            serde_json::json!([{"id": "", "summary": "x"}]),
+            serde_json::json!([{"id": "Has Space", "summary": "x"}]),
+            serde_json::json!([{"id": "ok", "summary": "  "}]),
+        ] {
+            assert!(AudioCatalog::from_manifest(&megatts3_manifest("megatts3", bad)).is_err());
+        }
+    }
+
+    #[test]
+    fn install_refuses_unacknowledged_terms_before_any_work() {
+        let catalog =
+            AudioCatalog::from_manifest(&megatts3_manifest("megatts3", encoder_ack())).unwrap();
+        let identity = catalog.get("megatts3-test").unwrap().identity.clone();
+        let dir = std::env::temp_dir().join(format!("ts-audio-ack-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(dir.clone());
+        let run = |acknowledged: &[String], cancel: &CancelFlag| {
+            catalog
+                .install_acknowledged(
+                    &Client::new(),
+                    &Catalog::embedded().unwrap(),
+                    &store,
+                    &identity,
+                    acknowledged,
+                    &mut |_| {},
+                    cancel,
+                )
+                .unwrap_err()
+        };
+        // Not cancelled: only the acknowledgment check can stop it here.
+        let err = run(&[], &CancelFlag::new());
+        assert!(
+            err.contains("requires accepting: megatts3_community_encoder"),
+            "{err}"
+        );
+        let err = run(&["something_else".into()], &CancelFlag::new());
+        assert!(err.contains("requires accepting"), "{err}");
+        assert!(!dir.exists(), "a refused install must not touch the store");
+        // Accepted: the check passes and the pre-cancelled flag stops it next.
+        let cancelled = CancelFlag::new();
+        cancelled.cancel();
+        let err = run(&["megatts3_community_encoder".into()], &cancelled);
+        assert!(!err.contains("requires accepting"), "{err}");
+        assert!(!dir.exists());
+        // The plain installer passes no acknowledgments.
+        let err = catalog
+            .install(
+                &Client::new(),
+                &Catalog::embedded().unwrap(),
+                &store,
+                &identity,
+                &mut |_| {},
+                &CancelFlag::new(),
+            )
+            .unwrap_err();
+        assert!(err.contains("requires accepting"), "{err}");
+        // Adoption cannot skip the terms either.
+        let err = catalog
+            .adopt_legacy(&store, &identity, &CancelFlag::new())
+            .unwrap_err();
+        assert!(err.contains("terms"), "{err}");
+    }
+
     #[test]
     fn partial_catalog_does_not_require_exactly_three_profiles() {
         let mut json: serde_json::Value = serde_json::from_str(ASSETS).unwrap();

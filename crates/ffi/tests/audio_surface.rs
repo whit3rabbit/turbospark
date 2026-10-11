@@ -35,6 +35,48 @@ fn catalog_and_unknown_identity_are_guarded() {
         assert!(out.is_null());
     }
 }
+#[test]
+fn install_options_are_parsed_strictly_before_any_install_work() {
+    unsafe {
+        let mut out = ptr::null_mut();
+        assert_eq!(ts_audio_catalog_json(&mut out), 0);
+        let rows: serde_json::Value =
+            serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
+        ts_string_free(out);
+        let identity = CString::new(rows[0]["identity"].to_string()).unwrap();
+        for bad in [
+            "not json",
+            r#"{"acknowledged": "one"}"#,
+            r#"{"accepted": []}"#,
+        ] {
+            let options = CString::new(bad).unwrap();
+            let mut out = ptr::dangling_mut();
+            let rc = ts_audio_install_with_options(
+                identity.as_ptr(),
+                options.as_ptr(),
+                None,
+                ptr::null_mut(),
+                &mut out,
+            );
+            assert_ne!(rc, 0, "{bad} accepted");
+            assert!(out.is_null(), "{bad} left an output");
+            assert!(!last_error_text().is_empty());
+        }
+        // A null identity is refused even with valid options.
+        let options = CString::new(r#"{"acknowledged": []}"#).unwrap();
+        let mut out = ptr::dangling_mut();
+        assert_ne!(
+            ts_audio_install_with_options(
+                ptr::null(),
+                options.as_ptr(),
+                None,
+                ptr::null_mut(),
+                &mut out
+            ),
+            0
+        );
+    }
+}
 #[cfg(target_os = "macos")]
 #[test]
 fn failed_open_clears_handle_and_unknown_task_refuses() {

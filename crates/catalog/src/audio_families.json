@@ -395,6 +395,20 @@
     "evidence": "crates/audio/src/tts/kokoro/README.md; historical evidence only, not rerun by capability discovery"
   },
   {
+    "family": "tts/megatts3",
+    "task": "text_to_speech",
+    "operations": [
+      "synthesize",
+      "voice_clone"
+    ],
+    "backend": "portable_cpu",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/audio/src/tts/megatts3/mod.rs",
+    "evidence": "crates/audio/src/tts/megatts3/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
     "family": "music/minimax_music3",
     "task": "music",
     "operations": [

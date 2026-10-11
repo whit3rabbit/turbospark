@@ -1494,15 +1494,24 @@ typedef struct TsAudioJob TsAudioJob;
  * LIFECYCLE. ts_audio_session_open() loads a model for ONE task; a session
  * runs one job at a time. A job is: ts_audio_job_open(request_json), zero or
  * more ts_audio_job_append() of input PCM, then exactly one ts_audio_job_run()
- * (a second run is refused), then ts_audio_job_close(). Input is 16 kHz mono
- * f32; one append carries at most 32,000 samples and the whole job at most 30
- * minutes. Appends after run has started are refused.
+ * (a second run is refused), then ts_audio_job_close(). Transcription input
+ * is 16 kHz mono f32. For a voice-cloning text_to_speech model (family
+ * "megatts3") the appended PCM is the mono reference voice at the request's
+ * reference_sample_rate, 1 to 30 seconds. One append carries at most 32,000
+ * samples and the whole job at most 30 minutes. Appends after run has started
+ * are refused.
  *
  * Tasks the runtime can open are "speech_to_text", "text_to_speech" and
  * "music". Any other task name (the catalog describes more families than the
  * runtime has session entry points for) is refused at open as an unknown
  * variant. Request keys: task, language, text, voice, speed, caption, lyrics,
- * duration_seconds, steps, seed; an unrecognised key is refused.
+ * duration_seconds, steps, seed, instruction, reference_text, p_w, t_w,
+ * reference_sample_rate, consent; an unrecognised key is refused. Voice
+ * cloning requires consent: true (the caller has the right to use the
+ * reference voice), reference_sample_rate, and English text; p_w (0.1 to 5)
+ * and t_w (0.1 to 10) weigh intelligibility and similarity. Send steps (1 to
+ * 100) explicitly: an omitted steps means the request type's 30, not the
+ * model's default of 32.
  *
  * CALLBACK. TsAudioCallback is invoked synchronously on the thread calling
  * ts_audio_job_run, and `kind` says what the other arguments hold:
@@ -1542,6 +1551,12 @@ int ts_audio_delete(const char *identity_json);
 int ts_audio_delete_legacy(const char *identity_json);
 int ts_audio_adopt(const char *identity_json, char **out);
 int ts_audio_install(const char *identity_json, TsInstallCallback cb, void *userdata, char **out);
+/* ts_audio_install for a profile with "acknowledgments" in the catalog:
+ * options_json is {"acknowledged": [id, ...]} with every id the user accepted
+ * (NULL or "" means none). A missing id is refused before any download.
+ * ts_audio_install passes none, so it refuses such a profile. */
+int ts_audio_install_with_options(const char *identity_json, const char *options_json,
+                                  TsInstallCallback cb, void *userdata, char **out);
 /* options: task, allow_portable (false), allow_experimental_metal (false),
    optional expected_family. A mismatch refuses the loaded model. */
 int ts_audio_session_open(const char *path, const char *options_json, TsAudioSession **out);

@@ -209,6 +209,8 @@ pub unsafe extern "C" fn ts_audio_adopt(
     })
 }
 /// Uses the same owner/pause/cancel registry as existing model installations.
+/// A profile with acknowledgments refuses here; see
+/// [`ts_audio_install_with_options`].
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_install(
     identity_json: *const c_char,
@@ -216,42 +218,87 @@ pub unsafe extern "C" fn ts_audio_install(
     userdata: *mut c_void,
     out: *mut *mut c_char,
 ) -> c_int {
+    guard_result(|| install(identity_json, &[], callback, userdata, out))
+}
+
+/// Install options. `acknowledged` lists the ids of the profile's
+/// acknowledgments the user accepted; every one must be present.
+#[derive(serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct InstallOptions {
+    #[serde(default)]
+    acknowledged: Vec<String>,
+}
+
+/// [`ts_audio_install`] with `options_json` (`{"acknowledged": [id, ...]}`;
+/// NULL or empty means none).
+#[no_mangle]
+pub unsafe extern "C" fn ts_audio_install_with_options(
+    identity_json: *const c_char,
+    options_json: *const c_char,
+    callback: crate::TsInstallCallback,
+    userdata: *mut c_void,
+    out: *mut *mut c_char,
+) -> c_int {
     guard_result(|| {
-        if out.is_null() {
-            return Err(invalid("out must not be null"));
-        }
-        *out = std::ptr::null_mut();
-        let active = crate::models::ActiveInstall::register();
-        let identity = identity(identity_json)?;
-        let row = AudioCatalog::embedded()
-            .map_err(invalid)?
-            .install(
-                &catalog::Client::new(),
-                &catalog::Catalog::embedded().map_err(invalid)?,
-                &catalog::Store::default_store().map_err(invalid)?,
-                &identity,
-                &mut |progress| {
-                    if let Some(cb) = callback {
-                        let stage = progress
-                            .current_path
-                            .as_deref()
-                            .unwrap_or("audio download")
-                            .to_string();
-                        cb(
-                            userdata,
-                            crate::TS_INSTALL_BYTES,
-                            stage.as_ptr().cast(),
-                            stage.len(),
-                            progress.completed_bytes,
-                            progress.total_bytes,
-                        );
-                    }
-                },
-                active.cancel_flag(),
-            )
-            .map_err(|e| install_failure(e, active.cancel_flag().is_cancelled()))?;
-        output(&row, out)
+        clear_output(out)?;
+        let options: InstallOptions =
+            match strings::optional(options_json, "options").map_err(invalid)? {
+                Some(json) => serde_json::from_str(json).map_err(invalid)?,
+                None => InstallOptions::default(),
+            };
+        install(
+            identity_json,
+            &options.acknowledged,
+            callback,
+            userdata,
+            out,
+        )
     })
+}
+
+unsafe fn install(
+    identity_json: *const c_char,
+    acknowledged: &[String],
+    callback: crate::TsInstallCallback,
+    userdata: *mut c_void,
+    out: *mut *mut c_char,
+) -> AbiResult<()> {
+    if out.is_null() {
+        return Err(invalid("out must not be null"));
+    }
+    *out = std::ptr::null_mut();
+    let active = crate::models::ActiveInstall::register();
+    let identity = identity(identity_json)?;
+    let row = AudioCatalog::embedded()
+        .map_err(invalid)?
+        .install_acknowledged(
+            &catalog::Client::new(),
+            &catalog::Catalog::embedded().map_err(invalid)?,
+            &catalog::Store::default_store().map_err(invalid)?,
+            &identity,
+            acknowledged,
+            &mut |progress| {
+                if let Some(cb) = callback {
+                    let stage = progress
+                        .current_path
+                        .as_deref()
+                        .unwrap_or("audio download")
+                        .to_string();
+                    cb(
+                        userdata,
+                        crate::TS_INSTALL_BYTES,
+                        stage.as_ptr().cast(),
+                        stage.len(),
+                        progress.completed_bytes,
+                        progress.total_bytes,
+                    );
+                }
+            },
+            active.cancel_flag(),
+        )
+        .map_err(|e| install_failure(e, active.cancel_flag().is_cancelled()))?;
+    output(&row, out)
 }
 
 #[cfg(target_os = "macos")]

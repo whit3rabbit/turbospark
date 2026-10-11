@@ -57,6 +57,16 @@ public struct AudioCapabilities: Codable, Sendable, Equatable {
         self.backend = backend; self.cancellation = cancellation; self.canRun = canRun
         self.unavailableReason = unavailableReason
     }
+    /// The engine clones a voice from reference audio carried as the job's PCM.
+    public var supportsVoiceClone: Bool { operations.contains("voice_clone") }
+}
+/// Terms a profile requires the user to accept before it downloads. Show
+/// `summary` (or a localized text for a known `id`) and pass accepted ids to
+/// `AudioCatalog.install(_:acknowledged:progress:)`.
+public struct AudioAcknowledgment: Codable, Sendable, Equatable, Hashable {
+    public let id: String
+    public let summary: String
+    public init(id: String, summary: String) { self.id = id; self.summary = summary }
 }
 public struct AudioPCMFormat: Codable, Sendable, Equatable {
     public let sampleRate: UInt32
@@ -78,16 +88,20 @@ public struct AudioProfile: Codable, Sendable, Identifiable, Equatable {
     public let residentMemoryEvidence: String
     public let readiness: String
     public let evidence: [String]
+    /// Absent from older payloads; `requiredAcknowledgments` reads it.
+    public let acknowledgments: [AudioAcknowledgment]?
+    public var requiredAcknowledgments: [AudioAcknowledgment] { acknowledgments ?? [] }
     /// Local-only descriptions need no invented repository revision or install plan.
     /// Use empty identity source fields and do not pass them to catalog mutation APIs.
     public init(identity: AudioProfileIdentity, family: String, displayName: String,
                 capabilities: AudioCapabilities, pcmFormat: AudioPCMFormat,
                 downloadBytes: UInt64 = 0, residentMemoryBytes: UInt64 = 0,
-                residentMemoryEvidence: String = "unknown", readiness: String, evidence: [String] = []) {
+                residentMemoryEvidence: String = "unknown", readiness: String, evidence: [String] = [],
+                acknowledgments: [AudioAcknowledgment] = []) {
         self.identity = identity; self.family = family; self.displayName = displayName
         self.capabilities = capabilities; self.pcmFormat = pcmFormat; self.downloadBytes = downloadBytes
         self.residentMemoryBytes = residentMemoryBytes; self.residentMemoryEvidence = residentMemoryEvidence
-        self.readiness = readiness; self.evidence = evidence
+        self.readiness = readiness; self.evidence = evidence; self.acknowledgments = acknowledgments
     }
 }
 public struct AudioInstalledRecord: Codable, Sendable, Equatable, Identifiable {
@@ -168,20 +182,25 @@ public enum AudioCatalog {
         return try audioDecode(AudioInstalledRecord.self, takeString { out in json.withCString { ts_audio_adopt($0, out) } })
     }
     /// Blocking transfer; call off the main actor. Existing Catalog install controls apply.
-    public static func install(_ identity: AudioProfileIdentity, progress: @escaping @Sendable (AudioDownloadProgress) -> Void = { _ in }) throws -> AudioInstalledRecord {
+    /// `acknowledged` lists the ids of the profile's `requiredAcknowledgments`
+    /// the user accepted; a missing one is refused before any download.
+    public static func install(_ identity: AudioProfileIdentity, acknowledged: [String] = [],
+                               progress: @escaping @Sendable (AudioDownloadProgress) -> Void = { _ in }) throws -> AudioInstalledRecord {
         let json = try audioEncode(identity)
+        let options = try audioEncode(AudioInstallOptions(acknowledged: acknowledged))
         let box = AudioDownloadBox(progress)
         let context = Unmanaged.passUnretained(box).toOpaque()
-        return try audioDecode(AudioInstalledRecord.self, takeString { out in json.withCString { identity in
-            ts_audio_install(identity, { userdata, _, path, length, completed, total in
+        return try audioDecode(AudioInstalledRecord.self, takeString { out in json.withCString { identity in options.withCString { options in
+            ts_audio_install_with_options(identity, options, { userdata, _, path, length, completed, total in
                 guard let userdata else { return }
                 let box = Unmanaged<AudioDownloadBox>.fromOpaque(userdata).takeUnretainedValue()
                 let name = path.map { String(decoding: UnsafeBufferPointer(start: UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self), count: length), as: UTF8.self) }
                 box.callback(AudioDownloadProgress(path: name, completedBytes: completed, totalBytes: total))
             }, context, out)
-        } })
+        } } })
     }
 }
+private struct AudioInstallOptions: Encodable { let acknowledged: [String] }
 public struct AudioDownloadProgress: Sendable {
     public let path: String?
     public let completedBytes: UInt64
@@ -244,6 +263,14 @@ public struct AudioRequest: Codable, Sendable, Equatable {
     public var seed: UInt64? = 0
     public var instruction: String?
     public var referenceText: String?
+    /// Voice cloning: intelligibility guidance weight (MegaTTS3 `p_w`).
+    public var pW: Float?
+    /// Voice cloning: similarity guidance weight (MegaTTS3 `t_w`).
+    public var tW: Float?
+    /// Rate of the reference voice passed as the job's PCM when cloning.
+    public var referenceSampleRate: UInt32?
+    /// The user confirmed the right to use the reference voice. Required to clone.
+    public var consent = false
 
     public init(task: AudioTask, language: String? = nil) {
         self.task = task
