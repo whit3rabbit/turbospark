@@ -54,7 +54,7 @@ use the same native service without changing their public result shape.
 | [stt/whisper](../crates/audio/src/stt/whisper/mod.rs) | `transcribe`, `encode` | Implemented, checkpoint/quality unqualified |
 | [tts/kokoro](../crates/audio/src/tts/kokoro/mod.rs) | `synthesize` | Portable synthesis is callable only with explicit diagnostic opt-in; Metal synthesis is not implemented |
 | [Qwen3-TTS](QWEN3_TTS.md) | Swift MLX `synthesize` | Base cloning, CustomVoice, and VoiceDesign in the app; Rust session and HTTP execution remain unavailable |
-| [tts/megatts3](../crates/audio/src/tts/megatts3/README.md) | `synthesize`, `voice_clone` | Native session (portable CPU; experimental Metal) and `POST /v1/audio/speech`; consent required; catalog row `megatts3-f32` (install terms required); quality unqualified |
+| [tts/megatts3](../crates/audio/src/tts/megatts3/README.md) | `synthesize`, `voice_clone` | Native session (Metal by default, portable CPU fallback only with the opt-in) and `POST /v1/audio/speech`; consent required; catalog row `megatts3-f32` (install terms required); 8-speaker WER and speaker-similarity study, no listening test |
 | [music/minimax_music3](../crates/audio/src/music/minimax_music3/mod.rs) | `generate_text` | Implemented, checkpoint/quality unqualified |
 | [sts/deepfilternet](../crates/audio/src/sts/deepfilternet/mod.rs) | `enhance` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [sts/dialogue_sidon](../crates/audio/src/sts/dialogue_sidon/mod.rs) | `extract_features`, `normalize_chunk`, `conditioning`, `sample_latents`, `decode_latents` | Concurrent source in progress; no complete separation entry point, native adapter or checkpoint qualification |
@@ -144,7 +144,7 @@ Local checkpoint worker tests also exercised:
 | `distil-large-v3` | Whisper Metal | The 3.25-second reference speech produced the expected transcript; a second request cancelled | One local clip, not a fresh pinned `whisper-base` profile gate |
 | `qwen3-asr-0.6b-8bit` | Packed Metal decoder and CPU encoder | Same expected transcript, emitted English metadata and finite token log probabilities | Explicit experimental mode; no corpus quality or measured peak-memory qualification |
 | `kokoro-82m` | Portable CPU | Short English synthesis returned finite nonzero 24 kHz PCM through bounded callbacks | Diagnostic execution only; no Metal synthesis or task-quality claim |
-| `megatts3-turbospark` (converter output) | Portable CPU; experimental Metal | A clone of a 2.8 s reference transcribed back as the target sentence through the server's Qwen3-ASR, on both paths; the Metal audio matched the CPU audio (cosine 1.000000) | One short sentence; no listening, speaker-similarity or corpus study |
+| `megatts3-turbospark` (converter output) | Metal by default; portable CPU fallback | Metal matched the CPU path across 8 LibriSpeech speakers and two multi-chunk passages at 32 steps (same lengths, RMS difference at most 2.3e-5); a step study over the same speakers found WER and speaker similarity flat from 8 to 32 steps | No listening test or MOS; not run on 16 GB hardware |
 
 The similarly named local `distil-whisper-large-v3` directory was refused because
 it contained no tokenizer. Checkpoint folders were not re-identified against

@@ -1528,7 +1528,8 @@ var request = AudioRequest(task: .textToSpeech, language: "en")
 request.text = "Hello there."
 request.referenceSampleRate = 24_000
 request.consent = true                 // the user has the right to use this voice
-request.steps = 32                     // send it: an omitted steps is the request type's 30
+request.steps = 16                     // Balanced (Fast is 8, Best is 32). Send it,
+                                       // because an omitted steps is the request type's 30
 request.pW = 1.4; request.tW = 3.0     // intelligibility and similarity weights
 request.speed = 1.0                    // scales durations
 let result = try await session.execute(request, pcm: reference24k) { progress in ... }
@@ -1536,9 +1537,9 @@ let result = try await session.execute(request, pcm: reference24k) { progress in
 
 Progress stages are `reference` (preparing the voice; skipped when the session
 already prepared this exact reference and seed) and `diffusion` (completed of
-total steps across text chunks). MegaTTS3's declared backend is `portable_cpu`,
-so a session opens it with the portable opt-in; experimental Metal is
-`allowExperimentalMetal`.
+total steps across text chunks). MegaTTS3's declared backend is `metal`, and a
+session opens it on Metal with no opt-in. `allowPortable` lets it fall back to
+the CPU reference path only when Metal cannot open.
 
 Some catalog profiles list install terms in `requiredAcknowledgments` (MegaTTS3:
 its encoder's unverified provenance). Show them and pass the accepted ids:

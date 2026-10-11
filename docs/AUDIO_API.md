@@ -88,9 +88,10 @@ at most 4096 characters, `speed` 0.5 to 2.0. Voice cloning fields:
   A model that cannot clone (Kokoro) refuses it.
 - `consent`: MegaTTS3 requires `true`, the caller's statement that it has the
   right to use the reference voice.
-- `steps` (1 to 100, default 32), `seed` (default 0), `p_w` (intelligibility,
-  0.1 to 5, default 1.4) and `t_w` (similarity, 0.1 to 10, default 3.0):
-  MegaTTS3 options. `speed` scales its durations.
+- `steps` (1 to 100, default 16, where the app's Fast, Balanced and Best are 8,
+  16 and 32), `seed` (default 0), `p_w` (intelligibility, 0.1 to 5, default 1.4)
+  and `t_w` (similarity, 0.1 to 10, default 3.0): MegaTTS3 options. `speed`
+  scales its durations.
 - `reference_text` and `instruction`: Qwen3-TTS only; MegaTTS3 aligns the
   reference itself and refuses both.
 

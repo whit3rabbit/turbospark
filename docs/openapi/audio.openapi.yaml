@@ -345,7 +345,7 @@ components:
         reference_text: { type: string, description: 'Transcript of the reference clip (Qwen3-TTS; MegaTTS3 aligns the reference itself and refuses it).' }
         instruction: { type: string, description: 'Emotion, style, or delivery guidance (Qwen3-TTS; MegaTTS3 refuses it).' }
         consent: { type: boolean, description: 'MegaTTS3 requires true: the caller states it has the right to use the reference voice.' }
-        steps: { type: integer, minimum: 1, maximum: 100, description: MegaTTS3 diffusion steps (default 32); fewer is faster. }
+        steps: { type: integer, minimum: 1, maximum: 100, description: MegaTTS3 diffusion steps (default 16, with 8, 16 and 32 as Fast, Balanced and Best). Fewer is faster. }
         seed: { type: integer, minimum: 0, description: Makes a MegaTTS3 run repeatable (default 0). }
         p_w: { type: number, minimum: 0.1, maximum: 5, description: MegaTTS3 intelligibility weight (default 1.4). }
         t_w: { type: number, minimum: 0.1, maximum: 10, description: MegaTTS3 similarity weight (default 3.0). }

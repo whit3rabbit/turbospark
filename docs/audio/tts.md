@@ -21,7 +21,7 @@ inference module in `crates/audio/src/tts`.
   - Paper: [MegaTTS 3](https://arxiv.org/abs/2502.18924)
 - **Status**: the whole English pipeline is ported and gated against the reference on real weights (prompt aligner, WavVAE encoder and decoder, G2P, duration LM, latent DiT with classifier-free guidance, loudness matching). Voice cloning needs the community WavVAE encoder, which ByteDance withheld; its origin and license are unverified. Weights are converted from the upstream PyTorch checkpoints by `crates/audio/tools/convert_megatts3.py`.
 - **Entry points**: the Voice Clone page in the app, `POST /v1/audio/speech` with `reference_audio` and `consent: true` ([HTTP API](../AUDIO_API.md)), the native audio session (family `megatts3`, reference audio as the job's PCM), and `turbospark-clone speak` ([CLI](../CLI.md)). Every cloning request needs consent. The catalog row `megatts3-f32` installs from the app once its install terms are accepted; every entry point also takes a local converted directory.
-- **Limits**: English only (the English text normalizer is a documented subset), 24 kHz output. The CPU path is slow; the Metal path (opt-in, experimental) runs the diffusion transformer and the WavVAE decoder on the GPU.
+- **Limits**: English only (the English text normalizer is a documented subset), 24 kHz output. On macOS the diffusion transformer and the WavVAE decoder run on Metal by default, about five times faster than the portable CPU path. Steps default to 16 (Balanced), with 8 (Fast) and 32 (Best) as the other presets, and the [step study](../../crates/audio/src/tts/megatts3/README.md#steps-and-quality) found no intelligibility or speaker-similarity loss from 8 steps up.
 
 ### Kokoro (82M)
 

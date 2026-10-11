@@ -153,9 +153,19 @@ when this file gets updated relative to the version bump and the tag.
   Clone page follows the catalog's `voice_clone` capability. Every cloning request
   requires consent, and catalog profiles can list install terms that
   `ts_audio_install_with_options` must acknowledge before any download.
-- `crates/audio`, `crates/runtime`: experimental Metal path for MegaTTS3 (the diffusion
-  transformer and the WavVAE decoder on the GPU), opt-in through
-  `allow_experimental_metal` and `turbospark-clone --metal`.
+- `crates/audio`, `crates/runtime`, `crates/cli`, `swift/TurboSparkApp`: MegaTTS3
+  runs on Metal by default on macOS (the diffusion transformer and the WavVAE
+  decoder on the GPU), about five times faster than the CPU path, which now runs
+  only as the portable opt-in's fallback or with `turbospark-clone --cpu`. Metal
+  matched the CPU path across 8 speakers and two multi-chunk passages.
+- `crates/audio`, `crates/cli`, `crates/server`, `swift/TurboSparkApp`: MegaTTS3
+  quality presets. Steps default to 16 (Balanced), with 8 (Fast) and 32 (Best)
+  as the alternatives: the app's Quality picker, `turbospark-clone --quality`,
+  and the HTTP `steps` default. A step study over 8 speakers found no
+  intelligibility or speaker-similarity loss from 8 steps up.
+- `crates/runtime`, `crates/audio`: `megatts3_bench` and
+  `scripts/benchmark_megatts3.py` time cloning requests and compare each peak
+  footprint with what runtime admission checked.
 - `crates/audio`: `convert_megatts3.py` writes a root `config.json`, `LICENSE`,
   `NOTICE.md` and a model card, so its output can be published as is.
 - `crates/catalog`: catalog row `megatts3-f32`, the converter output pinned at

@@ -11,7 +11,7 @@ The binaries are:
 - `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`, image models into `~/.turbospark/models/image`, and pinned MiniMax Music 3 profiles into `~/.turbospark/models/audio`. See [`docs/MODELS.md`](MODELS.md).
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
 - `turbospark-music` -- generate MiniMax Music 3 WAV files from an installed profile or local model directory. Full-size converted profiles use the Metal runner on macOS; tiny fixtures also support the portable CPU reference path.
-- `turbospark-clone` -- clone a voice from a short reference recording and speak new English text with MegaTTS3, from the installed `megatts3-f32` profile (install it in the app) or a local converted model directory. See [`crates/audio/src/tts/megatts3/README.md`](../crates/audio/src/tts/megatts3/README.md).
+- `turbospark-clone` -- clone a voice from a short reference recording and speak new English text with MegaTTS3 (Metal on macOS), from the installed `megatts3-f32` profile (install it in the app) or a local converted model directory. See [`crates/audio/src/tts/megatts3/README.md`](../crates/audio/src/tts/megatts3/README.md).
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/AGENTS.md`](../crates/server/AGENTS.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
@@ -111,6 +111,10 @@ about 30 percent in an 8 s, 30-step measurement and changes the output; the
 default output is unchanged. The measurement and its limits are in the module
 README.
 
+Metal execution is implemented; profile-specific quality and real-time
+performance qualification remain separate. See the [Music 3 verification
+notes](../crates/audio/src/music/minimax_music3/README.md).
+
 ### Voice cloning
 
 `turbospark-clone speak` clones the voice in a short reference recording and
@@ -127,20 +131,18 @@ turbospark-clone speak \
 ```
 
 The reference can be any WAV (mono or multichannel, any sample rate); at most the
-first 28 seconds are used. `--steps` (default 32), `--p-w` (default 1.4) and
-`--t-w` (default 3.0) trade speed, intelligibility and similarity, and `--seed`
-makes a run repeatable. Output is 24 kHz mono. `--consent` is required: it states
-that you have the right to clone this voice, because the community WavVAE
-encoder this needs was deliberately withheld by the model's authors and its
-origin and license are unverified. The CPU reference path is slow: expect minutes
-for a few seconds of speech at the default step count. `--metal` (macOS,
-experimental) runs the diffusion transformer and the WavVAE decoder on the GPU;
-the same seed draws the same random values, and the audio differs from the CPU
-path only by rounding.
+first 28 seconds are used. `--quality fast|balanced|best` picks 8, 16 (the
+default) or 32 diffusion steps, and `--steps` sets any count from 1 to 100.
+`--p-w` (default 1.4) and `--t-w` (default 3.0) trade intelligibility and
+similarity, and `--seed` makes a run repeatable. Output is 24 kHz mono.
+`--consent` is required: it states that you have the right to clone this voice,
+because the community WavVAE encoder this needs was deliberately withheld by the
+model's authors and its origin and license are unverified.
 
-Metal execution is implemented; profile-specific quality and real-time
-performance qualification remain separate. See the [Music 3 verification
-notes](../crates/audio/src/music/minimax_music3/README.md).
+On macOS the diffusion transformer and the WavVAE decoder run on the GPU by
+default. `--cpu` runs the portable CPU reference path, which takes minutes for a
+few seconds of speech. The same seed draws the same random values on both, and
+the audio differs only by rounding.
 
 ### oMLX compatibility
 

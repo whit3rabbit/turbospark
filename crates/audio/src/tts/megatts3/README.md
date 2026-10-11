@@ -5,8 +5,10 @@ latent diffusion transformer generates 25 Hz WavVAE latents conditioned on
 phonemes, predicted durations, and the prompt latent. The whole pipeline is
 ported and gated against the reference on real weights, and it is wired through
 the runtime (family `megatts3`), the FFI, the HTTP speech route and the Swift
-app; every cloning request needs explicit consent. The app installs it from
-the catalog as `megatts3-f32`, the converter output pinned at
+app; every cloning request needs explicit consent. On macOS it runs on Metal by
+default, at 16 diffusion steps unless asked otherwise (see
+[Steps and quality](#steps-and-quality)). The app installs it from the catalog
+as `megatts3-f32`, the converter output pinned at
 [cowWhySo/MegaTTS3-TurboSpark](https://huggingface.co/cowWhySo/MegaTTS3-TurboSpark).
 See [Pipeline](#pipeline), [Metal](#metal) and [Not done](#not-done).
 
@@ -34,7 +36,7 @@ See [Pipeline](#pipeline), [Metal](#metal) and [Not done](#not-done).
 | 5 | G2P (Qwen2) and English text frontend | Done (`g2p.rs`, `text.rs`); the English normalizer is a documented subset |
 | 6 | `MegaTts3` facade, post-processing, CLI | Done (`facade.rs`, `postprocess.rs`, `rng.rs`, `turbospark-clone`) |
 | 7 | Runtime, FFI, server, Swift | Done (`runtime::megatts3`, `ts_audio_install_with_options`, `POST /v1/audio/speech`, the Voice Clone page, catalog row `megatts3-f32`) |
-| 8 | Metal | Experimental (`execution.rs`, `runtime::megatts3::Device::Metal`); see [Metal](#metal) |
+| 8 | Metal | Default on macOS (`execution.rs`, `runtime::megatts3::Device::Metal`); see [Metal](#metal) |
 
 ## DiT (`dit.rs`, `sampler.rs`)
 
@@ -142,8 +144,58 @@ output padding (odd upsampling ratios), which the device contract cannot
 express. The device path computes RoPE and attention position-major, the layout
 the projections produce; with the host kernels behind the device interface it
 reproduces the host path bit for bit (`device_path_with_host_kernels_matches_*`).
-The runtime opens Metal only with `allow_experimental_metal`; `turbospark-clone
---metal` selects it on macOS.
+The runtime opens MegaTTS3 on Metal by default. The CPU path runs only as the
+portable opt-in's fallback when Metal cannot open, and `turbospark-clone --cpu`
+selects it directly.
+
+Metal became the default after three checks (see [Verification](#verification)).
+It reproduces the CPU path across 8 speakers and two multi-chunk passages at 32
+steps, with an RMS difference of at most 2.3e-5, so it inherits the CPU path's
+parity with the reference. The largest single-sample difference was 1.8e-3, on
+a 13 s passage. Runtime admission bounded every measured peak. And it is about five
+times faster than the CPU on a short request. It does hold 1.3 to 2.9 GiB more
+than the CPU path, because the uploaded weights keep their host copies (see
+[Not done](#not-done)).
+
+## Steps and quality
+
+Steps default to 16 (Balanced). Fast is 8, Best is 32 (the upstream sampler's
+count), and `steps` takes any count from 1 to 100. The app's Quality picker,
+`turbospark-clone --quality` and the HTTP `steps` field use these numbers, which
+`Quality` in `facade.rs` defines once.
+
+The step study found no intelligibility or speaker-similarity loss from 8 steps
+up. It cloned 8 LibriSpeech test-clean speakers (5 to 9 s references), each
+speaking two 10 to 22 word sentences from another speaker's transcripts, on
+Metal at every step count with one seed per sentence. The same requests at 32
+steps with a second seed are the noise floor. WER is distil-whisper large-v3,
+with Whisper's English normalizer on both sides. Similarity is the cosine of
+WavLM-base-plus-sv embeddings against the reference: a second real recording of
+the same speaker scores 0.963 on average, and two different speakers 0.774.
+
+| Steps | WER | Similarity | Change vs 32 (mean, sd) | Worst change | Sentences with worse WER than 32 |
+|---|---|---|---|---|---|
+| 4 | 8.5% | 0.968 | -0.006, 0.016 | -0.038 | 2 of 16 |
+| 8 | 6.4% | 0.971 | -0.003, 0.011 | -0.040 | 0 of 16 |
+| 12 | 6.1% | 0.970 | -0.004, 0.008 | -0.016 | 0 of 16 |
+| 16 | 6.8% | 0.976 | +0.002, 0.008 | -0.010 | 1 of 16 |
+| 24 | 6.7% | 0.976 | +0.002, 0.005 | -0.008 | 1 of 16 |
+| 32 | 6.4% | 0.974 | | | |
+| 32, second seed | 8.2% | 0.973 | -0.001, 0.010 | -0.020 | 2 of 16 |
+
+From 8 steps up, no difference is larger than changing the seed. 4 steps is the
+only count that trends worse on both measures, and it garbled one sentence ("a
+germ, an insignificant seed" came back as "a ger man in significance"), so no
+preset goes below 8. Most of the WER is the texts' rare names and archaic words,
+which every step count and seed misread alike.
+
+The study cannot see everything. It is 16 sentences, one ASR model and a
+base-size speaker model, with no listening test or MOS, so a loss of
+naturalness that keeps the words and the voice would not register.
+
+Time grows with steps on top of a fixed part: reference preparation, G2P,
+durations and the WavVAE decode. A 3 s sentence on Metal took 12.7 s at 8 steps,
+15.5 s at 16 and 24.6 s at 32 (indicative, see Verification).
 
 ## Not done
 
@@ -152,14 +204,22 @@ The runtime opens Metal only with `allow_experimental_metal`; `turbospark-clone
   pass the folder (`turbospark-clone --model DIR`,
   `turbospark-server --tts-model DIR`). Once installed, both take the alias.
 - **Chinese.** The Chinese normalizer, chunker and `langdetect` routing.
-- **Metal qualification.** Metal stays opt-in until a quiet-host benchmark,
-  a memory gate on 16 GB hardware, and a longer quality check. Follow-ups:
-  an F32 MMA attention kernel (attention is about half a step at 1000 frames),
-  keeping activations on the device across a block, and the encoder, aligner
-  and G2P on the GPU.
-- **Quality.** Parity with the reference is gated, and one short sentence
-  passed an ASR round trip. No listening evaluation, speaker-similarity
-  measure, or broader intelligibility (WER) study has been done.
+- **16 GB hardware.** Not run on a 16 GB Mac. From the memory gate below, a
+  16 GB machine's admission budget (10.5 GiB) admits a 3 s reference with one
+  sentence on Metal (10.05 GiB checked) and refuses a 7 s reference on both
+  devices. The refusal comes from the activation reserve (10 MiB per latent
+  frame), which set aside 5.2 GiB for a request that grew by 1.3 GiB on Metal.
+  Tightening it needs measurements over more request shapes.
+- **Duplicate weights on Metal.** The uploaded DiT projections and WavVAE
+  decoder weights keep their host copies, so the Metal path peaks 1.3 to 2.9
+  GiB above the CPU path. Freeing them means keying the uploads by layer
+  instead of by host address.
+- **Metal follow-ups.** An F32 MMA attention kernel (attention is about half a
+  step at 1000 frames), keeping activations on the device across a block, and
+  the encoder, aligner and G2P on the GPU. Timing has not been measured on a
+  quiet host on AC power.
+- **Quality.** The step study measured WER and speaker similarity on 16
+  sentences. No listening test or MOS has been run.
 
 ## G2P and text frontend (`g2p.rs`, `text.rs`)
 
@@ -263,6 +323,10 @@ at inference and are ignored.
 | Catalog install (network, ignored test) | `real_megatts3_install_needs_its_terms_then_opens_verified` in `crates/ffi/tests/audio_surface.rs`, with `TURBOSPARK_AUDIO_REAL_INSTALL=1` and a scratch `TURBOSPARK_HOME`: the plain install is refused naming `megatts3_community_encoder`; with it accepted, all 10 pinned files (4.38 GB) download, verify and publish, and the session opens as family `megatts3`. `turbospark-clone --model megatts3-f32` from that store wrote a WAV byte-identical to the local converter output's (same seed, 4 steps), and `turbospark-server --tts-model megatts3-f32` answered 400 without `consent` and 200 with it. |
 | Swift binding and app (env-gated) | Set `TURBOSPARK_TEST_MEGATTS3` (a model folder) and `TURBOSPARK_TEST_VOICE_REFERENCE` (a mono WAV). `testRealMegaTTS3CloneThroughTheBinding` (`swift/TurboSpark`) is refused without consent, reports diffusion progress, and, with `TURBOSPARK_TEST_MEGATTS3_EXPECTED` set to the float32 WAV `turbospark-clone speak --steps 4 --seed 7 --wav-format float32` wrote for the same reference and text, matches the CLI sample for sample. `testRealVoiceClonePageClonesWithMegaTTS3` (`swift/TurboSparkApp`) drives the Voice Clone page: catalog profile, local model folder, imported reference, consent gate, the CPU session, and the saved encrypted take. Both passed on the 2.8 s test reference; run them with `swift test --build-system native` (the default Swift Build backend failed to link the `syntext` C target in a fresh build). |
 | Metal parity | Against the CPU path: tiny DiT velocity 2.2e-6 at peak 3.6 (bound 1e-5 relative); tiny WavVAE decode 5e-7; real DiT velocity 1.1e-4 at peak 7.6 (250 frames) and 5.8e-4 at peak 9.1 (1000 frames); whole pipeline with the same seed, 8 steps: max sample difference 8e-5, cosine 1.000000 (3 s output) and 0.999999998 (7.6 s output). The Metal WAV transcribes through the server's Qwen3-ASR as the target sentence. Mutants: RoPE skipped on keys (device plumbing), and the device conv dispatch counts. |
+| Metal across speakers (32 steps) | Same seed on both devices, 8 LibriSpeech test-clean speakers (5 to 9 s references, one 10 to 22 word sentence each): identical lengths, max sample difference 2.9e-5 to 9.5e-4 (RMS at most 2.3e-5), cosine at least 0.99999976. Two multi-chunk passages (48 and 53 words, 13.0 and 17.0 s of speech): identical lengths, max sample difference 1.8e-3 and 4.7e-4, RMS 1.9e-5 and 5.7e-6. Rounding accumulates over long outputs: those maxima exceed the 1e-3 the CPU port holds against PyTorch on short output, while the RMS stays below 2.5e-5. |
+| Metal by default, real checkpoint (env-gated) | `real_megatts3_worker_clones_streams_and_cancels` opens with neither opt-in, streams, refuses missing consent and cancels. `real_metal_pipeline_matches_the_cpu_pipeline` (8 steps): identical length, max sample difference 7.9e-5. The Swift binding's clone equals `turbospark-clone`'s Metal output sample for sample, so the session ran on Metal, and Metal output is identical across processes. The app's Voice Clone page clones on the catalog's `metal` backend without the portable opt-in. |
+| Memory gate (`benchmark_megatts3.py`, one sample per case) | Peak footprint against what admission checked (footprint before the request plus its activation reserve). 3 s reference, one sentence: Metal 8.81 GiB against 10.05, CPU 6.56 against 8.05. 7 s reference, 7.4 s of speech: Metal 9.79 against 13.74, CPU 8.44 against 10.96. 27.5 s reference, 13.3 s of speech: Metal 14.31 against 23.44, CPU 11.39 against 21.67. Every peak stayed within admission. |
+| Speed, short request (`benchmark_megatts3.py`, three interleaved runs, on battery with other sessions active) | 2.8 s reference, 3.04 s of speech, medians: Metal 12.7 s at 8 steps, 15.5 s at 16 and 24.6 s at 32 (spreads 15 to 27%), and the CPU 128.5 s at 32 (spread 6%). Each scenario wrote byte-identical WAVs on every run. Indicative only: not AC, not quiet. |
 | Metal speed (indicative, one reading each, M4 Max, host busy with other work) | One DiT step at 250 frames 0.51 s (CPU 3.2 to 4.6 s), at 1000 frames 2.7 s (CPU 13 to 17 s), where attention is about half. A 3 s sentence at 8 steps: 10.4 s warm (CPU 35.2 s); a 27.5 s reference with 7.6 s of speech: 80 s (CPU about 270 s). Not benchmark rows: see `docs/BENCHMARKING.md` before quoting. |
 | Mutation checks (DiT) | Swapped `p_w`/`t_w`, neox rotary, swapped final adaLN scale/shift, uncond row using real phones, unmasked prompt region, zeroed ctx-mask embedding, dropped relative-value term, off-by-one key window, zero AMO noise, and a skipped per-step draw each fail the tiny-fixture test. |
 | Mutation checks (pipeline) | A trim off by one latent frame, a prompt latent not restored over the sampler output, and swapped first/final chunk flags each fail the whole-pipeline test: the first on output length, the second on the audio comparison, the third on a replay draw-size mismatch (the changed flags change the draw order). |
