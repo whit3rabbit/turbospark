@@ -218,11 +218,38 @@ Models on an external drive or in another folder show up if you add the folder u
 
 The `turbospark-image` command uses the native Metal runtime, which supports only Z-Image Turbo and is far slower than the app: the recorded run took about an hour for one 1024 x 1024 image. Use the app for now.
 
+## Voice cloning and audio
+
+TurboSpark provides zero-shot voice cloning, music generation, and text-to-speech through the desktop app and dedicated CLI tools.
+
+### Voice cloning with MegaTTS3
+
+The `turbospark-clone` command and the app's Audio Studio clone the voice from a short reference recording (WAV format, mono or multichannel, at any sample rate; the first 28 seconds are used) and speak English text:
+
+```sh
+turbospark-clone speak \
+  --model megatts3-f32 \
+  --reference reference.wav \
+  --text "Hello, this is a cloned voice." \
+  --quality balanced \
+  --output output.wav \
+  --consent
+```
+
+- **Quality presets**: `--quality fast` (8 steps), `--quality balanced` (16 steps, default), or `--quality best` (32 steps). You can also pass `--steps` directly (1 to 100).
+- **Metal acceleration**: On macOS, the diffusion transformer and WavVAE decoder run on Metal by default, roughly 5x faster than the CPU reference path. Pass `--cpu` to force the portable CPU path.
+- **Consent required**: Voice cloning requires explicit caller consent (`--consent` in CLI, or user acknowledgment in the app) because the community WavVAE encoder's provenance and license are unverified.
+
+### Music generation and TTS
+
+- **Music generation**: `turbospark-music` generates MiniMax Music 3 tracks from installed profiles or converted weights, accelerated via Metal on macOS.
+- **TTS model families**: Portable implementations for Kokoro 82M, MegaTTS3, Bark, Confucius4, Dia, EchoTTS, OmniVoice, Longcat AudioDiT, MeloTTS, and others in `crates/audio`.
+
 ## Supported features
 
 | Feature | Support |
 | --- | --- |
-| Desktop app | Native SwiftUI chat, multi-chat persistence, model management, settings, and accessibility support |
+| Desktop app | Native SwiftUI multi-chat, Audio Studio (voice cloning and TTS), Image generation, Humanize, model management, and accessibility support |
 | Agent runtime | Native shell, file, web, git, MCP, and indexed code-search tools with permission gates |
 | MoE streaming | Routed expert weights stream from SSD through a bounded Metal slot cache |
 | CLI generation | Interactive chat, raw prompts, JSON message files, reasoning output, cancellation, and model recommendations |
@@ -230,7 +257,7 @@ The `turbospark-image` command uses the native Metal runtime, which supports onl
 | Model intake | Catalog installs, Hugging Face header probes, GGUF intake, MLX quantized checkpoints, and `.gturbo` packing |
 | Vision | Supported vision checkpoints, with the Qwen GDN and Qwen3-VL towers implemented |
 | Image generation | Z-Image Turbo and Qwen-Image 2.1 Turbo in the app, about 1 to 2 minutes per 1024 x 1024 image on an M4 Max. See [Image generation](#image-generation) |
-| Audio and STT | Unified portable audio crate (DSP, mel, WAV, FFT, neural ops), Whisper STT runner, Metal kernels, and STT FFI surface |
+| Voice cloning and audio | MegaTTS3 zero-shot voice cloning (Metal on macOS), MiniMax Music 3, Whisper STT runner, Kokoro, and extensive TTS family ports. See [Voice cloning and audio](#voice-cloning-and-audio) |
 | Performance controls | Context and load guards, expert-cache sizing, chunked prefill, KV-cache quantization, and eligible speculative decoding |
 | Steering | Directional residual steering for supported model flows, without modifying model weights |
 
@@ -238,7 +265,8 @@ The `turbospark-image` command uses the native Metal runtime, which supports onl
 
 - [Model catalog and installation](docs/MODELS.md)
 - [CLI and server reference](docs/CLI.md)
-- [Audio and speech processing](docs/AUDIO.md) and [Speech to text](docs/SPEECH_TO_TEXT.md)
+- [Audio and speech processing](docs/AUDIO.md) and [Voice cloning and TTS](docs/audio/tts.md)
+- [macOS UI design guide](DESIGN.md)
 - [Benchmark rows and quality evidence](docs/BENCHMARKS.md)
 - [Release assets, Homebrew casks, and packaging](docs/RELEASE.md)
 - [Swift bindings and app development](docs/SWIFT_BINDINGS.md)

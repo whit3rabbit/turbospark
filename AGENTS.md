@@ -8,6 +8,10 @@ evidence in the linked project docs. Do not turn this file into a changelog.
 
 - Read the nearest crate or app instructions before changing code:
   `crates/<name>/AGENTS.md` or `swift/AGENTS.md`.
+- ALWAYS read [DESIGN.md](DESIGN.md) before any UI or design change in the
+  macOS app: views, controls, copy, color, type, layout, menus, shortcuts,
+  or motion. It holds the accessibility, theming, localization, and layout
+  rules that earlier UI defects came from.
 - Read [API workspace](docs/API_WORKSPACE.md) when changing Text, Image, or
   TypeSafe serving. Text and Image share the TurboSpark listener; TypeSafe
   owns a separate loopback OpenKind daemon and Keychain key.
@@ -84,6 +88,17 @@ The root references are:
 - Read [MLX kernel experiments](docs/MLX_KERNELS.md) before reusing oMLX
   kernels. Steel has synthetic prefill evidence; runtime defaults still
   require real-model quality, memory, and paired performance gates.
+- Voice cloning with MegaTTS3 requires explicit caller consent up front
+  (`consent: true`) because community WavVAE encoder provenance is unverified.
+  On macOS it defaults to Metal; the portable CPU reference path is an opt-in
+  fallback only. Steps default to 16 (presets: Fast=8, Balanced=16, Best=32).
+- Split-KV decode attention in Metal: the GQA partial kernel bakes group,
+  simdgroups, head_dim, and unroll into function constants that MUST be
+  included in its pipeline cache key to prevent silent wrong-pipeline reuse.
+- App UI, localization, and store durability: follow [DESIGN.md](DESIGN.md).
+  Every UI string must use bundled `Text` or `AppStrings.localized` to pass the
+  ten localization parity gates. `AppJSONStore` must quarantine corrupt files
+  rather than overwriting them, preventing silent data loss.
 
 ## Minimal verification
 
