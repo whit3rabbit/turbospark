@@ -68,7 +68,25 @@ final class AudioVoiceCloneTests: XCTestCase {
         XCTAssertFalse(AudioWorkspaceController.nativeCloneRequest(base, speech: speech).consent)
         // Without saved options the model defaults apply.
         speech.cloneOptions = nil
-        XCTAssertEqual(AudioWorkspaceController.nativeCloneRequest(base, speech: speech).steps, 32)
+        XCTAssertEqual(AudioWorkspaceController.nativeCloneRequest(base, speech: speech).steps, CloneQuality.balanced.steps)
+    }
+
+    /// The pinned profile declares Metal, so the app opens it without the
+    /// portable opt-in and the runtime never falls back to the CPU on its own.
+    func testCatalogMegaTTS3RunsOnMetalWithoutThePortableOptIn() throws {
+        let mega = try XCTUnwrap(try AudioCatalog.profiles().first { $0.family == "megatts3" })
+        XCTAssertEqual(mega.capabilities.backend, "metal")
+        XCTAssertTrue(mega.capabilities.canRun)
+        XCTAssertFalse(AudioWorkspaceController.runsOnDeclaredCPU(mega))
+    }
+
+    /// The presets mirror the audio crate's `megatts3::Quality`, and a count
+    /// between them is custom, which the picker shows as its own segment.
+    func testQualityPresetsMapToStepCountsAndCustomCountsToNone() {
+        XCTAssertEqual(CloneQuality.allCases.map(\.steps), [8, 16, 32])
+        for preset in CloneQuality.allCases { XCTAssertEqual(CloneQuality(steps: preset.steps), preset) }
+        XCTAssertNil(CloneQuality(steps: 20))
+        XCTAssertEqual(CloneQuality(steps: AudioCloneOptions().steps), .balanced)
     }
 
     func testSpeechSettingsSavedBeforeCloneOptionsStillDecode() throws {
@@ -123,7 +141,8 @@ final class AudioVoiceCloneTests: XCTestCase {
 
     /// The Voice Clone page clones a real voice end to end: the catalog
     /// profile, a local model folder, an imported reference, consent, the
-    /// native session on the CPU the catalog declares, and the encrypted take.
+    /// native session on Metal (the backend the catalog declares), and the
+    /// encrypted take.
     /// Set TURBOSPARK_TEST_MEGATTS3 (a converted model folder) and
     /// TURBOSPARK_TEST_VOICE_REFERENCE (a WAV of 1 to 28 seconds).
     @MainActor func testRealVoiceClonePageClonesWithMegaTTS3() async throws {

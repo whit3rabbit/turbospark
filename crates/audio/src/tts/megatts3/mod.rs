@@ -49,7 +49,7 @@ pub use aligner::{AlignedPrompt, Aligner, AlignerConfig};
 pub use dit::{Dit, DitCondition, DitConfig};
 pub use duration::{DurationConfig, DurationLm, DurationPrompt};
 pub use facade::{
-    activation_reserve_bytes, plan_chunks, resample_reference, MegaTts3, SynthParams,
+    activation_reserve_bytes, plan_chunks, resample_reference, MegaTts3, Quality, SynthParams,
     SynthProgress, VoicePrompt, MAX_PROMPT_SECONDS, MODEL_TYPE, SAMPLE_RATE,
 };
 pub use g2p::G2p;

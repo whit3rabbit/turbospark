@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use super::facade::{
-    check_root_config, dit_inputs, plan_chunks, MegaTts3, SynthParams, VoicePrompt,
+    check_root_config, dit_inputs, plan_chunks, MegaTts3, Quality, SynthParams, VoicePrompt,
 };
 use super::rng::{ReplayRng, SeededRng};
 use super::tests::{f32s, i32s, max_diff};
@@ -112,13 +112,25 @@ fn root_config_must_agree_with_the_loaded_encoder() {
 }
 
 #[test]
-fn default_params_are_the_space_defaults() {
+fn default_params_are_the_space_settings_at_balanced_steps() {
     let p = SynthParams::default();
-    assert_eq!((p.steps, p.p_w, p.t_w), (32, 1.4, 3.0));
+    assert_eq!((p.steps, p.p_w, p.t_w), (16, 1.4, 3.0));
+    assert_eq!(p.steps, Quality::Balanced.steps());
     assert_eq!(
         (p.dur_disturb, p.dur_alpha, p.max_chunk_bytes),
         (0.1, 1.0, 130)
     );
+}
+
+#[test]
+fn quality_presets_rise_in_steps_and_round_trip_their_names() {
+    let steps: Vec<usize> = Quality::ALL.iter().map(|q| q.steps()).collect();
+    assert!(steps.windows(2).all(|w| w[0] < w[1]), "{steps:?}");
+    assert_eq!(Quality::Best.steps(), 32, "Best is the upstream sampler");
+    for q in Quality::ALL {
+        assert_eq!(Quality::parse(q.name()), Some(q));
+    }
+    assert_eq!(Quality::parse("Fast"), None, "names are lowercase");
 }
 
 fn replay_from(dir: &Path) -> ReplayRng {

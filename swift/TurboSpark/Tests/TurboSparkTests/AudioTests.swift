@@ -140,8 +140,9 @@ final class AudioTests: XCTestCase {
     /// TURBOSPARK_TEST_VOICE_REFERENCE (a mono WAV). With
     /// TURBOSPARK_TEST_MEGATTS3_EXPECTED, the WAV `turbospark-clone speak
     /// --steps 4 --seed 7 --wav-format float32` wrote for the same reference and
-    /// text, the binding must reproduce the CLI sample for sample: the reference
-    /// goes in at its own rate, so both resample it the same way.
+    /// text on the same device (Metal, the default for both on macOS), the
+    /// binding must reproduce the CLI sample for sample: the reference goes in
+    /// at its own rate, so both resample it the same way.
     func testRealMegaTTS3CloneThroughTheBinding() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let model = environment["TURBOSPARK_TEST_MEGATTS3"],

@@ -14,6 +14,22 @@ struct VoiceCloneInputsView: View {
         })
     }
 
+    /// A preset, or nil while the stepper holds a custom count.
+    private var quality: Binding<CloneQuality?> {
+        Binding(get: { CloneQuality(steps: controller.cloneOptions.steps) }, set: {
+            guard let preset = $0 else { return }
+            var options = controller.cloneOptions; options.steps = preset.steps; controller.cloneOptions = options
+        })
+    }
+
+    private func title(_ preset: CloneQuality) -> Text {
+        switch preset {
+        case .fast: Text("Fast", bundle: .module)
+        case .balanced: Text("Balanced", bundle: .module)
+        case .best: Text("Best", bundle: .module)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VoiceReferenceControls(controller: controller)
@@ -24,6 +40,11 @@ struct VoiceCloneInputsView: View {
             Text("Only clone your own voice or the voice of someone who agreed. Changing the reference clears this confirmation.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Picker(selection: quality) {
+                ForEach(CloneQuality.allCases, id: \.self) { preset in title(preset).tag(Optional(preset)) }
+                if quality.wrappedValue == nil { Text("Custom", bundle: .module).tag(CloneQuality?.none) }
+            } label: { Text("Quality", bundle: .module) }
+                .pickerStyle(.segmented)
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 12) {
                     Stepper(value: option(\.steps), in: 1...100) {

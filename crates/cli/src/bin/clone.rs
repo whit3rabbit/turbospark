@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-use audio::tts::megatts3::{resample_reference, MegaTts3, SeededRng, SynthParams, SAMPLE_RATE};
+use audio::tts::megatts3::{
+    resample_reference, MegaTts3, Quality, SeededRng, SynthParams, SAMPLE_RATE,
+};
 use audio::Waveform;
 use catalog::Store;
 
@@ -13,19 +15,23 @@ turbospark-clone: clone a voice from a short recording and speak new English tex
 
 USAGE:
     turbospark-clone speak --model MODEL --reference WAV (--text TEXT | --text-file PATH) \\
-        --output WAV --consent [--steps N] [--p-w X] [--t-w X] [--seed N] \\
-        [--wav-format pcm16|float32] [--metal]
+        --output WAV --consent [--quality fast|balanced|best | --steps N] \\
+        [--p-w X] [--t-w X] [--seed N] \\
+        [--wav-format pcm16|float32] [--metal | --cpu]
 
 --model is an installed audio alias or a converted MegaTTS3 directory (aligner_lm/,
 diffusion_transformer/, duration_lm/, wavvae/, g2p/) produced by
 crates/audio/tools/convert_megatts3.py.
 --reference is a clean recording of the target voice, mono or multichannel at any
 sample rate; at most the first 28 seconds are used. Text is English only.
---steps (default 32, 1 through 100) trades speed for quality. --p-w (default 1.4,
-0.1 through 5) raises intelligibility and --t-w (default 3.0, 0.1 through 10)
-raises similarity to the reference. --seed (default 0) makes a run repeatable.
---metal (macOS, experimental) runs the diffusion transformer and the WavVAE
-decoder on the GPU; the default is the CPU reference path.
+--quality picks the diffusion steps: fast (8), balanced (16, the default) or
+best (32); --steps (1 through 100) sets them directly. Fewer steps are faster.
+--p-w (default 1.4, 0.1 through 5) raises intelligibility and --t-w (default
+3.0, 0.1 through 10) raises similarity to the reference. --seed (default 0)
+makes a run repeatable.
+On macOS the diffusion transformer and the WavVAE decoder run on the GPU by
+default (--metal). --cpu runs the portable CPU reference path instead, which is
+several times slower and the only path on other platforms.
 
 Voice cloning needs the community WavVAE encoder, which ByteDance chose not to
 release; its origin and license are unverified. Only clone a voice you have the
@@ -43,7 +49,22 @@ struct SpeakOptions {
     t_w: f32,
     seed: u64,
     wav_format: WavFormat,
-    metal: bool,
+    device: Device,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Device {
+    Metal,
+    Cpu,
+}
+
+impl Device {
+    /// Metal where it exists; the CPU reference path elsewhere.
+    const DEFAULT: Self = if cfg!(target_os = "macos") {
+        Self::Metal
+    } else {
+        Self::Cpu
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +135,7 @@ fn parse_args(args: &[String]) -> Result<SpeakOptions, Error> {
         (None, None, None, None, None);
     let (mut steps, mut p_w, mut t_w, mut seed, mut wav_format) = (None, None, None, None, None);
     let mut consent = false;
-    let mut metal = false;
+    let mut device = None;
     let mut index = 1usize;
     while index < args.len() {
         let flag = args[index].as_str();
@@ -126,11 +147,15 @@ fn parse_args(args: &[String]) -> Result<SpeakOptions, Error> {
             index += 1;
             continue;
         }
-        if flag == "--metal" {
-            if metal {
-                return Err(Error::Usage("--metal may be specified only once".into()));
+        if flag == "--metal" || flag == "--cpu" {
+            if device.is_some() {
+                return Err(Error::Usage("choose --metal or --cpu, at most once".into()));
             }
-            metal = true;
+            device = Some(if flag == "--metal" {
+                Device::Metal
+            } else {
+                Device::Cpu
+            });
             index += 1;
             continue;
         }
@@ -145,6 +170,12 @@ fn parse_args(args: &[String]) -> Result<SpeakOptions, Error> {
             "--text" => set_once(&mut text, value()?.to_string(), flag)?,
             "--text-file" => set_once(&mut text_file, PathBuf::from(value()?), flag)?,
             "--output" => set_once(&mut output, PathBuf::from(value()?), flag)?,
+            "--quality" => {
+                let preset = Quality::parse(value()?).ok_or_else(|| {
+                    Error::Usage("--quality must be fast, balanced or best".into())
+                })?;
+                set_once(&mut steps, preset.steps(), "--quality or --steps")?;
+            }
             "--steps" => {
                 let n: usize = parse_number(flag, value()?, "a positive integer")?;
                 if !(1..=100).contains(&n) {
@@ -152,7 +183,7 @@ fn parse_args(args: &[String]) -> Result<SpeakOptions, Error> {
                         "--steps {n} is outside 1 through 100"
                     )));
                 }
-                set_once(&mut steps, n, flag)?;
+                set_once(&mut steps, n, "--quality or --steps")?;
             }
             "--p-w" => {
                 let x: f32 = parse_number(flag, value()?, "a number")?;
@@ -219,7 +250,7 @@ fn parse_args(args: &[String]) -> Result<SpeakOptions, Error> {
         t_w: t_w.unwrap_or(defaults.t_w),
         seed: seed.unwrap_or(0),
         wav_format: wav_format.unwrap_or(WavFormat::Pcm16),
-        metal,
+        device: device.unwrap_or(Device::DEFAULT),
     })
 }
 
@@ -349,10 +380,9 @@ fn speak(options: &SpeakOptions) -> Result<(), Error> {
         t_w: options.t_w,
         ..SynthParams::default()
     };
-    let samples = if options.metal {
-        synthesize_metal(&model, &reference, options, &params)?
-    } else {
-        synthesize_cpu(&model, &reference, options, &params)?
+    let samples = match options.device {
+        Device::Metal => synthesize_metal(&model, &reference, options, &params)?,
+        Device::Cpu => synthesize_cpu(&model, &reference, options, &params)?,
     };
     let wave = Waveform::mono(SAMPLE_RATE, samples)
         .map_err(|e| Error::Failed(format!("assembling the output: {e}")))?;
@@ -402,7 +432,7 @@ mod tests {
     #[test]
     fn parses_defaults_and_overrides() {
         let o = parse_args(&with_text(&[])).unwrap();
-        assert_eq!((o.steps, o.p_w, o.t_w, o.seed), (32, 1.4, 3.0, 0));
+        assert_eq!((o.steps, o.p_w, o.t_w, o.seed), (16, 1.4, 3.0, 0));
         assert_eq!(o.wav_format, WavFormat::Pcm16);
         assert_eq!(o.text, "hello there");
         let o = parse_args(&with_text(&[
@@ -420,6 +450,12 @@ mod tests {
         .unwrap();
         assert_eq!((o.steps, o.p_w, o.t_w, o.seed), (10, 2.5, 4.0, 9));
         assert_eq!(o.wav_format, WavFormat::Float32);
+        for q in Quality::ALL {
+            let o = parse_args(&with_text(&["--quality", q.name()])).unwrap();
+            assert_eq!(o.steps, q.steps());
+            let help = format!("{} ({}", q.name(), q.steps());
+            assert!(USAGE.contains(&help), "the help text is missing {help:?}");
+        }
     }
 
     #[test]
@@ -434,12 +470,20 @@ mod tests {
     }
 
     #[test]
-    fn metal_is_an_opt_in_switch() {
-        assert!(
-            !parse_args(&with_text(&[])).unwrap().metal,
-            "CPU is the default"
+    fn metal_is_the_macos_default_and_cpu_the_override() {
+        let default = parse_args(&with_text(&[])).unwrap().device;
+        assert_eq!(default, Device::DEFAULT);
+        if cfg!(target_os = "macos") {
+            assert_eq!(default, Device::Metal);
+        }
+        assert_eq!(
+            parse_args(&with_text(&["--metal"])).unwrap().device,
+            Device::Metal
         );
-        assert!(parse_args(&with_text(&["--metal"])).unwrap().metal);
+        assert_eq!(
+            parse_args(&with_text(&["--cpu"])).unwrap().device,
+            Device::Cpu
+        );
     }
 
     #[test]
@@ -454,7 +498,10 @@ mod tests {
             vec!["--seed", "-1"],
             vec!["--wav-format", "mp3"],
             vec!["--steps", "5", "--steps", "6"],
+            vec!["--quality", "fast", "--steps", "6"],
+            vec!["--quality", "ultra"],
             vec!["--metal", "--metal"],
+            vec!["--metal", "--cpu"],
             vec!["--bogus", "1"],
             vec!["stray"],
         ] {
@@ -507,7 +554,7 @@ mod tests {
             t_w: 3.0,
             seed: 0,
             wav_format: WavFormat::Pcm16,
-            metal: false,
+            device: Device::Cpu,
         };
         // Neither a directory nor an installed alias: refused before loading.
         let err = speak(&options).unwrap_err();

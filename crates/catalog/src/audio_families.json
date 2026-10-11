@@ -401,7 +401,7 @@
       "synthesize",
       "voice_clone"
     ],
-    "backend": "portable_cpu",
+    "backend": "metal",
     "can_run": true,
     "component": false,
     "unavailable_reason": null,

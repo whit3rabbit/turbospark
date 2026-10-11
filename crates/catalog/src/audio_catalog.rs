@@ -437,7 +437,7 @@ impl AudioCatalog {
             let (resident_memory_bytes,resident_memory_evidence)=match task {
                 // f32 weights, the bf16 G2P widened, and a reserve covering the
                 // measured peak footprint of a 28 s reference.
-                AudioTask::TextToSpeech if family == "megatts3" => (weight_bytes.saturating_add(g2p_bytes).saturating_add(17<<29),"measured peak footprint 6.6 GB (3 s reference) to 13.8 GB (28 s reference, 7.6 s of speech), CPU and Metal alike; estimate: weights, widened G2P and 8.5 GiB working reserve"),
+                AudioTask::TextToSpeech if family == "megatts3" => (weight_bytes.saturating_add(g2p_bytes).saturating_add(19<<29),"measured peak footprint on Metal 8.8 GiB (3 s reference) to 14.3 GiB (27.5 s reference, 13 s of speech), 1.3 to 2.9 GiB above the CPU path; estimate: weights, widened G2P and 9.5 GiB working reserve"),
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
@@ -949,7 +949,8 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             supports_lyrics: false,
             operations: vec!["synthesize".into(), "voice_clone".into()],
             timing: None,
-            backend: "portable_cpu".into(),
+            // Metal by default; the CPU reference is the portable fallback.
+            backend: "metal".into(),
             cancellation: "diffusion_step".into(),
             can_run: true,
             unavailable_reason: None,
@@ -1995,6 +1996,9 @@ mod tests {
         assert_eq!(profile.capabilities.languages, ["en"]);
         assert_eq!(profile.capabilities.max_input_seconds, Some(28));
         assert_eq!(profile.readiness, AudioReadiness::ImplementedUnqualified);
+        // Covers the largest measured peak: Metal, 27.5 s reference, 13 s of
+        // speech (README memory gate).
+        assert!(profile.resident_memory_bytes >= 15_363_862_144);
         let terms: Vec<_> = profile
             .acknowledgments
             .iter()
@@ -2341,12 +2345,12 @@ mod tests {
         assert!(p.capabilities.can_run);
         assert_eq!(p.capabilities.unavailable_reason, None);
         assert_eq!(p.capabilities.operations, vec!["synthesize", "voice_clone"]);
-        assert_eq!(p.capabilities.backend, "portable_cpu");
+        assert_eq!(p.capabilities.backend, "metal");
         assert_eq!(p.capabilities.max_input_seconds, Some(28));
         assert_eq!(p.readiness, AudioReadiness::ImplementedUnqualified);
         assert_eq!(p.acknowledgments[0].id, "megatts3_community_encoder");
-        // f32 weights (20 bytes), the widened G2P (10 more) and the 8.5 GiB reserve.
-        assert_eq!(p.resident_memory_bytes, 20 + 10 + (17 << 29));
+        // f32 weights (20 bytes), the widened G2P (10 more) and the 9.5 GiB reserve.
+        assert_eq!(p.resident_memory_bytes, 20 + 10 + (19 << 29));
 
         // The same row under an unreviewed family stays closed with a reason.
         let closed =

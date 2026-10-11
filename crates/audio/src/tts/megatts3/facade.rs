@@ -63,16 +63,53 @@ pub struct SynthParams {
 }
 
 impl Default for SynthParams {
-    /// The Space's defaults (the CLI's are `p_w` 1.6, `t_w` 2.5).
+    /// The Space's guidance and duration settings (the upstream CLI's are
+    /// `p_w` 1.6, `t_w` 2.5) at Balanced steps. The README's step study found
+    /// no intelligibility or speaker-similarity loss at 16 steps against the
+    /// upstream 32 (`Quality::Best`).
     fn default() -> Self {
         Self {
-            steps: 32,
+            steps: Quality::Balanced.steps(),
             p_w: 1.4,
             t_w: 3.0,
             dur_disturb: 0.1,
             dur_alpha: 1.0,
             max_chunk_bytes: DEFAULT_MAX_CHARS,
         }
+    }
+}
+
+/// Named step counts for a speed and quality choice. Each step is one DiT
+/// pass over the three guidance rows, so time scales with steps; the README's
+/// step study measured what fewer steps cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quality {
+    Fast,
+    Balanced,
+    Best,
+}
+
+impl Quality {
+    pub const ALL: [Self; 3] = [Self::Fast, Self::Balanced, Self::Best];
+
+    pub const fn steps(self) -> usize {
+        match self {
+            Self::Fast => 8,
+            Self::Balanced => 16,
+            Self::Best => 32,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+            Self::Balanced => "balanced",
+            Self::Best => "best",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|q| q.name() == name)
     }
 }
 

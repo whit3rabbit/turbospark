@@ -185,7 +185,7 @@ impl AudioSession {
                     let _permit = crate::heavy::HeavyWorkGuard::try_acquire().ok_or(
                         "audio device is busy; retry opening the model after the current job finishes",
                     )?;
-                    admit_memory(estimate_open_bytes(&path, task, allow_experimental_metal)?)?;
+                    admit_memory(estimate_open_bytes(&path, task)?)?;
                     Engine::open(&path, task, allow_portable, allow_experimental_metal)
                 }))
                 .unwrap_or_else(|_| Err("audio model opening panicked".into()));
@@ -534,19 +534,19 @@ impl Engine {
             // Declared family first: a MegaTTS3 directory must never fall
             // through to the Kokoro loader.
             AudioTask::TextToSpeech if tts_model_type(path).as_deref() == Some(MEGATTS3_FAMILY) => {
-                use crate::megatts3::Device;
-                // Metal is opt-in until its quality and memory gates qualify;
-                // the CPU path is the portable reference.
-                let device = if allow_experimental_metal {
-                    Device::Metal
-                } else if allow_portable {
-                    Device::Cpu
-                } else {
-                    return Err("MegaTTS3 needs explicit opt-in: the portable CPU path or experimental Metal".into());
-                };
-                crate::megatts3::MegaTts3Runner::open(path, device)
-                    .map(|m| Self::MegaTts3(std::cell::RefCell::new(Box::new(m))))
-                    .map_err(|e| e.to_string())
+                let mut failure = String::new();
+                for &device in megatts3_devices(allow_portable) {
+                    match crate::megatts3::MegaTts3Runner::open(path, device) {
+                        Ok(m) => {
+                            if !failure.is_empty() {
+                                eprintln!("MegaTTS3 runs on the CPU because Metal failed to open: {failure}");
+                            }
+                            return Ok(Self::MegaTts3(std::cell::RefCell::new(Box::new(m))));
+                        }
+                        Err(e) => failure = e.to_string(),
+                    }
+                }
+                Err(failure)
             }
             AudioTask::TextToSpeech if allow_portable => {
                 audio::tts::kokoro::KokoroSynthesizer::open(path)
@@ -972,15 +972,28 @@ pub fn qwen_language_name(code: &str) -> String {
         .map_or_else(|| code.to_string(), |(_, name)| name.to_string())
 }
 
+/// Devices MegaTTS3 tries, in order. Metal is the default: it reproduces the
+/// CPU reference to float rounding and is several times faster (family
+/// README, Metal). The CPU path runs only as the portable opt-in's fallback
+/// when the Metal device cannot open, so it is never chosen silently.
+fn megatts3_devices(allow_portable: bool) -> &'static [crate::megatts3::Device] {
+    use crate::megatts3::Device;
+    if allow_portable {
+        &[Device::Metal, Device::Cpu]
+    } else {
+        &[Device::Metal]
+    }
+}
 /// `model_type` of a model directory's root `config.json`, if it declares one.
 fn tts_model_type(path: &Path) -> Option<String> {
     let bytes = std::fs::read(path.join("config.json")).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     value.get("model_type")?.as_str().map(str::to_owned)
 }
-fn estimate_open_bytes(path: &Path, task: AudioTask, metal: bool) -> Result<u64, String> {
+fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
     if task == AudioTask::TextToSpeech && tts_model_type(path).as_deref() == Some(MEGATTS3_FAMILY) {
-        return megatts3_open_bytes(path, metal);
+        // Metal is tried first, and its device copies are the larger estimate.
+        return megatts3_open_bytes(path, true);
     }
     fn weights(path: &Path) -> Result<u64, String> {
         let mut total = 0u64;
@@ -1204,20 +1217,30 @@ mod tests {
         std::fs::write(dir.join("wavvae/model.safetensors"), vec![0u8; 50]).unwrap();
         // Subdirectory weights count, and the bf16 G2P doubles when widened.
         assert_eq!(
-            estimate_open_bytes(&dir, AudioTask::TextToSpeech, false).unwrap(),
+            megatts3_open_bytes(&dir, false).unwrap(),
             2 * 1000 + 300 + 50 + (512 << 20)
         );
-        // Metal keeps the host DiT and WavVAE and uploads them again.
+        // Metal keeps the host DiT and WavVAE and uploads them again, and
+        // admission sizes for it because Metal is tried first.
+        let metal = 2 * 1000 + 2 * 300 + 2 * 50 + (512 << 20);
+        assert_eq!(megatts3_open_bytes(&dir, true).unwrap(), metal);
         assert_eq!(
-            estimate_open_bytes(&dir, AudioTask::TextToSpeech, true).unwrap(),
-            2 * 1000 + 2 * 300 + 2 * 50 + (512 << 20)
+            estimate_open_bytes(&dir, AudioTask::TextToSpeech).unwrap(),
+            metal
         );
-        // Opening without the portable opt-in is refused before any load.
+        // No opt-in is needed: the open gets as far as loading the (empty)
+        // weights instead of refusing up front.
         let err = Engine::open(&dir, AudioTask::TextToSpeech, false, false)
             .err()
             .unwrap();
-        assert!(err.contains("portable"), "{err}");
+        assert!(!err.contains("opt-in"), "{err}");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+    #[test]
+    fn megatts3_opens_on_metal_and_falls_back_to_the_cpu_only_when_allowed() {
+        use crate::megatts3::Device;
+        assert_eq!(megatts3_devices(false), [Device::Metal]);
+        assert_eq!(megatts3_devices(true), [Device::Metal, Device::Cpu]);
     }
     #[test]
     fn output_buffers_are_bounded_and_backpressure_keeps_producer_alive() {
@@ -1378,7 +1401,8 @@ mod tests {
         let wave = audio::read_wav_f32(Path::new(&wav)).unwrap();
         assert_eq!(wave.channels, 1);
         let _serial = crate::heavy::serial_test_lock();
-        let session = AudioSession::open(path.into(), AudioTask::TextToSpeech, true).unwrap();
+        // Metal is the default: no portable or experimental opt-in.
+        let session = AudioSession::open(path.into(), AudioTask::TextToSpeech, false).unwrap();
         assert_eq!(session.family(), MEGATTS3_FAMILY);
         let request = AudioRequest {
             task: AudioTask::TextToSpeech,

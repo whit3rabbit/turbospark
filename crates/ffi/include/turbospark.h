@@ -1511,7 +1511,7 @@ typedef struct TsAudioJob TsAudioJob;
  * reference voice), reference_sample_rate, and English text; p_w (0.1 to 5)
  * and t_w (0.1 to 10) weigh intelligibility and similarity. Send steps (1 to
  * 100) explicitly: an omitted steps means the request type's 30, not the
- * model's default of 32.
+ * model's default of 16 (8, 16 and 32 are the app's Fast, Balanced and Best).
  *
  * CALLBACK. TsAudioCallback is invoked synchronously on the thread calling
  * ts_audio_job_run, and `kind` says what the other arguments hold:
@@ -1558,7 +1558,9 @@ int ts_audio_install(const char *identity_json, TsInstallCallback cb, void *user
 int ts_audio_install_with_options(const char *identity_json, const char *options_json,
                                   TsInstallCallback cb, void *userdata, char **out);
 /* options: task, allow_portable (false), allow_experimental_metal (false),
-   optional expected_family. A mismatch refuses the loaded model. */
+   optional expected_family. A mismatch refuses the loaded model. MegaTTS3
+   opens on Metal; allow_portable lets it fall back to the CPU reference path
+   only when Metal cannot open. */
 int ts_audio_session_open(const char *path, const char *options_json, TsAudioSession **out);
 /* A cancel request for one ts_audio_session_open_cancellable call. Create it
  * before the open, press Stop from any thread with _cancel (never blocks, a

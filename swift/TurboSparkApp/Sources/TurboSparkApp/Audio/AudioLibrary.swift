@@ -70,9 +70,29 @@ struct AudioSpeechSettings: Codable, Equatable, Sendable {
     var cloneOptions: AudioCloneOptions?
 }
 
+/// Named diffusion step counts for the Quality picker. They match the audio
+/// crate's `megatts3::Quality`; the MegaTTS3 README's step study measured
+/// what fewer steps cost.
+enum CloneQuality: CaseIterable, Sendable {
+    case fast, balanced, best
+    var steps: Int {
+        switch self {
+        case .fast: 8
+        case .balanced: 16
+        case .best: 32
+        }
+    }
+    /// The preset a step count belongs to, or nil for a custom count.
+    init?(steps: Int) {
+        guard let match = Self.allCases.first(where: { $0.steps == steps }) else { return nil }
+        self = match
+    }
+}
+
 struct AudioCloneOptions: Codable, Equatable, Sendable {
-    /// Diffusion steps; fewer is faster.
-    var steps = 32
+    /// Diffusion steps; fewer is faster. Balanced matched Best on
+    /// intelligibility and speaker similarity in the step study.
+    var steps = CloneQuality.balanced.steps
     /// Intelligibility guidance weight (`p_w`).
     var intelligibility: Float = 1.4
     /// Similarity guidance weight (`t_w`).
