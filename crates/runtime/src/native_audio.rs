@@ -34,6 +34,15 @@ pub struct AudioRequest {
     pub seed: Option<u64>,
     pub instruction: Option<String>,
     pub reference_text: Option<String>,
+    /// Voice cloning (MegaTTS3): intelligibility guidance weight.
+    pub p_w: Option<f32>,
+    /// Voice cloning (MegaTTS3): similarity guidance weight.
+    pub t_w: Option<f32>,
+    /// Rate of the reference audio carried as the job's PCM when cloning.
+    pub reference_sample_rate: Option<u32>,
+    /// The caller states it has the right to use the reference voice.
+    /// Required for every cloning request.
+    pub consent: bool,
 }
 impl Default for AudioRequest {
     fn default() -> Self {
@@ -50,6 +59,10 @@ impl Default for AudioRequest {
             seed: Some(0),
             instruction: None,
             reference_text: None,
+            p_w: None,
+            t_w: None,
+            reference_sample_rate: None,
+            consent: false,
         }
     }
 }
@@ -230,7 +243,7 @@ impl AudioSession {
         if request.task != self.task {
             return Err("request task does not match the loaded model".into());
         }
-        validate_request(&request, &samples)?;
+        validate_request(&self.family, &request, &samples)?;
         cancel.checkpoint()?;
         {
             let mut active = self.active.lock().unwrap_or_else(|p| p.into_inner());
@@ -309,7 +322,7 @@ fn run_worker(engine: Engine, rx: Receiver<Message>) {
                 completed: 0,
                 total: None,
             }));
-            admit_memory(engine.estimate_run_bytes(&request)?)?;
+            admit_memory(engine.estimate_run_bytes(&request, &samples)?)?;
             let outcome = engine.execute(&request, &samples, &cancel, &events);
             // Cancel discards unfinished output only after the backend actually stops.
             cancel.checkpoint()?;
@@ -320,7 +333,17 @@ fn run_worker(engine: Engine, rx: Receiver<Message>) {
         let _ = reply.send(outcome);
     }
 }
-fn validate_request(request: &AudioRequest, samples: &[f32]) -> Result<(), String> {
+/// Persisted family string of the MegaTTS3 voice-cloning engine.
+pub const MEGATTS3_FAMILY: &str = "megatts3";
+/// Reference audio bounds for cloning: shorter clips align poorly, and the
+/// pipeline uses at most 28 s.
+const CLONE_REFERENCE_SECONDS: std::ops::RangeInclusive<f64> = 1.0..=30.0;
+const CLONE_REFERENCE_RATES: std::ops::RangeInclusive<u32> = 8_000..=192_000;
+
+fn validate_request(family: &str, request: &AudioRequest, samples: &[f32]) -> Result<(), String> {
+    if request.task == AudioTask::TextToSpeech && family == MEGATTS3_FAMILY {
+        return megatts3_request(request, samples).map(|_| ());
+    }
     match request.task {
         AudioTask::SpeechToText => {
             if samples.is_empty()
@@ -358,6 +381,86 @@ fn validate_request(request: &AudioRequest, samples: &[f32]) -> Result<(), Strin
     }
     Ok(())
 }
+/// Validates a cloning request and maps it onto the pipeline's parameters.
+/// `voice` is ignored: the voice comes from the reference audio.
+fn megatts3_request<'a>(
+    r: &'a AudioRequest,
+    samples: &'a [f32],
+) -> Result<crate::megatts3::CloneRequest<'a>, String> {
+    use audio::tts::megatts3::SynthParams;
+    if !r.consent {
+        return Err("voice cloning needs consent: set consent to true to confirm you have the right to use the reference voice".into());
+    }
+    let rate = r
+        .reference_sample_rate
+        .ok_or("voice cloning needs reference_sample_rate for the reference audio")?;
+    if !CLONE_REFERENCE_RATES.contains(&rate) {
+        return Err(format!(
+            "reference_sample_rate {rate} is outside 8000 through 192000 Hz"
+        ));
+    }
+    let seconds = samples.len() as f64 / f64::from(rate);
+    if !CLONE_REFERENCE_SECONDS.contains(&seconds) || samples.iter().any(|v| !v.is_finite()) {
+        return Err(format!(
+            "voice cloning needs 1 through 30 seconds of finite reference audio, got {seconds:.2} s"
+        ));
+    }
+    if r.text.trim().is_empty() || r.text.len() > 32_768 {
+        return Err("speech needs 1 through 32768 text bytes".into());
+    }
+    if !r.speed.is_finite() || !(0.5..=2.0).contains(&r.speed) {
+        return Err("speed must be 0.5 through 2.0".into());
+    }
+    if r.language
+        .as_deref()
+        .is_some_and(|l| !l.is_empty() && !l.to_ascii_lowercase().starts_with("en"))
+    {
+        return Err("MegaTTS3 speaks English only".into());
+    }
+    if r.instruction
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        return Err("MegaTTS3 does not take an instruction".into());
+    }
+    if r.reference_text
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        return Err("MegaTTS3 aligns the reference itself and does not take reference_text".into());
+    }
+    let defaults = SynthParams::default();
+    let steps = r.steps.unwrap_or(defaults.steps);
+    if !(1..=100).contains(&steps) {
+        return Err(format!("steps {steps} is outside 1 through 100"));
+    }
+    let in_range = |name: &str, v: Option<f32>, default: f32, high: f32| -> Result<f32, String> {
+        let v = v.unwrap_or(default);
+        if v.is_finite() && (0.1..=high).contains(&v) {
+            Ok(v)
+        } else {
+            Err(format!("{name} {v} is outside 0.1 through {high}"))
+        }
+    };
+    let params = SynthParams {
+        steps,
+        p_w: in_range("p_w", r.p_w, defaults.p_w, 5.0)?,
+        t_w: in_range("t_w", r.t_w, defaults.t_w, 10.0)?,
+        // Durations scale with alpha, so a faster speed is a smaller alpha.
+        dur_alpha: 1.0 / r.speed,
+        ..defaults
+    };
+    audio::tts::megatts3::plan_chunks(&r.text, params.max_chunk_bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(crate::megatts3::CloneRequest {
+        text: &r.text,
+        reference: samples,
+        reference_rate: rate,
+        seed: r.seed.unwrap_or(0),
+        params,
+    })
+}
+
 fn music_request(r: &AudioRequest) -> audio::music::minimax_music3::TextGenerateRequest {
     audio::music::minimax_music3::TextGenerateRequest {
         caption: r.caption.clone(),
@@ -373,6 +476,7 @@ enum Engine {
     QwenMetal(std::cell::RefCell<Box<crate::qwen3_asr_metal::Qwen3AsrMetalEngine>>),
     Kokoro(Box<crate::KokoroRunner>),
     KokoroPortable(Box<audio::tts::kokoro::KokoroSynthesizer>),
+    MegaTts3(std::cell::RefCell<Box<crate::megatts3::MegaTts3Runner>>),
     Music(Box<crate::Music3Runner>),
 }
 // The observer owns an event sender, so it must be removed even if a backend panics.
@@ -390,6 +494,7 @@ impl Engine {
             Self::Whisper(_) => "whisper",
             Self::Qwen(_) | Self::QwenMetal(_) => "qwen3_asr",
             Self::Kokoro(_) | Self::KokoroPortable(_) => "kokoro",
+            Self::MegaTts3(_) => MEGATTS3_FAMILY,
             Self::Music(_) => "minimax_music3",
         }
     }
@@ -419,6 +524,16 @@ impl Engine {
                     family => Err(format!("unsupported transcription model_type {family:?}")),
                 }
             }
+            // Declared family first: a MegaTTS3 directory must never fall
+            // through to the Kokoro loader.
+            AudioTask::TextToSpeech if tts_model_type(path).as_deref() == Some(MEGATTS3_FAMILY) => {
+                if !allow_portable {
+                    return Err("MegaTTS3 runs on the CPU until its Metal path is qualified; portable execution requires explicit opt-in".into());
+                }
+                crate::megatts3::MegaTts3Runner::open(path)
+                    .map(|m| Self::MegaTts3(std::cell::RefCell::new(Box::new(m))))
+                    .map_err(|e| e.to_string())
+            }
             AudioTask::TextToSpeech if allow_portable => {
                 audio::tts::kokoro::KokoroSynthesizer::open(path)
                     .map(|m| Self::KokoroPortable(Box::new(m)))
@@ -432,8 +547,25 @@ impl Engine {
                 .map_err(|e| e.to_string()),
         }
     }
-    fn estimate_run_bytes(&self, r: &AudioRequest) -> Result<u64, String> {
+    fn estimate_run_bytes(&self, r: &AudioRequest, samples: &[f32]) -> Result<u64, String> {
         match self {
+            Self::MegaTts3(_) => {
+                let c = megatts3_request(r, samples)?;
+                let longest = audio::tts::megatts3::plan_chunks(c.text, c.params.max_chunk_bytes)
+                    .map_err(|e| e.to_string())?
+                    .iter()
+                    .map(String::len)
+                    .max()
+                    .unwrap_or(0);
+                let prompt_24k = (samples.len() as u64
+                    * u64::from(audio::tts::megatts3::SAMPLE_RATE)
+                    / u64::from(c.reference_rate)) as usize;
+                Ok(audio::tts::megatts3::activation_reserve_bytes(
+                    prompt_24k,
+                    longest,
+                    c.params.dur_alpha,
+                ))
+            }
             Self::Kokoro(model) => model
                 .estimate_run_bytes(&kokoro_request(r)?)
                 .map_err(|e| e.to_string()),
@@ -583,6 +715,16 @@ impl Engine {
                     },
                 )?;
             }
+            Self::MegaTts3(model) => {
+                synthesize_megatts3(
+                    r,
+                    samples,
+                    cancel,
+                    events,
+                    &mut result,
+                    &mut model.borrow_mut(),
+                )?;
+            }
             Self::Music(model) => {
                 use audio::music::minimax_music3::{Control, Progress};
                 let generated = model
@@ -701,6 +843,56 @@ fn synthesize_kokoro(
     result.seed = Some(seed);
     Ok(())
 }
+fn synthesize_megatts3(
+    r: &AudioRequest,
+    samples: &[f32],
+    cancel: &AudioCancel,
+    events: &SyncSender<AudioEvent>,
+    result: &mut AudioResult,
+    runner: &mut crate::megatts3::MegaTts3Runner,
+) -> Result<(), String> {
+    use crate::megatts3::CloneProgress;
+    let request = megatts3_request(r, samples)?;
+    let mut error = None;
+    let mut progress = |p: CloneProgress| {
+        cancel
+            .checkpoint()
+            .map_err(|why| audio::SpeechError::Input { why })?;
+        let (stage, completed, total) = match p {
+            CloneProgress::Reference => ("reference", 0, Some(1)),
+            CloneProgress::Diffusion { completed, total } => ("diffusion", completed, Some(total)),
+        };
+        events
+            .send(AudioEvent::Progress(AudioProgress {
+                stage: stage.into(),
+                completed,
+                total,
+            }))
+            .map_err(|_| audio::SpeechError::Input {
+                why: "audio event receiver closed".into(),
+            })
+    };
+    let mut emit = |pcm: Vec<f32>| match emit_pcm(&pcm, cancel, events, &mut result.sample_count) {
+        Ok(()) => true,
+        Err(e) => {
+            error = Some(e);
+            false
+        }
+    };
+    runner
+        .synthesize_controlled(&request, &mut progress, &mut emit)
+        .map_err(|e| e.to_string())?;
+    if let Some(e) = error {
+        return Err(e);
+    }
+    result.pcm_format = Some(AudioPcmFormat {
+        sample_rate: audio::tts::megatts3::SAMPLE_RATE,
+        channels: 1,
+        interleaved: true,
+    });
+    result.seed = Some(request.seed);
+    Ok(())
+}
 fn emit_pcm(
     pcm: &[f32],
     cancel: &AudioCancel,
@@ -764,7 +956,16 @@ pub fn qwen_language_name(code: &str) -> String {
         .map_or_else(|| code.to_string(), |(_, name)| name.to_string())
 }
 
+/// `model_type` of a model directory's root `config.json`, if it declares one.
+fn tts_model_type(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path.join("config.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    value.get("model_type")?.as_str().map(str::to_owned)
+}
 fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
+    if task == AudioTask::TextToSpeech && tts_model_type(path).as_deref() == Some(MEGATTS3_FAMILY) {
+        return megatts3_open_bytes(path);
+    }
     fn weights(path: &Path) -> Result<u64, String> {
         let mut total = 0u64;
         for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
@@ -781,6 +982,35 @@ fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
     Ok(weights(path)?
         .saturating_mul(multiplier)
         .saturating_add(512 << 20))
+}
+/// MegaTTS3 keeps each component in its own subdirectory, loaded as f32. The
+/// G2P checkpoint is bf16 on disk and doubles when widened. Measured resident
+/// size on the CPU path is about 5.8 GB for 4.4 GB of safetensors.
+fn megatts3_open_bytes(path: &Path) -> Result<u64, String> {
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
+        let dir = entry.map_err(|e| e.to_string())?.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        for file in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let file = file.map_err(|e| e.to_string())?;
+            if file
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "safetensors")
+            {
+                let len = file.metadata().map_err(|e| e.to_string())?.len();
+                let widen = if dir.file_name().is_some_and(|n| n == "g2p") {
+                    2
+                } else {
+                    1
+                };
+                total = total.saturating_add(len.saturating_mul(widen));
+            }
+        }
+    }
+    Ok(total.saturating_add(512 << 20))
 }
 fn estimate_run_bytes(request: &AudioRequest) -> u64 {
     match request.task {
@@ -824,13 +1054,13 @@ mod tests {
             text: "test".into(),
             ..AudioRequest::default()
         };
-        assert!(validate_request(&request, &[]).is_ok());
-        assert!(validate_request(&request, &[0.0]).is_err());
+        assert!(validate_request("kokoro", &request, &[]).is_ok());
+        assert!(validate_request("kokoro", &request, &[0.0]).is_err());
         request.speed = f32::NAN;
-        assert!(validate_request(&request, &[]).is_err());
+        assert!(validate_request("kokoro", &request, &[]).is_err());
         request.speed = 1.0;
         request.voice = "missing".into();
-        assert!(validate_request(&request, &[]).is_err());
+        assert!(validate_request("kokoro", &request, &[]).is_err());
     }
     #[test]
     fn kokoro_request_retains_language_and_refuses_unsupported_locale() {
@@ -839,13 +1069,129 @@ mod tests {
             text: "Hello, world!".into(),
             ..Default::default()
         };
-        assert!(validate_request(&request, &[]).is_ok());
+        assert!(validate_request("kokoro", &request, &[]).is_ok());
         request.language = Some("en-US".into());
-        assert!(validate_request(&request, &[]).is_ok());
+        assert!(validate_request("kokoro", &request, &[]).is_ok());
         request.language = Some("fr-FR".into());
-        assert!(validate_request(&request, &[])
+        assert!(validate_request("kokoro", &request, &[])
             .unwrap_err()
             .contains("en-US"));
+    }
+    fn clone_request() -> AudioRequest {
+        AudioRequest {
+            task: AudioTask::TextToSpeech,
+            text: "Hello, world!".into(),
+            reference_sample_rate: Some(16_000),
+            consent: true,
+            steps: Some(32),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn megatts3_validation_requires_consent_and_a_bounded_reference() {
+        let two_seconds = vec![0.1f32; 32_000];
+        let ok = clone_request();
+        assert!(validate_request(MEGATTS3_FAMILY, &ok, &two_seconds).is_ok());
+        // Kokoro still refuses PCM for the same request.
+        assert!(validate_request("kokoro", &ok, &two_seconds).is_err());
+
+        let refused = |mutate: &dyn Fn(&mut AudioRequest), pcm: &[f32], needle: &str| {
+            let mut r = clone_request();
+            mutate(&mut r);
+            let err = validate_request(MEGATTS3_FAMILY, &r, pcm).unwrap_err();
+            assert!(err.contains(needle), "{err:?} lacks {needle:?}");
+        };
+        refused(&|r| r.consent = false, &two_seconds, "consent");
+        refused(
+            &|r| r.reference_sample_rate = None,
+            &two_seconds,
+            "reference_sample_rate",
+        );
+        refused(
+            &|r| r.reference_sample_rate = Some(4_000),
+            &two_seconds,
+            "8000",
+        );
+        refused(&|_| {}, &[], "1 through 30 seconds");
+        refused(&|_| {}, &vec![0.1; 15_999], "1 through 30 seconds");
+        refused(&|_| {}, &vec![0.1; 16_000 * 30 + 1], "1 through 30 seconds");
+        let mut nan = two_seconds.clone();
+        nan[7] = f32::NAN;
+        refused(&|_| {}, &nan, "finite");
+        refused(&|r| r.text = " ".into(), &two_seconds, "text bytes");
+        refused(
+            &|r| r.text = "\u{4f60}\u{597d}".into(),
+            &two_seconds,
+            "English",
+        );
+        refused(&|r| r.language = Some("fr".into()), &two_seconds, "English");
+        refused(&|r| r.speed = 3.0, &two_seconds, "speed");
+        refused(&|r| r.steps = Some(0), &two_seconds, "steps");
+        refused(&|r| r.steps = Some(101), &two_seconds, "steps");
+        refused(&|r| r.p_w = Some(0.0), &two_seconds, "p_w");
+        refused(&|r| r.t_w = Some(f32::NAN), &two_seconds, "t_w");
+        refused(
+            &|r| r.instruction = Some("whisper".into()),
+            &two_seconds,
+            "instruction",
+        );
+        refused(
+            &|r| r.reference_text = Some("hi".into()),
+            &two_seconds,
+            "reference_text",
+        );
+        // Exactly 1 s and 30 s are accepted.
+        assert!(validate_request(MEGATTS3_FAMILY, &ok, &vec![0.1; 16_000]).is_ok());
+        assert!(validate_request(MEGATTS3_FAMILY, &ok, &vec![0.1; 16_000 * 30]).is_ok());
+    }
+    #[test]
+    fn megatts3_request_maps_defaults_and_speed() {
+        let pcm = vec![0.1f32; 32_000];
+        let mut r = clone_request();
+        r.steps = None;
+        r.seed = Some(9);
+        r.speed = 2.0;
+        let c = megatts3_request(&r, &pcm).unwrap();
+        let d = audio::tts::megatts3::SynthParams::default();
+        assert_eq!(
+            (c.params.steps, c.params.p_w, c.params.t_w),
+            (d.steps, d.p_w, d.t_w)
+        );
+        assert_eq!(c.params.dur_alpha, 0.5, "twice the speed halves durations");
+        assert_eq!((c.seed, c.reference_rate), (9, 16_000));
+    }
+    #[test]
+    fn tts_family_sniff_and_megatts3_admission_estimate() {
+        let dir = std::env::temp_dir().join(format!("ts-megatts3-sniff-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("g2p")).unwrap();
+        std::fs::create_dir_all(dir.join("diffusion_transformer")).unwrap();
+        assert_eq!(tts_model_type(&dir), None);
+        std::fs::write(dir.join("config.json"), r#"{"istftnet":{}}"#).unwrap();
+        assert_eq!(
+            tts_model_type(&dir),
+            None,
+            "a Kokoro-style config declares nothing"
+        );
+        std::fs::write(dir.join("config.json"), r#"{"model_type":"megatts3"}"#).unwrap();
+        assert_eq!(tts_model_type(&dir).as_deref(), Some(MEGATTS3_FAMILY));
+        std::fs::write(dir.join("g2p/model.safetensors"), vec![0u8; 1000]).unwrap();
+        std::fs::write(
+            dir.join("diffusion_transformer/model.safetensors"),
+            vec![0u8; 300],
+        )
+        .unwrap();
+        // Subdirectory weights count, and the bf16 G2P doubles when widened.
+        assert_eq!(
+            estimate_open_bytes(&dir, AudioTask::TextToSpeech).unwrap(),
+            2 * 1000 + 300 + (512 << 20)
+        );
+        // Opening without the portable opt-in is refused before any load.
+        let err = Engine::open(&dir, AudioTask::TextToSpeech, false, false)
+            .err()
+            .unwrap();
+        assert!(err.contains("portable"), "{err}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
     #[test]
     fn output_buffers_are_bounded_and_backpressure_keeps_producer_alive() {
@@ -997,6 +1343,71 @@ mod tests {
         assert!(pcm.iter().all(|v| v.is_finite()));
         assert_eq!(result.pcm_format.unwrap().sample_rate, 24000);
         eprintln!("Kokoro portable PCM: {} samples", pcm.len());
+    }
+    #[test]
+    #[ignore = "requires TURBOSPARK_MEGATTS3_DIR and TURBOSPARK_MEGATTS3_REFERENCE"]
+    fn real_megatts3_worker_clones_streams_and_cancels() {
+        let path = std::env::var_os("TURBOSPARK_MEGATTS3_DIR").unwrap();
+        let wav = std::env::var_os("TURBOSPARK_MEGATTS3_REFERENCE").unwrap();
+        let wave = audio::read_wav_f32(Path::new(&wav)).unwrap();
+        assert_eq!(wave.channels, 1);
+        let _serial = crate::heavy::serial_test_lock();
+        let session = AudioSession::open(path.into(), AudioTask::TextToSpeech, true).unwrap();
+        assert_eq!(session.family(), MEGATTS3_FAMILY);
+        let request = AudioRequest {
+            task: AudioTask::TextToSpeech,
+            text: "Hello world.".into(),
+            reference_sample_rate: Some(wave.sample_rate),
+            consent: true,
+            steps: Some(2),
+            seed: Some(1),
+            ..AudioRequest::default()
+        };
+        let (mut pcm, mut stages) = (Vec::new(), Vec::new());
+        let result = session
+            .execute(
+                request.clone(),
+                wave.samples.clone(),
+                AudioCancel::default(),
+                |event| match event {
+                    AudioEvent::Pcm(chunk) => pcm.extend(chunk),
+                    AudioEvent::Progress(p) => stages.push(p.stage),
+                },
+            )
+            .unwrap();
+        assert_eq!(result.sample_count, pcm.len());
+        assert!(pcm.iter().all(|v| v.is_finite()) && pcm.iter().any(|v| v.abs() > 1e-4));
+        assert_eq!(result.pcm_format.unwrap().sample_rate, 24000);
+        assert_eq!(result.seed, Some(1));
+        assert!(stages.iter().any(|s| s == "reference"));
+        assert!(stages.iter().any(|s| s == "diffusion"));
+        eprintln!("MegaTTS3 PCM: {} samples, stages {stages:?}", pcm.len());
+
+        // Missing consent never reaches the worker.
+        let mut refused = request.clone();
+        refused.consent = false;
+        let err = session
+            .execute(
+                refused,
+                wave.samples.clone(),
+                AudioCancel::default(),
+                |_| {},
+            )
+            .unwrap_err();
+        assert!(err.contains("consent"), "{err}");
+
+        // Cancelling at the first diffusion step stops the job.
+        let cancel = AudioCancel::default();
+        let signal = cancel.clone();
+        let err = session
+            .execute(request, wave.samples, cancel, |event| {
+                if matches!(event, AudioEvent::Progress(AudioProgress { ref stage, completed, .. }) if stage == "diffusion" && completed >= 1)
+                {
+                    signal.cancel();
+                }
+            })
+            .unwrap_err();
+        assert!(err.contains("cancelled"), "{err}");
     }
     #[test]
     fn music_trace_sender_is_released_on_backend_unwind() {

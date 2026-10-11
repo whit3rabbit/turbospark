@@ -163,6 +163,8 @@ pub use foundation::TokenId;
 #[cfg(target_os = "macos")]
 pub mod kokoro;
 #[cfg(target_os = "macos")]
+pub mod megatts3;
+#[cfg(target_os = "macos")]
 pub mod music3;
 #[cfg(target_os = "macos")]
 pub use kokoro::KokoroRunner;

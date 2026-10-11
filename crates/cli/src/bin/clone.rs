@@ -6,17 +6,19 @@ use std::time::Instant;
 
 use audio::tts::megatts3::{resample_reference, MegaTts3, SeededRng, SynthParams, SAMPLE_RATE};
 use audio::Waveform;
+use catalog::Store;
 
 const USAGE: &str = "\
 turbospark-clone: clone a voice from a short recording and speak new English text
 
 USAGE:
-    turbospark-clone speak --model DIR --reference WAV (--text TEXT | --text-file PATH) \\
+    turbospark-clone speak --model MODEL --reference WAV (--text TEXT | --text-file PATH) \\
         --output WAV --consent [--steps N] [--p-w X] [--t-w X] [--seed N] \\
         [--wav-format pcm16|float32]
 
---model is a converted MegaTTS3 directory (aligner_lm/, diffusion_transformer/,
-duration_lm/, wavvae/, g2p/) produced by crates/audio/tools/convert_megatts3.py.
+--model is an installed audio alias or a converted MegaTTS3 directory (aligner_lm/,
+diffusion_transformer/, duration_lm/, wavvae/, g2p/) produced by
+crates/audio/tools/convert_megatts3.py.
 --reference is a clean recording of the target voice, mono or multichannel at any
 sample rate; at most the first 28 seconds are used. Text is English only.
 --steps (default 32, 1 through 100) trades speed for quality. --p-w (default 1.4,
@@ -235,11 +237,26 @@ fn load_reference(path: &Path) -> Result<Vec<f32>, Error> {
         .map_err(|e| Error::Failed(format!("resampling the reference: {e}")))
 }
 
+/// A directory as given, else an installed audio alias.
+fn resolve_model(model: &Path) -> Result<PathBuf, Error> {
+    if model.is_dir() {
+        return Ok(model.to_path_buf());
+    }
+    let name = model.to_string_lossy();
+    let store = Store::default_store().map_err(Error::Failed)?;
+    store.resolve_audio(&name).ok_or_else(|| {
+        Error::Failed(format!(
+            "{name:?} is neither a directory nor an installed audio alias"
+        ))
+    })
+}
+
 fn speak(options: &SpeakOptions) -> Result<(), Error> {
     let reference = load_reference(&options.reference)?;
+    let model = resolve_model(&options.model)?;
     let started = Instant::now();
-    let mut tts = MegaTts3::open(&options.model)
-        .map_err(|e| Error::Failed(format!("opening {}: {e}", options.model.display())))?;
+    let mut tts = MegaTts3::open(&model)
+        .map_err(|e| Error::Failed(format!("opening {}: {e}", model.display())))?;
     let opened = started.elapsed();
     let mut rng = SeededRng::new(options.seed);
     let prompt = tts
@@ -406,9 +423,10 @@ mod tests {
             seed: 0,
             wav_format: WavFormat::Pcm16,
         };
+        // Neither a directory nor an installed alias: refused before loading.
         let err = speak(&options).unwrap_err();
         assert!(
-            matches!(&err, Error::Failed(m) if m.contains("opening")),
+            matches!(&err, Error::Failed(m) if m.contains("/nonexistent/megatts3")),
             "{err:?}"
         );
         assert!(!options.output.exists());

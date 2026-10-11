@@ -114,8 +114,8 @@ README.
 ### Voice cloning
 
 `turbospark-clone speak` clones the voice in a short reference recording and
-speaks new English text. The model is a converted MegaTTS3 directory (see
-`crates/audio/tools/convert_megatts3.py`); there is no catalog alias yet.
+speaks new English text. `--model` is an installed audio alias or a converted
+MegaTTS3 directory (see `crates/audio/tools/convert_megatts3.py`).
 
 ```sh
 turbospark-clone speak \
