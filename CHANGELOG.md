@@ -499,6 +499,11 @@ when this file gets updated relative to the version bump and the tag.
   Later repack lines still read as packing because there is no end marker yet.
 
 ### Fixed
+- `crates/catalog`: an audio catalog install downloaded every file and then
+  refused to publish it. The hub reports the repository id in lowercase, and
+  publication compared it case-sensitively against the pinned id, which is
+  mixed case in every audio row. Publication now compares it the way source
+  resolution does.
 - `swift/TurboSparkApp`: the Settings window opens large. Its min/ideal frame
   was ignored by the Settings scene, so it opened at the 940x660 floor on
   every display. It now takes a fixed size from the visible frame (76% x 86%,

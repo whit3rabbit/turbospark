@@ -582,8 +582,14 @@ impl AudioCatalog {
         }
         let group = &receipt.sources[0];
         let expected = &plan.sources[0];
+        // The hub returns the repository id lowercased (Hub ids are
+        // case-insensitive), so compare it the way `matches_exact_source` does.
         if group.role != expected.role
-            || group.repo != expected.repo
+            || !group.repo.repo.eq_ignore_ascii_case(&expected.repo.repo)
+            || !group
+                .repo
+                .revision
+                .eq_ignore_ascii_case(&expected.repo.revision)
             || group.files.len() != profile.assets.len()
         {
             return Err("audio transfer does not match the pinned source graph".into());
@@ -2068,7 +2074,7 @@ mod tests {
 
     #[test]
     fn publication_rejects_incomplete_changed_duplicate_and_corrupt_receipts() {
-        for mutation in 0..8 {
+        for mutation in 0..9 {
             let root = Scratch::new();
             let store = Store::new(root.0.join("store"));
             let (catalog, identity, mut receipt) = fixture(&root.0);
@@ -2086,6 +2092,7 @@ mod tests {
                 }
                 5 => receipt.sources[0].files[1] = receipt.sources[0].files[0].clone(),
                 6 => receipt.sources[0].files[0].staged_path = root.0.join("outside"),
+                7 => receipt.sources[0].repo.repo = "other-owner/Kokoro-82M-bf16".into(),
                 _ => {
                     fs::write(
                         receipt.staging_root.join("source-0000/extra.json"),
@@ -2103,6 +2110,28 @@ mod tests {
             assert!(!store.audio_install_path(&identity.alias).exists());
             assert!(!store.root().join("installed.json").exists());
         }
+    }
+
+    /// A real transfer receipt carries the repository id the hub resolved,
+    /// which is lowercased. Every pinned audio repository is mixed case, so
+    /// an exact compare refused every real install after the download.
+    #[test]
+    fn publication_accepts_the_lowercased_repository_id_the_hub_resolves() {
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        let (catalog, identity, mut receipt) = fixture(&root.0);
+        assert_ne!(
+            identity.repository,
+            identity.repository.to_ascii_lowercase()
+        );
+        receipt.sources[0].repo = RepoRef::new(
+            identity.repository.to_ascii_lowercase(),
+            identity.revision.clone(),
+        );
+        let installed = catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .unwrap();
+        assert_eq!(installed.repo, identity.repository);
     }
 
     #[test]
