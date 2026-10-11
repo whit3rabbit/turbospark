@@ -484,7 +484,9 @@ extension AppModel {
             }
         }
         showToast(
-            "Compacted \(rows.count) earlier message\(rows.count == 1 ? "" : "s") into a summary.",
+            rows.count == 1
+                ? AppStrings.localized("Compacted 1 earlier message into a summary.")
+                : AppStrings.localized("Compacted \(rows.count) earlier messages into a summary."),
             style: .success)
         return .compacted(rowsSummarized: rows.count)
     }
@@ -524,7 +526,7 @@ extension AppModel {
         case .nothingToCompact, .cancelled:
             return false
         case .failed(let message):
-            showToast("Auto-compaction failed: \(message)", style: .warning)
+            showToast(AppStrings.localized("Auto-compaction failed: \(message)"), style: .warning)
             return false
         }
     }
@@ -538,7 +540,7 @@ extension AppModel {
         guard session != nil
             || (compactionSummaryOverride != nil && compactionTokenCountOverride != nil)
         else {
-            error = "Load a model before compacting."
+            error = AppStrings.localized("Load a model before compacting.")
             return
         }
         guard !generating, !submitting, pendingToolCall == nil else { return }
@@ -564,10 +566,10 @@ extension AppModel {
                 break
             case .nothingToCompact:
                 self.showToast(
-                    "Nothing to compact yet: the recent conversation is the whole of it.",
+                    AppStrings.localized("Nothing to compact yet: the recent conversation is the whole of it."),
                     style: .info)
             case .failed(let message):
-                self.error = "Compaction failed: \(message)"
+                self.error = AppStrings.localized("Compaction failed: \(message)")
             }
         }
     }

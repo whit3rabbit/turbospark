@@ -36,7 +36,7 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var isPaused = false
     @Published var recordingSeconds: Double = 0
     @Published var inputLevel: Float = 0
-    @Published var status = String(localized: "Saved in this profile", bundle: .module)
+    @Published var status = AppStrings.localized("Saved in this profile")
     @Published var error: String?
     @Published var progress: Double?
     @Published var generationProgress: AudioGenerationProgress?
@@ -225,7 +225,7 @@ final class AudioWorkspaceController: ObservableObject {
         if let model = recipe.modelID { preferences.selectedModels[modelSelectionKey] = model }
         do {
             try library.savePreferences(preferences)
-            if !isBusy && error == nil { status = String(localized: "Saved in this profile", bundle: .module) }
+            if !isBusy && error == nil { status = AppStrings.localized("Saved in this profile") }
         }
         catch { fail(error) }
     }
@@ -308,7 +308,7 @@ final class AudioWorkspaceController: ObservableObject {
     func publish(_ item: AudioLibraryItem) {
         if let index = items.firstIndex(where: { $0.id == item.id }) { items[index] = item }
         else { items.insert(item, at: 0) }
-        if !isBusy { status = String(localized: "Saved in this profile", bundle: .module) }
+        if !isBusy { status = AppStrings.localized("Saved in this profile") }
     }
     func refreshPendingPins() {
         ManagedAssetPins.set(Set(pendingSaves.values.flatMap(\.assetReferences).compactMap(ManagedAssetStore.assetID(from:))), owner: pendingAssetOwner)
@@ -347,7 +347,7 @@ final class AudioWorkspaceController: ObservableObject {
     }
     func fail(_ failure: Error) {
         error = failure.localizedDescription
-        status = String(localized: "Not saved. Retry after checking available storage.", bundle: .module)
+        status = AppStrings.localized("Not saved. Retry after checking available storage.")
     }
     func update(_ id: UUID, _ mutation: (inout AudioLibraryItem) -> Void) {
         do { try persistMutation(id, mutation) } catch { fail(error) }
@@ -382,12 +382,12 @@ final class AudioWorkspaceController: ObservableObject {
     func duplicateSelected() {
         guard var copy = selectedItem else { return }
         copy.sourceID = copy.id; copy.id = UUID(); copy.createdAt = Date(); copy.updatedAt = Date()
-        copy.title += String(localized: " copy", bundle: .module); copy.recipe = recipe
+        copy.title += AppStrings.localized(" copy"); copy.recipe = recipe
         copy.status = .draft; copy.failure = nil
         do { try save(copy); select(copy) } catch { fail(error) }
     }
     func saveDraft() {
-        var draft = AudioLibraryItem(title: String(localized: "Untitled audio project", bundle: .module), kind: kind)
+        var draft = AudioLibraryItem(title: AppStrings.localized("Untitled audio project"), kind: kind)
         draft.status = .draft; draft.recipe = recipe; draft.sourceID = runSource?.id
         do { try save(draft); select(draft) } catch { fail(error) }
     }
@@ -460,11 +460,11 @@ final class AudioWorkspaceController: ObservableObject {
     func modelBookmark(for profile: AudioProfile, source: AudioLibraryItem? = nil) throws -> Data? {
         guard let source else { return preferences.localModels[profile.identity.alias] }
         if let family = source.modelFamily, family != profile.family {
-            throw AudioWorkspaceError.message(String(localized: "The saved model is unavailable. Choose a model and create a new take.", bundle: .module))
+            throw AudioWorkspaceError.message(AppStrings.localized("The saved model is unavailable. Choose a model and create a new take."))
         }
         if let identity = source.modelIdentity,
            try JSONDecoder().decode(AudioProfileIdentity.self, from: identity) != profile.identity {
-            throw AudioWorkspaceError.message(String(localized: "The saved model is unavailable. Choose a model and create a new take.", bundle: .module))
+            throw AudioWorkspaceError.message(AppStrings.localized("The saved model is unavailable. Choose a model and create a new take."))
         }
         return source.localModelBookmark
     }
@@ -505,7 +505,7 @@ final class AudioWorkspaceController: ObservableObject {
     func chooseModelFolder() {
         guard let profile = selectedProfile, !isBusy, !hasRecordingActivity else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
-        panel.message = String(localized: "Choose a checkpoint folder for the selected audio model.", bundle: .module)
+        panel.message = AppStrings.localized("Choose a checkpoint folder for the selected audio model.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             preferences.localModels[profile.identity.alias] = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
@@ -519,14 +519,14 @@ final class AudioWorkspaceController: ObservableObject {
         if let installHandler { _ = installHandler(profile, acknowledged); return }
         guard !isInstalling else { return }
         isInstalling = true; error = nil
-        status = String(localized: "Downloading audio model", bundle: .module)
+        status = AppStrings.localized("Downloading audio model")
         let token = epoch
         Task { [weak self] in
             let result = await Task.detached { Result { try AudioCatalog.install(profile.identity, acknowledged: acknowledged) } }.value
             guard let self, self.valid(token) else { return }
             self.isInstalling = false
             switch result {
-            case .success(let record): self.installedPaths[record.alias] = record.path; self.status = String(localized: "Audio model installed", bundle: .module)
+            case .success(let record): self.installedPaths[record.alias] = record.path; self.status = AppStrings.localized("Audio model installed")
             case .failure(let error): self.error = error.localizedDescription
             }
         }
@@ -538,10 +538,10 @@ final class AudioWorkspaceController: ObservableObject {
         if let bookmark = try modelBookmark(for: profile, source: source) {
             var stale = false
             let resolved = try URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale)
-            guard !stale else { throw AudioWorkspaceError.message(String(localized: "The model folder moved. Choose it again.", bundle: .module)) }
+            guard !stale else { throw AudioWorkspaceError.message(AppStrings.localized("The model folder moved. Choose it again.")) }
             _ = resolved.startAccessingSecurityScopedResource(); url = resolved; path = resolved.path
         } else if let installed = installedPaths[profile.identity.alias] { path = installed }
-        else { throw AudioWorkspaceError.message(String(localized: "Download this model or choose its checkpoint folder.", bundle: .module)) }
+        else { throw AudioWorkspaceError.message(AppStrings.localized("Download this model or choose its checkpoint folder.")) }
         let key = "\(profile.family):\(profile.identity.task.rawValue):\(path):\(portable):\(experimentalMetal)"
         if sessionKey == key, let session { url?.stopAccessingSecurityScopedResource(); return session }
         if let previous = session { await Task.detached { previous.close() }.value }
@@ -553,7 +553,7 @@ final class AudioWorkspaceController: ObservableObject {
             opening.onProgress = { [weak self, weak opening] fraction in
                 Task { @MainActor in
                     guard let self, let opening, self.valid(token), self.opening === opening else { return }
-                    self.status = String(localized: "Verifying", bundle: .module)
+                    self.status = AppStrings.localized("Verifying")
                     self.progress = fraction
                 }
             }

@@ -126,7 +126,7 @@ public enum AppStorageRoot {
                 // optional, but the cause must name the asset or every later
                 // turn fails with an unattributable `image : ...` error.
                 AppJSONStore.recordReadFailure(
-                    label: "Managed file \(path.suffix(12))", error: error)
+                    label: "Managed file \(String(path.suffix(12)))", error: error)
                 return ""
             }
         }
@@ -157,6 +157,10 @@ public enum AppStorageRoot {
 /// reads the stderr line the original is gone. The file is QUARANTINED
 /// instead: renamed with a timestamp, so a fresh one is written beside it and
 /// the user's data is recoverable by hand.
+///
+/// A `label` is a catalog key naming the store ("Chat archive"). The latched
+/// message reaches a toast, so it resolves in the picker's language; the
+/// stderr line resolves the same key in English, because a log line is not UI.
 public enum AppJSONStore {
     /// The last write failure, for a caller that wants to surface it.
     ///
@@ -215,7 +219,7 @@ public enum AppJSONStore {
     /// prevent, reached by the one path that skipped it. A file that EXISTS
     /// and cannot be read is quarantined and reported like a corrupt one.
     public static func load<T: Decodable>(
-        _ type: T.Type, from url: URL, label: String,
+        _ type: T.Type, from url: URL, label: String.LocalizationValue,
         decoder: JSONDecoder = JSONDecoder()
     ) -> T? {
         if let key = ProfileRepository.protectedRecordKey(for: url) {
@@ -234,35 +238,68 @@ public enum AppJSONStore {
                 // A genuine first run. Not an error, and nothing to preserve.
                 return nil
             }
-            report(label: label, url: url, error: error, verb: "could not be read")
+            report(label: label, url: url, error: error, failure: .unreadable)
             return nil
         }
         do {
             return try decoder.decode(type, from: data)
         } catch {
-            report(label: label, url: url, error: error, verb: "failed to decode")
+            report(label: label, url: url, error: error, failure: .undecodable)
             return nil
+        }
+    }
+
+    private enum ReadFailure {
+        case unreadable
+        case undecodable
+
+        var logVerb: String {
+            switch self {
+            case .unreadable: return "could not be read"
+            case .undecodable: return "failed to decode"
+            }
         }
     }
 
     /// Quarantines an unreadable file and records why, on stderr and on
     /// `lastReadError`.
-    private static func report(label: String, url: URL, error: Error, verb: String) {
+    private static func report(
+        label: String.LocalizationValue, url: URL, error: Error, failure: ReadFailure
+    ) {
         readFailureCount += 1
         let quarantined = quarantine(url)
+        // Whole-sentence keys per failure, so no translation has to agree
+        // with an English verb spliced into it.
+        let name = AppStrings.localized(label)
+        let detail = error.localizedDescription
+        let summary: String
+        switch failure {
+        case .unreadable:
+            summary = AppStrings.localized("\(name) could not be read, starting empty: \(detail).")
+        case .undecodable:
+            summary = AppStrings.localized("\(name) failed to decode, starting empty: \(detail).")
+        }
         let kept =
+            quarantined.map { AppStrings.localized("The unreadable file was kept at \($0.path).") }
+            ?? AppStrings.localized("The unreadable file could not be preserved.")
+        lastReadError = "\(summary) \(kept)"
+        let keptLog =
             quarantined.map { "the unreadable file was kept at \($0.path)" }
             ?? "the unreadable file could NOT be preserved"
-        lastReadError = "\(label) \(verb), starting empty: \(error.localizedDescription). \(kept)"
         FileHandle.standardError.write(
-            ("TurboSpark: \(label) \(verb), starting empty: \(error)\n"
-                + "TurboSpark: \(kept)\n").data(using: .utf8)!)
+            ("TurboSpark: \(englishName(label)) \(failure.logVerb), starting empty: \(error)\n"
+                + "TurboSpark: \(keptLog)\n").data(using: .utf8)!)
+    }
+
+    /// `label` for the stderr line, which stays English.
+    private static func englishName(_ label: String.LocalizationValue) -> String {
+        AppStrings.localized(label, language: .english)
     }
 
     /// Writes `value` atomically, recording rather than swallowing a failure.
     @discardableResult
     public static func save<T: Encodable>(
-        _ value: T, to url: URL, label: String,
+        _ value: T, to url: URL, label: String.LocalizationValue,
         encoder: JSONEncoder = JSONEncoder()
     ) -> Bool {
         if let key = ProfileRepository.protectedRecordKey(for: url) {
@@ -279,28 +316,31 @@ public enum AppJSONStore {
             try data.write(to: url, options: .atomic)
             return true
         } catch {
-            let message = "\(label) could not be saved: \(error.localizedDescription)"
-            lastWriteError = message
-            FileHandle.standardError.write("TurboSpark: \(message)\n".data(using: .utf8)!)
+            recordWriteFailure(label: label, error: error)
             return false
         }
     }
 
-    static func recordReadFailure(label: String, error: Error) {
-        let message = "\(label) could not be read: \(error.localizedDescription)"
+    static func recordReadFailure(label: String.LocalizationValue, error: Error) {
+        let name = AppStrings.localized(label)
+        let detail = error.localizedDescription
+        let message = AppStrings.localized("\(name) could not be read: \(detail)")
         // One critical section so a concurrent reader never sees the count
         // bumped without its message.
         latchLock.withLock {
             latchReadFailureCount += 1
             latchReadError = message
         }
-        FileHandle.standardError.write("TurboSpark: \(message)\n".data(using: .utf8)!)
+        FileHandle.standardError.write(
+            "TurboSpark: \(englishName(label)) could not be read: \(detail)\n".data(using: .utf8)!)
     }
 
-    static func recordWriteFailure(label: String, error: Error) {
-        let message = "\(label) could not be saved: \(error.localizedDescription)"
-        lastWriteError = message
-        FileHandle.standardError.write("TurboSpark: \(message)\n".data(using: .utf8)!)
+    static func recordWriteFailure(label: String.LocalizationValue, error: Error) {
+        let name = AppStrings.localized(label)
+        let detail = error.localizedDescription
+        lastWriteError = AppStrings.localized("\(name) could not be saved: \(detail)")
+        FileHandle.standardError.write(
+            "TurboSpark: \(englishName(label)) could not be saved: \(detail)\n".data(using: .utf8)!)
     }
 
     /// Moves an unreadable file aside, returning where it went.

@@ -181,7 +181,8 @@ enum MentionResolver {
         guard hit else { return false }
         if isExplicit {
             model.showToast(
-                "@file: \(text) looks like a credential file; it was not read.", style: .warning)
+                AppStrings.localized("@file: \(text) looks like a credential file; it was not read."),
+                style: .warning)
         }
         return true
     }

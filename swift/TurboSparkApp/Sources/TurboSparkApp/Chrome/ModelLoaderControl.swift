@@ -85,8 +85,8 @@ struct ModelLoaderControl: View {
         .overlay {
             Capsule().stroke(strokeColor, lineWidth: 0.5)
         }
-        .animation(TSMotion.select, value: model.session != nil)
-        .animation(TSMotion.hover, value: loaderState)
+        .tsAnimation(TSMotion.select, value: model.session != nil)
+        .tsAnimation(TSMotion.hover, value: loaderState)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -110,19 +110,19 @@ struct ModelLoaderControl: View {
             Button {
                 model.activeSection = .modelManager
             } label: {
-                Label { Text("Manage installed models…", bundle: .module) } icon: { Image(systemName: "internaldrive") }
+                Label { Text("Manage installed models\u{2026}", bundle: .module) } icon: { Image(systemName: "internaldrive") }
             }
 
             Button {
                 model.activeSection = .modelHub
             } label: {
-                Label { Text("Discover new models…", bundle: .module) } icon: { Image(systemName: "shippingbox") }
+                Label { Text("Discover new models\u{2026}", bundle: .module) } icon: { Image(systemName: "shippingbox") }
             }
 
             Button {
                 ModelLocationPicker.choose(for: model)
             } label: {
-                Label { Text("Open model folder…", bundle: .module) } icon: { Image(systemName: "folder") }
+                Label { Text("Open model folder\u{2026}", bundle: .module) } icon: { Image(systemName: "folder") }
             }
 
             if model.canReloadModel {
@@ -144,13 +144,13 @@ struct ModelLoaderControl: View {
                 // which also keeps this arm free of any new localized string.
                 if density == .compact {
                     HStack(spacing: 5) {
-                        Text(primaryText)
+                        primaryText
                             .font(theme.ui(.tiny, weight: .semibold))
                             .lineLimit(1)
                             .foregroundStyle(.appText)
 
                         if let secondaryText {
-                            Text(secondaryText)
+                            secondaryText
                                 .font(theme.ui(.tiny))
                                 .lineLimit(1)
                                 .truncationMode(.tail)
@@ -159,13 +159,13 @@ struct ModelLoaderControl: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(primaryText)
+                        primaryText
                             .font(theme.ui(.small, weight: .semibold))
                             .lineLimit(1)
                             .foregroundStyle(.appText)
 
                         if let secondaryText {
-                            Text(secondaryText)
+                            secondaryText
                                 .font(theme.ui(.micro))
                                 .lineLimit(1)
                                 .foregroundStyle(.appSecondary)
@@ -210,9 +210,9 @@ struct ModelLoaderControl: View {
         // Without this the two Texts are two elements, and VoiceOver reads
         // "Active model" twice.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Active model")
+        .accessibilityLabel(Text("Active model", bundle: .module))
         .accessibilityValue(accessibilityValue)
-        .accessibilityHint("Choose which installed model to use")
+        .accessibilityHint(Text("Choose which installed model to use", bundle: .module))
     }
 
     @ViewBuilder
@@ -225,10 +225,15 @@ struct ModelLoaderControl: View {
                     Button {
                         model.openChatWithModel(item)
                     } label: {
+                        // Alias and family are identifiers: nothing to translate.
                         if model.selected?.alias == item.alias {
-                            Label("\(item.alias)  (\(item.family))", systemImage: "checkmark")
+                            Label {
+                                Text(verbatim: "\(item.alias)  (\(item.family))")
+                            } icon: {
+                                Image(systemName: "checkmark")
+                            }
                         } else {
-                            Text("\(item.alias)  (\(item.family))", bundle: .module)
+                            Text(verbatim: "\(item.alias)  (\(item.family))")
                         }
                     }
                 }
@@ -242,15 +247,16 @@ struct ModelLoaderControl: View {
         Menu {
             Section(header: Text("Reasoning Effort", bundle: .module)) {
                 ForEach(model.availableReasoningLevels) { level in
-                    let title = model.reasoningLabel(for: level)
-                        + " - " + model.reasoningDescription(for: level)
+                    let title = Text(LocalizedStringKey(model.reasoningLabel(for: level)), bundle: .module)
+                        + Text(verbatim: " - ")
+                        + Text(LocalizedStringKey(model.reasoningDescription(for: level)), bundle: .module)
                     Button {
                         model.setReasoning(level)
                     } label: {
                         if model.reasoning == level {
-                            Label(title, systemImage: "checkmark")
+                            Label { title } icon: { Image(systemName: "checkmark") }
                         } else {
-                            Text(title)
+                            title
                         }
                     }
                 }
@@ -259,11 +265,11 @@ struct ModelLoaderControl: View {
             HStack(spacing: 4) {
                 Image(systemName: model.reasoning != .off ? "brain.head.profile" : "brain")
                     .font(theme.ui(.tiny, weight: .semibold))
-                    .foregroundStyle(model.reasoning != .off ? theme.accent : Color.secondary)
+                    .foregroundStyle(model.reasoning != .off ? theme.accent : theme.secondaryText)
 
-                Text(model.reasoningLabel(for: model.reasoning))
+                Text(LocalizedStringKey(model.reasoningLabel(for: model.reasoning)), bundle: .module)
                     .font(theme.ui(.tiny, weight: .medium))
-                    .foregroundStyle(model.reasoning != .off ? Color.primary : Color.secondary)
+                    .foregroundStyle(model.reasoning != .off ? theme.foreground : theme.secondaryText)
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.ui(.micro, weight: .bold))
@@ -281,9 +287,15 @@ struct ModelLoaderControl: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Reasoning effort: \(model.reasoningLabel(for: model.reasoning)). Click to change (takes effect immediately without reloading model).")
-        .accessibilityLabel("Reasoning effort: \(model.reasoningLabel(for: model.reasoning))")
-        .accessibilityHint("Select reasoning depth")
+        .help(Text("Reasoning effort: \(reasoningName). Click to change (takes effect immediately without reloading model).", bundle: .module))
+        .accessibilityLabel(Text("Reasoning effort: \(reasoningName)", bundle: .module))
+        .accessibilityHint(Text("Select reasoning depth", bundle: .module))
+    }
+
+    /// The level's name in the UI language, for interpolating into a
+    /// sentence. The binding's labels are English catalog keys.
+    private var reasoningName: String {
+        AppStrings.localized(String.LocalizationValue(model.reasoningLabel(for: model.reasoning)))
     }
 
     private var separator: some View {
@@ -308,8 +320,9 @@ struct ModelLoaderControl: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.94))
-        .help("Load \(model.selected?.alias ?? "the selected model") into memory")
-        .accessibilityLabel("Load model")
+        .help(model.selected.map { Text("Load \($0.alias) into memory", bundle: .module) }
+            ?? Text("Load the selected model into memory", bundle: .module))
+        .accessibilityLabel(Text("Load model", bundle: .module))
     }
 
     /// The board drew a pause glyph here. This keeps `eject.fill`.
@@ -336,8 +349,8 @@ struct ModelLoaderControl: View {
         .buttonStyle(TSPressScaleStyle(scale: 0.94))
         .disabled(!model.canUnloadModel)
         .help(Text("Eject the loaded model and free its memory", bundle: .module))
-        .accessibilityLabel("Eject model")
-        .accessibilityHint("Unloads the model and frees its memory. Loading it again takes several seconds.")
+        .accessibilityLabel(Text("Eject model", bundle: .module))
+        .accessibilityHint(Text("Unloads the model and frees its memory. Loading it again takes several seconds.", bundle: .module))
     }
 
     // MARK: - State
@@ -372,162 +385,54 @@ struct ModelLoaderControl: View {
         return model.session != nil ? .ready : .notLoaded
     }
 
-    private var primaryText: String {
+    private var primaryText: Text {
         switch loaderState {
-        case .noneInstalled: return "No model installed"
-        case .noneSelected: return "Select a model"
-        default: return model.selected?.alias ?? "Select a model"
+        case .noneInstalled: return Text("No model installed", bundle: .module)
+        case .noneSelected: return Text("Select a model", bundle: .module)
+        default:
+            // The alias is an identifier, so it is never translated.
+            return model.selected.map { Text(verbatim: $0.alias) } ?? Text("Select a model", bundle: .module)
         }
     }
 
-    private var secondaryText: String? {
+    private var secondaryText: Text? {
         switch loaderState {
         case .noneInstalled, .noneSelected:
             return nil
         case .installing:
             // Installer logs can be arbitrarily wide. Keep the selector
             // compact and let the Downloads panel carry progress.
-            return String(localized: "Installing", bundle: .module)
+            return Text("Installing", bundle: .module)
         case .opening:
-            return "Loading..."
+            return Text("Loading...", bundle: .module)
         case .notLoaded:
-            return "Not loaded"
+            return Text("Not loaded", bundle: .module)
         case .ready:
-            return "Ready -- \(model.resolvedContextTokens.formatted()) ctx"
+            return Text("Ready -- \(model.resolvedContextTokens.formatted()) ctx", bundle: .module)
         }
     }
 
-    private var chooserHelp: String {
+    private var chooserHelp: Text {
         switch loaderState {
         case .noneInstalled:
-            return "No models are installed. Open the Model Hub to download one."
+            return Text("No models are installed. Open the Model Hub to download one.", bundle: .module)
         case .noneSelected:
-            return "Choose which installed model to use"
+            return Text("Choose which installed model to use", bundle: .module)
         case .notLoaded:
-            return "Selected but not in memory. Press Load to open it."
+            return Text("Selected but not in memory. Press Load to open it.", bundle: .module)
         case .installing:
-            return model.installStageText ?? "Installing this model"
+            // The stage line is the installer's own text.
+            return model.installStageText.map { Text(verbatim: $0) }
+                ?? Text("Installing this model", bundle: .module)
         case .opening:
-            return "Opening the model: reading weights and allocating the KV cache"
+            return Text("Opening the model: reading weights and allocating the KV cache", bundle: .module)
         case .ready:
-            return "Loaded with a \(model.resolvedContextTokens.formatted()) token context window"
+            return Text("Loaded with a \(model.resolvedContextTokens.formatted()) token context window", bundle: .module)
         }
     }
 
-    private var accessibilityValue: String {
+    private var accessibilityValue: Text {
         guard let secondaryText else { return primaryText }
-        return "\(primaryText), \(secondaryText)"
-    }
-}
-
-/// The status dot in front of the alias.
-///
-/// Grey when there is nothing to run, accent when a session is live, and
-/// pulsing accent while one is being built. The pulse is the ONLY animated
-/// thing in this control and it is state-driven rather than per token, which
-/// is what lets it sit directly under a streaming transcript without paying a
-/// redraw per decoded token.
-struct ModelStatusDot: View {
-    let state: ModelLoaderControl.LoaderState
-    let accent: Color
-
-    @ObservedObject private var appearanceManager = AppearanceManager.shared
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-
-    private var reduceMotion: Bool {
-        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
-    }
-
-    private var isWorking: Bool {
-        state == .installing || state == .opening
-    }
-
-    private var tint: Color {
-        switch state {
-        case .ready: return accent
-        case .installing, .opening: return accent
-        case .notLoaded: return .secondary
-        case .noneInstalled, .noneSelected: return .secondary
-        }
-    }
-
-    var body: some View {
-        Circle()
-            .fill(tint)
-            .frame(width: 7, height: 7)
-            .opacity(state == .ready || isWorking ? 1 : 0.5)
-            .modifier(PulseIfWorking(active: isWorking && !reduceMotion))
-            .accessibilityHidden(true)
-    }
-
-    /// Applied as a modifier rather than branching in `body`, so the
-    /// `phaseAnimator` is torn down with the view when the state leaves
-    /// `installing`/`opening` instead of being left running behind a static
-    /// dot.
-    private struct PulseIfWorking: ViewModifier {
-        let active: Bool
-
-        func body(content: Content) -> some View {
-            if active {
-                content.phaseAnimator([0.4, 1.0]) { view, opacity in
-                    view.opacity(opacity)
-                } animation: { _ in
-                    .easeInOut(duration: 0.85)
-                }
-            } else {
-                content
-            }
-        }
-    }
-}
-
-/// Determinate or indeterminate hairline bar, sized by its caller.
-///
-/// Not `ProgressView`: the linear style on the 14 SDK brings its own vertical
-/// padding and a minimum width that both break a 34pt pill, and the
-/// indeterminate variant cannot be tinted to `theme.accent` without an
-/// appearance override.
-struct ModelLoadProgressBar: View {
-    /// `nil` renders the indeterminate sweep.
-    let fraction: Double?
-    let tint: Color
-
-    @ObservedObject private var appearanceManager = AppearanceManager.shared
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-
-    private var reduceMotion: Bool {
-        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
-    }
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.12))
-
-                if let fraction {
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: max(3, geometry.size.width * min(1, max(0, fraction))))
-                        .animation(TSMotion.hover, value: fraction)
-                } else if reduceMotion {
-                    // A static half bar rather than a sweep: still reads as
-                    // "working", with nothing in motion.
-                    Capsule()
-                        .fill(tint.opacity(0.5))
-                        .frame(width: geometry.size.width * 0.5)
-                } else {
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: geometry.size.width * 0.4)
-                        .phaseAnimator([0.0, 1.0]) { view, phase in
-                            view.offset(x: phase == 0 ? 0 : geometry.size.width * 0.6)
-                        } animation: { _ in
-                            .easeInOut(duration: 0.95)
-                        }
-                }
-            }
-        }
-        .frame(height: 3)
-        .accessibilityHidden(true)
+        return primaryText + Text(verbatim: ", ") + secondaryText
     }
 }

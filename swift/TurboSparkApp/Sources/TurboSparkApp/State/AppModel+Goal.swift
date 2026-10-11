@@ -29,32 +29,35 @@ extension AppModel {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if argument.isEmpty {
             if let goal = activeGoals[chatID] {
+                let elapsed = Self.formatGoalElapsed(since: goal.setAt)
+                let condition = GoalPolicy.conditionPreview(goal.condition)
                 showToast(
-                    "Goal active (\(goal.iterations) iteration\(goal.iterations == 1 ? "" : "s"), "
-                        + Self.formatGoalElapsed(since: goal.setAt) + "): "
-                        + GoalPolicy.conditionPreview(goal.condition),
+                    goal.iterations == 1
+                        ? AppStrings.localized("Goal active (1 iteration, \(elapsed)): \(condition)")
+                        : AppStrings.localized(
+                            "Goal active (\(goal.iterations) iterations, \(elapsed)): \(condition)"),
                     style: .info)
             } else {
-                showToast("No goal set. Use /goal <condition> to set one.", style: .info)
+                showToast(AppStrings.localized("No goal set. Use /goal <condition> to set one."), style: .info)
             }
             return
         }
         if Self.goalClearAliases.contains(argument.lowercased()) {
             if activeGoals[chatID] != nil {
                 clearGoal(chatID: chatID)
-                showToast("Goal cleared.", style: .success)
+                showToast(AppStrings.localized("Goal cleared."), style: .success)
             } else {
-                showToast("No goal set.", style: .info)
+                showToast(AppStrings.localized("No goal set."), style: .info)
             }
             return
         }
         guard argument.count <= GoalPolicy.maxConditionLength else {
-            error = "A goal condition is limited to \(GoalPolicy.maxConditionLength) "
-                + "characters; this one is \(argument.count)."
+            error = AppStrings.localized(
+                "A goal condition is limited to \(GoalPolicy.maxConditionLength) characters; this one is \(argument.count).")
             return
         }
         guard session != nil else {
-            error = "Load a model before setting a goal."
+            error = AppStrings.localized("Load a model before setting a goal.")
             return
         }
         setGoal(condition: argument, chatID: chatID)
@@ -115,8 +118,8 @@ extension AppModel {
         updateGoal(nil, chatID: chatID)
         if unrecoverable {
             showToast(
-                "Goal cleared after an unrecoverable error: the model was unloaded. "
-                    + "Run /goal again to continue.",
+                AppStrings.localized(
+                    "Goal cleared after an unrecoverable error: the model was unloaded. Run /goal again to continue."),
                 style: .warning)
         }
     }

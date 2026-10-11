@@ -10,7 +10,7 @@ extension AppModel {
     public func startTypeSafeServer() async {
         guard typeSafeServer == nil, !typeSafeBusy,
               let url = typeSafeBaseURL else {
-            typeSafeError = "Enter a valid loopback port."
+            typeSafeError = AppStrings.localized("Enter a valid loopback port.")
             return
         }
         typeSafeBusy = true
@@ -18,7 +18,7 @@ extension AppModel {
         typeSafeError = nil
         let typed = typeSafeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !typed.isEmpty || typeSafeKeyLoadFailed else {
-            typeSafeError = "TypeSafe API key is required to start the daemon."
+            typeSafeError = AppStrings.localized("TypeSafe API key is required to start the daemon.")
             return
         }
         // Same rule as the server key: an unreadable Keychain must not turn
@@ -30,12 +30,12 @@ extension AppModel {
         case .none: break
         case let .save(value):
             guard TypeSafeKeychain.saveKey(value) else {
-                typeSafeError = "Could not save the TypeSafe API key to Keychain."
+                typeSafeError = AppStrings.localized("Could not save the TypeSafe API key to Keychain.")
                 return
             }
             typeSafeKeyLoadFailed = false
         case .delete:
-            typeSafeError = "TypeSafe API key is required to start the daemon."
+            typeSafeError = AppStrings.localized("TypeSafe API key is required to start the daemon.")
             return
         case let .adopt(value):
             typeSafeAPIKeyInput = value
@@ -44,14 +44,15 @@ extension AppModel {
         }
         let key = effectiveKey
         guard !key.isEmpty else {
-            typeSafeError = "TypeSafe API key is required to start the daemon."
+            typeSafeError = AppStrings.localized("TypeSafe API key is required to start the daemon.")
             return
         }
         let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/openkindd")
         let override = ProcessInfo.processInfo.environment["OPENKINDD_BINARY"]
         let binary = override ?? bundled.path
         guard FileManager.default.isExecutableFile(atPath: binary) else {
-            typeSafeError = "openkindd is missing. Build the app bundle or set OPENKINDD_BINARY for development."
+            typeSafeError = AppStrings.localized(
+                "openkindd is missing. Build the app bundle or set OPENKINDD_BINARY for development.")
             return
         }
         do {
@@ -80,10 +81,9 @@ extension AppModel {
         guard String(reflecting: type(of: error)).contains("ServerError")
             || description.contains("ServerError")
         else { return description }
-        let where_ = port.map { "127.0.0.1:\($0)" } ?? "the configured address"
-        return "openkindd could not start on \(where_). The port may already be in use, "
-            + "possibly by an openkindd left running by a previous session: quit it "
-            + "(Activity Monitor or `pkill openkindd`) or choose another port."
+        let where_ = port.map { "127.0.0.1:\($0)" } ?? AppStrings.localized("the configured address")
+        return AppStrings.localized(
+            "openkindd could not start on \(where_). The port may already be in use, possibly by an openkindd left running by a previous session: quit it (Activity Monitor or `pkill openkindd`) or choose another port.")
     }
 
     public func stopTypeSafeServer() async {

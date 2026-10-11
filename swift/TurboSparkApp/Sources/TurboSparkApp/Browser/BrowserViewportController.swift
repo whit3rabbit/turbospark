@@ -32,20 +32,12 @@ public final class BrowserViewportController: ObservableObject {
     /// viewport, not on the page, so its coordinates must add this offset.
     @Published public private(set) var scrollOffset: CGPoint = .zero
 
-    private let writePreference: (BrowserViewportPreference) -> Void
-
-    public init(
-        readPreference: () -> BrowserViewportPreference = {
-            MacAppSettingsFileStore.load().browser.viewportPreference
-        },
-        writePreference: @escaping (BrowserViewportPreference) -> Void = { preference in
-            var settings = MacAppSettingsFileStore.load()
-            settings.browser.viewportPreference = preference
-            MacAppSettingsFileStore.save(settings)
-        }
-    ) {
-        self.preference = Self.normalized(readPreference())
-        self.writePreference = writePreference
+    /// `initialPreference` is the Settings default (`BrowserSettings.defaultViewport`).
+    /// Popover edits change only this session and are never saved: a second
+    /// persisted copy was clobbered by AppModel's launch-time settings on the
+    /// next save, and left the Settings value with no reader.
+    public init(initialPreference: BrowserViewportPreference) {
+        self.preference = Self.normalized(initialPreference)
     }
 
     public var isFixed: Bool {
@@ -78,7 +70,6 @@ public final class BrowserViewportController: ObservableObject {
         )
         guard next != preference else { return }
         preference = next
-        writePreference(next)
     }
 
     public func layout(in containerSize: CGSize) -> BrowserViewportLayout {

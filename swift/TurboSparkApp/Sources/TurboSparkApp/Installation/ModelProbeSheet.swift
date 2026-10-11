@@ -81,9 +81,8 @@ struct ModelProbeSheet: View {
             }
             Spacer()
             Button { dismiss() } label: { Text("Done", bundle: .module) }
+                .appAction(.secondary)
                 .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("Done")
-                .accessibilityHint("Closes the probe sheet")
         }
         .padding(16)
     }
@@ -115,11 +114,11 @@ struct ModelProbeSheet: View {
                                 Text("This repository may require Hugging Face authentication.", bundle: .module)
                                     .themedFont(.tiny)
                                     .foregroundStyle(.appSecondary)
+                                // Hugging Face sign-in lives in Models & Storage.
                                 Button {
-                                    model.openSettings(tab: .general)
+                                    model.openSettings(tab: .models)
                                 } label: { Text("Open Settings", bundle: .module) }
-                                .buttonStyle(.link)
-                                .themedFont(.tiny)
+                                .appAction(.quiet, size: .small)
                             }
                             .padding(.top, 2)
                         }
@@ -140,9 +139,10 @@ struct ModelProbeSheet: View {
     private var formFields: some View {
         VStack(alignment: .leading, spacing: 10) {
             LabeledContent {
-                TextField("e.g. mlx-community/Qwen3.6-35B-A3B-4bit", text: $repo)
+                TextField(text: $repo, prompt: example("mlx-community/Qwen3.6-35B-A3B-4bit")) {
+                    Text("Repository", bundle: .module)
+                }
                     .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Hugging Face repository to probe")
                     .onChange(of: repo) {
                         let clean = Self.sanitizeRepo(repo)
                         if clean != repo { repo = clean }
@@ -164,18 +164,20 @@ struct ModelProbeSheet: View {
                 Text("Repository", bundle: .module)
             }
             LabeledContent {
-                TextField("e.g. my-qwen-model", text: $alias)
+                TextField(text: $alias, prompt: example("my-qwen-model")) {
+                    Text("Local Alias", bundle: .module)
+                }
                     .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Local model alias")
             } label: {
                 Text("Local Alias", bundle: .module)
             }
             quantizationField
             LabeledContent {
                 VStack(alignment: .leading, spacing: 4) {
-                    TextField("e.g. original-org/model-tokenizer", text: $sidecarRepo)
+                    TextField(text: $sidecarRepo, prompt: example("original-org/model-tokenizer")) {
+                        Text("Sidecar Repo (optional)", bundle: .module)
+                    }
                         .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Sidecar repository for tokenizer (optional)")
                         .onChange(of: sidecarRepo) {
                             let clean = Self.sanitizeRepo(sidecarRepo)
                             if clean != sidecarRepo { sidecarRepo = clean }
@@ -211,19 +213,21 @@ struct ModelProbeSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     if let listed = variants, !listed.variants.isEmpty {
-                        Picker("", selection: $ggufFile) {
+                        Picker(selection: $ggufFile) {
                             Text("Let the installer choose", bundle: .module).tag("")
                             ForEach(listed.variants) { v in
-                                Text(variantLabel(v)).tag(v.file)
+                                variantLabel(v).tag(v.file)
                             }
+                        } label: {
+                            Text("Quantization", bundle: .module)
                         }
                         .labelsHidden()
-                        .accessibilityLabel("Quantization to install")
                         .onChange(of: ggufFile) { reprobeIfProbed() }
                     } else {
-                        TextField("e.g. model-q4_k_m.gguf", text: $ggufFile)
+                        TextField(text: $ggufFile, prompt: example("model-q4_k_m.gguf")) {
+                            Text("GGUF filename (optional)", bundle: .module)
+                        }
                             .textFieldStyle(.roundedBorder)
-                            .accessibilityLabel("GGUF filename (optional)")
                             // A probe of a different filename says nothing
                             // about this one.
                             .onChange(of: ggufFile) {
@@ -234,14 +238,20 @@ struct ModelProbeSheet: View {
                     Button {
                         listVariants()
                     } label: {
-                        if isListingVariants {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
+                        Label {
+                            Text("List the .gguf files this repository publishes", bundle: .module)
+                        } icon: {
+                            if isListingVariants {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
                         }
+                        .labelStyle(.iconOnly)
                     }
+                    .appAction(.secondary)
                     .disabled(repo.isEmpty || isListingVariants)
-                    .help("List the .gguf files this repository publishes")
+                    .help(Text("List the .gguf files this repository publishes", bundle: .module))
                 }
 
                 if let listed = variants, listed.variants.count > 1 && ggufFile.isEmpty {
@@ -258,7 +268,7 @@ struct ModelProbeSheet: View {
                 // Nonzero shards is why the list may be short or empty. Say
                 // so, or an empty picker reads as "no GGUF here".
                 if let listed = variants, listed.shardedSkipped > 0 {
-                    Text("\(listed.shardedSkipped) multi-part file\(listed.shardedSkipped == 1 ? "" : "s") not listed: this port cannot walk a shard set.", bundle: .module)
+                    Text("Multi-part files not listed: \(listed.shardedSkipped). This port cannot walk a shard set.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
@@ -266,11 +276,23 @@ struct ModelProbeSheet: View {
         } label: { Text("Quantization", bundle: .module) }
     }
 
-    private func variantLabel(_ v: RepoVariant) -> String {
-        let size = v.bytes.map { " - \(MetricFormat.storage($0))" } ?? ""
-        let quant = v.quantLabel ?? "unrecognized"
-        let blocked = v.executable ? "" : " (no kernels)"
-        return "\(quant)\(size)\(blocked) - \(v.file)"
+    /// Quantization, size, kernel status and file name. The quantization
+    /// name, size and file are data; only the two status words translate.
+    private func variantLabel(_ v: RepoVariant) -> Text {
+        var label = v.quantLabel.map { Text(verbatim: $0) } ?? Text("unrecognized", bundle: .module)
+        if let bytes = v.bytes {
+            label = label + Text(verbatim: " - \(MetricFormat.storage(bytes))")
+        }
+        if !v.executable {
+            label = label + Text(verbatim: " (") + Text("no kernels", bundle: .module) + Text(verbatim: ")")
+        }
+        return label + Text(verbatim: " - \(v.file)")
+    }
+
+    /// A placeholder that shows an example value: the words are a catalog
+    /// key, the example is data.
+    private func example(_ value: String) -> Text {
+        Text("e.g. \(value)", bundle: .module)
     }
 
     // MARK: - Footer
@@ -288,20 +310,19 @@ struct ModelProbeSheet: View {
             }
             HStack {
                 Button { runProbe() } label: { Text("Run Probe", bundle: .module) }
+                    .appAction(.secondary)
                     .disabled(repo.isEmpty || isProbing)
-                    .help("Fetch repository headers and inspect model compatibility")
-                    .accessibilityHint("Fetches checkpoint headers without downloading the model")
+                    .help(Text("Fetches checkpoint headers without downloading the model", bundle: .module))
 
                 Spacer()
 
                 Button { requestInstall() } label: { Text("Install Model", bundle: .module) }
-                    .buttonStyle(.borderedProminent)
+                    .appAction(.primary)
                     .disabled(
                         repo.isEmpty || alias.isEmpty || isProbing || model.isRunning
                             || decision.isBlocked || !model.canInstall(alias: alias)
                     )
-                    .help("Download and install probed repository")
-                    .accessibilityHint("Downloads and installs the probed repository")
+                    .help(Text("Downloads and installs the probed repository", bundle: .module))
             }
         }
         .padding(16)
@@ -332,7 +353,7 @@ struct ModelProbeSheet: View {
                 // "this repo has no GGUF variants"); reuse probeError so the
                 // existing sign-in hint applies.
                 variants = nil
-                probeError = "Variant listing failed: \(error.localizedDescription)"
+                probeError = AppStrings.localized("Variant listing failed: \(error.localizedDescription)")
             }
             isListingVariants = false
         }
@@ -380,10 +401,10 @@ struct ModelProbeSheet: View {
             case .success(let probed):
                 report = probed
                 _ = AccessibilityNotification.Announcement.post(
-                    .init("Probe complete. Report is available.")
+                    .init(AppStrings.localized("Probe complete. Report is available."))
                 )
             case .failure(let error):
-                let msg = "Probe failed: \(error.localizedDescription)"
+                let msg = AppStrings.localized("Probe failed: \(error.localizedDescription)")
                 probeError = msg
                 _ = AccessibilityNotification.Announcement.post(.init(msg))
             }

@@ -27,17 +27,23 @@ extension AgentManager {
         public var errorDescription: String? {
             switch self {
             case .invalidName(let name):
-                return "'\(name)' is not a usable agent name: it resolves outside the agents directory."
+                return AppStrings.localized(
+                    "'\(name)' is not a usable agent name: it resolves outside the agents directory.")
             case .scopeNotAllowed(let scope):
-                return "A \(scope.label)-scoped agent is not a file this editor can write: built-ins are code and plugin agents are owned by their plugin."
+                // `AppAgentScope.label` is fixed English; each value is a catalog key.
+                let scopeName = AppStrings.localized(String.LocalizationValue(scope.label))
+                return AppStrings.localized(
+                    "This editor cannot write agents in the \(scopeName) scope: built-ins are code and plugin agents are owned by their plugin.")
             case .projectRootRequired:
-                return "A project-scoped agent needs an open project to write into."
+                return AppStrings.localized("A project-scoped agent needs an open project to write into.")
             case .destinationExists(let name):
-                return "An agent file named '\(name)' already exists. Rename the new agent or delete the old file first."
+                return AppStrings.localized(
+                    "An agent file named '\(name)' already exists. Rename the new agent or delete the old file first.")
             case .missingFilePath(let name):
-                return "Agent '\(name)' has no file on disk to save to."
+                return AppStrings.localized("Agent '\(name)' has no file on disk to save to.")
             case .unsupportedEditFormat(let path):
-                return "Agent file '\(path)' is not Markdown and cannot be edited by TurboSpark."
+                return AppStrings.localized(
+                    "Agent file '\(path)' is not Markdown and cannot be edited by TurboSpark.")
             }
         }
     }

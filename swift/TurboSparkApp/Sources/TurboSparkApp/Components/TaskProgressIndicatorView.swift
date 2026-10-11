@@ -21,8 +21,11 @@ public struct TaskProgressIndicatorView: View {
             HStack(spacing: 6) {
                 TaskProgressFlameIcon(size: size, isFloating: $isFloating)
 
+                // The caller owns the text's localization. The old
+                // `LocalizedStringKey` lookup ran against the main bundle,
+                // which holds no strings in a SwiftPM build.
                 if let text = text, !text.isEmpty {
-                    Text(LocalizedStringKey(text))
+                    Text(verbatim: text)
                         .themedFont(fitting: max(11, size * 0.8), weight: .regular)
                         .foregroundStyle(.appSecondary)
                 }
@@ -31,14 +34,17 @@ public struct TaskProgressIndicatorView: View {
                 startFloatingAnimation()
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(text ?? "Task in progress")
-            .accessibilityHint("Animates while task is executing")
+            .accessibilityLabel(text.map { Text(verbatim: $0) } ?? Text("Task in progress", bundle: .module))
+            .accessibilityHint(Text("Animates while task is executing", bundle: .module))
             .transition(.opacity.combined(with: .scale(scale: 0.95)))
         }
     }
 
+    // The binding drives the icon's bob, so this has to honor Reduce
+    // Motion itself: the icon's own guard only covers its internal state.
+    @MainActor
     private func startFloatingAnimation() {
-        withAnimation(
+        TSMotion.animate(
             .easeInOut(duration: 0.9)
             .repeatForever(autoreverses: true)
         ) {

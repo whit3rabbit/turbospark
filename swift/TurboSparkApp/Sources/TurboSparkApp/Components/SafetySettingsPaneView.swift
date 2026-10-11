@@ -27,12 +27,15 @@ public struct SafetySettingsPaneView: View {
     // Each section is its own property rather than an inline `Section` in one
     // `Form`: five inline sections is one expression and exceeds the macOS 14
     // SDK type-checker's budget (Gotcha 45).
+    //
+    // Order is purpose and selected state first, then what is loaded, then
+    // the registry. The extraction and implementation notes that used to
+    // open the pane sit behind "Details" at the end of the first section.
     public var body: some View {
         Form {
-            explanationSection
             activationSection
-            presetsSection
             statusSection
+            presetsSection
         }
         .formStyle(.grouped)
         // The grouped Form paints its own system gray, which ignores the theme.
@@ -52,41 +55,37 @@ public struct SafetySettingsPaneView: View {
         }
     }
 
-    private var explanationSection: some View {
-        Section(header: Text("What this is", bundle: .module)) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Directional steering applies a rank-1 edit to the model's residual stream at every layer, while it generates. Nothing is written to the model files and the edit is reversible between two turns.", bundle: .module)
-                Text("TurboSpark ships no directions. A direction is a .gguf control vector in llama.cpp layout that you extract or supply yourself, and this engine has no opinion about what one encodes: the same code path serves concept steering, style vectors and refusal-direction work.", bundle: .module)
-                .foregroundStyle(.appSecondary)
-                Text("Extract one with scripts/extract_direction.py, or use a published set. docs/OBLITERATION.md has the measurements, including what happens at full strength.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
     private var activationSection: some View {
         Section(header: Text("Activation", bundle: .module)) {
+            // Resolved once: it walks the same compatibility check the
+            // policy does, and both the tooltip and the row read it.
+            let disabledReason = SteeringText.disabledReason(model)
+            // The purpose line keeps the one claim this pane must make before
+            // anything else: nothing ships a direction.
+            Text("Steer how the loaded model writes with a control vector you supply. TurboSpark ships no directions.", bundle: .module)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             Toggle(isOn: steeringBinding) {
                 Text("Apply steering when a model loads", bundle: .module)
             }
             .settingsControl("Apply steering when a model loads", pane: .safety, timing: .nextTurn)
-                .disabled(model.steeringDisabledReason != nil)
-                .help(model.steeringDisabledReason ?? "Applied at the next model load.")
+            .disabled(model.steeringDisabledReason != nil)
+            .help(disabledReason ?? Text("Applied at the next model load.", bundle: .module))
 
             Picker(selection: presetBinding) {
                 Text("None", bundle: .module)
                     .settingsControl("None", pane: .safety, timing: .nextTurn).tag(UUID?.none)
                 ForEach(model.steeringPresets) { preset in
-                    Text(preset.displayName).tag(UUID?.some(preset.id))
+                    Text(verbatim: preset.displayName).tag(UUID?.some(preset.id))
                 }
             } label: { Text("Active direction", bundle: .module) }
             .settingsControl("Active direction", pane: .safety, timing: .nextTurn)
             .disabled(model.steeringPresets.isEmpty)
 
-            if let reason = model.steeringDisabledReason {
-                Label(reason, systemImage: "exclamationmark.triangle")
+            if let reason = disabledReason {
+                Label { reason } icon: { Image(systemName: "exclamationmark.triangle") }
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
@@ -96,19 +95,35 @@ public struct SafetySettingsPaneView: View {
             // exact failure this whole surface exists to avoid.
             if model.steeringNeedsReload {
                 HStack {
-                    Label(
-                        "The loaded model is not running this. Steering is applied when a model "
-                            + "opens.",
-                        systemImage: "arrow.clockwise"
-                    )
+                    Label {
+                        Text("The loaded model is not running this. Steering is applied when a model opens.", bundle: .module)
+                    } icon: {
+                        Image(systemName: "arrow.clockwise")
+                    }
                     .themedFont(.small)
                     Spacer()
                     Button { model.reloadForSteering() } label: { Text("Reload model", bundle: .module) }
+                        .appAction(.secondary, size: .small)
                         .disabled(model.selected == nil || model.generating || model.opening)
                 }
             }
+
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Directional steering applies a rank-1 edit to the model's residual stream at every layer, while it generates. Nothing is written to the model files and the edit is reversible between two turns.", bundle: .module)
+                    Text("TurboSpark ships no directions. A direction is a .gguf control vector in llama.cpp layout that you extract or supply yourself, and this engine has no opinion about what one encodes: the same code path serves concept steering, style vectors and refusal-direction work.", bundle: .module)
+                        .foregroundStyle(.appSecondary)
+                    Text("Extract one with scripts/extract_direction.py, or use a published set. docs/OBLITERATION.md has the measurements, including what happens at full strength.", bundle: .module)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 2)
+            } label: {
+                Text("Details", bundle: .module)
+            }
         }
-            .settingsControl("Activation", pane: .safety, timing: .nextTurn)
+        .settingsControl("Activation", pane: .safety, timing: .nextTurn)
     }
 
     private var presetsSection: some View {
@@ -138,8 +153,9 @@ public struct SafetySettingsPaneView: View {
             } label: {
                 Label { Text("Add a direction", bundle: .module) } icon: { Image(systemName: "plus") }
             }
+            .appAction(.secondary, size: .small)
         }
-            .settingsControl("Directions", pane: .safety, timing: .nextTurn)
+        .settingsControl("Directions", pane: .safety, timing: .nextTurn)
     }
 
     /// What the LOADED session reports, read back rather than restated. The
@@ -151,13 +167,18 @@ public struct SafetySettingsPaneView: View {
                     .settingsControl("No model loaded.", pane: .safety, timing: .nextTurn).foregroundStyle(.appSecondary)
             } else if let summary = model.activeSteeringSummary {
                 LabeledContent {
-                    Text(summary)
+                    // The engine's own summary line, read back verbatim.
+                    Text(verbatim: summary)
                 } label: {
                     Text("Steering", bundle: .module)
                 }
             } else if model.steeringFamilySupported == false {
                 LabeledContent {
-                    Text(model.info?.steering.reason ?? "Not supported by this model's family")
+                    if let reason = model.info?.steering.reason {
+                        Text(verbatim: reason)
+                    } else {
+                        Text("Not supported by this model's family", bundle: .module)
+                    }
                 } label: {
                     Text("Steering", bundle: .module)
                 }
@@ -199,26 +220,32 @@ struct SteeringPresetRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(preset.displayName).fontWeight(.medium)
+                Text(verbatim: preset.displayName).fontWeight(.medium)
                 Spacer()
-                Button(action: onEdit) { Text("Edit", bundle: .module) }.buttonStyle(.link)
-                Button(action: onDelete) { Text("Delete", bundle: .module) }.buttonStyle(.link)
+                Button(action: onEdit) { Text("Edit", bundle: .module) }
+                    .appAction(.quiet, size: .small)
+                Button(role: .destructive, action: onDelete) { Text("Delete", bundle: .module) }
+                    .appAction(.quiet, size: .small)
+                    .foregroundStyle(.red)
             }
-            Text(detailLine)
+            detailLine
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
-            Label(compatibility.summary, systemImage: compatibilityIcon)
+            Label { SteeringText.compatibility(compatibility) } icon: { Image(systemName: compatibilityIcon) }
                 .themedFont(.small)
                 .foregroundStyle(compatibility.allowsEnabling ? Color.secondary : Color.red)
         }
         .padding(.vertical, 2)
     }
 
-    private var detailLine: String {
-        var parts = [preset.mode.menuLabel, "scale \(preset.scale)"]
-        if !preset.layers.isEmpty { parts.append("layers \(preset.layers)") }
-        if let hidden = preset.vectorHidden { parts.append("\(hidden) wide") }
-        return parts.joined(separator: " | ")
+    /// Mode, strength, layer band and width, joined by a separator. Each
+    /// part is its own catalog key so a translation can reorder within it.
+    private var detailLine: Text {
+        let scale = preset.scale.formatted(.number.precision(.fractionLength(0...2)))
+        var parts: [Text] = [SteeringText.mode(preset.mode), Text("scale \(scale)", bundle: .module)]
+        if !preset.layers.isEmpty { parts.append(Text("layers \(preset.layers)", bundle: .module)) }
+        if let hidden = preset.vectorHidden { parts.append(Text("\(hidden) wide", bundle: .module)) }
+        return parts.dropFirst().reduce(parts[0]) { $0 + Text(verbatim: " | ") + $1 }
     }
 
     private var compatibilityIcon: String {

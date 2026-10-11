@@ -35,8 +35,8 @@ struct ProjectMcpDetectionSectionView: View {
                         Label { Text("Scan Folder", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                     }
                 }
-                .buttonStyle(.bordered)
-                .help("Scan codebase root directory for MCP configuration files")
+                .appAction(.secondary)
+                .help(Text("Scan codebase root directory for MCP configuration files", bundle: .module))
                 .disabled(project?.rootDirectoryURL == nil || isDetecting)
             }
 
@@ -84,11 +84,12 @@ struct ProjectMcpDetectionSectionView: View {
                         .foregroundStyle(.appSecondary)
                 }
                 Spacer()
-                Button("Import All (\(file.servers.count))") {
+                Button {
                     onImportAll(file)
+                } label: {
+                    Text("Import All (\(file.servers.count))", bundle: .module)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -116,8 +117,7 @@ struct ProjectMcpDetectionSectionView: View {
                             Button {
                                 onImportSingle(server)
                             } label: { Text("Import", bundle: .module) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .appAction(.quiet, size: .small)
                         }
                     }
                     .padding(.vertical, 2)

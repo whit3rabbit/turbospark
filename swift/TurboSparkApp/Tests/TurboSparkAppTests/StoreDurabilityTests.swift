@@ -90,6 +90,118 @@ final class StoreDurabilityTests: XCTestCase {
         XCTAssertNil(AppJSONStore.lastWriteError)
     }
 
+    // MARK: - the latched messages are toasts, so they follow the picker
+
+    /// The latches reach `showToast`, so the sentence and the store name both
+    /// resolve in the picker's language. Each template is a whole-sentence key
+    /// with the name spliced in; an English verb glued to a French name was
+    /// the shape this replaced.
+    func testStoreFailureMessagesFollowThePickedLanguage() throws {
+        let defaults = UserDefaults.standard
+        let previousLanguage = defaults.object(forKey: AppLanguage.storageKey)
+        defer {
+            if let previousLanguage {
+                defaults.set(previousLanguage, forKey: AppLanguage.storageKey)
+            } else {
+                defaults.removeObject(forKey: AppLanguage.storageKey)
+            }
+            AppJSONStore.clearLastReadError()
+            AppJSONStore.clearLastWriteError()
+        }
+        defaults.set(AppLanguage.french.rawValue, forKey: AppLanguage.storageKey)
+        let name = AppStrings.localized("Chat archive", language: .french)
+        XCTAssertNotEqual(name, "Chat archive", "the store label must be a translated catalog key")
+
+        AppJSONStore.clearLastWriteError()
+        XCTAssertFalse(AppJSONStore.save(
+            Fixture(value: "x"), to: URL(fileURLWithPath: "/dev/null/nested/archive.json"),
+            label: "Chat archive"))
+        let write = try XCTUnwrap(AppJSONStore.lastWriteError)
+        XCTAssertTrue(write.contains(name), write)
+        XCTAssertFalse(write.contains("could not be saved"), write)
+
+        AppJSONStore.clearLastReadError()
+        AppJSONStore.recordReadFailure(label: "Chat archive", error: CocoaError(.fileReadUnknown))
+        let read = try XCTUnwrap(AppJSONStore.lastReadError)
+        XCTAssertTrue(read.contains(name), read)
+        XCTAssertFalse(read.contains("could not be read"), read)
+
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let corrupt = dir.appendingPathComponent("corrupt.json")
+        try "{ not json".write(to: corrupt, atomically: true, encoding: .utf8)
+        AppJSONStore.clearLastReadError()
+        XCTAssertNil(AppJSONStore.load(Fixture.self, from: corrupt, label: "Chat archive"))
+        let decode = try XCTUnwrap(AppJSONStore.lastReadError)
+        XCTAssertTrue(decode.contains(name), decode)
+        XCTAssertFalse(decode.contains("failed to decode"), decode)
+        XCTAssertFalse(decode.contains("unreadable file was kept"), decode)
+
+        let locked = dir.appendingPathComponent("locked.json")
+        try #"{"value":"kept"}"#.write(to: locked, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        AppJSONStore.clearLastReadError()
+        XCTAssertNil(AppJSONStore.load(Fixture.self, from: locked, label: "Chat archive"))
+        let unreadable = try XCTUnwrap(AppJSONStore.lastReadError)
+        XCTAssertTrue(unreadable.contains(name), unreadable)
+        XCTAssertFalse(unreadable.contains("could not be read"), unreadable)
+    }
+
+    /// Every store label is a catalog key. A label is a literal handed to a
+    /// `String.LocalizationValue` parameter, which neither source-scan gate in
+    /// `LocalizationParityTests` sees, so a new store with a keyless label
+    /// would toast its English name under all 21 languages.
+    func testEveryStoreLabelIsACatalogKey() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let catalog = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: packageRoot.appendingPathComponent(
+                    "Localization/Localizable.xcstrings"))) as? [String: Any])
+        let keys = Set(try XCTUnwrap(catalog["strings"] as? [String: Any]).keys)
+
+        let call = try NSRegularExpression(
+            pattern: #"AppJSONStore\.(?:load|save|recordReadFailure|recordWriteFailure)\([^"]*?label:\s*"((?:[^"\\]|\\.)*)""#)
+        var labels: [String: String] = [:]
+        let sources = packageRoot.appendingPathComponent("Sources/TurboSparkApp")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+        for case let file as URL in files where file.pathExtension == "swift" {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            for match in call.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard let range = Range(match.range(at: 1), in: text) else { continue }
+                labels[formatKey(String(text[range]))] = file.lastPathComponent
+            }
+        }
+
+        XCTAssertGreaterThanOrEqual(labels.count, 15, "the scan stopped finding store labels: \(labels)")
+        let missing = labels.filter { !keys.contains($0.key) }
+        XCTAssertTrue(missing.isEmpty, "store labels with no catalog key: \(missing)")
+    }
+
+    /// The key a label literal looks up. Labels interpolate only `String`
+    /// values, so every `\(...)` is a `%@`.
+    private func formatKey(_ literal: String) -> String {
+        var key = ""
+        var characters = literal[...]
+        while let next = characters.first {
+            if characters.hasPrefix("\\(") {
+                characters = characters.dropFirst(2)
+                var depth = 1
+                while depth > 0, let inner = characters.popFirst() {
+                    if inner == "(" { depth += 1 }
+                    if inner == ")" { depth -= 1 }
+                }
+                key += "%@"
+            } else {
+                key.append(next)
+                characters = characters.dropFirst()
+            }
+        }
+        return key
+    }
+
     // MARK: - the real chat archive goes through it
 
     func testMalformedLegacyChatArchiveIsNeverDeleted() throws {

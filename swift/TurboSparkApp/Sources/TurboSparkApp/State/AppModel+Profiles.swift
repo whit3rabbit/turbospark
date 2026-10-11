@@ -51,7 +51,7 @@ extension AppModel {
         // discovers a problem with the path.
         _ = UserProfileStore.folder(of: profile)
         profiles = registry.profiles
-        showToast("Profile \"\(profile.name)\" created. Switch to it to start using it.")
+        showToast(AppStrings.localized("Profile \"\(profile.name)\" created. Switch to it to start using it."))
     }
 
     public func renameProfile(_ profile: UserProfile, to newName: String) {
@@ -114,7 +114,7 @@ extension AppModel {
                 at: UserProfileStore.folder(of: profile), resultingItemURL: nil)
         } catch {
             showToast(
-                "Could not move the profile folder to the Trash: \(error.localizedDescription)",
+                AppStrings.localized("Could not move the profile folder to the Trash: \(error.localizedDescription)"),
                 style: .error, duration: 8)
             return
         }
@@ -123,7 +123,7 @@ extension AppModel {
             return
         }
         profiles = registry.profiles
-        showToast("Profile \"\(profile.name)\" deleted (its folder moved to the Trash).")
+        showToast(AppStrings.localized("Profile \"\(profile.name)\" deleted (its folder moved to the Trash)."))
     }
 
     // MARK: - Switching
@@ -152,12 +152,12 @@ extension AppModel {
         guard canSwitchProfile else {
             if hasUnsavedImageResult {
                 showToast(
-                    String(localized: "Save the image before switching profiles.", bundle: .module),
+                    AppStrings.localized("Save the image before switching profiles."),
                     style: .error)
                 return
             }
             showToast(
-                "Finish or cancel the running work before switching profiles.",
+                AppStrings.localized("Finish or cancel the running work before switching profiles."),
                 style: .error)
             return
         }
@@ -188,7 +188,7 @@ extension AppModel {
     private func relaunchIntoSelectedProfile(_ profile: UserProfile) {
         guard let executable = Bundle.main.executableURL else {
             showToast(
-                "Could not locate the app executable to relaunch. The profile is saved; reopen the app to use it.",
+                AppStrings.localized("Could not locate the app executable to relaunch. The profile is saved; reopen the app to use it."),
                 style: .error, duration: 10)
             return
         }
@@ -201,7 +201,7 @@ extension AppModel {
             try process.run()
         } catch {
             showToast(
-                "Relaunch failed: \(error.localizedDescription). The profile is saved; reopen the app to use it.",
+                AppStrings.localized("Relaunch failed: \(error.localizedDescription). The profile is saved; reopen the app to use it."),
                 style: .error, duration: 10)
             return
         }
@@ -211,17 +211,17 @@ extension AppModel {
     func profileMutationMessage(_ error: Error) -> String {
         switch error as? UserProfileStore.MutationError {
         case .emptyName:
-            return "A profile needs a name."
+            return AppStrings.localized("A profile needs a name.")
         case .duplicateName:
-            return "A profile with that name already exists."
+            return AppStrings.localized("A profile with that name already exists.")
         case .reservedName:
-            return "\"Default\" is reserved for the built-in user."
+            return AppStrings.localized("\"Default\" is reserved for the built-in user.")
         case .reservedDefault:
-            return "The Default profile cannot be deleted."
+            return AppStrings.localized("The Default profile cannot be deleted.")
         case .isActive:
-            return "Switch to another profile before deleting this one."
+            return AppStrings.localized("Switch to another profile before deleting this one.")
         case .notFound:
-            return "That profile no longer exists."
+            return AppStrings.localized("That profile no longer exists.")
         case nil:
             return error.localizedDescription
         }

@@ -25,7 +25,9 @@ extension AppModel {
         persistSettings()
         pluginStateChanged()
         showToast(
-            "\(plugin.name) \(enabled ? "enabled" : "disabled").",
+            enabled
+                ? AppStrings.localized("\(plugin.name) enabled.")
+                : AppStrings.localized("\(plugin.name) disabled."),
             style: .info)
     }
 
@@ -60,14 +62,14 @@ extension AppModel {
         let url = URL(fileURLWithPath: path, isDirectory: true)
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else {
-            showToast("Folder not found: \(path)", style: .error)
+            showToast(AppStrings.localized("Folder not found: \(path)"), style: .error)
             return
         }
         let hasManifest = fm.fileExists(
             atPath: url.appendingPathComponent(PluginManifestParser.manifestRelativePath).path)
         guard hasManifest || PluginManager.hasContributionSignature(url) else {
             showToast(
-                "That folder is not a plugin: it has no \(PluginManifestParser.manifestRelativePath) and no commands/, agents/, skills/, hooks/ or .mcp.json.",
+                AppStrings.localized("That folder is not a plugin: it has no \(PluginManifestParser.manifestRelativePath) and no commands/, agents/, skills/, hooks/ or .mcp.json."),
                 style: .error)
             return
         }
@@ -81,7 +83,7 @@ extension AppModel {
             }
         }
         pluginStateChanged()
-        showToast("Registered plugin folder \(url.lastPathComponent).", style: .info)
+        showToast(AppStrings.localized("Registered plugin folder \(url.lastPathComponent)."), style: .info)
     }
 
     public func removeLocalPluginFolder(_ plugin: LoadedPlugin, scope: PluginInstallScope) {
@@ -94,7 +96,7 @@ extension AppModel {
             updateProject(project)
         }
         pluginStateChanged()
-        showToast("Removed plugin folder \(plugin.name).", style: .info)
+        showToast(AppStrings.localized("Removed plugin folder \(plugin.name)."), style: .info)
     }
 
     // MARK: - Marketplace install / uninstall
@@ -123,11 +125,11 @@ extension AppModel {
             setPluginPreference(id: outcome.pluginID, enabled: true, scope: scope)
             pluginStateChanged()
             showToast(
-                "Installed \(outcome.pluginName) \(outcome.version).",
+                AppStrings.localized("Installed \(outcome.pluginName) \(outcome.version)."),
                 style: .info)
             return outcome
         } catch {
-            showToast("Install failed: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Install failed: \(error.localizedDescription)"), style: .error)
             return nil
         }
     }
@@ -144,13 +146,17 @@ extension AppModel {
     /// repo" expressible at all.
     public func setPluginEnabledForSelectedProject(_ plugin: LoadedPlugin, _ enabled: Bool) {
         guard var project = selectedProject else {
-            showToast("Select a project to set a per-project plugin override.", style: .warning)
+            showToast(AppStrings.localized("Select a project to set a per-project plugin override."), style: .warning)
             return
         }
         project.enabledPlugins[plugin.id] = enabled
         updateProject(project)
         pluginStateChanged()
-        showToast("\(plugin.name) \(enabled ? "enabled" : "disabled") for \(project.name).", style: .info)
+        showToast(
+            enabled
+                ? AppStrings.localized("\(plugin.name) enabled for \(project.name).")
+                : AppStrings.localized("\(plugin.name) disabled for \(project.name)."),
+            style: .info)
     }
 }
 

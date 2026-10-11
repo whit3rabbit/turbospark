@@ -8,7 +8,6 @@ final class BrowserSettingsPersistenceTests: XCTestCase {
         settings.browser.enabled = true
         settings.browser.dialogPolicy = .autoDismiss
         settings.browser.defaultViewport = BrowserViewportPreference(width: 1440, height: 900, zoom: 1.25)
-        settings.browser.viewportPreference = BrowserViewportPreference(width: 1100, height: 720, zoom: 1.1)
         settings.browser.onboardingDone = true
 
         let folder = BrowserBookmarkFolder(
@@ -27,7 +26,7 @@ final class BrowserSettingsPersistenceTests: XCTestCase {
         let browser = try XCTUnwrap(root["browser"] as? [String: Any])
         XCTAssertEqual(
             Set(browser.keys),
-            Set(["enabled", "dialog_policy", "default_viewport", "onboarding_done", "bookmarks", "viewport_pref"])
+            Set(["enabled", "dialog_policy", "default_viewport", "onboarding_done", "bookmarks"])
         )
     }
 
@@ -41,7 +40,6 @@ final class BrowserSettingsPersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.browser.defaultViewport, .standard)
         XCTAssertFalse(decoded.browser.onboardingDone)
         XCTAssertTrue(decoded.browser.bookmarks.isEmpty)
-        XCTAssertEqual(decoded.browser.viewportPreference, .standard)
     }
 
     func testMalformedAndUnknownBrowserSettingsFallBackIndependently() throws {
@@ -53,7 +51,20 @@ final class BrowserSettingsPersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.browser.defaultViewport, .standard)
         XCTAssertFalse(decoded.browser.onboardingDone)
         XCTAssertTrue(decoded.browser.bookmarks.isEmpty)
-        XCTAssertEqual(decoded.browser.viewportPreference, .standard)
+    }
+
+    /// The popover's old saved copy is dropped, not migrated: Settings'
+    /// `default_viewport` is the only persisted viewport.
+    func testLegacyViewportPreferenceIsIgnoredAndDroppedOnSave() throws {
+        let json = #"{"browser":{"default_viewport":{"width":1440,"height":900,"zoom":1.25},"viewport_pref":{"width":1100,"height":720,"zoom":1.1}}}"#
+        let decoded = try JSONDecoder().decode(MacAppSettings.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.browser.defaultViewport, BrowserViewportPreference(width: 1440, height: 900, zoom: 1.25))
+
+        let data = try JSONEncoder().encode(decoded)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let browser = try XCTUnwrap(root["browser"] as? [String: Any])
+        XCTAssertNil(browser["viewport_pref"])
     }
 
     func testOversizedBookmarkTreesAreRejectedAndOversizedStoredTreesDefaultEmpty() throws {

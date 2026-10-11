@@ -78,6 +78,22 @@ extension AppModel {
             case .chat, .files, .modelManager, .modelHub, .server: return false
             }
         }
+        /// Whether the Generation menu's Generate/Queue item may run the chat
+        /// draft. Only the chat section shows the composer it would send: a
+        /// menu item enabled anywhere else ran a draft the user could not see,
+        /// and in Images, Audio and Humanize it took Cmd+Return away from the
+        /// workspace's own (disabled) run button.
+        public var runsChatGenerationCommand: Bool { self == .chat }
+
+        /// Sections whose own run and stop controls bind Cmd+Return and Cmd+.,
+        /// so the chat-scoped Generation menu items must stand down there or
+        /// they cancel the chat while the user is stopping the visible job.
+        public var ownsGenerationShortcuts: Bool {
+            switch self {
+            case .images, .audio, .humanize: return true
+            case .chat, .files, .modelManager, .modelHub, .server: return false
+            }
+        }
         /// Keyboard shortcut character shown in the rail tooltip.
         public var shortcutKey: Character {
             switch self {

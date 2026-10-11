@@ -83,6 +83,9 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
 enum TurboSparkAppMain {
     static func main() {
         guard !REPLWorkerMain.runIfRequested() else { return }
+        // Before AppKit reads it, so a language picked by a build that did
+        // not mirror it (or `-TurboSpark.language`) reaches the menu bar.
+        AppLanguage.writeProcessLanguages(for: AppStrings.currentLanguage)
         TurboSparkApp.main()
     }
 }
@@ -124,6 +127,18 @@ struct TurboSparkApp: App {
             height: max(AppChromeLayout.minimumHeight, visible.height))
     }
 
+    /// Window content follows the picker at once through `\.locale`. The menu
+    /// bar and system panels follow `AppleLanguages`, which AppKit reads only
+    /// at launch, so the change is mirrored there and the user is told.
+    private func languageDidChange(to language: AppLanguage) {
+        AppLanguage.writeProcessLanguages(for: language)
+        guard AppLanguage.needsRelaunch(for: language) else { return }
+        vaultCoordinator.model?.showToast(
+            AppStrings.localized("The menu bar and system dialogs switch language after TurboSpark relaunches."),
+            style: .info,
+            duration: 6)
+    }
+
     var body: some Scene {
         let currentLanguage = AppLanguage.resolve(languageRawValue)
         Window("TurboSpark", id: "main") {
@@ -142,6 +157,11 @@ struct TurboSparkApp: App {
         .defaultSize(Self.defaultWindowSize)
         .defaultPosition(.center)
         .windowResizability(.contentMinSize)
+        // Every writer of the picker key (Appearance menu, General settings,
+        // the profile menu, `/language`) lands here through `@AppStorage`.
+        .onChange(of: languageRawValue) { _, newValue in
+            languageDidChange(to: AppLanguage.resolve(newValue))
+        }
         .commands {
             // Update check lives OUTSIDE the vault gate on purpose: it reads
             // no user data, and staying available while the vault is locked is
@@ -155,6 +175,29 @@ struct TurboSparkApp: App {
                     Text("Check for Updates…", bundle: .module)
                 }
                 .disabled(!updateController.canCheckForUpdates)
+            }
+            // Replaces the stock "TurboSpark Help" item, which only reported
+            // that no help book exists. Outside the vault gate like the update
+            // check: documentation and the issue tracker read no user data.
+            CommandGroup(replacing: .help) {
+                Button {
+                    NSWorkspace.shared.open(AppSupportLinks.documentation)
+                } label: {
+                    Text("TurboSpark Help", bundle: .module)
+                }
+                if let model = vaultCoordinator.model {
+                    Button {
+                        model.openSettings(tab: .shortcuts)
+                    } label: {
+                        Text("Keyboard Shortcuts...", bundle: .module)
+                    }
+                }
+                Divider()
+                Button {
+                    NSWorkspace.shared.open(AppSupportLinks.reportIssue)
+                } label: {
+                    Text("Report an Issue...", bundle: .module)
+                }
             }
             if let model = vaultCoordinator.model {
                 // Own Commands type so the menus OBSERVE the model: a Scene's
@@ -184,6 +227,9 @@ struct TurboSparkApp: App {
             .environment(\.locale, currentLanguage.locale)
             .environment(\.layoutDirection, currentLanguage.layoutDirection)
         }
+        // Resizable above the content's minimum; `SettingsWindowFrame` gives
+        // the first open its default size and autosaves the user's frame.
+        .windowResizability(.contentMinSize)
 
         MenuBarExtra(
             "TurboSpark",
@@ -215,6 +261,13 @@ struct TurboSparkApp: App {
     }
 }
 
+
+/// Where the Help menu sends a reader. The project's public repository is
+/// the documentation home and its tracker the support route.
+enum AppSupportLinks {
+    static let documentation = URL(string: "https://github.com/whit3rabbit/turbospark#readme")!
+    static let reportIssue = URL(string: "https://github.com/whit3rabbit/turbospark/issues/new")!
+}
 
 /// Republishes just the two AppModel facts the MenuBarExtra scene needs, so a
 /// server start/stop or the menu-bar toggle refreshes the scene.
@@ -252,65 +305,26 @@ struct TurboSparkModelCommands: Commands {
     var body: some Commands {
             // Menu-bar chrome takes its text from `Text(_:bundle:)` labels
             // rather than bare `LocalizedStringKey`s: the string catalog lives
-            // in `Bundle.module`, and the key-only initializers
-            // (`Button("Chat")`, `CommandMenu("View")`) resolve against
+            // in `Bundle.module`, and the key-only initializers (a `Button`
+            // or `CommandMenu` given a bare literal) resolve against
             // `Bundle.main`, which carries no strings in a SwiftPM build --
             // they would render English under every language.
-            CommandMenu(Text("View", bundle: .module)) {
-
-                Button {
-                    model.activeSection = .chat
-                } label: {
-                    Text("Chat", bundle: .module)
+            //
+            // App navigation joins the SYSTEM View menu rather than declaring
+            // a second menu titled "View" beside it: two View menus is what
+            // the 2026-10-11 UI audit found in the menu bar. The destinations
+            // are derived from `AppNavigationSection`, the same source as the
+            // sidebar and the Keyboard Shortcuts pane, so the three cannot
+            // disagree on a name or a chord.
+            CommandGroup(before: .toolbar) {
+                ForEach(AppModel.AppNavigationSection.allCases) { section in
+                    Button {
+                        model.activeSection = section
+                    } label: {
+                        Text(LocalizedStringKey(section.title), bundle: .module)
+                    }
+                    .keyboardShortcut(KeyEquivalent(section.shortcutKey), modifiers: .command)
                 }
-                .keyboardShortcut("1", modifiers: .command)
-
-                Button {
-                    model.activeSection = .images
-                } label: {
-                    Text("Image Generation", bundle: .module)
-                }
-                .keyboardShortcut("2", modifiers: .command)
-
-                Button {
-                    model.activeSection = .files
-                } label: {
-                    Text("Files", bundle: .module)
-                }
-                .keyboardShortcut("3", modifiers: .command)
-
-                Button {
-                    model.activeSection = .modelManager
-                } label: {
-                    Text("Installed Models", bundle: .module)
-                }
-                .keyboardShortcut("4", modifiers: .command)
-
-                Button {
-                    model.activeSection = .modelHub
-                } label: {
-                    Text("Discover Models", bundle: .module)
-                }
-                .keyboardShortcut("5", modifiers: .command)
-
-                Button {
-                    model.activeSection = .server
-                } label: {
-                    Text("API", bundle: .module)
-                }
-                .keyboardShortcut("6", modifiers: .command)
-                Button {
-                    model.activeSection = .audio
-                } label: {
-                    Text("Audio", bundle: .module)
-                }
-                .keyboardShortcut("7", modifiers: .command)
-                Button {
-                    model.activeSection = .humanize
-                } label: {
-                    Text("Humanize", bundle: .module)
-                }
-                .keyboardShortcut("8", modifiers: .command)
                 Menu {
                     AudioDestinationMenu(model: model)
                 } label: {
@@ -328,7 +342,7 @@ struct TurboSparkModelCommands: Commands {
                     set: { model.setInteractionMode($0) }
                 )) {
                     ForEach(AppModel.AppInteractionMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+                        Text(LocalizedStringKey(mode.title), bundle: .module).tag(mode)
                     }
                 } label: {
                     Text("Interaction Mode", bundle: .module)
@@ -363,7 +377,10 @@ struct TurboSparkModelCommands: Commands {
 
                 Picker(selection: $appearanceManager.statusBarViewMode) {
                     ForEach(StatusBarViewMode.allCases) { mode in
-                        Label(mode.label, systemImage: mode.systemImage).tag(mode)
+                        Label { Text(LocalizedStringKey(mode.label), bundle: .module) } icon: {
+                            Image(systemName: mode.systemImage)
+                        }
+                        .tag(mode)
                     }
                 } label: {
                     Text("Status Bar Benchmarks", bundle: .module)
@@ -473,20 +490,22 @@ struct TurboSparkModelCommands: Commands {
             }
 
             CommandMenu(Text("Generation", bundle: .module)) {
-                // CanRunOrQueue, not canRun: mid-turn the item QUEUES the
-                // draft, so the label says which one it will do.
+                // CanRunOrQueue gates, canQueue labels: mid-turn the item
+                // QUEUES the draft, so the label says which one it will do.
+                // Keyed on canRun, an idle chat with an empty draft read
+                // "Queue Message" (disabled) although nothing could queue.
                 Button {
                     model.run()
                 } label: {
-                    model.canRun
-                        ? Text("Generate Response", bundle: .module)
-                        : Text("Queue Message", bundle: .module)
+                    model.canQueue
+                        ? Text("Queue Message", bundle: .module)
+                        : Text("Generate Response", bundle: .module)
                 }
                 .keyboardShortcut(.return, modifiers: .command)
-                // The Images composer owns this chord there. If the menu item
-                // stays enabled it takes the chord from a disabled Generate
-                // button and sends the image prompt to the text model.
-                .disabled(!model.canRunOrQueue || model.activeSection == .images)
+                // Chat-scoped: Images, Audio and Humanize own this chord with
+                // their own run buttons, and an enabled menu item takes it
+                // from a disabled one and sends the hidden chat draft.
+                .disabled(!model.canRunOrQueue || !model.activeSection.runsChatGenerationCommand)
 
                 Button {
                     model.cancel()
@@ -494,7 +513,9 @@ struct TurboSparkModelCommands: Commands {
                     Text("Cancel Generation", bundle: .module)
                 }
                 .keyboardShortcut(".", modifiers: .command)
-                .disabled(!model.canCancel)
+                // Audio and Humanize bind Cmd+. to their own stop buttons;
+                // Stop All below remains the global stop.
+                .disabled(!model.canCancel || model.activeSection.ownsGenerationShortcuts)
 
                 Button {
                     model.stopAll()
@@ -518,36 +539,37 @@ struct TurboSparkModelCommands: Commands {
                 Button {
                     ModelLocationPicker.choose(for: model)
                 } label: {
-                    Text(verbatim: "Choose Model Folder…")
+                    Text("Choose Model Folder\u{2026}", bundle: .module)
                 }
                 .disabled(model.isRunning || model.isInstallingModel)
 
                 Button {
                     model.loadModel()
                 } label: {
-                    Text("Load Model", bundle: .module)
+                    Text("Load Chat Model", bundle: .module)
                 }
                 .disabled(!model.canLoadModel)
 
                 Button {
                     model.reloadModel()
                 } label: {
-                    Text("Reload Model", bundle: .module)
+                    Text("Reload Chat Model", bundle: .module)
                 }
                 .disabled(!model.canReloadModel)
 
                 Button {
                     model.unloadModel()
                 } label: {
-                    Text("Unload Model", bundle: .module)
+                    Text("Unload Chat Model", bundle: .module)
                 }
                 .disabled(!model.canUnloadModel)
 
                 if model.imageSession != nil {
+                    Divider()
                     Button {
                         model.unloadImageModel()
                     } label: {
-                        Text("Unload", bundle: .module)
+                        Text("Unload Image Model", bundle: .module)
                     }
                     .disabled(!model.canUnloadImageModel)
                 }
@@ -577,22 +599,18 @@ struct TurboSparkModelCommands: Commands {
             }
 
             CommandMenu(Text("Appearance", bundle: .module)) {
+                // "Mode", not "Appearance": the menu is already Appearance,
+                // and Appearance > Appearance named neither thing.
                 Picker(selection: $appearanceManager.appearance) {
-                    ForEach(AppAppearance.allCases) { appearance in
-                        Label(appearance.label, systemImage: appearance.systemImage)
-                            .tag(appearance)
-                    }
+                    AppearanceModeOptions()
                 } label: {
-                    Text("Appearance", bundle: .module)
+                    Text("Mode", bundle: .module)
                 }
 
                 Divider()
 
                 Picker(selection: $appearanceManager.textSize) {
-                    ForEach(AppTextSize.allCases) { size in
-                        Text(size.label)
-                            .tag(size)
-                    }
+                    TextSizeOptions()
                 } label: {
                     Text("Text Size", bundle: .module)
                 }
@@ -600,10 +618,7 @@ struct TurboSparkModelCommands: Commands {
                 Divider()
 
                 Picker(selection: $languageRawValue) {
-                    ForEach(AppLanguage.allCases) { language in
-                        Text(language.label)
-                            .tag(language.rawValue)
-                    }
+                    LanguageOptions()
                 } label: {
                     Text("Language", bundle: .module)
                 }

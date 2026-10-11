@@ -37,7 +37,6 @@ public struct SkillImportSheet: View {
                 .fill(.appBorder)
                 .frame(height: 1)
 
-            Button { showsSources = true } label: { Text("Manage sources", bundle: .module) }
             scopeBar
 
             Rectangle()
@@ -78,6 +77,9 @@ public struct SkillImportSheet: View {
 
     private var scopeBar: some View {
         HStack {
+            // Was a bare button floating between the header and this bar.
+            Button { showsSources = true } label: { Text("Manage sources", bundle: .module) }
+                .appAction(.secondary, size: .small)
             Spacer()
 
             Text("Target Scope:", bundle: .module)
@@ -101,8 +103,11 @@ public struct SkillImportSheet: View {
         VStack(spacing: 0) {
             // Search / fetch bar
             HStack(spacing: 10) {
-                TextField("GitHub repo (owner/name), Git URL, or HTTPS marketplace.json", text: $remoteInput)
-                    .textFieldStyle(.roundedBorder)
+                TextField(text: $remoteInput, prompt: Text("GitHub repo (owner/name), Git URL, or HTTPS marketplace.json", bundle: .module)) {
+                    Text("GitHub repo (owner/name), Git URL, or HTTPS marketplace.json", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
                     .themedFont(.base)
 
                 Button(action: { fetchRemoteMarketplace() }) {
@@ -112,8 +117,7 @@ public struct SkillImportSheet: View {
                         Text("Fetch", bundle: .module)
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(TurboSparkTheme.accentColor)
+                .appAction(.primary)
                 .disabled(remoteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isFetchingRemote)
             }
             .padding(.horizontal, 20)
@@ -149,7 +153,7 @@ public struct SkillImportSheet: View {
                             }
                         }
                         Spacer()
-                        Text(verbatim: "\(manifest.skills.count) skills available")
+                        Text("Skills available: \(manifest.skills.count)", bundle: .module)
                             .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
                     }
@@ -260,7 +264,7 @@ public struct SkillImportSheet: View {
                 }
             } catch {
                 await MainActor.run {
-                    self.remoteError = "Failed to load marketplace: \(error.localizedDescription)"
+                    self.remoteError = AppStrings.localized("Failed to load marketplace: \(error.localizedDescription)")
                     self.isFetchingRemote = false
                 }
             }
@@ -269,7 +273,7 @@ public struct SkillImportSheet: View {
 
     private func installRemoteEntry(_ entry: MarketplaceSkillEntry) {
         guard !importToProjectScope || project?.rootDirectoryURL != nil else {
-            model.showToast(String(localized: "The target project no longer exists.", bundle: .module), style: .error)
+            model.showToast(AppStrings.localized("The target project no longer exists."), style: .error)
             return
         }
         let targetScope: SkillScope
@@ -291,12 +295,17 @@ public struct SkillImportSheet: View {
                 await MainActor.run {
                     self.installingSkillNames.remove(entry.name)
                     self.model.reloadSkills()
-                    self.model.showToast("Installed '\(skill.name)' to \(targetScope.label).", style: .info)
+                    // `SkillScope.label` is fixed English from the model
+                    // layer; each value it takes is a catalog key.
+                    let scopeName = AppStrings.localized(String.LocalizationValue(targetScope.label))
+                    self.model.showToast(
+                        AppStrings.localized("Installed '\(skill.name)' to \(scopeName)."), style: .info)
                 }
             } catch {
                 await MainActor.run {
                     self.installingSkillNames.remove(entry.name)
-                    self.model.showToast("Installation failed: \(error.localizedDescription)", style: .error)
+                    self.model.showToast(
+                        AppStrings.localized("Installation failed: \(error.localizedDescription)"), style: .error)
                 }
             }
         }

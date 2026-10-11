@@ -4,6 +4,7 @@ import SwiftUI
 /// read-only. Editing that instruction is deliberately not offered: the
 /// checkpoint was trained on those exact bytes and the engine refuses any
 /// other prompt.
+@MainActor
 struct HumanizeAdvancedPanel: View {
     @ObservedObject var controller: HumanizeController
     let onClose: () -> Void
@@ -21,7 +22,7 @@ struct HumanizeAdvancedPanel: View {
             Text("Advanced", bundle: .module).font(theme.ui(.callout, weight: .semibold))
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
-            HumanizeChip(title: "Close", systemImage: "xmark", iconOnly: true, action: onClose)
+            AppChip(Text("Close", bundle: .module), systemImage: "xmark", iconOnly: true, action: onClose)
         } content: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -70,14 +71,15 @@ struct HumanizeAdvancedPanel: View {
                     .padding(.horizontal, 4).padding(.vertical, 8)
                     .accessibilityLabel(Text(title, bundle: .module))
             }
-            .frame(height: 76)
+            // Grows with the text size so about three lines stay in view.
+            .frame(height: (76 * HumanizeMetrics.textScale(theme)).rounded())
             .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(
                     focusedField == field ? theme.accent.opacity(0.55) : Color.primary.opacity(0.1),
                     lineWidth: focusedField == field ? 1.25 : 0.75)
             }
-            .animation(TSMotion.hover, value: focusedField)
+            .tsAnimation(TSMotion.hover, value: focusedField)
         }
     }
 
@@ -97,8 +99,10 @@ struct HumanizeAdvancedPanel: View {
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
                 .font(theme.ui(.small).monospacedDigit())
-                .frame(width: 110)
-                HumanizeChip(title: "New seed", systemImage: "dice", iconOnly: true) {
+                // Flexible so the row still fits a narrow panel at a large
+                // text size.
+                .frame(minWidth: 64, idealWidth: 110, maxWidth: 140)
+                AppChip(Text("New seed", bundle: .module), systemImage: "dice", iconOnly: true) {
                     controller.rules.seed = UInt64.random(in: 1...999_999)
                 }
             }
@@ -109,7 +113,7 @@ struct HumanizeAdvancedPanel: View {
     private var instructionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                withAnimation(TSMotion.select) { showInstruction.toggle() }
+                TSMotion.animate(TSMotion.select) { showInstruction.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")

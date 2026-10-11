@@ -5,10 +5,8 @@ import WebKit
 @MainActor
 final class BrowserViewportControllerTests: XCTestCase {
     func testModeSwitchUsesFixedDimensionsOrTracksResizedPane() {
-        var storedPreference = BrowserViewportPreference(width: 1100, height: 720, zoom: 1.25)
         let controller = BrowserViewportController(
-            readPreference: { storedPreference },
-            writePreference: { storedPreference = $0 }
+            initialPreference: BrowserViewportPreference(width: 1100, height: 720, zoom: 1.25)
         )
 
         let firstResponsiveLayout = controller.layout(in: CGSize(width: 800, height: 600))
@@ -28,10 +26,8 @@ final class BrowserViewportControllerTests: XCTestCase {
     }
 
     func testChangingViewportRelayoutsTheSamePageWithoutReloading() async throws {
-        var storedPreference = BrowserViewportPreference(width: 1100, height: 720, zoom: 1.25)
         let controller = BrowserViewportController(
-            readPreference: { storedPreference },
-            writePreference: { storedPreference = $0 }
+            initialPreference: BrowserViewportPreference(width: 1100, height: 720, zoom: 1.25)
         )
         controller.setMode(.fixed)
 
@@ -66,28 +62,30 @@ final class BrowserViewportControllerTests: XCTestCase {
         XCTAssertEqual(recorder.finishCount, originalLoadCount)
     }
 
-    func testUpdatedPreferenceIsRestoredByANewController() {
-        var storedPreference = BrowserViewportPreference.standard
-        var writeCount = 0
-        let firstController = BrowserViewportController(
-            readPreference: { storedPreference },
-            writePreference: {
-                storedPreference = $0
-                writeCount += 1
-            }
-        )
+    /// Settings > Browser > Default viewport used to be written and never
+    /// read. Drives the real Settings edit path into AppModel and opens the
+    /// pane's session the way `BrowserPaneView` does.
+    func testSettingsDefaultViewportStartsEachSessionAndPopoverEditsStayInIt() {
+        let appModel = AppModel()
+        let settingsPane = BrowserSettingsPaneViewModel(
+            settings: appModel.browserSettings, latest: { appModel.browserSettings }
+        ) { appModel.browserSettings = $0 }
+        settingsPane.setDefaultViewport(width: 1440, height: 900, zoom: 1.25)
+        let chosen = BrowserViewportPreference(width: 1440, height: 900, zoom: 1.25)
 
-        firstController.updatePreference(width: 1360, height: 900, zoom: 1.2)
-
-        let relaunchedController = BrowserViewportController(
-            readPreference: { storedPreference },
-            writePreference: { storedPreference = $0 }
-        )
+        let session = BrowserPaneView.makeViewportController(appModel: appModel)
+        XCTAssertEqual(session.preference, chosen)
+        session.setMode(.fixed)
         XCTAssertEqual(
-            relaunchedController.preference,
-            BrowserViewportPreference(width: 1360, height: 900, zoom: 1.2)
+            session.layout(in: CGSize(width: 800, height: 600)),
+            BrowserViewportLayout(size: CGSize(width: 1440, height: 900), pageZoom: 1.25)
         )
-        XCTAssertEqual(writeCount, 1)
+
+        // A popover edit changes this session only.
+        session.updatePreference(width: 1024, height: 768, zoom: 1.5)
+        XCTAssertEqual(session.preference, BrowserViewportPreference(width: 1024, height: 768, zoom: 1.5))
+        XCTAssertEqual(appModel.browserSettings.defaultViewport, chosen)
+        XCTAssertEqual(BrowserPaneView.makeViewportController(appModel: appModel).preference, chosen)
     }
 }
 

@@ -80,20 +80,32 @@ struct SteeringVectorImportSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if !descriptor.isSteeringReady {
-                    Label("This model family does not support live steering.", systemImage: "xmark.octagon.fill")
-                        .foregroundStyle(.red)
+                    Label {
+                        Text("This model family does not support live steering.", bundle: .module)
+                    } icon: {
+                        Image(systemName: "xmark.octagon.fill")
+                    }
+                    .foregroundStyle(.red)
                 }
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Hugging Face source", bundle: .module)
                             .themedFont(.small, weight: .semibold)
-                        TextField("owner/repository", text: $repo)
-                            .textFieldStyle(.roundedBorder)
-                        TextField("path/to/vector.gguf", text: $file)
-                            .textFieldStyle(.roundedBorder)
-                        TextField("Revision", text: $revision)
-                            .textFieldStyle(.roundedBorder)
+                        // The prompts are format examples (repo id, file
+                        // path), so they stay verbatim; the labels are names.
+                        TextField(text: $repo, prompt: Text(verbatim: "owner/repository")) {
+                            Text("Repository", bundle: .module)
+                        }
+                        .textFieldStyle(.roundedBorder)
+                        TextField(text: $file, prompt: Text(verbatim: "path/to/vector.gguf")) {
+                            Text("File", bundle: .module)
+                        }
+                        .textFieldStyle(.roundedBorder)
+                        TextField(text: $revision, prompt: Text("Revision", bundle: .module)) {
+                            Text("Revision", bundle: .module)
+                        }
+                        .textFieldStyle(.roundedBorder)
                     }
                 }
 
@@ -101,12 +113,16 @@ struct SteeringVectorImportSheet: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Preset", bundle: .module)
                             .themedFont(.small, weight: .semibold)
-                        TextField("Direction name", text: $name)
-                            .textFieldStyle(.roundedBorder)
+                        TextField(text: $name, prompt: Text("Direction name", bundle: .module)) {
+                            Text("Direction name", bundle: .module)
+                        }
+                        .textFieldStyle(.roundedBorder)
                         HStack {
                             Text("Ablate strength", bundle: .module)
                             Spacer()
-                            TextField("0.3", text: $scale)
+                            TextField(text: $scale, prompt: Text(verbatim: "0.3")) {
+                                Text("Ablate strength", bundle: .module)
+                            }
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 90)
                         }
@@ -240,7 +256,7 @@ struct SteeringVectorImportSheet: View {
                 }
                 model.setSteeringEnabled(true)
                 model.showToast(
-                    "Vector downloaded and selected. Reload the model to apply steering.",
+                    AppStrings.localized("Vector downloaded and selected. Reload the model to apply steering."),
                     style: .success,
                     duration: 7.0)
                 isDownloading = false

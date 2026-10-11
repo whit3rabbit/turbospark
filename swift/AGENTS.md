@@ -10,6 +10,9 @@ Short seams. Verify each one before release.
 
 ## Read first
 
+- [Design rules](../DESIGN.md): ALWAYS read before any UI or design change
+  (views, controls, copy, color, type, layout, menus, shortcuts, motion).
+  It covers accessibility, theming, localization, and layout.
 - [Detailed archived Swift guide](../.claude/docs/modules/swift.md)
 - [Swift tool implementation](docs/SWIFT_TOOLS.md)
 - [Swift skills](docs/SWIFT_SKILLS.md)
@@ -49,8 +52,19 @@ staging files changed.
   describe it as a minimal demo.
 - Keep app bundle and DMG creation in the release scripts. Verify the mounted
   DMG contents, not only the packager exit code.
-- Localization changes go through the string catalog and parity workflow.
-  Do not add ad hoc strings to a view.
+- Localization changes go through the string catalog and ten parity gates
+  (`swift/docs/SWIFT_LOCALIZATION.md`). Key-only initializers outside `Text`
+  must never take bare string literals. Use `AppStrings.localized("Key")` for
+  UI strings without `Text`. `Localization/Info.plist` declares
+  `CFBundleLocalizations` for all 21 languages so menu bar and system dialogs
+  follow the in-app picker after relaunch.
+- Store durability: `AppJSONStore` quarantines unreadable or corrupt JSON
+  files (`corrupt-...`) instead of overwriting them on save, preventing silent
+  data loss.
+- Generation menu shortcuts: `Cmd+Return` and `Cmd+.` are scoped by workspace.
+  `runsChatGenerationCommand` enables chat generation only in Chat. Full-bleed
+  workspaces (`.images`, `.audio`, `.humanize`) declare `ownsGenerationShortcuts`
+  to bind those chords to their own run/stop controls.
 - The API destination has three modes. Text and Image share the TurboSpark
   Rust listener, address, and key. TypeSafe manages a separate loopback
   `openkindd` process, URL, and Keychain key through the OpenKind Swift
@@ -67,6 +81,11 @@ staging files changed.
   storage abstractions. Do not invent another `~/.turbospark` path.
 - Accessibility and keyboard changes must follow the existing shortcuts and
   VoiceOver contracts.
+- Every UI or design change follows [DESIGN.md](../DESIGN.md): build from
+  its shared control vocabulary (`Theme/AppControls.swift`,
+  `Theme/AppPreferenceOptions.swift`, `Theme/AppStrings.swift`,
+  `Theme/TurboSparkMotion.swift`), not local variants, and run its
+  verification list.
 - The Sparkle updater starts only inside a real .app bundle (see
   `SparkleUpdateController`); never bypass that guard for `swift run` builds.
   Update trust is the EdDSA signature, not Apple code signing -- the bundle

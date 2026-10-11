@@ -60,15 +60,15 @@ struct ChatSidebarChatRowView: View {
             }
         }
         .contentShape(.rect(cornerRadius: 9))
-        .animation(TSMotion.hover, value: isHovered)
-        .animation(TSMotion.select, value: isSelected)
+        .tsAnimation(TSMotion.hover, value: isHovered)
+        .tsAnimation(TSMotion.select, value: isSelected)
         .onHover { hovering in
             isHovered = hovering
         }
         .contextMenu {
             Button {
                 model.setChatPinned(id: chat.id, pinned: !chat.isPinned)
-            } label: { Text(LocalizedStringKey(chat.isPinned ? "Unpin" : "Pin"), bundle: .module) }
+            } label: { (chat.isPinned ? Text("Unpin", bundle: .module) : Text("Pin", bundle: .module)) }
             Button {
                 renameText = chat.title
                 chatBeingRenamed = chat
@@ -84,7 +84,7 @@ struct ChatSidebarChatRowView: View {
             .disabled(model.isRunning || chat.isGhost)
             Button {
                 model.setChatArchived(id: chat.id, archived: !chat.isArchived)
-            } label: { Text(LocalizedStringKey(chat.isArchived ? "Unarchive" : "Archive"), bundle: .module) }
+            } label: { (chat.isArchived ? Text("Unarchive", bundle: .module) : Text("Archive", bundle: .module)) }
             .disabled(chat.isGhost)
             // The qwen-code "open in split view" action: the chat joins the
             // pane column without leaving the list. The selected chat is
@@ -92,14 +92,14 @@ struct ChatSidebarChatRowView: View {
             // so the item is disabled rather than a silent no-op.
             Button {
                 model.toggleSplitPane(chatID: chat.id)
-            } label: { Text(LocalizedStringKey(model.isSplitPane(chatID: chat.id) ? "Close Split Pane" : "Open in Split View"), bundle: .module) }
+            } label: { (model.isSplitPane(chatID: chat.id) ? Text("Close Split Pane", bundle: .module) : Text("Open in Split View", bundle: .module)) }
             .disabled(chat.isGhost || model.isRunning || chat.id == model.selectedChatID)
             Button(role: .destructive) {
                 chatPendingDeletion = chat
             } label: { Text("Delete", bundle: .module) }
             .disabled(model.isRunning)
         }
-        .accessibilityAction(named: Text(LocalizedStringKey(chat.isPinned ? "Unpin" : "Pin"), bundle: .module)) {
+        .accessibilityAction(named: (chat.isPinned ? Text("Unpin", bundle: .module) : Text("Pin", bundle: .module))) {
             model.setChatPinned(id: chat.id, pinned: !chat.isPinned)
         }
         .accessibilityAction(named: Text("Rename", bundle: .module)) {
@@ -130,7 +130,7 @@ struct ChatSidebarChatRowView: View {
 
     private func selectButton(isSelected: Bool) -> some View {
         Button {
-            withAnimation(TSMotion.select) {
+            TSMotion.animate(TSMotion.select) {
                 model.selectChat(id: chat.id)
             }
         } label: {

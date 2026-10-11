@@ -320,6 +320,8 @@ final class HumanizeController: ObservableObject {
     }
 }
 
+/// Shown in the section's feedback line, so the text follows the in-app
+/// language picker (`AppStrings`) like the labels beside it.
 enum HumanizeError: LocalizedError {
     case notInstalled
     case passageTooLong
@@ -327,9 +329,9 @@ enum HumanizeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .passageTooLong:
-            return String(localized: "One passage is too long for the model. Add paragraph breaks and try again.", bundle: .module)
+            return AppStrings.localized("One passage is too long for the model. Add paragraph breaks and try again.")
         case .notInstalled:
-            return String(localized: "The Humanizer model is not installed.", bundle: .module)
+            return AppStrings.localized("The Humanizer model is not installed.")
         }
     }
 }

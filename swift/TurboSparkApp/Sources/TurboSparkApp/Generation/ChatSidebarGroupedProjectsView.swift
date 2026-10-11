@@ -174,7 +174,7 @@ struct ChatSidebarGroupedProjectsView: View {
                         Button {
                             toggleExpansion(for: project.id)
                         } label: {
-                            Text(LocalizedStringKey(isExpanded ? "Show less" : "Show more"), bundle: .module)
+                            (isExpanded ? Text("Show less", bundle: .module) : Text("Show more", bundle: .module))
                                 .font(theme.ui(.tiny, weight: .medium))
                                 .foregroundStyle(.appSecondary)
                                 .padding(.leading, 24)
@@ -182,7 +182,7 @@ struct ChatSidebarGroupedProjectsView: View {
                                 .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
-                        .help(Text(LocalizedStringKey(isExpanded ? "Show less" : "Show more"), bundle: .module))
+                        .help((isExpanded ? Text("Show less", bundle: .module) : Text("Show more", bundle: .module)))
                     }
                 }
             }
@@ -319,7 +319,8 @@ struct ChatSidebarGroupedProjectsView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isRunning && !isSelected)
-            .help("\(chat.title) - \(MessageTimestampFormatter.relativeString(for: chat.updatedAt, locale: locale))")
+            // Data only (the chat's own title and a locale-formatted date).
+            .help(Text(verbatim: "\(chat.title) - \(MessageTimestampFormatter.relativeString(for: chat.updatedAt, locale: locale))"))
             .accessibilityLabel(chat.title)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
 

@@ -61,7 +61,7 @@ struct ToolCodeCellView: View {
                 .foregroundStyle(isCopied ? Color.green : Color.secondary)
             }
             .buttonStyle(.plain)
-            .help("Copy \(label) to clipboard")
+            .help(Text("Copy \(label) to clipboard", bundle: .module))
 
             if let filename = downloadFilename, !filename.isEmpty {
                 Button {
@@ -76,7 +76,7 @@ struct ToolCodeCellView: View {
                     .foregroundStyle(Color.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Save \(label) to file")
+                .help(Text("Save \(label) to file", bundle: .module))
             }
         }
         .padding(.vertical, 2)

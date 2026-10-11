@@ -28,9 +28,9 @@ public struct AgentContentImportSheet: View {
 
         var localizedName: String {
             switch self {
-            case .skills: return String(localized: "Skills", bundle: .module)
-            case .agents: return String(localized: "Agents", bundle: .module)
-            case .mcpServers: return String(localized: "MCP Servers", bundle: .module)
+            case .skills: return AppStrings.localized("Skills")
+            case .agents: return AppStrings.localized("Agents")
+            case .mcpServers: return AppStrings.localized("MCP Servers")
             }
         }
     }
@@ -231,9 +231,13 @@ public struct AgentContentImportSheet: View {
 
     private func candidateRow(_ candidate: Binding<ImportCandidate>) -> some View {
         HStack(spacing: 12) {
-            Toggle("", isOn: candidate.isSelected)
-                .labelsHidden()
-                .disabled(candidate.wrappedValue.alreadyImported)
+            // Named by the item it selects; an empty label left VoiceOver
+            // announcing a column of unnamed checkboxes.
+            Toggle(isOn: candidate.isSelected) {
+                Text(candidate.wrappedValue.name)
+            }
+            .labelsHidden()
+            .disabled(candidate.wrappedValue.alreadyImported)
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text(candidate.wrappedValue.name)
@@ -281,11 +285,12 @@ public struct AgentContentImportSheet: View {
 
             Spacer()
 
-            Button(String(localized: "Import Selected (\(selectedCount))", bundle: .module)) {
+            Button {
                 importSelected()
+            } label: {
+                Text("Import Selected (\(selectedCount))", bundle: .module)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(TurboSparkTheme.accentColor)
+            .appAction(.primary)
             .disabled(selectedCount == 0)
         }
         .padding(.horizontal, 20)
@@ -503,7 +508,7 @@ public struct AgentContentImportSheet: View {
     private func selectCustomFolder() {
         guard !importToProjectScope || project?.rootDirectoryURL != nil else {
             model.showToast(
-                String(localized: "The target project no longer exists.", bundle: .module),
+                AppStrings.localized("The target project no longer exists."),
                 style: .error)
             return
         }
@@ -511,7 +516,7 @@ public struct AgentContentImportSheet: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Import"
+        panel.prompt = AppStrings.localized("Import")
 
         guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
         switch category {
@@ -537,7 +542,7 @@ public struct AgentContentImportSheet: View {
     private func importSelected() {
         guard !importToProjectScope || project?.rootDirectoryURL != nil else {
             model.showToast(
-                String(localized: "The target project no longer exists.", bundle: .module),
+                AppStrings.localized("The target project no longer exists."),
                 style: .error)
             return
         }
@@ -584,13 +589,12 @@ public struct AgentContentImportSheet: View {
             }
             if skipped > 0 {
                 model.showToast(
-                    String(
-                        localized: "Added \(imported) servers; \(skipped) skipped (name already in use).",
-                        bundle: .module),
+                    AppStrings.localized(
+                        "Servers added: \(imported). Skipped (name already in use): \(skipped)."),
                     style: .warning)
             } else {
                 model.showToast(
-                    String(localized: "Added \(imported) servers (disabled).", bundle: .module),
+                    AppStrings.localized("Servers added (disabled): \(imported)."),
                     style: .success)
             }
         }

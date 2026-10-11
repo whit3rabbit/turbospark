@@ -33,7 +33,7 @@ struct ChatSearchOverlayView: View {
             card
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Search chats")
+        .accessibilityLabel(Text("Search chats", bundle: .module))
         .onAppear {
             query = ""
             selectedIndex = 0
@@ -85,11 +85,12 @@ struct ChatSearchOverlayView: View {
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
-            TextField("Search chats...", text: $query)
+            TextField(text: $query, prompt: Text("Search chats...", bundle: .module)) {
+                Text("Search chats", bundle: .module)
+            }
                 .textFieldStyle(.plain)
                 .font(theme.ui(.callout))
                 .focused($fieldFocused)
-                .accessibilityLabel("Search chats")
             if !query.isEmpty {
                 Button {
                     query = ""
@@ -101,7 +102,7 @@ struct ChatSearchOverlayView: View {
                 }
                 .buttonStyle(.plain)
                 .help(Text("Clear search", bundle: .module))
-                .accessibilityLabel("Clear search")
+                .accessibilityLabel(Text("Clear search", bundle: .module))
             }
         }
         .padding(.horizontal, 14)
@@ -113,13 +114,15 @@ struct ChatSearchOverlayView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3) {
                     if documents.isEmpty {
-                        emptyState(
-                            title: "No chats yet",
-                            detail: "Start a conversation to search it here")
+                        AppEmptyState(
+                            systemImage: "bubble.left.and.bubble.right",
+                            title: Text("No chats yet", bundle: .module),
+                            message: Text("Start a conversation to search it here", bundle: .module))
                     } else if hits.isEmpty {
-                        emptyState(
-                            title: "No matching chats",
-                            detail: "Try a different search term")
+                        AppEmptyState(
+                            systemImage: "magnifyingglass",
+                            title: Text("No matching chats", bundle: .module),
+                            message: Text("Try a different search term", bundle: .module))
                     } else {
                         ForEach(Array(hits.enumerated()), id: \.element.id) { index, hit in
                             Button {
@@ -130,7 +133,7 @@ struct ChatSearchOverlayView: View {
                                     isSelected: index == selectedIndex)
                             }
                             .buttonStyle(.plain)
-                            .help("Open \(hit.title)")
+                            .help(Text("Open \(hit.title)", bundle: .module))
                             .id(hit.id)
                         }
                     }
@@ -146,37 +149,19 @@ struct ChatSearchOverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func emptyState(title: String, detail: String) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(theme.ui(.title2))
-                .foregroundStyle(.tertiary)
-                .padding(.top, 18)
-                .padding(.bottom, 2)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(theme.ui(.tiny, weight: .medium))
-                .foregroundStyle(.appSecondary)
-            Text(detail)
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title). \(detail).")
-    }
-
     private var footer: some View {
         HStack {
             Text("Up/Down to navigate, Enter to open, Esc to close", bundle: .module)
                 .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
             Spacer(minLength: 0)
-            Text(hits.count == documents.count
-                ? "\(documents.count) chats"
-                : "\(hits.count) of \(documents.count) chats")
+            Group {
+                if hits.count == documents.count {
+                    Text("Chats: \(documents.count)", bundle: .module)
+                } else {
+                    Text("Chats: \(hits.count) of \(documents.count)", bundle: .module)
+                }
+            }
                 .font(theme.ui(.tiny))
                 .foregroundStyle(.tertiary)
         }

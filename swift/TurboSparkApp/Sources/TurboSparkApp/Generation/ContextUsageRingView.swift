@@ -45,9 +45,9 @@ struct ContextUsageRingView: View {
             }
             .buttonStyle(.plain)
             .onHover { isHovered = $0 }
-            .help("Context usage: \(percentText) of the model's context window")
-            .accessibilityLabel("Context usage")
-            .accessibilityValue("\(percentText) of the context window")
+            .help(Text("Context usage: \(percentText) of the model's context window", bundle: .module))
+            .accessibilityLabel(Text("Context usage", bundle: .module))
+            .accessibilityValue(Text("\(percentText) of the context window", bundle: .module))
             .appPointerCursor()
             .popover(
                 isPresented: $showsPopover,
@@ -69,7 +69,7 @@ struct ContextUsageRingView: View {
                 .rotationEffect(.degrees(-90))
         }
         .frame(width: 13, height: 13)
-        .animation(.linear(duration: 0.15), value: fraction)
+        .tsAnimation(.linear(duration: 0.15), value: fraction)
     }
 }
 
@@ -150,14 +150,16 @@ struct ContextUsagePopoverView: View {
         if let summary {
             VStack(alignment: .leading, spacing: 5) {
                 ForEach(summary.components) { component in
+                    // Every component label `AppContextUsage` builds is
+                    // fixed English and a catalog key.
                     row(
-                        label: component.label,
+                        label: Text(LocalizedStringKey(component.label), bundle: .module),
                         tokens: component.tokens,
                         window: summary.windowTokens,
                         color: component.kind.segmentColor)
                 }
                 row(
-                    label: "Free space",
+                    label: Text("Free space", bundle: .module),
                     tokens: summary.freeTokens,
                     window: summary.windowTokens,
                     color: Color.primary.opacity(0.15))
@@ -169,19 +171,19 @@ struct ContextUsagePopoverView: View {
         }
     }
 
-    private func row(label: String, tokens: Int, window: Int, color: Color) -> some View {
+    private func row(label: Text, tokens: Int, window: Int, color: Color) -> some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(color)
                 .frame(width: 6, height: 6)
-            // Verbatim: the label is built at runtime, not a literal key.
-            Text(verbatim: label)
+            label
                 .font(theme.ui(.tiny))
                 .foregroundStyle(.appText)
                 .lineLimit(1)
             Spacer(minLength: 8)
             let percent = window > 0 ? Int((Double(tokens) / Double(window) * 100).rounded()) : 0
-            Text("\(tokens.formatted(.number.notation(.compactName))) (\(percent)%)")
+            // A numeric readout: nothing in it to translate.
+            Text(verbatim: "\(tokens.formatted(.number.notation(.compactName))) (\(percent)%)")
                 .monospacedDigit()
                 .font(theme.ui(.tiny))
                 .foregroundStyle(.appSecondary)

@@ -49,29 +49,12 @@ public struct WorktreeFileListView: View {
     }
 
     private var searchBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .themedFont(.tiny)
-                .foregroundStyle(.appSecondary)
-
-            TextField("Filter changed files...", text: $worktree.searchQuery)
-                .textFieldStyle(.plain)
-                .font(theme.ui(.small))
-
-            if !worktree.searchQuery.isEmpty {
-                Button {
-                    worktree.searchQuery = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .themedFont(.tiny)
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.primary.opacity(0.03))
+        AppSearchField(
+            text: $worktree.searchQuery,
+            prompt: Text("Filter changed files...", bundle: .module),
+            minWidth: 0, idealWidth: 240, maxWidth: .infinity)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
     }
 
     private var emptySearchResults: some View {

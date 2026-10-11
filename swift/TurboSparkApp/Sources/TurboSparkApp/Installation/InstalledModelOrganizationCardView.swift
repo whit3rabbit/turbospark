@@ -24,17 +24,13 @@ struct InstalledModelOrganizationCardView: View {
                 FlowLayout(spacing: 6, lineSpacing: 6) {
                     ForEach(orgStore.tags(alias: installedModel.alias, path: installedModel.path), id: \.self) { tag in
                         HStack(spacing: 4) {
-                            Text(tag)
+                            Text(verbatim: tag)
                                 .themedFont(.tiny, weight: .medium)
-                            Button {
+                            AppIconButton("xmark", label: Text("Remove tag \(tag)", bundle: .module)) {
                                 orgStore.removeTag(tag, for: installedModel.alias, path: installedModel.path)
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .themedFont(.micro, weight: .bold)
                             }
                             .buttonStyle(.plain)
-                            .help("Remove tag \(tag)")
-                            .accessibilityLabel("Remove tag \(tag)")
+                            .themedFont(.micro, weight: .bold)
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
@@ -44,7 +40,9 @@ struct InstalledModelOrganizationCardView: View {
 
                     if isAddingTag {
                         HStack(spacing: 4) {
-                            TextField("Tag name", text: $newTagText)
+                            TextField(text: $newTagText, prompt: Text("Tag name", bundle: .module)) {
+                                Text("Tag name", bundle: .module)
+                            }
                                 .textFieldStyle(.plain)
                                 .themedFont(.tiny)
                                 .frame(width: 80)
@@ -72,7 +70,7 @@ struct InstalledModelOrganizationCardView: View {
                                 .padding(.vertical, 3)
                         }
                         .buttonStyle(.plain)
-                        .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: RoundedRectangle(cornerRadius: 4))
+                        .background(.appElevated, in: RoundedRectangle(cornerRadius: 4))
                         .foregroundStyle(.appSecondary)
                     }
                 }
@@ -86,12 +84,17 @@ struct InstalledModelOrganizationCardView: View {
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
 
-                TextField("Add personal notes for this model (e.g., best for Swift, fast test runner)...", text: $notesText, axis: .vertical)
+                TextField(
+                    text: $notesText,
+                    prompt: Text("Add personal notes for this model (e.g., best for Swift, fast test runner)...", bundle: .module),
+                    axis: .vertical
+                ) {
+                    Text("Personal Notes", bundle: .module)
+                }
                     .textFieldStyle(.plain)
                     .themedFont(.small)
-                    .padding(8)
-                    .background(.appElevated, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay { RoundedRectangle(cornerRadius: 6).stroke(.appBorder, lineWidth: 0.5) }
+                    .appEditorSurface()
+                    .accessibilityLabel(Text("Personal Notes", bundle: .module))
                     .onChange(of: notesText) { _, newValue in
                         orgStore.setNotes(newValue, for: installedModel.alias, path: installedModel.path)
                     }

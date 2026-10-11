@@ -17,13 +17,13 @@ struct AudioRecordingSetupDependencies {
 
 extension AudioWorkspaceController {
     private var microphoneSetupMessage: String {
-        String(localized: "Allow microphone access in the macOS prompt to continue.", bundle: .module)
+        AppStrings.localized("Allow microphone access in the macOS prompt to continue.")
     }
     private var systemSetupMessage: String {
-        String(localized: "Allow screen and system audio recording in System Settings if prompted.", bundle: .module)
+        AppStrings.localized("Allow screen and system audio recording in System Settings if prompted.")
     }
     private var setupCancelledMessage: String {
-        String(localized: "Recording setup cancelled. Start again when you are ready.", bundle: .module)
+        AppStrings.localized("Recording setup cancelled. Start again when you are ready.")
     }
     private func showRecordingSetup(_ message: String) {
         recordingSetupStatus = message
@@ -64,7 +64,7 @@ extension AudioWorkspaceController {
                     guard self.isCurrentRecordingSetup(attempt, token: token) else { return }
                     self.audioApplications = applications
                 }
-                self.status = String(localized: "Recording devices are ready.", bundle: .module)
+                self.status = AppStrings.localized("Recording devices are ready.")
             } catch {
                 guard self.isCurrentRecordingSetup(attempt, token: token) else { return }
                 self.error = error.localizedDescription; self.status = error.localizedDescription
@@ -87,7 +87,7 @@ extension AudioWorkspaceController {
             return
         }
         stopPlayback(); stopReferencePreview(); error = nil
-        var item = AudioLibraryItem(title: String(localized: "Meeting", bundle: .module) + " " + Date().formatted(date: .abbreviated, time: .shortened), kind: .recording)
+        var item = AudioLibraryItem(title: AppStrings.localized("Meeting") + " " + Date().formatted(date: .abbreviated, time: .shortened), kind: .recording)
         item.status = .draft; item.recipe = recipe; item.recipe.task = AudioTask.speechToText.rawValue
         if let profile = selectedProfile, profile.identity.task == .speechToText {
             item.modelFamily = profile.family
@@ -139,12 +139,12 @@ extension AudioWorkspaceController {
                 }
                 guard self.isCurrentRecordingSetup(attempt, token: token), self.capture === capture else { return }
                 self.showRecordingSetup(config.systemSource == .none
-                    ? String(localized: "Preparing recording...", bundle: .module) : self.systemSetupMessage)
+                    ? AppStrings.localized("Preparing recording...") : self.systemSetupMessage)
                 try await dependencies.start(capture, config)
                 guard self.isCurrentRecordingSetup(attempt, token: token), self.capture === capture, self.recordingID == id else { _ = await capture.stop(); return }
                 self.isRecording = true; self.isPaused = false
                 self.update(id) { $0.status = .recording }
-                self.status = String(localized: "Recording and autosaving", bundle: .module)
+                self.status = AppStrings.localized("Recording and autosaving")
             } catch {
                 guard self.isCurrentRecordingSetup(attempt, token: token), self.capture === capture, self.recordingID == id else { _ = await capture.stop(); return }
                 _ = capture.stopAcceptingAndDrain()
@@ -167,7 +167,7 @@ extension AudioWorkspaceController {
     func addMarker() {
         guard isRecording, let id = recordingID, let capture else { return }
         let seconds = capture.currentElapsed()
-        update(id) { $0.markers.append(AudioRecordingMarker(time: seconds, title: String(localized: "Marker", bundle: .module) + " \($0.markers.count + 1)")) }
+        update(id) { $0.markers.append(AudioRecordingMarker(time: seconds, title: AppStrings.localized("Marker") + " \($0.markers.count + 1)")) }
     }
     func stopRecording() { stopRecording(interrupted: false) }
     func stopRecording(interrupted: Bool) {
@@ -186,7 +186,7 @@ extension AudioWorkspaceController {
             update(id) {
                 if !$0.clips.contains(where: { $0.frameCount > 0 }), started {
                     interrupted = true
-                    failure = failure ?? String(localized: "Recording did not capture audio. Check the source and try again.", bundle: .module)
+                    failure = failure ?? AppStrings.localized("Recording did not capture audio. Check the source and try again.")
                 }
                 $0.status = interrupted ? .interrupted : .completed; $0.failure = failure; $0.updatedAt = Date()
             }

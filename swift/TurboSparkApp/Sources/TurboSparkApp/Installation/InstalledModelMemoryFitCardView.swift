@@ -31,7 +31,7 @@ struct InstalledModelMemoryFitCardView: View {
             // of layer count or expert stride.
             if let fit, fit.countedSource != .unknown {
                 allocationRow(fit)
-                Text(workingSetExplanation(fit))
+                workingSetExplanation
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -83,13 +83,13 @@ struct InstalledModelMemoryFitCardView: View {
                         .padding(.vertical, 1)
                         .background(Color.green.opacity(0.16), in: Capsule())
                         .foregroundStyle(.green)
-                        .help("A frozen benchmark row taken on this chip at this context and slot count.")
+                        .help(Text("A frozen benchmark row taken on this chip at this context and slot count.", bundle: .module))
                 }
                 Spacer()
             }
             // A footprint is only meaningful beside its context and slot
             // count: Gemma 4 reads 2,175 MiB at 16 slots and 3,654 at 32.
-            Text(configurationCaption(fit))
+            configurationCaption(fit)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
             HStack(spacing: 6) {
@@ -111,19 +111,22 @@ struct InstalledModelMemoryFitCardView: View {
         }
     }
 
-    private func configurationCaption(_ fit: ModelRecommendation) -> String {
+    private func configurationCaption(_ fit: ModelRecommendation) -> Text {
         let slots = resolvedSlots ?? fit.slotCacheSlots
-        let context = activeFitContext
-        let base = "at \(context.formatted()) tokens"
+        let context = activeFitContext.formatted()
         return descriptor.isSlotCacheStreaming
-            ? "\(base), \(slots) expert-cache slots"
-            : base
+            ? Text("at \(context) tokens, \(slots) expert-cache slots", bundle: .module)
+            : Text("at \(context) tokens", bundle: .module)
     }
 
-    private func workingSetExplanation(_ fit: ModelRecommendation) -> String {
+    private var workingSetExplanation: Text {
         if descriptor.isSlotCacheStreaming {
-            return "Mixture-of-Experts. Routed expert weights are read from storage on demand through a working-memory slot cache, so what has to fit is the cache and the KV rather than the whole install."
+            return Text(
+                "Mixture-of-Experts. Routed expert weights are read from storage on demand through a working-memory slot cache, so what has to fit is the cache and the KV rather than the whole install.",
+                bundle: .module)
         }
-        return "Dense. Every token touches every weight layer, so the weights are mapped into unified memory. A mapped range is not charged to the process footprint, which is why the allocated figure is far below the size on disk."
+        return Text(
+            "Dense. Every token touches every weight layer, so the weights are mapped into unified memory. A mapped range is not charged to the process footprint, which is why the allocated figure is far below the size on disk.",
+            bundle: .module)
     }
 }

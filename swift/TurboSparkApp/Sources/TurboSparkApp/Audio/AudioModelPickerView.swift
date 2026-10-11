@@ -20,11 +20,9 @@ struct AudioModelPickerView: View {
                 Label { Text("Audio model", bundle: .module) } icon: { Image(systemName: "cpu") }
                     .themedFont(.base, weight: .semibold)
                 Spacer()
-                Button { controller.refreshModels() } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless)
+                AppIconButton("arrow.clockwise", label: Text("Refresh", bundle: .module)) { controller.refreshModels() }
+                    .appAction(.quiet, size: .small)
                     .disabled(controller.isRefreshingModels)
-                    .help(Text("Refresh", bundle: .module))
-                    .accessibilityLabel(Text("Refresh", bundle: .module))
             }
             Picker(selection: Binding(get: { controller.recipe.modelID }, set: { controller.selectModel($0) })) {
                 Text("Choose a model", bundle: .module).tag(Optional<String>.none)
@@ -40,6 +38,7 @@ struct AudioModelPickerView: View {
             } else if let error = controller.modelCatalogError {
                 Text(error).themedFont(.small).foregroundStyle(.appSecondary).textSelection(.enabled)
                 Button { controller.refreshModels() } label: { Text("Retry", bundle: .module) }
+                    .appAction(.secondary, size: .small)
             }
 
             if let profile = controller.selectedProfile {
@@ -89,14 +88,14 @@ struct AudioModelPickerView: View {
                     icon: { Image(systemName: "checkmark.seal") }
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent).controlSize(.large)
+            .appAction(.primary, size: .large)
             .disabled(controller.isManagingInstall || controller.isBusy)
         }
         if controller.canDeleteSelectedModel {
             Button(role: .destructive) { confirmingDelete = true } label: {
                 Label { Text("Delete Model", bundle: .module) } icon: { Image(systemName: "trash") }
             }
-            .buttonStyle(.borderless)
+            .appAction(.destructive, size: .small)
         }
         if !controller.incompatibleInstalls.isEmpty {
             DisclosureGroup {
@@ -150,7 +149,7 @@ struct AudioModelPickerView: View {
                     Label { Text("Retry", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent).controlSize(.large)
+                .appAction(.primary, size: .large)
                 .disabled(!model.canRetryModelDownload(download))
             } else {
                 Button {
@@ -160,7 +159,7 @@ struct AudioModelPickerView: View {
                     Label { Text("Download model", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent).controlSize(.large)
+                .appAction(.primary, size: .large)
                 .disabled(!model.canQueueModelDownload(.audio(identity: profile.identity)) || controller.isBusy)
                 .alert(Text("Before downloading", bundle: .module),
                        isPresented: Binding(get: { acknowledging != nil }, set: { if !$0 { acknowledging = nil } }),
@@ -180,13 +179,14 @@ struct AudioModelPickerView: View {
                 .help(folder.path)
             if controller.installedPaths[profile.identity.alias] != nil {
                 Button { controller.useDownloadedModel() } label: { Text("Use downloaded model", bundle: .module) }
+                    .appAction(.secondary, size: .small)
                     .disabled(controller.isBusy || controller.hasRecordingActivity)
             }
         }
         Button { controller.chooseModelFolder() } label: {
             Label { Text("Choose local model folder", bundle: .module) } icon: { Image(systemName: "folder") }
         }
-        .buttonStyle(.borderless)
+        .appAction(.secondary, size: .small)
         .disabled(controller.isBusy || controller.hasRecordingActivity)
     }
 
@@ -209,18 +209,26 @@ struct AudioModelPickerView: View {
                 ProgressView().progressViewStyle(.linear)
             }
             HStack {
+                // The same treatment as the install toast's controls:
+                // Pause/Resume secondary, Cancel destructive.
                 if download.status == .queued {
-                    Button { model.cancelQueuedAudioDownload(download) } label: { Text("Cancel", bundle: .module) }
+                    Button(role: .destructive) { model.cancelQueuedAudioDownload(download) } label: { Text("Cancel", bundle: .module) }
+                        .appAction(.destructive, size: .small)
                 } else if download.id == model.activeModelDownloadID && !model.isCancellingModelInstall {
                     Button {
                         if model.isInstallPaused { model.resumeModelDownload() }
                         else { model.pauseModelDownload() }
-                    } label: { Text(model.isInstallPaused ? "Resume" : "Pause", bundle: .module) }
+                    } label: {
+                        model.isInstallPaused ? Text("Resume", bundle: .module) : Text("Pause", bundle: .module)
+                    }
+                    .appAction(.secondary, size: .small)
                     .disabled(!model.isInstallPaused && !model.canPauseModelDownload)
-                    Button { model.cancelActiveModelDownload() } label: { Text("Cancel", bundle: .module) }
+                    Button(role: .destructive) { model.cancelActiveModelDownload() } label: { Text("Cancel", bundle: .module) }
+                        .appAction(.destructive, size: .small)
                 }
                 Spacer(minLength: 0)
                 Button { model.isDownloadManagerExpanded = true } label: { Text("Downloads", bundle: .module) }
+                    .appAction(.quiet, size: .small)
             }.controlSize(.small)
         }
     }
@@ -257,7 +265,7 @@ extension AudioModelPickerView {
         profile.requiredAcknowledgments.map { term in
             switch term.id {
             case "megatts3_community_encoder":
-                return String(localized: "The voice-cloning encoder in this model is a community re-upload. Its origin and license have not been verified.", bundle: .module)
+                return AppStrings.localized("The voice-cloning encoder in this model is a community re-upload. Its origin and license have not been verified.")
             default:
                 return term.summary
             }

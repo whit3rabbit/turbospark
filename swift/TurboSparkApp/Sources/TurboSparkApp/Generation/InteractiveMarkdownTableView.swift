@@ -126,16 +126,14 @@ struct InteractiveMarkdownTableView: View {
             Text("Table", bundle: .module)
                 .themedCode(.tiny, weight: .semibold)
                 .foregroundStyle(.tertiary)
-            Text("\(grid.rowCount) rows x \(grid.columnCount) columns", bundle: .module)
+            // Labeled counts rather than "N rows": the fragment format has
+            // no plural variants, and a label reads right for any count.
+            Text("Rows: \(grid.rowCount), columns: \(grid.columnCount)", bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.tertiary)
             Spacer()
             if !selectedRowIndices.isEmpty {
-                Text(
-                    selectedRowIndices.count == 1
-                        ? "1 row selected"
-                        : "\(selectedRowIndices.count) rows selected",
-                    bundle: .module)
+                Text("Selected rows: \(selectedRowIndices.count)", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
                 Button { selectedRowIndices.removeAll() } label: { Text("Clear", bundle: .module) }
@@ -153,7 +151,11 @@ struct InteractiveMarkdownTableView: View {
                 Divider()
                 Button { exportCSV() } label: { Text("Export as CSV...", bundle: .module) }
             } label: {
-                Label(isCopied ? "Copied" : "Copy", systemImage: isCopied ? "checkmark" : "doc.on.doc")
+                Label {
+                    isCopied ? Text("Copied", bundle: .module) : Text("Copy", bundle: .module)
+                } icon: {
+                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                }
                     .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(isCopied ? Color.accentColor : Color.secondary)
             }
@@ -193,8 +195,8 @@ struct InteractiveMarkdownTableView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Sort by \(cell)")
-        .accessibilityLabel("Sort table by column \(cell)")
+        .help(Text("Sort by \(cell)", bundle: .module))
+        .accessibilityLabel(Text("Sort table by column \(cell)", bundle: .module))
     }
 
     private func rowView(row: [String], isSelected: Bool) -> some View {

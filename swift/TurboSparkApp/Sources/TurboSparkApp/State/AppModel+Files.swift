@@ -156,7 +156,9 @@ extension AppModel {
     /// Reveals the attachment's source file in Finder when the path still resolves.
     public func revealAttachmentInFinder(_ attachment: AppPromptAttachment) {
         guard let url = attachment.sourceURL, attachment.sourceExists else {
-            showToast("\(attachment.fileName) is no longer at its original path.", style: .warning)
+            showToast(
+                AppStrings.localized("\(attachment.fileName) is no longer at its original path."),
+                style: .warning)
             return
         }
         NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -165,7 +167,9 @@ extension AppModel {
     /// Opens the attachment's source file in its default application.
     public func openAttachmentExternally(_ attachment: AppPromptAttachment) {
         guard let url = attachment.sourceURL, attachment.sourceExists else {
-            showToast("\(attachment.fileName) is no longer at its original path.", style: .warning)
+            showToast(
+                AppStrings.localized("\(attachment.fileName) is no longer at its original path."),
+                style: .warning)
             return
         }
         NSWorkspace.shared.open(url)

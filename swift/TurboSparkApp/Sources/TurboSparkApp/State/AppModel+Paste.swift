@@ -45,18 +45,12 @@ extension AppModel {
             text = kept
             wasTruncated = true
             showToast(
-                String(
-                    localized:
-                        "Pasted text exceeded the \(freeTokens)-token context window; kept the first \(kept.count) characters.",
-                    bundle: .module),
+                AppStrings.localized("Pasted text exceeded the \(freeTokens)-token context window; kept the first \(kept.count) characters."),
                 style: .warning,
                 duration: 6)
         case .noRoom:
             showToast(
-                String(
-                    localized:
-                        "Not enough room in the \(resolvedContextTokens)-token context window for pasted text.",
-                    bundle: .module),
+                AppStrings.localized("Not enough room in the \(resolvedContextTokens)-token context window for pasted text."),
                 style: .warning,
                 duration: 6)
             return
@@ -91,10 +85,7 @@ extension AppModel {
         writePromptTextDirectly(split.draft)
         if !isDuplicate {
             showToast(
-                String(
-                    localized:
-                        "Large paste attached as \"\(Self.pasteAttachmentFileName)\" (\(text.count) characters).",
-                    bundle: .module),
+                AppStrings.localized("Large paste attached as \"\(Self.pasteAttachmentFileName)\" (\(text.count) characters)."),
                 style: .info)
         }
     }

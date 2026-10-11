@@ -38,9 +38,19 @@ struct PluginMarketplaceSheet: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
 
-            ExtensionScopePicker(model: model, projectID: $projectID)
-            Button { showsSources = true } label: { Text("Manage sources", bundle: .module) }
-            Text("Removing a source keeps installed items.", bundle: .module).themedFont(.small)
+            // One row for where installs go and which sources are listed;
+            // these used to stack unpadded under the title.
+            HStack(spacing: AppMetrics.actionSpacing) {
+                ExtensionScopePicker(model: model, projectID: $projectID)
+                Spacer()
+                Text("Removing a source keeps installed items.", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+                Button { showsSources = true } label: { Text("Manage sources", bundle: .module) }
+                    .appAction(.secondary, size: .small)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 10)
             Rectangle().fill(.appBorder).frame(height: 1)
 
             HStack(spacing: 0) {
@@ -123,25 +133,39 @@ struct PluginMarketplaceSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Add marketplace", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
-            TextField("Name (e.g. my-plugins)", text: $newMarketplaceName)
-                .textFieldStyle(.roundedBorder)
-            Picker("", selection: $newSourceKind) {
+            TextField(text: $newMarketplaceName, prompt: Text("Name (e.g. my-plugins)", bundle: .module)) {
+                Text("Name", bundle: .module)
+            }
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            Picker(selection: $newSourceKind) {
                 Text("GitHub", bundle: .module).tag("github")
                 Text("Git URL", bundle: .module).tag("git")
                 Text("Directory", bundle: .module).tag("directory")
+            } label: {
+                Text("Source type", bundle: .module)
             }
             .labelsHidden()
             .pickerStyle(.segmented)
             switch newSourceKind {
             case "github":
-                TextField("owner/repo", text: $newGitHubRepo)
-                    .textFieldStyle(.roundedBorder)
+                TextField(text: $newGitHubRepo, prompt: Text(verbatim: "owner/repo")) {
+                    Text("GitHub", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
             case "git":
-                TextField("https://... .git", text: $newGitURL)
-                    .textFieldStyle(.roundedBorder)
+                TextField(text: $newGitURL, prompt: Text(verbatim: "https://... .git")) {
+                    Text("Git URL", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
             default:
-                TextField("/path/to/marketplace", text: $newDirectoryPath)
-                    .textFieldStyle(.roundedBorder)
+                TextField(text: $newDirectoryPath, prompt: Text(verbatim: "/path/to/marketplace")) {
+                    Text("Directory", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
             }
             Button { addMarketplace() } label: { Text("Add", bundle: .module) }
                 .disabled(newMarketplaceName.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -155,7 +179,7 @@ struct PluginMarketplaceSheet: View {
         case "github":
             let repo = newGitHubRepo.trimmingCharacters(in: .whitespaces)
             guard repo.contains("/") else {
-                loadError = "A GitHub source is owner/repo, e.g. anthropics/claude-plugins-official."
+                loadError = AppStrings.localized("A GitHub source is owner/repo, e.g. anthropics/claude-plugins-official.")
                 return
             }
             // nil ref = the repo default branch (master/trunk repos have no "main").
@@ -163,14 +187,14 @@ struct PluginMarketplaceSheet: View {
         case "git":
             let url = newGitURL.trimmingCharacters(in: .whitespaces)
             guard url.hasPrefix("https://") || url.hasPrefix("http://") || url.hasPrefix("ssh://") else {
-                loadError = "A git source needs an https:// or ssh:// URL."
+                loadError = AppStrings.localized("A git source needs an https:// or ssh:// URL.")
                 return
             }
             source = .git(url: url, ref: nil, path: nil, sparsePaths: nil)
         default:
             let path = newDirectoryPath.trimmingCharacters(in: .whitespaces)
             guard FileManager.default.fileExists(atPath: path) else {
-                loadError = "Directory not found: \(path)"
+                loadError = AppStrings.localized("Directory not found: \(path)")
                 return
             }
             source = .directory(path: path)
@@ -194,8 +218,14 @@ struct PluginMarketplaceSheet: View {
     private var entryList: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(selectedMarketplaceName ?? "Select a marketplace")
-                    .font(theme.ui(.base, weight: .semibold))
+                Group {
+                    if let selectedMarketplaceName {
+                        Text(selectedMarketplaceName)
+                    } else {
+                        Text("Select a marketplace", bundle: .module)
+                    }
+                }
+                .font(theme.ui(.base, weight: .semibold))
                 Spacer()
                 if let name = selectedMarketplaceName {
                     Button {
@@ -220,7 +250,7 @@ struct PluginMarketplaceSheet: View {
             Rectangle().fill(.appBorder).frame(height: 1)
 
             if let loadError {
-                Label(loadError, systemImage: "exclamationmark.triangle")
+                Label { Text(loadError) } icon: { Image(systemName: "exclamationmark.triangle") }
                     .foregroundStyle(.orange)
                     .font(theme.ui(.small))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -280,7 +310,7 @@ struct PluginMarketplaceSheet: View {
                 Button(role: .destructive) {
                     uninstall(entry: entry, scope: installScope)
                 } label: { Text("Uninstall", bundle: .module) }
-                .help("Removes only the installation in the selected scope.")
+                .help(Text("Removes only the installation in the selected scope.", bundle: .module))
             } else {
                 Button { install(entry: entry, scope: installScope) } label: {
                     Text("Install", bundle: .module)
@@ -333,7 +363,7 @@ struct PluginMarketplaceSheet: View {
 
     private func install(entry: PluginManifestParser.MarketplaceEntry, scope: PluginInstallScope) {
         guard projectID == nil || scopedProject != nil else {
-            model.showToast(String(localized: "The target project no longer exists.", bundle: .module), style: .error)
+            model.showToast(AppStrings.localized("The target project no longer exists."), style: .error)
             return
         }
         guard let marketplaceName = selectedMarketplaceName else { return }

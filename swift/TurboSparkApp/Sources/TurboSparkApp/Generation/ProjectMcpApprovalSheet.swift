@@ -46,7 +46,7 @@ struct ProjectMcpApprovalSheet: View {
                 }
                 Spacer()
                 if model.pendingMcpApprovals.count > 1 {
-                    Text("\(model.pendingMcpApprovals.count) pending", bundle: .module)
+                    Text("Pending: \(model.pendingMcpApprovals.count)", bundle: .module)
                         .themedFont(.small, weight: .medium)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
@@ -92,21 +92,21 @@ struct ProjectMcpApprovalSheet: View {
                 Button {
                     model.approvePendingMcpServer(id: approval.id, approveAllFuture: true)
                 } label: { Text("Approve All Future", bundle: .module) }
-                .buttonStyle(.bordered)
-                .help("Approve this server and every server this project declares in the future without prompting")
+                .appAction(.secondary)
+                .help(Text("Approve this server and every server this project declares in the future without prompting", bundle: .module))
 
                 Button {
                     model.rejectPendingMcpServer(id: approval.id)
                 } label: { Text("Reject", bundle: .module) }
-                .buttonStyle(.bordered)
-                .help("Never import or run this server, and do not ask again")
+                .appAction(.secondary)
+                .help(Text("Never import or run this server, and do not ask again", bundle: .module))
 
                 Spacer()
 
                 Button {
                     model.approvePendingMcpServer(id: approval.id)
                 } label: { Text("Approve", bundle: .module) }
-                .buttonStyle(.borderedProminent)
+                .appAction(.primary)
             }
         }
         .padding(24)
@@ -114,6 +114,6 @@ struct ProjectMcpApprovalSheet: View {
     }
 
     private func projectName(_ approval: PendingMcpServerApproval) -> String {
-        model.projects.first(where: { $0.id == approval.projectID })?.name ?? "Unknown"
+        model.projects.first(where: { $0.id == approval.projectID })?.name ?? AppStrings.localized("Unknown")
     }
 }

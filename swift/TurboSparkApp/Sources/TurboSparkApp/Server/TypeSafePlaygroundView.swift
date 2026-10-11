@@ -27,15 +27,18 @@ struct TypeSafePlaygroundView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("TypeSafe", bundle: .module).themedFont(.title2, weight: .semibold)
-                Spacer()
+            AppAdaptiveHeader {
+                AppSectionHeader(
+                    title: Text("Test TypeSafe request", bundle: .module),
+                    subtitle: Text("Requests go to the TypeSafe service, not the TurboSpark server.", bundle: .module))
+            } actions: {
                 Picker(selection: $page) {
                     Text("Playground", bundle: .module).tag(Page.playground)
                     Text("Benchmark", bundle: .module).tag(Page.benchmark)
                 } label: { Text("TypeSafe", bundle: .module) }
                 .pickerStyle(.segmented)
-                .frame(width: 260)
+                .labelsHidden()
+                .frame(minWidth: 200, idealWidth: 260, maxWidth: 320)
                 .disabled(isRunning)
             }
             if page == .playground {
@@ -57,9 +60,17 @@ struct TypeSafePlaygroundView: View {
 
     private var playgroundContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 14) {
-                examplePanel.frame(width: 180)
-                requestPanel.frame(maxWidth: .infinity)
+            // Side by side when there is room; stacked when a narrow window
+            // or a large text size would squeeze the request editor.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    examplePanel.frame(width: 180)
+                    requestPanel.frame(minWidth: 380, maxWidth: .infinity)
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    examplePanel
+                    requestPanel
+                }
             }
             outputPanel
         }
@@ -77,19 +88,18 @@ struct TypeSafePlaygroundView: View {
                     Text(verbatim: preset.rawValue)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.bordered)
-                .accessibilityHint(Text("Request", bundle: .module))
+                .appAction(.secondary, size: APIControlSize.row)
+                .accessibilityHint(Text("Replaces the request with this example", bundle: .module))
             }
         }
-        .padding(14)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+        .apiCard()
     }
 
     private var requestPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            AppAdaptiveHeader {
                 Text("Request", bundle: .module).themedFont(.callout, weight: .semibold)
-                Spacer()
+            } actions: {
                 Picker(selection: Binding(
                     get: { mode },
                     set: { changeMode(to: $0) }
@@ -98,41 +108,43 @@ struct TypeSafePlaygroundView: View {
                     Text("Raw JSON", bundle: .module).tag(EditorMode.raw)
                 } label: { Text("Request", bundle: .module) }
                 .pickerStyle(.segmented)
-                .frame(width: 210)
+                .labelsHidden()
+                .frame(minWidth: 160, idealWidth: 210, maxWidth: 260)
             }
 
             if mode == .form { formEditor } else { rawEditor }
 
             if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
                     .accessibilityAddTraits(.isStaticText)
             }
-            HStack {
+            HStack(spacing: AppMetrics.actionSpacing) {
                 Button {
                     runTask = Task { await runRequest() }
                 } label: { Text("Run", bundle: .module) }
-                .buttonStyle(.borderedProminent)
+                .appAction(.primary, size: APIControlSize.panel)
                 .disabled(isRunning || model.typeSafeServer == nil)
                 if isRunning {
                     Button { runTask?.cancel() } label: { Text("Stop", bundle: .module) }
-                    ProgressView().controlSize(.small)
+                        .appAction(.secondary, size: APIControlSize.panel)
                 }
+                APIRunIndicator(running: isRunning, elapsed: nil)
                 Spacer()
                 Button { copyRequest() } label: { Text("Copy", bundle: .module) }
+                    .appAction(.secondary, size: APIControlSize.panel)
             }
         }
-        .padding(14)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+        .apiCard()
     }
 
     private var formEditor: some View {
         VStack(alignment: .leading, spacing: 10) {
             if loadedModels.isEmpty {
                 Text("Select a model to load", bundle: .module)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             } else {
                 Picker(selection: $draft.model) {
-                    ForEach(loadedModels, id: \.self) { name in Text(name).tag(name) }
+                    ForEach(loadedModels, id: \.self) { name in Text(verbatim: name).tag(name) }
                 } label: { Text("Model", bundle: .module) }
             }
 
@@ -144,12 +156,13 @@ struct TypeSafePlaygroundView: View {
                     Text(verbatim: "JSON").tag(TypeSafeStateMode.json)
                 } label: { Text("State", bundle: .module) }
                 .pickerStyle(.segmented)
-                .frame(width: 155)
+                .labelsHidden()
+                .frame(minWidth: 120, idealWidth: 155, maxWidth: 200)
             }
             TextEditor(text: $draft.state)
                 .themedCode(.small)
                 .frame(minHeight: 95)
-                .border(.appBorder)
+                .appEditorSurface()
                 .accessibilityLabel(Text("State", bundle: .module))
 
             HStack {
@@ -158,6 +171,7 @@ struct TypeSafePlaygroundView: View {
                 Button {
                     draft.questions.append(.new(.noul, index: draft.questions.count + 1))
                 } label: { Text("Add", bundle: .module) }
+                .appAction(.secondary, size: APIControlSize.row)
             }
             ForEach($draft.questions) { $question in
                 TypeSafeQuestionCard(question: $question) {
@@ -172,9 +186,9 @@ struct TypeSafePlaygroundView: View {
             TextEditor(text: $rawJSON)
                 .themedCode(.small)
                 .frame(minHeight: 310)
-                .border(.appBorder)
+                .appEditorSurface()
                 .accessibilityLabel(Text("Raw JSON", bundle: .module))
-            HStack {
+            HStack(spacing: AppMetrics.actionSpacing) {
                 Button {
                     do {
                         let value = try JSONDecoder().decode(JSONValue.self, from: Data(rawJSON.utf8))
@@ -182,7 +196,9 @@ struct TypeSafePlaygroundView: View {
                         errorMessage = nil
                     } catch { errorMessage = error.localizedDescription }
                 } label: { Text("Format", bundle: .module) }
+                .appAction(.secondary, size: APIControlSize.panel)
                 Button { copy(rawJSON) } label: { Text("Copy", bundle: .module) }
+                    .appAction(.secondary, size: APIControlSize.panel)
             }
         }
     }
@@ -194,36 +210,35 @@ struct TypeSafePlaygroundView: View {
                 Spacer()
                 if !responseJSON.isEmpty {
                     Button { copy(responseJSON) } label: { Text("Copy", bundle: .module) }
+                        .appAction(.secondary, size: APIControlSize.panel)
                 }
             }
             if let latencyMS {
                 HStack(spacing: 14) {
                     Text(verbatim: String(format: "%.1f ms", latencyMS))
                     if let response { Text(verbatim: response.model) }
-                    if let requestID { Text(verbatim: "Request ID: \(requestID)").textSelection(.enabled) }
+                    if let requestID { Text("Request ID: \(requestID)", bundle: .module).textSelection(.enabled) }
                 }
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             }
             if let response {
                 let names = response.answers.keys.sorted()
-                Text(verbatim: "Input \(response.usage.input_tokens), output \(response.usage.output_tokens) tokens")
-                    .themedFont(.small).foregroundStyle(.secondary)
+                Text("Input \(String(response.usage.input_tokens)), output \(String(response.usage.output_tokens)) tokens", bundle: .module)
+                    .themedFont(.small).foregroundStyle(.appSecondary)
                 ForEach(names, id: \.self) { name in
                     if let answer = response.answers[name] {
                         TypeSafeAnswerCard(name: name, answer: answer, question: lastRequest?.questions[name])
                     }
                 }
                 DisclosureGroup {
-                    Text(responseJSON).themedCode(.small).textSelection(.enabled)
+                    APICodeBlock(code: responseJSON)
                 } label: { Text("Raw JSON", bundle: .module) }
             } else if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+        .apiCard()
     }
 
     private func chooseLoadedModel() {
@@ -270,7 +285,7 @@ struct TypeSafePlaygroundView: View {
             requestID = result.requestID
             lastRequest = request
         } catch is CancellationError {
-            errorMessage = "Stopped waiting for the response."
+            errorMessage = AppStrings.localized("Stopped waiting for the response.")
         } catch let error as ApiError {
             requestID = error.requestID
             errorMessage = "HTTP \(error.status): \(error.message)"
@@ -294,144 +309,5 @@ struct TypeSafePlaygroundView: View {
     private func copy(_ value: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
-    }
-}
-
-private struct TypeSafeQuestionCard: View {
-    @Binding var question: TypeSafeQuestionDraft
-    let remove: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                TextField("Question ID", text: $question.name)
-                    .accessibilityLabel(Text("Questions", bundle: .module))
-                Picker(selection: $question.kind) {
-                    ForEach(TypeSafeQuestionKind.allCases, id: \.self) { kind in
-                        Text(verbatim: kind.rawValue).tag(kind)
-                    }
-                } label: { Text("Questions", bundle: .module) }
-                .frame(width: 135)
-                Button(action: remove) { Text("Remove", bundle: .module) }
-            }
-            TextField("Instructions", text: $question.instructions)
-                .accessibilityLabel(Text("Instructions", bundle: .module))
-            switch question.kind {
-            case .noul:
-                HStack {
-                    TextField("true", text: $question.trueCriteria)
-                    TextField("false", text: $question.falseCriteria)
-                }
-            case .choice:
-                Text("Options", bundle: .module).themedFont(.small, weight: .medium)
-                ForEach($question.options) { $option in
-                    HStack {
-                        TextField("key", text: $option.key)
-                            .disabled(option.key == "__none__")
-                            .frame(width: 135)
-                        TextField("description", text: $option.detail)
-                        Button {
-                            question.options.removeAll { $0.id == option.id }
-                        } label: { Text("Remove", bundle: .module) }
-                    }
-                }
-                HStack {
-                    Button {
-                        question.options.append(.init(key: "option_\(question.options.count + 1)", detail: ""))
-                    } label: { Text("Add", bundle: .module) }
-                    if !question.options.contains(where: { $0.key == "__none__" }) {
-                        Button {
-                            question.options.append(.init(key: "__none__", detail: "None of the listed options applies."))
-                        } label: { Text(verbatim: "+ __none__") }
-                    }
-                }
-            case .score:
-                ForEach(question.levels.indices, id: \.self) { index in
-                    HStack {
-                        Text(verbatim: "\(index)").frame(width: 25)
-                        // A bounds-checked binding: ForEach over indices keeps
-                        // this row alive for one pass after Remove shrinks the
-                        // array, and a direct `$question.levels[index]` then
-                        // traps with "Index out of range".
-                        TextField("level", text: Binding(
-                            get: { question.levels.indices.contains(index) ? question.levels[index] : "" },
-                            set: { if question.levels.indices.contains(index) { question.levels[index] = $0 } }))
-                        Button {
-                            if question.levels.count > 2 { question.levels.remove(at: index) }
-                        } label: { Text("Remove", bundle: .module) }
-                        .disabled(question.levels.count <= 2)
-                    }
-                }
-                Button { question.levels.append("") } label: { Text("Add", bundle: .module) }
-            }
-        }
-        .padding(10)
-        .background(.appPage, in: RoundedRectangle(cornerRadius: 8))
-        .onChange(of: question.kind) { _, kind in
-            let defaults = TypeSafeQuestionDraft.new(kind, index: 1)
-            if kind == .choice && question.options.isEmpty { question.options = defaults.options }
-            if kind == .score && question.levels.count < 2 { question.levels = defaults.levels }
-        }
-    }
-}
-
-private struct TypeSafeAnswerCard: View {
-    let name: String
-    let answer: Answer
-    let question: Question?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Text(name).themedFont(.callout, weight: .semibold)
-                Spacer()
-                Text(verbatim: kind).themedCode(.small).foregroundStyle(.secondary)
-            }
-            switch answer {
-            case .noul(let value):
-                Text(verbatim: String(format: "%.3f", value)).themedFont(.title2, weight: .semibold)
-                ProgressView(value: value, total: 1)
-                    .accessibilityLabel(Text(verbatim: "Probability of true"))
-                if case .noul(_, let criteria) = question, let criteria {
-                    Text(verbatim: "true: \(criteria.true)  false: \(criteria.false)")
-                        .themedFont(.small).foregroundStyle(.secondary)
-                }
-            case .choice(let selected, let probabilities, let confidence):
-                Text(verbatim: selected == "__none__" ? "None of the listed options" : selected)
-                    .themedFont(.title3, weight: .semibold)
-                ForEach(probabilities.sorted(by: { $0.value > $1.value }), id: \.key) { key, value in
-                    probabilityRow(label: key, value: value, selected: key == selected)
-                }
-                Text(verbatim: String(format: "confidence %.3f", confidence))
-                    .themedFont(.small).foregroundStyle(.secondary)
-            case .score(let value, let legend, let probabilities, let confidence):
-                Text(verbatim: String(format: "expected level %.2f, confidence %.3f", value, confidence))
-                    .themedFont(.callout, weight: .semibold)
-                ForEach(probabilities.sorted(by: { (Int($0.key) ?? 0) < (Int($1.key) ?? 0) }), id: \.key) { key, probability in
-                    probabilityRow(label: "\(key)  \(legend[key] ?? "")", value: probability, selected: false)
-                }
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.appPage, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var kind: String {
-        switch answer {
-        case .noul: return "noul"
-        case .choice: return "choice"
-        case .score: return "score"
-        }
-    }
-
-    private func probabilityRow(label: String, value: Double, selected: Bool) -> some View {
-        HStack(spacing: 8) {
-            Text(verbatim: label).frame(width: 145, alignment: .leading)
-            ProgressView(value: value, total: 1)
-            Text(verbatim: String(format: "%.1f%%", value * 100)).frame(width: 55, alignment: .trailing)
-            if selected { Text("Selected", bundle: .module).themedFont(.tiny) }
-        }
-        .accessibilityElement(children: .combine)
     }
 }

@@ -4,6 +4,9 @@ import TurboSpark
 
 /// Models and storage preferences pane for managing primary TurboSpark download location,
 /// automatic LM Studio library detection, and external model search folders.
+// Isolated explicitly: its helpers call each other, and only `body` is
+// isolated by the protocol on the macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 public struct ModelsSettingsPaneView: View {
     @ObservedObject var model: AppModel
 
@@ -36,8 +39,11 @@ public struct ModelsSettingsPaneView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Hugging Face Authentication API token
+                // The canonical home of Hugging Face authentication: General
+                // used to carry a second copy, and two surfaces for one token
+                // let them disagree about which token was in effect.
                 HfAuthTokenCardView(model: model)
+                    .settingsControl("Hugging Face Authentication", pane: .models, timing: .immediate)
 
                 // Section 1: TurboSpark Primary Storage
                 turboSparkStorageSection
@@ -70,80 +76,65 @@ public struct ModelsSettingsPaneView: View {
     // MARK: - TurboSpark Primary Storage
     private var turboSparkStorageSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            AppAdaptiveHeader {
                 Label { Text("TurboSpark Models Storage", bundle: .module) } icon: { Image(systemName: "cylinder.split.1x2") }
                     .themedFont(.base, weight: .semibold)
-                Spacer()
+            } actions: {
                 Button {
                     showingStoreMigration = true
                 } label: {
                     Label { Text("Move Store...", bundle: .module) } icon: { Image(systemName: "externaldrive") }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
                 .settingsControl("Move Model Store", pane: .models, timing: .immediate)
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text(turboSparkStoreRoot)
-                    .themedCode(.small)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                storagePathRow(label: "Text", path: ModelStorageManager.defaultTurboSparkModelsDirectory)
-                storagePathRow(label: "Image", path: ModelStorageManager.defaultTurboSparkImageModelsDirectory)
-                storagePathRow(label: "Audio", path: ModelStorageManager.defaultTurboSparkAudioModelsDirectory)
+                SettingsPathText(turboSparkStoreRoot)
+                storagePathRow(label: Text("Text", bundle: .module), path: ModelStorageManager.defaultTurboSparkModelsDirectory)
+                storagePathRow(label: Text("Image", bundle: .module), path: ModelStorageManager.defaultTurboSparkImageModelsDirectory)
+                storagePathRow(label: Text("Audio", bundle: .module), path: ModelStorageManager.defaultTurboSparkAudioModelsDirectory)
 
-                HStack {
+                HStack(spacing: AppMetrics.actionSpacing) {
                     Button {
                         ModelStorageManager.revealInFinder(path: turboSparkStoreRoot)
                     } label: {
                         Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "arrow.up.right.square") }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .appAction(.secondary, size: .small)
                     .help(Text("Opens the TurboSpark store in Finder", bundle: .module))
-                    .accessibilityLabel(Text("Reveal in Finder", bundle: .module))
                     Spacer()
                     Button {
                         showingProviderDiscovery = true
                     } label: {
                         Label { Text("Detect Model Libraries", bundle: .module) } icon: { Image(systemName: "magnifyingglass") }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help(Text("Detect Model Libraries", bundle: .module))
-                    .accessibilityLabel(Text("Detect Model Libraries", bundle: .module))
+                    .appAction(.secondary, size: .small)
                 }
 
                 Text("Catalog installs and future text, image, and audio installs use this shared root. Other folders are scanned in place and are never copied automatically.", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
-            .padding(14)
-            .background(.appPage)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
+            .modelsSettingsCard()
         }
     }
 
-    private func storagePathRow(label: String, path: String) -> some View {
+    private func storagePathRow(label: Text, path: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "folder.fill")
-                .foregroundStyle(Color.accentColor)
-            Text(label)
+                .foregroundStyle(.appAccent)
+                .accessibilityHidden(true)
+            label
                 .themedFont(.small, weight: .medium)
-                .frame(width: 52, alignment: .leading)
-            Text(path)
-                .themedCode(.tiny)
-                .textSelection(.enabled)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .frame(minWidth: 52, alignment: .leading)
+                .fixedSize()
+            SettingsPathText(path, size: .tiny)
             Spacer()
         }
         .padding(8)
         .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
     }
 
     // MARK: - LM Studio Integration
@@ -151,17 +142,19 @@ public struct ModelsSettingsPaneView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label { Text("LM Studio Library Integration", bundle: .module) } icon: { Image(systemName: "arrow.triangle.2.circlepath") }
-                .settingsControl("LM Studio Library Integration", pane: .models, timing: .immediate)
+                    .settingsControl("LM Studio Library Integration", pane: .models, timing: .immediate)
                     .themedFont(.base, weight: .semibold)
                 Spacer()
-                Toggle("", isOn: Binding(
+                Toggle(isOn: Binding(
                     get: { model.enableLMStudioDetection },
                     set: { val in
                         model.enableLMStudioDetection = val
                         model.persistSettings()
                         model.refreshModels()
                     }
-                ))
+                )) {
+                    Text("LM Studio Library Integration", bundle: .module)
+                }
                 .toggleStyle(.switch)
                 .labelsHidden()
             }
@@ -174,60 +167,27 @@ public struct ModelsSettingsPaneView: View {
                 HStack(spacing: 8) {
                     Image(systemName: isLmStudioPresent ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .foregroundStyle(isLmStudioPresent ? Color.green : Color.orange)
-
-                    Text(isLmStudioPresent ? "LM Studio folder detected" : "Folder not found")
-                        .themedFont(.small, weight: .medium)
-
-                    Spacer()
-                }
-
-                HStack(spacing: 8) {
-                    Image(systemName: "folder")
-                        .foregroundStyle(.appSecondary)
-                    Text(activeLmStudioPath)
-                        .themedCode(.small)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-
-                    if isLmStudioPresent {
-                        Button {
-                            ModelStorageManager.revealInFinder(path: activeLmStudioPath)
-                        } label: {
-                            Image(systemName: "arrow.up.right.square")
+                        .accessibilityHidden(true)
+                    Group {
+                        if isLmStudioPresent {
+                            Text("LM Studio folder detected", bundle: .module)
+                        } else {
+                            Text("Folder not found", bundle: .module)
                         }
-                        .buttonStyle(.plain)
-                        .help(Text("Reveal in Finder", bundle: .module))
                     }
-
-                    Button {
-                        selectLmStudioFolder()
-                    } label: { Text("Select Folder...", bundle: .module) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    if !model.lmStudioDirectory.isEmpty {
-                        Button {
-                            model.lmStudioDirectory = ""
-                            model.persistSettings()
-                            model.refreshModels()
-                        } label: { Text("Default", bundle: .module) }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help("Reset to default ~/.lmstudio/models")
-                    }
+                    .themedFont(.small, weight: .medium)
+                    Spacer()
                 }
-                .padding(8)
-                .background(.appSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                lmStudioPathRow
 
                 // Zero-copy explanation callout
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "bolt.shield")
                         .themedFont(.title3)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(.appAccent)
                         .frame(width: 24)
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Zero-Copy In-Place Inference", bundle: .module)
@@ -239,12 +199,14 @@ public struct ModelsSettingsPaneView: View {
                     }
                 }
                 .padding(10)
-                .background(Color.accentColor.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(.appAccent.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
 
                 HStack {
                     if isLmStudioPresent && model.enableLMStudioDetection {
-                        Text("\(lmStudioModelCount) model\(lmStudioModelCount == 1 ? "" : "s") found in LM Studio folder", bundle: .module)
+                        // A count label rather than a plural sentence: the
+                        // catalog carries no plural variants for this key.
+                        Text("Models found in LM Studio folder: \(lmStudioModelCount)", bundle: .module)
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
                     }
@@ -252,22 +214,53 @@ public struct ModelsSettingsPaneView: View {
                     Button {
                         model.refreshModels()
                         Task { await rescanLmStudioCount() }
-                        model.showToast("Rescanned local and LM Studio models", style: .info)
+                        model.showToast(AppStrings.localized("Rescanned local and LM Studio models"), style: .info)
                     } label: {
                         Label { Text("Rescan Now", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .appAction(.secondary, size: .small)
                 }
             }
-            .padding(14)
             .task(id: "\(activeLmStudioPath)|\(model.enableLMStudioDetection)") {
                 await rescanLmStudioCount()
             }
-            .background(.appPage)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
+            .modelsSettingsCard()
         }
+    }
+
+    private var lmStudioPathRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder")
+                .foregroundStyle(.appSecondary)
+                .accessibilityHidden(true)
+            SettingsPathText(activeLmStudioPath)
+            Spacer()
+
+            if isLmStudioPresent {
+                AppIconButton("arrow.up.right.square", label: Text("Reveal in Finder", bundle: .module)) {
+                    ModelStorageManager.revealInFinder(path: activeLmStudioPath)
+                }
+                .appAction(.quiet, size: .small)
+            }
+
+            Button {
+                selectLmStudioFolder()
+            } label: { Text("Select Folder...", bundle: .module) }
+            .appAction(.secondary, size: .small)
+
+            if !model.lmStudioDirectory.isEmpty {
+                Button {
+                    model.lmStudioDirectory = ""
+                    model.persistSettings()
+                    model.refreshModels()
+                } label: { Text("Default", bundle: .module) }
+                .appAction(.secondary, size: .small)
+                .help(Text("Reset to default ~/.lmstudio/models", bundle: .module))
+            }
+        }
+        .padding(8)
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
     }
 
     // MARK: - Folder Picker Helpers
@@ -276,14 +269,14 @@ public struct ModelsSettingsPaneView: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Select LM Studio Models Folder"
-        panel.message = "Select your LM Studio models directory"
+        panel.prompt = AppStrings.localized("Select LM Studio Models Folder")
+        panel.message = AppStrings.localized("Select your LM Studio models directory")
 
         if panel.runModal() == .OK, let url = panel.url {
             model.lmStudioDirectory = url.path
             model.persistSettings()
             model.refreshModels()
-            model.showToast("Configured LM Studio folder: \(url.lastPathComponent)", style: .success)
+            model.showToast(AppStrings.localized("Configured LM Studio folder: \(url.lastPathComponent)"), style: .success)
         }
     }
 
@@ -304,5 +297,19 @@ public struct ModelsSettingsPaneView: View {
     nonisolated static func lmStudioModelCount(path: String, detectionEnabled: Bool) -> Int {
         guard detectionEnabled else { return 0 }
         return ModelStorageManager.scanModels(in: path, sourceTag: "LM Studio").count
+    }
+}
+
+extension View {
+    /// The bordered page card every Models & Storage section sits in, so the
+    /// sections (several in their own files) cannot drift apart.
+    func modelsSettingsCard() -> some View {
+        padding(14)
+            .background(.appPage)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                    .stroke(.appBorder.opacity(0.4), lineWidth: 1)
+            )
     }
 }

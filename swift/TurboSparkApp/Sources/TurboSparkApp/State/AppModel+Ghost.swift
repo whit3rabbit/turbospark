@@ -193,7 +193,9 @@ extension AppModel {
         }
         var chat = AppChat(projectID: selectedProjectID)
         chat.isGhost = true
-        chat.title = "Temporary Chat"
+        // Not persisted (ghost rows never reach disk) and never compared, so
+        // the title can follow the UI language.
+        chat.title = AppStrings.localized("Temporary Chat")
         AppHookExecutionEngine.markGhostSession(chat.id.uuidString, isGhost: true)
         chats.insert(chat, at: 0)
         selectedChatID = chat.id

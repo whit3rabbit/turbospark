@@ -46,15 +46,20 @@ struct AudioLibraryView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Audio library", bundle: .module)
                 .themedFont(.title2, weight: .semibold).accessibilityAddTraits(.isHeader)
-            TextField(text: $controller.search) { Text("Search recordings and takes", bundle: .module) }
-                .textFieldStyle(.roundedBorder)
+            AppSearchField(text: $controller.search, prompt: Text("Search recordings and takes", bundle: .module), maxWidth: .infinity)
             Toggle(isOn: $favoritesOnly) {
                 Label { Text("Favorites", bundle: .module) } icon: { Image(systemName: "star") }
             }.toggleStyle(.checkbox)
             HStack {
-                Button { controller.importAudio() } label: { Text("Import audio", bundle: .module) }
-                    .disabled(controller.isBusy || controller.hasRecordingActivity)
-                Button { controller.selectPage(.record) } label: { Text("Record", bundle: .module) }
+                Button { controller.importAudio() } label: {
+                    Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+                }
+                .appAction(.secondary, size: .small)
+                .disabled(controller.isBusy || controller.hasRecordingActivity)
+                Button { controller.selectPage(.record) } label: {
+                    Label { Text("Record", bundle: .module) } icon: { Image(systemName: "mic") }
+                }
+                .appAction(.secondary, size: .small)
             }
             if visibleItems.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -128,8 +133,7 @@ struct AudioLibraryView: View {
                 .menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel(Text("Audio actions", bundle: .module))
                 .disabled(controller.hasRecordingActivity || controller.isBusy)
-                AudioDeleteButton(controller: controller, item: item).labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
+                AudioDeleteButton(controller: controller, item: item, compact: true)
             }
         }
         .padding(12)
@@ -168,6 +172,7 @@ struct AudioItemDetailView: View {
                 if item.hasPlayableAudio { AudioSaveAsButton(controller: controller, item: item) }
                 if item.hasPlayableAudio && item.kind == .voiceover {
                     Button { controller.reuseVoice(item) } label: { Text("Use as reference voice", bundle: .module) }
+                        .appAction(.secondary, size: .small)
                         .disabled(controller.isBusy || controller.hasRecordingActivity)
                 }
                 if item.preferredTranscript != nil { AudioExportMenu(controller: controller, item: item) }
@@ -224,7 +229,9 @@ struct AudioItemDetailView: View {
             }
             Button { controller.summarizeMeeting() } label: {
                 Text("Summarize meeting", bundle: .module)
-            }.disabled(!controller.canSummarizeMeeting || controller.isBusy || controller.hasRecordingActivity)
+            }
+            .appAction(.secondary, size: .small)
+            .disabled(!controller.canSummarizeMeeting || controller.isBusy || controller.hasRecordingActivity)
             if !controller.canSummarizeMeeting && !controller.isBusy {
                 Text("Load a local chat model to summarize this transcript.", bundle: .module)
                     .themedFont(.small).foregroundStyle(.appSecondary)
@@ -234,11 +241,13 @@ struct AudioItemDetailView: View {
 
     private var duplicateButton: some View {
         Button { controller.duplicateSelected() } label: { Text("Duplicate with changes", bundle: .module) }
+            .appAction(.secondary, size: .small)
             .disabled(controller.isBusy || controller.hasRecordingActivity)
     }
 
     private var runAgainButton: some View {
         Button { controller.runAgain(item) } label: { Text("Run again", bundle: .module) }
+            .appAction(.secondary, size: .small)
             .disabled(controller.isBusy || controller.hasRecordingActivity || item.recipe.modelID == nil)
     }
 
@@ -248,7 +257,7 @@ struct AudioItemDetailView: View {
                 Button { controller.compare(with: candidate) } label: { Text(candidate.title) }
             }
         } label: { Text("Compare at this position", bundle: .module) }
-        .menuStyle(.borderlessButton).fixedSize()
+        .appMenuAction(size: .small)
         .disabled(item.clips.isEmpty || comparisonItems.isEmpty || controller.hasRecordingActivity)
         .help(Text("Switch takes while keeping the playback position.", bundle: .module))
     }
@@ -284,7 +293,10 @@ struct AudioItemDetailView: View {
                         Button { controller.exportClip(clip, preset: .nativeWAV) } label: { Text("WAV (original format)", bundle: .module) }
                         Button { controller.exportClip(clip, preset: .videoWAV) } label: { Text("WAV (48 kHz for video)", bundle: .module) }
                         Button { controller.exportClip(clip, preset: .m4a) } label: { Text("M4A", bundle: .module) }
-                    } label: { Text("Export", bundle: .module) }
+                    } label: {
+                        Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
+                    }
+                    .appMenuAction(size: .small)
                     .disabled(controller.hasRecordingActivity)
                 }.padding(.vertical, 4)
             }
@@ -381,6 +393,7 @@ struct AudioTranscriptEditorView: View {
 
     private var saveButton: some View {
         Button { flushEdits() } label: { Text("Save edits", bundle: .module) }
+            .appAction(.secondary, size: .small)
             .disabled(!dirty)
     }
 

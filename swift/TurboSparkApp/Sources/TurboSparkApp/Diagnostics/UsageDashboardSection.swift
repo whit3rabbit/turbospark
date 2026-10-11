@@ -85,7 +85,8 @@ private struct UsageDashboardSectionView: View {
                                         tokens: cell.day.promptTokens + cell.day.outputTokens,
                                         maxTokens: maxDay))
                                     .frame(width: 11, height: 11)
-                                    .help("\(cell.key): \((cell.day.promptTokens + cell.day.outputTokens).formatted()) tokens")
+                                    .help(Text(verbatim: "\(cell.key): ")
+                                        + Text("\((cell.day.promptTokens + cell.day.outputTokens).formatted()) tokens", bundle: .module))
                             } else {
                                 Color.clear
                                     .frame(width: 11, height: 11)
@@ -95,7 +96,7 @@ private struct UsageDashboardSectionView: View {
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Token usage heatmap for the last 12 weeks")
+            .accessibilityLabel(Text("Token usage heatmap for the last 12 weeks", bundle: .module))
         }
         .padding(.vertical, 4)
     }
@@ -111,8 +112,9 @@ private struct UsageDashboardSectionView: View {
                 .foregroundStyle(.appSecondary)
             Chart(series, id: \.date) { entry in
                 BarMark(
-                    x: .value("Day", entry.date, unit: .day),
-                    y: .value("Tokens", entry.tokens)
+                    // Axis names are what VoiceOver's chart summary reads.
+                    x: .value(Text("Day", bundle: .module), entry.date, unit: .day),
+                    y: .value(Text("Tokens", bundle: .module), entry.tokens)
                 )
                 .foregroundStyle(.appAccent.opacity(0.75))
             }
@@ -156,8 +158,10 @@ private struct UsageDashboardSectionView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Open \(chat.title)")
-                .accessibilityLabel("Open chat \(chat.title), \(chat.usage!.totalPromptTokens + chat.usage!.totalOutputTokens) tokens recorded")
+                .help(Text("Open \(chat.title)", bundle: .module))
+                .accessibilityLabel(Text(
+                    "Open chat \(chat.title), \((chat.usage!.totalPromptTokens + chat.usage!.totalOutputTokens).formatted()) tokens recorded",
+                    bundle: .module))
             }
         }
         .padding(.vertical, 4)

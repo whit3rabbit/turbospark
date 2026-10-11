@@ -49,7 +49,9 @@ extension AppModel {
 
     public func runDiffCommand() {
         guard let root = gitCommandRootPath else {
-            showToast("Pick a project with a folder first: /diff works on its git repository.", style: .warning)
+            showToast(
+                AppStrings.localized("Pick a project with a folder first: /diff works on its git repository."),
+                style: .warning)
             return
         }
         gitInfoTab = .diff
@@ -83,7 +85,9 @@ extension AppModel {
 
     public func runLogCommand() {
         guard let root = gitCommandRootPath else {
-            showToast("Pick a project with a folder first: /log works on its git repository.", style: .warning)
+            showToast(
+                AppStrings.localized("Pick a project with a folder first: /log works on its git repository."),
+                style: .warning)
             return
         }
         gitInfoTab = .log
@@ -126,7 +130,9 @@ extension AppModel {
 
     public func runPrsCommand() {
         guard let root = gitCommandRootPath else {
-            showToast("Pick a project with a folder first: /prs works on its git repository.", style: .warning)
+            showToast(
+                AppStrings.localized("Pick a project with a folder first: /prs works on its git repository."),
+                style: .warning)
             return
         }
         gitInfoTab = .prs

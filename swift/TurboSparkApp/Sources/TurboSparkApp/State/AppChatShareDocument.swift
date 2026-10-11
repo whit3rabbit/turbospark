@@ -124,14 +124,14 @@ struct AppChatShareDocument {
 extension AppModel {
     func shareSelectedChat(format: AppChatExportFormat, options: AppChatExportOptions) {
         guard !selectedChat.isGhost else {
-            showToast("Temporary chats cannot be exported.", style: .warning)
+            showToast(AppStrings.localized("Temporary chats cannot be exported."), style: .warning)
             return
         }
         var chat = selectedChat
         chat.messages = selectedTurnMessages
         let document = AppChatShareDocument(chat: chat, liveContent: outputText, options: options)
         guard !document.chat.messages.isEmpty else {
-            showToast("This chat has no conversation to export yet.", style: .warning)
+            showToast(AppStrings.localized("This chat has no conversation to export yet."), style: .warning)
             return
         }
         let panel = NSSavePanel()
@@ -144,9 +144,9 @@ extension AppModel {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try document.data(format: format).write(to: url, options: .atomic)
-            showToast("Exported to \(url.lastPathComponent)", style: .success)
+            showToast(AppStrings.localized("Exported to \(url.lastPathComponent)"), style: .success)
         } catch {
-            showToast("Export failed: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Export failed: \(error.localizedDescription)"), style: .error)
         }
     }
 }

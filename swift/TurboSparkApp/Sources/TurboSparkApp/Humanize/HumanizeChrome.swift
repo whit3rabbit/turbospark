@@ -1,45 +1,28 @@
 import SwiftUI
 
-/// A chip in the composer's vocabulary (`SearchToggleButton`): radius 8, a
-/// faint fill that deepens on hover, and an accent tint while on.
-struct HumanizeChip: View {
-    let title: LocalizedStringKey
-    let systemImage: String
-    var isOn = false
-    var iconOnly = false
-    let action: () -> Void
+/// Frames in the Humanize section that hold text grow with the user's text
+/// size instead of clipping it. Fonts scale with the base UI size and the
+/// text-size setting, so a fixed 46pt card row or a 300pt panel stayed put
+/// while the text inside them grew.
+enum HumanizeMetrics {
+    /// How far the UI font sits above the default. Never below 1, so a
+    /// smaller font keeps the designed proportions.
+    static func textScale(_ theme: ResolvedAppTheme) -> CGFloat {
+        max(1, theme.uiFontDescriptor.size / AppFontCatalog.defaultUISize)
+    }
 
-    @Environment(\.appTheme) private var theme
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovered = false
+    /// A card's header and footer row.
+    static func rowHeight(_ theme: ResolvedAppTheme) -> CGFloat {
+        (46 * textScale(theme)).rounded()
+    }
 
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: systemImage).font(theme.ui(.tiny, weight: .medium))
-                if !iconOnly { Text(title, bundle: .module).font(theme.ui(.small, weight: .medium)) }
-            }
-            .lineLimit(1)
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .foregroundStyle(isOn ? Color.primary : Color.secondary)
-            .background(
-                isOn ? theme.accent.opacity(0.14) : Color.primary.opacity(hovered && isEnabled ? 0.08 : 0.04),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                if isOn {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(theme.accent.opacity(0.3), lineWidth: 0.5)
-                }
-            }
-            .opacity(isEnabled ? 1 : 0.45)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(TSPressScaleStyle(scale: 0.96))
-        .onHover { hovered = $0 }
-        .animation(TSMotion.hover, value: isOn)
-        .fixedSize()
-        .help(Text(title, bundle: .module))
-        .accessibilityLabel(Text(title, bundle: .module))
+    /// The narrowest the Advanced panel gets before its text only wraps.
+    static let advancedMinWidth: CGFloat = 240
+
+    /// The Advanced panel's preferred width. Capped so very large text wraps
+    /// inside the panel instead of squeezing the two cards.
+    static func advancedWidth(_ theme: ResolvedAppTheme) -> CGFloat {
+        min((300 * textScale(theme)).rounded(), 420)
     }
 }
 
@@ -57,12 +40,12 @@ struct HumanizeCard<Header: View, Content: View, Footer: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) { header }
-                .padding(.horizontal, 16).frame(height: 46)
+                .padding(.horizontal, 16).frame(height: HumanizeMetrics.rowHeight(theme))
             Divider().opacity(0.6)
             content.frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider().opacity(0.6)
             HStack(spacing: 8) { footer }
-                .padding(.horizontal, 12).frame(height: 46)
+                .padding(.horizontal, 12).frame(height: HumanizeMetrics.rowHeight(theme))
         }
         .background {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -75,7 +58,7 @@ struct HumanizeCard<Header: View, Content: View, Footer: View>: View {
                 }
                 .shadow(color: Color.black.opacity(theme.isDark ? 0.28 : 0.08), radius: focused ? 10 : 6, x: 0, y: 2)
         }
-        .animation(.easeInOut(duration: 0.15), value: focused)
+        .tsAnimation(TSMotion.hover, value: focused)
     }
 }
 
@@ -113,8 +96,8 @@ struct HumanizeModelBar: View {
             Capsule().stroke(
                 controller.engineLoaded ? theme.accent.opacity(0.32) : TurboSparkTheme.hairlineColor, lineWidth: 0.5)
         }
-        .animation(TSMotion.select, value: controller.engineLoaded)
-        .animation(TSMotion.hover, value: state)
+        .tsAnimation(TSMotion.select, value: controller.engineLoaded)
+        .tsAnimation(TSMotion.hover, value: state)
         .fixedSize()
     }
 
@@ -128,7 +111,7 @@ struct HumanizeModelBar: View {
                 Divider()
             }
             Button { model.activeSection = .modelManager } label: {
-                Label { Text("Manage installed models…", bundle: .module) } icon: { Image(systemName: "internaldrive") }
+                Label { Text("Manage installed models\u{2026}", bundle: .module) } icon: { Image(systemName: "internaldrive") }
             }
         } label: {
             HStack(spacing: 8) {
@@ -234,7 +217,7 @@ struct HumanizeRunButton: View {
                             Circle().trim(from: 0, to: prefill)
                                 .stroke(ink, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                                 .rotationEffect(.degrees(-90)).padding(4)
-                                .animation(TSMotion.hover, value: prefill)
+                                .animation(reduceMotion ? nil : TSMotion.hover, value: prefill)
                         } else if !reduceMotion {
                             // Torn down with the view, unlike a repeatForever
                             // animation that keeps a display link alive.

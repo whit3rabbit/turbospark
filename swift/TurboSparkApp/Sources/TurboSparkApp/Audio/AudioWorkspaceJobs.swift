@@ -81,7 +81,7 @@ extension AudioWorkspaceController {
         isBusy = true; progress = nil; error = nil
         activeRunID = result.id
         generationProgress = task == .music ? AudioGenerationProgress() : nil
-        status = String(localized: "Waiting for background work", bundle: .module)
+        status = AppStrings.localized("Waiting for background work")
         let token = epoch; let currentTask = task
         let portable = (page == .advanced && allowPortableExperiment) || Self.runsOnDeclaredCPU(profile)
         let clonesNatively = currentTask == .textToSpeech && Self.clonesNatively(profile)
@@ -99,31 +99,31 @@ extension AudioWorkspaceController {
             do {
                 guard admitted else { throw CancellationError() }
                 try Task.checkCancellation()
-                self.status = String(localized: "Loading model", bundle: .module)
+                self.status = AppStrings.localized("Loading model")
                 let session = profile.family == "qwen3_tts" ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
                 var request = Self.request(from: inputs, task: currentTask)
                 if clonesNatively { request = Self.nativeCloneRequest(request, speech: inputs.speech) }
                 if currentTask == .speechToText {
-                    guard let selected else { throw AudioWorkspaceError.message(String(localized: "Import or select a recording first.", bundle: .module)) }
+                    guard let selected else { throw AudioWorkspaceError.message(AppStrings.localized("Import or select a recording first.")) }
                     guard let session else { throw CancellationError() }
                     try await self.transcribe(item: selected, into: result.id, session: session, request: request, source: .final, token: token)
                 } else {
                     let pcm: [Float]
                     if [.enhancement, .separation, .alignment, .diarization, .speechDetection, .codec, .languageIdentification].contains(currentTask) {
-                        guard let selected else { throw AudioWorkspaceError.message(String(localized: "Import or select an audio source first.", bundle: .module)) }
+                        guard let selected else { throw AudioWorkspaceError.message(AppStrings.localized("Import or select an audio source first.")) }
                         guard selected.duration <= Double(profile.capabilities.maxInputSeconds ?? 30) else {
-                            throw AudioWorkspaceError.message(String(localized: "This operation cannot process the full recording. Choose a shorter source.", bundle: .module))
+                            throw AudioWorkspaceError.message(AppStrings.localized("This operation cannot process the full recording. Choose a shorter source."))
                         }
                         let assets = self.assets; let lifetime = self.lifetime
                         pcm = try await Task.detached { try AudioMediaIO.readMono16k(selected.clips, store: assets, start: 0, duration: selected.duration, cancel: lifetime.check) }.value
                     } else if clonesNatively {
                         guard let reference = inputs.speech?.reference, reference.isValid else {
-                            throw AudioWorkspaceError.message(String(localized: "Choose 1 to 30 seconds of reference speech.", bundle: .module))
+                            throw AudioWorkspaceError.message(AppStrings.localized("Choose 1 to 30 seconds of reference speech."))
                         }
                         guard request.consent else {
-                            throw AudioWorkspaceError.message(String(localized: "Confirm you have the right to use this voice.", bundle: .module))
+                            throw AudioWorkspaceError.message(AppStrings.localized("Confirm you have the right to use this voice."))
                         }
-                        self.status = String(localized: "Preparing reference audio", bundle: .module)
+                        self.status = AppStrings.localized("Preparing reference audio")
                         let assets = self.assets; let lifetime = self.lifetime
                         pcm = try await Task.detached { try AudioMediaIO.readMono24k(reference.clips, store: assets, start: reference.start, duration: reference.duration, cancel: lifetime.check) }.value
                     } else { pcm = [] }
@@ -145,7 +145,7 @@ extension AudioWorkspaceController {
                     guard self.valid(token) else { return }
                     if synthesis { _ = try Self.validateGeneratedAudio(output.pcm) }
                     self.generationProgress?.saving()
-                    self.status = String(localized: "Saving audio", bundle: .module)
+                    self.status = AppStrings.localized("Saving audio")
                     self.progress = nil
                     var generatedClip: AudioLibraryClip?
                     if let audio = output.pcm {
@@ -171,7 +171,7 @@ extension AudioWorkspaceController {
                 }
                 guard self.valid(token) else { return }
                 if currentTask == .speechToText { try self.persistMutation(result.id) { $0.status = .completed; $0.updatedAt = Date() } }
-                self.status = String(localized: "Saved in this profile", bundle: .module)
+                self.status = AppStrings.localized("Saved in this profile")
             } catch {
                 guard self.valid(token) else { return }
                 let cancelled = Task.isCancelled
@@ -181,7 +181,7 @@ extension AudioWorkspaceController {
                 } else if self.pendingSaves[result.id] == nil {
                     self.update(result.id) { $0.status = cancelled ? .interrupted : .failed; $0.failure = error.localizedDescription }
                 }
-                self.status = cancelled ? String(localized: "Interrupted", bundle: .module) : String(localized: "Failed", bundle: .module)
+                self.status = cancelled ? AppStrings.localized("Interrupted") : AppStrings.localized("Failed")
                 self.error = cancelled ? nil : error.localizedDescription
             }
         }
@@ -217,7 +217,7 @@ extension AudioWorkspaceController {
                 segments.append(contentsOf: next)
             }
             progress = min(1, (offset + seconds) / max(1, duration))
-            status = String(localized: "Refining saved recording", bundle: .module)
+            status = AppStrings.localized("Refining saved recording")
         }
         guard valid(token) else { throw CancellationError() }
         let metadata = try JSONEncoder().encode(native)

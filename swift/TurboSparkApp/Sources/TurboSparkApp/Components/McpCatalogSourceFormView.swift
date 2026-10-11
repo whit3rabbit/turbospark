@@ -19,7 +19,7 @@ struct McpCatalogSourceFormView: View {
 
             Picker(selection: $sourceKind) {
                 ForEach(McpImportSheet.SourceKind.allCases) { kind in
-                    Text(kind.rawValue).tag(kind)
+                    kind.title.tag(kind)
                 }
             } label: { Text("Source", bundle: .module) }
             .pickerStyle(.segmented)
@@ -38,8 +38,12 @@ struct McpCatalogSourceFormView: View {
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             HStack(spacing: 6) {
-                TextField(placeholder, text: $sourceText)
-                    .textFieldStyle(.roundedBorder)
+                // Placeholders are example identifiers and paths: verbatim.
+                TextField(text: $sourceText, prompt: Text(verbatim: placeholder)) {
+                    Text("Source", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
                 if sourceKind == .directory {
                     Button { chooseFolder() } label: { Text("Choose...", bundle: .module) }
                         .buttonStyle(.bordered)
@@ -61,8 +65,11 @@ struct McpCatalogSourceFormView: View {
             Text("Git Ref", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
-            TextField("main", text: $gitRef)
-                .textFieldStyle(.roundedBorder)
+            TextField(text: $gitRef, prompt: Text(verbatim: "main")) {
+                Text("Git Ref", bundle: .module)
+            }
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
         }
     }
 
@@ -74,12 +81,8 @@ struct McpCatalogSourceFormView: View {
             TextEditor(text: $sparsePathsText)
                 .themedCode(.small)
                 .frame(height: 50)
-                .padding(4)
-                .background(.appSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
+                .appEditorSurface()
+                .accessibilityLabel(Text("Sparse Paths (one per line, optional)", bundle: .module))
             Text("Checks out only these subtrees, for a repository too large to clone whole.", bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
@@ -91,8 +94,8 @@ struct McpCatalogSourceFormView: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-        panel.message = "Choose a folder holding an MCP catalog manifest."
+        panel.prompt = AppStrings.localized("Choose")
+        panel.message = AppStrings.localized("Choose a folder holding an MCP catalog manifest.")
         if panel.runModal() == .OK, let url = panel.url {
             sourceText = url.path
         }

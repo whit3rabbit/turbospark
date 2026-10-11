@@ -174,11 +174,13 @@ struct MusicPromptGeneratorView: View {
         HStack(spacing: 12) {
             if tab == .style {
                 Button { selection = MusicPromptSelection() } label: { Text("Clear", bundle: .module) }
+                    .appAction(.quiet)
                     .disabled(selection == MusicPromptSelection())
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(caption, forType: .string)
                 } label: { Text("Copy", bundle: .module) }
+                    .appAction(.secondary)
                     .disabled(caption.isEmpty)
             }
             Spacer()
@@ -186,12 +188,15 @@ struct MusicPromptGeneratorView: View {
                 Text("Replaces the current description.", bundle: .module)
                     .themedFont(.small).foregroundStyle(.appSecondary)
             }
-            Button { dismiss() } label: { Text("Close", bundle: .module) }.keyboardShortcut(.cancelAction)
+            Button { dismiss() } label: { Text("Close", bundle: .module) }
+                .appAction(.secondary)
+                .keyboardShortcut(.cancelAction)
             if tab == .style {
                 Button {
                     controller.recipe.caption = caption
                     dismiss()
                 } label: { Text("Use as Description", bundle: .module) }
+                    .appAction(.primary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(caption.isEmpty || controller.isBusy)
             }

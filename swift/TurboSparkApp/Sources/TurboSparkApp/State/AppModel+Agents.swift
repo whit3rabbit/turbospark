@@ -37,10 +37,10 @@ extension AppModel {
             let agent = try AgentManager.shared.importAgent(
                 from: sourceURL, scope: targetScope, projectRootURL: projectURL)
             reloadAgents()
-            showToast("Imported '\(agent.name)' into \(targetScope.label).", style: .info)
+            showToast(AppStrings.localized("Imported '\(agent.name)' into \(targetScope.label)."), style: .info)
             return .success(agent)
         } catch {
-            showToast("Import failed: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Import failed: \(error.localizedDescription)"), style: .error)
             return .failure(error)
         }
     }
@@ -95,10 +95,10 @@ extension AppModel {
                 scope: scope,
                 projectRootURL: selectedProject?.rootDirectoryURL)
             reloadAgents()
-            showToast("Agent '\(agent.name)' created in \(scope.label) scope.", style: .info)
+            showToast(AppStrings.localized("Agent '\(agent.name)' created in \(scope.label) scope."), style: .info)
             return .success(agent)
         } catch {
-            showToast("Failed to create agent: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Failed to create agent: \(error.localizedDescription)"), style: .error)
             return .failure(error)
         }
     }
@@ -108,9 +108,9 @@ extension AppModel {
         do {
             try AgentManager.shared.saveAgent(agent)
             reloadAgents()
-            showToast("Saved changes to '\(agent.name)'.", style: .info)
+            showToast(AppStrings.localized("Saved changes to '\(agent.name)'."), style: .info)
         } catch {
-            showToast("Failed to save agent: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Failed to save agent: \(error.localizedDescription)"), style: .error)
         }
     }
 
@@ -119,9 +119,9 @@ extension AppModel {
         do {
             try AgentManager.shared.deleteAgent(agent)
             reloadAgents()
-            showToast("Removed agent '\(agent.name)'.", style: .info)
+            showToast(AppStrings.localized("Removed agent '\(agent.name)'."), style: .info)
         } catch {
-            showToast("Failed to delete agent: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Failed to delete agent: \(error.localizedDescription)"), style: .error)
         }
     }
 
@@ -202,15 +202,18 @@ extension AppModel {
             // through to be sent to the model as prose (state#93).
             if let disabled = findAnyAgent(named: agentName) {
                 showToast(
-                    "Agent '\(disabled.displayName)' is switched off. Enable it in Settings > "
-                        + "Agents to use it.", style: .warning)
+                    AppStrings.localized(
+                        "Agent '\(disabled.displayName)' is switched off. Enable it in Settings > Agents to use it."),
+                    style: .warning)
                 return true
             }
             return false
         }
 
         guard !taskPrompt.isEmpty else {
-            showToast("Please provide a prompt for agent '\(agent.displayName)'.", style: .warning)
+            showToast(
+                AppStrings.localized("Please provide a prompt for agent '\(agent.displayName)'."),
+                style: .warning)
             return true
         }
 
@@ -237,11 +240,11 @@ extension AppModel {
         presentation: MidTurnInputPresentation?
     ) {
         guard session != nil else {
-            showToast("No active model session. Please load a model first.", style: .error)
+            showToast(AppStrings.localized("No active model session. Please load a model first."), style: .error)
             return
         }
         guard !generating else {
-            showToast("A turn is already running. Wait for it to finish first.", style: .warning)
+            showToast(AppStrings.localized("A turn is already running. Wait for it to finish first."), style: .warning)
             return
         }
 

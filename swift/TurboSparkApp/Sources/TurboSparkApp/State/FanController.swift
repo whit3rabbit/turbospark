@@ -195,7 +195,7 @@ final class FanController: ObservableObject {
             if status?.allFansNearTarget == true { return }
             try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
-        lastError = "Fans did not reach target RPM within 10 s; the pin may not be holding."
+        lastError = AppStrings.localized("Fans did not reach target RPM within 10 s; the pin may not be holding.")
     }
 
     /// Returns the fans to the machine's own curve.
@@ -291,8 +291,8 @@ final class FanController: ObservableObject {
     }
 
     private static func daemonHint(command: String) -> String {
-        "thermalforge \(command) failed. Is the ThermalForge daemon running?"
-            + " Install it once with: sudo thermalforge install"
+        AppStrings.localized(
+            "thermalforge \(command) failed. Is the ThermalForge daemon running? Install it once with: sudo thermalforge install")
     }
 
     // MARK: - Plumbing

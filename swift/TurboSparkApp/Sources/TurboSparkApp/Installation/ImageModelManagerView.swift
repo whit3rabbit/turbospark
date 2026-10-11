@@ -21,35 +21,46 @@ struct ImageModelManagerView: View {
             .padding(24)
         }
         .confirmationDialog(
-            imageToDelete.map { model.isManagedImageModel($0) } ?? true
-                ? "Delete image model?" : "Remove image model?",
+            deleteDialogTitle,
             isPresented: Binding(
                 get: { imageToDelete != nil },
                 set: { if !$0 { imageToDelete = nil } }),
             presenting: imageToDelete
         ) { image in
             if model.isManagedImageModel(image) {
-                Button("Delete \(image.alias)", role: .destructive) {
+                Button(role: .destructive) {
                     model.deleteImageModel(image)
                     imageToDelete = nil
+                } label: {
+                    Text("Delete \(image.alias)", bundle: .module)
                 }
             } else {
-                Button("Remove \(image.alias) from the list", role: .destructive) {
+                Button(role: .destructive) {
                     model.deleteImageModel(image)
                     imageToDelete = nil
+                } label: {
+                    Text("Remove \(image.alias) from the list", bundle: .module)
                 }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: { image in
             if model.isManagedImageModel(image) {
                 Text("This removes \(image.path) from the shared TurboSpark image store.", bundle: .module)
             } else {
-                Text(verbatim: "The files stay on disk at \(image.path). You can restore it under Settings > Models.")
+                Text(
+                    "The files stay on disk at \(image.path). You can restore it under Settings > Models & Storage.",
+                    bundle: .module)
             }
         }
         .task {
             model.refreshTelemetry()
         }
+    }
+
+    private var deleteDialogTitle: Text {
+        imageToDelete.map { model.isManagedImageModel($0) } ?? true
+            ? Text("Delete image model?", bundle: .module)
+            : Text("Remove image model?", bundle: .module)
     }
 
     private var recommendationCard: some View {
@@ -79,12 +90,13 @@ struct ImageModelManagerView: View {
             }
 
             HStack {
-                Text(
-                    model.hasInstalledMLXImageModel
-                        ? "A curated image model is installed."
-                        : "No curated image model is downloaded yet.",
-                    bundle: .module
-                )
+                Group {
+                    if model.hasInstalledMLXImageModel {
+                        Text("A curated image model is installed.", bundle: .module)
+                    } else {
+                        Text("No curated image model is downloaded yet.", bundle: .module)
+                    }
+                }
                 .themedFont(.tiny)
                 .foregroundStyle(
                     model.hasInstalledMLXImageModel ? Color.green : Color.secondary)
@@ -98,8 +110,7 @@ struct ImageModelManagerView: View {
                         Image(systemName: "photo.on.rectangle")
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
             }
         }
         .padding(16)
@@ -142,7 +153,7 @@ struct ImageModelManagerView: View {
                 .foregroundStyle(.appAccent)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 3) {
-                Text(image.alias)
+                Text(verbatim: image.alias)
                     .themedFont(.small, weight: .medium)
                 Text(verbatim: "\(image.quantization)  |  \(image.width) x \(image.height)")
                     .themedFont(.tiny)
@@ -150,11 +161,11 @@ struct ImageModelManagerView: View {
             }
             Spacer()
             if !AppModel.supportsMLXImageModel(modelID: image.modelID) {
-                Label("MLX required", systemImage: "exclamationmark.triangle")
+                Label { Text("MLX required", bundle: .module) } icon: { Image(systemName: "exclamationmark.triangle") }
                     .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(.appSecondary)
             } else if model.imageModelPath == image.path {
-                Label("Selected", systemImage: "checkmark.circle.fill")
+                Label { Text("Selected", bundle: .module) } icon: { Image(systemName: "checkmark.circle.fill") }
                     .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(.green)
             } else {
@@ -163,8 +174,7 @@ struct ImageModelManagerView: View {
                 } label: {
                     Text("Use", bundle: .module)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
             }
             // Only the shared store is ours to delete from. A model found in an
             // additional model folder is dropped from the list and its files
@@ -183,12 +193,11 @@ struct ImageModelManagerView: View {
                     Image(systemName: managed ? "trash" : "eye.slash")
                 }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .appAction(.destructive, size: .small)
             .accessibilityHint(
                 managed
-                    ? "Removes this image model from the shared image store"
-                    : "Hides this image model without deleting its files")
+                    ? Text("Removes this image model from the shared image store", bundle: .module)
+                    : Text("Hides this image model without deleting its files", bundle: .module))
         }
         .padding(10)
         .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
@@ -206,7 +215,7 @@ struct ImageModelManagerView: View {
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(source.alias)
+                    Text(verbatim: source.alias)
                         .themedFont(.small, weight: .medium)
                     if recommended {
                         Text("Recommended", bundle: .module)
@@ -243,14 +252,12 @@ struct ImageModelManagerView: View {
                 } label: {
                     Text("Use", bundle: .module)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
                 Button {} label: {
                     Text("Installed", bundle: .module)
                 }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(true)
+                .appAction(.secondary, size: .small)
+                .disabled(true)
             } else {
                 Button {
                     model.installImageModel(source)
@@ -261,8 +268,7 @@ struct ImageModelManagerView: View {
                         Image(systemName: "icloud.and.arrow.down")
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
                 .disabled(!isTested || !model.canInstallImageModel(alias: source.alias))
             }
         }
@@ -283,13 +289,18 @@ struct ImageModelRecommendationSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("Set up local image generation", systemImage: "photo.on.rectangle.angled")
-                    .themedFont(.title3, weight: .semibold)
+                Label {
+                    Text("Set up local image generation", bundle: .module)
+                } icon: {
+                    Image(systemName: "photo.on.rectangle.angled")
+                }
+                .themedFont(.title3, weight: .semibold)
                 Spacer()
                 Button { dismiss() } label: {
                     Text("Later", bundle: .module)
                 }
-                    .keyboardShortcut(.cancelAction)
+                .appAction(.secondary)
+                .keyboardShortcut(.cancelAction)
             }
             Text(
                 "TurboSpark did not find a downloaded Z-Image model. These pinned MLX variants have completed install gates and are matched to this Mac's memory.",
@@ -302,7 +313,7 @@ struct ImageModelRecommendationSheet: View {
             ForEach(model.recommendedImageModelSources) { source in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text(source.alias)
+                        Text(verbatim: source.alias)
                             .themedFont(.base, weight: .medium)
                         Spacer()
                         Button {
@@ -310,8 +321,11 @@ struct ImageModelRecommendationSheet: View {
                         } label: {
                             Text("Download", bundle: .module)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        // The first source is the one sized for this Mac, so it
+                        // is the sheet's one primary action.
+                        .appAction(
+                            source.id == model.recommendedImageModelSources.first?.id ? .primary : .secondary,
+                            size: .small)
                         .disabled(!model.canInstallImageModel(alias: source.alias))
                     }
                     Text(verbatim: "\(source.quantization)  |  \(source.modelID)")
@@ -330,7 +344,7 @@ struct ImageModelRecommendationSheet: View {
                 } label: {
                     Text("Manage image models", bundle: .module)
                 }
-                .buttonStyle(.link)
+                .appAction(.quiet)
             }
         }
         .padding(24)

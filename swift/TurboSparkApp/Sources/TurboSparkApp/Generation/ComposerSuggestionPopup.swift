@@ -39,15 +39,16 @@ struct ComposerSuggestionPopup: View {
                 .stroke(Color.primary.opacity(0.14), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.16), radius: 8, y: 2)
-        .accessibilityLabel("Suggestions")
-        .accessibilityHint("Use the up and down arrows to choose, Return to accept, Escape to dismiss.")
+        .accessibilityLabel(Text("Suggestions", bundle: .module))
+        .accessibilityHint(Text("Use the up and down arrows to choose, Return to accept, Escape to dismiss.", bundle: .module))
     }
 
     private func hintRow(_ text: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
                 .foregroundStyle(.appSecondary)
-            Text(text)
+            // Every hint the controller sets is fixed English and a catalog key.
+            Text(LocalizedStringKey(text), bundle: .module)
                 .foregroundStyle(.appSecondary)
             Spacer(minLength: 0)
         }
@@ -74,8 +75,8 @@ struct ComposerSuggestionPopup: View {
                     Text(suggestion.title)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    if let subtitle = suggestion.subtitle {
-                        Text(subtitle)
+                    if let subtitle = Self.subtitleText(suggestion) {
+                        subtitle
                             .themedFont(.tiny)
                             .foregroundStyle(.appSecondary)
                             .lineLimit(1)
@@ -93,7 +94,21 @@ struct ComposerSuggestionPopup: View {
         .id(suggestion.id)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(suggestion.title)
-        .accessibilityHint(suggestion.subtitle ?? "")
+        .accessibilityHint(Self.subtitleText(suggestion) ?? Text(verbatim: ""))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// The row's second line in the UI language. Command summaries, the
+    /// typed-reference rows and the folder/scheme markers are fixed English
+    /// from `ComposerAutocompleteEngine` and are catalog keys; a skill's
+    /// description is its author's text and stays as written.
+    private static func subtitleText(_ suggestion: ComposerSuggestion) -> Text? {
+        guard let subtitle = suggestion.subtitle else { return nil }
+        switch suggestion.kind {
+        case .skill:
+            return Text(subtitle)
+        case .builtInCommand, .reference, .file, .folder:
+            return Text(LocalizedStringKey(subtitle), bundle: .module)
+        }
     }
 }

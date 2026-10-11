@@ -22,7 +22,7 @@ enum ImageStyleFavoriteStore {
     private static func loadLocked() -> Archive {
         if let cache { return cache }
         let archive =
-            AppJSONStore.load(Archive.self, from: fileURL, label: "image style favorites")
+            AppJSONStore.load(Archive.self, from: fileURL, label: "Image style favorites")
             ?? Archive()
         Self.cache = archive
         return archive

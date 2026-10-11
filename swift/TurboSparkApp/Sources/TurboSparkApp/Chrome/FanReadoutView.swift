@@ -50,9 +50,9 @@ struct FanReadoutView: View {
             HStack(spacing: 5) {
                 Image(systemName: "fanblades")
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(isPinned ? Color.orange : Color.secondary)
+                    .foregroundStyle(isPinned ? Color.orange : theme.secondaryText)
                     .accessibilityHidden(true)
-                Text(rpmText)
+                Text(verbatim: rpmText)
                     .monospacedDigit()
                     .foregroundStyle(.appText)
                 if isPinned {
@@ -63,10 +63,11 @@ struct FanReadoutView: View {
             }
         }
         .buttonStyle(.plain)
-        .help("Fan speed via ThermalForge. Click to pin max or restore the automatic curve.")
+        .help(Text("Fan speed via ThermalForge. Click to pin max or restore the automatic curve.", bundle: .module))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Fan speed")
-        .accessibilityValue(rpmText + (isPinned ? ", pinned to maximum" : ""))
+        .accessibilityLabel(Text("Fan speed", bundle: .module))
+        .accessibilityValue(
+            isPinned ? Text("\(rpmText), pinned to maximum", bundle: .module) : Text(verbatim: rpmText))
         .appPointerCursor()
     }
 
@@ -85,14 +86,14 @@ struct FanReadoutView: View {
             if let status = fans.status {
                 ForEach(status.fans) { fan in
                     HStack {
-                        Text(verbatim: "Fan \(fan.index)")
+                        Text("Fan \(fan.index)", bundle: .module)
                             .foregroundStyle(.appSecondary)
                         Spacer()
                         Text(verbatim: "\(fan.actualRPM.formatted()) RPM")
                             .monospacedDigit()
                             .foregroundStyle(.appText)
-                        Text(fan.isHeld ? "held" : "auto")
-                            .foregroundStyle(fan.isHeld ? Color.orange : Color.secondary)
+                        (fan.isHeld ? Text("Held", bundle: .module) : Text("Auto", bundle: .module))
+                            .foregroundStyle(fan.isHeld ? Color.orange : theme.secondaryText)
                     }
                     .font(theme.ui(.tiny))
                 }
@@ -102,9 +103,16 @@ struct FanReadoutView: View {
                         .foregroundStyle(.tertiary)
                 }
             } else {
-                Text(fans.statusError ?? "Reading fan status...")
-                    .font(theme.ui(.tiny))
-                    .foregroundStyle(.tertiary)
+                // The poll's own failure text comes from `FanController`.
+                Group {
+                    if let statusError = fans.statusError {
+                        Text(verbatim: statusError)
+                    } else {
+                        Text("Reading fan status...", bundle: .module)
+                    }
+                }
+                .font(theme.ui(.tiny))
+                .foregroundStyle(.tertiary)
             }
 
             Divider()
@@ -113,10 +121,12 @@ struct FanReadoutView: View {
                 Button {
                     Task { await fans.pinMax() }
                 } label: { Text("Pin Max", bundle: .module) }
+                .appAction(.secondary, size: .small)
                 .disabled(fans.isBusy)
                 Button {
                     Task { await fans.restoreAuto() }
                 } label: { Text("Restore Auto", bundle: .module) }
+                .appAction(.secondary, size: .small)
                 .disabled(fans.isBusy)
             }
             .font(theme.ui(.tiny))
@@ -137,7 +147,7 @@ struct FanReadoutView: View {
             .controlSize(.small)
 
             if let error = fans.lastError ?? fans.statusError {
-                Text(error)
+                Text(verbatim: error)
                     .font(theme.ui(.tiny))
                     .foregroundStyle(.red)
             }

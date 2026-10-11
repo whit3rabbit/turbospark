@@ -29,8 +29,14 @@ public struct SkillEditorSheet: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text(skillToEdit == nil ? "Create New Skill" : "Edit Skill: \(name)")
-                    .themedFont(.base, weight: .semibold)
+                Group {
+                    if skillToEdit == nil {
+                        Text("Create New Skill", bundle: .module)
+                    } else {
+                        Text("Edit Skill: \(name)", bundle: .module)
+                    }
+                }
+                .themedFont(.base, weight: .semibold)
                 Spacer()
                 Button {
                     dismiss()
@@ -53,8 +59,11 @@ public struct SkillEditorSheet: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Skill Name", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            TextField("e.g. git-workflow, jupyter-skill", text: $name)
-                                .textFieldStyle(.roundedBorder)
+                            TextField(text: $name, prompt: Text(verbatim: "git-workflow, jupyter-skill")) {
+                                Text("Skill Name", bundle: .module)
+                            }
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
@@ -73,16 +82,22 @@ public struct SkillEditorSheet: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Description", bundle: .module)
                             .themedFont(.small, weight: .semibold)
-                        TextField("Brief summary of what this skill does and when to activate it...", text: $descriptionText)
-                            .textFieldStyle(.roundedBorder)
+                        TextField(text: $descriptionText, prompt: Text("Brief summary of what this skill does and when to activate it...", bundle: .module)) {
+                            Text("Description", bundle: .module)
+                        }
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
                     }
 
                     // Allowed Tools
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Allowed Tools (Comma-separated)", bundle: .module)
                             .themedFont(.small, weight: .semibold)
-                        TextField("e.g. Bash(git:*), Read, write_file, search_code", text: $allowedToolsText)
-                            .textFieldStyle(.roundedBorder)
+                        TextField(text: $allowedToolsText, prompt: Text(verbatim: "Bash(git:*), Read, write_file, search_code")) {
+                            Text("Allowed Tools (Comma-separated)", bundle: .module)
+                        }
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
                         Text("Tool permissions allowed during execution of this skill.", bundle: .module)
                             .themedFont(.tiny)
                             .foregroundStyle(.appSecondary)
@@ -92,8 +107,11 @@ public struct SkillEditorSheet: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Activation Path Triggers (Comma-separated)", bundle: .module)
                             .themedFont(.small, weight: .semibold)
-                        TextField("e.g. *.ipynb, src/**/*.ts, Cargo.toml", text: $pathsText)
-                            .textFieldStyle(.roundedBorder)
+                        TextField(text: $pathsText, prompt: Text(verbatim: "*.ipynb, src/**/*.ts, Cargo.toml")) {
+                            Text("Activation Path Triggers (Comma-separated)", bundle: .module)
+                        }
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
                         Text("Glob patterns that will trigger activation when editing matching files.", bundle: .module)
                             .themedFont(.tiny)
                             .foregroundStyle(.appSecondary)
@@ -112,14 +130,8 @@ public struct SkillEditorSheet: View {
 
                         TextEditor(text: $content)
                             .themedCode(.base)
-                            .frame(minHeight: 200)
-                            .padding(4)
-                            .background(.appElevated)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(.appBorder, lineWidth: 1)
-                            )
+                            .appEditorSurface(minHeight: 200)
+                            .accessibilityLabel(Text("Instruction Body (Markdown)", bundle: .module))
                     }
                 }
                 .padding(20)
@@ -135,8 +147,7 @@ public struct SkillEditorSheet: View {
                 Button {
                     saveAction()
                 } label: { Text("Save Skill", bundle: .module) }
-                .buttonStyle(.borderedProminent)
-                .tint(TurboSparkTheme.accentColor)
+                .appAction(.primary)
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut(.defaultAction)
             }

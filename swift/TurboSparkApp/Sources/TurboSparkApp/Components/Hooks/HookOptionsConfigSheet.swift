@@ -32,6 +32,8 @@ public struct HookOptionsConfigSheet: View {
                         .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
+                .help(Text("Close", bundle: .module))
+                .accessibilityLabel(Text("Close", bundle: .module))
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -69,8 +71,7 @@ public struct HookOptionsConfigSheet: View {
                 Button {
                     dismiss()
                 } label: { Text("Done", bundle: .module) }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .appAction(.primary)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
@@ -108,8 +109,8 @@ public struct HookOptionsConfigSheet: View {
 
             switch spec.type {
             case .boolean:
+                // Named by the option title the row already draws.
                 Toggle(
-                    "",
                     isOn: Binding(
                         get: { (values[spec.key] ?? spec.defaultValue ?? "false") == "true" },
                         set: { val in
@@ -118,13 +119,14 @@ public struct HookOptionsConfigSheet: View {
                             hookStore.updateOptionValue(sourceID: group.id, key: spec.key, value: strVal)
                         }
                     )
-                )
+                ) {
+                    Text(spec.title)
+                }
                 .labelsHidden()
 
             case .number, .string:
                 if spec.isSensitive {
                     SecureField(
-                        spec.defaultValue ?? "Enter value...",
                         text: Binding(
                             get: { values[spec.key] ?? "" },
                             set: { val in
@@ -133,35 +135,45 @@ public struct HookOptionsConfigSheet: View {
                                     sourceID: group.id, key: spec.key, value: val,
                                     isSensitive: true)
                             }
-                        )
-                    )
+                        ),
+                        prompt: valuePrompt(spec)
+                    ) {
+                        Text(spec.title)
+                    }
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                 } else {
                     TextField(
-                        spec.defaultValue ?? "Enter value...",
                         text: Binding(
                             get: { values[spec.key] ?? "" },
                             set: { val in
                                 values[spec.key] = val
                                 hookStore.updateOptionValue(sourceID: group.id, key: spec.key, value: val)
                             }
-                        )
-                    )
+                        ),
+                        prompt: valuePrompt(spec)
+                    ) {
+                        Text(spec.title)
+                    }
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                 }
 
             case .file, .directory:
                 HStack(spacing: 8) {
                     TextField(
-                        "Path...",
                         text: Binding(
                             get: { values[spec.key] ?? "" },
                             set: { val in
                                 values[spec.key] = val
                                 hookStore.updateOptionValue(sourceID: group.id, key: spec.key, value: val)
                             }
-                        )
-                    )
+                        ),
+                        prompt: Text("Path...", bundle: .module)
+                    ) {
+                        Text(spec.title)
+                    }
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
 
                     Button {
@@ -183,6 +195,15 @@ public struct HookOptionsConfigSheet: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(.appBorder.opacity(0.3), lineWidth: 1)
         )
+    }
+
+    /// The declared default when there is one (a value, shown verbatim),
+    /// otherwise a localized hint.
+    private func valuePrompt(_ spec: AppHookOptionSpec) -> Text {
+        if let defaultValue = spec.defaultValue {
+            return Text(verbatim: defaultValue)
+        }
+        return Text("Enter value...", bundle: .module)
     }
 
     private func loadValues() {

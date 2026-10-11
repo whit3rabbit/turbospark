@@ -13,40 +13,28 @@ struct ServerLoadedModelsView: View {
     private var rows: [ServerModelRow] { model.serverModelRows }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Serving", bundle: .module)
-                    .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.appSecondary)
-                Spacer()
-                // attachChatSession is a no-op without a running, idle server.
-                if model.session != nil, model.server != nil, !model.serverBusy,
-                   !rows.contains(where: \.isChatSession) {
-                    // The cheap path, and worth its own button: the chat
-                    // model is already mapped, so serving it costs nothing
-                    // where a second install costs its whole footprint.
-                    Button { model.attachChatSession() } label: { Text("Serve loaded model", bundle: .module) }
-                        .buttonStyle(.link)
-                        .themedFont(.tiny)
-                }
-                Button {
-                    showingPicker = true
-                } label: {
-                    Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "plus") }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-                .disabled(model.serverBusy || model.server == nil)
+        APIPanel(title: Text("Serving", bundle: .module)) {
+            // attachChatSession is a no-op without a running, idle server.
+            if model.session != nil, model.server != nil, !model.serverBusy,
+               !rows.contains(where: \.isChatSession) {
+                // The cheap path, and worth its own button: the chat
+                // model is already mapped, so serving it costs nothing
+                // where a second install costs its whole footprint.
+                Button { model.attachChatSession() } label: { Text("Serve loaded model", bundle: .module) }
+                    .appAction(.secondary, size: APIControlSize.panel)
             }
-
-            if rows.isEmpty {
-                Text("Nothing attached yet.", bundle: .module)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 10)
-            } else {
-                VStack(spacing: 0) {
+            Button {
+                showingPicker = true
+            } label: {
+                Label { Text("Attach Model...", bundle: .module) } icon: { Image(systemName: "plus") }
+            }
+            .appAction(.primary, size: APIControlSize.panel)
+            .disabled(model.serverBusy || model.server == nil)
+        } content: {
+            APIRowList {
+                if rows.isEmpty {
+                    APINothingServedRow()
+                } else {
                     ForEach(rows) { row in
                         modelRow(row)
                         if row.id != rows.last?.id {
@@ -54,15 +42,7 @@ struct ServerLoadedModelsView: View {
                         }
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.appSurface))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(.appBorder, lineWidth: 0.5))
             }
-
-
         }
         .sheet(isPresented: $showingPicker) {
             ServerModelPickerSheet(model: model)
@@ -70,80 +50,48 @@ struct ServerLoadedModelsView: View {
     }
 
     private func modelRow(_ row: ServerModelRow) -> some View {
-        HStack(spacing: 12) {
-            Circle().fill(Color.green).frame(width: 7, height: 7)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(row.id)
-                        .themedCode(.base)
-                        .textSelection(.enabled)
-                    if row.isChatSession {
-                        Text("chat", bundle: .module)
-                            .themedFont(.micro, weight: .medium)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                TurboSparkTheme.accentColor.opacity(0.15),
-                                in: Capsule())
-                    } else if row.isAudioModel {
-                        Text("audio", bundle: .module)
-                            .themedFont(.micro, weight: .medium)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Color.purple.opacity(0.15),
-                                in: Capsule())
-                    }
-                }
-                Text(detailLine(row))
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
-                // READ-ONLY. Steering resolves at OPEN and this server serves
-                // already-open sessions, so it is a property of the model's
-                // load rather than of the server. Showing every known state
-                // lets an operator distinguish active, supported-but-off,
-                // and unsupported models without implying that this pane can
-                // change an already-open session.
-                if let status = row.steeringStatus {
-                    Label(status.label, systemImage: status.systemImageName)
-                        .themedFont(.tiny)
-                        .foregroundStyle(
-                            status.isActive || status.isUnsupported
-                                ? Color.orange : Color.secondary)
-                }
+        APIServedModelRow(
+            name: row.id,
+            badge: row.isChatSession
+                ? Text("chat", bundle: .module)
+                : (row.isAudioModel ? Text("audio", bundle: .module) : nil),
+            badgeTint: row.isChatSession ? TurboSparkTheme.accentColor : .purple,
+            detachHelp: row.isChatSession
+                ? Text("Stop serving this over HTTP. It stays loaded for the Chat pane.", bundle: .module)
+                : Text("Stop serving this and release it from memory.", bundle: .module),
+            detach: { model.detachModelFromServer(id: row.id) }
+        ) {
+            detailLine(row)
+            // READ-ONLY. Steering resolves at OPEN and this server serves
+            // already-open sessions, so it is a property of the model's
+            // load rather than of the server. Showing every known state
+            // lets an operator distinguish active, supported-but-off,
+            // and unsupported models without implying that this pane can
+            // change an already-open session.
+            if let status = row.steeringStatus {
+                Label { steeringText(status) } icon: { Image(systemName: status.systemImageName) }
+                    .foregroundStyle(
+                        status.isActive || status.isUnsupported
+                            ? Color.orange : Color.secondary)
             }
-
-            Spacer(minLength: 8)
-
-            Text(verbatim: "\(row.requestsServed) req")
+        } trailing: {
+            Text("\(row.requestsServed) requests", bundle: .module)
                 .themedFont(.tiny)
                 .monospacedDigit()
                 .foregroundStyle(.appSecondary)
-
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(row.id, forType: .string)
-            } label: {
-                Image(systemName: "doc.on.doc")
-            }
-            .buttonStyle(.borderless)
-            .help("Copy the model id clients should send")
-
-            Button {
-                model.detachModelFromServer(id: row.id)
-            } label: {
-                Label { Text("Eject", bundle: .module) } icon: { Image(systemName: "eject") }
-                    .labelStyle(.titleAndIcon)
-            }
-            .buttonStyle(.borderless)
-            .help(
-                row.isChatSession
-                    ? "Stop serving this over HTTP. It stays loaded for the Chat pane."
-                    : "Stop serving this and release it from memory.")
+            APICopyButton(label: Text("Copy the model id clients should send", bundle: .module)) { row.id }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+    }
+
+    /// The steering label is built in State/ as English; the two fixed
+    /// readings are mapped to catalog text here, and an engine-supplied
+    /// summary or reason is shown as given.
+    private func steeringText(_ status: ServerModelSteeringStatus) -> Text {
+        switch status {
+        case let .active(summary): return Text(verbatim: summary)
+        case .off: return Text("Steering Off (supported)", bundle: .module)
+        case let .unsupported(reason): return Text("Steering unavailable: \(reason)", bundle: .module)
+        }
     }
 
     /// **NOTHING HERE IS STATED WHEN IT WAS NOT MEASURED** (`swift/CLAUDE.md`
@@ -151,19 +99,15 @@ struct ServerLoadedModelsView: View {
     /// here to read a window or a slot count off, and a zero rendered
     /// through the same row would read as a measurement of zero -- worse,
     /// the slot count would read as a plausible 16 arrived at by ignorance.
-    private func detailLine(_ row: ServerModelRow) -> String {
+    private func detailLine(_ row: ServerModelRow) -> Text {
         if row.isAudioModel {
-            return "audio model"
+            return Text("Audio model", bundle: .module)
         }
-        guard row.maxContext > 0 else { return "attached" }
-        var parts = ["\(row.maxContext.formatted()) ctx"]
-        if row.expertCacheSlots > 0 {
-            parts.append("\(row.expertCacheSlots) slots")
-        }
-        return parts.joined(separator: " - ")
+        guard row.maxContext > 0 else { return Text("Attached", bundle: .module) }
+        let context = Text("\(row.maxContext.formatted()) context", bundle: .module)
+        guard row.expertCacheSlots > 0 else { return context }
+        return context + Text(verbatim: " - ") + Text("\(row.expertCacheSlots) expert slots", bundle: .module)
     }
-
-
 }
 
 /// Picks an installed model to serve.
@@ -177,7 +121,7 @@ private struct ServerModelPickerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Serve another model", bundle: .module)
+            Text("Attach another model", bundle: .module)
                 .themedFont(.callout, weight: .semibold)
                 .padding(16)
 
@@ -214,6 +158,7 @@ private struct ServerModelPickerSheet: View {
                     .foregroundStyle(.appSecondary)
                 Spacer()
                 Button { dismiss() } label: { Text("Done", bundle: .module) }
+                    .appAction(.primary, size: APIControlSize.panel)
                     .keyboardShortcut(.defaultAction)
             }
             .padding(12)
@@ -228,9 +173,9 @@ private struct ServerModelPickerSheet: View {
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(candidate.alias)
+                    Text(verbatim: candidate.alias)
                         .themedFont(.small, weight: .medium)
-                    Text((candidate.path as NSString).lastPathComponent)
+                    Text(verbatim: (candidate.path as NSString).lastPathComponent)
                         .themedCode(.callout)
                         .foregroundStyle(.appSecondary)
                 }
@@ -244,7 +189,7 @@ private struct ServerModelPickerSheet: View {
             .padding(.vertical, 9)
         }
         .buttonStyle(.plain)
-        .help("Attach \(candidate.alias) to server")
-        .accessibilityLabel("Attach \(candidate.alias) to server")
+        .help(Text("Attach \(candidate.alias) to server", bundle: .module))
+        .accessibilityLabel(Text("Attach \(candidate.alias) to server", bundle: .module))
     }
 }

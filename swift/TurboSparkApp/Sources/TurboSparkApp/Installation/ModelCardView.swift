@@ -31,7 +31,7 @@ struct ModelCardView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .center, spacing: 4) {
-                        Text(alias)
+                        Text(verbatim: alias)
                             .themedFont(.base, weight: .semibold)
                             .foregroundStyle(.appText)
                             .lineLimit(1)
@@ -44,14 +44,16 @@ struct ModelCardView: View {
                             HStack(spacing: 4) {
                                 ProgressView().controlSize(.mini)
                                 if let fraction = downloadFraction {
-                                    Text("\(Int(fraction * 100))%", bundle: .module)
+                                    Text(verbatim: "\(Int(fraction * 100))%")
                                         .themedFont(.tiny, weight: .medium).monospacedDigit()
                                         .foregroundStyle(Color.accentColor)
                                 }
                             }
                             .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("Downloading")
-                            .accessibilityValue(downloadFraction.map { "\(Int($0 * 100)) percent" } ?? "in progress")
+                            .accessibilityLabel(Text("Downloading", bundle: .module))
+                            .accessibilityValue(
+                                downloadFraction.map { Text(verbatim: MetricFormat.percent($0 * 100)) }
+                                    ?? Text("In progress", bundle: .module))
                         } else if isActive {
                             Text("Active", bundle: .module)
                                 .themedFont(.tiny, weight: .bold)
@@ -69,43 +71,36 @@ struct ModelCardView: View {
                         }
                     }
 
-                    Text(name)
+                    Text(verbatim: name)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
 
-                    HStack(spacing: 4) {
-                        HStack(spacing: 3) {
-                            Image(systemName: visuals.iconSystemName)
-                                .themedFont(.micro, weight: .semibold)
-                                .accessibilityHidden(true)
-                            Text(visuals.parameterTag)
-                        }
-                        .themedFont(.tiny, weight: .medium)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1.5)
-                        .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(.appSecondary)
+                    // The tags wrap onto a second line in a narrow column (or
+                    // at a large text size) instead of being clipped; the
+                    // size stays on the trailing edge of the first line.
+                    HStack(alignment: .top, spacing: 4) {
+                        FlowLayout(spacing: 4, lineSpacing: 3) {
+                            metadataTag {
+                                HStack(spacing: 3) {
+                                    Image(systemName: visuals.iconSystemName)
+                                        .themedFont(.micro, weight: .semibold)
+                                        .accessibilityHidden(true)
+                                    Text(verbatim: visuals.parameterTag)
+                                }
+                            }
+                            metadataTag { Text(verbatim: visuals.formatLabel) }
+                                .help(Text(verbatim: visuals.formatLabel))
 
-                        Text(visuals.formatLabel)
-                            .themedFont(.tiny, weight: .medium)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1.5)
-                            .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
-                            .foregroundStyle(.appSecondary)
-
-                        if let rec = recommendation {
-                            verdictBadge(rec.verdict)
+                            if let rec = recommendation {
+                                verdictBadge(rec.verdict)
+                            }
                         }
 
                         Spacer(minLength: 2)
 
-                        Text(MetricFormat.storage(downloadBytes))
+                        Text(verbatim: MetricFormat.storage(downloadBytes))
                             .themedFont(.tiny).monospacedDigit()
                             .lineLimit(1)
                             .fixedSize()
@@ -131,29 +126,43 @@ struct ModelCardView: View {
                     lineWidth: 1
                 )
         )
-        .help("Select \(alias) (\(name))")
-        .accessibilityLabel("\(alias), \(visuals.family)")
+        .help(Text(verbatim: "\(alias) (\(name))"))
+        .accessibilityLabel(Text(verbatim: "\(alias), \(visuals.family)"))
         .accessibilityValue(cardAccessibilityValue)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
-    private var cardAccessibilityValue: String {
-        var parts: [String] = [name]
+    /// Spoken summary of the card. Names and sizes are data and stay
+    /// verbatim; the state words come from the catalog.
+    private var cardAccessibilityValue: Text {
+        var parts: [Text] = [Text(verbatim: name)]
         if let statusAccessibilityText { parts.append(statusAccessibilityText) }
-        if isActive { parts.append("Active") }
-        if isInstalled && !isActive { parts.append("Installed") }
-        if isDownloading { parts.append("Downloading") }
+        if isActive { parts.append(Text("Active", bundle: .module)) }
+        if isInstalled && !isActive { parts.append(Text("Installed", bundle: .module)) }
+        if isDownloading { parts.append(Text("Downloading", bundle: .module)) }
         if let rec = recommendation {
             switch rec.verdict {
-            case .resident: parts.append("Fits memory")
-            case .streams: parts.append("Streams fast")
-            case .tight: parts.append("Tight fit")
-            case .refused: parts.append("Too large")
+            case .resident: parts.append(Text("Fits Memory", bundle: .module))
+            case .streams: parts.append(Text("Streams", bundle: .module))
+            case .tight: parts.append(Text("Tight fit", bundle: .module))
+            case .refused: parts.append(Text("Too large", bundle: .module))
             case .unknown: break
             }
         }
-        parts.append(MetricFormat.storage(downloadBytes))
-        return parts.joined(separator: ", ")
+        parts.append(Text(verbatim: MetricFormat.storage(downloadBytes)))
+        return parts.dropFirst().reduce(parts[0]) { $0 + Text(verbatim: ", ") + $1 }
+    }
+
+    /// A small neutral tag in the card's metadata row.
+    private func metadataTag<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .themedFont(.tiny, weight: .medium)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1.5)
+            .background(.appElevated, in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(.appSecondary)
     }
 
     private var avatarIcon: some View {
@@ -175,13 +184,13 @@ struct ModelCardView: View {
             Image(systemName: "checkmark.seal.fill")
                 .themedFont(.tiny)
                 .foregroundStyle(.appAccent)
-                .help("Verified: this port has run this row end to end")
+                .help(Text("Verified: this port has run this row end to end", bundle: .module))
                 .accessibilityHidden(true)
         case "caveat":
             Image(systemName: "exclamationmark.triangle.fill")
                 .themedFont(.tiny)
                 .foregroundStyle(.orange)
-                .help("Runs with a caveat; see the notes in the detail pane")
+                .help(Text("Runs with a caveat; see the model notes.", bundle: .module))
                 .accessibilityHidden(true)
         default:
             EmptyView()
@@ -189,10 +198,10 @@ struct ModelCardView: View {
     }
 
     /// Spoken form of the status seal, which is decorative for sighted users.
-    private var statusAccessibilityText: String? {
+    private var statusAccessibilityText: Text? {
         switch status {
-        case "verified": return "Verified"
-        case "caveat": return "Has a caveat"
+        case "verified": return Text("Verified", bundle: .module)
+        case "caveat": return Text("Caveat", bundle: .module)
         default: return nil
         }
     }

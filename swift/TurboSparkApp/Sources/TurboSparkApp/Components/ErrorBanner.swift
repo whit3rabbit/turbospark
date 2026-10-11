@@ -11,12 +11,12 @@ struct ErrorBanner: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                         .accessibilityHidden(true)
-                    Text(error)
+                    Text(verbatim: error)
                         .themedFont(.base)
                         .lineLimit(2)
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("Error: \(error)")
+                .accessibilityLabel(Text("Error: \(error)", bundle: .module))
 
                 Spacer(minLength: 8)
 
@@ -31,8 +31,8 @@ struct ErrorBanner: View {
                 }
                 .buttonStyle(.plain)
                 .help(Text("Dismiss error", bundle: .module))
-                .accessibilityLabel("Dismiss error")
-                .accessibilityHint("Removes the error message")
+                .accessibilityLabel(Text("Dismiss error", bundle: .module))
+                .accessibilityHint(Text("Removes the error message", bundle: .module))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -43,15 +43,15 @@ struct ErrorBanner: View {
                         Capsule().stroke(.red.opacity(0.55), lineWidth: 1)
                     }
             }
-            .accessibilityAction(named: "Dismiss error") {
+            .accessibilityAction(named: Text("Dismiss error", bundle: .module)) {
                 model.error = nil
             }
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .onAppear {
-                _ = AccessibilityNotification.Announcement.post(.init("Error: \(error)"))
+                _ = AccessibilityNotification.Announcement.post(.init(AppStrings.localized("Error: \(error)")))
             }
             .onChange(of: error) { _, newError in
-                _ = AccessibilityNotification.Announcement.post(.init("Error: \(newError)"))
+                _ = AccessibilityNotification.Announcement.post(.init(AppStrings.localized("Error: \(newError)")))
             }
         }
     }

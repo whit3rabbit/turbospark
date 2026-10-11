@@ -13,25 +13,27 @@ struct PersonalitySettingsSection: View {
     var body: some View {
         Section(header: Text("Personality", bundle: .module)) {
             Picker(selection: selectedPersonalityBinding) {
-                Text(verbatim: "None").tag(UUID?.none)
+                Text("None", bundle: .module).tag(UUID?.none)
                 ForEach(model.personalities) { personality in
-                    Text(personality.name).tag(Optional(personality.id))
+                    Text(verbatim: personality.name).tag(Optional(personality.id))
                 }
             } label: { Text("Personality", bundle: .module) }
 
             if let personality = model.selectedPersonality {
-                Text(personality.instructions)
+                Text(verbatim: personality.instructions)
                     .themedCode(.small)
                     .foregroundStyle(.appSecondary)
 
                 Button(role: .destructive) {
                     model.deletePersonality(personality.id)
                 } label: { Text("Remove Selected", bundle: .module) }
+                .appAction(.destructive, size: .small)
             }
 
             Button {
                 showingAddSheet = true
             } label: { Text("Add Personality", bundle: .module) }
+            .appAction(.secondary, size: .small)
         }
         .settingsControl("Personality", pane: .engine, timing: .nextTurn)
         .sheet(isPresented: $showingAddSheet) {
@@ -67,6 +69,7 @@ private struct PersonalityEditorSheet: View {
             HStack {
                 Text("Add Personality", bundle: .module)
                     .themedFont(.base, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button { dismiss() } label: { Text("Cancel", bundle: .module) }
                     .keyboardShortcut(.cancelAction)
@@ -76,12 +79,15 @@ private struct PersonalityEditorSheet: View {
             Divider()
 
             Form {
-                TextField("Name", text: $name)
+                TextField(text: $name) {
+                    Text("Name", bundle: .module)
+                }
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(verbatim: "Instructions")
+                    Text("Instructions", bundle: .module)
                     TextEditor(text: $instructions)
                         .themedCode(.base)
-                        .frame(minHeight: 140)
+                        .appEditorSurface(minHeight: 140)
+                        .accessibilityLabel(Text("Instructions", bundle: .module))
                 }
             }
             .formStyle(.grouped)
@@ -94,6 +100,7 @@ private struct PersonalityEditorSheet: View {
                     onSave(name, instructions)
                     dismiss()
                 } label: { Text("Save", bundle: .module) }
+                .appAction(.primary)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSave)
             }

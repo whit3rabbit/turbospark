@@ -168,7 +168,9 @@ struct ProjectChatSummaryView: View {
             else { collapsed.insert(title) }
         } label: {
             HStack {
-                Text(String(localized: String.LocalizationValue(title), bundle: .module))
+                // Section titles are catalog keys; `Text` follows the in-app
+                // language where `String(localized:)` followed the system's.
+                Text(LocalizedStringKey(title), bundle: .module)
                     .themedFont(.small, weight: .semibold)
                 Spacer()
                 Text(verbatim: "\(count)").themedFont(.tiny).foregroundStyle(.appSecondary)
@@ -183,7 +185,7 @@ struct ProjectChatSummaryView: View {
     }
 
     private func empty(_ text: String) -> some View {
-        Text(String(localized: String.LocalizationValue(text), bundle: .module))
+        Text(LocalizedStringKey(text), bundle: .module)
             .themedFont(.small).foregroundStyle(.appSecondary)
     }
 

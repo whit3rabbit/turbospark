@@ -184,13 +184,13 @@ public enum UserProfileStore {
     /// the default-only registry, because a broken registry must not take the
     /// stores down with it.
     public static func loadRegistry() -> UserProfileRegistry {
-        AppJSONStore.load(UserProfileRegistry.self, from: registryURL, label: "user profiles")
+        AppJSONStore.load(UserProfileRegistry.self, from: registryURL, label: "User profiles")
             ?? .empty
     }
 
     @discardableResult
     public static func saveRegistry(_ registry: UserProfileRegistry) -> Bool {
-        AppJSONStore.save(registry, to: registryURL, label: "user profiles")
+        AppJSONStore.save(registry, to: registryURL, label: "User profiles")
     }
 
     /// Applies `body` to a freshly loaded registry and saves it back. The

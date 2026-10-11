@@ -13,6 +13,9 @@ public struct ModelFeatureBadgeView: View {
     let iconSystemName: String?
     let tintColor: Color
     let tooltip: String?
+    /// Data appended verbatim after the (translated) tooltip, such as a
+    /// quantization name, so the fixed part can still be a catalog key.
+    let tooltipDetail: String?
     let style: BadgeStyle
 
     public init(
@@ -20,13 +23,29 @@ public struct ModelFeatureBadgeView: View {
         iconSystemName: String? = nil,
         tintColor: Color = .secondary,
         tooltip: String? = nil,
+        tooltipDetail: String? = nil,
         style: BadgeStyle = .compact
     ) {
         self.title = title
         self.iconSystemName = iconSystemName
         self.tintColor = tintColor
         self.tooltip = tooltip
+        self.tooltipDetail = tooltipDetail
         self.style = style
+    }
+
+    /// Titles and tooltips are English values shared with the descriptor;
+    /// display looks each one up in the catalog. A value with no key (a
+    /// quantization name, an expert count) renders as written.
+    private var titleText: Text {
+        Text(LocalizedStringKey(title), bundle: .module)
+    }
+
+    private var tooltipText: Text {
+        guard let tooltip else { return titleText }
+        let fixed = Text(LocalizedStringKey(tooltip), bundle: .module)
+        guard let tooltipDetail else { return fixed }
+        return fixed + Text(verbatim: " \(tooltipDetail)")
     }
 
     public var body: some View {
@@ -35,7 +54,7 @@ public struct ModelFeatureBadgeView: View {
                 Image(systemName: iconSystemName)
                     .themedFont(fitting: iconSize, weight: .semibold)
             }
-            Text(title)
+            titleText
                 .themedFont(fontStep, weight: fontWeight)
                 .lineLimit(1)
         }
@@ -50,9 +69,9 @@ public struct ModelFeatureBadgeView: View {
                 .stroke(tintColor.opacity(borderOpacity), lineWidth: 0.5)
         }
         .foregroundStyle(tintColor)
-        .help(tooltip ?? title)
+        .help(tooltipText)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(tooltip ?? title)
+        .accessibilityLabel(tooltipText)
     }
 
     private var iconSpacing: CGFloat {
@@ -183,7 +202,8 @@ extension ModelFeatureBadgeView {
             title: quant,
             iconSystemName: "number.square.fill",
             tintColor: tint,
-            tooltip: "Weight Quantization: \(quant)",
+            tooltip: "Weight Quantization:",
+            tooltipDetail: quant,
             style: style
         )
     }

@@ -33,11 +33,11 @@ public final class ManagedAssetStore: @unchecked Sendable {
 
         var errorDescription: String? {
             switch self {
-            case .locked: return "The profile must be unlocked to use managed files."
-            case .malformed: return "The encrypted asset is malformed or was modified."
-            case .tooLarge: return "The managed file is too large for this asset format."
-            case .missing: return "The managed file is missing."
-            case .writeFailed: return "The encrypted asset could not be written."
+            case .locked: return AppStrings.localized("The profile must be unlocked to use managed files.")
+            case .malformed: return AppStrings.localized("The encrypted asset is malformed or was modified.")
+            case .tooLarge: return AppStrings.localized("The managed file is too large for this asset format.")
+            case .missing: return AppStrings.localized("The managed file is missing.")
+            case .writeFailed: return AppStrings.localized("The encrypted asset could not be written.")
             }
         }
     }

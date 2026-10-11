@@ -28,12 +28,14 @@ extension AppModel {
     /// `<shell_output>` marker, and the model reads the same text verbatim.
     public func handleBangCommand(_ draft: String) {
         guard !generating, !submitting, pendingToolCall == nil else {
-            showToast("Stop the current turn before running a shell command.", style: .warning)
+            showToast(AppStrings.localized("Stop the current turn before running a shell command."), style: .warning)
             return
         }
         let project = turnProject(chatID: selectedChatID) ?? selectedProject
         guard let root = project?.rootDirectoryURL, !root.path.isEmpty else {
-            showToast("Attach a project first: a shell command needs a working directory.", style: .warning)
+            showToast(
+                AppStrings.localized("Attach a project first: a shell command needs a working directory."),
+                style: .warning)
             return
         }
         let command = String(draft.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
@@ -62,7 +64,7 @@ extension AppModel {
             }
             // Stopped by the user: the partial output is not a result.
             if Task.isCancelled {
-                showToast("Stopped \(command.prefix(48)).", style: .info)
+                showToast(AppStrings.localized("Stopped \(String(command.prefix(48)))."), style: .info)
                 return
             }
             let trimmed = Self.boundedShellOutput(output)
@@ -70,7 +72,7 @@ extension AppModel {
             mutateTurnMessages(for: chatID) { $0.append(AppChatMessage(role: .user, content: content, isSynthetic: true)) }
             updateTokenEstimate()
             let head = command.count > 48 ? String(command.prefix(48)) + "..." : command
-            showToast("Ran \(head).", style: .success)
+            showToast(AppStrings.localized("Ran \(head)."), style: .success)
         }
     }
 

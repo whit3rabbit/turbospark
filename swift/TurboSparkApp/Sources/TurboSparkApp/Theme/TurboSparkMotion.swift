@@ -210,3 +210,38 @@ public struct TSIdlingSparkView: View {
         }
     }
 }
+
+public extension TSMotion {
+    /// `withAnimation` that honors the reduce-motion preference, for a call
+    /// from an action closure where no environment is in scope. The direct
+    /// `withAnimation(TSMotion.pane)` calls the 2026-10-11 audit found in
+    /// Humanize animated even with Reduce Motion on; this resolves the same
+    /// two sources as `TSMotionContext` (the app setting first, the system
+    /// setting for `.system`) and runs the change unanimated when reduced.
+    @MainActor
+    static func animate<Result>(_ animation: Animation, _ body: () throws -> Result) rethrows -> Result {
+        let reduce = AppearanceManager.shared.shouldReduceMotion(
+            systemReduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        return try withAnimation(reduce ? nil : animation, body)
+    }
+}
+
+/// `.animation(_:value:)` with the same reduce-motion resolution.
+private struct TSAnimationModifier<Value: Equatable>: ViewModifier {
+    let animation: Animation
+    let value: Value
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    func body(content: Content) -> some View {
+        let reduce = appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
+        content.animation(reduce ? nil : animation, value: value)
+    }
+}
+
+public extension View {
+    /// Animates changes to `value` unless the user has reduced motion.
+    func tsAnimation<Value: Equatable>(_ animation: Animation, value: Value) -> some View {
+        modifier(TSAnimationModifier(animation: animation, value: value))
+    }
+}

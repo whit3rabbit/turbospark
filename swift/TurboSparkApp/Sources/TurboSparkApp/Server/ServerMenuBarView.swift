@@ -42,28 +42,31 @@ public struct ServerMenuBarView: View {
 
     @ViewBuilder
     private var statusSection: some View {
-        Label(statusTitle, systemImage: statusSymbol)
+        Label { statusTitle } icon: { Image(systemName: statusSymbol) }
 
         if isRunning, let info = model.serverInfo {
             let address = info.baseURL?.absoluteString ?? "http://\(info.host):\(info.port)"
-            Button("Listening: \(address)") {
+            Button {
                 copyToClipboard(address)
-                model.showToast("Copied server address", style: .info)
-            }
+                model.showToast(AppStrings.localized("Copied server address"), style: .info)
+            } label: { Text("Listening: \(address)", bundle: .module) }
         } else if let daemon = daemonStatus, daemon.running {
             let address = daemon.endpoint ?? "http://127.0.0.1:\(daemon.port ?? 8080)/v1"
-            Button("CLI Daemon: \(address)") {
+            Button {
                 copyToClipboard(address)
-                model.showToast("Copied daemon address", style: .info)
-            }
+                model.showToast(AppStrings.localized("Copied daemon address"), style: .info)
+            } label: { Text("CLI Daemon: \(address)", bundle: .module) }
             if let logPath = daemon.logPath {
                 Button {
                     ModelStorageManager.revealInFinder(path: logPath)
                 } label: { Text("Reveal Daemon Log", bundle: .module) }
             }
         } else {
-            let portStr = model.serverPinnedPort == 0 ? "automatic" : "\(model.serverPinnedPort)"
-            Text("Port: \(portStr)", bundle: .module)
+            if model.serverPinnedPort == 0 {
+                Text("Port: automatic", bundle: .module)
+            } else {
+                Text("Port: \(String(model.serverPinnedPort))", bundle: .module)
+            }
         }
     }
 
@@ -75,8 +78,10 @@ public struct ServerMenuBarView: View {
             } label: { Text("Stop Server", bundle: .module) }
             .disabled(model.serverBusy)
         } else if let daemon = daemonStatus, daemon.running {
-            Button("Stop Background Daemon (PID \(daemon.pid.map(String.init) ?? "?"))") {
+            Button {
                 stopDaemon()
+            } label: {
+                Text("Stop Background Daemon (PID \(daemon.pid.map(String.init) ?? "?"))", bundle: .module)
             }
             .disabled(daemonBusy)
             Button {
@@ -113,20 +118,31 @@ public struct ServerMenuBarView: View {
     /// daemon is a separate process that inherits nothing: without them it
     /// binds its own default port with no API key, whatever the Advanced
     /// pane has configured.
+    // Whole sentences per verb rather than a verb spliced into one
+    // sentence: word order and inflection differ by language.
     private func startDaemon() {
-        runDaemonVerb(success: "Started background daemon", failure: "start") { args in
+        runDaemonVerb(
+            success: AppStrings.localized("Started background daemon"),
+            failure: { AppStrings.localized("Could not start the background daemon: \($0)") }
+        ) { args in
             try TurboSparkDaemon.start(args: args)
         }
     }
 
     private func stopDaemon() {
-        runDaemonVerb(success: "Stopped background daemon", failure: "stop") { _ in
+        runDaemonVerb(
+            success: AppStrings.localized("Stopped background daemon"),
+            failure: { AppStrings.localized("Could not stop the background daemon: \($0)") }
+        ) { _ in
             try TurboSparkDaemon.stop()
         }
     }
 
     private func restartDaemon() {
-        runDaemonVerb(success: "Restarted background daemon", failure: "restart") { args in
+        runDaemonVerb(
+            success: AppStrings.localized("Restarted background daemon"),
+            failure: { AppStrings.localized("Could not restart the background daemon: \($0)") }
+        ) { args in
             try TurboSparkDaemon.restart(args: args)
         }
     }
@@ -138,7 +154,7 @@ public struct ServerMenuBarView: View {
     /// main actor; the toast is published back on it.
     private func runDaemonVerb(
         success: String,
-        failure verb: String,
+        failure: @escaping (String) -> String,
         _ body: @escaping @Sendable ([String]) throws -> Void
     ) {
         guard !daemonBusy else { return }
@@ -154,9 +170,7 @@ public struct ServerMenuBarView: View {
             case .success:
                 model.showToast(success, style: .info)
             case .failure(let error):
-                model.showToast(
-                    "Could not \(verb) the background daemon: \(error.localizedDescription)",
-                    style: .error)
+                model.showToast(failure(error.localizedDescription), style: .error)
             }
         }
     }
@@ -177,10 +191,10 @@ public struct ServerMenuBarView: View {
             Text("Requests Served: \(metrics.totalRequests)", bundle: .module)
             Text("In Flight: \(metrics.inFlight)", bundle: .module)
             if let pp = metrics.aggregatePromptTokensPerSecond {
-                Text(String(format: "Avg PP Speed: %.1f tok/s", pp))
+                Text("Avg PP Speed: \(String(format: "%.1f", pp)) tok/s", bundle: .module)
             }
             if let tg = metrics.aggregateTokensPerSecond {
-                Text(String(format: "Avg TG Speed: %.1f tok/s", tg))
+                Text("Avg TG Speed: \(String(format: "%.1f", tg)) tok/s", bundle: .module)
             }
             if metrics.totalReusedPrefixTokens > 0 {
                 Text("Reused Prefix Tokens: \(formatNumber(metrics.totalReusedPrefixTokens))", bundle: .module)
@@ -211,36 +225,38 @@ public struct ServerMenuBarView: View {
 
             Text("Connect Terminal Agents:", bundle: .module)
 
-            Button("Claude Code (claude)") {
+            // Product names and their commands: nothing to translate.
+            Button {
                 let cmd = TurboSparkAgent.launchCommand(for: "claude", host: host, port: port, apiKey: key)
                 copyToClipboard(cmd)
-                model.showToast("Copied Claude Code export command", style: .info)
-            }
+                model.showToast(AppStrings.localized("Copied Claude Code export command"), style: .info)
+            } label: { Text(verbatim: "Claude Code (claude)") }
 
-            Button("OpenAI CLI / Codex (codex)") {
+            Button {
                 let cmd = TurboSparkAgent.launchCommand(for: "codex", host: host, port: port, apiKey: key)
                 copyToClipboard(cmd)
-                model.showToast("Copied Codex export command", style: .info)
-            }
+                model.showToast(AppStrings.localized("Copied Codex export command"), style: .info)
+            } label: { Text(verbatim: "OpenAI CLI / Codex (codex)") }
 
-            Button("OpenCode (opencode)") {
+            Button {
                 let cmd = TurboSparkAgent.launchCommand(for: "opencode", host: host, port: port, apiKey: key)
                 copyToClipboard(cmd)
-                model.showToast("Copied OpenCode export command", style: .info)
-            }
+                model.showToast(AppStrings.localized("Copied OpenCode export command"), style: .info)
+            } label: { Text(verbatim: "OpenCode (opencode)") }
 
-            Button("Hermes / OpenClaw") {
+            Button {
                 let cmd = TurboSparkAgent.launchCommand(for: "hermes", host: host, port: port, apiKey: key)
                 copyToClipboard(cmd)
-                model.showToast("Copied environment export command", style: .info)
-            }
+                model.showToast(AppStrings.localized("Copied environment export command"), style: .info)
+            } label: { Text(verbatim: "Hermes / OpenClaw") }
 
             Divider()
 
-            Button("CLI Starter: turbospark start claude") {
-                copyToClipboard("turbospark start claude")
-                model.showToast("Copied turbospark start claude", style: .info)
-            }
+            let starter = "turbospark start claude"
+            Button {
+                copyToClipboard(starter)
+                model.showToast(AppStrings.localized("Copied \(starter)"), style: .info)
+            } label: { Text("CLI Starter: \(starter)", bundle: .module) }
         } label: {
             Text("Coding Agents", bundle: .module)
         }
@@ -252,60 +268,47 @@ public struct ServerMenuBarView: View {
             let base = info?.baseURL?.absoluteString
                 ?? "http://127.0.0.1:\(model.serverPinnedPort == 0 ? 8080 : model.serverPinnedPort)"
 
-            Button("Copy Base URL (\(base))") {
+            Button {
                 copyToClipboard(base)
-                model.showToast("Copied Base URL", style: .info)
-            }
+                model.showToast(AppStrings.localized("Copied Base URL"), style: .info)
+            } label: { Text("Copy Base URL (\(base))", bundle: .module) }
 
             Divider()
 
             Text("OpenAI Compatible:", bundle: .module)
-            Button("POST /v1/chat/completions") {
-                copyToClipboard("\(base)/v1/chat/completions")
-                model.showToast("Copied /v1/chat/completions endpoint", style: .info)
-            }
-            Button("POST /v1/embeddings") {
-                copyToClipboard("\(base)/v1/embeddings")
-                model.showToast("Copied /v1/embeddings endpoint", style: .info)
-            }
-            Button("GET /v1/models") {
-                copyToClipboard("\(base)/v1/models")
-                model.showToast("Copied /v1/models endpoint", style: .info)
-            }
+            endpointButton("POST", "/v1/chat/completions", base: base)
+            endpointButton("POST", "/v1/embeddings", base: base)
+            endpointButton("GET", "/v1/models", base: base)
 
             Divider()
 
             Text("Anthropic Compatible:", bundle: .module)
-            Button("POST /v1/messages") {
-                copyToClipboard("\(base)/v1/messages")
-                model.showToast("Copied /v1/messages endpoint", style: .info)
-            }
+            endpointButton("POST", "/v1/messages", base: base)
 
             Divider()
 
             Text("Ollama Compatible:", bundle: .module)
-            Button("POST /api/chat") {
-                copyToClipboard("\(base)/api/chat")
-                model.showToast("Copied /api/chat endpoint", style: .info)
-            }
-            Button("POST /api/embeddings") {
-                copyToClipboard("\(base)/api/embeddings")
-                model.showToast("Copied /api/embeddings endpoint", style: .info)
-            }
-            Button("GET /api/tags") {
-                copyToClipboard("\(base)/api/tags")
-                model.showToast("Copied /api/tags endpoint", style: .info)
-            }
+            endpointButton("POST", "/api/chat", base: base)
+            endpointButton("POST", "/api/embeddings", base: base)
+            endpointButton("GET", "/api/tags", base: base)
 
             Divider()
 
             Text("Service:", bundle: .module)
-            Button("GET /health") {
-                copyToClipboard("\(base)/health")
-                model.showToast("Copied /health endpoint", style: .info)
-            }
+            endpointButton("GET", "/health", base: base)
         } label: {
             Text("API Endpoints", bundle: .module)
+        }
+    }
+
+    /// One route in the Endpoints submenu: the label is the route itself,
+    /// and the toast names it.
+    private func endpointButton(_ method: String, _ path: String, base: String) -> some View {
+        Button {
+            copyToClipboard(base + path)
+            model.showToast(AppStrings.localized("Copied \(path) endpoint"), style: .info)
+        } label: {
+            Text(verbatim: "\(method) \(path)")
         }
     }
 
@@ -325,11 +328,11 @@ public struct ServerMenuBarView: View {
                         model.selectModel(installedModel)
                     } label: {
                         if isAttached {
-                            Label(installedModel.alias + " (Active)", systemImage: "checkmark")
+                            Label { Text("\(installedModel.alias) (Active)", bundle: .module) } icon: { Image(systemName: "checkmark") }
                         } else if isCurrentChat {
-                            Label(installedModel.alias + " (Loaded)", systemImage: "checkmark")
+                            Label { Text("\(installedModel.alias) (Loaded)", bundle: .module) } icon: { Image(systemName: "checkmark") }
                         } else {
-                            Text(installedModel.alias)
+                            Text(verbatim: installedModel.alias)
                         }
                     }
                 }
@@ -372,20 +375,22 @@ public struct ServerMenuBarView: View {
 
     // MARK: - Helpers
 
-    private var statusTitle: String {
+    private var statusTitle: Text {
         if model.serverBusy {
-            return isRunning ? "Stopping TurboSpark Server..." : "Starting TurboSpark Server..."
+            return isRunning
+                ? Text("Stopping TurboSpark Server...", bundle: .module)
+                : Text("Starting TurboSpark Server...", bundle: .module)
         }
         if isRunning {
             if info?.models.isEmpty ?? true {
-                return "TurboSpark Server (no model)"
+                return Text("TurboSpark Server (no model)", bundle: .module)
             }
-            return "TurboSpark Server is running"
+            return Text("TurboSpark Server is running", bundle: .module)
         }
         if let daemon = daemonStatus, daemon.running {
-            return "TurboSpark CLI Daemon is running"
+            return Text("TurboSpark CLI Daemon is running", bundle: .module)
         }
-        return "TurboSpark Server is stopped"
+        return Text("TurboSpark Server is stopped", bundle: .module)
     }
 
     private var statusSymbol: String {

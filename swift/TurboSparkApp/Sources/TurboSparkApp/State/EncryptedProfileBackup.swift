@@ -38,17 +38,22 @@ enum EncryptedProfileBackup {
 
         var errorDescription: String? {
             switch self {
-            case .locked: return "Unlock this profile before exporting or restoring it."
-            case .wrongProfile: return "Only the active unlocked profile can be exported."
-            case .malformed: return "The encrypted profile backup is malformed."
+            case .locked: return AppStrings.localized("Unlock this profile before exporting or restoring it.")
+            case .wrongProfile: return AppStrings.localized("Only the active unlocked profile can be exported.")
+            case .malformed: return AppStrings.localized("The encrypted profile backup is malformed.")
             case .unsupportedVersion(let version):
-                return "This backup uses unsupported format \(version)."
-            case .checksumMismatch(let path): return "Backup checksum verification failed for \(path)."
-            case .unexpectedEntry(let path): return "The backup contains an unexpected entry: \(path)."
-            case .assetInventoryMismatch: return "The encrypted asset inventory does not match the database."
-            case .integrityCheckFailed: return "The restored encrypted database failed its integrity check."
+                return AppStrings.localized("This backup uses unsupported format \(version).")
+            case .checksumMismatch(let path):
+                return AppStrings.localized("Backup checksum verification failed for \(path).")
+            case .unexpectedEntry(let path):
+                return AppStrings.localized("The backup contains an unexpected entry: \(path).")
+            case .assetInventoryMismatch:
+                return AppStrings.localized("The encrypted asset inventory does not match the database.")
+            case .integrityCheckFailed:
+                return AppStrings.localized("The restored encrypted database failed its integrity check.")
             case .assetAuthenticationFailed(let id):
-                return "A managed file failed authentication and cannot be backed up (\(id.prefix(8)))."
+                return AppStrings.localized(
+                    "A managed file failed authentication and cannot be backed up (\(String(id.prefix(8)))).")
             }
         }
     }

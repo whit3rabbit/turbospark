@@ -52,10 +52,10 @@ struct ContextLadderView: View {
         let p = ModelFitPresentation.of(rung.verdict)
         let isCurrent = currentContext == rung.context
         HStack(spacing: 8) {
-            Text(rung.context.formatted())
+            Text(verbatim: rung.context.formatted())
                 .themedFont(.small, weight: isCurrent ? .bold : .regular).monospacedDigit()
                 .frame(width: 68, alignment: .trailing)
-            Text(MetricFormat.storage(rung.counted))
+            Text(verbatim: MetricFormat.storage(rung.counted))
                 .themedFont(.small).monospacedDigit()
                 .frame(width: 78, alignment: .trailing)
                 .foregroundStyle(.appSecondary)
@@ -63,11 +63,11 @@ struct ContextLadderView: View {
                 .fill(p.color)
                 .frame(width: 7, height: 7)
                 .accessibilityHidden(true)
-            Text(p.compactLabel)
+            Text(LocalizedStringKey(p.compactLabel), bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(p.color)
             Spacer()
-            Text(marker(rung, isCurrent: isCurrent))
+            marker(rung, isCurrent: isCurrent)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
         }
@@ -80,16 +80,19 @@ struct ContextLadderView: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(rung.context.formatted()) tokens, \(MetricFormat.storage(rung.counted)), \(p.label)")
+            Text("\(rung.context.formatted()) tokens", bundle: .module)
+                + Text(verbatim: ", \(MetricFormat.storage(rung.counted)), ")
+                + Text(LocalizedStringKey(p.label), bundle: .module))
     }
 
-    private func marker(_ rung: ContextLadderRung, isCurrent: Bool) -> String {
-        var parts: [String] = []
-        if isCurrent { parts.append("current") }
-        if rung.isTrainedMax { parts.append("trained max") }
-        if rung.isLargestFitting { parts.append("largest that fits") }
-        if rung.pastTrained { parts.append("past trained") }
-        return parts.joined(separator: ", ")
+    private func marker(_ rung: ContextLadderRung, isCurrent: Bool) -> Text {
+        var parts: [Text] = []
+        if isCurrent { parts.append(Text("current", bundle: .module)) }
+        if rung.isTrainedMax { parts.append(Text("trained max", bundle: .module)) }
+        if rung.isLargestFitting { parts.append(Text("largest that fits", bundle: .module)) }
+        if rung.pastTrained { parts.append(Text("past trained", bundle: .module)) }
+        guard let first = parts.first else { return Text(verbatim: "") }
+        return parts.dropFirst().reduce(first) { $0 + Text(verbatim: ", ") + $1 }
     }
 }
 
@@ -109,11 +112,8 @@ struct ThroughputRowView: View {
                 Text("Decode", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
-                Text(
-                    String(
-                        format: "%.1f to %.1f tok/s", band.minTokensPerSecond,
-                        band.maxTokensPerSecond)
-                )
+                Text(verbatim: String(
+                    format: "%.1f-%.1f tok/s", band.minTokensPerSecond, band.maxTokensPerSecond))
                 .themedFont(.small).monospacedDigit()
                 if band.measuredOnThisChip {
                     Text("measured", bundle: .module)

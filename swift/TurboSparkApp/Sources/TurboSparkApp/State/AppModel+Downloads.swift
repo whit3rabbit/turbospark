@@ -106,7 +106,7 @@ extension AppModel {
         let audioEpoch = audioWorkspace.epoch
         isInstallingModel = true
         audioWorkspace.isInstalling = true
-        audioWorkspace.status = String(localized: "Downloading audio model", bundle: .module)
+        audioWorkspace.status = AppStrings.localized("Downloading audio model")
         installStageText = audioWorkspace.status
         installProgressFraction = nil
         installDownloadedBytes = nil
@@ -168,8 +168,8 @@ extension AppModel {
                       self.audioWorkspace.valid(audioEpoch) else { return }
                 self.setModelDownloadStatus(.completed)
                 self.audioWorkspace.refreshModels()
-                self.audioWorkspace.status = String(localized: "Audio model installed", bundle: .module)
-                self.showToast(String(localized: "Audio model installed", bundle: .module), style: .success)
+                self.audioWorkspace.status = AppStrings.localized("Audio model installed")
+                self.showToast(AppStrings.localized("Audio model installed"), style: .success)
             } catch {
                 guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown,
                       self.audioWorkspace.valid(audioEpoch) else { return }
@@ -328,7 +328,7 @@ extension AppModel {
             // an empty history on the next download.
             downloadHistoryWritable = false
             NSLog("Could not load download history: %@", error.localizedDescription)
-            showToast(String(localized: "Download history could not be loaded.", bundle: .module), style: .error)
+            showToast(AppStrings.localized("Download history could not be loaded."), style: .error)
         }
     }
 
@@ -342,7 +342,7 @@ extension AppModel {
         } catch {
             if !downloadHistorySaveFailed {
                 NSLog("Could not save download history: %@", error.localizedDescription)
-                showToast(String(localized: "Download history could not be saved.", bundle: .module), style: .error)
+                showToast(AppStrings.localized("Download history could not be saved."), style: .error)
             }
             downloadHistorySaveFailed = true
         }

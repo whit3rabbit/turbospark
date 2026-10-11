@@ -30,7 +30,7 @@ struct ModelHardwareFitCardView: View {
                 Image(systemName: "gauge.with.needle")
                     .themedFont(.small)
                     .foregroundStyle(Color.accentColor)
-                    .help("Hardware compatibility estimate")
+                    .help(Text("Hardware compatibility estimate", bundle: .module))
                 Text("Hardware Compatibility", bundle: .module)
                     .themedFont(.base, weight: .semibold)
 
@@ -51,21 +51,21 @@ struct ModelHardwareFitCardView: View {
             // model rather than like missing data.
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 110, maximum: 200), spacing: 12)], spacing: 12) {
                 if rec.countedBytes > 0 {
-                    metricCell(title: "Unified Memory", value: MetricFormat.storage(rec.countedBytes))
+                    metricCell(title: "Unified Memory", value: Text(verbatim: MetricFormat.storage(rec.countedBytes)))
                 }
                 if rec.installBytes > 0 {
-                    metricCell(title: "On-Disk Storage", value: MetricFormat.storage(rec.installBytes))
+                    metricCell(title: "On-Disk Storage", value: Text(verbatim: MetricFormat.storage(rec.installBytes)))
                 }
                 if rec.largestContext > 0 {
-                    metricCell(title: "Max Context", value: "\(rec.largestContext.formatted()) tokens")
+                    metricCell(title: "Max Context", value: Text("\(rec.largestContext.formatted()) tokens", bundle: .module))
                 }
                 if rec.slotCacheSlots > 0 {
-                    metricCell(title: "Expert Slots", value: "\(rec.slotCacheSlots) slots")
+                    metricCell(title: "Expert Slots", value: Text(verbatim: "\(rec.slotCacheSlots)"))
                 }
                 if let minS = rec.toksPerSecondMin, let maxS = rec.toksPerSecondMax {
                     metricCell(
                         title: "Expected Speed",
-                        value: "\(String(format: "%.1f", minS))-\(String(format: "%.1f", maxS)) tok/s")
+                        value: Text(verbatim: "\(String(format: "%.1f", minS))-\(String(format: "%.1f", maxS)) tok/s"))
                 }
             }
         }
@@ -115,10 +115,10 @@ struct ModelHardwareFitCardView: View {
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 110, maximum: 200), spacing: 12)], spacing: 12) {
                 if entry.installBytes > 0 {
-                    metricCell(title: "On-Disk Storage", value: MetricFormat.storage(entry.installBytes))
+                    metricCell(title: "On-Disk Storage", value: Text(verbatim: MetricFormat.storage(entry.installBytes)))
                 }
                 if entry.downloadBytes > 0 {
-                    metricCell(title: "Download", value: MetricFormat.storage(entry.downloadBytes))
+                    metricCell(title: "Download", value: Text(verbatim: MetricFormat.storage(entry.downloadBytes)))
                 }
             }
 
@@ -130,15 +130,16 @@ struct ModelHardwareFitCardView: View {
         }
         .modelCardStyle()
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Hardware compatibility: not sized on this machine")
+        .accessibilityLabel(Text("Hardware compatibility: not sized on this machine", bundle: .module))
     }
 
-    private func metricCell(title: String, value: String) -> some View {
+    /// `title` is a catalog key; `value` is already a display `Text`.
+    private func metricCell(title: LocalizedStringKey, value: Text) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title)
+            Text(title, bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
-            Text(value)
+            value
                 .themedFont(.base, weight: .medium).monospacedDigit()
         }
     }

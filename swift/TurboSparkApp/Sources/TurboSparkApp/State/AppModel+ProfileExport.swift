@@ -34,10 +34,10 @@ extension AppModel {
                 self.profileBackupInFlight = false
                 switch outcome {
                 case .success:
-                    self.showToast("Encrypted profile backup exported.", style: .success)
+                    self.showToast(AppStrings.localized("Encrypted profile backup exported."), style: .success)
                 case .failure(let error):
                     self.showToast(
-                        "Encrypted backup failed: \(error.localizedDescription)",
+                        AppStrings.localized("Encrypted backup failed: \(error.localizedDescription)"),
                         style: .error, duration: 10)
                 }
             }
@@ -54,7 +54,7 @@ extension AppModel {
         do {
             snapshot = try makeProfileExportSnapshot()
         } catch {
-            showToast("Open export failed: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Open export failed: \(error.localizedDescription)"), style: .error)
             return
         }
         let panel = NSSavePanel()
@@ -75,10 +75,10 @@ extension AppModel {
                 self.profileBackupInFlight = false
                 switch outcome {
                 case .success:
-                    self.showToast("Plaintext profile export written.", style: .success)
+                    self.showToast(AppStrings.localized("Plaintext profile export written."), style: .success)
                 case .failure(let error):
                     self.showToast(
-                        "Open export failed: \(error.localizedDescription)",
+                        AppStrings.localized("Open export failed: \(error.localizedDescription)"),
                         style: .error, duration: 10)
                 }
             }
@@ -94,7 +94,7 @@ extension AppModel {
         panel.allowedContentTypes = [
             UTType(filenameExtension: EncryptedProfileBackup.fileExtension) ?? .data,
         ]
-        panel.message = "Choose an encrypted TurboSpark profile backup."
+        panel.message = AppStrings.localized("Choose an encrypted TurboSpark profile backup.")
         return panel.runModal() == .OK ? panel.url : nil
     }
 
@@ -148,7 +148,7 @@ extension AppModel {
                     if let saved = Self.registerRestoredProfile(profile) {
                         self.profiles = saved.profiles
                         self.showToast(
-                            "Encrypted backup restored as a locked profile.", style: .success)
+                            AppStrings.localized("Encrypted backup restored as a locked profile."), style: .success)
                     } else {
                         try? FileManager.default.removeItem(at: destination)
                         self.surfaceStorageIssues()
@@ -156,7 +156,7 @@ extension AppModel {
                 case .failure(let error):
                     try? FileManager.default.removeItem(at: destination)
                     self.showToast(
-                        "Encrypted backup restore failed: \(error.localizedDescription)",
+                        AppStrings.localized("Encrypted backup restore failed: \(error.localizedDescription)"),
                         style: .error, duration: 10)
                 }
             }

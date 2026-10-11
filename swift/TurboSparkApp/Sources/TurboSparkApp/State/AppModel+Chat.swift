@@ -282,7 +282,7 @@ extension AppModel {
             imageJob.savedPath == nil
         {
             showToast(
-                String(localized: "Save the image before deleting this chat.", bundle: .module),
+                AppStrings.localized("Save the image before deleting this chat."),
                 style: .error)
             return
         }
@@ -427,7 +427,7 @@ extension AppModel {
 
     public func addPromptAttachment(_ attachment: AppPromptAttachment, toChatID chatID: UUID? = nil) {
         guard !generating, !submitting else {
-            error = "Cannot attach files while generating."
+            error = AppStrings.localized("Cannot attach files while generating.")
             return
         }
         appendPromptAttachmentDuringSubmission(attachment, toChatID: chatID)

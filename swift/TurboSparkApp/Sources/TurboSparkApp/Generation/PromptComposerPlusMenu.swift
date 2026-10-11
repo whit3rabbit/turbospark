@@ -25,8 +25,8 @@ struct PromptComposerPlusMenu: View {
         if isExtracting {
             TaskProgressFlameIcon(size: 16)
                 .frame(width: iconButtonSize, height: iconButtonSize)
-                .help("Extracting documents...")
-                .accessibilityLabel("Extracting documents")
+                .help(Text("Extracting documents...", bundle: .module))
+                .accessibilityLabel(Text("Extracting documents", bundle: .module))
         } else {
             Menu {
                 filesSection
@@ -91,17 +91,36 @@ struct PromptComposerPlusMenu: View {
         }
     }
 
+    /// Built-in commands grouped by task (`SlashCommandMenuGroup`), with
+    /// a search route first: inserting `/` opens the composer's own
+    /// type-to-filter popup, which ranks every command and skill by name.
     @ViewBuilder
     private var slashCommandsSection: some View {
         Section {
             Menu {
-                ForEach(BuiltInSlashCommand.all) { command in
-                    Button {
-                        onInsertPromptText("/\(command.name) ")
+                Button {
+                    onInsertPromptText("/")
+                } label: {
+                    Label { Text("Search Commands...", bundle: .module) } icon: { Image(systemName: "magnifyingglass") }
+                }
+
+                Divider()
+
+                ForEach(SlashCommandMenuGroup.grouped(BuiltInSlashCommand.all), id: \.group) { entry in
+                    Menu {
+                        ForEach(entry.commands) { command in
+                            Button {
+                                onInsertPromptText("/\(command.name) ")
+                            } label: {
+                                Label {
+                                    Text(verbatim: "/\(command.name): ") + command.localizedSummary
+                                } icon: {
+                                    Image(systemName: command.iconName)
+                                }
+                            }
+                        }
                     } label: {
-                        Label(
-                            "/\(command.name): \(command.summary)",
-                            systemImage: command.iconName)
+                        Label { entry.group.title } icon: { Image(systemName: entry.group.systemImage) }
                     }
                 }
 
@@ -111,13 +130,22 @@ struct PromptComposerPlusMenu: View {
                 let skills = model.effectiveSkills
                     .filter { $0.isEnabled && $0.manifest.userInvocable }
                 if !skills.isEmpty {
-                    Divider()
-                    ForEach(skills) { skill in
-                        Button {
-                            onInsertPromptText("/\(skill.name) ")
-                        } label: {
-                            Label("/\(skill.name): \(skill.skillDescription)", systemImage: "wand.and.stars")
+                    Menu {
+                        ForEach(skills) { skill in
+                            Button {
+                                onInsertPromptText("/\(skill.name) ")
+                            } label: {
+                                // A skill's name and description are the
+                                // author's own text, shown as written.
+                                Label {
+                                    Text(verbatim: "/\(skill.name): \(skill.skillDescription)")
+                                } icon: {
+                                    Image(systemName: "wand.and.stars")
+                                }
+                            }
                         }
+                    } label: {
+                        Label { Text("Skills", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
                     }
                 }
             } label: {
@@ -178,7 +206,7 @@ struct PromptComposerPlusMenu: View {
                             Button {
                                 onInsertPromptText("/\(skill.name) ")
                             } label: {
-                                Label("Use in Chat (/\(skill.name))", systemImage: "arrow.right.circle")
+                                Label { Text("Use in Chat (/\(skill.name))", bundle: .module) } icon: { Image(systemName: "arrow.right.circle") }
                             }
                             // The submit handler refuses disabled and model-only skills.
                             .disabled(!skill.isEnabled || !skill.manifest.userInvocable)
@@ -186,10 +214,11 @@ struct PromptComposerPlusMenu: View {
                             Button {
                                 model.toggleSkillEnabled(skill)
                             } label: {
-                                Label(
-                                    skill.isEnabled ? "Disable Skill" : "Enable Skill",
-                                    systemImage: skill.isEnabled ? "checkmark" : "circle"
-                                )
+                                Label {
+                                    skill.isEnabled ? Text("Disable Skill", bundle: .module) : Text("Enable Skill", bundle: .module)
+                                } icon: {
+                                    Image(systemName: skill.isEnabled ? "checkmark" : "circle")
+                                }
                             }
                         } label: {
                             Label(
@@ -265,13 +294,10 @@ struct PromptComposerPlusMenu: View {
     @ViewBuilder
     private var modesSection: some View {
         Section {
-            Button {
-                model.webSearchEnabled.toggle()
-            } label: {
-                Label(
-                    "Web Search",
-                    systemImage: model.webSearchEnabled ? "checkmark.circle.fill" : "globe"
-                )
+            // A Toggle so the menu shows the native checkmark and VoiceOver
+            // reads the on/off state, rather than an icon swap.
+            Toggle(isOn: $model.webSearchEnabled) {
+                Label { Text("Web Search", bundle: .module) } icon: { Image(systemName: "globe") }
             }
 
             Menu {
@@ -280,16 +306,42 @@ struct PromptComposerPlusMenu: View {
                     Button {
                         setPermissionMode(mode)
                     } label: {
-                        Label(
-                            mode.label,
-                            systemImage: currentMode == mode ? "checkmark" : ""
-                        )
+                        Label {
+                            approvalModeMenuTitle(mode)
+                        } icon: {
+                            Image(systemName: currentMode == mode ? "checkmark" : mode.systemImage)
+                        }
                     }
                 }
             } label: {
                 let currentMode = model.selectedProject?.permissions.mode ?? model.activePermissionMode
-                Label("Tool Approval (\(currentMode.shortLabel))", systemImage: currentMode.systemImage)
+                Label {
+                    Text("Tool Approval (\(currentMode.approvalLabelText))", bundle: .module)
+                } icon: {
+                    Image(systemName: currentMode.systemImage)
+                }
             }
+        }
+    }
+
+    /// Each approval choice names what it ALLOWS, not only its short mode
+    /// name: "Approve for me" or "Full access" alone does not say whether
+    /// the sandbox stays on, and these rows change what tools may do to
+    /// this machine without another prompt.
+    private func approvalModeMenuTitle(_ mode: AppPermissionMode) -> Text {
+        switch mode {
+        case .ask:
+            Text("Ask for approval: ask before tools edit files or use the internet", bundle: .module)
+        case .auto:
+            Text("Approve for me: run tools, ask before high-risk actions", bundle: .module)
+        case .agentAuto:
+            Text("Agent (classifier): a local classifier approves or blocks each call", bundle: .module)
+        case .permissive:
+            Text("Run automatically: run every tool without asking, sandbox on", bundle: .module)
+        case .fullAccess:
+            Text("Full access: run every tool without asking, sandbox off", bundle: .module)
+        case .readOnly:
+            Text("Strict Read-Only: only read and search, no edits or commands", bundle: .module)
         }
     }
 

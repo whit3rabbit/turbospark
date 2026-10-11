@@ -40,9 +40,8 @@ struct CatalogSheet: View {
             }
             Spacer()
             Button { dismiss() } label: { Text("Done", bundle: .module) }
+                .appAction(.primary)
                 .keyboardShortcut(.defaultAction)
-                .accessibilityLabel("Done")
-                .accessibilityHint("Closes the catalog sheet")
         }
         .padding(14)
     }
@@ -65,27 +64,32 @@ struct CatalogSheet: View {
     private var installProgressBox: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(model.installStageText ?? "Installing...")
-                    .themedFont(.base, weight: .medium)
+                Group {
+                    if let stage = model.installStageText {
+                        Text(stage)
+                    } else {
+                        Text("Installing", bundle: .module)
+                    }
+                }
+                .themedFont(.base, weight: .medium)
                 Spacer()
                 Button {
                     model.cancelInstall()
                 } label: { Text("Cancel", bundle: .module) }
-                .controlSize(.small)
-                .accessibilityLabel("Cancel installation")
-                .accessibilityHint("Stops the in-progress model installation")
+                .appAction(.secondary, size: .small)
+                .accessibilityLabel(Text("Cancel Download", bundle: .module))
             }
 
             if let fraction = model.installProgressFraction {
                 ProgressView(value: fraction)
-                    .accessibilityLabel("Installation progress")
+                    .accessibilityLabel(Text("Download progress", bundle: .module))
                     .accessibilityValue(MetricFormat.percent(fraction * 100))
                 HStack {
                     if let downloaded = model.installDownloadedBytes, let total = model.installTotalBytes {
-                        Text("\(MetricFormat.storage(downloaded)) / \(MetricFormat.storage(total))", bundle: .module)
+                        Text(verbatim: "\(MetricFormat.storage(downloaded)) / \(MetricFormat.storage(total))")
                     }
                     Spacer()
-                    Text(MetricFormat.percent(fraction * 100))
+                    Text(verbatim: MetricFormat.percent(fraction * 100))
                 }
                 .themedFont(.small).monospacedDigit()
                 .foregroundStyle(.appSecondary)
@@ -115,9 +119,9 @@ struct CatalogSheet: View {
                             ModelLogoView(visuals: visuals, size: 24, cornerRadius: 6)
 
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(item.alias)
+                                Text(verbatim: item.alias)
                                     .themedFont(.base, weight: .medium)
-                                Text("\(visuals.family) | \(MetricFormat.storage(item.installBytes))", bundle: .module)
+                                Text(verbatim: "\(visuals.family) | \(MetricFormat.storage(item.installBytes))")
                                     .themedFont(.small)
                                     .foregroundStyle(.appSecondary)
                             }
@@ -131,11 +135,10 @@ struct CatalogSheet: View {
                         Button(role: .destructive) {
                             model.deleteModel(item)
                         } label: { Text("Delete", bundle: .module) }
-                        .controlSize(.small)
+                        .appAction(.destructive, size: .small)
                         .disabled(model.isInstallingModel || !model.canDeleteModel)
-                        .help("Delete model from disk")
-                        .accessibilityLabel("Delete \(item.alias)")
-                        .accessibilityHint("Removes this installed model from disk")
+                        .help(Text("Delete model from disk", bundle: .module))
+                        .accessibilityLabel(Text("Delete \(item.alias)", bundle: .module))
                     }
                     .padding(8)
                     .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
@@ -174,7 +177,9 @@ struct CatalogSheet: View {
                             Text(entry.name)
                                 .themedFont(.small)
                                 .foregroundStyle(.appSecondary)
-                            Text("Download: \(MetricFormat.storage(entry.downloadBytes)) | Disk: \(MetricFormat.storage(entry.installBytes))", bundle: .module)
+                            Text(
+                                "Download: \(MetricFormat.storage(entry.downloadBytes)) | Disk: \(MetricFormat.storage(entry.installBytes))",
+                                bundle: .module)
                                 .themedFont(.tiny)
                                 .foregroundStyle(.tertiary)
                         }
@@ -188,12 +193,10 @@ struct CatalogSheet: View {
                         Button {
                             model.installModel(alias: entry.alias)
                         } label: { Text("Install", bundle: .module) }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .appAction(.secondary, size: .small)
                         .disabled(model.isRunning || !model.canInstall(alias: entry.alias))
-                        .help("Install \(entry.alias)")
-                        .accessibilityLabel("Install \(entry.alias)")
-                        .accessibilityHint("Downloads and installs \(entry.name)")
+                        .help(Text("Install \(entry.alias)", bundle: .module))
+                        .accessibilityLabel(Text("Install \(entry.alias)", bundle: .module))
                     }
                 }
                 .padding(8)
@@ -203,27 +206,28 @@ struct CatalogSheet: View {
     }
 
     private var customSection: some View {
-        DisclosureGroup("Install from Hugging Face Repository", isExpanded: $isCustomExpanded) {
+        DisclosureGroup(isExpanded: $isCustomExpanded) {
             VStack(alignment: .leading, spacing: 10) {
-                TextField("Hugging Face repo (e.g. owner/model)", text: $customRepo)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Hugging Face repository")
-                TextField("Local alias (e.g. my-model)", text: $customAlias)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Local alias")
+                TextField(text: $customRepo, prompt: Text("Hugging Face repo (e.g. owner/model)", bundle: .module)) {
+                    Text("Repository", bundle: .module)
+                }
+                .textFieldStyle(.roundedBorder)
+                TextField(text: $customAlias, prompt: Text("Local alias (e.g. my-model)", bundle: .module)) {
+                    Text("Local Alias", bundle: .module)
+                }
+                .textFieldStyle(.roundedBorder)
 
                 Button {
                     model.installRepo(repo: customRepo, alias: customAlias)
                 } label: { Text("Install Custom Repo", bundle: .module) }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
                 .disabled(
                     customRepo.isEmpty || customAlias.isEmpty || model.isRunning
                         || !model.canInstall(alias: customAlias))
-                .accessibilityLabel("Install custom repository")
-                .accessibilityHint("Downloads and builds model from specified Hugging Face repository")
             }
             .padding(.top, 6)
+        } label: {
+            Text("Install from Hugging Face Repository", bundle: .module)
         }
         .themedFont(.small)
     }
@@ -233,16 +237,16 @@ struct CatalogSheet: View {
             Button {
                 ModelLocationPicker.choose(for: model)
             } label: { Text("Choose Local Folder...", bundle: .module) }
-            .help("Select an existing model directory")
-            .accessibilityHint("Opens a folder picker for an already-installed model")
+            .appAction(.secondary)
+            .help(Text("Select an existing model directory", bundle: .module))
 
             Spacer()
 
             Button {
                 model.refreshModels()
             } label: { Text("Refresh", bundle: .module) }
-            .help("Reload model catalog")
-            .accessibilityHint("Reloads the model catalog from disk")
+            .appAction(.secondary)
+            .help(Text("Reload model catalog", bundle: .module))
         }
         .padding(12)
     }

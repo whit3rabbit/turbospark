@@ -61,27 +61,27 @@ extension AudioWorkspaceController {
     var speechValidationMessage: String? {
         if selectedProfileClonesNatively { return nativeCloneValidationMessage }
         guard selectedProfile?.family == "qwen3_tts" else { return nil }
-        if recipe.text.count > 6000 { return String(localized: "Split speech text longer than 6,000 characters into sections.", bundle: .module) }
+        if recipe.text.count > 6000 { return AppStrings.localized("Split speech text longer than 6,000 characters into sections.") }
         if speechSettings.mode == .clone {
             guard let reference = speechSettings.reference, reference.isValid else {
-                return String(localized: "Choose 1 to 30 seconds of reference speech.", bundle: .module)
+                return AppStrings.localized("Choose 1 to 30 seconds of reference speech.")
             }
             if !speechSettings.embeddingOnly && speechSettings.referenceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return String(localized: "Enter the exact transcript of the selected reference region.", bundle: .module)
+                return AppStrings.localized("Enter the exact transcript of the selected reference region.")
             }
         }
         if speechSettings.mode == .design && speechSettings.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return String(localized: "Describe the voice before generating speech.", bundle: .module)
+            return AppStrings.localized("Describe the voice before generating speech.")
         }
         return nil
     }
     private var nativeCloneValidationMessage: String? {
-        if recipe.text.count > 6000 { return String(localized: "Split speech text longer than 6,000 characters into sections.", bundle: .module) }
+        if recipe.text.count > 6000 { return AppStrings.localized("Split speech text longer than 6,000 characters into sections.") }
         guard let reference = speechSettings.reference, reference.isValid else {
-            return String(localized: "Choose 1 to 30 seconds of reference speech.", bundle: .module)
+            return AppStrings.localized("Choose 1 to 30 seconds of reference speech.")
         }
         if cloneOptions.consentedReference != reference {
-            return String(localized: "Confirm you have the right to use this voice.", bundle: .module)
+            return AppStrings.localized("Confirm you have the right to use this voice.")
         }
         return nil
     }

@@ -11,6 +11,12 @@ import Foundation
 ///
 /// There is no rebinding store in this app. These are fixed, and the pane
 /// says so.
+///
+/// Every `label` and section `title` is a string-catalog key spelled the way
+/// the menu item spells it (an ellipsis-bearing menu title such as
+/// "Search Chats..." drops it here, since the row names the command rather
+/// than the item that opens a panel). The pane renders them through the
+/// catalog, so a new row needs its key translated.
 public struct KeyboardShortcutRow: Equatable, Identifiable, Sendable {
     public let label: String
     /// Display form, e.g. "\u{2318} 1".

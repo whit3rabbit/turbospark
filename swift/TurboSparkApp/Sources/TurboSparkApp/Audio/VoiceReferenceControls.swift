@@ -21,26 +21,43 @@ struct VoiceReferenceControls: View {
             HStack {
                 Button { controller.importAudio(asVoiceReference: true) } label: {
                     Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
-                }.disabled(controller.importTask != nil)
+                }
+                .appAction(.secondary, size: .small)
+                .disabled(controller.importTask != nil)
                 Menu {
                     ForEach(controller.items.filter { $0.hasPlayableAudio && $0.status == .completed }) { item in
-                        Button { controller.setVoiceReference(item) } label: { Text(item.title) }
+                        Button { controller.setVoiceReference(item) } label: { Text(verbatim: item.title) }
                     }
-                } label: { Text("Saved audio", bundle: .module) }
-                Button { controller.selectPage(.record) } label: { Text("Record", bundle: .module) }
+                } label: {
+                    Label { Text("Saved audio", bundle: .module) } icon: { Image(systemName: "books.vertical") }
+                }
+                .appMenuAction(size: .small)
+                Button { controller.selectPage(.record) } label: {
+                    Label { Text("Record", bundle: .module) } icon: { Image(systemName: "mic") }
+                }
+                .appAction(.secondary, size: .small)
             }
             Text("Import MP3, WAV, M4A, FLAC, AIFF, or other audio formats supported by macOS.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
             if let reference = controller.speechSettings.reference {
                 HStack {
                     Image(systemName: "waveform").accessibilityHidden(true)
-                    Text(reference.title).lineLimit(2)
+                    Text(verbatim: reference.title).lineLimit(2)
                     Spacer()
+                    // Playback looks the same here as in the transport and
+                    // the API test panel: secondary, with a play/stop symbol.
                     Button { controller.previewVoiceReference() } label: {
-                        if controller.referencePlaying { Text("Stop preview", bundle: .module) }
-                        else { Text("Preview reference audio", bundle: .module) }
-                    }.disabled(!reference.isValid)
+                        Label {
+                            if controller.referencePlaying { Text("Stop preview", bundle: .module) }
+                            else { Text("Preview reference audio", bundle: .module) }
+                        } icon: {
+                            Image(systemName: controller.referencePlaying ? "stop.fill" : "play.fill")
+                        }
+                    }
+                    .appAction(.secondary, size: .small)
+                    .disabled(!reference.isValid)
                     Button { controller.clearVoiceReference() } label: { Text("Remove", bundle: .module) }
+                        .appAction(.secondary, size: .small)
                 }
                 HStack {
                     VStack(alignment: .leading, spacing: 6) {

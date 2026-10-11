@@ -33,6 +33,7 @@ struct ProjectSettingsSheet: View {
     @State private var isIndexing: Bool = false
     @State private var hasSyntextIndex: Bool = false
     @State private var indexStatsMessage: String? = nil
+    @State private var confirmingDelete = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,7 +62,9 @@ struct ProjectSettingsSheet: View {
                             if editingProject != nil {
                                 HStack {
                                     Button { showingSkills = true } label: { Text("Skills", bundle: .module) }
+                                        .appAction(.secondary)
                                     Button { showingPlugins = true } label: { Text("Plugins", bundle: .module) }
+                                        .appAction(.secondary)
                                 }
                             }
                             ProjectRulesSectionView(
@@ -119,7 +122,9 @@ struct ProjectSettingsSheet: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(editingProject == nil ? "New Project" : "Project Settings")
+                (editingProject == nil
+                    ? Text("New Project", bundle: .module)
+                    : Text("Project Settings", bundle: .module))
                     .themedFont(.base, weight: .semibold)
                 Text("Manage codebase root, agent profile, rules, and execution permissions.", bundle: .module)
                     .themedFont(.small)
@@ -127,7 +132,7 @@ struct ProjectSettingsSheet: View {
             }
             Spacer()
             Button { onDismiss() } label: { Text("Close", bundle: .module) }
-                .buttonStyle(.plain)
+                .appAction(.quiet)
                 .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 20)
@@ -144,7 +149,9 @@ struct ProjectSettingsSheet: View {
                 Text("Project Name", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
-                TextField("e.g. My Rust Engine", text: $name)
+                TextField(text: $name, prompt: Text("e.g. My Rust Engine", bundle: .module)) {
+                    Text("Project name", bundle: .module)
+                }
                     .textFieldStyle(.plain)
                     .themedFont(.base)
                     .padding(10)
@@ -154,7 +161,7 @@ struct ProjectSettingsSheet: View {
                             .strokeBorder(.appBorder, lineWidth: 1)
                             .allowsHitTesting(false)
                     }
-                    .accessibilityLabel("Project name")
+                    .accessibilityLabel(Text("Project name", bundle: .module))
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -162,7 +169,10 @@ struct ProjectSettingsSheet: View {
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                 HStack(spacing: 8) {
-                    TextField("/path/to/codebase", text: $rootDirectoryPath)
+                    // The prompt is a path example, not prose.
+                    TextField(text: $rootDirectoryPath, prompt: Text(verbatim: "/path/to/codebase")) {
+                        Text("Codebase root directory path", bundle: .module)
+                    }
                         .textFieldStyle(.plain)
                         .themedFont(.base)
                         .padding(10)
@@ -172,14 +182,14 @@ struct ProjectSettingsSheet: View {
                                 .strokeBorder(.appBorder, lineWidth: 1)
                                 .allowsHitTesting(false)
                         }
-                        .accessibilityLabel("Codebase root directory path")
+                        .accessibilityLabel(Text("Codebase root directory path", bundle: .module))
                     Button {
                         selectFolder()
                     } label: { Text("Choose...", bundle: .module) }
-                    .buttonStyle(.bordered)
-                    .help("Choose codebase root folder")
-                    .accessibilityLabel("Choose codebase root folder")
-                    .accessibilityHint("Opens folder picker to select root directory")
+                    .appAction(.secondary)
+                    .help(Text("Choose codebase root folder", bundle: .module))
+                    .accessibilityLabel(Text("Choose codebase root folder", bundle: .module))
+                    .accessibilityHint(Text("Opens folder picker to select root directory", bundle: .module))
                 }
             }
         }
@@ -193,13 +203,19 @@ struct ProjectSettingsSheet: View {
 
             Picker(selection: $agentType) {
                 ForEach(AppAgentType.allCases) { type in
-                    Label(type.label, systemImage: type.systemImage).tag(type)
+                    // Every agent label and description is a catalog key.
+                    Label {
+                        Text(LocalizedStringKey(type.label), bundle: .module)
+                    } icon: {
+                        Image(systemName: type.systemImage)
+                    }
+                    .tag(type)
                 }
             } label: { Text("Agent Profile", bundle: .module) }
             .pickerStyle(.menu)
-            .accessibilityLabel("Agent profile")
+            .accessibilityLabel(Text("Agent profile", bundle: .module))
 
-            Text(agentType.descriptionText)
+            Text(LocalizedStringKey(agentType.descriptionText), bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
                 .padding(10)
@@ -212,28 +228,28 @@ struct ProjectSettingsSheet: View {
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                     Spacer()
-                    Text(verbatim: "\(Int(maxAutonomousSteps)) steps")
+                    Text("Steps: \(Int(maxAutonomousSteps))", bundle: .module)
                         .themedFont(.small).monospacedDigit()
                         .foregroundStyle(.appSecondary)
                 }
                 Slider(value: $maxAutonomousSteps, in: 1...15, step: 1)
-                    .accessibilityLabel("Autonomous step limit")
-                    .accessibilityValue("\(Int(maxAutonomousSteps)) steps")
+                    .accessibilityLabel(Text("Autonomous step limit", bundle: .module))
+                    .accessibilityValue(Text("Steps: \(Int(maxAutonomousSteps))", bundle: .module))
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(isOn: $skillStateEnabled) {
                 Text("Bounded execution state", bundle: .module)
             }
-                    .accessibilityHint(
-                        "Carry a compact state between steps instead of the full transcript")
-                Text(
-                    skillStateEnabled
-                        ? "Each step sees the task, a compact state and the newest tool result. "
-                            + "Long runs stay within the context window and cost 3 to 5x fewer tokens."
-                        : "Each step sees the whole transcript. Simple and exact, but long runs "
-                            + "grow until they hit the context window."
-                )
+                    .accessibilityHint(Text(
+                        "Carry a compact state between steps instead of the full transcript", bundle: .module))
+                (skillStateEnabled
+                    ? Text(
+                        "Each step sees the task, a compact state and the newest tool result. Long runs stay within the context window and cost 3 to 5x fewer tokens.",
+                        bundle: .module)
+                    : Text(
+                        "Each step sees the whole transcript. Simple and exact, but long runs grow until they hit the context window.",
+                        bundle: .module))
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             }
@@ -255,7 +271,9 @@ struct ProjectSettingsSheet: View {
                     // servers otherwise.
                     let liveCount = model.projects.first { $0.id == editingProject?.id }?
                         .mcpServers.count ?? editingProject?.mcpServers.count ?? 0
-                    Text(liveCount > 0 ? "\(liveCount) server(s) configured for this project." : "Import .mcp.json or configure codebase MCP tools.")
+                    (liveCount > 0
+                        ? Text("Servers configured for this project: \(liveCount)", bundle: .module)
+                        : Text("Import .mcp.json or configure codebase MCP tools.", bundle: .module))
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
@@ -266,8 +284,8 @@ struct ProjectSettingsSheet: View {
                     } label: {
                         Label { Text("Manage MCPs...", bundle: .module) } icon: { Image(systemName: "server.rack") }
                     }
-                    .buttonStyle(.bordered)
-                    .help("Manage MCP servers for this project")
+                    .appAction(.secondary)
+                    .help(Text("Manage MCP servers for this project", bundle: .module))
                 } else {
                     Text("Save project to configure MCPs", bundle: .module)
                         .themedFont(.tiny)
@@ -335,21 +353,21 @@ struct ProjectSettingsSheet: View {
                         }
                         Spacer()
                         if syntextIndexEnabled {
-                            Button(hasSyntextIndex ? "Reindex" : "Index Now") {
+                            Button {
                                 reindexProject(rootURL: rootURL)
+                            } label: {
+                                hasSyntextIndex ? Text("Reindex", bundle: .module) : Text("Index Now", bundle: .module)
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .accessibilityLabel("Reindex project codebase")
+                            .appAction(.secondary, size: .small)
+                            .accessibilityLabel(Text("Reindex project codebase", bundle: .module))
                         }
 
                         if hasSyntextIndex {
                             Button(role: .destructive) {
                                 deleteProjectIndex(rootURL: rootURL)
                             } label: { Text("Remove Index", bundle: .module) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .accessibilityLabel("Remove project codebase index")
+                            .appAction(.destructive, size: .small)
+                            .accessibilityLabel(Text("Remove project codebase index", bundle: .module))
                         }
                     }
                 }
@@ -363,20 +381,35 @@ struct ProjectSettingsSheet: View {
     private var footer: some View {
         HStack {
             if let editing = editingProject {
+                // Asks first, like the sidebar's Delete Project: the
+                // project's configuration has no way back.
                 Button(role: .destructive) {
-                    model.deleteProject(id: editing.id)
-                    onDismiss()
+                    confirmingDelete = true
                 } label: { Text("Delete Project", bundle: .module) }
-                .buttonStyle(.plain)
-                .foregroundStyle(.red)
+                .appAction(.destructive)
+                .confirmationDialog(
+                    Text("Delete Project", bundle: .module),
+                    isPresented: $confirmingDelete,
+                    titleVisibility: .visible
+                ) {
+                    Button(role: .destructive) {
+                        model.deleteProject(id: editing.id)
+                        onDismiss()
+                    } label: { Text("Delete Project", bundle: .module) }
+                    Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+                } message: {
+                    Text(verbatim: editing.name)
+                }
             }
             Spacer()
             Button { onDismiss() } label: { Text("Cancel", bundle: .module) }
-                .buttonStyle(.plain)
-            Button(editingProject == nil ? "Create Project" : "Save Changes") {
+                .appAction(.secondary)
+            Button {
                 save()
+            } label: {
+                editingProject == nil ? Text("Create Project", bundle: .module) : Text("Save Changes", bundle: .module)
             }
-            .buttonStyle(.borderedProminent)
+            .appAction(.primary)
             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || model.isRunning || model.submitting || model.pendingToolCall != nil)
         }
@@ -439,7 +472,7 @@ struct ProjectSettingsSheet: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.prompt = "Select Codebase Root"
+        panel.prompt = AppStrings.localized("Select Codebase Root")
         if panel.runModal() == .OK, let url = panel.url {
             rootDirectoryPath = url.path
             if name == "New Project" || name.isEmpty {
@@ -461,17 +494,17 @@ struct ProjectSettingsSheet: View {
         Task {
             if await SyntextIndexManager.shared.isIndexed(for: rootURL) {
                 if let stats = try? await SyntextIndexManager.shared.stats(for: rootURL) {
-                    let mb = Double(stats.indexSizeBytes) / 1_048_576.0
+                    let message = Self.indexedMessage(documents: Int(stats.totalDocuments), bytes: Int64(stats.indexSizeBytes))
                     await MainActor.run {
                         hasSyntextIndex = true
-                        indexStatsMessage = String(format: "Indexed: %d documents (%.1f MB)", stats.totalDocuments, mb)
+                        indexStatsMessage = message
                     }
                     return
                 }
             }
             await MainActor.run {
                 hasSyntextIndex = false
-                indexStatsMessage = "Not indexed yet."
+                indexStatsMessage = AppStrings.localized("Not indexed yet.")
             }
         }
     }
@@ -482,16 +515,16 @@ struct ProjectSettingsSheet: View {
         Task {
             do {
                 let stats = try await SyntextIndexManager.shared.buildIndex(for: rootURL)
-                let mb = Double(stats.indexSizeBytes) / 1_048_576.0
+                let message = Self.indexedMessage(documents: Int(stats.totalDocuments), bytes: Int64(stats.indexSizeBytes))
                 await MainActor.run {
                     isIndexing = false
                     hasSyntextIndex = true
-                    indexStatsMessage = String(format: "Indexed: %d documents (%.1f MB)", stats.totalDocuments, mb)
+                    indexStatsMessage = message
                 }
             } catch {
                 await MainActor.run {
                     isIndexing = false
-                    indexStatsMessage = "Indexing failed: \(error.localizedDescription)"
+                    indexStatsMessage = AppStrings.localized("Indexing failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -506,12 +539,12 @@ struct ProjectSettingsSheet: View {
                 await MainActor.run {
                     isIndexing = false
                     hasSyntextIndex = false
-                    indexStatsMessage = "Not indexed yet."
+                    indexStatsMessage = AppStrings.localized("Not indexed yet.")
                 }
             } catch {
                 await MainActor.run {
                     isIndexing = false
-                    indexStatsMessage = "Failed to remove index: \(error.localizedDescription)"
+                    indexStatsMessage = AppStrings.localized("Failed to remove index: \(error.localizedDescription)")
                 }
             }
         }
@@ -521,10 +554,20 @@ struct ProjectSettingsSheet: View {
         guard !rootDirectoryPath.isEmpty else { return }
         if let result = model.detectLiveProjectInstructions(directoryPath: rootDirectoryPath, preference: rulePreference) {
             let files = result.detectedFiles.joined(separator: ", ")
-            rulesAutoDetectedMessage = "Detected \(files). These files are applied live to every project turn."
+            rulesAutoDetectedMessage = AppStrings.localized(
+                "Detected \(files). These files are applied live to every project turn.")
         } else {
-            rulesAutoDetectedMessage = "No AGENTS.md, CLAUDE.md, CONTEXT.md, or SOUL.md found in folder."
+            rulesAutoDetectedMessage = AppStrings.localized(
+                "No AGENTS.md, CLAUDE.md, CONTEXT.md, or SOUL.md found in folder.")
         }
+    }
+
+    /// The index summary in the UI language. The size is formatted to one
+    /// decimal first, so the catalog key carries a `%@` rather than a
+    /// floating-point specifier.
+    private static func indexedMessage(documents: Int, bytes: Int64) -> String {
+        let megabytes = (Double(bytes) / 1_048_576.0).formatted(.number.precision(.fractionLength(1)))
+        return AppStrings.localized("Indexed documents: \(documents) (\(megabytes) MB)")
     }
 
     private func save() {

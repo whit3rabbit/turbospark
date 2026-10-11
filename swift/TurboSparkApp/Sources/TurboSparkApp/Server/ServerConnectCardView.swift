@@ -13,7 +13,6 @@ import SwiftUI
 struct ServerConnectCardView: View {
     @ObservedObject var model: AppModel
     @State private var selection: String = "claude-code"
-    @State private var copiedID: String?
 
     private var snippets: [ServerConnectSnippet] {
         ServerConnectRecipes.snippets(
@@ -30,51 +29,38 @@ struct ServerConnectCardView: View {
                     .foregroundStyle(.appSecondary)
             }
 
-            Picker("", selection: $selection) {
+            // Snippet titles, notes, family names and route summaries are
+            // fixed English in ServerEndpointCatalog (pure, and tested
+            // against the router), so they are looked up in the catalog here.
+            Picker(selection: $selection) {
                 ForEach(snippets) { snippet in
-                    Text(snippet.title).tag(snippet.id)
+                    Text(LocalizedStringKey(snippet.title), bundle: .module).tag(snippet.id)
                 }
-            }
+            } label: { Text("Client", bundle: .module) }
             .pickerStyle(.segmented)
             .labelsHidden()
 
             if let snippet = snippets.first(where: { $0.id == selection }) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(snippet.note)
+                    Text(LocalizedStringKey(snippet.note), bundle: .module)
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)
 
                     ZStack(alignment: .topTrailing) {
                         ScrollView(.horizontal, showsIndicators: false) {
-                            Text(snippet.body)
+                            Text(verbatim: snippet.body)
                                 .themedCode(.callout)
                                 .textSelection(.enabled)
-                                .padding(12)
+                                .padding(4)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(snippet.body, forType: .string)
-                            copiedID = snippet.id
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                copiedID = nil
-                            }
-                        } label: {
-                            Image(systemName: copiedID == snippet.id ? "checkmark" : "doc.on.doc")
-                        }
-                        .buttonStyle(.borderless)
-                        .padding(8)
-                        .help(Text("Copy code snippet to clipboard", bundle: .module))
-                        .accessibilityLabel("Copy code snippet")
-                        .accessibilityValue(copiedID == snippet.id ? "Copied" : "")
+                        APICopyButton(label: Text("Copy code snippet to clipboard", bundle: .module)) { snippet.body }
+                            .padding(4)
                     }
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(.appElevated.opacity(0.5)))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(.appBorder, lineWidth: 0.5))
+                    // The same surface as the request and response editors
+                    // in the Image, Audio and TypeSafe modes.
+                    .appEditorSurface()
                 }
             }
 
@@ -112,43 +98,43 @@ private struct ServerEndpointListView: View {
                     .themedFont(.tiny, weight: .semibold)
                     .foregroundStyle(.appSecondary)
                 Spacer()
-                Picker("", selection: $family) {
+                Picker(selection: $family) {
                     ForEach(ServerAPIFamily.allCases) { option in
-                        Text(option.title).tag(option)
+                        Text(LocalizedStringKey(option.title), bundle: .module).tag(option)
                     }
-                }
+                } label: { Text("API family", bundle: .module) }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 300)
+                .frame(minWidth: 220, idealWidth: 300, maxWidth: 360)
             }
 
-            Text(family.blurb)
+            Text(LocalizedStringKey(family.blurb), bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
 
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(ServerEndpointCatalog.endpoints(for: family)) { endpoint in
                     HStack(spacing: 8) {
-                        Text(endpoint.method)
+                        Text(verbatim: endpoint.method)
                             .themedCode(.small, weight: .semibold)
                             .foregroundStyle(.appSecondary)
                             .frame(width: 34, alignment: .leading)
-                        Text(endpoint.path)
+                        Text(verbatim: endpoint.path)
                             .themedCode(.callout)
                             .textSelection(.enabled)
                         if endpoint.streams {
-                            Text(family == .ollama ? "NDJSON" : "SSE")
+                            Text(verbatim: family == .ollama ? "NDJSON" : "SSE")
                                 .themedFont(.micro, weight: .medium)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
                                 .background(Color.secondary.opacity(0.15), in: Capsule())
                                 .help(
                                     family == .ollama
-                                        ? "One JSON object per line, no sentinel. Ollama's framing."
-                                        : "Server-sent events.")
+                                        ? Text("One JSON object per line, no sentinel. Ollama's framing.", bundle: .module)
+                                        : Text("Server-sent events.", bundle: .module))
                         }
                         Spacer(minLength: 8)
-                        Text(endpoint.summary)
+                        Text(LocalizedStringKey(endpoint.summary), bundle: .module)
                             .themedFont(.tiny)
                             .foregroundStyle(.appSecondary)
                             .lineLimit(1)

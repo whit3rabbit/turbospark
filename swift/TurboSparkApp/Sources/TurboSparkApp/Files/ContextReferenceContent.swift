@@ -18,19 +18,19 @@ extension MentionResolver {
             await appendGitAttachment(
                 label: "diff", fileName: "Working tree diff", formatLabel: "diff",
                 arguments: ["diff", "--no-ext-diff", "--no-textconv"],
-                emptyMessage: "@diff: no unstaged changes to attach.",
+                emptyMessage: AppStrings.localized("@diff: no unstaged changes to attach."),
                 projectRoot: projectRoot, chatID: chatID, into: model)
         case .staged:
             await appendGitAttachment(
                 label: "staged", fileName: "Staged diff", formatLabel: "diff",
                 arguments: ["diff", "--no-ext-diff", "--no-textconv", "--cached"],
-                emptyMessage: "@staged: nothing is staged to attach.",
+                emptyMessage: AppStrings.localized("@staged: nothing is staged to attach."),
                 projectRoot: projectRoot, chatID: chatID, into: model)
         case .git(let count):
             await appendGitAttachment(
                 label: "git:\(count)", fileName: "Last \(count) commits", formatLabel: "git",
                 arguments: ["log", "--no-ext-diff", "--no-textconv", "-p", "-n", String(count)],
-                emptyMessage: "@git: the repository has no commits yet.",
+                emptyMessage: AppStrings.localized("@git: the repository has no commits yet."),
                 projectRoot: projectRoot, chatID: chatID, into: model)
         case .path, .url:
             break  // not this file's routes
@@ -45,15 +45,17 @@ extension MentionResolver {
         emptyMessage: String, projectRoot: URL?, chatID: UUID?, into model: AppModel
     ) async {
         guard let root = projectRoot?.path, !root.isEmpty else {
-            model.showToast("@\(label) needs a project with a git repository.", style: .warning)
+            model.showToast(
+                AppStrings.localized("@\(label) needs a project with a git repository."), style: .warning)
             return
         }
         let result = await AppModel.runGit(arguments: arguments, workingDirectory: root)
         guard result.exitCode == 0 else {
             let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            model.showToast(
-                "@\(label) failed: \(detail.isEmpty ? "git exited with status \(result.exitCode)." : detail)",
-                style: .warning)
+            let reason = detail.isEmpty
+                ? AppStrings.localized("git exited with status \(Int(result.exitCode)).")
+                : detail
+            model.showToast(AppStrings.localized("@\(label) failed: \(reason)"), style: .warning)
             return
         }
         guard !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -77,13 +79,18 @@ extension MentionResolver {
         // The same toggle gates the model's own web tools; a fetch the user
         // typed by hand does not step around it.
         guard model.webSearchEnabled else {
-            model.showToast("@url: is unavailable while web tools are disabled for this chat.", style: .warning)
+            model.showToast(
+                AppStrings.localized("@url: is unavailable while web tools are disabled for this chat."),
+                style: .warning)
             return
         }
         do {
             let content = try await WebFetchExecutor.fetch(url: url.absoluteString, format: "markdown")
             guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                model.showToast("@url: no content could be extracted from \(url.host ?? "that page").", style: .warning)
+                let message = url.host.map {
+                    AppStrings.localized("@url: no content could be extracted from \($0).")
+                } ?? AppStrings.localized("@url: no content could be extracted from that page.")
+                model.showToast(message, style: .warning)
                 return
             }
             // The fetch caps bytes; this caps the characters that reach the
@@ -99,7 +106,8 @@ extension MentionResolver {
                     wasTruncatedDuringExtraction: truncated),
                 toChatID: chatID)
         } catch {
-            model.showToast("@url: fetch failed: \(error.localizedDescription)", style: .warning)
+            model.showToast(
+                AppStrings.localized("@url: fetch failed: \(error.localizedDescription)"), style: .warning)
         }
     }
 }

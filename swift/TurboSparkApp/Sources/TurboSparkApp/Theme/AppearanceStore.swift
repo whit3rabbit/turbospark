@@ -92,7 +92,7 @@ public enum AppearanceFileStore {
     /// `migrated` is true -- the caller must save successfully before the
     /// legacy keys may be removed.
     public static func load() -> (archive: AppearanceArchive, migrated: Bool) {
-        if let loaded: AppearanceArchive = AppJSONStore.load(AppearanceArchive.self, from: fileURL, label: "appearance") {
+        if let loaded: AppearanceArchive = AppJSONStore.load(AppearanceArchive.self, from: fileURL, label: "Appearance") {
             return (loaded, false)
         }
         return (legacyArchive(), legacyArchiveHasAnyValue)

@@ -15,15 +15,15 @@ struct InstalledModelTechnicalSpecsView: View {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 GridRow {
                     Text("Architecture", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                    Text(visuals.architectureType).themedFont(.small, weight: .medium)
+                    Text(verbatim: visuals.architectureType).themedFont(.small, weight: .medium)
                 }
                 GridRow {
                     Text("Quantization", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                    Text(descriptor.quantFormat).themedFont(.small, weight: .medium)
+                    Text(verbatim: descriptor.quantFormat).themedFont(.small, weight: .medium)
                 }
                 GridRow {
                     Text("Format & Package", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                    Text(descriptor.format.rawValue).themedFont(.small, weight: .medium)
+                    Text(verbatim: descriptor.format.rawValue).themedFont(.small, weight: .medium)
                 }
                 if let ctx = descriptor.contextLimit {
                     GridRow {
@@ -40,13 +40,13 @@ struct InstalledModelTechnicalSpecsView: View {
                 if let hidden = descriptor.hiddenSize {
                     GridRow {
                         Text("Hidden Dimension", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                        Text("\(hidden)", bundle: .module).themedFont(.small, weight: .medium).monospacedDigit()
+                        Text(verbatim: "\(hidden)").themedFont(.small, weight: .medium).monospacedDigit()
                     }
                 }
                 if let vocab = descriptor.vocabSize {
                     GridRow {
                         Text("Vocabulary Size", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                        Text("\(vocab)", bundle: .module).themedFont(.small, weight: .medium).monospacedDigit()
+                        Text(verbatim: "\(vocab)").themedFont(.small, weight: .medium).monospacedDigit()
                     }
                 }
                 GridRow {
@@ -54,21 +54,21 @@ struct InstalledModelTechnicalSpecsView: View {
                     Button {
                         ModelStorageManager.revealInFinder(path: installedModel.path)
                     } label: {
-                        Text(installedModel.path)
+                        Text(verbatim: installedModel.path)
                             .themedCode(.small)
                             .lineLimit(2)
                             .foregroundStyle(Color.accentColor)
                     }
                     .buttonStyle(.plain)
-                    .help("Reveal in Finder: \(installedModel.path)")
-                    .accessibilityLabel("Disk path: \(installedModel.path)")
-                    .accessibilityHint("Opens Finder to reveal model files")
+                    .help(Text("Reveal in Finder", bundle: .module) + Text(verbatim: ": \(installedModel.path)"))
+                    .accessibilityLabel(Text("Disk Path", bundle: .module) + Text(verbatim: ": \(installedModel.path)"))
+                    .accessibilityHint(Text("Reveal in Finder", bundle: .module))
                     .accessibilityAddTraits(.isLink)
                 }
                 if !installedModel.installedOn.isEmpty {
                     GridRow {
                         Text("Installed On", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                        Text(installedModel.installedOn).themedFont(.small, weight: .medium)
+                        Text(verbatim: installedModel.installedOn).themedFont(.small, weight: .medium)
                     }
                 }
             }

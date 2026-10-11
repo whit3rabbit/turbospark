@@ -13,6 +13,19 @@ public enum MessageTimestampFormatter {
         return formatter
     }
 
+    /// "Just now" in the language `locale` names. `String(localized:locale:)`
+    /// formats with the locale but LOOKS UP in the process's language, so a
+    /// French in-app picker on an English system still read "Just now";
+    /// resolving the catalog for the picker's language matches the
+    /// formatter-built strings around it. A locale that names no offered
+    /// language (the system default) falls back to the current UI language.
+    private static func justNow(_ locale: Locale) -> String {
+        let identifier = locale.identifier.replacingOccurrences(of: "_", with: "-")
+        let language = AppLanguage.allCases.first { $0 != .system && $0.rawValue == identifier }
+            ?? AppStrings.currentLanguage
+        return AppStrings.localized("Just now", language: language)
+    }
+
     /// Returns a human-friendly relative string describing how long ago the date was.
     /// E.g. "Just now", "20 minutes ago", "2 hours ago", "yesterday".
     public static func relativeString(
@@ -21,7 +34,7 @@ public enum MessageTimestampFormatter {
         let interval = now.timeIntervalSince(date)
 
         if interval < 45 {
-            return String(localized: "Just now", bundle: .module, locale: locale)
+            return justNow(locale)
         }
 
         let formatter = relativeFormatter(locale)
@@ -63,7 +76,7 @@ public enum MessageTimestampFormatter {
     ) -> String {
         let interval = now.timeIntervalSince(date)
         if interval < 60 {
-            return String(localized: "Just now", bundle: .module, locale: locale)
+            return justNow(locale)
         }
         let formatter = DateComponentsFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)

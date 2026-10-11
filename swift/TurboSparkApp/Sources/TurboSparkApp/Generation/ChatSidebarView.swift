@@ -99,7 +99,7 @@ struct ChatSidebarView: View {
             ForEach(AppModel.AppInteractionMode.allCases) { mode in
                 let isSelected = model.interactionMode == mode
                 Button {
-                    withAnimation(.easeInOut(duration: 0.12)) {
+                    TSMotion.animate(.easeInOut(duration: 0.12)) {
                         model.setInteractionMode(mode)
                     }
                 } label: {
@@ -143,8 +143,7 @@ struct ChatSidebarView: View {
                 .accessibilityHidden(true)
 
             TextField(text: $searchText) {
-                Text(LocalizedStringKey(model.interactionMode == .projects
-                     ? "Filter projects and tasks..." : "Filter chats..."), bundle: .module)
+                (model.interactionMode == .projects ? Text("Filter projects and tasks...", bundle: .module) : Text("Filter chats...", bundle: .module))
             }
             .textFieldStyle(.plain)
             .font(theme.ui(.tiny))
@@ -171,10 +170,8 @@ struct ChatSidebarView: View {
                 .stroke(.appBorder, lineWidth: 0.5)
         )
         .accessibilityElement(children: .contain)
-        .help(Text(LocalizedStringKey(model.interactionMode == .projects
-              ? "Filter projects and tasks..." : "Filter chats..."), bundle: .module))
-        .accessibilityLabel(Text(LocalizedStringKey(model.interactionMode == .projects
-              ? "Filter projects and tasks..." : "Filter chats..."), bundle: .module))
+        .help((model.interactionMode == .projects ? Text("Filter projects and tasks...", bundle: .module) : Text("Filter chats...", bundle: .module)))
+        .accessibilityLabel((model.interactionMode == .projects ? Text("Filter projects and tasks...", bundle: .module) : Text("Filter chats...", bundle: .module)))
     }
 
     // MARK: - Content View
@@ -343,10 +340,10 @@ struct ChatSidebarView: View {
                             .padding(.top, 18)
                             .padding(.bottom, 2)
                             .accessibilityHidden(true)
-                        Text(LocalizedStringKey(searchText.isEmpty ? "No chats yet" : "No matching chats"), bundle: .module)
+                        (searchText.isEmpty ? Text("No chats yet", bundle: .module) : Text("No matching chats", bundle: .module))
                             .font(theme.ui(.tiny, weight: .medium))
                             .foregroundStyle(.appSecondary)
-                        Text(LocalizedStringKey(searchText.isEmpty ? "Start a conversation to see history here" : "Try a different search term"), bundle: .module)
+                        (searchText.isEmpty ? Text("Start a conversation to see history here", bundle: .module) : Text("Try a different search term", bundle: .module))
                             .font(theme.ui(.tiny))
                             .foregroundStyle(.appSecondary)
                             .multilineTextAlignment(.center)
@@ -434,17 +431,14 @@ struct ChatSidebarView: View {
                             Text("Restore", bundle: .module)
                                 .font(theme.ui(.tiny, weight: .medium))
                         }
-                        .buttonStyle(.plain)
+                        .appAction(.quiet, size: .small)
                         .help(Text("Restore", bundle: .module))
-                        Button(role: .destructive) {
+                        // Asks first: this only stages the deletion alert.
+                        AppIconButton("trash", label: Text("Delete", bundle: .module), role: .destructive) {
                             chatPendingDeletion = chat
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(theme.ui(.tiny))
                         }
-                        .buttonStyle(.plain)
+                        .appAction(.quiet, size: .small)
                         .foregroundStyle(.appSecondary)
-                        .help(Text("Delete", bundle: .module))
                     }
                     .padding(.leading, 12)
                     .padding(.vertical, 2)

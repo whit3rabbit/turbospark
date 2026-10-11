@@ -6,69 +6,47 @@ import TurboSpark
 /// doing.
 struct ServerHeaderBandView: View {
     @ObservedObject var model: AppModel
-    @State private var copied = false
 
     private var info: ServerInfo? { model.serverInfo }
     private var isRunning: Bool { model.server != nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                stateDot
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(stateTitle)
-                        .themedFont(.callout, weight: .semibold)
-                    Text(stateSubtitle)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                }
-
-                Spacer(minLength: 12)
-
-                if model.serverBusy {
-                    ProgressView().controlSize(.small)
-                }
-
-                Button(isRunning ? "Stop" : "Start Server") {
-                    isRunning ? model.stopServer() : model.startServer()
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(model.serverBusy || (!isRunning && !model.serverPortIsValid))
-            }
-
+        APIStatusBand(
+            color: stateColor,
+            title: stateTitle,
+            subtitle: stateSubtitle,
+            isRunning: isRunning,
+            busy: model.serverBusy,
+            startLabel: Text("Start Server", bundle: .module),
+            stopLabel: Text("Stop Server", bundle: .module),
+            startDisabled: model.serverBusy || !model.serverPortIsValid,
+            stopDisabled: model.serverBusy,
+            start: { model.startServer() },
+            stop: { model.stopServer() }
+        ) {
             if let info, isRunning {
                 addressRow(info)
                 summaryRow(info)
             }
 
-            if isRunning, (info?.models.isEmpty ?? true) && (info?.imageModels.isEmpty ?? true) && (info?.audioModels.isEmpty ?? true) {
+            if isRunning, servesNothing {
                 // **NAMED RATHER THAN LEFT TO BE DISCOVERED BY A 503.** A
                 // bound server with nothing attached is a real and useful
                 // state, and it is also the one a person is most likely to
                 // misread as broken.
-                Label(
-                    "Bound and answering, with no model attached. "
-                        + "Requests get a 503 until you add one below.",
-                    systemImage: "info.circle")
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
+                Label {
+                    Text("Bound and answering, with no model attached. Requests get a 503 until you add one below.", bundle: .module)
+                } icon: {
+                    Image(systemName: "info.circle")
+                }
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(.appSurface))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(.appBorder, lineWidth: 0.5))
     }
 
-    private var stateDot: some View {
-        Circle()
-            .fill(stateColor)
-            .frame(width: 10, height: 10)
-            .overlay(Circle().stroke(stateColor.opacity(0.25), lineWidth: 6))
+    private var servesNothing: Bool {
+        (info?.models.isEmpty ?? true) && (info?.imageModels.isEmpty ?? true) && (info?.audioModels.isEmpty ?? true)
     }
 
     /// **AMBER FOR RUNNING-BUT-EMPTY, not green.** Green beside a server that
@@ -76,23 +54,24 @@ struct ServerHeaderBandView: View {
     /// when it does not yet.
     private var stateColor: Color {
         guard isRunning else { return .secondary }
-        if (info?.models.isEmpty ?? true) && (info?.imageModels.isEmpty ?? true) && (info?.audioModels.isEmpty ?? true) { return .orange }
+        if servesNothing { return .orange }
         return model.serverMetrics.totalErrors > 0 ? .yellow : .green
     }
 
-    private var stateTitle: String {
-        guard isRunning else { return "Server stopped" }
-        return (info?.models.isEmpty ?? true) && (info?.imageModels.isEmpty ?? true) && (info?.audioModels.isEmpty ?? true)
-            ? "Running, no model" : "Running"
+    private var stateTitle: Text {
+        guard isRunning else { return Text("Server stopped", bundle: .module) }
+        return servesNothing ? Text("Running, no model", bundle: .module) : Text("Running", bundle: .module)
     }
 
-    private var stateSubtitle: String {
+    private var stateSubtitle: Text {
         guard isRunning, let info else {
-            return "Serve your loaded models over HTTP to any app on this machine."
+            return Text("Serve your loaded models over HTTP to any app on this machine.", bundle: .module)
         }
         let models = info.models.count + info.imageModels.count + info.audioModels.count
-        let noun = models == 1 ? "model" : "models"
-        return "\(models) \(noun) - up \(uptimeText(info.uptimeSeconds))"
+        let uptime = uptimeText(info.uptimeSeconds)
+        return models == 1
+            ? Text("1 model, up \(uptime)", bundle: .module)
+            : Text("\(models) models, up \(uptime)", bundle: .module)
     }
 
     private func addressRow(_ info: ServerInfo) -> some View {
@@ -102,16 +81,7 @@ struct ServerHeaderBandView: View {
                 .themedCode(.large)
                 .textSelection(.enabled)
 
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(rows.address, forType: .string)
-                copied = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-            } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-            }
-            .buttonStyle(.borderless)
-            .help("Copy the address")
+            APICopyButton(label: Text("Copy the address", bundle: .module)) { rows.address }
 
             Divider().frame(height: 12)
 
@@ -119,14 +89,16 @@ struct ServerHeaderBandView: View {
             // enforcement point from the Chat pane's own engine: an HTTP
             // client bypasses that entirely. Reported here because it cannot
             // be changed without a restart.
-            Label("guardrails " + rows.guardrailsLabel, systemImage: "shield.lefthalf.filled")
+            Label { guardrailsText(rows) } icon: { Image(systemName: "shield.lefthalf.filled") }
                 .themedFont(.small)
                 .foregroundStyle(Color.secondary)
-                .help(
-                    "Tool-call guardrails for requests this server answers. Resolved when the "
-                        + "server started; restart it to change them.")
+                .help(Text("Tool-call guardrails for requests this server answers. Resolved when the server started; restart it to change them.", bundle: .module))
 
-            Label(rows.authLabel, systemImage: rows.authIsWarning ? "lock.open" : "lock")
+            Label {
+                rows.authIsWarning ? Text("No API key", bundle: .module) : Text("API key required", bundle: .module)
+            } icon: {
+                Image(systemName: rows.authIsWarning ? "lock.open" : "lock")
+            }
                 .themedFont(.small)
                 .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
                 // The warning is not decoration: an unauthenticated loopback
@@ -135,35 +107,49 @@ struct ServerHeaderBandView: View {
                 // looking like it took.
                 .help(
                     rows.authIsWarning
-                        ? "Any process on this machine can reach this server. Set a key under Advanced."
-                        : "Requests must send this key.")
+                        ? Text("Any process on this machine can reach this server. Set a key under Advanced.", bundle: .module)
+                        : Text("Requests must send this key.", bundle: .module))
+        }
+    }
+
+    /// `ServerStatusRows.guardrailsLabel` is an English word chosen in State/
+    /// (and asserted by tests there), so the three known readings are mapped
+    /// to catalog text here and anything new renders as given.
+    private func guardrailsText(_ rows: ServerStatusRows) -> Text {
+        switch rows.guardrailsLabel {
+        case "on": return Text("Guardrails on", bundle: .module)
+        case "off": return Text("Guardrails off", bundle: .module)
+        case "unknown (restart the server to report it)":
+            return Text("Guardrails unknown (restart the server to report it)", bundle: .module)
+        default: return Text(verbatim: "guardrails " + rows.guardrailsLabel)
         }
     }
 
     private func summaryRow(_ info: ServerInfo) -> some View {
         let metrics = model.serverMetrics
         return HStack(spacing: 16) {
-            stat("Requests", "\(metrics.totalRequests)")
-            stat("In flight", "\(metrics.inFlight)")
+            stat(Text("Requests", bundle: .module), "\(metrics.totalRequests)")
+            stat(Text("In flight", bundle: .module), "\(metrics.inFlight)")
             stat(
-                "Errors", "\(metrics.totalErrors)",
+                Text("Errors", bundle: .module), "\(metrics.totalErrors)",
                 tint: metrics.totalErrors > 0 ? .orange : nil)
             if let rate = metrics.aggregateTokensPerSecond {
-                stat("Decode", String(format: "%.1f tok/s", rate))
+                stat(Text("Decode", bundle: .module), String(format: "%.1f tok/s", rate))
             }
             if metrics.droppedEvents > 0 {
                 // Surfaced rather than swallowed: a console missing rows
                 // reads exactly like a server that was idle.
-                stat("Log gaps", "\(metrics.droppedEvents)", tint: .orange)
+                stat(Text("Log gaps", bundle: .module), "\(metrics.droppedEvents)", tint: .orange)
             }
         }
         .themedFont(.small)
+        .accessibilityElement(children: .combine)
     }
 
-    private func stat(_ label: String, _ value: String, tint: Color? = nil) -> some View {
+    private func stat(_ label: Text, _ value: String, tint: Color? = nil) -> some View {
         HStack(spacing: 4) {
-            Text(label).foregroundStyle(.appSecondary)
-            Text(value)
+            label.foregroundStyle(.appSecondary)
+            Text(verbatim: value)
                 .monospacedDigit()
                 .foregroundStyle(tint ?? .primary)
         }

@@ -17,29 +17,29 @@ struct GitInfoSheet: View {
                     .accessibilityHidden(true)
                 Text("Git", bundle: .module)
                     .themedFont(.callout, weight: .semibold)
-                Picker("", selection: $model.gitInfoTab) {
+                Picker(selection: $model.gitInfoTab) {
+                    // The tabs are named by the slash command that fills
+                    // them (`/diff`, `/log`, `/prs`), so they stay as typed.
                     ForEach(AppModel.GitInfoTab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
+                        Text(verbatim: tab.rawValue).tag(tab)
                     }
+                } label: {
+                    Text("Git view", bundle: .module)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 220)
+                .frame(minWidth: 150, idealWidth: 220, maxWidth: 260)
                 Spacer()
                 if let branch = model.worktree?.currentBranch, !branch.isEmpty {
                     Text(branch)
                         .themedCode(.tiny)
                         .foregroundStyle(.appSecondary)
                 }
-                Button {
+                AppIconButton("xmark.circle.fill", label: Text("Close git view", bundle: .module)) {
                     dismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .help(Text("Close", bundle: .module))
-                .accessibilityLabel("Close git view")
+                .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -82,7 +82,7 @@ struct GitInfoSheet: View {
             ProgressView()
                 .padding(.top, 24)
         } else if model.gitDiffText.isEmpty {
-            emptyState("No working-tree changes against HEAD.", systemImage: "checkmark.circle")
+            emptyState(Text("No working-tree changes against HEAD.", bundle: .module), systemImage: "checkmark.circle")
         } else {
             // Split at the same seam the text was assembled at: the --stat
             // block first, then the full diff. The diff lines get +/-/heading
@@ -132,7 +132,7 @@ struct GitInfoSheet: View {
             ProgressView()
                 .padding(.top, 24)
         } else if model.gitCommits.isEmpty {
-            emptyState("No commits yet.", systemImage: "clock")
+            emptyState(Text("No commits yet.", bundle: .module), systemImage: "clock")
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(model.gitCommits) { commit in
@@ -153,15 +153,15 @@ struct GitInfoSheet: View {
                         Button {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(commit.hash, forType: .string)
-                            model.showToast("Copied \(commit.shortHash).", style: .success)
+                            model.showToast(AppStrings.localized("Copied \(commit.shortHash)."), style: .success)
                         } label: {
                             Image(systemName: "doc.on.doc")
                                 .themedFont(.tiny)
                                 .foregroundStyle(.tertiary)
                         }
                         .buttonStyle(.plain)
-                        .help("Copy full commit SHA")
-                        .accessibilityLabel("Copy SHA for \(commit.summary)")
+                        .help(Text("Copy full commit SHA", bundle: .module))
+                        .accessibilityLabel(Text("Copy SHA for \(commit.summary)", bundle: .module))
                     }
                     .padding(.vertical, 3)
                 }
@@ -176,7 +176,9 @@ struct GitInfoSheet: View {
                 .padding(.top, 24)
         } else if model.gitPullRequests.isEmpty {
             emptyState(
-                model.gitInfoError == nil ? "No open pull requests." : "No pull requests loaded.",
+                model.gitInfoError == nil
+                    ? Text("No open pull requests.", bundle: .module)
+                    : Text("No pull requests loaded.", bundle: .module),
                 systemImage: "arrow.triangle.pull")
         } else {
             VStack(alignment: .leading, spacing: 8) {
@@ -204,8 +206,8 @@ struct GitInfoSheet: View {
                                     .foregroundStyle(.tertiary)
                             }
                             .buttonStyle(.plain)
-                            .help("Open in browser")
-                            .accessibilityLabel("Open pull request #\(pr.number)")
+                            .help(Text("Open in browser", bundle: .module))
+                            .accessibilityLabel(Text("Open pull request #\(pr.number)", bundle: .module))
                         }
                     }
                     .padding(.vertical, 3)
@@ -223,11 +225,19 @@ struct GitInfoSheet: View {
             default: return ("arrow.triangle.pull", .green)
             }
         }()
+        // `gh` reports the state in English capitals; the three it can
+        // return are named in the UI language, anything newer as sent.
+        let stateText: Text = switch normalized {
+        case "OPEN": Text("Open", bundle: .module)
+        case "MERGED": Text("Merged", bundle: .module)
+        case "CLOSED": Text("Closed", bundle: .module)
+        default: Text(verbatim: state)
+        }
         return Image(systemName: symbol)
             .themedFont(.small)
             .foregroundStyle(color)
-            .help(state)
-            .accessibilityLabel("Pull request state \(state)")
+            .help(stateText)
+            .accessibilityLabel(Text("Pull request state \(stateText)", bundle: .module))
     }
 
     private func errorBanner(_ message: String) -> some View {
@@ -246,16 +256,7 @@ struct GitInfoSheet: View {
         .background(Color.orange.opacity(0.08))
     }
 
-    private func emptyState(_ text: String, systemImage: String) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(theme.ui(.title2))
-                .foregroundStyle(.tertiary)
-            Text(text)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.top, 40)
+    private func emptyState(_ text: Text, systemImage: String) -> some View {
+        AppEmptyState(systemImage: systemImage, title: text)
     }
 }

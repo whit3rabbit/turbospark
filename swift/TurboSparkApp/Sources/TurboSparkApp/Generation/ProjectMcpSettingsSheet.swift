@@ -8,6 +8,11 @@ public struct ProjectMcpSettingsSheet: View {
     @ObservedObject var model: AppModel
     let projectID: UUID
     let onDismiss: () -> Void
+    /// False when embedded in a pane that owns its own title and has no
+    /// sheet to dismiss (Settings > MCP Servers at project scope): the
+    /// sheet's title row, Close and Done would repeat the pane title and
+    /// do nothing there.
+    let showsChrome: Bool
 
     @State private var showingMarketplace = false
     @State private var detectedFiles: [DetectedProjectMcpFile] = []
@@ -18,9 +23,12 @@ public struct ProjectMcpSettingsSheet: View {
     @State private var testingServerID: UUID?
     @State private var testResultToast: (id: UUID, message: String, isError: Bool)?
 
-    public init(model: AppModel, projectID: UUID, onDismiss: @escaping () -> Void) {
+    public init(
+        model: AppModel, projectID: UUID, showsChrome: Bool = true, onDismiss: @escaping () -> Void
+    ) {
         self.model = model
         self.projectID = projectID
+        self.showsChrome = showsChrome
         self.onDismiss = onDismiss
     }
 
@@ -34,8 +42,10 @@ public struct ProjectMcpSettingsSheet: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            if showsChrome {
+                header
+                Divider()
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     ProjectMcpDetectionSectionView(
@@ -55,15 +65,18 @@ public struct ProjectMcpSettingsSheet: View {
                     Button { showingMarketplace = true } label: {
                         Text("Browse Marketplace", bundle: .module)
                     }
+                    .appAction(.secondary)
                     Divider()
                     permissionRulesSection
                 }
                 .padding(20)
             }
-            Divider()
-            footer
+            if showsChrome {
+                Divider()
+                footer
+            }
         }
-        .frame(minWidth: 560, minHeight: 520)
+        .frame(minWidth: showsChrome ? 560 : nil, minHeight: showsChrome ? 520 : nil)
         .sheet(isPresented: $showingMarketplace) {
             McpImportSheet(model: model, projectID: projectID) { showingMarketplace = false }
         }
@@ -101,8 +114,8 @@ public struct ProjectMcpSettingsSheet: View {
                 HStack(spacing: 6) {
                     Image(systemName: "folder.badge.gearshape")
                         .foregroundStyle(.appAccent)
-                        .help("Project MCP Tool Configuration")
-                    Text("\(project?.name ?? "Project") - MCP External Tools", bundle: .module)
+                        .help(Text("Project MCP Tool Configuration", bundle: .module))
+                    Text("\(project?.name ?? AppStrings.localized("Project")) - MCP External Tools", bundle: .module)
                         .themedFont(.base, weight: .semibold)
                 }
                 Text("Manage project-specific MCP servers and import configs from codebase.", bundle: .module)
@@ -111,7 +124,7 @@ public struct ProjectMcpSettingsSheet: View {
             }
             Spacer()
             Button { onDismiss() } label: { Text("Close", bundle: .module) }
-                .buttonStyle(.plain)
+                .appAction(.quiet)
                 .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 20)
@@ -128,7 +141,9 @@ public struct ProjectMcpSettingsSheet: View {
                     ExtensionOverridePicker(enabled: Binding(
                         get: { project?.enabledMcpServers[server.id.uuidString] },
                         set: { model.setMcpOverride(serverID: server.id, enabled: $0, projectID: projectID) }))
-                    Text((project?.enabledMcpServers[server.id.uuidString] ?? server.isEnabled) ? "Enabled" : "Disabled")
+                    ((project?.enabledMcpServers[server.id.uuidString] ?? server.isEnabled)
+                        ? Text("Enabled", bundle: .module)
+                        : Text("Disabled", bundle: .module))
                         .themedFont(.small)
                 }
             }
@@ -152,7 +167,7 @@ public struct ProjectMcpSettingsSheet: View {
                 } label: {
                     Label { Text("Add Server", bundle: .module) } icon: { Image(systemName: "plus") }
                 }
-                .buttonStyle(.bordered)
+                .appAction(.secondary)
             }
 
             if projectServers.isEmpty {
@@ -244,15 +259,11 @@ public struct ProjectMcpSettingsSheet: View {
             Text(rule)
                 .themedCode(.small)
             Spacer()
-            Button {
+            AppIconButton("trash", label: Text("Remove this rule", bundle: .module), role: .destructive) {
                 removeRule(rule)
-            } label: {
-                Image(systemName: "trash")
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
             }
-            .buttonStyle(.plain)
-            .help("Remove this rule")
+            .appAction(.quiet, size: .small)
+            .foregroundStyle(.appSecondary)
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
@@ -274,7 +285,7 @@ public struct ProjectMcpSettingsSheet: View {
         HStack {
             Spacer()
             Button { onDismiss() } label: { Text("Done", bundle: .module) }
-                .buttonStyle(.borderedProminent)
+                .appAction(.primary)
                 .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 20)
@@ -324,9 +335,13 @@ public struct ProjectMcpSettingsSheet: View {
                 .mcpServers.first { $0.id == server.id } ?? server
             updated.discoveredTools = tools
             model.updateProjectMcpServer(projectID: projectID, config: updated)
-            testResultToast = (id: server.id, message: "Connected: Discovered \(tools.count) tools.", isError: false)
+            testResultToast = (
+                id: server.id,
+                message: AppStrings.localized("Connected. Tools discovered: \(tools.count)."),
+                isError: false)
         case .failure(let error):
-            testResultToast = (id: server.id, message: "Error: \(error.localizedDescription)", isError: true)
+            testResultToast = (
+                id: server.id, message: AppStrings.localized("Error: \(error.localizedDescription)"), isError: true)
         }
         testingServerID = nil
     }

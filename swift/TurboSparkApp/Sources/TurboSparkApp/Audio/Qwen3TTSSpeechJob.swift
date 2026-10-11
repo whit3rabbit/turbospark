@@ -49,7 +49,7 @@ final class Qwen3TTSSpeechJob: @unchecked Sendable {
         if let bookmark {
             var stale = false
             directory = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale)
-            guard !stale else { throw AudioWorkspaceError.message(String(localized: "The model folder moved. Choose it again.", bundle: .module)) }
+            guard !stale else { throw AudioWorkspaceError.message(AppStrings.localized("The model folder moved. Choose it again.")) }
             scoped = directory.startAccessingSecurityScopedResource()
         } else {
             let verified = try AudioCatalog.verify(profile.identity, token: openToken, progress: report)
@@ -72,7 +72,7 @@ final class Qwen3TTSSpeechJob: @unchecked Sendable {
         }
         let budget = min(ProcessInfo.processInfo.physicalMemory * 3 / 4, MTLCreateSystemDefaultDevice()?.recommendedMaxWorkingSetSize ?? 0)
         guard weightBytes > 0, weightBytes <= budget / 2 else {
-            throw AudioWorkspaceError.message(String(localized: "This checkpoint exceeds the available audio model memory budget.", bundle: .module))
+            throw AudioWorkspaceError.message(AppStrings.localized("This checkpoint exceeds the available audio model memory budget."))
         }
         let reference: [Float]?
         if settings.mode == .clone {

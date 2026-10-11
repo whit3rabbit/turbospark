@@ -15,11 +15,11 @@ enum AudioExportPreset: String, CaseIterable, Sendable {
 
     var title: String {
         switch self {
-        case .nativeWAV: return String(localized: "WAV (original format)", bundle: .module)
-        case .videoWAV: return String(localized: "WAV (48 kHz for video)", bundle: .module)
+        case .nativeWAV: return AppStrings.localized("WAV (original format)")
+        case .videoWAV: return AppStrings.localized("WAV (48 kHz for video)")
         case .flac: return "FLAC"
         case .aiff: return "AIFF"
-        case .m4a: return String(localized: "M4A", bundle: .module)
+        case .m4a: return AppStrings.localized("M4A")
         }
     }
 }
@@ -34,8 +34,8 @@ final class AudioExportPanel: NSObject {
     init(title: String, preset: AudioExportPreset = .nativeWAV) {
         self.preset = preset
         super.init()
-        panel.title = String(localized: "Save as Audio...", bundle: .module)
-        panel.prompt = String(localized: "Save", bundle: .module)
+        panel.title = AppStrings.localized("Save as Audio...")
+        panel.prompt = AppStrings.localized("Save")
         panel.canCreateDirectories = true
         panel.isExtensionHidden = false
         panel.allowedContentTypes = [UTType(filenameExtension: preset.fileExtension) ?? .audio]
@@ -44,8 +44,8 @@ final class AudioExportPanel: NSObject {
         formatPicker.selectItem(at: AudioExportPreset.allCases.firstIndex(of: preset)!)
         formatPicker.target = self
         formatPicker.action = #selector(changeFormat)
-        formatPicker.setAccessibilityLabel(String(localized: "Format", bundle: .module))
-        let label = NSTextField(labelWithString: String(localized: "Format", bundle: .module))
+        formatPicker.setAccessibilityLabel(AppStrings.localized("Format"))
+        let label = NSTextField(labelWithString: AppStrings.localized("Format"))
         let accessory = NSStackView(views: [label, formatPicker])
         accessory.spacing = 12
         accessory.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)

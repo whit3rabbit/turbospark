@@ -39,11 +39,14 @@ extension AppHookStore {
     func recomputeSourceGroups(projectDirectory: String?) {
         var groups: [String: AppHookSourceGroup] = [:]
 
+        // Titles and subtitles are UI text only (the Hooks pane and its
+        // detail sheet render them; groups are keyed by `id`), so they are
+        // resolved in the UI language when the groups are rebuilt.
         // User Config Group
         groups["user_config"] = AppHookSourceGroup(
             id: "user_config",
-            title: "User config",
-            subtitle: "All projects (~/.turbospark or ~/.claude)",
+            title: AppStrings.localized("User config"),
+            subtitle: AppStrings.localized("All projects (~/.turbospark or ~/.claude)"),
             sourceType: .userConfig
         )
 
@@ -52,14 +55,14 @@ extension AppHookStore {
             let projectName = URL(fileURLWithPath: projectDirectory).lastPathComponent
             groups["project_config"] = AppHookSourceGroup(
                 id: "project_config",
-                title: "Project config (\(projectName))",
-                subtitle: "Configured in \(projectName) (.turbospark or .claude)",
+                title: AppStrings.localized("Project config (\(projectName))"),
+                subtitle: AppStrings.localized("Configured in \(projectName) (.turbospark or .claude)"),
                 sourceType: .projectConfig
             )
             groups["local_config"] = AppHookSourceGroup(
                 id: "local_config",
-                title: "Local settings (\(projectName))",
-                subtitle: "settings.local.json in \(projectName), not shared",
+                title: AppStrings.localized("Local settings (\(projectName))"),
+                subtitle: AppStrings.localized("settings.local.json in \(projectName), not shared"),
                 sourceType: .localConfig
             )
         }
@@ -67,8 +70,8 @@ extension AppHookStore {
         // Custom in-app hooks group
         groups["custom"] = AppHookSourceGroup(
             id: "custom",
-            title: "Custom Hooks",
-            subtitle: "In-app created automation and guardrail hooks",
+            title: AppStrings.localized("Custom Hooks"),
+            subtitle: AppStrings.localized("In-app created automation and guardrail hooks"),
             sourceType: .custom
         )
 
@@ -97,8 +100,8 @@ extension AppHookStore {
                         .map(\.optionSpec) ?? []
                     groups[groupKey] = AppHookSourceGroup(
                         id: groupKey,
-                        title: hook.pluginName ?? "Plugin",
-                        subtitle: "Plugin hooks and options",
+                        title: hook.pluginName ?? AppStrings.localized("Plugin"),
+                        subtitle: AppStrings.localized("Plugin hooks and options"),
                         sourceType: .plugin,
                         pluginName: hook.pluginName,
                         optionSpecs: specs

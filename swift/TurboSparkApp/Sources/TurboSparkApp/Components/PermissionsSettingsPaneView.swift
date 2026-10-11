@@ -9,11 +9,7 @@ public struct PermissionsSettingsPaneView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var permissionsManager = SystemPermissionsManager.shared
 
-    @State private var hoveredFolder: String?
     @State private var isRefreshing = false
-    /// Mirrors `CommandGate.vetoEnabled`, which is a static and so cannot
-    /// drive a SwiftUI binding on its own. `persistSettings` reads the static.
-    @State private var commandVetoEnabled = CommandGate.vetoEnabled
 
     public init(model: AppModel) {
         self.model = model
@@ -25,39 +21,45 @@ public struct PermissionsSettingsPaneView: View {
                 headerBar
                 systemFoldersSection
                 customFoldersSection
-                systemPrivacyLinksSection
-                commandGateSection
+                PermissionsSystemLinksSection(permissionsManager: permissionsManager)
+                CommandGateSettingsSection(model: model)
                 AgentModeHintsSectionView(model: model)
-                securityModelCallout
+                PermissionsSecurityCallout()
             }
             .padding(SettingsLayout.contentInsets)
         }
     }
 
     // MARK: - Header
+    /// The Settings shell already titles this pane, so the header is only
+    /// the pane's purpose and its one action. The search anchor that sat on
+    /// the old in-pane title moves to the purpose line so a search for it
+    /// still lands at the top of the pane.
+    ///
+    /// A plain row rather than `AppAdaptiveHeader`: the purpose line wraps
+    /// and the only action is one icon, so nothing here can truncate, and
+    /// the adaptive header would measure the sentence unwrapped and always
+    /// drop the icon onto a second row.
     private var headerBar: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Files & Privacy Permissions", bundle: .module)
-                    .settingsControl("Files & Privacy Permissions", pane: .permissions, timing: .immediate)
-                    .themedFont(.title2, weight: .bold)
-                Text("Inspect and manage macOS filesystem access, protected user folders, and tool execution permissions.", bundle: .module)
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
-            }
-            Spacer()
-            Button {
+        HStack(alignment: .top, spacing: 12) {
+            Text("Inspect and manage macOS filesystem access, protected user folders, and tool execution permissions.", bundle: .module)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .settingsControl("Files & Privacy Permissions", pane: .permissions, timing: .immediate)
+            AppIconButton(
+                isRefreshing ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath",
+                label: Text("Refresh Status", bundle: .module)
+            ) {
                 isRefreshing = true
                 permissionsManager.refreshAllStatuses()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     isRefreshing = false
                 }
-            } label: {
-                Label { Text("Refresh Status", bundle: .module) } icon: { Image(systemName: isRefreshing ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath") }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .help("Re-check accessibility for all folders")
+            .appAction(.secondary, size: .small)
+            .accessibilityHint(Text("Re-checks access for every folder listed here", bundle: .module))
         }
         // A grant made in System Settings was invisible until the manual
         // Refresh, so the pane kept reporting "restricted" for a folder the
@@ -73,15 +75,11 @@ public struct PermissionsSettingsPaneView: View {
     // MARK: - Standard Protected Folders Section
     private var systemFoldersSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("macOS Protected Folders", bundle: .module)
-                    .settingsControl("macOS Protected Folders", pane: .permissions, timing: .immediate)
-                    .themedFont(.base, weight: .semibold)
-                Spacer()
-                Text("Governed by macOS TCC & Sandbox", bundle: .module)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
-            }
+            AppSectionHeader(
+                title: Text("macOS Protected Folders", bundle: .module),
+                subtitle: Text("Governed by macOS TCC & Sandbox", bundle: .module)
+            )
+            .settingsControl("macOS Protected Folders", pane: .permissions, timing: .immediate)
 
             VStack(spacing: 8) {
                 ForEach(SystemFolderType.allCases) { folder in
@@ -93,23 +91,25 @@ public struct PermissionsSettingsPaneView: View {
 
     private func systemFolderRow(_ folder: SystemFolderType) -> some View {
         let status = permissionsManager.folderStatuses[folder] ?? .unknown
+        let name = Self.folderName(folder)
 
         return HStack(spacing: 12) {
             Image(systemName: folder.systemImage)
                 .themedFont(.title3)
                 .foregroundStyle(status.isGranted ? TurboSparkTheme.accentColor : .secondary)
                 .frame(width: 24)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    Text(folder.rawValue)
+                    Text(name)
                         .themedFont(.small, weight: .semibold)
-                    Text(folder.pathDisplay)
+                    Text(verbatim: folder.pathDisplay)
                         .themedCode(.small)
                         .foregroundStyle(.appSecondary)
                 }
 
-                Text(folder.description)
+                Self.folderPurpose(folder)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
                     .lineLimit(1)
@@ -117,11 +117,13 @@ public struct PermissionsSettingsPaneView: View {
 
             Spacer()
 
-            // Status Badge
+            // Status badge: the explicit word, not only the color, so the
+            // state reads the same to VoiceOver and to a color-blind reader.
             HStack(spacing: 4) {
                 Image(systemName: status.systemIcon)
                     .themedFont(.small)
-                Text(status.rawValue)
+                    .accessibilityHidden(true)
+                Self.statusLabel(status)
                     .themedFont(.small, weight: .medium)
             }
             .foregroundStyle(status.statusColor)
@@ -130,277 +132,177 @@ public struct PermissionsSettingsPaneView: View {
             .background(status.statusColor.opacity(0.12))
             .clipShape(Capsule())
 
-            // Actions
             HStack(spacing: 6) {
                 if !status.isGranted {
                     Button {
                         permissionsManager.requestFolderAccess(for: folder)
                     } label: {
                         Text("Grant Access", bundle: .module)
-                    .settingsControl("Grant Access", pane: .permissions, timing: .immediate)
-                            .themedFont(.small)
+                            .settingsControl("Grant Access", pane: .permissions, timing: .immediate)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .help("Prompt macOS to grant file access to \(folder.rawValue)")
-                    .accessibilityLabel("Grant access to \(folder.rawValue)")
+                    .appAction(.secondary, size: .small)
+                    .help(Text("Prompt macOS to grant file access to \(name)", bundle: .module))
+                    .accessibilityLabel(Text("Grant access to \(name)", bundle: .module))
                 }
 
                 if let url = folder.defaultURL {
-                    Button {
+                    AppIconButton("folder", label: Text("Reveal \(name) in Finder", bundle: .module)) {
                         permissionsManager.revealInFinder(url: url)
-                    } label: {
-                        Image(systemName: "folder")
-                            .themedFont(.small)
                     }
-                    .buttonStyle(.borderless)
-                    .help("Reveal \(folder.rawValue) in Finder")
-                    .accessibilityLabel("Reveal \(folder.rawValue) in Finder")
+                    .appAction(.quiet, size: .small)
                 }
             }
         }
         .padding(10)
         .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .stroke(.appBorder, lineWidth: 0.5)
         )
     }
 
     // MARK: - Custom Granted Folders Section
     private var customFoldersSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Authorized Workspace Folders", bundle: .module)
-                    .settingsControl("Authorized Workspace Folders", pane: .permissions, timing: .immediate)
-                        .themedFont(.base, weight: .semibold)
-                    Text("Folders you have granted macOS read access to. This does not widen what file tools may reach: those stay inside the selected project's root.", bundle: .module)
-                        .themedFont(.tiny)
-                        .foregroundStyle(.appSecondary)
-                }
-                Spacer()
+            // A plain row for the same reason as `headerBar`: the subtitle
+            // wraps, and the button keeps its full label beside it.
+            HStack(alignment: .top, spacing: 12) {
+                AppSectionHeader(
+                    title: Text("Authorized Workspace Folders", bundle: .module),
+                    subtitle: Text("Folders you have granted macOS read access to. This does not widen what file tools may reach: those stay inside the selected project's root.", bundle: .module)
+                )
+                .settingsControl("Authorized Workspace Folders", pane: .permissions, timing: .immediate)
                 Button {
                     permissionsManager.addCustomFolder()
                 } label: {
                     Label {
                         Text("Add Folder\u{2026}", bundle: .module)
-                    .settingsControl("Add Folder\u{2026}", pane: .permissions, timing: .immediate)
+                            .settingsControl("Add Folder\u{2026}", pane: .permissions, timing: .immediate)
                     } icon: {
                         Image(systemName: "plus")
                     }
-                        .themedFont(.small)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Authorize an additional workspace directory")
-                .accessibilityLabel("Add Folder")
-                .accessibilityHint("Opens file picker to authorize an additional workspace directory")
+                .appAction(.secondary, size: .small)
+                .fixedSize()
+                .help(Text("Choose a folder to grant macOS access to.", bundle: .module))
+                .accessibilityHint(Text("Choose a folder to grant macOS access to.", bundle: .module))
             }
 
             if permissionsManager.customFolders.isEmpty {
-                HStack {
-                    Spacer()
-                    VStack(spacing: 6) {
-                        Image(systemName: "folder.badge.plus")
-                            .themedFont(.title2)
-                            .foregroundStyle(.secondary.opacity(0.6))
-                        Text("No custom folders authorized yet.", bundle: .module)
-                            .themedFont(.small)
-                            .foregroundStyle(.appSecondary)
-                        Text("Add a folder here to clear the macOS access prompt for it up front.", bundle: .module)
-                            .themedFont(.tiny)
-                            .foregroundStyle(.secondary.opacity(0.8))
-                    }
-                    .padding(.vertical, 14)
-                    Spacer()
-                }
-                .background(.appSurface.opacity(0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.secondary.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                )
+                customFoldersEmptyState
             } else {
                 VStack(spacing: 6) {
                     ForEach(permissionsManager.customFolders) { customFolder in
-                        HStack(spacing: 10) {
-                            Image(systemName: "folder.fill")
-                                .foregroundStyle(.appAccent)
-                                .themedFont(.small)
-
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(customFolder.name)
-                                    .themedFont(.small, weight: .medium)
-                                Text(customFolder.path)
-                                    .themedCode(.small)
-                                    .foregroundStyle(.appSecondary)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer()
-
-                            Button {
-                                permissionsManager.revealInFinder(url: URL(fileURLWithPath: customFolder.path))
-                            } label: {
-                                Image(systemName: "folder")
-                                    .themedFont(.small)
-                            }
-                            .buttonStyle(.borderless)
-                            .help(Text("Reveal in Finder", bundle: .module))
-                            .accessibilityLabel("Reveal \(customFolder.name) in Finder")
-
-                            Button {
-                                permissionsManager.removeCustomFolder(id: customFolder.id)
-                            } label: {
-                                Image(systemName: "trash")
-                                    .themedFont(.small)
-                                    .foregroundStyle(.red.opacity(0.8))
-                            }
-                            .buttonStyle(.borderless)
-                            .help("Remove authorization")
-                            .accessibilityLabel("Remove authorization for \(customFolder.name)")
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(.appSurface)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.secondary.opacity(0.12), lineWidth: 0.5)
-                        )
+                        customFolderRow(customFolder)
                     }
                 }
             }
         }
     }
 
-    // MARK: - macOS System Privacy Links
-    private var systemPrivacyLinksSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("macOS System Settings Links", bundle: .module)
-                    .settingsControl("macOS System Settings Links", pane: .permissions, timing: .immediate)
-                .themedFont(.base, weight: .semibold)
-
-            HStack(spacing: 10) {
-                systemLinkCard(
-                    title: "Files and Folders",
-                    subtitle: "Manage per-folder permissions in macOS Privacy & Security.",
-                    icon: "folder.badge.gearshape",
-                    pane: .filesAndFolders
-                )
-
-                systemLinkCard(
-                    title: "Full Disk Access",
-                    subtitle: "Grant broad filesystem access for developer workflows.",
-                    icon: "externaldrive.fill.badge.checkmark",
-                    pane: .fullDiskAccess
-                )
-
-                systemLinkCard(
-                    title: "Accessibility",
-                    subtitle: "System control for global shortcuts and automation.",
-                    icon: "figure.roll",
-                    pane: .accessibility
-                )
-            }
-        }
-    }
-
-    private func systemLinkCard(title: String, subtitle: String, icon: String, pane: MacPrivacyPane) -> some View {
-        Button {
-            permissionsManager.openSystemPrivacySettings(pane)
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: icon)
-                        .themedFont(.base, weight: .semibold)
-                        .foregroundStyle(.appAccent)
-                    Spacer()
-                    Image(systemName: "arrow.up.forward.app")
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                }
-
-                Text(title)
-                    .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.appText)
-
-                Text(subtitle)
-                    .themedFont(.tiny)
+    private var customFoldersEmptyState: some View {
+        HStack {
+            Spacer()
+            VStack(spacing: 6) {
+                Image(systemName: "folder.badge.plus")
+                    .themedFont(.title2)
                     .foregroundStyle(.appSecondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.appSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-        .appPointerCursor()
-        .help("Open macOS \(title) Settings in System Settings")
-        .accessibilityLabel("macOS System Settings: \(title). \(subtitle)")
-        .accessibilityHint("Opens \(title) privacy settings pane in macOS System Settings")
-        .accessibilityAddTraits(.isLink)
-    }
-
-    // MARK: - Command Gate
-    /// The one `MacAppSettings` key that was consumed and unreachable: the
-    /// classifier's veto had been on the JSON file and in `CommandGate` since
-    /// it was measured, and only a hand edit could turn it on.
-    private var commandGateSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label { Text("Command Classifier Veto", bundle: .module) } icon: { Image(systemName: "terminal.fill") }
-                    .themedFont(.base, weight: .semibold)
-                Spacer()
-                Toggle("", isOn: $commandVetoEnabled)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .onChange(of: commandVetoEnabled) { _, newValue in
-                        CommandGate.vetoEnabled = newValue
-                        model.persistSettingsDebounced()
-                    }
-            }
-            Text("Lets the local command classifier send an ALLOWLISTED shell command to the approval sheet when it scores it as hazardous. Off by default on purpose: held out by generator the classifier scores 0.70 against 0.997 in distribution, so no threshold stops it prompting on commands the Auto tier promises to run silently. Its reasons are shown either way on commands that were already going to ask.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14)
-        .background(.appPage)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
-    }
-
-    // MARK: - Security Model Callout
-    private var securityModelCallout: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "shield.lefthalf.filled")
-                .themedFont(.title2)
-                .foregroundStyle(.appAccent)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("TurboSpark Safety & Sandbox Guarantee", bundle: .module)
-                    .themedFont(.small, weight: .semibold)
-                Text("Model tools (`FileRead`, `FileWrite`, `FileEdit`, `Terminal`) operate under strict workspace containment checks (`resolveSecurePath`). High-risk operations (e.g., editing files outside project root, deleting directories, or executing destructive terminal commands) require manual user confirmation unless overridden in Project Settings.", bundle: .module)
+                    .accessibilityHidden(true)
+                Text("No custom folders authorized yet.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text("Add a folder here to clear the macOS access prompt for it up front.", bundle: .module)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.appSecondary)
             }
+            .padding(.vertical, 14)
+            Spacer()
         }
-        .padding(12)
-        .background(.appAccent.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(.appSurface.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.appAccent.opacity(0.25), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .stroke(.appBorder, style: StrokeStyle(lineWidth: 1, dash: [4]))
         )
+    }
+
+    private func customFolderRow(_ customFolder: GrantedCustomFolder) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder.fill")
+                .foregroundStyle(.appAccent)
+                .themedFont(.small)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: customFolder.name)
+                    .themedFont(.small, weight: .medium)
+                SettingsPathText(customFolder.path)
+                    .foregroundStyle(.appSecondary)
+            }
+
+            Spacer()
+
+            AppIconButton("folder", label: Text("Reveal \(customFolder.name) in Finder", bundle: .module)) {
+                permissionsManager.revealInFinder(url: URL(fileURLWithPath: customFolder.path))
+            }
+            .appAction(.quiet, size: .small)
+
+            AppIconButton(
+                "trash",
+                label: Text("Remove authorization for \(customFolder.name)", bundle: .module),
+                role: .destructive
+            ) {
+                permissionsManager.removeCustomFolder(id: customFolder.id)
+            }
+            .appAction(.quiet, size: .small)
+            .foregroundStyle(.red)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .stroke(.appBorder, lineWidth: 0.5)
+        )
+    }
+
+    // MARK: - Localized folder and status names
+    // `SystemFolderType` and `FolderAccessStatus` raw values are identifiers
+    // shared with persistence and tests, so the display names are resolved
+    // here, one literal per case, where the catalog scan can see each key.
+
+    /// A `String` rather than a `Text` because it is also interpolated into
+    /// the per-folder help and VoiceOver labels.
+    static func folderName(_ folder: SystemFolderType) -> String {
+        switch folder {
+        case .documents: return AppStrings.localized("Documents")
+        case .downloads: return AppStrings.localized("Downloads")
+        case .desktop: return AppStrings.localized("Desktop")
+        case .home: return AppStrings.localized("Home Directory")
+        }
+    }
+
+    static func folderPurpose(_ folder: SystemFolderType) -> Text {
+        switch folder {
+        case .documents:
+            return Text("Used for accessing attached documents, notes, and user project files.", bundle: .module)
+        case .downloads:
+            return Text("Used for downloading model checkpoints, datasets, and reading imported files.", bundle: .module)
+        case .desktop:
+            return Text("Used for accessing desktop attachments and user workspace folders.", bundle: .module)
+        case .home:
+            return Text("Root user folder for config files (.turbospark, .mcp, scripts).", bundle: .module)
+        }
+    }
+
+    static func statusLabel(_ status: FolderAccessStatus) -> Text {
+        switch status {
+        case .granted: return Text("Granted", bundle: .module)
+        case .restricted: return Text("Requires Permission", bundle: .module)
+        case .notFound: return Text("Not Found", bundle: .module)
+        case .unknown: return Text("Unknown", bundle: .module)
+        }
     }
 }

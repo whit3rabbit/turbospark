@@ -280,7 +280,8 @@ extension AppModel {
         // runs another, with no error anywhere.
         guard !generating, !opening else { return }
         if let steeringReason = steeringOpenBlockReason(for: model) {
-            let message = "Cannot load " + model.alias + " with steering enabled: " + steeringReason
+            let message = AppStrings.localized(
+                "Cannot load \(model.alias) with steering enabled: \(steeringReason)")
             error = message
             showToast(message, style: .error, duration: 8.0)
             return
@@ -330,17 +331,17 @@ extension AppModel {
             updateTokenEstimate()
             if expressible != wanted {
                 showToast(
-                    "Loaded \(model.alias). Reasoning \(wanted.label) is not available here, using \(expressible.label).",
+                    AppStrings.localized("Loaded \(model.alias). Reasoning \(wanted.label) is not available here, using \(expressible.label)."),
                     style: .info
                 )
             } else {
-                showToast("Loaded \(model.alias)", style: .success)
+                showToast(AppStrings.localized("Loaded \(model.alias)"), style: .success)
             }
             if self.server != nil {
                 self.attachChatSession()
             }
         } catch {
-            let msg = "Failed to load model: \(error.localizedDescription)"
+            let msg = AppStrings.localized("Failed to load model: \(error.localizedDescription)")
             self.error = msg
             showToast(msg, style: .error)
         }
@@ -372,7 +373,7 @@ extension AppModel {
         // nothing loaded. See `detachChatSessionFromServer`'s own note.
         detachChatSessionFromServer()
         session = nil
-        showToast("Model unloaded", style: .info)
+        showToast(AppStrings.localized("Model unloaded"), style: .info)
     }
 
     /// Unloads either the active workspace's model or whichever model is currently resident.
@@ -408,7 +409,8 @@ extension AppModel {
             ?? InstalledModel(
                 alias: url.lastPathComponent, repo: "", path: path, family: "")
         if let steeringReason = steeringOpenBlockReason(for: row) {
-            let message = "Cannot load " + row.alias + " with steering enabled: " + steeringReason
+            let message = AppStrings.localized(
+                "Cannot load \(row.alias) with steering enabled: \(steeringReason)")
             error = message
             showToast(message, style: .error, duration: 8.0)
             return
@@ -435,7 +437,7 @@ extension AppModel {
         // a decode loop reading it.
         guard !generating, !submitting else {
             showToast(
-                "Cannot delete '\(model.alias)' while a turn is running. Stop it first.",
+                AppStrings.localized("Cannot delete '\(model.alias)' while a turn is running. Stop it first."),
                 style: .warning)
             return
         }
@@ -449,7 +451,7 @@ extension AppModel {
         // is the honest bound, since the load in flight has no row here.
         guard !opening else {
             showToast(
-                "Cannot delete '\(model.alias)' while a model is loading. Wait for it to finish.",
+                AppStrings.localized("Cannot delete '\(model.alias)' while a model is loading. Wait for it to finish."),
                 style: .warning)
             return
         }
@@ -459,7 +461,7 @@ extension AppModel {
         // serving a model whose bytes are gone.
         if Self.isAttachedToServer(model: model, servedIDs: Set(serverAttachedSessions.keys).union(serverInfo?.models ?? [])) {
             showToast(
-                "'\(model.alias)' is attached to the running server. Detach it there first.",
+                AppStrings.localized("'\(model.alias)' is attached to the running server. Detach it there first."),
                 style: .warning)
             return
         }
@@ -467,7 +469,7 @@ extension AppModel {
         // Keep this guard here so deletion from Installed Models is safe too.
         if humanizeWorkspace.usesModel(at: model.path) {
             guard !humanizeWorkspace.isBusy else {
-                showToast(String(localized: "Stop Humanize before deleting its model.", bundle: .module), style: .warning)
+                showToast(AppStrings.localized("Stop Humanize before deleting its model."), style: .warning)
                 return
             }
             humanizeWorkspace.unload()
@@ -513,8 +515,8 @@ extension AppModel {
             ModelOrganizationStore.shared.excludeFromScan(path: model.path)
             refreshModels()
             showToast(
-                "Removed '\(model.alias)' from TurboSpark. The file was left on disk at "
-                    + "\(model.path); restore it under Settings > Models.",
+                AppStrings.localized(
+                    "Removed '\(model.alias)' from TurboSpark. The file was left on disk at \(model.path); restore it under Settings > Models."),
                 style: .info, duration: 5.0)
             return
         }
@@ -554,9 +556,9 @@ extension AppModel {
         refreshModels()
 
         if deleted {
-            showToast("Deleted model '\(model.alias)'", style: .info)
+            showToast(AppStrings.localized("Deleted model '\(model.alias)'"), style: .info)
         } else if let err = lastError {
-            let msg = "Failed to delete model: \(err.localizedDescription)"
+            let msg = AppStrings.localized("Failed to delete model: \(err.localizedDescription)")
             self.error = msg
             showToast(msg, style: .error)
         }

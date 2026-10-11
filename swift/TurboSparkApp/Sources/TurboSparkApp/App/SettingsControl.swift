@@ -21,6 +21,15 @@ struct SettingsControlDescriptor: Identifiable {
             }
             if ["Delete saved theme", "Rename"].contains(title) { return pane.rawValue + ":Theme gallery" }
         }
+        if pane == .soul, ["Import Hermes", "Import OpenClaw", "Load File..."].contains(title) {
+            return pane.rawValue + ":Import"
+        }
+        if pane == .profiles {
+            if ["Export Backup...", "Rename Profile"].contains(title) {
+                return pane.rawValue + ":Profiles on this Mac"
+            }
+            if title == "Import Profile Backup" { return pane.rawValue + ":Restore a Backup" }
+        }
         return id
     }
 }

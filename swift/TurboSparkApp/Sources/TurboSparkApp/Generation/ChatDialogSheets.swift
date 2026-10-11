@@ -18,15 +18,11 @@ struct SessionStatsSheet: View {
                 Text("Session Stats", bundle: .module)
                     .themedFont(.callout, weight: .semibold)
                 Spacer()
-                Button {
+                AppIconButton("xmark.circle.fill", label: Text("Close session stats", bundle: .module)) {
                     dismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .help(Text("Close", bundle: .module))
-                .accessibilityLabel("Close session stats")
+                .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -53,9 +49,7 @@ struct SessionStatsSheet: View {
                         }
                         statsRow("Images attached", String(stats.images))
                         if stats.todoTotal > 0 {
-                            statsRow(
-                                "Checklist",
-                                "\(stats.todoCompleted)/\(stats.todoTotal) done")
+                            statsRow("Checklist", Text("\(stats.todoCompleted)/\(stats.todoTotal) done", bundle: .module))
                         }
                     }
                     statsGroup("Context", bundle: .module) {
@@ -64,12 +58,11 @@ struct SessionStatsSheet: View {
                         }
                         statsRow(
                             "Compaction summary",
-                            stats.hasSummary ? "Present" : "None")
+                            stats.hasSummary ? Text("Present", bundle: .module) : Text("None", bundle: .module))
                         if let summary = model.contextUsageSummary {
-                            statsRow(
-                                "Context window",
-                                "\(summary.usedTokens.formatted(.number.notation(.compactName))) / "
-                                    + "\(summary.windowTokens.formatted(.number.notation(.compactName))) tokens")
+                            let used = summary.usedTokens.formatted(.number.notation(.compactName))
+                            let window = summary.windowTokens.formatted(.number.notation(.compactName))
+                            statsRow("Context window", Text("\(used) / \(window) tokens", bundle: .module))
                         }
                     }
                     statsGroup("Token usage", bundle: .module) {
@@ -109,13 +102,19 @@ struct SessionStatsSheet: View {
         }
     }
 
-    private func statsRow(_ label: String, _ value: String) -> some View {
+    /// A row whose value is data (a title, a date, a count): shown as is.
+    private func statsRow(_ label: LocalizedStringKey, _ value: String) -> some View {
+        statsRow(label, Text(value))
+    }
+
+    /// Every row label here is a catalog key.
+    private func statsRow(_ label: LocalizedStringKey, _ value: Text) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(label)
+            Text(label, bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             Spacer(minLength: 12)
-            Text(value)
+            value
                 .themedFont(.small, weight: .medium)
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
@@ -140,15 +139,11 @@ struct HelpSheetView: View {
                 Text("Help", bundle: .module)
                     .themedFont(.callout, weight: .semibold)
                 Spacer()
-                Button {
+                AppIconButton("xmark.circle.fill", label: Text("Close help", bundle: .module)) {
                     dismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .help(Text("Close", bundle: .module))
-                .accessibilityLabel("Close help")
+                .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -159,27 +154,27 @@ struct HelpSheetView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     helpSection("Slash commands", bundle: .module) {
                         ForEach(BuiltInSlashCommand.all) { command in
-                            helpRow(
-                                "/\(command.name)",
-                                command.summary,
-                                mono: true)
+                            helpRow("/\(command.name)", command.localizedSummary)
                         }
+                        // A skill's description is its author's text.
                         ForEach(ComposerAutocompleteEngine.invocableSkills(model.effectiveSkills)) { skill in
-                            helpRow("/\(skill.name)", skill.skillDescription, mono: true)
+                            helpRow("/\(skill.name)", Text(skill.skillDescription))
                         }
                     }
                     helpSection("Keyboard shortcuts", bundle: .module) {
                         ForEach(KeyboardShortcutCatalog.sections) { section in
-                            Text(section.title)
+                            // Section titles and row labels are catalog keys
+                            // (`KeyboardShortcutCatalog`); the chords are glyphs.
+                            Text(LocalizedStringKey(section.title), bundle: .module)
                                 .themedFont(.small, weight: .semibold)
                                 .foregroundStyle(.appSecondary)
                                 .padding(.top, 6)
                             ForEach(section.rows) { row in
                                 HStack(alignment: .firstTextBaseline) {
-                                    Text(row.label)
+                                    Text(LocalizedStringKey(row.label), bundle: .module)
                                         .themedFont(.small)
                                     Spacer(minLength: 12)
-                                    Text(row.keys)
+                                    Text(verbatim: row.keys)
                                         .themedCode(.small)
                                         .foregroundStyle(.appSecondary)
                                 }
@@ -211,13 +206,14 @@ struct HelpSheetView: View {
         }
     }
 
-    private func helpRow(_ name: String, _ detail: String, mono: Bool) -> some View {
+    /// `name` is a `/command` spelling, never translated.
+    private func helpRow(_ name: String, _ detail: Text) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(name)
-                .font(mono ? theme.code(.small) : theme.ui(.small, weight: .medium))
+            Text(verbatim: name)
+                .font(theme.code(.small))
                 .foregroundStyle(.appAccent)
             Spacer(minLength: 12)
-            Text(detail)
+            detail
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.trailing)

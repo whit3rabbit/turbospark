@@ -2,6 +2,7 @@ import SwiftUI
 import TurboSpark
 
 /// Settings pane for language, localization, keyboard layout, and readability.
+@MainActor
 struct GeneralSettingsPaneView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject private var appearanceManager = AppearanceManager.shared
@@ -15,38 +16,16 @@ struct GeneralSettingsPaneView: View {
 
     var body: some View {
         Form {
-            Section(header: Text("Language & Localization", bundle: .module)) {
-                Picker(selection: $languageRawValue) {
-                    ForEach(AppLanguage.allCases) { language in
-                        Text(language.label).tag(language.rawValue)
-                    }
-                } label: { Text("Language", bundle: .module) }
-            .settingsControl("Language", pane: .general, timing: .immediate)
-                .pickerStyle(.menu)
+            // Where a change lands is the one thing this pane mixes: most
+            // rows apply at once, the chat rows from the next turn, and the
+            // relaunch rows say so under their own label.
+            Text("Display and app options apply immediately. Chat and agent options apply from the next turn; rows that need a relaunch say so.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
 
-                if let keyboard = LanguageDetector.currentKeyboardLayoutName() {
-                    HStack {
-                        Text("Active Keyboard Layout:", bundle: .module)
-                            .font(theme.ui(.small))
-                            .foregroundStyle(.appSecondary)
-                        Spacer()
-                        Text(keyboard)
-                            .font(theme.code(.small))
-                            .foregroundStyle(.appSecondary)
-                    }
-                }
-            }
-            .settingsControl("Language & Localization", pane: .general, timing: .immediate)
+            languageSection
 
-            Section(header: Text("Text Size & Readability", bundle: .module)) {
-                Picker(selection: $appearanceManager.textSize) {
-                    ForEach(AppTextSize.allCases) { size in
-                        Text(size.label).tag(size)
-                    }
-                } label: { Text("Text Readability", bundle: .module) }
-            .settingsControl("Text Readability", pane: .general, timing: .immediate)
-                .pickerStyle(.segmented)
-            }
+            textSizeSection
 
             // Its own computed property: a Section inline in a larger Form
             // expression is the shape that blew the macOS 14 SDK type-checker.
@@ -66,7 +45,8 @@ struct GeneralSettingsPaneView: View {
 
             softwareUpdatesSection
 
-            hfAuthSection
+            // Hugging Face sign-in lives in Models & Storage only: two token
+            // fields for one Keychain item read as two separate settings.
         }
         .formStyle(.grouped)
         // The grouped Form paints its own system gray, which ignores the theme.
@@ -75,6 +55,44 @@ struct GeneralSettingsPaneView: View {
         .padding(SettingsLayout.formInsets)
         .sheet(isPresented: $showsImportWizard) {
             AgentContentImportSheet(model: model)
+        }
+    }
+
+    /// The option rows come from `LanguageOptions`, the same definition the
+    /// menus use, so the native-script names and the "System" entry match
+    /// everywhere the setting is reachable.
+    private var languageSection: some View {
+        Section(header: Text("Language & Localization", bundle: .module)) {
+            Picker(selection: $languageRawValue) {
+                LanguageOptions()
+            } label: { Text("Language", bundle: .module) }
+            .settingsControl("Language", pane: .general, timing: .immediate)
+            .pickerStyle(.menu)
+
+            if let keyboard = LanguageDetector.currentKeyboardLayoutName() {
+                LabeledContent {
+                    Text(keyboard)
+                        .font(theme.code(.small))
+                        .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Active Keyboard Layout:", bundle: .module)
+                        .font(theme.ui(.small))
+                        .foregroundStyle(.appSecondary)
+                }
+            }
+        }
+        .settingsControl("Language & Localization", pane: .general, timing: .immediate)
+    }
+
+    /// "Text Size", the name the View menu and the profile menu use for the
+    /// same setting, with the shared option rows.
+    private var textSizeSection: some View {
+        Section(header: Text("Text Size & Readability", bundle: .module)) {
+            Picker(selection: $appearanceManager.textSize) {
+                TextSizeOptions()
+            } label: { Text("Text Size", bundle: .module) }
+            .settingsControl("Text Size", pane: .general, timing: .immediate)
+            .pickerStyle(.segmented)
         }
     }
 
@@ -92,10 +110,10 @@ struct GeneralSettingsPaneView: View {
             Button {
                 updateController.checkForUpdates()
             } label: {
-                Text("Check for Updates…", bundle: .module)
+                Text("Check for Updates\u{2026}", bundle: .module)
             }
             .disabled(!updateController.canCheckForUpdates)
-            .settingsControl("Check for Updates…", pane: .general, timing: .immediate)
+            .settingsControl("Check for Updates\u{2026}", pane: .general, timing: .immediate)
 
             HStack {
                 Text("Current Version", bundle: .module)
@@ -145,9 +163,9 @@ struct GeneralSettingsPaneView: View {
             Button {
                 showsImportWizard = true
             } label: {
-                Text("Import from Other Agents…", bundle: .module)
+                Text("Import from Other Agents\u{2026}", bundle: .module)
             }
-            .settingsControl("Import from Other Agents…", pane: .general, timing: .action)
+            .settingsControl("Import from Other Agents\u{2026}", pane: .general, timing: .action)
         }
     }
 
@@ -184,13 +202,6 @@ struct GeneralSettingsPaneView: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
         }
-    }
-
-    private var hfAuthSection: some View {
-        Section(header: Text("Hugging Face Authentication", bundle: .module)) {
-            HfAuthTokenCardView(model: model)
-        }
-            .settingsControl("Hugging Face Authentication", pane: .general, timing: .immediate)
     }
 
     private var temporaryChatSection: some View {
@@ -255,22 +266,26 @@ struct GeneralSettingsPaneView: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
 
-            HStack {
+            LabeledContent {
+                HStack(spacing: 8) {
+                    TextField(
+                        value: controls.microcompactMinimumSavingsTokens,
+                        format: .number.grouping(.never),
+                        prompt: Text(verbatim: "64")
+                    ) {
+                        Text("Minimum token savings (64-4,096 tokens)", bundle: .module)
+                    }
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 80, idealWidth: 100, maxWidth: 140)
+                    Text("tokens", bundle: .module)
+                        .font(theme.ui(.small))
+                        .foregroundStyle(.appSecondary)
+                        .fixedSize()
+                }
+            } label: {
                 Text("Minimum token savings (64-4,096 tokens)", bundle: .module)
                     .settingsControl("Minimum token savings (64-4,096 tokens)", pane: .general, timing: .nextTurn)
-                Spacer()
-                TextField(
-                    "64",
-                    value: controls.microcompactMinimumSavingsTokens,
-                    format: .number.grouping(.never)
-                )
-                .labelsHidden()
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 100)
-                .accessibilityLabel(Text("Minimum token savings (64-4,096 tokens)", bundle: .module))
-                Text("tokens", bundle: .module)
-                    .font(theme.ui(.small))
-                    .foregroundStyle(.appSecondary)
             }
 
             Toggle(isOn: controls.autoContinuationEnabled) {
@@ -318,22 +333,26 @@ struct GeneralSettingsPaneView: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
 
-            HStack {
+            LabeledContent {
+                HStack(spacing: 8) {
+                    TextField(
+                        value: controls.instructionPinTokenCeiling,
+                        format: .number.grouping(.never),
+                        prompt: Text(verbatim: "0")
+                    ) {
+                        Text("Maximum pinned instruction tokens (0-2,048 tokens)", bundle: .module)
+                    }
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 80, idealWidth: 100, maxWidth: 140)
+                    Text("tokens", bundle: .module)
+                        .font(theme.ui(.small))
+                        .foregroundStyle(.appSecondary)
+                        .fixedSize()
+                }
+            } label: {
                 Text("Maximum pinned instruction tokens (0-2,048 tokens)", bundle: .module)
                     .settingsControl("Maximum pinned instruction tokens (0-2,048 tokens)", pane: .general, timing: .nextTurn)
-                Spacer()
-                TextField(
-                    "0",
-                    value: controls.instructionPinTokenCeiling,
-                    format: .number.grouping(.never)
-                )
-                .labelsHidden()
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 100)
-                .accessibilityLabel(Text("Maximum pinned instruction tokens (0-2,048 tokens)", bundle: .module))
-                Text("tokens", bundle: .module)
-                    .font(theme.ui(.small))
-                    .foregroundStyle(.appSecondary)
             }
         }
         .settingsControl("Chat Runtime", pane: .general, timing: .nextTurn)
@@ -367,72 +386,5 @@ struct GeneralSettingsPaneView: View {
                 model[keyPath: keyPath] = value
                 model.persistSettingsDebounced()
             })
-    }
-}
-
-/// The bindings used by the General Settings controls also give the settings
-/// seam a small, direct test surface for both directions of the UI contract.
-@MainActor
-struct ChatRuntimeSettingsBindings {
-    let microcompactEnabled: Binding<Bool>
-    let autoContinuationEnabled: Binding<Bool>
-    let nativeToolCallingEnabled: Binding<Bool>
-    let nativeToolCallingIgnoresSpeed: Binding<Bool>
-    let instructionPinningEnabled: Binding<Bool>
-    let microcompactMinimumSavingsTokens: Binding<Int>
-    let instructionPinTokenCeiling: Binding<Int>
-
-    init(model: AppModel) {
-        microcompactEnabled = Binding(
-            get: { model.microcompactEnabled },
-            set: { value in
-                model.microcompactEnabled = value
-                model.persistSettingsDebounced()
-            }
-        )
-        autoContinuationEnabled = Binding(
-            get: { model.autoContinuationEnabled },
-            set: { value in
-                model.autoContinuationEnabled = value
-                model.persistSettingsDebounced()
-            }
-        )
-        nativeToolCallingEnabled = Binding(
-            get: { model.nativeToolCallingEnabled },
-            set: { value in
-                model.nativeToolCallingEnabled = value
-                model.persistSettingsDebounced()
-            }
-        )
-        nativeToolCallingIgnoresSpeed = Binding(
-            get: { model.nativeToolCallingIgnoresSpeed },
-            set: { value in
-                model.nativeToolCallingIgnoresSpeed = value
-                model.persistSettingsDebounced()
-            }
-        )
-        instructionPinningEnabled = Binding(
-            get: { model.instructionPinningEnabled },
-            set: { value in
-                model.instructionPinningEnabled = value
-                model.persistSettingsDebounced()
-            }
-        )
-        microcompactMinimumSavingsTokens = Binding(
-            get: { model.microcompactMinimumSavingsTokens },
-            set: { value in
-                model.microcompactMinimumSavingsTokens = MacAppSettings
-                    .clampMicrocompactMinimumSavingsTokens(value)
-                model.persistSettingsDebounced()
-            }
-        )
-        instructionPinTokenCeiling = Binding(
-            get: { model.instructionPinTokenCeiling },
-            set: { value in
-                model.instructionPinTokenCeiling = MacAppSettings
-                    .clampInstructionPinTokenCeiling(value)
-                model.persistSettingsDebounced()
-            }
-        )
     }
 }

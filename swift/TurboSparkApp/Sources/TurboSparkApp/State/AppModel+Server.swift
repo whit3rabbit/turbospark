@@ -262,7 +262,7 @@ extension AppModel {
                 self.serverStopRequested = false
                 started.stop()
                 self.serverAttachedSessions = [:]
-                showToast("Server stopped", style: .info)
+                showToast(AppStrings.localized("Server Stopped"), style: .info)
                 return
             }
             self.server = started
@@ -272,10 +272,13 @@ extension AppModel {
             self.serverEventLog = []
             self.startServerPolling()
             let auth = info.authEnabled
-                ? "API key required"
-                : "no API key: any process on this machine can reach it"
+                ? AppStrings.localized("API key required")
+                : AppStrings.localized("no API key: any process on this machine can reach it")
+            // The port is a UInt16, which has no `%@`/`%lld` specifier, so
+            // the address is formatted to a String before it is interpolated.
+            let address = "\(info.host):\(info.port)"
             showToast(
-                "Server listening on \(info.host):\(info.port) (\(auth))",
+                AppStrings.localized("Server listening on \(address) (\(auth))"),
                 style: .success
             )
         } catch {
@@ -286,7 +289,7 @@ extension AppModel {
             // publish point and stopped itself, reporting "Server
             // stopped" for a server the user had just asked for.
             self.serverStopRequested = false
-            let msg = "Failed to start server: \(error.localizedDescription)"
+            let msg = AppStrings.localized("Failed to start server: \(error.localizedDescription)")
             self.error = msg
             showToast(msg, style: .error)
         }
@@ -321,7 +324,7 @@ extension AppModel {
         self.serverInfo = nil
         self.serverAttachedSessions = [:]
         self.serverStartedGuardrails = nil
-        showToast("Server stopped", style: .info)
+        showToast(AppStrings.localized("Server Stopped"), style: .info)
     }
 
     // MARK: - Reading state

@@ -30,7 +30,7 @@ struct InstalledModelRowView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
-                        Text(modelItem.alias)
+                        Text(verbatim: modelItem.alias)
                             .themedFont(.base, weight: .semibold)
                             .lineLimit(1)
 
@@ -55,27 +55,32 @@ struct InstalledModelRowView: View {
                         }
                     }
 
-                    // Feature & Source Badges
-                    HStack(spacing: 4) {
-                        Text(descriptor.storageSource.shortLabel)
-                            .themedFont(.micro, weight: .semibold)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1.5)
-                            .background(Color(nsColor: .quaternaryLabelColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 3))
-                            .foregroundStyle(.appSecondary)
+                    // Feature & Source Badges. Same density rule as the
+                    // Discover cards: badges wrap instead of clipping, size
+                    // stays on the trailing edge of the first line.
+                    HStack(alignment: .top, spacing: 4) {
+                        FlowLayout(spacing: 4, lineSpacing: 3) {
+                            Text(LocalizedStringKey(descriptor.storageSource.shortLabel), bundle: .module)
+                                .themedFont(.micro, weight: .semibold)
+                                .lineLimit(1)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1.5)
+                                .background(.appElevated, in: RoundedRectangle(cornerRadius: 3))
+                                .foregroundStyle(.appSecondary)
 
-                        if descriptor.routingType == .moe {
-                            ModelFeatureBadgeView.moe(details: "MoE", style: .compact)
-                        } else {
-                            ModelFeatureBadgeView.dense(details: "Dense", style: .compact)
-                        }
+                            if descriptor.routingType == .moe {
+                                ModelFeatureBadgeView.moe(details: "MoE", style: .compact)
+                            } else {
+                                ModelFeatureBadgeView.dense(details: "Dense", style: .compact)
+                            }
 
-                        ModelFeatureBadgeView.quant(descriptor.quantFormat, style: .compact)
+                            ModelFeatureBadgeView.quant(descriptor.quantFormat, style: .compact)
 
-                        if descriptor.speculativeDrafter == .dynamicSloth {
-                            ModelFeatureBadgeView.dynamicSloth(style: .compact)
-                        } else if descriptor.speculativeDrafter == .mtp {
-                            ModelFeatureBadgeView.mtp(style: .compact)
+                            if descriptor.speculativeDrafter == .dynamicSloth {
+                                ModelFeatureBadgeView.dynamicSloth(style: .compact)
+                            } else if descriptor.speculativeDrafter == .mtp {
+                                ModelFeatureBadgeView.mtp(style: .compact)
+                            }
                         }
 
                         Spacer(minLength: 2)
@@ -84,16 +89,18 @@ struct InstalledModelRowView: View {
                             Image(systemName: "internaldrive")
                                 .themedFont(.micro)
                                 .foregroundStyle(.tertiary)
-                            Text(MetricFormat.storage(modelItem.installBytes))
+                                .accessibilityHidden(true)
+                            Text(verbatim: MetricFormat.storage(modelItem.installBytes))
                                 .themedFont(.tiny).monospacedDigit()
                                 .foregroundStyle(.appSecondary)
                         }
+                        .fixedSize()
                     }
 
                     if !tags.isEmpty {
                         HStack(spacing: 3) {
                             ForEach(tags.prefix(3), id: \.self) { tag in
-                                Text(tag)
+                                Text(verbatim: tag)
                                     .themedFont(.micro, weight: .medium)
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
@@ -122,22 +129,23 @@ struct InstalledModelRowView: View {
                     lineWidth: 1
                 )
         )
-        .help("Select \(modelItem.alias)")
+        .help(Text(verbatim: modelItem.alias))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(modelItem.alias)
         .accessibilityValue(accessibilityDescription)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
-    private var accessibilityDescription: String {
-        var parts: [String] = []
-        if isLoaded { parts.append("Loaded") }
-        if isFavorite { parts.append("Favorite") }
-        parts.append(descriptor.routingType == .moe ? "MoE" : "Dense")
-        parts.append(MetricFormat.storage(modelItem.installBytes))
+    /// Spoken row summary: state words from the catalog, data verbatim.
+    private var accessibilityDescription: Text {
+        var parts: [Text] = []
+        if isLoaded { parts.append(Text("Loaded", bundle: .module)) }
+        if isFavorite { parts.append(Text("Favorite", bundle: .module)) }
+        parts.append(Text(LocalizedStringKey(descriptor.routingType.label), bundle: .module))
+        parts.append(Text(verbatim: MetricFormat.storage(modelItem.installBytes)))
         if !tags.isEmpty {
-            parts.append("Tags: \(tags.joined(separator: ", "))")
+            parts.append(Text("Tags:", bundle: .module) + Text(verbatim: " " + tags.joined(separator: ", ")))
         }
-        return parts.joined(separator: ", ")
+        return parts.dropFirst().reduce(parts[0]) { $0 + Text(verbatim: ", ") + $1 }
     }
 }

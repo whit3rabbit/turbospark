@@ -30,7 +30,7 @@ extension AppModel {
 
     func summarizeAudioTranscript(_ item: AudioLibraryItem) async throws -> AudioMeetingSummary {
         guard canSummarizeAudio, let session, let transcript = item.preferredTranscript else {
-            throw AudioWorkspaceError.message(String(localized: "Load a local chat model to summarize this transcript.", bundle: .module))
+            throw AudioWorkspaceError.message(AppStrings.localized("Load a local chat model to summarize this transcript."))
         }
         audioSummaryInFlight = true; generating = true
         let modelAlias = selected?.alias
@@ -56,7 +56,7 @@ extension AppModel {
                 sourceTimes.append(chunk.start)
             }
         }
-        guard !sections.isEmpty else { throw AudioWorkspaceError.message(String(localized: "The local model returned an empty summary. Try again.", bundle: .module)) }
+        guard !sections.isEmpty else { throw AudioWorkspaceError.message(AppStrings.localized("The local model returned an empty summary. Try again.")) }
         return AudioMeetingSummary(text: sections.joined(separator: "\n\n"), sourceTimes: sourceTimes, transcriptRevisionID: transcript.id, modelAlias: modelAlias)
     }
 }

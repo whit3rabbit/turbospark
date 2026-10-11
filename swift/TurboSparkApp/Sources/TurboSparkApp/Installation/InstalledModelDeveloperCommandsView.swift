@@ -34,12 +34,12 @@ struct InstalledModelDeveloperCommandsView: View {
                 .themedFont(.small, weight: .semibold)
 
             cliSnippet(
-                title: "Run CLI REPL Chat",
+                title: Text("Run CLI REPL Chat", bundle: .module),
                 command: Self.chatCommand(modelPath: modelPath)
             )
 
             cliSnippet(
-                title: "Serve OpenAI & Anthropic API",
+                title: Text("Serve OpenAI & Anthropic API", bundle: .module),
                 command: serveCommand
             )
         }
@@ -47,24 +47,25 @@ struct InstalledModelDeveloperCommandsView: View {
         .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func cliSnippet(title: String, command: String) -> some View {
+    private func cliSnippet(title: Text, command: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).themedFont(.tiny).foregroundStyle(.appSecondary)
+            title.themedFont(.tiny).foregroundStyle(.appSecondary)
             HStack {
-                Text(command)
+                Text(verbatim: command)
                     .themedCode(.small)
                     .lineLimit(1)
                 Spacer()
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(command, forType: .string)
-                    onShowToast("Command copied to clipboard")
+                    onShowToast(AppStrings.localized("Command copied to clipboard"))
                 } label: {
-                    Image(systemName: "doc.on.doc")
+                    Label { Text("Copy command", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
+                        .labelStyle(.iconOnly)
                         .themedFont(.small)
                 }
-                .buttonStyle(.plain)
-                .help("Copy command")
+                .appAction(.quiet, size: .small)
+                .help(Text("Copy command", bundle: .module))
             }
             .padding(6)
             .background(.appElevated, in: RoundedRectangle(cornerRadius: 4))

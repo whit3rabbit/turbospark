@@ -214,7 +214,7 @@ extension AppModel {
             (projects[index].rootDirectoryPath ?? "") != (project.rootDirectoryPath ?? "")
         if rootChanged, generating || submitting || pendingToolCall != nil {
             showToast(
-                "Cannot change the workspace root while a turn is running.", style: .warning)
+                AppStrings.localized("Cannot change the workspace root while a turn is running."), style: .warning)
             return
         }
         var updated = project

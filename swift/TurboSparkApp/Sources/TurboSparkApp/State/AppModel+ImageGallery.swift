@@ -24,7 +24,7 @@ extension AppModel {
             }
             let url = URL(fileURLWithPath: path).standardizedFileURL
             guard url.deletingLastPathComponent().resolvingSymlinksInPath() == directory else {
-                showToast(String(localized: "Only images saved by this profile can be removed.", bundle: .module), style: .error)
+                showToast(AppStrings.localized("Only images saved by this profile can be removed."), style: .error)
                 continue
             }
             do {

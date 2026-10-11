@@ -62,10 +62,10 @@ extension AppModel {
                 projectRootURL: projectURL
             )
             reloadSkills()
-            showToast("Skill '\(skill.name)' created in \(scope.label).", style: .info)
+            showToast(AppStrings.localized("Skill '\(skill.name)' created in \(scope.label)."), style: .info)
             return .success(skill)
         } catch {
-            showToast("Failed to create skill: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Failed to create skill: \(error.localizedDescription)"), style: .error)
             return .failure(error)
         }
     }
@@ -75,9 +75,9 @@ extension AppModel {
         do {
             try SkillManager.shared.saveSkill(skill)
             reloadSkills()
-            showToast("Saved changes to '\(skill.name)'.", style: .info)
+            showToast(AppStrings.localized("Saved changes to '\(skill.name)'."), style: .info)
         } catch {
-            showToast("Failed to save skill: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Failed to save skill: \(error.localizedDescription)"), style: .error)
         }
     }
 
@@ -86,9 +86,9 @@ extension AppModel {
         defer { reloadSkills() }
         do {
             try SkillManager.shared.deleteSkill(skill)
-            showToast("Removed skill '\(skill.name)'.", style: .info)
+            showToast(AppStrings.localized("Removed skill '\(skill.name)'."), style: .info)
         } catch {
-            showToast("Failed to delete skill: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Failed to delete skill: \(error.localizedDescription)"), style: .error)
         }
     }
 
@@ -123,10 +123,10 @@ extension AppModel {
                 projectRootURL: projectURL
             )
             reloadSkills()
-            showToast("Imported '\(skill.name)' into \(targetScope.label).", style: .info)
+            showToast(AppStrings.localized("Imported '\(skill.name)' into \(targetScope.label)."), style: .info)
             return .success(skill)
         } catch {
-            showToast("Import failed: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Import failed: \(error.localizedDescription)"), style: .error)
             return .failure(error)
         }
     }
@@ -202,7 +202,9 @@ extension AppModel {
         } else {
             let all = allManagedSkills
             if let disabled = all.first(where: { $0.name.lowercased() == command }) {
-                showToast("Skill '\(disabled.name)' is currently disabled. Enable it in Settings > Skills to use it.", style: .warning)
+                showToast(
+                    AppStrings.localized("Skill '\(disabled.name)' is currently disabled. Enable it in Settings > Skills to use it."),
+                    style: .warning)
                 return true
             }
         }
@@ -212,12 +214,12 @@ extension AppModel {
         }
 
         guard skill.isEnabled else {
-            showToast("Skill '\(skill.name)' is disabled.", style: .warning)
+            showToast(AppStrings.localized("Skill '\(skill.name)' is disabled."), style: .warning)
             return true
         }
 
         guard skill.manifest.userInvocable else {
-            showToast("Skill '\(skill.name)' is not user-invocable.", style: .warning)
+            showToast(AppStrings.localized("Skill '\(skill.name)' is not user-invocable."), style: .warning)
             return true
         }
 

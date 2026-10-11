@@ -287,9 +287,9 @@ struct CodeBlockContainer<Content: View>: View {
                         .foregroundStyle(theme.secondaryText)
                     }
                     .buttonStyle(.plain)
-                    .help("Open this HTML in the sandboxed preview panel")
-                    .accessibilityLabel("Preview \(language ?? "html") block")
-                    .accessibilityHint("Opens the block in the sandboxed preview panel")
+                    .help(Text("Open this HTML in the sandboxed preview panel", bundle: .module))
+                    .accessibilityLabel(Text("Preview \(language ?? "html") block", bundle: .module))
+                    .accessibilityHint(Text("Opens the block in the sandboxed preview panel", bundle: .module))
                 } else if let chart = chartPreviewHTML {
                     Button {
                         onPreviewHTML?(chart)
@@ -303,9 +303,9 @@ struct CodeBlockContainer<Content: View>: View {
                         .foregroundStyle(theme.secondaryText)
                     }
                     .buttonStyle(.plain)
-                    .help("Render this chart in the preview panel")
-                    .accessibilityLabel("Preview \(language ?? "chart") block")
-                    .accessibilityHint("Renders the block as a chart in the preview panel")
+                    .help(Text("Render this chart in the preview panel", bundle: .module))
+                    .accessibilityLabel(Text("Preview \(language ?? "chart") block", bundle: .module))
+                    .accessibilityHint(Text("Renders the block as a chart in the preview panel", bundle: .module))
                 }
                 Button {
                     copyCode()
@@ -319,9 +319,9 @@ struct CodeBlockContainer<Content: View>: View {
                     .foregroundStyle(isCopied ? theme.accent : theme.secondaryText)
                 }
                 .buttonStyle(.plain)
-                .help("Copy code block to clipboard")
+                .help(Text("Copy code block to clipboard", bundle: .module))
                 .accessibilityLabel(isCopied ? "Copied \(language ?? "code")" : "Copy \(language ?? "code") block")
-                .accessibilityHint("Copies the code block to the clipboard")
+                .accessibilityHint(Text("Copies the code block to the clipboard", bundle: .module))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)

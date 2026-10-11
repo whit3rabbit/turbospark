@@ -25,8 +25,8 @@ struct ProjectRulesSectionView: View {
                                 onAutoDetect()
                             } label: { Text("Check Project Instructions", bundle: .module) }
                             .themedFont(.small)
-                            .buttonStyle(.borderless)
-                            .help("Check the live AGENTS.md, CLAUDE.md, CONTEXT.md, and SOUL.md files for this project")
+                            .appAction(.quiet, size: .small)
+                            .help(Text("Check the live AGENTS.md, CLAUDE.md, CONTEXT.md, and SOUL.md files for this project", bundle: .module))
                         }
                     }
 
@@ -43,12 +43,13 @@ struct ProjectRulesSectionView: View {
                 Spacer()
                 Picker(selection: $rulePreference) {
                     ForEach(AppRulePreference.allCases) { pref in
-                        Text(pref.label).tag(pref)
+                        // Every preference label is a catalog key.
+                        Text(LocalizedStringKey(pref.label), bundle: .module).tag(pref)
                     }
                 } label: { Text("Conflict Preference", bundle: .module) }
                 .pickerStyle(.menu)
                 .frame(width: 180)
-                .accessibilityLabel("Rules conflict preference")
+                .accessibilityLabel(Text("Rules conflict preference", bundle: .module))
             }
 
             if let rulesAutoDetectedMessage {
@@ -60,11 +61,9 @@ struct ProjectRulesSectionView: View {
             TextEditor(text: $customInstructions)
                 .themedCode(.base)
                 .frame(height: 100)
-                .padding(4)
-                .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
-                .accessibilityLabel("Additional project instructions")
-                .accessibilityHint("Guidance stored with this project; repository instruction files are read live")
+                .appEditorSurface()
+                .accessibilityLabel(Text("Additional project instructions", bundle: .module))
+                .accessibilityHint(Text("Guidance stored with this project; repository instruction files are read live", bundle: .module))
         }
     }
 }

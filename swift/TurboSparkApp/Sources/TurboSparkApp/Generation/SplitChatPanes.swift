@@ -53,7 +53,7 @@ private struct SplitChatPaneView: View {
         }
         .background(.appPage)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Split pane: \(chat?.title ?? "chat")")
+        .accessibilityLabel(chat.map { Text("Split pane: \($0.title)", bundle: .module) } ?? Text("Split pane", bundle: .module))
     }
 
     private var header: some View {
@@ -62,11 +62,11 @@ private struct SplitChatPaneView: View {
                 .fill(isChatRunning ? TurboSparkTheme.accentColor : Color.primary.opacity(0.2))
                 .frame(width: 6, height: 6)
                 .accessibilityHidden(true)
-            Text(chat?.title ?? "Chat")
+            (chat.map { Text($0.title) } ?? Text("Chat", bundle: .module))
                 .themedFont(.small, weight: .semibold)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .help(chat?.title ?? "")
+                .help(Text(verbatim: chat?.title ?? ""))
             Spacer(minLength: 8)
             Button {
                 model.promoteSplitPane(chatID: chatID)
@@ -77,8 +77,8 @@ private struct SplitChatPaneView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isRunning)
-            .help("Make this the main conversation")
-            .accessibilityLabel("Promote this chat to the main conversation")
+            .help(Text("Make this the main conversation", bundle: .module))
+            .accessibilityLabel(Text("Promote this chat to the main conversation", bundle: .module))
             Button {
                 model.closeSplitPane(chatID: chatID)
             } label: {
@@ -87,8 +87,8 @@ private struct SplitChatPaneView: View {
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)
-            .help("Close split pane")
-            .accessibilityLabel("Close split pane")
+            .help(Text("Close split pane", bundle: .module))
+            .accessibilityLabel(Text("Close split pane", bundle: .module))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

@@ -83,17 +83,22 @@ public struct AppearanceSettingsPaneView: View {
                 resetDescription
                     .font(theme.ui(.small))
                     .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button {
+            // Destructive treatment, but this only opens the confirmation
+            // below; nothing resets until that dialog's own button.
+            Button(role: .destructive) {
                 showsResetConfirmation = true
             } label: { Text("Reset to Defaults...", bundle: .module) }
+            .appAction(.destructive)
+            .fixedSize()
         }
         .padding(16)
         .background(.appSurface.opacity(0.7))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .stroke(.appBorder.opacity(0.4), lineWidth: 1)
         )
         .confirmationDialog(
@@ -119,7 +124,7 @@ public struct AppearanceSettingsPaneView: View {
                 .foregroundStyle(.appText)
 
             HStack(spacing: 16) {
-                themeCard(mode: .system, title: "System") {
+                themeCard(mode: .system) {
                     // Split card preview
                     HStack(spacing: 0) {
                         lightThumbnailMockup
@@ -127,23 +132,26 @@ public struct AppearanceSettingsPaneView: View {
                     }
                 }
 
-                themeCard(mode: .light, title: "Light") {
+                themeCard(mode: .light) {
                     lightThumbnailMockup
                 }
 
-                themeCard(mode: .dark, title: "Dark") {
+                themeCard(mode: .dark) {
                     darkThumbnailMockup
                 }
             }
         }
     }
 
+    /// One mode card. The title is the mode's own label through the catalog,
+    /// the same key the Appearance menu and the profile menu show, so the
+    /// three surfaces name the modes alike in every language.
     private func themeCard<Content: View>(
         mode: AppAppearance,
-        title: String,
         @ViewBuilder preview: () -> Content
     ) -> some View {
         let isSelected = manager.appearance == mode
+        let title = Text(LocalizedStringKey(mode.label), bundle: .module)
         return Button {
             manager.appearance = mode
         } label: {
@@ -157,14 +165,14 @@ public struct AppearanceSettingsPaneView: View {
 
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(
-                            isSelected ? manager.activeAccentColor(isDark: isCurrentlyDark) : Color(nsColor: .separatorColor).opacity(0.3),
+                            isSelected ? manager.activeAccentColor(isDark: isCurrentlyDark) : theme.border,
                             lineWidth: isSelected ? 2.5 : 1
                         )
                 }
                 .frame(height: 80)
                 .shadow(color: isSelected ? manager.activeAccentColor(isDark: isCurrentlyDark).opacity(0.2) : Color.black.opacity(0.04), radius: 4, y: 2)
 
-                Text(title)
+                title
                     .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? .primary : .secondary)
             }
@@ -172,6 +180,8 @@ public struct AppearanceSettingsPaneView: View {
         }
         .buttonStyle(.plain)
         .appPointerCursor()
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var lightThumbnailMockup: some View { ThemeModeThumbnail(config: manager.lightConfig) }

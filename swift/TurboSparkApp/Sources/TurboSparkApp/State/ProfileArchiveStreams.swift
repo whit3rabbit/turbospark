@@ -19,9 +19,9 @@ final class ProfileZipStreamWriter {
 
         var errorDescription: String? {
             switch self {
-            case .invalidPath: return "An export entry has an unsafe path."
-            case .archiveTooLarge: return "This export exceeds the standard ZIP size limit."
-            case .tooManyEntries: return "This export has too many files for a standard ZIP."
+            case .invalidPath: return AppStrings.localized("An export entry has an unsafe path.")
+            case .archiveTooLarge: return AppStrings.localized("This export exceeds the standard ZIP size limit.")
+            case .tooManyEntries: return AppStrings.localized("This export has too many files for a standard ZIP.")
             }
         }
     }

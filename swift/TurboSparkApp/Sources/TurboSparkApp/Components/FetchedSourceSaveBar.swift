@@ -35,12 +35,13 @@ struct FetchedSourceSaveBar: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 220)
             Button { add() } label: { Text("Add source", bundle: .module) }
+                .appAction(.secondary, size: .small)
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             if let message {
                 if failed {
-                    Text(message).themedFont(.small).foregroundStyle(.orange).lineLimit(2)
+                    Text(verbatim: message).themedFont(.small).foregroundStyle(.orange).lineLimit(2)
                 } else {
-                    Text(message).themedFont(.small).foregroundStyle(.appSecondary).lineLimit(2)
+                    Text(verbatim: message).themedFont(.small).foregroundStyle(.appSecondary).lineLimit(2)
                 }
             }
             Spacer()
@@ -53,7 +54,7 @@ struct FetchedSourceSaveBar: View {
         do {
             try model.addMarketplaceSource(name: name, source: source, kind: kind, projectID: projectID)
             failed = false
-            message = String(localized: "Source saved.", bundle: .module)
+            message = AppStrings.localized("Source saved.")
         } catch {
             failed = true
             message = error.localizedDescription

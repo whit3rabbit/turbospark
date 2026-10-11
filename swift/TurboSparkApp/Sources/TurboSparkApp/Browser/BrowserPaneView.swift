@@ -379,17 +379,29 @@ public struct BrowserPaneView: View {
     public init(engine: WebKitBrowserEngine) {
         self.engine = engine
         self._model = StateObject(wrappedValue: BrowserPaneModel(engine: engine))
-        self._viewportController = StateObject(wrappedValue: BrowserViewportController())
+        self._viewportController = StateObject(
+            wrappedValue: BrowserViewportController(
+                initialPreference: MacAppSettingsFileStore.load().browser.defaultViewport
+            )
+        )
         self._elementPicker = StateObject(wrappedValue: ElementPickerController(engine: engine))
     }
 
     public init(engine: WebKitBrowserEngine, appModel: AppModel) {
         self.engine = engine
         self._model = StateObject(wrappedValue: BrowserPaneModel(engine: engine))
-        self._viewportController = StateObject(wrappedValue: BrowserViewportController())
+        self._viewportController = StateObject(
+            wrappedValue: Self.makeViewportController(appModel: appModel)
+        )
         self._elementPicker = StateObject(
             wrappedValue: ElementPickerController(engine: engine, appModel: appModel)
         )
+    }
+
+    /// A pane session starts from Settings > Browser > Default viewport, read
+    /// from AppModel's live settings so an unsaved Settings edit still applies.
+    static func makeViewportController(appModel: AppModel) -> BrowserViewportController {
+        BrowserViewportController(initialPreference: appModel.browserSettings.defaultViewport)
     }
 
     public var body: some View {
@@ -707,6 +719,8 @@ public struct BrowserPaneView: View {
             .disabled(!viewportController.isFixed)
         }
         .padding(14)
-        .frame(width: 260)
+        // A floor, not a fixed width: the steppers' labels and values grow
+        // with the text size and with longer translations.
+        .frame(minWidth: 260)
     }
 }

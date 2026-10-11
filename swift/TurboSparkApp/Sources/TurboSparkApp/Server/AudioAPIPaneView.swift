@@ -80,121 +80,147 @@ struct AudioAPIPaneView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             ServerHeaderBandView(model: model)
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Audio Speech & Voice Cloning API", bundle: .module).themedFont(.title3, weight: .semibold)
-                Text("The same address and API key as Text. Serves OpenAI-compatible /v1/audio/speech with voice cloning extensions.", bundle: .module)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Picker("Audio model", selection: $selectedAlias) {
-                        ForEach(supported) { item in
-                            Text(item.alias).tag(item.alias)
-                        }
-                    }
-                    .frame(maxWidth: 360)
-                    Button {
-                        if let selected { attach(selected) }
-                    } label: { Text("Attach", bundle: .module) }
-                    .disabled(model.server == nil || selected == nil || attached != nil || model.serverBusy)
-                    Button { detach() } label: {
-                        Text("Detach", bundle: .module)
-                    }
-                    .disabled(attached == nil)
-                }
-                if supported.isEmpty {
-                    Text("Install a supported Qwen3-TTS, Kokoro, or MegaTTS3 model in Audio Studio first.", bundle: .module)
-                        .foregroundStyle(.secondary)
-                }
-                if let info = model.serverInfo?.baseURL {
-                    Text(verbatim: "POST " + info.absoluteString + "/v1/audio/speech")
-                        .themedCode(.callout)
-                        .textSelection(.enabled)
-                    Text(exampleBody)
-                        .themedCode(.small)
-                        .textSelection(.enabled)
-                }
-                Text(verbatim: "Attached: \(attached?.alias ?? "none")")
-                Text(verbatim: "Progress: \(model.serverSpeechProgress)")
-                    .accessibilityLabel(Text(verbatim: "Audio progress: \(model.serverSpeechProgress)"))
-            }
-            .padding(16)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Test speech request", bundle: .module).themedFont(.title3, weight: .semibold)
-                TextEditor(text: $text)
-                    .frame(height: 74)
-                    .border(.appBorder)
-                    .accessibilityLabel(Text("Speech input text", bundle: .module))
-
-                if attachedClonesNatively {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Reference voice", bundle: .module)
-                            Button { chooseReference() } label: { Text("Choose WAV file", bundle: .module) }
-                            if let referenceURL { Text(referenceURL.lastPathComponent).lineLimit(1).truncationMode(.middle) }
-                        }
-                        Toggle(isOn: $consent) { Text("I have the right to use this voice", bundle: .module) }
-                            .disabled(referenceURL == nil)
-                    }
-                } else {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Voice", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
-                        TextField("Voice", text: $voice)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 160)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Language", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
-                        TextField("Language (en, zh, auto)", text: $language)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 160)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Style instruction", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
-                        TextField("e.g. Whisper, Cheerful", text: $instruction)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 220)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Reference transcript (optional)", bundle: .module).themedFont(.small).foregroundStyle(.secondary)
-                    TextField("Transcript of reference voice if cloning", text: $referenceText)
-                        .textFieldStyle(.roundedBorder)
-                }
-                }
-
-                HStack {
-                    Button {
-                        Task { await runTest() }
-                    } label: { Text("Synthesize", bundle: .module) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(testing || attached == nil || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || (attachedClonesNatively && (referenceURL == nil || !consent)))
-
-                    if testing { ProgressView().controlSize(.small) }
-                    if let elapsed { Text(String(format: "%.1f s", elapsed)) }
-
-                    if let resultWav {
-                        Button {
-                            togglePlayback(wav: resultWav)
-                        } label: {
-                            Image(systemName: isPlaying ? "stop.fill" : "play.fill")
-                            Text(isPlaying ? "Stop" : "Play", bundle: .module)
-                        }
-                    }
-                }
-                if let errorMessage { Text(errorMessage).foregroundStyle(.red).textSelection(.enabled) }
-            }
-            .padding(16)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+            servingPanel
+            testPanel
         }
         .onAppear {
             refreshInstalled()
         }
         .onDisappear {
             stopPlayback()
+        }
+    }
+
+    private var servingPanel: some View {
+        APIPanel(
+            title: Text("Audio Speech & Voice Cloning API", bundle: .module),
+            subtitle: Text("The same address and API key as Text. Serves OpenAI-compatible /v1/audio/speech with voice cloning extensions.", bundle: .module)
+        ) {
+            Picker(selection: $selectedAlias) {
+                ForEach(supported) { item in
+                    Text(verbatim: item.alias).tag(item.alias)
+                }
+            } label: { Text("Audio model", bundle: .module) }
+            .frame(minWidth: 180, idealWidth: 280, maxWidth: 360)
+            Button {
+                if let selected { attach(selected) }
+            } label: { Text("Attach", bundle: .module) }
+            .appAction(.primary, size: APIControlSize.panel)
+            .disabled(model.server == nil || selected == nil || attached != nil || model.serverBusy)
+        } content: {
+            if supported.isEmpty {
+                Text("Install a supported Qwen3-TTS, Kokoro, or MegaTTS3 model in Audio Studio first.", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+            }
+            APIRowList {
+                if let attached {
+                    APIServedModelRow(
+                        name: attached.alias,
+                        badge: Text("audio", bundle: .module),
+                        badgeTint: .purple,
+                        detachHelp: Text("Stop serving this and release it from memory.", bundle: .module),
+                        detach: { detach() }
+                    ) {
+                        Text("Speech model", bundle: .module)
+                    }
+                } else {
+                    APINothingServedRow()
+                }
+            }
+            APIStatusLine(label: Text("Progress", bundle: .module), value: APIStatusText.text(model.serverSpeechProgress))
+            if let info = model.serverInfo?.baseURL {
+                APIRequestPreview(method: "POST", url: info.absoluteString + "/v1/audio/speech", example: exampleBody)
+            }
+        }
+    }
+
+    private var testPanel: some View {
+        APIPanel(title: Text("Test speech request", bundle: .module)) {
+            TextEditor(text: $text)
+                .themedFont(.base)
+                .frame(height: 74)
+                .appEditorSurface()
+                .accessibilityLabel(Text("Speech input text", bundle: .module))
+
+            if attachedClonesNatively {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: AppMetrics.actionSpacing) {
+                        Text("Reference voice", bundle: .module)
+                        Button { chooseReference() } label: { Text("Choose WAV file", bundle: .module) }
+                            .appAction(.secondary, size: APIControlSize.panel)
+                        if let referenceURL {
+                            Text(verbatim: referenceURL.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                        }
+                    }
+                    Toggle(isOn: $consent) { Text("I have the right to use this voice", bundle: .module) }
+                        .disabled(referenceURL == nil)
+                }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 12) { speechFields }
+                    VStack(alignment: .leading, spacing: 8) { speechFields }
+                }
+                fieldColumn(Text("Reference transcript (optional)", bundle: .module)) {
+                    TextField(text: $referenceText, prompt: Text("Transcript of reference voice if cloning", bundle: .module)) {
+                        Text("Reference transcript (optional)", bundle: .module)
+                    }
+                    .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            HStack(spacing: AppMetrics.actionSpacing) {
+                Button {
+                    Task { await runTest() }
+                } label: { Text("Synthesize", bundle: .module) }
+                .appAction(.primary, size: APIControlSize.panel)
+                .disabled(testing || attached == nil || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || (attachedClonesNatively && (referenceURL == nil || !consent)))
+
+                APIRunIndicator(running: testing, elapsed: elapsed)
+
+                if let resultWav {
+                    Button {
+                        togglePlayback(wav: resultWav)
+                    } label: {
+                        Label {
+                            isPlaying ? Text("Stop", bundle: .module) : Text("Play", bundle: .module)
+                        } icon: {
+                            Image(systemName: isPlaying ? "stop.fill" : "play.fill")
+                        }
+                    }
+                    .appAction(.secondary, size: APIControlSize.panel)
+                }
+            }
+            if let errorMessage {
+                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var speechFields: some View {
+        fieldColumn(Text("Voice", bundle: .module)) {
+            TextField(text: $voice, prompt: Text("Voice", bundle: .module)) { Text("Voice", bundle: .module) }
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 120, idealWidth: 160, maxWidth: 200)
+        }
+        fieldColumn(Text("Language", bundle: .module)) {
+            TextField(text: $language, prompt: Text("Language (en, zh, auto)", bundle: .module)) { Text("Language", bundle: .module) }
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 120, idealWidth: 160, maxWidth: 200)
+        }
+        fieldColumn(Text("Style instruction", bundle: .module)) {
+            TextField(text: $instruction, prompt: Text("e.g. Whisper, Cheerful", bundle: .module)) { Text("Style instruction", bundle: .module) }
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 140, idealWidth: 220, maxWidth: 280)
+        }
+    }
+
+    private func fieldColumn<Field: View>(_ label: Text, @ViewBuilder field: () -> Field) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            label.themedFont(.small).foregroundStyle(.appSecondary)
+            field()
         }
     }
 
@@ -279,7 +305,7 @@ struct AudioAPIPaneView: View {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 throw NSError(domain: "Audio API", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: String(data: data.prefix(2048), encoding: .utf8) ?? "Invalid speech response"
+                    NSLocalizedDescriptionKey: String(data: data.prefix(2048), encoding: .utf8) ?? AppStrings.localized("Invalid speech response")
                 ])
             }
             resultWav = data

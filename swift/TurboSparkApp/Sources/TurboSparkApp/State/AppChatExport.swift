@@ -368,11 +368,11 @@ extension AppModel {
         guard let index = chats.firstIndex(where: { $0.id == chatID }) else { return }
         let chat = chats[index]
         guard !chat.isGhost else {
-            showToast("Temporary chats cannot be exported.", style: .warning)
+            showToast(AppStrings.localized("Temporary chats cannot be exported."), style: .warning)
             return
         }
         guard !chat.messages.isEmpty else {
-            showToast("This chat has no conversation to export yet.", style: .warning)
+            showToast(AppStrings.localized("This chat has no conversation to export yet."), style: .warning)
             return
         }
 
@@ -395,9 +395,9 @@ extension AppModel {
                 try AppChatExport.html(for: chat, modelAlias: selected?.alias)
                     .write(to: url, atomically: true, encoding: .utf8)
             }
-            showToast("Exported to \(url.lastPathComponent)", style: .success)
+            showToast(AppStrings.localized("Exported to \(url.lastPathComponent)"), style: .success)
         } catch {
-            showToast("Export failed: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Export failed: \(error.localizedDescription)"), style: .error)
         }
     }
 

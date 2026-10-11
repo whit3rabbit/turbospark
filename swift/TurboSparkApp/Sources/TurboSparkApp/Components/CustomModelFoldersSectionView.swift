@@ -3,6 +3,9 @@ import SwiftUI
 import TurboSpark
 
 /// Settings section for managing additional external folders to scan for models.
+// Isolated explicitly: its helpers call each other, and only `body` is
+// isolated by the protocol on the macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct CustomModelFoldersSectionView: View {
     @ObservedObject var model: AppModel
 
@@ -18,22 +21,21 @@ struct CustomModelFoldersSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            AppAdaptiveHeader {
                 Label { Text("Additional Model Folders", bundle: .module) } icon: { Image(systemName: "folder.badge.plus") }
-                .settingsControl("Additional Model Folders", pane: .models, timing: .action)
+                    .settingsControl("Additional Model Folders", pane: .models, timing: .action)
                     .themedFont(.base, weight: .semibold)
-                Spacer()
+            } actions: {
                 Button {
                     addCustomFolder()
                 } label: {
                     Label {
-                        Text("Add Folder…", bundle: .module)
+                        Text("Add Folder\u{2026}", bundle: .module)
                     } icon: {
                         Image(systemName: "plus")
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -44,6 +46,7 @@ struct CustomModelFoldersSectionView: View {
                             Image(systemName: "folder.badge.questionmark")
                                 .themedFont(.title2)
                                 .foregroundStyle(.appSecondary)
+                                .accessibilityHidden(true)
                             Text("No additional model scan folders configured.", bundle: .module)
                                 .themedFont(.small)
                                 .foregroundStyle(.appSecondary)
@@ -53,40 +56,7 @@ struct CustomModelFoldersSectionView: View {
                     }
                 } else {
                     ForEach(model.customModelDirectories, id: \.self) { dir in
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder")
-                                .foregroundStyle(.appSecondary)
-                            Text(dir)
-                                .themedCode(.small)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer()
-
-                            let found = scannedCounts[dir] ?? 0
-                            Text("\(found) model\(found == 1 ? "" : "s")", bundle: .module)
-                                .themedFont(.tiny)
-                                .foregroundStyle(.appSecondary)
-
-                            Button {
-                                ModelStorageManager.revealInFinder(path: dir)
-                            } label: {
-                                Image(systemName: "arrow.up.right.square")
-                            }
-                            .buttonStyle(.plain)
-                            .help(Text("Reveal in Finder", bundle: .module))
-
-                            Button {
-                                removeCustomFolder(dir)
-                            } label: {
-                                Image(systemName: "trash")
-                                    .foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Remove this folder from scan list")
-                        }
-                        .padding(8)
-                        .background(.appSurface)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        folderRow(dir)
                     }
                 }
 
@@ -94,14 +64,42 @@ struct CustomModelFoldersSectionView: View {
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
-            .padding(14)
-            .background(.appPage)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
+            .modelsSettingsCard()
         }
         .task(id: model.customModelDirectories) {
             await rescanCounts()
         }
+    }
+
+    private func folderRow(_ dir: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder")
+                .foregroundStyle(.appSecondary)
+                .accessibilityHidden(true)
+            SettingsPathText(dir)
+            Spacer()
+
+            // A count label rather than a plural sentence: the catalog
+            // carries no plural variants for this key.
+            Text("Models: \(scannedCounts[dir] ?? 0)", bundle: .module)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
+                .fixedSize()
+
+            AppIconButton("arrow.up.right.square", label: Text("Reveal in Finder", bundle: .module)) {
+                ModelStorageManager.revealInFinder(path: dir)
+            }
+            .appAction(.quiet, size: .small)
+
+            AppIconButton("trash", label: Text("Remove this folder from scan list", bundle: .module), role: .destructive) {
+                removeCustomFolder(dir)
+            }
+            .appAction(.quiet, size: .small)
+            .foregroundStyle(.red)
+        }
+        .padding(8)
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
     }
 
     /// Walks off the main actor: a folder on an external or network drive can
@@ -137,8 +135,8 @@ struct CustomModelFoldersSectionView: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Add Scan Folder"
-        panel.message = "Select a folder containing models to scan"
+        panel.prompt = AppStrings.localized("Add Scan Folder")
+        panel.message = AppStrings.localized("Select a folder containing models to scan")
 
         if panel.runModal() == .OK, let url = panel.url {
             let path = url.path
@@ -146,7 +144,7 @@ struct CustomModelFoldersSectionView: View {
                 model.customModelDirectories.append(path)
                 model.persistSettings()
                 model.refreshModels()
-                model.showToast("Added model scan folder: \(url.lastPathComponent)", style: .success)
+                model.showToast(AppStrings.localized("Added model scan folder: \(url.lastPathComponent)"), style: .success)
             }
         }
     }
@@ -155,6 +153,6 @@ struct CustomModelFoldersSectionView: View {
         model.customModelDirectories.removeAll { $0 == folder }
         model.persistSettings()
         model.refreshModels()
-        model.showToast("Removed model scan folder", style: .info)
+        model.showToast(AppStrings.localized("Removed model scan folder"), style: .info)
     }
 }

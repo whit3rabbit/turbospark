@@ -6,6 +6,9 @@ import SwiftUI
 /// The toggle is the ONLY writer of `model.memoryEnabled`; its `didSet`
 /// re-points `MemoryStore.shared.isModelEnabled`, which the tool catalog and
 /// both prompt assemblers read.
+// Isolated explicitly: its helpers call each other, and only `body` is
+// isolated by the protocol on the macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct MemorySettingsPaneView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
@@ -31,23 +34,14 @@ struct MemorySettingsPaneView: View {
         .padding(SettingsLayout.formInsets)
         .onAppear { reloadLedger() }
         .sheet(item: $editingClaim) { claim in
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Edit Memory", bundle: .module).themedFont(.title3)
-                TextEditor(text: $draftText)
-                    .frame(minWidth: 520, minHeight: 220)
-                HStack {
-                    Button { editingClaim = nil } label: { Text("Cancel", bundle: .module) }
-                    Spacer()
-                    Button {
-                        // Keep the sheet (and the draft) open when the edit fails.
-                        if perform({ try MemoryLedgerStore.shared.edit(claim.id, text: draftText) }) {
-                            editingClaim = nil
-                        }
-                    } label: { Text("Save", bundle: .module) }
-                    .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+            MemoryEditSheet(draftText: $draftText) {
+                // Keep the sheet (and the draft) open when the edit fails.
+                let saved = perform({ try MemoryLedgerStore.shared.edit(claim.id, text: draftText) })
+                if saved { editingClaim = nil }
+                return saved
+            } onCancel: {
+                editingClaim = nil
             }
-            .padding(20)
         }
     }
 
@@ -90,23 +84,24 @@ struct MemorySettingsPaneView: View {
 
     private var managerSection: some View {
         Section(header: Text("Memory Manager (\(ledgerState.claims.filter { $0.status == .pending }.count) pending)", bundle: .module)) {
-            HStack {
-                Picker("Scope", selection: $scopeSelection) {
+            HStack(spacing: AppMetrics.actionSpacing) {
+                Picker(selection: $scopeSelection) {
                     Text("Profile", bundle: .module).tag("profile")
                     if selectedProjectRoot != nil {
                         Text("This Project", bundle: .module).tag("project")
                     }
-                }
+                } label: { Text("Scope", bundle: .module) }
                 .pickerStyle(.segmented)
-                Picker("Status", selection: $statusSelection) {
+                Picker(selection: $statusSelection) {
                     Text("All", bundle: .module).tag("all")
                     ForEach(MemoryClaimStatus.allCases, id: \.rawValue) { status in
-                        Text(verbatim: status.rawValue.capitalized).tag(status.rawValue)
+                        MemoryClaimText.status(status).tag(status.rawValue)
                     }
-                }
+                } label: { Text("Status", bundle: .module) }
                 Button { reloadLedger() } label: { Text("Refresh", bundle: .module) }
+                    .appAction(.secondary, size: .small)
             }
-            TextField("Search memories", text: $searchText)
+            AppSearchField(text: $searchText, prompt: Text("Search memories...", bundle: .module), maxWidth: .infinity)
             if let managerError {
                 Text(verbatim: managerError).foregroundStyle(.red)
             }
@@ -115,86 +110,109 @@ struct MemorySettingsPaneView: View {
                     .foregroundStyle(.appSecondary)
             }
             ForEach(visibleClaims) { claim in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(verbatim: claim.kind.capitalized).font(theme.ui(.small, weight: .semibold))
-                        Text(verbatim: claim.status.rawValue)
-                            .font(theme.ui(.small)).foregroundStyle(.appSecondary)
-                        Spacer()
-                        Text(verbatim: String(claim.id.uuidString.prefix(8)))
-                            .font(theme.code(.small)).foregroundStyle(.appSecondary)
-                    }
-                    Text(verbatim: claim.text.isEmpty ? "(forgotten)" : claim.text)
-                        .textSelection(.enabled)
-                    Text(verbatim: "Evidence: \(claim.confidence)")
-                        .font(theme.ui(.small)).foregroundStyle(.appSecondary)
-                    ForEach(claim.evidence) { evidence in
-                        HStack {
-                            Text(verbatim: "\"\(evidence.quote)\"")
-                                .font(theme.ui(.small)).textSelection(.enabled)
-                            Button {
-                                model.selectChat(id: evidence.chatID)
-                                Task { @MainActor in
-                                    await Task.yield()
-                                    model.turnNavigationTargetID = evidence.messageID
-                                    model.turnNavigationToken += 1
-                                }
-                            } label: { Text("Open Source Message", bundle: .module) }
-                            .disabled(!model.chats.contains(where: { $0.id == evidence.chatID }))
-                        }
-                    }
-                    HStack {
-                        if claim.status == .pending || claim.status == .legacy {
-                            Button {
-                                perform { try MemoryLedgerStore.shared.approve(claim.id) }
-                            } label: { Text("Approve", bundle: .module) }
-                            let replacements = ledgerState.claims.filter {
-                                $0.scope == claim.scope && $0.status == .active && $0.id != claim.id
-                            }
-                            if !replacements.isEmpty {
-                                Menu {
-                                    ForEach(replacements) { existing in
-                                        Button("Replace \(String(existing.text.prefix(48)))") {
-                                            perform { try MemoryLedgerStore.shared.approve(
-                                                claim.id, supersedes: existing.id) }
-                                        }
-                                        Button("Merge with \(String(existing.text.prefix(48)))") {
-                                            perform { try MemoryLedgerStore.shared.approve(
-                                                claim.id,
-                                                text: existing.text + "\n" + claim.text,
-                                                supersedes: existing.id) }
-                                        }
-                                    }
-                                } label: { Text("Merge or Replace", bundle: .module) }
-                            }
-                        }
-                        if claim.status == .pending {
-                            Button {
-                                perform { try MemoryLedgerStore.shared.dismiss(claim.id) }
-                            } label: { Text("Dismiss", bundle: .module) }
-                        }
-                        if claim.status == .active {
-                            Button {
-                                draftText = claim.text
-                                editingClaim = claim
-                            } label: { Text("Edit", bundle: .module) }
-                            Button(role: .destructive) {
-                                perform { try MemoryLedgerStore.shared.forget(claim.id) }
-                            } label: { Text("Forget", bundle: .module) }
-                        }
-                    }
-                }
-                .padding(.vertical, 5)
+                claimRow(claim)
             }
             Text("Forgetting removes this profile's memory records and future exports. Existing external backups must be deleted separately. Original chat messages remain visible in chat history.", bundle: .module)
                 .font(theme.ui(.small)).foregroundStyle(.appSecondary)
-            Text(verbatim: "Base prompt preview: \(promptPreview)")
+            // The label is UI; the preview after it is the prompt text the
+            // model receives, which is never translated.
+            Text("Base prompt preview: \(promptPreview)", bundle: .module)
                 .font(theme.code(.small)).textSelection(.enabled)
         }
     }
 
+    private func claimRow(_ claim: MemoryClaim) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                MemoryClaimText.kind(claim.kind).font(theme.ui(.small, weight: .semibold))
+                MemoryClaimText.status(claim.status)
+                    .font(theme.ui(.small)).foregroundStyle(.appSecondary)
+                Spacer()
+                Text(verbatim: String(claim.id.uuidString.prefix(8)))
+                    .font(theme.code(.small)).foregroundStyle(.appSecondary)
+            }
+            Group {
+                if claim.text.isEmpty {
+                    Text("(forgotten)", bundle: .module)
+                } else {
+                    Text(verbatim: claim.text)
+                }
+            }
+            .textSelection(.enabled)
+            Text("Evidence: \(MemoryClaimText.confidence(claim.confidence))", bundle: .module)
+                .font(theme.ui(.small)).foregroundStyle(.appSecondary)
+            ForEach(claim.evidence) { evidence in
+                HStack {
+                    Text(verbatim: "\"\(evidence.quote)\"")
+                        .font(theme.ui(.small)).textSelection(.enabled)
+                    Button {
+                        model.selectChat(id: evidence.chatID)
+                        Task { @MainActor in
+                            await Task.yield()
+                            model.turnNavigationTargetID = evidence.messageID
+                            model.turnNavigationToken += 1
+                        }
+                    } label: { Text("Open Source Message", bundle: .module) }
+                    .appAction(.quiet, size: .small)
+                    .disabled(!model.chats.contains(where: { $0.id == evidence.chatID }))
+                }
+            }
+            claimActions(claim)
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func claimActions(_ claim: MemoryClaim) -> some View {
+        HStack(spacing: AppMetrics.actionSpacing) {
+            if claim.status == .pending || claim.status == .legacy {
+                Button {
+                    perform { try MemoryLedgerStore.shared.approve(claim.id) }
+                } label: { Text("Approve", bundle: .module) }
+                .appAction(.secondary, size: .small)
+                let replacements = ledgerState.claims.filter {
+                    $0.scope == claim.scope && $0.status == .active && $0.id != claim.id
+                }
+                if !replacements.isEmpty {
+                    Menu {
+                        ForEach(replacements) { existing in
+                            let excerpt = String(existing.text.prefix(48))
+                            Button {
+                                perform { try MemoryLedgerStore.shared.approve(
+                                    claim.id, supersedes: existing.id) }
+                            } label: { Text("Replace \(excerpt)", bundle: .module) }
+                            Button {
+                                perform { try MemoryLedgerStore.shared.approve(
+                                    claim.id,
+                                    text: existing.text + "\n" + claim.text,
+                                    supersedes: existing.id) }
+                            } label: { Text("Merge with \(excerpt)", bundle: .module) }
+                        }
+                    } label: { Text("Merge or Replace", bundle: .module) }
+                    .appMenuAction(size: .small)
+                }
+            }
+            if claim.status == .pending {
+                Button {
+                    perform { try MemoryLedgerStore.shared.dismiss(claim.id) }
+                } label: { Text("Dismiss", bundle: .module) }
+                .appAction(.quiet, size: .small)
+            }
+            if claim.status == .active {
+                Button {
+                    draftText = claim.text
+                    editingClaim = claim
+                } label: { Text("Edit", bundle: .module) }
+                .appAction(.secondary, size: .small)
+                Button(role: .destructive) {
+                    perform { try MemoryLedgerStore.shared.forget(claim.id) }
+                } label: { Text("Forget", bundle: .module) }
+                .appAction(.destructive, size: .small)
+            }
+        }
+    }
+
     private var promptPreview: String {
-        guard model.memoryEnabled else { return "Model memory is disabled." }
+        guard model.memoryEnabled else { return AppStrings.localized("Model memory is disabled.") }
         let profile = MemoryPromptBuilder.profileSection(approvedOnly: true)
         guard let root = selectedProjectRoot else { return profile }
         return profile + "\n\n" + MemoryPromptBuilder.section(
@@ -217,6 +235,7 @@ struct MemorySettingsPaneView: View {
                         Button {
                             perform { try MemoryLedgerStore.shared.approveReflection(reflection.id) }
                         } label: { Text("Activate Guidance", bundle: .module) }
+                        .appAction(.secondary, size: .small)
                     }
                 }
             }
@@ -228,7 +247,7 @@ struct MemorySettingsPaneView: View {
             HStack(alignment: .center, spacing: 18) {
                 TSIdlingMemorySparkView(size: 80)
                     .opacity(model.memoryEnabled ? 1.0 : 0.65)
-                    .animation(TSMotion.select, value: model.memoryEnabled)
+                    .tsAnimation(TSMotion.select, value: model.memoryEnabled)
 
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle(isOn: Binding(
@@ -266,18 +285,23 @@ struct MemorySettingsPaneView: View {
             Text("Claims and evidence are stored in the encrypted profile. Profile export includes the ledger and readable Markdown projections.", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
-            TextField("Arctic embedding model path or alias", text: $model.memoryEmbeddingModel)
-                .onSubmit { model.persistSettingsDebounced() }
+            TextField(text: $model.memoryEmbeddingModel) {
+                Text("Arctic embedding model path or alias", bundle: .module)
+            }
+            .onSubmit { model.persistSettingsDebounced() }
             Text("Embeddings are optional. Approved claims remain searchable without a model.", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
             HStack {
-                Label(
-                    MemoryLedgerStore.shared.hasEmbeddingIndex(modelPath: model.memoryEmbeddingModel)
-                        ? "Index: \(model.memoryEmbeddingModel)"
-                        : "Index: not built",
-                    systemImage: "circle"
-                )
+                Label {
+                    if MemoryLedgerStore.shared.hasEmbeddingIndex(modelPath: model.memoryEmbeddingModel) {
+                        Text("Index: \(model.memoryEmbeddingModel)", bundle: .module)
+                    } else {
+                        Text("Index: not built", bundle: .module)
+                    }
+                } icon: {
+                    Image(systemName: "circle")
+                }
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
                 Spacer()
@@ -290,10 +314,12 @@ struct MemorySettingsPaneView: View {
                         } catch { managerError = error.localizedDescription }
                     }
                 } label: { Text("Rebuild Index", bundle: .module) }
+                .appAction(.secondary, size: .small)
                 .disabled(model.memoryEmbeddingModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button {
                     perform { try MemoryLedgerStore.shared.clearEmbeddings() }
                 } label: { Text("Clear Index", bundle: .module) }
+                .appAction(.secondary, size: .small)
                 .disabled(!MemoryLedgerStore.shared.hasEmbeddingIndex(modelPath: model.memoryEmbeddingModel))
             }
         }

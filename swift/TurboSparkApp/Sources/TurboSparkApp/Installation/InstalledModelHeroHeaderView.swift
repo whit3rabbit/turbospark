@@ -66,7 +66,7 @@ struct InstalledModelHeroHeaderView: View {
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
 
-                    Text(descriptor.storageSource.shortLabel)
+                    Text(LocalizedStringKey(descriptor.storageSource.shortLabel), bundle: .module)
                         .themedFont(.small, weight: .medium)
                         .foregroundStyle(.appSecondary)
                 }
@@ -83,9 +83,10 @@ struct InstalledModelHeroHeaderView: View {
                             .themedCode(.small)
                             .foregroundStyle(Color.accentColor)
                         }
-                        .help("Open \(installedModel.repo) on Hugging Face: \(url.absoluteString)")
-                        .accessibilityLabel("Hugging Face repository \(installedModel.repo)")
-                        .accessibilityHint("Opens this model's page on Hugging Face in your web browser")
+                        .help(Text("Open \(installedModel.repo) on Hugging Face: \(url.absoluteString)", bundle: .module))
+                        .accessibilityLabel(
+                            Text("Hugging Face source", bundle: .module)
+                                + Text(verbatim: " \(installedModel.repo)"))
                         .accessibilityAddTraits(.isLink)
                     } else {
                         Text(installedModel.repo)
@@ -128,7 +129,7 @@ struct InstalledModelHeroHeaderView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3.5)
-            .background(Color(nsColor: .quaternaryLabelColor).opacity(0.4), in: Capsule())
+            .background(.appElevated, in: Capsule())
             .foregroundStyle(.appSecondary)
         }
     }

@@ -69,30 +69,59 @@ public struct McpServerFormValidation: Equatable, Sendable {
         return url
     }
 
-    /// Why Save is refused, or nil when it is allowed.
-    public var message: String? {
+    private enum Refusal {
+        case missingName
+        case duplicateName(String)
+        case missingCommand
+        case invalidURL
+    }
+
+    private var refusal: Refusal? {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedName.isEmpty {
-            return "A server name is required."
+            return .missingName
         }
         // Name is the identity key in `AppToolRegistry.executeMcpCall` and in
         // `AppToolPermissionEngine.evaluate`, both of which resolve with
         // `first(where:)`. A duplicate is not cosmetic: the second server can
         // never be dialled, and the approval card cannot tell them apart.
         if McpServerConfig.nameIsTaken(trimmedName, among: existingNames) {
-            return "A server named '\(trimmedName)' already exists."
+            return .duplicateName(trimmedName)
         }
         switch transport {
         case .stdio:
             if command.trimmingCharacters(in: .whitespaces).isEmpty {
-                return "A command is required."
+                return .missingCommand
             }
         case .sse:
             if parsedEndpointURL == nil {
-                return "A valid server URL is required."
+                return .invalidURL
             }
         }
         return nil
+    }
+
+    /// Why Save is refused, or nil when it is allowed. English, and pinned by
+    /// tests; the editor shows `localizedMessage`.
+    public var message: String? {
+        switch refusal {
+        case .missingName: return "A server name is required."
+        case .duplicateName(let name): return "A server named '\(name)' already exists."
+        case .missingCommand: return "A command is required."
+        case .invalidURL: return "A valid server URL is required."
+        case nil: return nil
+        }
+    }
+
+    /// The same refusal in the UI language, for the editor footer.
+    public var localizedMessage: String? {
+        switch refusal {
+        case .missingName: return AppStrings.localized("A server name is required.")
+        case .duplicateName(let name): return AppStrings.localized("A server named '\(name)' already exists.")
+        case .missingCommand: return AppStrings.localized("A command is required.")
+        case .invalidURL: return AppStrings.localized("A valid server URL is required.")
+        case nil: return nil
+        }
     }
 
     public var isValid: Bool { message == nil }

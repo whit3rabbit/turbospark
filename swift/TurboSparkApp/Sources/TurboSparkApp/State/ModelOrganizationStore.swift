@@ -286,7 +286,7 @@ public final class ModelOrganizationStore: ObservableObject {
 
     private func loadExclusions() {
         let decoded = AppJSONStore.load(
-            [String].self, from: Self.exclusionsFileURL, label: "scan exclusions")
+            [String].self, from: Self.exclusionsFileURL, label: "Scan exclusions")
         excludedScanPaths = Set(decoded ?? [])
     }
 
@@ -294,7 +294,7 @@ public final class ModelOrganizationStore: ObservableObject {
         let failuresBefore = AppJSONStore.readFailureCount
         if let decoded = AppJSONStore.load(
             [String: ModelCustomMetadata].self, from: Self.fileURL,
-            label: "model organization metadata")
+            label: "Model organization metadata")
         {
             self.metadataByModelKey = decoded
             return

@@ -22,7 +22,7 @@ struct ModelTechnicalSpecsCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: visuals.iconSystemName)
                     .foregroundStyle(visuals.accentColor)
-                    .help("\(visuals.family) architecture specifications")
+                    .help(Text("\(visuals.family) architecture specifications", bundle: .module))
                 Text("Technical Overview", bundle: .module)
                     .themedFont(.base, weight: .semibold)
             }
@@ -41,16 +41,16 @@ struct ModelTechnicalSpecsCardView: View {
                         Button {
                             ModelStorageManager.revealInFinder(path: inst.path)
                         } label: {
-                            Text(inst.path)
+                            Text(verbatim: inst.path)
                                 .themedCode(.small)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .foregroundStyle(Color.accentColor)
                         }
                         .buttonStyle(.plain)
-                        .help("Reveal in Finder: \(inst.path)")
-                        .accessibilityLabel("Installed path: \(inst.path)")
-                        .accessibilityHint("Opens Finder to show model directory")
+                        .help(Text("Reveal in Finder", bundle: .module) + Text(verbatim: ": \(inst.path)"))
+                        .accessibilityLabel(Text("Installed Path", bundle: .module) + Text(verbatim: ": \(inst.path)"))
+                        .accessibilityHint(Text("Reveal in Finder", bundle: .module))
                         .accessibilityAddTraits(.isLink)
                     }
                     specRow(label: "Installed On", value: inst.installedOn)
@@ -60,13 +60,14 @@ struct ModelTechnicalSpecsCardView: View {
         .modelCardStyle()
     }
 
-    private func specRow(label: String, value: String) -> some View {
+    /// `label` is a catalog key; `value` is data and renders as written.
+    private func specRow(label: LocalizedStringKey, value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(label)
+            Text(label, bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             Spacer(minLength: 16)
-            Text(value)
+            Text(verbatim: value)
                 .themedCode(.small)
                 .lineLimit(1)
                 .truncationMode(.middle)

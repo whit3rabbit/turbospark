@@ -1,6 +1,9 @@
 import SwiftUI
 
 /// Shows known local model libraries before adding any scan roots.
+// Isolated explicitly: its helpers call each other, and only `body` is
+// isolated by the protocol on the macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct ModelProviderDiscoverySheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -36,16 +39,18 @@ struct ModelProviderDiscoverySheet: View {
                 .frame(maxHeight: 300)
             }
 
-            HStack {
+            HStack(spacing: AppMetrics.actionSpacing) {
                 Spacer()
                 Button(role: .cancel) { dismiss() } label: {
                     Text("Cancel", bundle: .module)
                 }
+                .keyboardShortcut(.cancelAction)
                 Button { addSelected() } label: {
                     Text("Add Selected", bundle: .module)
                 }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isScanning || selectedIDs.isEmpty)
+                .appAction(.primary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(isScanning || selectedIDs.isEmpty)
             }
         }
         .padding(22)
@@ -62,17 +67,15 @@ struct ModelProviderDiscoverySheet: View {
             })) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
-                    Text(candidate.provider.displayName)
+                    // Provider names are product names.
+                    Text(verbatim: candidate.provider.displayName)
                         .themedFont(.small, weight: .semibold)
                     Spacer()
-                    Text(candidate.statusText)
+                    statusText(candidate)
                         .themedFont(.tiny)
                         .foregroundStyle(candidate.supportedModelCount > 0 ? .green : .orange)
                 }
-                Text(candidate.path)
-                    .themedCode(.tiny)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                SettingsPathText(candidate.path, size: .tiny)
                 if candidate.provider == .ollama && candidate.supportedModelCount == 0 {
                     Text("Ollama's blob store is not directly importable; no files will be copied.", bundle: .module)
                         .themedFont(.tiny)
@@ -84,6 +87,18 @@ struct ModelProviderDiscoverySheet: View {
         .padding(9)
         .background(.appSurface, in: RoundedRectangle(cornerRadius: 7))
         .disabled(candidate.supportedModelCount == 0 && candidate.provider != .lmStudio)
+    }
+
+    /// Mirrors `ModelProviderCandidate.statusText`, whose English string is
+    /// built in the model layer; the sheet renders it from the catalog.
+    private func statusText(_ candidate: ModelProviderCandidate) -> Text {
+        if candidate.supportedModelCount > 0 {
+            return Text("Supported models: \(candidate.supportedModelCount)", bundle: .module)
+        }
+        if candidate.unsupportedArtifactCount > 0 {
+            return Text("Contains unsupported provider artifacts", bundle: .module)
+        }
+        return Text("No directly runnable models found", bundle: .module)
     }
 
     private func scan() {
@@ -115,7 +130,7 @@ struct ModelProviderDiscoverySheet: View {
         }
         model.persistSettings()
         model.refreshModels()
-        model.showToast("Added detected model libraries", style: .success)
+        model.showToast(AppStrings.localized("Added detected model libraries"), style: .success)
         dismiss()
     }
 }

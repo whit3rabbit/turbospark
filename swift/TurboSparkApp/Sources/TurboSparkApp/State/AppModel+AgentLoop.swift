@@ -55,7 +55,7 @@ extension AppModel {
         if verdict.preventContinuation {
             stopHookReentryCount = 0
             if let reason = verdict.continuationStopReason, !reason.isEmpty {
-                showToast("Turn stopped by hook: \(reason)", style: .warning)
+                showToast(AppStrings.localized("Turn stopped by hook: \(reason)"), style: .warning)
             }
             return false
         }
@@ -174,7 +174,7 @@ extension AppModel {
                 call, extra: extra, reason: reason, fullContent: fullContent,
                 reasoning: reasoning, chatID: chatID, currentStep: currentStep,
                 project: project, continuesLoop: false)
-            showToast("Turn stopped by hook: \(reason)", style: .warning)
+            showToast(AppStrings.localized("Turn stopped by hook: \(reason)"), style: .warning)
             return
         }
 
@@ -405,7 +405,7 @@ extension AppModel {
                     call, extra: extra, reason: reason, fullContent: fullContent,
                     reasoning: reasoning, chatID: chatID, currentStep: currentStep,
                     project: decisionProject, continuesLoop: false)
-                showToast("Turn stopped by hook: \(reason)", style: .warning)
+                showToast(AppStrings.localized("Turn stopped by hook: \(reason)"), style: .warning)
                 return
             }
 
@@ -525,7 +525,7 @@ extension AppModel {
         // the turn ends here with the reason shown to the user.
         if let reason = executed.stopReason {
             if !reason.isEmpty {
-                showToast("Turn stopped by hook: \(reason)", style: .warning)
+                showToast(AppStrings.localized("Turn stopped by hook: \(reason)"), style: .warning)
             }
             return
         }
@@ -644,7 +644,7 @@ extension AppModel {
                     executed: [], executedResults: [],
                     denied: calls.map { ($0, reason, false) },
                     fullContent: fullContent, reasoning: reasoning, chatID: chatID)
-                showToast("Turn stopped by hook: \(reason)", style: .warning)
+                showToast(AppStrings.localized("Turn stopped by hook: \(reason)"), style: .warning)
                 return
             }
             var updated = call
@@ -912,7 +912,7 @@ extension AppModel {
         }
 
         if let reason = stopReason {
-            showToast("Turn stopped by hook: \(reason)", style: .warning)
+            showToast(AppStrings.localized("Turn stopped by hook: \(reason)"), style: .warning)
             return
         }
         await continueOrStop(afterStep: currentStep, chatID: chatID, project: project)

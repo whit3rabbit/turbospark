@@ -435,7 +435,10 @@ final class LocalizationParityTests: XCTestCase {
                 source[..<source.index(source.startIndex, offsetBy: min(offset, source.count))]
                     .components(separatedBy: "\n").count
             }
-            for trigger in ["Text(", "LocalizedStringKey("] {
+            // `AppStrings.localized` takes no `bundle:` argument: it IS the
+            // bundled lookup for String values (toasts, alert titles), so its
+            // literal needs a key exactly like a bundled `Text` does.
+            for trigger in ["Text(", "LocalizedStringKey(", "AppStrings.localized("] {
                 var searchRange = source.startIndex..<source.endIndex
                 while let found = source.range(of: trigger, range: searchRange) {
                     let offset = source.distance(from: source.startIndex, to: found.lowerBound)
@@ -446,7 +449,7 @@ final class LocalizationParityTests: XCTestCase {
                     guard let body = Self.callBody(
                         Array(source), from: offset + trigger.count - 1)
                     else { continue }
-                    guard body.contains("bundle:") else { continue }
+                    guard trigger == "AppStrings.localized(" || body.contains("bundle:") else { continue }
                     guard let literal = Self.leadingLiteral(body) else { continue }
                     // A literal carrying an interpolation resolves to a format
                     // string, not to itself; see the note above.
@@ -464,6 +467,166 @@ final class LocalizationParityTests: XCTestCase {
                 + "every language; add the key with all 21 translations, or use "
                 + "`Text(verbatim:)` when there is nothing to translate):\n"
                 + problems.joined(separator: "\n"))
+    }
+
+    // MARK: 8. Key-only initializers outside Text never take a bare literal
+
+    /// The APIs besides `Text` whose string-literal overload is a
+    /// `LocalizedStringKey` with no `bundle:` parameter. Each resolves its key
+    /// against `Bundle.main`, which carries no strings in a SwiftPM build, so
+    /// a literal passed straight in renders English under every language --
+    /// and for `.accessibilityLabel` and `.help` it is ALSO what VoiceOver
+    /// speaks and the tooltip shows. The bundled spellings are a `Text`
+    /// argument (`.help(Text(_, bundle: .module))`) or a `label:` closure.
+    ///
+    /// Leading-dot triggers are modifiers and always count; bare triggers must
+    /// not follow an identifier character or a dot, so `AppButton(` or
+    /// `Foo.Label(` are not mistaken for the SwiftUI initializers.
+    private static let keyOnlyTriggers = [
+        ".help(", ".accessibilityLabel(", ".accessibilityHint(", ".accessibilityValue(",
+        "TextField(", "SecureField(", "Button(", "Toggle(", "Picker(", "Label(",
+        "Section(", "Stepper(", "Link(", "Menu(", ".confirmationDialog(", ".alert(",
+        ".navigationTitle(", "LabeledContent(", "GroupBox(", "DisclosureGroup(",
+        "ProgressView(", ".badge(", "CommandMenu(", "ControlGroup(",
+    ]
+
+    /// Gate 5 covered only `Text(`; the UI audit of 2026-10-11 found the
+    /// rest of the surface -- tooltips, VoiceOver names, placeholders, dialog
+    /// titles, `Toggle("")` with no name at all -- English or empty under
+    /// every language. An empty literal is a violation too: it is a control
+    /// with no accessible name, which `labelsHidden()` on a real label fixes.
+    func testKeyOnlyInitializersDoNotTakeBareLiterals() throws {
+        var problems: [String] = []
+        let enumerator = FileManager.default.enumerator(
+            at: sourcesRoot, includingPropertiesForKeys: nil)
+        while let url = enumerator?.nextObject() as? URL {
+            guard url.pathExtension == "swift" else { continue }
+            let source = try String(contentsOf: url, encoding: .utf8)
+            let characters = Array(source)
+            let lineOf: (Int) -> Int = { offset in
+                source[..<source.index(source.startIndex, offsetBy: min(offset, source.count))]
+                    .components(separatedBy: "\n").count
+            }
+            for trigger in Self.keyOnlyTriggers {
+                var searchRange = source.startIndex..<source.endIndex
+                while let found = source.range(of: trigger, range: searchRange) {
+                    let offset = source.distance(from: source.startIndex, to: found.lowerBound)
+                    searchRange = found.upperBound..<source.endIndex
+                    if !trigger.hasPrefix(".") {
+                        let previous = offset > 0 ? characters[offset - 1] : " "
+                        if previous.isLetter || previous.isNumber || previous == "_" || previous == "." {
+                            continue
+                        }
+                    }
+                    guard let body = Self.callBody(
+                        characters, from: offset + trigger.count - 1)
+                    else { continue }
+                    let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard trimmed.hasPrefix("\"") else { continue }
+                    let preview = trimmed.split(whereSeparator: \.isNewline).joined(separator: " ")
+                    problems.append("\(url.lastPathComponent):\(lineOf(offset)) "
+                        + "\(trigger) takes a bare literal -> \(preview.prefix(60))")
+                }
+            }
+        }
+        XCTAssertTrue(
+            problems.isEmpty,
+            "key-only initializers with a bare literal (pass `Text(\"...\", bundle: .module)` "
+                + "or use the `label:` closure form, and add the catalog key):\n"
+                + problems.joined(separator: "\n"))
+    }
+
+    // MARK: 9. Enum-backed display strings are catalog keys
+
+    /// Fixed English held in an enum and rendered through
+    /// `Text(LocalizedStringKey(value), bundle: .module)` is invisible to the
+    /// source scans: the call site passes a variable, not a literal. Nine
+    /// Settings tab titles and every "Applies ..." timing hint shipped with no
+    /// key that way, English under every language beside translated
+    /// neighbors (UI audit 2026-10-11). Each enum the UI renders like this is
+    /// listed here, so a new case without a key reddens instead of shipping.
+    @MainActor
+    func testEnumBackedDisplayStringsAreCatalogKeys() throws {
+        let strings = try loadCatalogStrings()
+        var values: [(source: String, value: String)] = []
+        for tab in AppSettingsView.SettingsTab.allCases {
+            values.append(("SettingsTab.title", tab.title))
+            values.append(("SettingsTab.category", tab.category))
+        }
+        for timing in [SettingsApplicationTiming.immediate, .nextTurn, .modelReload, .relaunch, .action] {
+            values.append(("SettingsApplicationTiming", timing.rawValue))
+        }
+        for section in AppModel.AppNavigationSection.allCases {
+            values.append(("AppNavigationSection.title", section.title))
+        }
+        for mode in AppModel.AppInteractionMode.allCases {
+            values.append(("AppInteractionMode.title", mode.title))
+        }
+        for mode in StatusBarViewMode.allCases {
+            values.append(("StatusBarViewMode.label", mode.label))
+        }
+        for appearance in AppAppearance.allCases {
+            values.append(("AppAppearance.label", appearance.label))
+        }
+        for size in AppTextSize.allCases {
+            values.append(("AppTextSize.label", size.label))
+        }
+        for section in KeyboardShortcutCatalog.sections {
+            values.append(("KeyboardShortcutSection.title", section.title))
+            for row in section.rows {
+                values.append(("KeyboardShortcutRow.label", row.label))
+            }
+        }
+        // The composer's Add menu renders each command summary as a key.
+        for command in BuiltInSlashCommand.all {
+            values.append(("BuiltInSlashCommand.summary", command.summary))
+        }
+        // Settings search renders each generated entry's title as a key.
+        for entry in SettingsControlCatalog.entries {
+            values.append(("SettingsControlCatalog.title", entry.title))
+        }
+        let missing = values.filter { strings[$0.value] == nil }
+            .map { "\($0.source): \($0.value)" }
+        XCTAssertTrue(
+            missing.isEmpty,
+            "enum-backed display strings with no catalog key (add each with all "
+                + "21 translations):\n" + missing.joined(separator: "\n"))
+    }
+
+    // MARK: 10. Non-Latin scripts are not English or transliterated
+
+    /// Gate 1 checks that every translation is non-empty, which an English
+    /// paraphrase or a Latin transliteration satisfies. Both shipped: the
+    /// Codemode caption read "Batch-executes MCP tool calls..." in Japanese
+    /// and Russian, and eight Russian image-model strings were transliterated
+    /// ("Vse podobrannye varianty"). For a language written in another
+    /// script, a value of three or more ASCII words is one of those two
+    /// defects. Format specifiers are removed before counting, and an entry
+    /// identical to its key (a file name such as SOUL.md) is allowed.
+    func testNonLatinScriptTranslationsAreNotLatinProse() throws {
+        let strings = try loadCatalogStrings()
+        let nonLatin = ["ar", "he", "hi", "ja", "ko", "ru", "uk", "zh-Hans", "zh-Hant"]
+        var problems: [String] = []
+        for (key, node) in strings {
+            guard let localizations = (node as? [String: Any])?["localizations"] as? [String: Any]
+            else { continue }
+            for language in nonLatin {
+                guard let entry = localizations[language] else { continue }
+                for unit in stringUnits(entry) where unit.value != key {
+                    let stripped = unit.value.replacingOccurrences(
+                        of: #"%(\d+\$)?(lld|ld|lf|d|@|f)"#, with: "", options: .regularExpression)
+                    guard stripped.unicodeScalars.allSatisfy(\.isASCII) else { continue }
+                    let words = stripped.split(whereSeparator: { !$0.isLetter }).filter { $0.count >= 3 }
+                    if words.count >= 3 {
+                        problems.append("\(language): \(key.prefix(60)) -> \(unit.value.prefix(60))")
+                    }
+                }
+            }
+        }
+        XCTAssertTrue(
+            problems.isEmpty,
+            "translations in a non-Latin-script language that are English or transliterated:\n"
+                + problems.sorted().joined(separator: "\n"))
     }
 
     // MARK: 6. greetings.json parity

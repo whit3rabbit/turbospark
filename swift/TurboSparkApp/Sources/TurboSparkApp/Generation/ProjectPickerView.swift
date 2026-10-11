@@ -20,8 +20,14 @@ struct ProjectPickerView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "folder")
-                    Text(model.selectedProject?.name ?? String(localized: "Projects", bundle: .module))
-                        .lineLimit(1)
+                    Group {
+                        if let name = model.selectedProject?.name {
+                            Text(name)
+                        } else {
+                            Text("Projects", bundle: .module)
+                        }
+                    }
+                    .lineLimit(1)
                     Image(systemName: "chevron.down")
                 }
                 .themedFont(.small, weight: .medium)
@@ -49,9 +55,10 @@ struct ProjectPickerView: View {
 
     private var pickerContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Filter projects and tasks...", text: $searchText)
-                .textFieldStyle(.roundedBorder)
-                .themedFont(.small)
+            AppSearchField(
+                text: $searchText,
+                prompt: Text("Filter projects and tasks...", bundle: .module),
+                maxWidth: .infinity)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(model.projects.filter {

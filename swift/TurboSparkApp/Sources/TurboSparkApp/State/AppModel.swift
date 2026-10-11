@@ -1083,7 +1083,8 @@ public final class AppModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 NSWorkspace.shared.activateFileViewerSelecting([fileURL])
-                self.activeToast = AppToast(message: "Presented file: \(fileURL.lastPathComponent)", style: .info)
+                self.activeToast = AppToast(
+                    message: AppStrings.localized("Presented file: \(fileURL.lastPathComponent)"), style: .info)
             }
         }
         ArtifactRegistrar.onArtifactsProduced = { [weak self] targetChatID, files in

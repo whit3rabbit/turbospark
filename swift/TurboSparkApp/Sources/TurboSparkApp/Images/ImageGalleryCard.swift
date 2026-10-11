@@ -14,6 +14,10 @@ struct ImageGalleryCard: View {
     let reuse: () -> Void
     @State private var thumbnail: NSImage?
 
+    private var openLabel: Text {
+        selecting ? Text("Select", bundle: .module) : Text("Open image", bundle: .module)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .topTrailing) {
@@ -41,8 +45,8 @@ struct ImageGalleryCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(Text(selecting ? "Select" : "Open image", bundle: .module))
-                .accessibilityLabel(Text(selecting ? "Select" : "Open image", bundle: .module))
+                .help(openLabel)
+                .accessibilityLabel(openLabel)
                 .accessibilityValue(Text(artifact.imageRequest?.prompt ?? artifact.title))
                 .accessibilityAddTraits(selected ? .isSelected : [])
 

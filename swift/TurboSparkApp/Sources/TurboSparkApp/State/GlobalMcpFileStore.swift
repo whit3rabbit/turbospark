@@ -36,7 +36,7 @@ public enum GlobalMcpFileStore {
     /// Loads the saved global MCP servers archive from disk or returns an empty default.
     public static func load() -> GlobalMcpArchive {
         AppJSONStore.load(
-            GlobalMcpArchive.self, from: archiveFileURL, label: "global MCP server archive")
+            GlobalMcpArchive.self, from: archiveFileURL, label: "Global MCP servers")
             ?? GlobalMcpArchive.empty()
     }
 

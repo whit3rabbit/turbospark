@@ -67,7 +67,7 @@ public final class InputHistoryStore: ObservableObject {
 
     private func load() {
         guard let archive = AppJSONStore.load(
-            [InputHistoryEntry].self, from: fileURL, label: "input history")
+            [InputHistoryEntry].self, from: fileURL, label: "Input history")
         else { return }
         entries = archive
     }

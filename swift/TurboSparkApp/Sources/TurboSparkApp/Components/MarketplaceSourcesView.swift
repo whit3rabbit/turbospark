@@ -20,6 +20,7 @@ struct MarketplaceSourcesView: View {
                 Button { dismiss() } label: { Text("Done", bundle: .module) }
             }
             ExtensionScopePicker(model: model, projectID: $projectID)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text("Project sources include user sources. Removing a source keeps installed items.", bundle: .module).themedFont(.small)
             List {
                 let sources = model.marketplaceSources(kind: kind, projectID: projectID)
@@ -48,14 +49,18 @@ struct MarketplaceSourcesView: View {
                     }
                 }
             }
-            TextField("Name", text: $name)
+            TextField(text: $name, prompt: Text("Name", bundle: .module)) {
+                Text("Name", bundle: .module)
+            }
             Picker(selection: $sourceType) {
                 Text("GitHub", bundle: .module).tag("github")
                 Text("Git URL", bundle: .module).tag("git")
                 Text("JSON URL", bundle: .module).tag("url")
                 Text("Directory", bundle: .module).tag("directory")
             } label: { Text("Source type", bundle: .module) }
-            TextField("Location", text: $location)
+            TextField(text: $location, prompt: Text("Location", bundle: .module)) {
+                Text("Location", bundle: .module)
+            }
             Button { addSource() } label: { Text("Add source", bundle: .module) }
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || location.trimmingCharacters(in: .whitespaces).isEmpty)
             if let error { Text(error).foregroundStyle(.red).themedFont(.small) }
@@ -67,10 +72,10 @@ struct MarketplaceSourcesView: View {
 
     private func origin(_ name: String) -> String {
         guard let project = model.projects.first(where: { $0.id == projectID }) else {
-            return String(localized: "User", bundle: .module)
+            return AppStrings.localized("User")
         }
         return project.marketplaces.sources[kind.rawValue]?[name] == nil
-            ? String(localized: "Inherited from user", bundle: .module) : project.name
+            ? AppStrings.localized("Inherited from user") : project.name
     }
 
     private func addSource() {

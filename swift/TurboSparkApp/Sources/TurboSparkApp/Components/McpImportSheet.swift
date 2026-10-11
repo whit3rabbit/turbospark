@@ -19,6 +19,15 @@ public struct McpImportSheet: View {
         case directory = "Local Folder"
 
         public var id: String { rawValue }
+
+        /// The segment label. The raw value is the identity, never shown.
+        var title: Text {
+            switch self {
+            case .github: return Text("GitHub Repo", bundle: .module)
+            case .git: return Text("Git URL", bundle: .module)
+            case .directory: return Text("Local Folder", bundle: .module)
+            }
+        }
     }
 
     let onDismiss: () -> Void
@@ -91,8 +100,7 @@ public struct McpImportSheet: View {
             }
             Spacer()
             Button { onDismiss() } label: { Text("Close", bundle: .module) }
-                .buttonStyle(.plain)
-                .foregroundStyle(.appSecondary)
+                .appAction(.quiet)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -169,7 +177,7 @@ public struct McpImportSheet: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
-                Text(verbatim: "\(manifest.servers.count) servers")
+                Text("Servers: \(manifest.servers.count)", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
@@ -342,7 +350,7 @@ public struct McpImportSheet: View {
         entryErrors[entry.id] = nil
         let project = self.project
         guard !installToProjectScope || project != nil else {
-            entryErrors[entry.id] = String(localized: "The target project no longer exists.", bundle: .module)
+            entryErrors[entry.id] = AppStrings.localized("The target project no longer exists.")
             return
         }
         let useProjectScope = installToProjectScope && project != nil
@@ -364,7 +372,7 @@ public struct McpImportSheet: View {
             }
             installedNames.insert(entry.id)
             model.showToast(
-                "Added '\(config.name)'. It is disabled until you enable it.", style: .success)
+                AppStrings.localized("Added '\(config.name)'. It is disabled until you enable it."), style: .success)
         } catch {
             entryErrors[entry.id] = error.localizedDescription
         }

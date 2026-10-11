@@ -33,9 +33,10 @@ struct MessageVariantSwitcherView: View {
             }
             .buttonStyle(.plain)
             .disabled(position <= 1)
-            .help("Show earlier version")
+            .help(Text("Show earlier version", bundle: .module))
 
-            Text("\(position) / \(count)")
+            // A numeric readout: nothing in it to translate.
+            Text(verbatim: "\(position) / \(count)")
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
                 .monospacedDigit()
@@ -51,11 +52,24 @@ struct MessageVariantSwitcherView: View {
             }
             .buttonStyle(.plain)
             .disabled(position >= count)
-            .help("Show later version")
+            .help(Text("Show later version", bundle: .module))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Message version \(position) of \(count)")
-        .accessibilityHint("Steps between the earlier and later versions of this message")
+        .accessibilityLabel(Text("Message version \(position) of \(count)", bundle: .module))
+        .accessibilityHint(Text("Steps between the earlier and later versions of this message", bundle: .module))
+        // The children are ignored above, so the two chevrons are only
+        // reachable through this: VoiceOver's increment and decrement step
+        // the version the way the hint promises.
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                if position < count { step(1) }
+            case .decrement:
+                if position > 1 { step(-1) }
+            @unknown default:
+                break
+            }
+        }
     }
 }
 
@@ -64,7 +78,7 @@ struct MessageVariantSwitcherView: View {
 /// row untouched.
 struct MessageEditComposerView: View {
     let initialText: String
-    var saveLabel: String = "Save & rerun"
+    var saveLabel: LocalizedStringKey = "Save & rerun"
     let onSave: (String) -> Void
     let onCancel: () -> Void
 
@@ -91,13 +105,15 @@ struct MessageEditComposerView: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .focused($isFocused)
+                .accessibilityLabel(Text("Edit message text", bundle: .module))
 
             HStack(spacing: 8) {
                 Button { onCancel() } label: { Text("Cancel", bundle: .module) }
+                    .appAction(.secondary)
                     .keyboardShortcut(.cancelAction)
-                Button(saveLabel) { onSave(text) }
+                Button { onSave(text) } label: { Text(saveLabel, bundle: .module) }
+                    .appAction(.primary)
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
                     .disabled(trimmedText.isEmpty)
             }
         }
@@ -142,23 +158,18 @@ struct BranchEditSheet: View {
 
             TextEditor(text: $text)
                 .font(theme.uiFont)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 120, maxHeight: 280, alignment: .leading)
-                .padding(8)
-                .background(.appSurface.opacity(0.85))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(maxHeight: 280, alignment: .leading)
+                .appEditorSurface(minHeight: 120)
+                .accessibilityLabel(Text("Branch message text", bundle: .module))
 
             HStack {
                 Spacer()
                 Button { onCancel() } label: { Text("Cancel", bundle: .module) }
+                    .appAction(.secondary)
                     .keyboardShortcut(.cancelAction)
                 Button { onCreate(text) } label: { Text("Create branch & rerun", bundle: .module) }
+                    .appAction(.primary)
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
                     .disabled(trimmedText.isEmpty)
             }
         }

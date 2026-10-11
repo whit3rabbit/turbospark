@@ -63,10 +63,10 @@ extension AppModel {
         do {
             try manager.uninstall(pluginID: id, scope: scope.ledgerValue, projectRootURL: scope.projectRootURL)
             setPluginPreference(id: id, enabled: nil, scope: scope)
-            showToast("Removed from \(scope.label).", style: .info)
+            showToast(AppStrings.localized("Removed from \(scope.label)."), style: .info)
             return true
         } catch {
-            showToast("Uninstall failed: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Uninstall failed: \(error.localizedDescription)"), style: .error)
             return false
         }
     }

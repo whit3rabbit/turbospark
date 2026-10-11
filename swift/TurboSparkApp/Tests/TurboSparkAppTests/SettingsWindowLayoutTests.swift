@@ -1,10 +1,11 @@
 import XCTest
 @testable import TurboSparkApp
 
-/// The Settings window takes a fixed size from the visible frame (the scene
-/// ignored an ideal size and opened at the floor). These pin the clamps: a
-/// large display gets a roomy window, a huge one is capped, and a 1280x800
-/// display still fits the window and its title bar.
+/// The Settings window opens at a size derived from the visible frame (the
+/// scene ignored an ideal size and opened at the floor) and is resizable down
+/// to `minimumSize`. These pin the clamps: a large display gets a roomy
+/// window, a huge one is capped, a 1280x800 display still fits the window and
+/// its title bar, and the minimum never exceeds the default it shrinks from.
 @MainActor
 final class SettingsWindowLayoutTests: XCTestCase {
     /// Title bar height above the content frame on a standard window.
@@ -35,6 +36,25 @@ final class SettingsWindowLayoutTests: XCTestCase {
             forVisibleFrame: CGRect(x: 0, y: 0, width: 2560, height: 1385))
         XCTAssertEqual(size.width, 1480)
         XCTAssertEqual(size.height, 1000)
+    }
+
+    func testMinimumFitsSmallDisplayAndIsBelowEveryDefault() {
+        let small = CGRect(x: 0, y: 70, width: 1280, height: 705)
+        let minimum = AppSettingsView.minimumSize
+        XCTAssertLessThanOrEqual(minimum.width, small.width)
+        XCTAssertLessThanOrEqual(minimum.height + titleBar, small.height)
+        for visible in [small, CGRect(x: 0, y: 0, width: 2560, height: 1385), nil] {
+            let size = AppSettingsView.windowSize(forVisibleFrame: visible)
+            XCTAssertLessThanOrEqual(minimum.width, size.width)
+            XCTAssertLessThanOrEqual(minimum.height, size.height)
+        }
+    }
+
+    func testSearchMatchesSourceTitleAndKeywords() {
+        XCTAssertTrue(AppSettingsView.matches("Keyboard Shortcuts", query: ""))
+        XCTAssertTrue(AppSettingsView.matches("Keyboard Shortcuts", query: "shortcut"))
+        XCTAssertTrue(AppSettingsView.matches("Engine", keywords: ["sampling"], query: "Sampl"))
+        XCTAssertFalse(AppSettingsView.matches("Engine", keywords: ["sampling"], query: "zzz"))
     }
 
     func testNoScreenFallsBackToFixedSize() {

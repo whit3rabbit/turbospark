@@ -56,12 +56,7 @@ struct InteractiveQuestionCardView: View {
                 .stroke(.appAccent.opacity(0.35), lineWidth: 1)
         )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(accessibilitySummary)
-    }
-
-    private var accessibilitySummary: String {
-        let count = questions.count
-        return "The model asked \(count) question\(count == 1 ? "" : "s")"
+        .accessibilityLabel(Text("Questions from the model: \(questions.count)", bundle: .module))
     }
 
     @ViewBuilder
@@ -77,8 +72,8 @@ struct InteractiveQuestionCardView: View {
                 .controlSize(.small)
                 .themedFont(.small, weight: .semibold)
                 .disabled(!allQuestionsAnswered)
-                .help("Answer every question to submit")
-                .accessibilityLabel("Submit all answers")
+                .help(Text("Answer every question to submit", bundle: .module))
+                .accessibilityLabel(Text("Submit all answers", bundle: .module))
             }
             Spacer()
             Button {
@@ -89,8 +84,8 @@ struct InteractiveQuestionCardView: View {
             .buttonStyle(.plain)
             .themedFont(.small)
             .foregroundStyle(.appSecondary)
-            .help("Tell the model you are not answering these")
-            .accessibilityLabel("Skip questions")
+            .help(Text("Tell the model you are not answering these", bundle: .module))
+            .accessibilityLabel(Text("Skip questions", bundle: .module))
         }
     }
 
@@ -131,14 +126,14 @@ struct InteractiveQuestionCardView: View {
                     Button {
                         submitMulti(question, index)
                     } label: {
-                        Text(submitTitle(index))
+                        submitTitle(index)
                     }
                     .buttonStyle(.plain)
                     .themedFont(.small, weight: .semibold)
                     .foregroundStyle(.appAccent)
                     .disabled(selectedCount(index) == 0)
                     .padding(.top, 2)
-                    .accessibilityLabel("Submit answer for \(question.header)")
+                    .accessibilityLabel(Text("Submit answer for \(question.header)", bundle: .module))
                 }
             } else {
                 VStack(alignment: .leading, spacing: 4) {
@@ -165,8 +160,9 @@ struct InteractiveQuestionCardView: View {
             optionRow(option, isSelected: isSelected, systemImage: isSelected ? "circle.fill" : "circle")
         }
         .buttonStyle(.plain)
-        .help("Answer with: \(option.label)")
-        .accessibilityLabel("\(option.label). \(option.description)")
+        .help(Text("Answer with: \(option.label)", bundle: .module))
+        // The model's own words: shown as written.
+        .accessibilityLabel(Text(verbatim: "\(option.label). \(option.description)"))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
@@ -178,7 +174,7 @@ struct InteractiveQuestionCardView: View {
             optionRow(option, isSelected: isSelected, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(option.label). \(option.description)")
+        .accessibilityLabel(Text(verbatim: "\(option.label). \(option.description)"))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
@@ -220,9 +216,9 @@ struct InteractiveQuestionCardView: View {
         selections[index]?.count ?? 0
     }
 
-    private func submitTitle(_ index: Int) -> String {
+    private func submitTitle(_ index: Int) -> Text {
         let count = selectedCount(index)
-        return count > 0 ? "Submit (\(count))" : "Submit"
+        return count > 0 ? Text("Submit (\(count))", bundle: .module) : Text("Submit", bundle: .module)
     }
 
     private func submitMulti(_ question: UserQuestionItem, _ index: Int) {

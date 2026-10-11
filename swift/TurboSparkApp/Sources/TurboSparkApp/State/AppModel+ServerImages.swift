@@ -31,7 +31,7 @@ extension AppModel {
             serverImageProgress = "Ready"
             refreshServerInfo()
         } catch {
-            showToast("Could not serve image model: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Could not serve image model: \(error.localizedDescription)"), style: .error)
         }
     }
 
@@ -44,7 +44,9 @@ extension AppModel {
             serverImageProgress = "Idle"
             refreshServerInfo()
         } catch {
-            showToast("Could not detach image model: \(error.localizedDescription)", style: .error)
+            showToast(
+                AppStrings.localized("Could not detach image model: \(error.localizedDescription)"),
+                style: .error)
         }
     }
 

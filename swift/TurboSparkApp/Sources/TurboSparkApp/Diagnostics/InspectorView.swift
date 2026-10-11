@@ -40,7 +40,7 @@ struct InspectorView: View {
             Image(systemName: "slider.horizontal.3")
                 .themedFont(.callout, weight: .semibold)
                 .foregroundStyle(.appAccent)
-                .help("Model loading, generation, and steering options for the active model")
+                .help(Text("Model loading, generation, and steering options for the active model", bundle: .module))
                 .accessibilityHidden(true)
             Text("Model Settings", bundle: .module)
                 .themedFont(.callout, weight: .semibold)
@@ -55,6 +55,6 @@ struct InspectorView: View {
                 .frame(height: 0.5)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Model Settings")
+        .accessibilityLabel(Text("Model Settings", bundle: .module))
     }
 }

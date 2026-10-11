@@ -27,8 +27,8 @@ struct ServerChartsView: View {
                 emptyState
             } else {
                 HStack(alignment: .top, spacing: 14) {
-                    chartCard("Decode rate", subtitle: rateSubtitle) { throughputChart }
-                    chartCard("Where the time went", subtitle: latencySubtitle) { latencyChart }
+                    chartCard(Text("Decode rate", bundle: .module), subtitle: rateSubtitle) { throughputChart }
+                    chartCard(Text("Where the time went", bundle: .module), subtitle: latencySubtitle) { latencyChart }
                 }
             }
         }
@@ -42,20 +42,28 @@ struct ServerChartsView: View {
             .padding(.vertical, 18)
     }
 
-    private var rateSubtitle: String {
-        guard let rate = model.serverMetrics.aggregateTokensPerSecond else { return "" }
+    private var rateSubtitle: Text? {
+        guard let rate = model.serverMetrics.aggregateTokensPerSecond else { return nil }
         // Tokens over decode seconds across the window, NOT a mean of
         // per-request rates -- that would weight a two-token reply the same
         // as a thousand-token one.
-        return String(format: "%.1f tok/s over the window", rate)
+        return Text("\(String(format: "%.1f", rate)) tok/s over the window", bundle: .module)
     }
 
-    private var latencySubtitle: String {
+    private var latencySubtitle: Text? {
         guard let p50 = model.serverMetrics.prefillPercentile(0.5),
             let p95 = model.serverMetrics.prefillPercentile(0.95)
-        else { return "" }
-        return String(format: "prefill p50 %.2fs, p95 %.2fs", p50, p95)
+        else { return nil }
+        return Text(
+            "prefill p50 \(String(format: "%.2fs", p50)), p95 \(String(format: "%.2fs", p95))",
+            bundle: .module)
     }
+
+    /// Legend entries are drawn from the series values, so the phase names
+    /// are resolved in the UI language rather than plotted as English.
+    private var prefillPhase: String { AppStrings.localized("prefill") }
+    private var decodePhase: String { AppStrings.localized("decode") }
+    private var queuedPhase: String { AppStrings.localized("queued") }
 
     /// One line per model that has actually SERVED something. Built from
     /// what is present rather than from the attached list, so there is never
@@ -88,16 +96,16 @@ struct ServerChartsView: View {
                 BarMark(
                     x: .value("Request", point.requestID),
                     y: .value("Seconds", point.prefillSeconds))
-                    .foregroundStyle(by: .value("Phase", "prefill"))
+                    .foregroundStyle(by: .value("Phase", prefillPhase))
                 BarMark(
                     x: .value("Request", point.requestID),
                     y: .value("Seconds", point.decodeSeconds))
-                    .foregroundStyle(by: .value("Phase", "decode"))
+                    .foregroundStyle(by: .value("Phase", decodePhase))
                 if let queued = point.queuedSeconds, queued > 0.001 {
                     BarMark(
                         x: .value("Request", point.requestID),
                         y: .value("Seconds", queued))
-                        .foregroundStyle(by: .value("Phase", "queued"))
+                        .foregroundStyle(by: .value("Phase", queuedPhase))
                 }
             }
         }
@@ -107,13 +115,13 @@ struct ServerChartsView: View {
     }
 
     private func chartCard<Content: View>(
-        _ title: String, subtitle: String, @ViewBuilder content: () -> Content
+        _ title: Text, subtitle: Text?, @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).themedFont(.tiny, weight: .medium)
-                if !subtitle.isEmpty {
-                    Text(subtitle)
+                title.themedFont(.tiny, weight: .medium)
+                if let subtitle {
+                    subtitle
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)
                         .monospacedDigit()
@@ -124,10 +132,10 @@ struct ServerChartsView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .fill(.appSurface))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .stroke(.appBorder, lineWidth: 0.5))
     }
 }

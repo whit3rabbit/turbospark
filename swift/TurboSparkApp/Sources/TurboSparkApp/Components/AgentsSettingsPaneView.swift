@@ -15,6 +15,18 @@ public struct AgentsSettingsPaneView: View {
         case project = "Project Scope"
 
         public var id: String { rawValue }
+
+        /// The label the filter shows. The raw value is its identity and is
+        /// never displayed: `Text(filter.rawValue)` rendered English under
+        /// every language.
+        public var title: Text {
+            switch self {
+            case .all: return Text("All Agents", bundle: .module)
+            case .builtIn: return Text("Built-in", bundle: .module)
+            case .user: return Text("User Scope", bundle: .module)
+            case .project: return Text("Project Scope", bundle: .module)
+            }
+        }
     }
 
     @State private var scopeFilter: AgentScopeFilter = .all
@@ -78,18 +90,21 @@ public struct AgentsSettingsPaneView: View {
         if !constrained.isEmpty || !shadowed.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 if !shadowed.isEmpty {
-                    Label(
-                        "This project overrides your own \(shadowed.joined(separator: ", ")).",
-                        systemImage: "arrow.triangle.branch"
-                    )
+                    let names = shadowed.joined(separator: ", ")
+                    Label {
+                        Text("This project overrides your own \(names).", bundle: .module)
+                    } icon: {
+                        Image(systemName: "arrow.triangle.branch")
+                    }
                     .themedFont(.small)
                 }
                 if !constrained.isEmpty {
-                    Label(
-                        "\(constrained.joined(separator: ", ")) took a built-in's name and is "
-                            + "held to its tool limits.",
-                        systemImage: "lock.shield"
-                    )
+                    let names = constrained.joined(separator: ", ")
+                    Label {
+                        Text("\(names) took a built-in's name and is held to its tool limits.", bundle: .module)
+                    } icon: {
+                        Image(systemName: "lock.shield")
+                    }
                     .themedFont(.small)
                 }
             }
@@ -106,16 +121,20 @@ public struct AgentsSettingsPaneView: View {
             HStack(spacing: 8) {
                 Image(systemName: "doc.text")
                     .foregroundStyle(.appAccent)
-                if let root = project.rootDirectoryPath, !root.isEmpty {
-                    let detected = ProjectRuleDetector.detectRules(in: root, preference: project.rulePreference)
-                    Text(detected?.statusDescription ?? "No live AGENTS.md or CLAUDE.md detected in project root.")
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                } else {
-                    Text("No project folder attached. Set a folder in project settings to read AGENTS.md.", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
+                    .accessibilityHidden(true)
+                Group {
+                    if let root = project.rootDirectoryPath, !root.isEmpty {
+                        if let detected = ProjectRuleDetector.detectRules(in: root, preference: project.rulePreference) {
+                            Text(detected.statusDescription)
+                        } else {
+                            Text("No live AGENTS.md or CLAUDE.md detected in project root.", bundle: .module)
+                        }
+                    } else {
+                        Text("No project folder attached. Set a folder in project settings to read AGENTS.md.", bundle: .module)
+                    }
                 }
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
                 Spacer()
             }
             .padding(.horizontal, SettingsLayout.horizontalInset)
@@ -126,36 +145,29 @@ public struct AgentsSettingsPaneView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Header bar
-            headerControlBar
-                .padding(.horizontal, SettingsLayout.horizontalInset)
-                .padding(.vertical, SettingsLayout.headerBarVerticalPadding)
-                .background(.appPage)
-
-            Rectangle()
-                .fill(.appBorder)
-                .frame(height: 1)
-
+            header
             overrideDisclosureBanner
             projectInstructionsBanner
 
-            if model.allManagedAgents.isEmpty {
-                emptyStateView
+            if filteredAgents.isEmpty {
+                if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    emptyStateView
+                } else {
+                    ExtensionNoMatchesState(query: searchQuery)
+                }
             } else {
-                HStack(spacing: 0) {
-                    // Left list
+                ExtensionSplitView {
                     agentsListView
-                        .frame(width: 300)
-                        .background(.appSurface.opacity(0.5))
-
-                    Rectangle()
-                        .fill(.appBorder)
-                        .frame(width: 1)
-
-                    // Right detail
+                } detail: {
                     if let current = selectedAgent {
-                        agentDetailView(agent: current)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        AgentDetailView(
+                            model: model,
+                            agent: current,
+                            onEdit: {
+                                agentToEdit = current
+                                showingEditorSheet = true
+                            },
+                            onDelete: { agentToDelete = current })
                     } else {
                         VStack(spacing: 16) {
                             TSIdlingAgentsSparkView(size: 80)
@@ -163,7 +175,6 @@ public struct AgentsSettingsPaneView: View {
                                 .themedFont(.base)
                                 .foregroundStyle(.appSecondary)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
             }
@@ -201,61 +212,64 @@ public struct AgentsSettingsPaneView: View {
                 Text("Cancel", bundle: .module)
             }
         } message: { agent in
-            Text(verbatim: "Delete the agent file for '\(agent.name)'? This cannot be undone.")
+            Text("Delete the agent file for '\(agent.name)'? This cannot be undone.", bundle: .module)
         }
     }
 
-    // MARK: - Header Bar
+    // MARK: - Header
 
-    private var headerControlBar: some View {
-        HStack(spacing: 12) {
+    /// `[scope][search] ... [reload][Import...][New Agent]`, shared with the
+    /// other extension panes. The scope filter is a menu: a 320pt segmented
+    /// control beside the search field and three actions overflowed the row.
+    private var header: some View {
+        ExtensionPaneHeader {
+            ExtensionPaneIntro(text: Text("Subagents the assistant can hand a task to, each with its own instructions and tool limits.", bundle: .module))
+        } filters: {
             Picker(selection: $scopeFilter) {
                 ForEach(AgentScopeFilter.allCases) { filter in
-                    Text(filter.rawValue).tag(filter)
+                    filter.title.tag(filter)
                 }
             } label: { Text("Scope", bundle: .module) }
             .settingsControl("Scope", pane: .agents, timing: .nextTurn)
-            .pickerStyle(.segmented)
-            .frame(width: 320)
-
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.appSecondary)
-                TextField("Search agents...", text: $searchQuery)
-                    .textFieldStyle(.plain)
+            .pickerStyle(.menu)
+            .fixedSize()
+            AppSearchField(text: $searchQuery, prompt: Text("Search agents...", bundle: .module))
+        } actions: {
+            ExtensionRefreshButton(label: Text("Reload", bundle: .module)) { model.reloadAgents() }
+            importButton
+            newAgentButton
+        } compactActions: {
+            ExtensionMoreMenu {
+                Button { model.reloadAgents() } label: {
+                    Label { Text("Reload", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
+                }
+                Button { isImportingFromAgents = true } label: {
+                    Label { Text("Import...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+                }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(.appElevated))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.appBorder, lineWidth: 1))
-
-            Spacer()
-
-            Button {
-                model.reloadAgents()
-            } label: {
-                Label { Text("Reload", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
-            }
-            .buttonStyle(.bordered)
-            .help("Rescan agents on disk")
-
-            Button {
-                isImportingFromAgents = true
-            } label: {
-                Label { Text("Import...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
-            }
-            .buttonStyle(.bordered)
-            .help("Import agents from other agent tools")
-
-            Button {
-                agentToEdit = nil
-                showingEditorSheet = true
-            } label: {
-                Label { Text("New Agent", bundle: .module) } icon: { Image(systemName: "plus") }
-            }
-            .buttonStyle(.borderedProminent)
-            .help("Create a new agent definition file")
+            newAgentButton
         }
+    }
+
+    private var importButton: some View {
+        Button {
+            isImportingFromAgents = true
+        } label: {
+            Label { Text("Import...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+        }
+        .appAction(.secondary)
+        .help(Text("Import agents from other agent tools", bundle: .module))
+    }
+
+    private var newAgentButton: some View {
+        Button {
+            agentToEdit = nil
+            showingEditorSheet = true
+        } label: {
+            Label { Text("New Agent", bundle: .module) } icon: { Image(systemName: "plus") }
+        }
+        .appAction(.primary)
+        .help(Text("Create a new agent definition file", bundle: .module))
     }
 
     // MARK: - List View
@@ -264,20 +278,30 @@ public struct AgentsSettingsPaneView: View {
         List(selection: $selectedAgentID) {
             ForEach(filteredAgents) { agent in
                 HStack(spacing: 10) {
-                    Toggle("", isOn: Binding(
+                    // Named by the agent: an empty label left VoiceOver
+                    // announcing a row of unnamed checkboxes.
+                    Toggle(isOn: Binding(
                         get: { agent.isEnabled },
                         set: { _ in model.toggleAgentEnabled(agent) }
-                    ))
+                    )) {
+                        Text(agent.displayName)
+                    }
                     .toggleStyle(.checkbox)
                     .labelsHidden()
 
                     VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
+                        // Two lines and a tooltip: at the narrowest list
+                        // width the badge left one line for "Codebase Ex...".
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(agent.displayName)
                                 .themedFont(.base, weight: .semibold)
-                                .lineLimit(1)
-                            Spacer()
-                            badgeView(text: agent.scope.label, color: scopeColor(agent.scope))
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .help(Text(verbatim: agent.displayName))
+                            Spacer(minLength: 4)
+                            AgentBadge(
+                                text: Text(LocalizedStringKey(agent.scope.label), bundle: .module),
+                                color: AgentBadge.scopeColor(agent.scope))
                         }
 
                         Text(agent.agentDescription)
@@ -291,194 +315,23 @@ public struct AgentsSettingsPaneView: View {
             }
         }
         .listStyle(.sidebar)
-    }
-
-    // MARK: - Detail View
-
-    private func agentDetailView(agent: AppAgentDefinition) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Title and action header
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 8) {
-                            Text(agent.displayName)
-                                .themedFont(.title2, weight: .bold)
-
-                            badgeView(text: agent.scope.label, color: scopeColor(agent.scope))
-                            badgeView(text: agent.sourceAgent.displayName, color: .indigo)
-                        }
-
-                        Text(agent.agentDescription)
-                            .themedFont(.base)
-                            .foregroundStyle(.appSecondary)
-                    }
-
-                    Spacer()
-
-                    // Edit and Delete only where the definition is a file
-                    // this app owns: built-ins are code and plugin agents
-                    // belong to their plugin, so neither has an editor.
-                    if agent.scope == .userGlobal || agent.scope == .project {
-                        HStack(spacing: 8) {
-                            if URL(fileURLWithPath: agent.filePath ?? "")
-                                .pathExtension.lowercased() == "md" {
-                                Button {
-                                    agentToEdit = agent
-                                    showingEditorSheet = true
-                                } label: {
-                                    Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
-                                }
-                                .buttonStyle(.bordered)
-                            }
-
-                            Button(role: .destructive) {
-                                agentToDelete = agent
-                            } label: {
-                                Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-
-                    Toggle(isOn: Binding(
-                        get: { agent.isEnabled },
-                        set: { _ in model.toggleAgentEnabled(agent) }
-                    )) {
-                        Text("Enabled", bundle: .module)
-                    }
-            .settingsControl("Enabled", pane: .agents, timing: .nextTurn)
-                    .toggleStyle(.switch)
-                }
-
-                Divider()
-
-                // Configuration metadata
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Configuration", bundle: .module)
-                        .themedFont(.base, weight: .semibold)
-
-                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                        GridRow {
-                            Text("Agent Identifier:", bundle: .module)
-                                .foregroundStyle(.appSecondary)
-                            Text(verbatim: "`\(agent.name)`")
-                                .themedCode(.base)
-                        }
-                        GridRow {
-                            Text("Max Turns:", bundle: .module)
-                                .foregroundStyle(.appSecondary)
-                            Text(verbatim: "\(agent.maxTurns)")
-                        }
-                        // No "Model Override" row: `agent.model` is parsed
-                        // and read by nothing, a subagent runs on whatever is
-                        // loaded, and the row sat between two that ARE
-                        // enforced (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
-                        if let disallowed = agent.disallowedTools, !disallowed.isEmpty {
-                            GridRow {
-                                Text("Disallowed Tools:", bundle: .module)
-                                    .foregroundStyle(.appSecondary)
-                                Text(disallowed.joined(separator: ", "))
-                                    .themedFont(.small)
-                                    .foregroundStyle(.red)
-                            }
-                        }
-                        if let allowed = agent.tools, !allowed.isEmpty {
-                            GridRow {
-                                Text("Allowed Tools:", bundle: .module)
-                                    .foregroundStyle(.appSecondary)
-                                Text(allowed.joined(separator: ", "))
-                                    .themedFont(.small)
-                            }
-                        }
-                        if let path = agent.filePath {
-                            GridRow {
-                                Text("File Location:", bundle: .module)
-                                    .foregroundStyle(.appSecondary)
-                                Text(path)
-                                    .themedFont(.small)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                        }
-                    }
-                }
-                .padding()
-                .background(RoundedRectangle(cornerRadius: 8).fill(.appSurface))
-
-                // System Prompt / Instructions
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("System Instructions", bundle: .module)
-                        .themedFont(.base, weight: .semibold)
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(agent.systemPrompt)
-                            .themedCode(.small)
-                            .textSelection(.enabled)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .background(RoundedRectangle(cornerRadius: 8).fill(.appSurface))
-                }
-
-                // REPL Usage hint. Only for an ENABLED agent: the slash
-                // command refuses a disabled one (state#93), so the hint
-                // would advertise a command that fails.
-                if agent.isEnabled {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("REPL Chat Invocation", bundle: .module)
-                            .themedFont(.small, weight: .bold)
-                        Text("You can invoke this subagent in chat or via slash command with clean context isolation:", bundle: .module)
-                            .themedFont(.small)
-                            .foregroundStyle(.appSecondary)
-                        Text(verbatim: "`/\(agent.name) <task description>`")
-                            .themedCode(.small)
-                            .padding(8)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(.appElevated))
-                    }
-                }
-            }
-            .padding(SettingsLayout.detailInset)
-        }
+        .scrollContentBackground(.hidden)
     }
 
     // MARK: - Empty State
 
     private var emptyStateView: some View {
-        VStack(spacing: 16) {
-            TSIdlingAgentsSparkView(size: 80)
-            Text("No Agents Found", bundle: .module)
-                .themedFont(.title3, weight: .bold)
-            Text("No agent definitions match the selected scope filter.", bundle: .module)
-                .themedFont(.base)
-                .foregroundStyle(.appSecondary)
+        AppEmptyState(
+            systemImage: "person.2.badge.gearshape",
+            title: Text("No Agents Found", bundle: .module),
+            message: Text("No agent definitions match the selected scope filter.", bundle: .module)
+        ) {
             Button {
                 isImportingFromAgents = true
             } label: {
                 Label { Text("Import from Agents...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
             }
-            .buttonStyle(.bordered)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // MARK: - Helpers
-
-    private func badgeView(text: String, color: Color) -> some View {
-        Text(text)
-            .themedFont(.tiny, weight: .medium)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.15)))
-            .foregroundStyle(color)
-    }
-
-    private func scopeColor(_ scope: AppAgentScope) -> Color {
-        switch scope {
-        case .builtIn: return .blue
-        case .userGlobal: return .purple
-        case .project: return .green
-        case .plugin: return .orange
+            .appAction(.secondary)
         }
     }
 }

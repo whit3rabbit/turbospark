@@ -24,13 +24,16 @@ struct ServerInspectorView: View {
                     Button { copyDiagnostics() } label: {
                         Label { Text("Copy diagnostics", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
                     }
+                    .appAction(.secondary, size: .small)
                     Divider()
                     Picker(selection: $model.maxContextTokens) {
+                        // menuLabel is "Auto" or a token count: the word
+                        // resolves through the catalog, numbers fall through.
                         ForEach(AppContextLengthOption.allCases) { option in
-                            Text(option.menuLabel).tag(option.tokens)
+                            Text(LocalizedStringKey(option.menuLabel), bundle: .module).tag(option.tokens)
                         }
                         if !AppContextLengthOption.allCases.contains(where: { $0.tokens == model.maxContextTokens }) {
-                            Text(model.maxContextTokens.formatted()).tag(model.maxContextTokens)
+                            Text(verbatim: model.maxContextTokens.formatted()).tag(model.maxContextTokens)
                         }
                     } label: { Text("Context Window", bundle: .module) }
                     .disabled(model.serverBusy)
@@ -54,24 +57,28 @@ struct ServerInspectorView: View {
                 model.saveServerFavorite(name: name)
                 name = ""
             } label: { Text("Save Preset", bundle: .module) }
+            .appAction(.secondary, size: .small)
             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             ForEach(model.serverFavorites) { favorite in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(favorite.name).themedFont(.small, weight: .medium)
-                    Text(verbatim: "\(favorite.host):\(favorite.port) | \(favorite.modelPaths.count) models")
+                    Text(verbatim: favorite.name).themedFont(.small, weight: .medium)
+                    (Text(verbatim: "\(favorite.host):\(favorite.port) | ")
+                        + Text("\(favorite.modelPaths.count) models", bundle: .module))
                         .themedCode(.small).foregroundStyle(.appSecondary)
                     HStack {
                         Button { model.loadServerFavorite(favorite) } label: { Text("Load", bundle: .module) }
+                            .appAction(.secondary, size: .small)
                             .disabled(model.server != nil || model.serverBusy)
                         Spacer()
-                        Button {
+                        Button(role: .destructive) {
                             model.serverFavorites.removeAll { $0.id == favorite.id }
                             model.persistSettingsDebounced()
                         } label: { Text("Delete", bundle: .module) }
+                        .appAction(.destructive, size: .small)
                     }
                 }
                 .padding(10)
-                .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
             }
         }
     }

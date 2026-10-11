@@ -24,11 +24,13 @@ enum SettingsLayout {
 
 public struct AppSettingsView: View {
     /// The Settings scene ignores `idealWidth`/`idealHeight` and opens at the
-    /// content's minimum, so a min/ideal frame left every display at the
-    /// 940x660 floor. A fixed frame is the size the window actually opens at
-    /// (and it is not user-resizable). Derived from the visible frame, same
-    /// approach as `TurboSparkApp.defaultWindowSize`: roughly three quarters
-    /// of a large display, clamped to a floor that still fits a 1280x800 one.
+    /// content's minimum, so a min/ideal frame alone left every display at the
+    /// floor. `SettingsWindowFrame` applies this size to the AppKit window the
+    /// first time it opens; the content itself only declares `minimumSize`, so
+    /// the user can resize the window to recover a crowded pane. Derived from
+    /// the visible frame, same approach as `TurboSparkApp.defaultWindowSize`:
+    /// roughly three quarters of a large display, clamped to a floor that
+    /// still fits a 1280x800 one.
     static var defaultWindowSize: CGSize {
         windowSize(forVisibleFrame: NSScreen.main?.visibleFrame)
     }
@@ -42,6 +44,20 @@ public struct AppSettingsView: View {
             width: min(max(940, visible.width * 0.76), 1480),
             height: min(max(660, visible.height * 0.86), 1000)
         )
+    }
+
+    /// The smallest window the panes still lay out in: the 252pt sidebar plus
+    /// a content column the adaptive headers fold into two rows within.
+    static let minimumSize = CGSize(width: 820, height: 560)
+
+    /// Settings search matches the title the user actually SEES, which
+    /// follows the in-app language, as well as the English source and the
+    /// tab's keywords.
+    static func matches(_ title: String, keywords: [String] = [], query: String) -> Bool {
+        query.isEmpty
+            || title.localizedCaseInsensitiveContains(query)
+            || AppStrings.localized(String.LocalizationValue(title)).localizedCaseInsensitiveContains(query)
+            || keywords.contains { $0.localizedCaseInsensitiveContains(query) }
     }
 
     @Environment(\.appTheme) private var theme
@@ -75,6 +91,7 @@ public struct AppSettingsView: View {
                 HStack {
                     Text(LocalizedStringKey(selectedTab.title), bundle: .module)
                         .font(theme.ui(.title3, weight: .semibold))
+                        .accessibilityAddTraits(.isHeader)
                     Spacer()
                 }
                 .padding(.horizontal, SettingsLayout.horizontalInset)
@@ -116,7 +133,10 @@ public struct AppSettingsView: View {
             }
         }
         .font(theme.ui(.base))
-        .frame(width: windowSize.width, height: windowSize.height)
+        .frame(
+            minWidth: Self.minimumSize.width, maxWidth: .infinity,
+            minHeight: Self.minimumSize.height, maxHeight: .infinity)
+        .background(SettingsWindowFrame(minimumSize: Self.minimumSize, defaultSize: windowSize))
         .onReceive(NotificationCenter.default.publisher(for: .openSettingsTab)) { notification in
             if let tab = notification.object as? SettingsTab {
                 selectedTab = tab
@@ -135,25 +155,10 @@ public struct AppSettingsView: View {
     // MARK: - Sidebar
     private var settingsSidebar: some View {
         VStack(spacing: 16) {
-            // Search field
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.appSecondary)
-                    .font(theme.ui(.small))
-                    .accessibilityHidden(true)
-                TextField("Search settings...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(theme.ui(.small))
-                    .accessibilityLabel("Search settings")
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(.appSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(.appBorder.opacity(0.3), lineWidth: 1)
-            )
+            AppSearchField(
+                text: $searchText,
+                prompt: Text("Search settings...", bundle: .module),
+                minWidth: 0, idealWidth: 220, maxWidth: .infinity)
             .padding(.horizontal, 16)
             .padding(.top, 20)
 
@@ -179,17 +184,12 @@ public struct AppSettingsView: View {
 
     private func sidebarCategory(title: String, tabs: [SettingsTab]) -> some View {
         let filtered = tabs.filter { tab in
-            searchText.isEmpty ||
-            tab.title.localizedCaseInsensitiveContains(searchText) ||
-            // The title the user actually sees, in the active language.
-            NSLocalizedString(tab.title, bundle: .module, comment: "")
-                .localizedCaseInsensitiveContains(searchText) ||
-            tab.keywords.contains { $0.localizedCaseInsensitiveContains(searchText) }
+            Self.matches(tab.title, keywords: tab.keywords, query: searchText)
         }
 
         return VStack(alignment: .leading, spacing: 3) {
             if !filtered.isEmpty {
-                Text(title)
+                Text(LocalizedStringKey(title), bundle: .module)
                     .font(theme.ui(.tiny, weight: .semibold))
                     .foregroundStyle(.appSecondary)
                     .padding(.horizontal, 12)
@@ -224,9 +224,8 @@ public struct AppSettingsView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .help(tab.title)
-                    .accessibilityLabel(tab.title)
-                    .accessibilityHint("Switches settings view to \(tab.title)")
+                    .help(Text(LocalizedStringKey(tab.title), bundle: .module))
+                    .accessibilityLabel(Text(LocalizedStringKey(tab.title), bundle: .module))
                     .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
                     .appPointerCursor()
                 }
@@ -237,8 +236,7 @@ public struct AppSettingsView: View {
     private var controlSearchResults: some View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let results = SettingsControlCatalog.entries.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-                || NSLocalizedString($0.title, bundle: .module, comment: "").localizedCaseInsensitiveContains(query)
+            Self.matches($0.title, query: query)
         }
         return VStack(alignment: .leading, spacing: 8) {
             if results.isEmpty {
@@ -252,7 +250,8 @@ public struct AppSettingsView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(LocalizedStringKey(result.title), bundle: .module).themedFont(.small, weight: .medium)
-                        Text(result.pane.title).themedFont(.tiny).foregroundStyle(.appSecondary)
+                        Text(LocalizedStringKey(result.pane.title), bundle: .module)
+                            .themedFont(.tiny).foregroundStyle(.appSecondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }

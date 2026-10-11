@@ -13,7 +13,9 @@ extension AppModel {
             serverSpeechProgress = "Ready"
             refreshServerInfo()
         } catch {
-            showToast("Could not serve audio speech model: \(error.localizedDescription)", style: .error)
+            showToast(
+                AppStrings.localized("Could not serve audio speech model: \(error.localizedDescription)"),
+                style: .error)
         }
     }
 
@@ -26,7 +28,9 @@ extension AppModel {
             serverSpeechProgress = "Idle"
             refreshServerInfo()
         } catch {
-            showToast("Could not detach audio speech model: \(error.localizedDescription)", style: .error)
+            showToast(
+                AppStrings.localized("Could not detach audio speech model: \(error.localizedDescription)"),
+                style: .error)
         }
     }
 

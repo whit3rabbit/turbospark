@@ -25,7 +25,7 @@ extension AudioWorkspaceController {
         do { try save(item) } catch { fail(error); return }
         if !asVoiceReference { selectedID = item.id }
         let id = item.id; let assets = self.assets; let library = self.library; let lifetime = self.lifetime
-        status = String(localized: "Importing audio", bundle: .module)
+        status = AppStrings.localized("Importing audio")
         importTask = Task { [weak self] in
             let outcome = await Task.detached { Result {
                 try AudioMediaIO.importFile(source, cancel: lifetime.check) { chunk in
@@ -134,7 +134,7 @@ extension AudioWorkspaceController {
         do {
             let temporary = try scratchURL(extension: "wav")
             let encoded = try scratchURL(extension: suffix)
-            if !isBusy { status = String(localized: "Exporting audio", bundle: .module) }
+            if !isBusy { status = AppStrings.localized("Exporting audio") }
             exportTask = Task { [weak self] in
                 let scoped = target.startAccessingSecurityScopedResource()
                 defer {
@@ -158,7 +158,7 @@ extension AudioWorkspaceController {
                     guard let self, self.valid(token), !Task.isCancelled else { return }
                     let source = preset == .nativeWAV || preset == .videoWAV ? temporary : encoded
                     try AudioMediaIO.commitExport(from: source, to: target)
-                    if !self.isBusy { self.status = String(localized: "Audio exported", bundle: .module) }
+                    if !self.isBusy { self.status = AppStrings.localized("Audio exported") }
                 } catch {
                     if let self, self.valid(token) { self.error = error.localizedDescription }
                 }
@@ -186,7 +186,7 @@ extension AudioWorkspaceController {
                 data = try encoder.encode(portable)
             }
             try data.write(to: url, options: .atomic)
-            status = String(localized: "Transcript exported", bundle: .module)
+            status = AppStrings.localized("Transcript exported")
         } catch { self.error = error.localizedDescription }
     }
 }

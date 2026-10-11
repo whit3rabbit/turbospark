@@ -84,12 +84,12 @@ struct AudioWorkspaceView: View {
                 Button { controller.selectPage(.library) } label: {
                     Label { Text("Audio library", bundle: .module) } icon: { Image(systemName: "books.vertical") }
                 }
-                .buttonStyle(.borderless)
+                .appAction(.secondary)
             }
             Menu { AudioDestinationMenu(model: model) } label: {
                 Label { Text("Audio tasks", bundle: .module) } icon: { Image(systemName: "ellipsis.circle") }
             }
-            .menuStyle(.borderlessButton).fixedSize()
+            .appMenuAction()
         }
         .themedFont(.small)
     }
@@ -98,7 +98,7 @@ struct AudioWorkspaceView: View {
         VStack(alignment: .leading, spacing: 24) {
             Text(LocalizedStringKey(pageDescription), bundle: .module)
                 .foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
-            if controller.page == .record { recording }
+            if controller.page == .record { AudioRecordingPanel(model: model, controller: controller) }
             else { modelAndInputs }
             if let item = controller.workspaceResult, item.status != .processing {
                 AudioItemDetailView(controller: controller, item: item)
@@ -131,8 +131,8 @@ struct AudioWorkspaceView: View {
                                 }
                                 .contentShape(Rectangle())
                             }.buttonStyle(.plain)
-                            AudioSaveAsButton(controller: controller, item: item)
-                            AudioDeleteButton(controller: controller, item: item).labelStyle(.iconOnly)
+                            AudioSaveAsButton(controller: controller, item: item, compact: true)
+                            AudioDeleteButton(controller: controller, item: item, compact: true)
                         }
                         .padding(12).background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
                     }
@@ -285,6 +285,7 @@ struct AudioWorkspaceView: View {
         Button { controller.selectPage(.record) } label: {
             Label { Text("Record", bundle: .module) } icon: { Image(systemName: "mic") }
         }
+        .appAction(.secondary, size: .small)
         .disabled(controller.isBusy)
     }
 
@@ -296,7 +297,7 @@ struct AudioWorkspaceView: View {
         } label: {
             Label { Text("Saved audio", bundle: .module) } icon: { Image(systemName: "books.vertical") }
         }
-        .menuStyle(.borderlessButton).fixedSize()
+        .appMenuAction(size: .small)
         .disabled(controller.isBusy || controller.hasRecordingActivity || !controller.items.contains { !$0.clips.isEmpty })
     }
 
@@ -304,6 +305,7 @@ struct AudioWorkspaceView: View {
         Button { controller.importAudio() } label: {
             Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
         }
+        .appAction(.secondary, size: .small)
         .disabled(controller.isBusy || controller.hasRecordingActivity)
     }
 
@@ -387,7 +389,7 @@ struct AudioWorkspaceView: View {
                     Button { showingGenerator = true } label: {
                         Label { Text("Prompt generator", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
                     }
-                    .buttonStyle(.borderless).themedFont(.small)
+                    .appAction(.secondary, size: .small)
                 }
                 ZStack(alignment: .topLeading) {
                     TextEditor(text: $controller.recipe.caption)
@@ -469,11 +471,13 @@ struct AudioWorkspaceView: View {
                 Button { showingPrompts = true } label: {
                     Label { Text("Prompt library", bundle: .module) } icon: { Image(systemName: "text.book.closed") }
                 }
+                .appAction(.secondary, size: .small)
                 Button {
                     savingPrompt = true
                     presetName = String((controller.task == .music ? controller.recipe.caption : controller.recipe.text).prefix(60))
                     showingPreset = true
                 } label: { Text("Save Prompt", bundle: .module) }
+                    .appAction(.secondary, size: .small)
                     .disabled(!controller.canSavePrompt)
             }.fixedSize()
         } else {
@@ -509,12 +513,13 @@ struct AudioWorkspaceView: View {
                 }
             }
         } label: { Text("Presets", bundle: .module) }
-        .menuStyle(.borderlessButton).fixedSize()
+        .appMenuAction(size: .small)
         .disabled(controller.isBusy)
     }
 
     private var saveDraftButton: some View {
         Button { controller.saveDraft() } label: { Text("Save draft", bundle: .module) }
+            .appAction(.secondary, size: .small)
             .disabled(controller.isBusy)
     }
 
@@ -523,84 +528,7 @@ struct AudioWorkspaceView: View {
             Label { Text(LocalizedStringKey(controller.runTitle), bundle: .module) }
                 icon: { Image(systemName: controller.page.symbol) }
         }
-        .buttonStyle(.borderedProminent).controlSize(.large).disabled(!controller.canRun)
+        .appAction(.primary, size: .large).disabled(!controller.canRun)
         .keyboardShortcut(.return, modifiers: .command)
-    }
-
-    private var recording: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            captureSources
-            if let setupStatus = controller.recordingSetupStatus {
-                HStack(alignment: .top, spacing: 12) {
-                    ProgressView().controlSize(.small)
-                    Text(setupStatus).fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Button { controller.cancelRecordingSetup() } label: { Text("Cancel", bundle: .module) }
-                }
-            } else if controller.isRecording {
-                HStack {
-                    AudioRecordingBadge(controller: controller)
-                    Spacer()
-                    Button { controller.addMarker() } label: {
-                        Label { Text("Add marker", bundle: .module) } icon: { Image(systemName: "bookmark") }
-                    }
-                }
-                ProgressView(value: Double(max(0, min(1, controller.inputLevel)))) {
-                    Text("Input level", bundle: .module)
-                }
-                .accessibilityValue(Text(verbatim: "\(Int(max(0, min(1, controller.inputLevel)) * 100))%"))
-                HStack {
-                    Button {
-                        if controller.isPaused { controller.resumeRecording() } else { controller.pauseRecording() }
-                    } label: {
-                        Label {
-                            Text(controller.isPaused ? "Resume" : "Pause", bundle: .module)
-                        } icon: { Image(systemName: controller.isPaused ? "play.fill" : "pause.fill") }
-                    }
-                    Button { controller.stopRecording() } label: {
-                        Label { Text("Stop recording", bundle: .module) } icon: { Image(systemName: "stop.fill") }
-                    }.buttonStyle(.borderedProminent)
-                }
-            } else {
-                Button { controller.startRecording() } label: {
-                    Label { Text("Start recording", bundle: .module) } icon: { Image(systemName: "record.circle") }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(controller.isBusy || (!controller.captureMicrophone && !controller.captureSystemAudio))
-                .keyboardShortcut("r", modifiers: [.command, .shift])
-            }
-            DisclosureGroup {
-                Toggle(isOn: $controller.liveTranscription) { Text("Show a live draft transcript", bundle: .module) }
-                AudioModelPickerView(model: model, controller: controller).padding(.top, 8)
-                Text("Live text is a draft. Saved audio remains available when transcription falls behind.", bundle: .module)
-                    .themedFont(.small).foregroundStyle(.appSecondary)
-            } label: { Text("Transcription model", bundle: .module) }
-        }
-        .padding(20).background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
-    }
-
-    private var captureSources: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle(isOn: $controller.captureMicrophone) { Text("Microphone", bundle: .module) }
-            if controller.captureMicrophone {
-                Picker(selection: $controller.microphoneID) {
-                    Text("Default microphone", bundle: .module).tag(Optional<String>.none)
-                    ForEach(controller.microphones, id: \.id) { device in Text(device.name).tag(Optional(device.id)) }
-                } label: { Text("Microphone", bundle: .module) }
-            }
-            Toggle(isOn: $controller.captureSystemAudio) { Text("App or system audio", bundle: .module) }
-            if controller.captureSystemAudio {
-                Picker(selection: $controller.selectedApplicationID) {
-                    Text("All system audio", bundle: .module).tag(Optional<Int32>.none)
-                    ForEach(controller.audioApplications, id: \.id) { app in Text(app.name).tag(Optional(app.id)) }
-                } label: { Text("Audio source", bundle: .module) }
-                Text("TurboSpark playback is excluded. Only audio is saved.", bundle: .module)
-                    .themedFont(.small).foregroundStyle(.appSecondary)
-            }
-            Button { controller.prepareRecording() } label: {
-                Label { Text("Check devices and permissions", bundle: .module) } icon: { Image(systemName: "checkmark.shield") }
-            }
-        }.disabled(controller.hasRecordingActivity)
     }
 }

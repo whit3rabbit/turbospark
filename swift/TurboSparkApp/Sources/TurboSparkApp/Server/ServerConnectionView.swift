@@ -10,17 +10,21 @@ struct ServerConnectionView: View {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading) {
                     Text("IP address", bundle: .module).themedFont(.small, weight: .medium)
-                    TextField("127.0.0.1", text: $model.serverHost)
+                    TextField(text: $model.serverHost, prompt: Text(verbatim: "127.0.0.1")) {
+                        Text("IP address", bundle: .module)
+                    }
                         .textFieldStyle(.roundedBorder)
                         .themedCode(.small)
                         .onChange(of: model.serverHost) { _, _ in model.persistSettingsDebounced() }
                 }
                 VStack(alignment: .leading) {
                     Text("Port", bundle: .module).themedFont(.small, weight: .medium)
-                    TextField("auto", text: $port)
+                    TextField(text: $port, prompt: Text("auto", bundle: .module)) {
+                        Text("Port", bundle: .module)
+                    }
                         .textFieldStyle(.roundedBorder)
                         .themedCode(.small)
-                        .frame(width: 100)
+                        .frame(minWidth: 80, idealWidth: 100, maxWidth: 140)
                         .onChange(of: port) { _, value in
                             switch ServerPortInput.parse(value) {
                             case .success(let port):
@@ -36,7 +40,11 @@ struct ServerConnectionView: View {
                 }
             }
             .disabled(model.server != nil || model.serverBusy)
-            if let portError { Text(portError).foregroundStyle(.red).themedFont(.small) }
+            // `ServerPortInput` keeps English messages (its tests assert
+            // them); they are a closed set, so they are looked up here.
+            if let portError {
+                Text(LocalizedStringKey(portError), bundle: .module).foregroundStyle(.red).themedFont(.small)
+            }
             Text("Stop the server to edit. Leave the port blank for automatic assignment.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
         }

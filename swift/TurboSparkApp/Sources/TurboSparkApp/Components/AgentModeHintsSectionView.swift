@@ -61,7 +61,7 @@ struct AgentModeHintsSectionView: View {
 
     private func hintEditor(
         title: LocalizedStringKey, icon: String,
-        entries: Binding<[String]>, placeholder: String
+        entries: Binding<[String]>, placeholder: LocalizedStringKey
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -89,21 +89,19 @@ struct AgentModeHintsSectionView: View {
                 }))
                 .themedCode(.small)
                 .frame(minHeight: 44, maxHeight: 110)
-                .scrollContentBackground(.hidden)
-                .padding(6)
-                .background(.appElevated.opacity(0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.18), lineWidth: 0.5))
+                .appEditorSurface()
+                .accessibilityLabel(Text(title, bundle: .module))
                 .overlay(alignment: .topLeading) {
+                    // Example sentences are prose, so they are catalog keys
+                    // like any other hint text.
                     if entries.wrappedValue.isEmpty {
-                        Text(placeholder)
+                        Text(placeholder, bundle: .module)
                             .themedCode(.small)
                             .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 12)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 14)
                             .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
                 }
         }

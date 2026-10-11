@@ -102,7 +102,7 @@ extension AppModel {
                 Self.attachMayComplete(captured: server, current: live)
             else {
                 showToast(
-                    "Server stopped while \(model.alias) was loading; it was not attached.",
+                    AppStrings.localized("Server stopped while \(model.alias) was loading; it was not attached."),
                     style: .warning)
                 return
             }
@@ -118,9 +118,9 @@ extension AppModel {
             }
             serverAttachedSessions[id] = session
             refreshServerInfo()
-            showToast("Serving \(id)", style: .success)
+            showToast(AppStrings.localized("Serving \(id)"), style: .success)
         } catch {
-            let msg = "Could not serve \(model.alias): \(error.localizedDescription)"
+            let msg = AppStrings.localized("Could not serve \(model.alias): \(error.localizedDescription)")
             self.error = msg
             showToast(msg, style: .error)
         }
@@ -148,9 +148,9 @@ extension AppModel {
             let id = try server.attach(session)
             serverAttachedSessions[id] = session
             refreshServerInfo()
-            showToast("Serving \(id)", style: .success)
+            showToast(AppStrings.localized("Serving \(id)"), style: .success)
         } catch {
-            let msg = "Could not serve the loaded model: \(error.localizedDescription)"
+            let msg = AppStrings.localized("Could not serve the loaded model: \(error.localizedDescription)")
             self.error = msg
             showToast(msg, style: .error)
         }
@@ -188,9 +188,9 @@ extension AppModel {
                 try server.detach(modelId: id)
             }
             refreshServerInfo()
-            showToast("Stopped serving \(id)", style: .info)
+            showToast(AppStrings.localized("Stopped serving \(id)"), style: .info)
         } catch {
-            let msg = "Could not stop serving \(id): \(error.localizedDescription)"
+            let msg = AppStrings.localized("Could not stop serving \(id): \(error.localizedDescription)")
             self.error = msg
             showToast(msg, style: .error)
         }
@@ -205,9 +205,9 @@ extension AppModel {
             do {
                 let id = try server.attachAudioModel(path, task: task)
                 refreshServerInfo()
-                showToast("Serving \(id)", style: .success)
+                showToast(AppStrings.localized("Serving \(id)"), style: .success)
             } catch {
-                let msg = "Could not serve audio model \(path): \(error.localizedDescription)"
+                let msg = AppStrings.localized("Could not serve audio model \(path): \(error.localizedDescription)")
                 self.error = msg
                 showToast(msg, style: .error)
             }
@@ -243,9 +243,10 @@ extension AppModel {
             releaseServerAttachment(id: id, refresh: false)
         }
         if !failures.isEmpty {
-            let msg =
-                "The server could not release \(failures.count == 1 ? "a model" : "some models"); "
-                + "it may still be serving \(failures.joined(separator: ", "))."
+            let serving = failures.joined(separator: ", ")
+            let msg = failures.count == 1
+                ? AppStrings.localized("The server could not release a model; it may still be serving \(serving).")
+                : AppStrings.localized("The server could not release some models; it may still be serving \(serving).")
             self.error = msg
             showToast(msg, style: .warning)
         }

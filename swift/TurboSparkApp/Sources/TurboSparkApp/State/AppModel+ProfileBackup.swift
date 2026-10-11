@@ -74,10 +74,10 @@ extension AppModel {
                 self.profileBackupInFlight = false
                 switch outcome {
                 case .success:
-                    self.showToast("Backup of \"\(profile.name)\" exported.", style: .success)
+                    self.showToast(AppStrings.localized("Backup of \"\(profile.name)\" exported."), style: .success)
                 case .failure(let error):
                     self.showToast(
-                        "Backup export failed: \(self.profileBackupFailureMessage(error))",
+                        AppStrings.localized("Backup export failed: \(self.profileBackupFailureMessage(error))"),
                         style: .error, duration: 8)
                 }
             }
@@ -97,7 +97,7 @@ extension AppModel {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.zip]
-        panel.message = "Choose a TurboSpark profile backup (.zip)."
+        panel.message = AppStrings.localized("Choose a TurboSpark profile backup (.zip).")
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         do {
             let manifest = try await ProfileBackupImport.readSummary(archive: url)
@@ -175,14 +175,14 @@ extension AppModel {
                     guard let fresh = try? Self.registryAdding(profile) else {
                         try? FileManager.default.removeItem(at: destination)
                         self.showToast(
-                            "Backup import failed: the profile name is no longer available.",
+                            AppStrings.localized("Backup import failed: the profile name is no longer available."),
                             style: .error, duration: 8)
                         return
                     }
                     if UserProfileStore.saveRegistry(fresh) {
                         self.profiles = fresh.profiles
                         self.showToast(
-                            "Profile \"\(profile.name)\" imported from backup. Switch to it to start using it.",
+                            AppStrings.localized("Profile \"\(profile.name)\" imported from backup. Switch to it to start using it."),
                             style: .success)
                     } else {
                         // No row was saved, so the half-restored folder is an
@@ -194,7 +194,7 @@ extension AppModel {
                 case .failure(let error):
                     try? FileManager.default.removeItem(at: destination)
                     self.showToast(
-                        "Backup import failed: \(self.profileBackupImportFailureMessage(error))",
+                        AppStrings.localized("Backup import failed: \(self.profileBackupImportFailureMessage(error))"),
                         style: .error, duration: 8)
                 }
             }
@@ -214,12 +214,12 @@ extension AppModel {
     private func profileBackupFailureMessage(_ error: Error) -> String {
         switch error as? ProfileBackup.ProcessError {
         case .sourceMissing:
-            return "the profile folder does not exist"
+            return AppStrings.localized("the profile folder does not exist")
         case .stagingFailed:
-            return "could not create a staging folder"
+            return AppStrings.localized("could not create a staging folder")
         case .processFailed(let step, _, let stderr):
             let reason = stderr.split(separator: "\n").first.map(String.init) ?? stderr
-            return reason.isEmpty ? "the \(step) step failed" : reason
+            return reason.isEmpty ? AppStrings.localized("the \(step) step failed") : reason
         case nil:
             return error.localizedDescription
         }
@@ -228,18 +228,18 @@ extension AppModel {
     private func profileBackupImportFailureMessage(_ error: Error) -> String {
         switch error as? ProfileBackupImport.ImportError {
         case .unreadableArchive:
-            return "that file is not a readable backup archive"
+            return AppStrings.localized("that file is not a readable backup archive")
         case .unsafeEntries(let paths):
             let shown = paths.prefix(3).joined(separator: ", ")
-            return "the archive contains unsafe paths (\(shown)) and was refused"
+            return AppStrings.localized("the archive contains unsafe paths (\(shown)) and was refused")
         case .manifestMissing:
-            return "that archive has no profile-backup manifest"
+            return AppStrings.localized("that archive has no profile-backup manifest")
         case .manifestCorrupt:
-            return "the backup's manifest could not be read"
+            return AppStrings.localized("the backup's manifest could not be read")
         case .unsupportedVersion(let version):
-            return "that backup uses format \(version), which this app does not read; update the app first"
+            return AppStrings.localized("that backup uses format \(version), which this app does not read; update the app first")
         case .layoutCorrupt:
-            return "the backup is missing part of its declared layout"
+            return AppStrings.localized("the backup is missing part of its declared layout")
         case nil:
             return error.localizedDescription
         }

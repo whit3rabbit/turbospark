@@ -116,7 +116,9 @@ extension AppModel {
     public func installImageModel(_ source: ImageCatalogEntry) {
         guard Self.testedImageModelAliases.contains(source.alias),
               Self.supportsMLXImageModel(modelID: source.modelID) else {
-            showToast("Only supported MLX image models can be installed in the app.", style: .warning)
+            showToast(
+                AppStrings.localized("Only supported MLX image models can be installed in the app."),
+                style: .warning)
             return
         }
         guard !imageModels.contains(where: { $0.alias == source.alias }) else {
@@ -133,8 +135,8 @@ extension AppModel {
         isInstallingImageModel = true
         installingAlias = alias
         imageInstallAlias = alias
-        installStageText = "Preparing image source..."
-        imageInstallStage = "Preparing image source..."
+        installStageText = AppStrings.localized("Preparing image source...")
+        imageInstallStage = installStageText
         installProgressFraction = nil
         installDownloadedBytes = nil
         installTotalBytes = nil
@@ -178,20 +180,20 @@ extension AppModel {
                         self.refreshModels()
                         self.selectImageModel(model)
                         self.showToast(
-                            "Installed image model '\(model.alias)'.",
+                            AppStrings.localized("Installed image model '\(model.alias)'."),
                             style: .success, duration: 4.0)
                     }
                 }
             } catch is CancellationError {
                 if !self.modelDownloadsShuttingDown {
                     self.setModelDownloadStatus(.cancelled)
-                    self.showToast("Image model install stopped.", style: .info)
+                    self.showToast(AppStrings.localized("Image model install stopped."), style: .info)
                 }
             } catch {
                 if !self.modelDownloadsShuttingDown && !self.isCancellingModelInstall {
                     self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
                     self.showToast(
-                        "Image model install failed: \(error.localizedDescription)",
+                        AppStrings.localized("Image model install failed: \(error.localizedDescription)"),
                         style: .error, duration: 6.0)
                 }
             }
@@ -218,7 +220,7 @@ extension AppModel {
         isCancellingModelInstall = true
         setModelDownloadStatus(.cancelling)
         installETAText = nil
-        imageInstallStage = "Stopping image install..."
+        imageInstallStage = AppStrings.localized("Stopping image install...")
         installStageText = imageInstallStage
         TurboSparkCatalog.cancelInstall()
     }
@@ -244,8 +246,8 @@ extension AppModel {
             if wasSelected { imageModelPathText = "" }
             refreshModels()
             showToast(
-                "Removed '\(image.alias)' from TurboSpark. The files were left on disk at "
-                    + "\(image.path); restore it under Settings > Models.",
+                AppStrings.localized(
+                    "Removed '\(image.alias)' from TurboSpark. The files were left on disk at \(image.path); restore it under Settings > Models."),
                 style: .info, duration: 5.0)
             return
         }
@@ -255,10 +257,10 @@ extension AppModel {
                 imageModelPathText = ""
             }
             refreshModels()
-            showToast("Deleted image model '\(image.alias)'.", style: .info)
+            showToast(AppStrings.localized("Deleted image model '\(image.alias)'."), style: .info)
         } catch {
             showToast(
-                "Could not delete image model: \(error.localizedDescription)",
+                AppStrings.localized("Could not delete image model: \(error.localizedDescription)"),
                 style: .error, duration: 6.0)
         }
     }
@@ -284,6 +286,6 @@ extension AppModel {
         // Cancel, wait for the producer, then release the weights and the
         // MLX buffer cache so the memory actually returns to the system.
         Task { await old?.unload() }
-        showToast("Image model unloaded", style: .info)
+        showToast(AppStrings.localized("Image model unloaded"), style: .info)
     }
 }

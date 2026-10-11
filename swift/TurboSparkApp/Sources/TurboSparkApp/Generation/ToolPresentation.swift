@@ -86,8 +86,11 @@ struct ToolPresentation: Equatable {
         return ToolPresentation(label: readable, icon: "plug", isBuiltIn: false)
     }
 
+    /// Built-in labels are catalog keys, resolved in the in-app language
+    /// (`AppStrings`), not the process language `String(localized:)` uses.
+    /// An MCP tool's derived name is shown as the server spells it.
     var localizedLabel: String {
-        isBuiltIn ? String(localized: String.LocalizationValue(label), bundle: .module) : label
+        isBuiltIn ? AppStrings.localized(String.LocalizationValue(label)) : label
     }
 
     static func status(call: AppToolCall, result: AppToolResult?) -> AppToolCallStatus {

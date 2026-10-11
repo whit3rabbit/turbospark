@@ -126,15 +126,9 @@ struct ImageStyleBrowserSheet: View {
             Text("Style", bundle: .module)
                 .themedFont(.title3, weight: .semibold)
             Spacer(minLength: 0)
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.appSecondary)
-                TextField(text: $search) { Text("Search styles", bundle: .module) }
-                    .textFieldStyle(.plain)
-                    .focused($searchFocused)
-            }
-            .padding(8)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
-            .frame(width: 230)
+            AppSearchField(
+                text: $search, prompt: Text("Search styles", bundle: .module),
+                minWidth: 160, idealWidth: 230, maxWidth: 300, focus: $searchFocused)
             Picker(selection: $categoryID) {
                 Text("All Categories", bundle: .module).tag("")
                 ForEach(AppImageStyleCatalog.groups) { group in
@@ -194,9 +188,10 @@ struct ImageStyleBrowserSheet: View {
             } label: {
                 Text("None", bundle: .module)
             }
+            .appAction(.secondary)
             Spacer(minLength: 0)
             Button { dismiss() } label: { Text("Done", bundle: .module) }
-                .buttonStyle(.borderedProminent)
+                .appAction(.primary)
         }
         .padding(16)
     }

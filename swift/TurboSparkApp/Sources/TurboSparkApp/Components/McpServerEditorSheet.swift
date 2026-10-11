@@ -80,16 +80,22 @@ public struct McpServerEditorSheet: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(existingConfig == nil ? "Add MCP Server" : "Edit MCP Server")
-                    .themedFont(.base, weight: .semibold)
+                // Same words as the pane's button and the server menu.
+                Group {
+                    if existingConfig == nil {
+                        Text("Add Server", bundle: .module)
+                    } else {
+                        Text("Edit Server", bundle: .module)
+                    }
+                }
+                .themedFont(.base, weight: .semibold)
                 Text("Configure Model Context Protocol server parameters and execution transport.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
             Button { onDismiss() } label: { Text("Close", bundle: .module) }
-                .buttonStyle(.plain)
-                .foregroundStyle(.appSecondary)
+                .appAction(.quiet)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -104,16 +110,22 @@ public struct McpServerEditorSheet: View {
                 Text("Server Name", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
-                TextField("e.g. codebase-memory-mcp", text: $name)
-                    .textFieldStyle(.roundedBorder)
+                TextField(text: $name, prompt: Text(verbatim: "codebase-memory-mcp")) {
+                    Text("Server Name", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Description (Optional)", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
-                TextField("e.g. Knowledge graph and symbol search", text: $serverDescription)
-                    .textFieldStyle(.roundedBorder)
+                TextField(text: $serverDescription, prompt: Text("e.g. Knowledge graph and symbol search", bundle: .module)) {
+                    Text("Description (Optional)", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
             }
         }
     }
@@ -258,7 +270,7 @@ public struct McpServerEditorSheet: View {
 
     private var parsedEndpointURL: URL? { validation.parsedEndpointURL }
 
-    private var validationMessage: String? { validation.message }
+    private var validationMessage: String? { validation.localizedMessage }
 
     private func populateValues() {
         guard let config = existingConfig else { return }
@@ -360,7 +372,7 @@ public struct McpServerEditorSheet: View {
         testIsError = false
 
         guard let config = buildConfig() else {
-            testResult = validationMessage ?? "This server is not fully configured yet."
+            testResult = validationMessage ?? AppStrings.localized("This server is not fully configured yet.")
             testIsError = true
             isTesting = false
             return
@@ -368,10 +380,10 @@ public struct McpServerEditorSheet: View {
         do {
             let tools = try await McpClientEngine.shared.discoverTools(for: config, workingDirectory: workingDirectory)
             discoveredTools = tools
-            testResult = "Connected successfully! Discovered \(tools.count) tool(s)."
+            testResult = AppStrings.localized("Connected. Tools discovered: \(tools.count).")
             testIsError = false
         } catch {
-            testResult = "Connection failed: \(error.localizedDescription)"
+            testResult = AppStrings.localized("Connection failed: \(error.localizedDescription)")
             testIsError = true
         }
         isTesting = false

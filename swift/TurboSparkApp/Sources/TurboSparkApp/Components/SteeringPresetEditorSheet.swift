@@ -53,8 +53,15 @@ struct SteeringPresetEditorSheet: View {
 
     private var header: some View {
         HStack {
-            Text(draft.name.isEmpty ? "Add a direction" : "Edit direction")
-                .themedFont(.base, weight: .semibold)
+            Group {
+                if draft.name.isEmpty {
+                    Text("Add a direction", bundle: .module)
+                } else {
+                    Text("Edit direction", bundle: .module)
+                }
+            }
+            .themedFont(.base, weight: .semibold)
+            .accessibilityAddTraits(.isHeader)
             Spacer()
         }
         .padding()
@@ -62,19 +69,26 @@ struct SteeringPresetEditorSheet: View {
 
     private var identitySection: some View {
         Section(header: Text("Identity", bundle: .module)) {
-            TextField("Name", text: $draft.name)
-                .help("What this direction encodes. Only you know: nothing here inspects it.")
-            TextField("Notes", text: $draft.notes, axis: .vertical)
-                .lineLimit(2...4)
+            TextField(text: $draft.name) {
+                Text("Name", bundle: .module)
+            }
+            .help(Text("What this direction encodes. Only you know: nothing here inspects it.", bundle: .module))
+            TextField(text: $draft.notes, axis: .vertical) {
+                Text("Notes", bundle: .module)
+            }
+            .lineLimit(2...4)
         }
     }
 
     private var vectorSection: some View {
         Section(header: Text("Control vector", bundle: .module)) {
             HStack {
-                TextField("Path to a .gguf control vector", text: $draft.vectorPath)
-                    .truncationMode(.head)
+                TextField(text: $draft.vectorPath) {
+                    Text("Path to a .gguf control vector", bundle: .module)
+                }
+                .truncationMode(.head)
                 Button { pickFile() } label: { Text("Choose...", bundle: .module) }
+                    .appAction(.secondary, size: .small)
             }
             .onChange(of: draft.vectorPath) { _, _ in readVector() }
 
@@ -87,23 +101,22 @@ struct SteeringPresetEditorSheet: View {
                     Text("Width", bundle: .module)
                 }
                 LabeledContent {
-                    Text(coverageText(info))
+                    coverageText(info)
                 } label: {
                     Text("Blocks", bundle: .module)
                 }
                 if let declared = info.declaredArch {
                     LabeledContent {
-                        Text(declared)
+                        // An architecture identifier from the file header.
+                        Text(verbatim: declared)
                     } label: {
                         Text("Declared for", bundle: .module)
                     }
-                        .help(
-                            "Advisory only: nothing validates against this, which is exactly "
-                                + "why it is worth reading.")
+                    .help(Text("Advisory only: nothing validates against this, which is exactly why it is worth reading.", bundle: .module))
                 }
             }
             if let readError {
-                Label(readError, systemImage: "exclamationmark.triangle")
+                Label { Text(verbatim: readError) } icon: { Image(systemName: "exclamationmark.triangle") }
                     .themedFont(.small)
                     .foregroundStyle(.red)
             }
@@ -113,7 +126,7 @@ struct SteeringPresetEditorSheet: View {
                 modelHidden: model.selectedModelHiddenSize,
                 modelLayers: model.selectedModelLayerCount
             )
-            Label(compatibility.summary, systemImage: "info.circle")
+            Label { SteeringText.compatibility(compatibility) } icon: { Image(systemName: "info.circle") }
                 .themedFont(.small)
                 .foregroundStyle(compatibility.allowsEnabling ? Color.secondary : Color.red)
         }
@@ -126,12 +139,13 @@ struct SteeringPresetEditorSheet: View {
                 set: { draft.mode = $0; modeTouched = true }
             )) {
                 ForEach(AppSteeringModeOption.allCases) { mode in
-                    Text(mode.menuLabel).tag(mode)
+                    SteeringText.mode(mode).tag(mode)
                 }
             } label: { Text("Mode", bundle: .module) }
             HStack {
                 Text("Strength", bundle: .module)
                 Slider(value: $draft.scale, in: -2...2, step: 0.05)
+                    .accessibilityLabel(Text("Strength", bundle: .module))
                 Text(draft.scale, format: .number.precision(.fractionLength(2)))
                     .monospacedDigit()
                     .frame(width: 48, alignment: .trailing)
@@ -144,48 +158,52 @@ struct SteeringPresetEditorSheet: View {
             // A band read off one direction is not an operating point for
             // another, which is why this warns rather than clamping.
             if abs(draft.scale) > 0.8 {
-                Label(
-                    "Measured usable strengths on real installs ran 0.4 to 0.8, and full "
-                        + "ablation over every layer collapsed the turn entirely. Restrict the "
-                        + "layer band, or lower this.",
-                    systemImage: "exclamationmark.triangle"
-                )
+                Label {
+                    Text("Measured usable strengths on real installs ran 0.4 to 0.8, and full ablation over every layer collapsed the turn entirely. Restrict the layer band, or lower this.", bundle: .module)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                }
                 .themedFont(.small)
                 .foregroundStyle(.orange)
             }
-            TextField("Layers, e.g. 20:45 (blank = every covered block)", text: $draft.layers)
-            if draft.mode == .clamp {
-                TextField("Clamp target", value: $draft.target, format: .number)
+            TextField(text: $draft.layers) {
+                Text("Layers, e.g. 20:45 (blank = every covered block)", bundle: .module)
             }
-            TextField("Gate threshold (0 always fires)", value: $draft.gate, format: .number)
+            if draft.mode == .clamp {
+                TextField(value: $draft.target, format: .number) {
+                    Text("Clamp target", bundle: .module)
+                }
+            }
+            TextField(value: $draft.gate, format: .number) {
+                Text("Gate threshold (0 always fires)", bundle: .module)
+            }
         }
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: AppMetrics.actionSpacing) {
             Spacer()
             Button { dismiss() } label: { Text("Cancel", bundle: .module) }
+                .keyboardShortcut(.cancelAction)
             Button {
                 onSave(draft)
                 dismiss()
             } label: { Text("Save", bundle: .module) }
+            .appAction(.primary)
             .keyboardShortcut(.defaultAction)
             .disabled(draft.vectorPath.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .padding()
     }
 
-    private func coverageText(_ info: ControlVectorInfo) -> String {
+    private func coverageText(_ info: ControlVectorInfo) -> Text {
         // The SPAN is what a layer-count check compares against, and the
         // range is what tells a reader that a missing block 0 is the
         // convention rather than a gap.
-        let range: String
         if let low = info.minLayer, let high = info.maxLayer {
-            range = " (\(low) to \(high))"
-        } else {
-            range = ""
+            return Text("\(info.coveredLayers) of \(info.spannedLayers) (\(low) to \(high))", bundle: .module)
         }
-        return "\(info.coveredLayers) of \(info.spannedLayers)\(range)"
+        return Text("\(info.coveredLayers) of \(info.spannedLayers)", bundle: .module)
     }
 
     private func readVector(applyDeclaredMode: Bool = true) {

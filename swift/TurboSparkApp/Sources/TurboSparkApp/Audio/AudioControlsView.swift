@@ -1,5 +1,14 @@
 import SwiftUI
 
+// One treatment for the actions every Audio route shares (Library, Record,
+// Transcribe, Voiceover, Voice Clone, Voice Design, Music, Cleanup and
+// Advanced all draw their saved items through these components):
+// playback, Save As and Export are `.secondary`, Delete is `.destructive`,
+// all `.small` because they sit in cards and rows. Rows pass
+// `compact: true` for icon-only Save As and Delete with the same roles.
+// The route's run action and the model panel's Download/Retry/Adopt are
+// the only `.primary` actions.
+
 @MainActor
 struct AudioTransportView: View {
     @ObservedObject var controller: AudioWorkspaceController
@@ -11,15 +20,21 @@ struct AudioTransportView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
-                Button { controller.seek(to: max(0, position - 5)) } label: { Image(systemName: "gobackward.5") }
-                    .accessibilityLabel(Text("Back five seconds", bundle: .module))
-                Button { controller.playPause() } label: {
-                    Label { Text(controller.isPlaying ? "Pause" : "Play", bundle: .module) }
-                        icon: { Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill") }
+                AppIconButton("gobackward.5", label: Text("Back five seconds", bundle: .module)) {
+                    controller.seek(to: max(0, position - 5))
                 }
+                .appAction(.quiet, size: .small)
+                Button { controller.playPause() } label: {
+                    Label {
+                        controller.isPlaying ? Text("Pause", bundle: .module) : Text("Play", bundle: .module)
+                    } icon: { Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill") }
+                }
+                .appAction(.secondary, size: .small)
                 .keyboardShortcut(.space, modifiers: .option)
-                Button { controller.seek(to: min(duration, position + 5)) } label: { Image(systemName: "goforward.5") }
-                    .accessibilityLabel(Text("Forward five seconds", bundle: .module))
+                AppIconButton("goforward.5", label: Text("Forward five seconds", bundle: .module)) {
+                    controller.seek(to: min(duration, position + 5))
+                }
+                .appAction(.quiet, size: .small)
                 Spacer(minLength: 0)
                 Text(verbatim: audioTime(position) + " / " + audioTime(duration))
                     .themedFont(.small).monospacedDigit()
@@ -28,7 +43,7 @@ struct AudioTransportView: View {
             Slider(value: Binding(get: { position }, set: { controller.seek(to: $0) }), in: 0...max(0.01, duration)) {
                 Text("Playback position", bundle: .module)
             }
-            .accessibilityValue(Text(audioTime(position)))
+            .accessibilityValue(Text(verbatim: audioTime(position)))
             .accessibilityAdjustableAction { direction in
                 switch direction {
                 case .increment: controller.seek(to: min(duration, position + 5))
@@ -44,12 +59,13 @@ struct AudioTransportView: View {
                     .textFieldStyle(.roundedBorder).frame(maxWidth: 140)
                     .onSubmit { seek() }
                     Button { seek() } label: { Text("Go to position", bundle: .module) }
+                        .appAction(.secondary, size: .small)
                 }.padding(.top, 8)
             } label: { Text("Go to position", bundle: .module) }
             .themedFont(.small)
         }
         .disabled(duration <= 0 || controller.hasRecordingActivity)
-        .padding(16).background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+        .padding(16).background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private func seek() {
@@ -74,7 +90,7 @@ struct AudioExportMenu: View {
         } label: {
             Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
         }
-        .menuStyle(.borderlessButton).fixedSize()
+        .appMenuAction(size: .small)
         .disabled(item.preferredTranscript == nil || controller.hasRecordingActivity || controller.isExporting)
     }
 }
@@ -83,13 +99,32 @@ struct AudioExportMenu: View {
 struct AudioSaveAsButton: View {
     @ObservedObject var controller: AudioWorkspaceController
     let item: AudioLibraryItem
+    /// Icon only, for rows; the title stays the tooltip and VoiceOver name.
+    var compact = false
 
     var body: some View {
         Button { controller.exportAudio(item) } label: {
             Label { Text("Save As...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+                .labelStyle(AudioActionLabelStyle(compact: compact))
         }
+        .appAction(.secondary, size: .small)
         .fixedSize()
+        .help(Text("Save As...", bundle: .module))
         .disabled(!item.hasPlayableAudio || controller.hasRecordingActivity || controller.isExporting)
+    }
+}
+
+/// Title and icon, or icon only for a row, without a conditional modifier
+/// that would change the button's identity.
+struct AudioActionLabelStyle: LabelStyle {
+    let compact: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        if compact {
+            configuration.icon
+        } else {
+            Label(title: { configuration.title }, icon: { configuration.icon })
+        }
     }
 }
 
@@ -97,13 +132,18 @@ struct AudioSaveAsButton: View {
 struct AudioDeleteButton: View {
     @ObservedObject var controller: AudioWorkspaceController
     let item: AudioLibraryItem
+    /// Icon only, for rows; the title stays the tooltip and VoiceOver name.
+    var compact = false
     @State private var deletingItem: AudioLibraryItem?
 
     var body: some View {
         Button(role: .destructive) { deletingItem = item } label: {
             Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
+                .labelStyle(AudioActionLabelStyle(compact: compact))
         }
+        .appAction(.destructive, size: .small)
         .fixedSize()
+        .help(Text("Delete", bundle: .module))
         .disabled(!controller.canDelete(item))
         .modifier(AudioDeleteConfirmation(controller: controller, item: $deletingItem))
     }
@@ -142,11 +182,11 @@ struct AudioRecordingBadge: View {
                     } else {
                         Image(systemName: controller.isPaused ? "pause.circle.fill" : "record.circle")
                         Text(controller.isPaused ? "Paused" : "Recording", bundle: .module)
-                        Text(audioTime(controller.recordingSeconds)).monospacedDigit()
+                        Text(verbatim: audioTime(controller.recordingSeconds)).monospacedDigit()
                     }
                 }.themedFont(.small, weight: .semibold)
             }
-            .buttonStyle(.bordered)
+            .appAction(.secondary)
             .accessibilityHint(Text("Open recording controls", bundle: .module))
         }
     }
@@ -161,10 +201,10 @@ struct AudioWorkspaceStatusView: View {
             if let error = controller.error {
                 HStack(alignment: .top) {
                     Image(systemName: "exclamationmark.triangle")
-                    Text(error).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(verbatim: error).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
-                    Button { controller.error = nil } label: { Image(systemName: "xmark") }
-                        .accessibilityLabel(Text("Dismiss error", bundle: .module))
+                    AppIconButton("xmark", label: Text("Dismiss error", bundle: .module)) { controller.error = nil }
+                        .appAction(.quiet, size: .small)
                 }
                 Text("Your input and completed takes are kept. Adjust the settings and try again.", bundle: .module)
                     .foregroundStyle(.appSecondary)
@@ -174,8 +214,8 @@ struct AudioWorkspaceStatusView: View {
                     if controller.isBusy || controller.isInstalling || controller.recordingSetupStatus != nil {
                         if let progress = controller.progress {
                             ProgressView(value: max(0, min(1, progress))).frame(width: 180)
-                                .accessibilityLabel(Text(controller.status))
-                                .accessibilityValue(Text(controller.generationProgress?.counter ?? "\(Int(progress * 100))%"))
+                                .accessibilityLabel(Text(verbatim: controller.status))
+                                .accessibilityValue(Text(verbatim: controller.generationProgress?.counter ?? "\(Int(progress * 100))%"))
                         } else {
                             ProgressView().controlSize(.small)
                         }
@@ -186,11 +226,11 @@ struct AudioWorkspaceStatusView: View {
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(controller.isExporting && !controller.isBusy
-                             ? String(localized: "Exporting audio", bundle: .module) : controller.status).lineLimit(2)
+                             ? AppStrings.localized("Exporting audio") : controller.status).lineLimit(2)
                         if let generation = controller.generationProgress {
                             HStack(spacing: 12) {
-                                if let counter = generation.counter { Text(counter).monospacedDigit() }
-                                if let detail = generation.detail { Text(detail).monospacedDigit() }
+                                if let counter = generation.counter { Text(verbatim: counter).monospacedDigit() }
+                                if let detail = generation.detail { Text(verbatim: detail).monospacedDigit() }
                             }.foregroundStyle(.appSecondary)
                         }
                     }
@@ -203,13 +243,16 @@ struct AudioWorkspaceStatusView: View {
                     }
                     if controller.recordingSetupStatus != nil {
                         Button { controller.cancelRecordingSetup() } label: { Text("Cancel", bundle: .module) }
+                            .appAction(.secondary, size: .small)
                             .keyboardShortcut(".", modifiers: .command)
                     } else if controller.isBusy {
                         Button { controller.cancel() } label: { Text("Cancel", bundle: .module) }
+                            .appAction(.secondary, size: .small)
                             .keyboardShortcut(".", modifiers: .command)
                     }
                     if !controller.pendingSaves.isEmpty || !controller.pendingTranscriptEdits.isEmpty {
                         Button { controller.retryAutosave() } label: { Text("Retry", bundle: .module) }
+                            .appAction(.secondary, size: .small)
                     }
                 }
             }
@@ -218,12 +261,12 @@ struct AudioWorkspaceStatusView: View {
                     HStack(spacing: 16) {
                         HStack(spacing: 6) {
                             Text("Elapsed time", bundle: .module)
-                            Text(audioTime(context.date.timeIntervalSince(generation.startedAt))).monospacedDigit()
+                            Text(verbatim: audioTime(context.date.timeIntervalSince(generation.startedAt))).monospacedDigit()
                         }
                         if generation.phase != .preparing {
                             HStack(spacing: 6) {
                                 Text("Last update", bundle: .module)
-                                Text(audioTime(context.date.timeIntervalSince(generation.updatedAt))).monospacedDigit()
+                                Text(verbatim: audioTime(context.date.timeIntervalSince(generation.updatedAt))).monospacedDigit()
                             }
                         }
                     }.foregroundStyle(.appSecondary)
@@ -256,8 +299,10 @@ struct AudioNameSheet: View {
             HStack {
                 Spacer()
                 Button { dismiss() } label: { Text("Cancel", bundle: .module) }
+                    .appAction(.secondary)
                     .keyboardShortcut(.cancelAction)
                 Button { save() } label: { Text("Save", bundle: .module) }
+                    .appAction(.primary)
                     .keyboardShortcut(.defaultAction).disabled(!valid)
             }
         }

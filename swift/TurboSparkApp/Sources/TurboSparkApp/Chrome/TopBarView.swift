@@ -71,7 +71,7 @@ struct TopBarView: View {
                         } label: {
                             Image(systemName: "list.bullet.rectangle")
                                 .font(theme.ui(.callout))
-                                .foregroundStyle(canPinSummary && isSummaryVisible ? theme.accent : .secondary)
+                                .foregroundStyle(canPinSummary && isSummaryVisible ? theme.accent : theme.secondaryText)
                         }
                         .buttonStyle(.plain)
                         .help(Text("Chat summary", bundle: .module))
@@ -129,14 +129,14 @@ struct TopBarView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
-        .foregroundStyle(isChatSidebarVisible ? Color.primary : Color.secondary)
+        .foregroundStyle(isChatSidebarVisible ? theme.foreground : theme.secondaryText)
         // No `.keyboardShortcut` here (U7): the "View" menu's "Toggle Chat
         // Sidebar" command already claims Cmd+Ctrl+S, and SwiftUI does not
         // define which of two identical shortcuts on different controls wins.
-        .help(presentation.help)
-        .accessibilityLabel(presentation.title)
-        .accessibilityHint(presentation.help)
-        .accessibilityValue(presentation.accessibilityValue)
+        .help(helpText(presentation))
+        .accessibilityLabel(titleText(presentation))
+        .accessibilityHint(helpText(presentation))
+        .accessibilityValue(Text(LocalizedStringKey(presentation.accessibilityValue), bundle: .module))
     }
 
     private var inspectorToggle: some View {
@@ -150,19 +150,35 @@ struct TopBarView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
-        .foregroundStyle(isInspectorVisible ? theme.accent : Color.secondary)
+        .foregroundStyle(isInspectorVisible ? theme.accent : theme.secondaryText)
         .background {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(isInspectorVisible ? theme.accent.opacity(0.14) : .clear)
         }
-        .animation(TSMotion.hover, value: isInspectorVisible)
+        .tsAnimation(TSMotion.hover, value: isInspectorVisible)
         // No `.keyboardShortcut` here (U7): the "View" menu's "Toggle
         // Inspector" command claims Cmd+Shift+I and its handler also
         // dismisses an open attachment preview first.
-        .help(presentation.help)
-        .accessibilityLabel(presentation.title)
-        .accessibilityHint(presentation.help)
-        .accessibilityValue(presentation.accessibilityValue)
+        .help(helpText(presentation))
+        .accessibilityLabel(titleText(presentation))
+        .accessibilityHint(helpText(presentation))
+        .accessibilityValue(Text(LocalizedStringKey(presentation.accessibilityValue), bundle: .module))
+    }
+
+    /// `AppSidebarControlPresentation` carries English `String`s, which the
+    /// `String` overloads of `.help` and `.accessibilityLabel` would show
+    /// untranslated. Its title and value are catalog keys; its help is the
+    /// title plus a shortcut suffix, which has nothing to translate.
+    private func titleText(_ presentation: AppSidebarControlPresentation) -> Text {
+        Text(LocalizedStringKey(presentation.title), bundle: .module)
+    }
+
+    private func helpText(_ presentation: AppSidebarControlPresentation) -> Text {
+        guard presentation.help.hasPrefix(presentation.title) else {
+            return Text(LocalizedStringKey(presentation.help), bundle: .module)
+        }
+        return titleText(presentation)
+            + Text(verbatim: String(presentation.help.dropFirst(presentation.title.count)))
     }
 
     private var browserToggle: some View {
@@ -175,12 +191,12 @@ struct TopBarView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
-        .foregroundStyle(model.browserPaneIsOpen ? theme.accent : Color.secondary)
+        .foregroundStyle(model.browserPaneIsOpen ? theme.accent : theme.secondaryText)
         .background {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(model.browserPaneIsOpen ? theme.accent.opacity(0.14) : .clear)
         }
-        .animation(TSMotion.hover, value: model.browserPaneIsOpen)
+        .tsAnimation(TSMotion.hover, value: model.browserPaneIsOpen)
         .help(Text("Browser", bundle: .module))
         .accessibilityLabel(Text("Browser", bundle: .module))
         .accessibilityAddTraits(model.browserPaneIsOpen ? .isSelected : [])
@@ -195,7 +211,7 @@ struct TopBarView: View {
                     .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(theme.accent)
 
-                Text(worktree.currentBranch)
+                Text(verbatim: worktree.currentBranch)
                     .font(theme.code(.small, weight: .semibold))
                     .foregroundStyle(.appText)
 
@@ -217,11 +233,11 @@ struct TopBarView: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(TurboSparkTheme.surfaceColor, in: Capsule())
-            .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+            .overlay(Capsule().stroke(.appText.opacity(0.08), lineWidth: 0.5))
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.97))
-        .help("Git: \(worktree.currentBranch) (click to open changes pane)")
-        .accessibilityLabel("Git branch \(worktree.currentBranch)")
+        .help(Text("Git: \(worktree.currentBranch) (click to open changes pane)", bundle: .module))
+        .accessibilityLabel(Text("Git branch \(worktree.currentBranch)", bundle: .module))
     }
 
     @ViewBuilder
@@ -268,272 +284,10 @@ struct TopBarView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(TSPressScaleStyle(scale: 0.9))
-            .foregroundStyle(model.canUnloadAnyModel ? theme.accent : Color.secondary.opacity(0.35))
+            .foregroundStyle(model.canUnloadAnyModel ? theme.accent : theme.secondaryText.opacity(0.35))
             .disabled(!model.canUnloadAnyModel)
             .help(Text("Unload Model", bundle: .module))
             .accessibilityLabel(Text("Unload Model", bundle: .module))
         }
-    }
-}
-
-/// Memory, CPU and GPU wait, in the top bar's centre.
-///
-/// Polled on a 2-second timer -- the same cadence `StatusBarView` used for
-/// these three -- so this bar never redraws per token. The readouts are the
-/// same accessors, moved rather than restated: `currentProcessMemoryBytes`,
-/// `currentProcessCPUUsage`, and `diagnostics?.phases?.gpuWaitMs`.
-///
-/// **GPU wait, not "GPU %".** There is no GPU-utilisation figure anywhere in
-/// this app's telemetry, and inventing a percentage from `gpuWaitMs` would be
-/// a number arrived at by ignorance (`swift/CLAUDE.md`'s rule about the
-/// unsized model's "16 slots"). GPU wait is what the engine actually
-/// measures, so GPU wait is what this shows -- and it shows an em dash until a
-/// run has produced phase counters, rather than a zero.
-@MainActor
-struct ChromeTelemetryView: View {
-    @Environment(\.appTheme) private var theme
-    @ObservedObject var model: AppModel
-
-    @State private var memoryBytes: UInt64?
-    @State private var cpuPercent: Double?
-
-
-    var body: some View {
-        HStack(spacing: 11) {
-            memoryCell
-            divider
-            cpuCell
-            divider
-            gpuCell
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(.appBorder, lineWidth: 0.5)
-        }
-        .onAppear(perform: refresh)
-        .task {
-            // Lifetime follows view identity, not struct re-creation: a Timer
-            // publisher stored on the struct restarted on every parent render
-            // (every ~25 ms while generating), so the 2 s poll never fired.
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                if Task.isCancelled { break }
-                refresh()
-            }
-        }
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(.appBorder)
-            .frame(width: 1, height: 13)
-    }
-
-    private var memoryCell: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "memorychip")
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.appSecondary)
-                .accessibilityHidden(true)
-            Text(MetricFormat.memory(memoryBytes))
-                .font(theme.code(.callout, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(.appText)
-            if let fraction = memoryFraction {
-                TSMeterBar(fraction: fraction, tint: memoryTint(fraction))
-                    .frame(width: 34)
-            }
-        }
-        .help(memoryHelp)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Process memory")
-        .accessibilityValue(memoryAccessibilityValue)
-    }
-
-    private var cpuCell: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "cpu")
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.appSecondary)
-                .accessibilityHidden(true)
-            Text(cpuText)
-                .font(theme.code(.callout, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(.appText)
-            Text("CPU", bundle: .module)
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
-        }
-        .help("Current CPU utilization of the TurboSpark process")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Process CPU usage")
-        .accessibilityValue(cpuText)
-    }
-
-    private var gpuCell: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "chart.line.uptrend.xyaxis")
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.appSecondary)
-                .accessibilityHidden(true)
-            Text(gpuWaitText)
-                .font(theme.code(.callout, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(.appText)
-            Text("GPU wait", bundle: .module)
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
-        }
-        .help(
-            "Metal GPU wait per pass from the last run's phase counters. "
-                + "Updates after a generation pass completes; TurboSpark does not measure a live GPU percentage."
-        )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("GPU wait per pass")
-        .accessibilityValue(gpuWaitText)
-    }
-
-    // MARK: - Values
-
-    private var memoryFraction: Double? {
-        guard let memoryBytes,
-              let physical = model.telemetry?.physicalMemoryBytes,
-              physical > 0
-        else { return nil }
-        return min(1.0, Double(memoryBytes) / Double(physical))
-    }
-
-    private func memoryTint(_ fraction: Double) -> Color {
-        if fraction > 0.85 { return .red }
-        if fraction > 0.65 { return .orange }
-        return theme.accent
-    }
-
-    private var memoryHelp: String {
-        var text = "Physical footprint of this process (phys_footprint)."
-        if let physical = model.telemetry?.physicalMemoryBytes {
-            text += " Machine has \(MetricFormat.memory(physical))."
-        }
-        return text
-    }
-
-    private var memoryAccessibilityValue: String {
-        guard let fraction = memoryFraction else { return MetricFormat.memory(memoryBytes) }
-        return "\(MetricFormat.memory(memoryBytes)), \(MetricFormat.percent(fraction * 100)) of system memory"
-    }
-
-    private var cpuText: String {
-        guard let cpuPercent else { return "\u{2014}" }
-        return MetricFormat.percent(cpuPercent)
-    }
-
-    /// An em dash until a run has produced phase counters. `calls > 0` is the
-    /// same guard `RunnerDiagnosticsSection` uses before showing this figure.
-    private var gpuWaitText: String {
-        guard let phases = model.diagnostics?.phases, phases.calls > 0 else { return "\u{2014}" }
-        return String(format: "%.1f ms", phases.gpuWaitMs)
-    }
-
-    private func refresh() {
-        memoryBytes = model.currentProcessMemoryBytes
-        cpuPercent = model.currentProcessCPUUsage
-        model.refreshTelemetry()
-    }
-}
-
-/// Two-tone horizontal meter.
-///
-/// Declared here rather than reused: `StatusBarView`'s `MeterBar` is
-/// `private`, and widening it to share would couple the top bar to a file it
-/// otherwise has nothing to do with. Six lines is cheaper than that coupling.
-private struct TSMeterBar: View {
-    let fraction: Double
-    let tint: Color
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.1))
-                Capsule()
-                    .fill(tint)
-                    .frame(width: max(2, geometry.size.width * fraction))
-            }
-        }
-        .frame(height: 4)
-        .accessibilityHidden(true)
-    }
-}
-
-
-/// Compact prefill/decode indicator shown to the right of the model loader.
-struct GenerationPhaseIndicator: View {
-    @Environment(\.appTheme) private var theme
-    @ObservedObject var model: AppModel
-    @ObservedObject private var appearanceManager = AppearanceManager.shared
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-
-    /// App preference over system value; see `ToastOverlayView`.
-    private var reduceMotion: Bool {
-        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
-    }
-
-    var body: some View {
-        Group {
-            if let statusText {
-                HStack(spacing: 5) {
-                    if model.opening {
-                        ProgressView().controlSize(.mini).scaleEffect(0.7)
-                    } else if model.phase == .prefill, !reduceMotion {
-                        PulsingIndicatorDot()
-                    } else {
-                        Circle()
-                            .fill(.appAccent)
-                            .frame(width: 6, height: 6)
-                    }
-                    Text(statusText)
-                        .font(theme.ui(.tiny, weight: .medium))
-                        .monospacedDigit()
-                        .foregroundStyle(.appSecondary)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(TurboSparkTheme.surfaceColor, in: Capsule())
-                .help(statusText)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Model status")
-                .accessibilityValue(statusText)
-            }
-        }
-    }
-
-    /// Nil while idle: a bar that shows "Ready" forever is chrome that never
-    /// changes, and the status strip already carries the loaded/not signal.
-    private var statusText: String? {
-        if model.opening { return "Loading model" }
-        switch model.phase {
-        case .prefill:
-            return "Prefill \(model.livePrefillDone)/\(max(model.livePrefillTotal, 1))"
-        case .decode:
-            return "Generating"
-        case .idle:
-            return nil
-        }
-    }
-}
-
-private struct PulsingIndicatorDot: View {
-    var body: some View {
-        Circle()
-            .fill(.appAccent)
-            .frame(width: 6, height: 6)
-            .phaseAnimator([0.4, 1.0]) { dot, opacity in
-                dot.opacity(opacity)
-            } animation: { _ in
-                .easeInOut(duration: 0.7)
-            }
     }
 }

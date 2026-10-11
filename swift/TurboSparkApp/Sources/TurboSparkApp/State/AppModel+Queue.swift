@@ -264,9 +264,12 @@ extension AppModel {
                 }
             }
             if !imageDocs.isEmpty && !visionAvailable {
+                let reason = visionRefusalReason
+                    ?? AppStrings.localized("the loaded model has no active vision tower")
                 showToast(
-                    "Cannot send \(imageDocs.count == 1 ? "this image" : "these images"): "
-                        + "\(visionRefusalReason ?? "the loaded model has no active vision tower")",
+                    imageDocs.count == 1
+                        ? AppStrings.localized("Cannot send this image: \(reason)")
+                        : AppStrings.localized("Cannot send these images: \(reason)"),
                     style: .warning)
                 reparkSteer(entry, chatID: chatID)
                 break

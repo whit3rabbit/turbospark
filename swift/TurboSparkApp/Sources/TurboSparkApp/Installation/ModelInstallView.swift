@@ -78,13 +78,11 @@ struct ModelInstallView: View {
                 model.enableLMStudioDetection = true
                 model.persistSettings()
                 model.refreshModels()
-                model.showToast("Scanned LM Studio models folder", style: .success)
+                model.showToast(AppStrings.localized("Scanned LM Studio models folder"), style: .success)
             } label: {
                 Text("Scan LM Studio", bundle: .module)
-                    .themedFont(.small, weight: .medium)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .appAction(.secondary, size: .small)
         }
         .padding(12)
         .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
@@ -96,7 +94,7 @@ struct ModelInstallView: View {
             Image(systemName: "bolt.horizontal.circle.fill")
                 .themedFont(.display)
                 .foregroundStyle(.appAccent)
-                .help("TurboSpark Local Inference")
+                .help(Text(verbatim: "TurboSpark"))
                 .accessibilityHidden(true)
 
             Text("Welcome to TurboSpark", bundle: .module)
@@ -118,7 +116,13 @@ struct ModelInstallView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Recommended Models for Your Mac", bundle: .module)
                         .themedFont(.base, weight: .semibold)
-                    Text("Ranked by compatibility with your \(model.telemetry?.chip ?? "device") memory budget.", bundle: .module)
+                    Group {
+                        if let chip = model.telemetry?.chip {
+                            Text("Ranked by compatibility with your \(chip) memory budget.", bundle: .module)
+                        } else {
+                            Text("Ranked by compatibility with this Mac's memory budget.", bundle: .module)
+                        }
+                    }
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
@@ -129,9 +133,10 @@ struct ModelInstallView: View {
                     }
                 } label: { Text("Filter", bundle: .module) }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .themedFont(.small)
-                .frame(width: 240)
-                .accessibilityLabel("Recommendations filter")
+                .fixedSize()
+                .accessibilityLabel(Text("Recommendations filter", bundle: .module))
             }
 
             if isLoadingRecommendations {
@@ -151,9 +156,8 @@ struct ModelInstallView: View {
                         Task { await loadRecommendations() }
                     } label: {
                         Text("Refresh", bundle: .module)
-                            .themedFont(.small, weight: .medium)
                     }
-                    .buttonStyle(.bordered)
+                    .appAction(.secondary, size: .small)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
@@ -168,9 +172,8 @@ struct ModelInstallView: View {
                         selectedFilter = .all
                     } label: {
                         Text("All models", bundle: .module)
-                            .themedFont(.small, weight: .medium)
                     }
-                    .buttonStyle(.link)
+                    .appAction(.secondary, size: .small)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
@@ -193,21 +196,17 @@ struct ModelInstallView: View {
                 Task { await loadRecommendations() }
             } label: {
                 Label { Text("Rescan Storage", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
-                    .themedFont(.small)
             }
-            .buttonStyle(.bordered)
-            .help("Rescan storage for local models")
-            .accessibilityHint("Rescans local model directories and reloads recommendations")
+            .appAction(.secondary)
+            .help(Text("Rescans local model directories and reloads recommendations", bundle: .module))
 
             Button {
                 ModelLocationPicker.choose(for: model)
             } label: {
                 Label { Text("Choose Existing Model Folder...", bundle: .module) } icon: { Image(systemName: "folder") }
-                    .themedFont(.small)
             }
-            .buttonStyle(.bordered)
-            .help("Select an existing model directory")
-            .accessibilityHint("Opens a folder picker for an already-installed model")
+            .appAction(.secondary)
+            .help(Text("Select an existing model directory", bundle: .module))
 
             Spacer()
 
@@ -215,13 +214,10 @@ struct ModelInstallView: View {
                 model.openModelHub()
             } label: {
                 Label { Text("Browse Full Model Hub", bundle: .module) } icon: { Image(systemName: "square.grid.2x2") }
-                    .themedFont(.small)
             }
-            .buttonStyle(.bordered)
-            .help("Open the model catalog")
-            .accessibilityHint("Opens the full model catalog in the sidebar")
+            .appAction(.secondary)
+            .help(Text("Open the model catalog", bundle: .module))
         }
-        .controlSize(.regular)
         .padding(.top, 4)
     }
 

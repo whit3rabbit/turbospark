@@ -28,7 +28,7 @@ struct ModelInstallToastView: View {
                     Text(title, bundle: .module)
                         .themedFont(.base, weight: .semibold)
                     if let alias = model.installingAlias {
-                        Text(alias)
+                        Text(verbatim: alias)
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
                             .lineLimit(2)
@@ -52,16 +52,14 @@ struct ModelInstallToastView: View {
                             Text("Pause", bundle: .module)
                         }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .appAction(.secondary, size: .small)
                     .disabled(!model.isInstallPaused && !model.canPauseModelDownload)
                     .fixedSize()
 
-                    Button(action: model.cancelActiveModelDownload) {
+                    Button(role: .destructive, action: model.cancelActiveModelDownload) {
                         Text("Cancel", bundle: .module)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .appAction(.destructive, size: .small)
                     .fixedSize()
                     .accessibilityLabel(Text("Cancel Download", bundle: .module))
                 }
@@ -71,7 +69,7 @@ struct ModelInstallToastView: View {
                 ProgressView(value: fraction)
                     .tint(theme.accent)
                     .accessibilityLabel(Text(title, bundle: .module))
-                    .accessibilityValue(MetricFormat.percent(fraction * 100))
+                    .accessibilityValue(Text(verbatim: MetricFormat.percent(fraction * 100)))
 
                 HStack(spacing: 8) {
                     if let downloaded = model.installDownloadedBytes,
@@ -84,7 +82,7 @@ struct ModelInstallToastView: View {
                         if let speed = model.modelDownloadSpeed() {
                             Text("Speed: \(MetricFormat.transferBytes(speed))/s", bundle: .module)
                         } else {
-                            Text(MetricFormat.percent(fraction * 100))
+                            Text(verbatim: MetricFormat.percent(fraction * 100))
                         }
                     }
                     .fixedSize()
@@ -104,7 +102,7 @@ struct ModelInstallToastView: View {
             }
             if let downloaded = model.installDownloadedBytes,
                model.installTotalBytes == nil || model.installTotalBytes == 0 {
-                Text(MetricFormat.storage(downloaded))
+                Text(verbatim: MetricFormat.storage(downloaded))
                     .themedFont(.small)
                     .monospacedDigit()
                     .foregroundStyle(.appSecondary)
@@ -132,8 +130,8 @@ struct ModelInstallToastView: View {
                 }
         }
         .onAppear {
-            let message = String(localized: "Installing", bundle: .module)
-                + ": " + (model.installingAlias ?? "")
+            let message = model.installingAlias.map { AppStrings.localized("Installing \($0)") }
+                ?? AppStrings.localized("Installing")
             _ = AccessibilityNotification.Announcement.post(.init(message))
         }
     }

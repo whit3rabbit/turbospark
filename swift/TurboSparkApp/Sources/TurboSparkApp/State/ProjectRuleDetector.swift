@@ -200,9 +200,9 @@ public enum ProjectRuleDetector {
                 let targetName = agentsIsSymlink ? "CLAUDE.md" : "AGENTS.md"
                 let desc: String
                 if agentsIsSymlink || claudeIsSymlink {
-                    desc = "Detected \(targetName) (\(symlinkName) is a symlink)"
+                    desc = AppStrings.localized("Detected \(targetName) (\(symlinkName) is a symlink)")
                 } else {
-                    desc = "Detected AGENTS.md and CLAUDE.md (identical target)"
+                    desc = AppStrings.localized("Detected AGENTS.md and CLAUDE.md (identical target)")
                 }
 
                 return ProjectRulesDetectionResult(
@@ -227,7 +227,7 @@ public enum ProjectRuleDetector {
                     hasConflict: false,
                     isSymlink: agentsIsSymlink || claudeIsSymlink,
                     resolvedCanonicalPath: agentsCanonical,
-                    statusDescription: "Detected AGENTS.md and CLAUDE.md (identical content)"
+                    statusDescription: AppStrings.localized("Detected AGENTS.md and CLAUDE.md (identical content)")
                 )
             }
 
@@ -241,7 +241,7 @@ public enum ProjectRuleDetector {
                         hasConflict: true,
                         isSymlink: agentsIsSymlink,
                         resolvedCanonicalPath: agentsCanonical,
-                        statusDescription: "Loaded AGENTS.md (preferred over CLAUDE.md)"
+                        statusDescription: AppStrings.localized("Loaded AGENTS.md (preferred over CLAUDE.md)")
                     )
                 } else if !claudeContent.isEmpty {
                     return ProjectRulesDetectionResult(
@@ -250,7 +250,7 @@ public enum ProjectRuleDetector {
                         hasConflict: false,
                         isSymlink: claudeIsSymlink,
                         resolvedCanonicalPath: claudeCanonical,
-                        statusDescription: "Loaded CLAUDE.md (AGENTS.md was empty)"
+                        statusDescription: AppStrings.localized("Loaded CLAUDE.md (AGENTS.md was empty)")
                     )
                 }
 
@@ -262,7 +262,7 @@ public enum ProjectRuleDetector {
                         hasConflict: true,
                         isSymlink: claudeIsSymlink,
                         resolvedCanonicalPath: claudeCanonical,
-                        statusDescription: "Loaded CLAUDE.md (preferred over AGENTS.md)"
+                        statusDescription: AppStrings.localized("Loaded CLAUDE.md (preferred over AGENTS.md)")
                     )
                 } else if !agentsContent.isEmpty {
                     return ProjectRulesDetectionResult(
@@ -271,7 +271,7 @@ public enum ProjectRuleDetector {
                         hasConflict: false,
                         isSymlink: agentsIsSymlink,
                         resolvedCanonicalPath: agentsCanonical,
-                        statusDescription: "Loaded AGENTS.md (CLAUDE.md was empty)"
+                        statusDescription: AppStrings.localized("Loaded AGENTS.md (CLAUDE.md was empty)")
                     )
                 }
 
@@ -292,7 +292,7 @@ public enum ProjectRuleDetector {
                     hasConflict: true,
                     isSymlink: agentsIsSymlink || claudeIsSymlink,
                     resolvedCanonicalPath: nil,
-                    statusDescription: "Merged AGENTS.md and CLAUDE.md rules"
+                    statusDescription: AppStrings.localized("Merged AGENTS.md and CLAUDE.md rules")
                 )
             }
         }
@@ -301,7 +301,9 @@ public enum ProjectRuleDetector {
         if agentsExists, let content = readText(at: agentsURL, containedIn: rootURL) {
             let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                let desc = agentsIsSymlink ? "Loaded AGENTS.md (symlink resolved)" : "Loaded AGENTS.md"
+                let desc = agentsIsSymlink
+                    ? AppStrings.localized("Loaded AGENTS.md (symlink resolved)")
+                    : AppStrings.localized("Loaded AGENTS.md")
                 return ProjectRulesDetectionResult(
                     content: String(trimmed.prefix(maxCharacters)),
                     detectedFiles: ["AGENTS.md"],
@@ -317,7 +319,9 @@ public enum ProjectRuleDetector {
         if claudeExists, let content = readText(at: claudeURL, containedIn: rootURL) {
             let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                let desc = claudeIsSymlink ? "Loaded CLAUDE.md (symlink resolved)" : "Loaded CLAUDE.md"
+                let desc = claudeIsSymlink
+                    ? AppStrings.localized("Loaded CLAUDE.md (symlink resolved)")
+                    : AppStrings.localized("Loaded CLAUDE.md")
                 return ProjectRulesDetectionResult(
                     content: String(trimmed.prefix(maxCharacters)),
                     detectedFiles: ["CLAUDE.md"],
@@ -344,7 +348,7 @@ public enum ProjectRuleDetector {
                         hasConflict: false,
                         isSymlink: symlink,
                         resolvedCanonicalPath: fileURL.resolvingSymlinksInPath().path,
-                        statusDescription: "Loaded \(candidate)"
+                        statusDescription: AppStrings.localized("Loaded \(candidate)")
                     )
                 }
             }

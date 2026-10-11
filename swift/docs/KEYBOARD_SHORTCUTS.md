@@ -6,10 +6,21 @@ TurboSparkApp provides complete keyboard-driven navigation, command menus, and V
 
 ### Navigation and View (View Menu)
 
+The app's items join the system View menu (there is one View menu, not two).
+The destination rows are generated from `AppNavigationSection`, the same
+source as the sidebar and the Keyboard Shortcuts pane, so names and chords
+cannot drift between the three.
+
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
-| `Cmd+1` | Switch to Chat | Activates the chat view and conversation pane. |
-| `Cmd+2` | Switch to Model Hub | Opens the on-device Model Hub and catalog browser. |
+| `Cmd+1` | Chat | Activates the chat view and conversation pane. |
+| `Cmd+2` | Image Generation | Opens the Images workspace. |
+| `Cmd+3` | Files | Opens the Files workspace. |
+| `Cmd+4` | Installed | Opens installed text and image models. |
+| `Cmd+5` | Discover | Opens the model catalog. |
+| `Cmd+6` | API | Opens the API workspace. |
+| `Cmd+7` | Audio | Opens Audio Studio. |
+| `Cmd+8` | Humanize | Opens the Humanize workspace. |
 | `Ctrl+Cmd+S` | Toggle Chat Sidebar | Expands or collapses the left-hand conversation sidebar. |
 | `Cmd+Shift+I` | Toggle Inspector | Expands or collapses the right-hand model and runtime inspector. |
 | `Cmd++` | Make Text Bigger | Increases in-app text readability and Dynamic Type scale. |
@@ -30,18 +41,33 @@ TurboSparkApp provides complete keyboard-driven navigation, command menus, and V
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
-| `Cmd+Return` | Generate Response | Submits the current prompt and initiates token generation. |
+| `Cmd+Return` | Generate Response / Queue Message | Submits the chat prompt, or queues it while a turn is running. The label reads Queue Message only when the draft would actually queue. |
 | `Cmd+.` or `Escape` | Cancel Generation | Interrupts active prefill or token decoding immediately. |
 | `Cmd+Shift+.` | Stop All | Stops the turn, every running background agent and shell, and an in-flight model install. The server and the loaded model are untouched. |
+
+Generation menu scope: Generate/Queue acts only while Chat is the active
+section, because it sends the chat draft. Images, Audio and Humanize bind
+`Cmd+Return` and `Cmd+.` to their own run and stop buttons, so the chat items
+are disabled there (`AppNavigationSection.runsChatGenerationCommand` and
+`ownsGenerationShortcuts`). Stop All stays global.
 
 ### Model Management (Model Menu)
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
-| `Cmd+M` / Menu | Choose Model Folder | Opens an NSOpenPanel to select a local .gturbo model directory. |
-| Menu | Load Model | Memory-maps and warms up the selected model. |
-| Menu | Reload Model | Re-initializes runtime session and clears KV cache allocations. |
-| Menu | Unload Model | Drops current runtime session to reclaim physical memory. |
+| Menu | Choose Model Folder... | Opens an NSOpenPanel to select a local .gturbo model directory. |
+| Menu | Load Chat Model | Memory-maps and warms up the selected chat model. |
+| Menu | Reload Chat Model | Re-initializes runtime session and clears KV cache allocations. |
+| Menu | Unload Chat Model | Drops current runtime session to reclaim physical memory. |
+| Menu | Unload Image Model | Shown while an image model is resident; releases it. |
+
+### Help Menu
+
+| Shortcut | Action | Description |
+| :--- | :--- | :--- |
+| Menu | TurboSpark Help | Opens the project README. |
+| Menu | Keyboard Shortcuts... | Opens Settings > Keyboard Shortcuts (also `Cmd+/` in View). |
+| Menu | Report an Issue... | Opens a new GitHub issue. |
 
 ---
 

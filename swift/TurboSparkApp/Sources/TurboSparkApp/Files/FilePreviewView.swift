@@ -43,7 +43,7 @@ struct FilePreviewView: View {
             Image(systemName: attachment.symbolName)
                 .themedFont(.callout)
                 .foregroundStyle(.appAccent)
-                .help("\(attachment.formatLabel) file")
+                .help(Text("\(attachment.formatLabel) file", bundle: .module))
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 1) {
@@ -51,7 +51,7 @@ struct FilePreviewView: View {
                     .themedFont(.small, weight: .semibold)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(subtitle)
+                subtitle
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
                     .lineLimit(1)
@@ -59,50 +59,40 @@ struct FilePreviewView: View {
 
             Spacer(minLength: 4)
 
-            headerButton(
-                "arrow.up.left.and.arrow.down.right",
-                help: "Open a larger preview",
-                label: "Open a larger preview")
-            {
-                isMaximized = true
+            HStack(spacing: 2) {
+                AppIconButton(
+                    "arrow.up.left.and.arrow.down.right",
+                    label: Text("Open a larger preview", bundle: .module)
+                ) {
+                    isMaximized = true
+                }
+                AppIconButton("xmark", label: Text("Close preview", bundle: .module)) {
+                    model.dismissPreview()
+                }
             }
-
-            headerButton("xmark", help: "Close preview", label: "Close preview") {
-                model.dismissPreview()
-            }
+            .appAction(.quiet, size: .small)
+            .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
 
-    private func headerButton(
-        _ systemImage: String,
-        help: String,
-        label: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .themedFont(.tiny, weight: .semibold)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.appSecondary)
-        .help(help)
-        .accessibilityLabel(label)
-    }
-
-    private var subtitle: String {
+    /// Format, size and character count. The parts that carry no words
+    /// (format label, byte size) stay verbatim; the count and the truncation
+    /// note are catalog strings so they follow the in-app language.
+    private var subtitle: Text {
         var parts = [attachment.formatLabel]
         if let size = MetricFormat.fileSize(attachment.sourceByteSize) {
             parts.append(size)
         }
-        parts.append("\(attachment.characterCount.formatted(.number.notation(.compactName))) chars")
+        let separator = Text(verbatim: " \u{2022} ")
+        let count = attachment.characterCount.formatted(.number.notation(.compactName))
+        var line = Text(verbatim: parts.joined(separator: " \u{2022} "))
+            + separator + Text("\(count) characters", bundle: .module)
         if attachment.wasTruncatedDuringExtraction {
-            parts.append("truncated")
+            line = line + separator + Text("truncated", bundle: .module)
         }
-        return parts.joined(separator: " • ")
+        return line
     }
 
     // MARK: - Content
@@ -131,7 +121,7 @@ struct FilePreviewView: View {
         let preview = showsFullText ? nil : MessageContentPreview.make(attachment.extractedText)
         return ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                Text(displayText(preview: preview))
+                displayText(preview: preview)
                     .themedCode(.callout)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -151,23 +141,24 @@ struct FilePreviewView: View {
             .padding(12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityLabel("Extracted text of \(attachment.fileName)")
+        .accessibilityLabel(Text("Extracted text of \(attachment.fileName)", bundle: .module))
     }
 
     /// The text to show: the preview window while gated, the empty-extraction
     /// notice, or the whole extraction once expanded.
-    private func displayText(preview: MessageContentPreview.Preview?) -> String {
-        if let preview { return preview.visible }
-        return attachment.extractedText.isEmpty
-            ? "No text was extracted from this document."
-            : attachment.extractedText
+    private func displayText(preview: MessageContentPreview.Preview?) -> Text {
+        if let preview { return Text(preview.visible) }
+        if attachment.extractedText.isEmpty {
+            return Text("No text was extracted from this document.", bundle: .module)
+        }
+        return Text(attachment.extractedText)
     }
 
     @ViewBuilder
     private var imageView: some View {
         if let url = attachment.sourceURL, let image = NSImage(contentsOf: url) {
             ImagePreviewView(image: image)
-                .accessibilityLabel("Image preview of \(attachment.fileName)")
+                .accessibilityLabel(Text("Image preview of \(attachment.fileName)", bundle: .module))
         } else {
             unavailableView
         }
@@ -182,7 +173,7 @@ struct FilePreviewView: View {
         if let url = quickLookURL {
             QuickLookPreviewView(url: url)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityLabel("Quick Look preview of \(attachment.fileName)")
+                .accessibilityLabel(Text("Quick Look preview of \(attachment.fileName)", bundle: .module))
         } else {
             extractedTextView
         }
@@ -236,41 +227,36 @@ struct FilePreviewView: View {
                 }
                 .toggleStyle(.button)
                 .controlSize(.mini)
-                .help("Show the text the model actually receives instead of the rendered document")
+                .help(Text("Show the text the model actually receives instead of the rendered document", bundle: .module))
             }
 
             Spacer(minLength: 0)
 
-            if attachment.sourceExists {
-                footerButton(
-                    "Reveal in Finder",
-                    systemImage: "folder",
-                    hint: "Opens Finder showing \(attachment.fileName)",
-                    traits: .isLink
-                ) {
-                    model.revealAttachmentInFinder(attachment)
+            HStack(spacing: 2) {
+                if attachment.sourceExists {
+                    AppIconButton("folder", label: Text("Reveal in Finder", bundle: .module)) {
+                        model.revealAttachmentInFinder(attachment)
+                    }
+                    .accessibilityHint(Text("Opens Finder showing \(attachment.fileName)", bundle: .module))
+                    .accessibilityAddTraits(.isLink)
+                    AppIconButton("arrow.up.forward.app", label: Text("Open with default app", bundle: .module)) {
+                        model.openAttachmentExternally(attachment)
+                    }
+                    .accessibilityHint(Text("Opens \(attachment.fileName) in its default viewer", bundle: .module))
+                    .accessibilityAddTraits(.isLink)
                 }
-                footerButton(
-                    "Open with default app",
-                    systemImage: "arrow.up.forward.app",
-                    hint: "Opens \(attachment.fileName) in its default viewer",
-                    traits: .isLink
-                ) {
-                    model.openAttachmentExternally(attachment)
-                }
-            }
 
-            if let reference = model.attachmentReference(id: attachment.id) {
-                footerButton(
-                    "Remove",
-                    systemImage: "trash",
-                    role: .destructive,
-                    hint: "Detaches this document from the chat"
-                ) {
-                    model.removeAttachment(reference: reference)
+                if let reference = model.attachmentReference(id: attachment.id) {
+                    AppIconButton("trash", label: Text("Remove", bundle: .module), role: .destructive) {
+                        model.removeAttachment(reference: reference)
+                    }
+                    .foregroundStyle(.red)
+                    .accessibilityHint(Text("Detaches this document from the chat", bundle: .module))
+                    .disabled(model.isRunning)
                 }
-                .disabled(model.isRunning)
             }
+            .appAction(.quiet, size: .small)
+            .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -292,9 +278,11 @@ struct FilePreviewView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
-                headerButton("xmark", help: "Close", label: "Close maximized preview") {
+                AppIconButton("xmark", label: Text("Close preview", bundle: .module)) {
                     isMaximized = false
                 }
+                .appAction(.quiet, size: .small)
+                .foregroundStyle(.appSecondary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -303,28 +291,5 @@ struct FilePreviewView: View {
         }
         .frame(width: 1100, height: 800)
         .background(TurboSparkTheme.barBackgroundColor)
-    }
-
-    private func footerButton(
-        _ title: String,
-        systemImage: String,
-        role: ButtonRole? = nil,
-        hint: String? = nil,
-        traits: AccessibilityTraits = [],
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(role: role, action: action) {
-            Label(title, systemImage: systemImage)
-                .themedFont(.tiny, weight: .medium)
-                .labelStyle(.iconOnly)
-                .frame(width: 24, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(role == .destructive ? Color.red.opacity(0.85) : Color.secondary)
-        .help(title)
-        .accessibilityLabel("\(title) \(attachment.fileName)")
-        .accessibilityHint(hint ?? title)
-        .accessibilityAddTraits(traits)
     }
 }

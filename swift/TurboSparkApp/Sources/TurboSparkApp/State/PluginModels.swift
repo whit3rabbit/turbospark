@@ -275,8 +275,8 @@ public struct PluginLoadError: Error, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         if let pluginName {
-            return "Plugin '\(pluginName)' failed to load: \(reason)"
+            return AppStrings.localized("Plugin '\(pluginName)' failed to load: \(reason)")
         }
-        return "A plugin failed to load: \(reason)"
+        return AppStrings.localized("A plugin failed to load: \(reason)")
     }
 }

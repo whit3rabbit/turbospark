@@ -10,6 +10,9 @@ import TurboSpark
 /// The policy these two controls drive lives in the engine, not here: see
 /// `docs/LOAD_GUARD.md` for the tiers, what each one reserves, and why
 /// `relaxed` is the default.
+// Isolated explicitly: its helpers call each other, and only `body` is
+// isolated by the protocol on the macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 public struct LocalModelDefaultsSectionView: View {
     @ObservedObject var model: AppModel
 
@@ -62,15 +65,17 @@ public struct LocalModelDefaultsSectionView: View {
         )
     }
 
-    private var floorLabel: String {
+    /// A `Text` so the empty case is a catalog key; the number itself and
+    /// its unit have nothing to translate.
+    private var floorLabel: Text {
         let tokens = model.runtimeOptions.minAutoContextTokens
-        return tokens == 0 ? "No minimum" : tokens.formatted()
+        return tokens == 0 ? Text("No minimum", bundle: .module) : Text(verbatim: tokens.formatted())
     }
 
-    private var ceilingLabel: String {
+    private var ceilingLabel: Text {
         let bytes = model.runtimeOptions.loadGuardCustomBytes
-        guard bytes > 0 else { return "Not set" }
-        return "\(bytes / (1 << 30)) GB"
+        guard bytes > 0 else { return Text("Not set", bundle: .module) }
+        return Text(verbatim: "\(bytes / (1 << 30)) GB")
     }
 
     public var body: some View {
@@ -88,15 +93,14 @@ public struct LocalModelDefaultsSectionView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Minimum AutoFit context length", bundle: .module)
-                .settingsControl("Minimum AutoFit context length", pane: .models, timing: .modelReload)
+                        .settingsControl("Minimum AutoFit context length", pane: .models, timing: .modelReload)
                         .themedFont(.base)
                     Spacer()
-                    Text(floorLabel)
+                    floorLabel
                         .themedFont(.base).monospacedDigit()
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(Color.secondary.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                 }
                 // Says what it constrains AND what it does not. The setting is
                 // named for AutoFit because it is scoped to it: an explicitly
@@ -110,12 +114,10 @@ public struct LocalModelDefaultsSectionView: View {
                     in: 0...Double(Self.contextStops.count - 1),
                     step: 1
                 )
-                .accessibilityLabel("Minimum AutoFit context length")
+                .accessibilityLabel(Text("Minimum AutoFit context length", bundle: .module))
                 .accessibilityValue(floorLabel)
             }
-            .padding(14)
-            .background(Color.secondary.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .modelsSettingsCard()
         }
     }
 
@@ -138,9 +140,7 @@ public struct LocalModelDefaultsSectionView: View {
                     customCeiling
                 }
             }
-            .padding(14)
-            .background(Color.secondary.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .modelsSettingsCard()
         }
     }
 
@@ -155,11 +155,12 @@ public struct LocalModelDefaultsSectionView: View {
                         ? "largecircle.fill.circle" : "circle"
                 )
                 .foregroundStyle(model.runtimeOptions.loadGuard == option ? Color.accentColor : .secondary)
+                .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(option.menuLabel)
+                    Self.guardTitle(option)
                         .themedFont(.base)
                         .foregroundStyle(.appText)
-                    Text(option.detailText)
+                    Self.guardDetail(option)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
@@ -175,15 +176,14 @@ public struct LocalModelDefaultsSectionView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Maximum allocation", bundle: .module)
-                .settingsControl("Maximum allocation", pane: .models, timing: .modelReload)
+                    .settingsControl("Maximum allocation", pane: .models, timing: .modelReload)
                     .themedFont(.base)
                 Spacer()
-                Text(ceilingLabel)
+                ceilingLabel
                     .themedFont(.base).monospacedDigit()
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
             // The distinction that makes this number usable: it caps what the
             // engine ALLOCATES, not the size of the file on disk. A large
@@ -198,9 +198,32 @@ public struct LocalModelDefaultsSectionView: View {
                 in: 0...Double(Self.ceilingStops.count - 1),
                 step: 1
             )
-            .accessibilityLabel("Maximum allocation")
+            .accessibilityLabel(Text("Maximum allocation", bundle: .module))
             .accessibilityValue(ceilingLabel)
         }
         .padding(.top, 4)
+    }
+
+    // One literal per case rather than `LocalizedStringKey(option.menuLabel)`:
+    // the catalog scan (gate 7) can only check a key it can see, and a
+    // wrapped variable would render English silently if a label drifted.
+    static func guardTitle(_ option: AppLoadGuardOption) -> Text {
+        switch option {
+        case .off: return Text("Off (Not Recommended)", bundle: .module)
+        case .relaxed: return Text("Relaxed", bundle: .module)
+        case .balanced: return Text("Balanced", bundle: .module)
+        case .strict: return Text("Strict", bundle: .module)
+        case .custom: return Text("Custom", bundle: .module)
+        }
+    }
+
+    static func guardDetail(_ option: AppLoadGuardOption) -> Text {
+        switch option {
+        case .off: return Text("No precautions against system overload", bundle: .module)
+        case .relaxed: return Text("Mild precautions against system overload", bundle: .module)
+        case .balanced: return Text("Moderate precautions against system overload", bundle: .module)
+        case .strict: return Text("Strong precautions against system overload", bundle: .module)
+        case .custom: return Text("Set your own limit for maximum model size that can be loaded", bundle: .module)
+        }
     }
 }

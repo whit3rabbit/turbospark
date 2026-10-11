@@ -52,100 +52,40 @@ struct ModelHubView: View {
 
     // MARK: - Header
 
+    /// Same structure as the Installed header (`ModelManagerHeaderView`):
+    /// title block on the leading side, actions in the shared treatment, and
+    /// search in the filter bar below rather than squeezed into this row.
     private var header: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.appAccent.opacity(0.15))
-                        .frame(width: 30, height: 30)
-                    Image(systemName: "shippingbox.fill")
-                        .themedFont(.callout, weight: .semibold)
-                        .foregroundStyle(.appAccent)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("Discover Models", bundle: .module)
-                            .themedFont(.callout, weight: .semibold)
-                            .accessibilityAddTraits(.isHeader)
-
-                        Text("ONLINE CATALOG", bundle: .module)
-                            .themedFont(.micro, weight: .bold)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(.appAccent.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                            .foregroundStyle(.appAccent)
-                    }
-
-                    Text(summaryText)
-                        .themedFont(.tiny)
-                        .foregroundStyle(.appSecondary)
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            searchField
-
+        AppAdaptiveHeader {
+            ModelWorkspaceTitle(
+                systemImage: "shippingbox.fill",
+                tint: .appAccent,
+                title: Text("Discover Models", bundle: .module),
+                badge: Text("ONLINE CATALOG", bundle: .module),
+                summary: summaryText)
+        } actions: {
             Button {
                 showingProbeSheet = true
             } label: {
                 Label { Text("Probe HF Repo", bundle: .module) } icon: { Image(systemName: "sparkle.magnifyingglass") }
-                    .themedFont(.tiny, weight: .medium)
-                    .frame(height: 22)
-                    .padding(.horizontal, 9)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .background(.appAccent.opacity(0.14), in: Capsule())
-            .foregroundStyle(.appAccent)
-            .help("Probe an arbitrary Hugging Face repository by header alone")
-            .accessibilityLabel("Probe a Hugging Face repository")
+            .appAction(.secondary)
+            .help(Text("Probe an arbitrary Hugging Face repository by header alone", bundle: .module))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
-    private var summaryText: String {
+    private var summaryText: Text {
         let installed = model.installed
-        var parts = ["\(model.catalog.count) in catalog"]
-        parts.append("\(installed.count) installed")
+        let separator = Text(verbatim: " \u{2022} ")
+        var line = Text("In catalog: \(model.catalog.count)", bundle: .module)
+            + separator + Text("Installed models: \(installed.count)", bundle: .module)
         let onDisk = installed.reduce(UInt64(0)) { $0 + $1.installBytes }
         if onDisk > 0 {
-            parts.append("\(MetricFormat.storage(onDisk)) on disk")
+            line = line + separator + Text("On disk: \(MetricFormat.storage(onDisk))", bundle: .module)
         }
-        return parts.joined(separator: " \u{2022} ")
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "magnifyingglass")
-                .themedFont(.tiny)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
-            TextField("Filter", text: $filter.searchText)
-                .textFieldStyle(.plain)
-                .themedFont(.tiny)
-                .frame(width: 130)
-                .accessibilityLabel("Search models")
-                .accessibilityHint("Filters by alias, name, family or notes")
-            if !filter.searchText.isEmpty {
-                Button {
-                    filter.searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .themedFont(.tiny)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
-        .background(TurboSparkTheme.surfaceColor, in: Capsule())
-        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
+        return line
     }
 
     // MARK: - List and detail
@@ -202,7 +142,7 @@ struct ModelHubView: View {
                     .foregroundStyle(.primary)
                 Spacer()
                 if let chip = model.telemetry?.chip {
-                    Text(chip)
+                    Text(verbatim: chip)
                         .themedFont(.micro, weight: .medium)
                         .foregroundStyle(.appSecondary)
                 }
@@ -246,30 +186,19 @@ struct ModelHubView: View {
     }
 
     private var emptyListState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: emptyIconName)
-                .themedFont(.hero)
-                .foregroundStyle(.quaternary)
-                .accessibilityHidden(true)
-            emptyTitle
+        AppEmptyState(systemImage: emptyIconName, title: emptyTitle) {
             if filter.isNarrowed {
                 Button { filter.clearNarrowing() } label: { Text("Clear filters", bundle: .module) }
-                    .buttonStyle(.link)
-                    .themedFont(.small)
+                    .appAction(.secondary, size: .small)
             } else if filter.tab == .recommended {
                 Button { filter.tab = .discover } label: { Text("All models", bundle: .module) }
-                    .buttonStyle(.link)
-                    .themedFont(.small)
+                    .appAction(.secondary, size: .small)
             } else if filter.tab == .onDevice {
                 Button { filter.tab = .discover } label: { Text("Discover", bundle: .module) }
-                    .buttonStyle(.link)
-                    .themedFont(.small)
+                    .appAction(.secondary, size: .small)
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 16)
-        .padding(.top, 48)
-        .accessibilityElement(children: .contain)
+        .padding(.top, 16)
     }
 
     private var emptyIconName: String {
@@ -280,18 +209,13 @@ struct ModelHubView: View {
         }
     }
 
-    @ViewBuilder
-    private var emptyTitle: some View {
+    private var emptyTitle: Text {
         if filter.tab == .onDevice && !filter.isNarrowed {
-            Text("No models installed", bundle: .module)
-                .themedFont(.base, weight: .medium)
+            return Text("No models installed", bundle: .module)
         } else if filter.tab == .recommended && !filter.isNarrowed {
-            Text("No recommended models", bundle: .module)
-                .themedFont(.base, weight: .medium)
-        } else {
-            Text("No matching models", bundle: .module)
-                .themedFont(.base, weight: .medium)
+            return Text("No recommended models", bundle: .module)
         }
+        return Text("No matching models", bundle: .module)
     }
 
     private var recommendationLoadingState: some View {
@@ -316,8 +240,7 @@ struct ModelHubView: View {
             } label: {
                 Text("Refresh", bundle: .module)
             }
-            .buttonStyle(.link)
-            .themedFont(.small)
+            .appAction(.secondary, size: .small)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)
@@ -333,21 +256,10 @@ struct ModelHubView: View {
                 installedModel: model.installed.first(where: { $0.alias == selectedEntry.alias }),
                 recommendation: recommendations[selectedEntry.alias])
         } else {
-            VStack(spacing: 8) {
-                Image(systemName: "shippingbox")
-                    .themedFont(.hero)
-                    .foregroundStyle(.quaternary)
-                    .accessibilityHidden(true)
-                Text("No model selected", bundle: .module)
-                    .themedFont(.base, weight: .medium)
-                Text("Pick a row to see what it costs and whether it fits this machine.", bundle: .module)
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 320)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityElement(children: .combine)
+            AppEmptyState(
+                systemImage: "shippingbox",
+                title: Text("No model selected", bundle: .module),
+                message: Text("Pick a row to see what it costs and whether it fits this machine.", bundle: .module))
         }
     }
 

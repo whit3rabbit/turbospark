@@ -39,8 +39,14 @@ public struct HookEditorSheet: View {
             // Header
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(existingHook == nil ? "New Lifecycle Hook" : "Edit Hook")
-                        .themedFont(.base, weight: .semibold)
+                    Group {
+                        if existingHook == nil {
+                            Text("New Lifecycle Hook", bundle: .module)
+                        } else {
+                            Text("Edit Hook", bundle: .module)
+                        }
+                    }
+                    .themedFont(.base, weight: .semibold)
                     Text("Configure deterministic actions, guardrails, and lifecycle event handlers.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
@@ -54,6 +60,8 @@ public struct HookEditorSheet: View {
                         .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
+                .help(Text("Close", bundle: .module))
+                .accessibilityLabel(Text("Close", bundle: .module))
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -67,8 +75,11 @@ public struct HookEditorSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Hook Name", bundle: .module)
                             .themedFont(.small, weight: .semibold)
-                        TextField("e.g. Lint before tool use, Auto-format on edit...", text: $name)
-                            .textFieldStyle(.roundedBorder)
+                        TextField(text: $name, prompt: Text("e.g. Lint before tool use, Auto-format on edit...", bundle: .module)) {
+                            Text("Hook Name", bundle: .module)
+                        }
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
                     }
 
                     // Event & Type
@@ -76,10 +87,14 @@ public struct HookEditorSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Lifecycle Event", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            Picker("", selection: $event) {
+                            // Event names are the identifiers hook configs
+                            // use (PreToolUse, Stop, ...), shown verbatim.
+                            Picker(selection: $event) {
                                 ForEach(AppHookEvent.allCases) { ev in
                                     Text(ev.displayName).tag(ev)
                                 }
+                            } label: {
+                                Text("Lifecycle Event", bundle: .module)
                             }
                             .labelsHidden()
                         }
@@ -87,10 +102,14 @@ public struct HookEditorSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Hook Type", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            Picker("", selection: $type) {
+                            Picker(selection: $type) {
                                 ForEach(Self.selectableTypes(existing: existingHook?.type)) { t in
-                                    Text(t.title).tag(t)
+                                    // `title` is fixed English from the model
+                                    // layer; each value is a catalog key.
+                                    Text(LocalizedStringKey(t.title), bundle: .module).tag(t)
                                 }
+                            } label: {
+                                Text("Hook Type", bundle: .module)
                             }
                             .labelsHidden()
                         }
@@ -98,18 +117,12 @@ public struct HookEditorSheet: View {
 
                     // Command / URL / Prompt Text
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(type == .http ? "Webhook URL" : (type == .prompt ? "Evaluator Prompt" : "Shell Command or Script"))
+                        commandTitle
                             .themedFont(.small, weight: .semibold)
                         TextEditor(text: $command)
                             .themedCode(.base)
-                            .frame(minHeight: 90)
-                            .padding(4)
-                            .background(.appSurface)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(.appBorder.opacity(0.4), lineWidth: 1)
-                            )
+                            .appEditorSurface(minHeight: 90)
+                            .accessibilityLabel(commandTitle)
                         Text("Payload is supplied via JSON over stdin. Exit code 2 blocks PreToolUse execution.", bundle: .module)
                             .themedFont(.tiny)
                             .foregroundStyle(.appSecondary)
@@ -120,15 +133,21 @@ public struct HookEditorSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Tool Matcher (Optional)", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            TextField("e.g. Write|Edit, Bash, *", text: $matcher)
-                                .textFieldStyle(.roundedBorder)
+                            TextField(text: $matcher, prompt: Text(verbatim: "Write|Edit, Bash, *")) {
+                                Text("Tool Matcher (Optional)", bundle: .module)
+                            }
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text("If Condition (Optional)", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            TextField("e.g. Bash(git *), Read(*.ts)", text: $ifCondition)
-                                .textFieldStyle(.roundedBorder)
+                            TextField(text: $ifCondition, prompt: Text(verbatim: "Bash(git *), Read(*.ts)")) {
+                                Text("If Condition (Optional)", bundle: .module)
+                            }
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                         }
                     }
 
@@ -138,10 +157,12 @@ public struct HookEditorSheet: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Shell", bundle: .module)
                                     .themedFont(.small, weight: .semibold)
-                                Picker("", selection: $shell) {
+                                Picker(selection: $shell) {
                                     ForEach(AppHookShell.allCases) { sh in
-                                        Text(sh.rawValue).tag(sh)
+                                        Text(verbatim: sh.rawValue).tag(sh)
                                     }
+                                } label: {
+                                    Text("Shell", bundle: .module)
                                 }
                                 .labelsHidden()
                             }
@@ -150,8 +171,11 @@ public struct HookEditorSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Timeout (Seconds)", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            TextField("30", value: $timeoutSeconds, format: .number)
-                                .textFieldStyle(.roundedBorder)
+                            TextField(value: $timeoutSeconds, format: .number, prompt: Text(verbatim: "30")) {
+                                Text("Timeout (Seconds)", bundle: .module)
+                            }
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
                             Text("Hooks discovered from Claude Code config default to 600s when unset.", bundle: .module)
                                 .themedFont(.tiny)
@@ -161,8 +185,11 @@ public struct HookEditorSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Status Message", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            TextField("e.g. Running pre-check...", text: $statusMessage)
-                                .textFieldStyle(.roundedBorder)
+                            TextField(text: $statusMessage, prompt: Text("e.g. Running pre-check...", bundle: .module)) {
+                                Text("Status Message", bundle: .module)
+                            }
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                         }
                     }
 
@@ -186,15 +213,15 @@ public struct HookEditorSheet: View {
                 Button {
                     onDismiss()
                 } label: { Text("Cancel", bundle: .module) }
-                .controlSize(.regular)
+                .appAction(.secondary)
+                .keyboardShortcut(.cancelAction)
 
                 Spacer()
 
                 Button {
                     save()
                 } label: { Text("Save Hook", bundle: .module) }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .appAction(.primary)
                 .disabled(
                     command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || (type == .prompt && existingHook?.type != .prompt))
@@ -217,6 +244,15 @@ public struct HookEditorSheet: View {
                 statusMessage = hook.statusMessage ?? ""
                 isAsync = hook.isAsync
             }
+        }
+    }
+
+    /// The command field's title, which is also its accessible name.
+    private var commandTitle: Text {
+        switch type {
+        case .http: return Text("Webhook URL", bundle: .module)
+        case .prompt: return Text("Evaluator Prompt", bundle: .module)
+        case .command: return Text("Shell Command or Script", bundle: .module)
         }
     }
 

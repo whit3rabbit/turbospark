@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
 struct ThemeGalleryView: View {
     @ObservedObject var manager: AppearanceManager
     @Environment(\.appTheme) private var theme
@@ -17,7 +18,16 @@ struct ThemeGalleryView: View {
                 Text("Theme gallery", bundle: .module)
                     .settingsControl("Theme gallery", pane: .appearance, timing: .immediate).themedFont(.large, weight: .semibold)
                 Spacer()
-                Text(manager.currentThemeName).themedFont(.small)
+                // No saved or preset match means the colors were edited by
+                // hand; that state's name is a UI string, a theme's is not.
+                Group {
+                    if manager.currentThemeID == nil {
+                        Text("Custom", bundle: .module)
+                    } else {
+                        Text(verbatim: manager.currentThemeName)
+                    }
+                }
+                .themedFont(.small)
             }
             Text("Choose a palette for both Light and Dark. Your fonts and text sizes stay the same.", bundle: .module)
                 .themedFont(.small)
@@ -31,27 +41,28 @@ struct ThemeGalleryView: View {
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                             HStack {
-                                Text(preset.name).themedFont(.small, weight: .medium)
+                                Text(verbatim: preset.name).themedFont(.small, weight: .medium)
                                 Spacer()
                                 if manager.currentThemeID == preset.id {
                                     Image(systemName: "checkmark.circle.fill").foregroundStyle(theme.accent)
+                                        .accessibilityHidden(true)
                                 }
                             }
                         }
                         .padding(10)
                         .background(theme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10)
+                        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                             .stroke(manager.currentThemeID == preset.id ? theme.accent : theme.border, lineWidth: 2))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(preset.name)
+                    .accessibilityLabel(Text(verbatim: preset.name))
                     .accessibilityAddTraits(manager.currentThemeID == preset.id ? [.isSelected] : [])
                 }
             }
             ViewThatFits(in: .horizontal) {
-                HStack { libraryActions }
-                VStack(alignment: .leading) { libraryActions }
+                HStack(spacing: AppMetrics.actionSpacing) { libraryActions }
+                VStack(alignment: .leading, spacing: AppMetrics.actionSpacing) { libraryActions }
             }
             if manager.lightConfig.textContrastRatio < 4.5 || manager.darkConfig.textContrastRatio < 4.5 {
                 Label { Text("Text contrast is low in one or both modes. Adjust foreground or background colors.", bundle: .module) }
@@ -63,7 +74,9 @@ struct ThemeGalleryView: View {
             }
         }
         .alert(Text("Theme name", bundle: .module), isPresented: $showsNameEditor) {
-            TextField("Name", text: $name)
+            TextField(text: $name, prompt: Text("Name", bundle: .module)) {
+                Text("Name", bundle: .module)
+            }
             Button { saveName() } label: { Text("Save", bundle: .module) }
             Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         }
@@ -81,10 +94,12 @@ struct ThemeGalleryView: View {
     @ViewBuilder private var libraryActions: some View {
         Button {
             renamingID = nil
-            name = manager.currentThemeName + " Copy"
+            // A suggested name the person edits; written in the UI language.
+            name = AppStrings.localized("\(manager.currentThemeName) Copy")
             showsNameEditor = true
         } label: { Text("Save as new theme", bundle: .module)
                     .settingsControl("Save as new theme", pane: .appearance, timing: .immediate) }
+        .appAction(.secondary)
         if let id = manager.currentThemeID, manager.savedThemes.contains(where: { $0.id == id }) {
             Button {
                 renamingID = id
@@ -92,11 +107,13 @@ struct ThemeGalleryView: View {
                 showsNameEditor = true
             } label: { Text("Rename", bundle: .module)
                     .settingsControl("Rename", pane: .appearance, timing: .immediate) }
+            .appAction(.secondary)
             Button(role: .destructive) { manager.deleteTheme(id: id) } label: {
                 Text("Delete saved theme", bundle: .module)
                     .settingsControl("Delete saved theme", pane: .appearance, timing: .immediate)
             }
-            .help("Keeps the current colors as Custom.")
+            .appAction(.destructive)
+            .help(Text("Keeps the current colors as Custom.", bundle: .module))
         }
         Menu {
             Button { importPresented = true } label: { Text("Import JSON file", bundle: .module)
@@ -121,6 +138,7 @@ struct ThemeGalleryView: View {
                     .settingsControl("Copy theme JSON", pane: .appearance, timing: .immediate) }
         } label: { Text("Import / Export", bundle: .module)
                     .settingsControl("Import / Export", pane: .appearance, timing: .immediate) }
+        .appMenuAction()
     }
 
     private func thumbnail(_ config: ThemeModeConfig) -> some View { ThemeModeThumbnail(config: config) }

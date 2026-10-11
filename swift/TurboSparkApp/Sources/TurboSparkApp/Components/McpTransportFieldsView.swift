@@ -22,17 +22,20 @@ struct McpStdioTransportFields: View {
             Text("Subprocess Configuration", bundle: .module)
                 .themedFont(.small, weight: .semibold)
 
-            labelledField("Command / Executable") {
-                TextField("npx, python3, uvx, docker, or absolute path", text: $command)
-                    .textFieldStyle(.roundedBorder)
+            labelledField(Text("Command / Executable", bundle: .module)) {
+                TextField(text: $command, prompt: Text("npx, python3, uvx, docker, or absolute path", bundle: .module)) {
+                    Text("Command / Executable", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
             }
 
-            labelledField("Arguments (one per line or space-separated)") {
-                monospacedEditor(text: $argsText, height: 60)
+            labelledField(Text("Arguments (one per line or space-separated)", bundle: .module)) {
+                monospacedEditor(text: $argsText, height: 60, name: Text("Arguments (one per line or space-separated)", bundle: .module))
             }
 
-            labelledField("Environment Variables (KEY=VALUE per line)") {
-                monospacedEditor(text: $envText, height: 60)
+            labelledField(Text("Environment Variables (KEY=VALUE per line)", bundle: .module)) {
+                monospacedEditor(text: $envText, height: 60, name: Text("Environment Variables (KEY=VALUE per line)", bundle: .module))
             }
 
             workingDirectoryField
@@ -46,11 +49,14 @@ struct McpStdioTransportFields: View {
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             HStack(spacing: 6) {
-                TextField("Defaults to the project root", text: $cwdText)
-                    .textFieldStyle(.roundedBorder)
+                TextField(text: $cwdText, prompt: Text("Defaults to the project root", bundle: .module)) {
+                    Text("Working Directory (Optional)", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
                 Button { chooseWorkingDirectory() } label: { Text("Choose...", bundle: .module) }
                     .buttonStyle(.bordered)
-                    .help("Pick the directory this server is launched in")
+                    .help(Text("Pick the directory this server is launched in", bundle: .module))
             }
             Text("Leave empty to launch the server in the active project's root.", bundle: .module)
                 .themedFont(.tiny)
@@ -63,7 +69,7 @@ struct McpStdioTransportFields: View {
             Text("Environment Passthrough (one variable NAME per line)", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
-            monospacedEditor(text: $envPassthroughText, height: 50)
+            monospacedEditor(text: $envPassthroughText, height: 50, name: Text("Environment Passthrough (one variable NAME per line)", bundle: .module))
             Text("Forwards these variables from this app's own environment. PATH, HOME, LANG and TMPDIR are always forwarded; nothing else is, so a server never receives a credential it was not named.", bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
@@ -75,34 +81,30 @@ struct McpStdioTransportFields: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-        panel.message = "Choose the directory this MCP server is launched in."
+        panel.prompt = AppStrings.localized("Choose")
+        panel.message = AppStrings.localized("Choose the directory this MCP server is launched in.")
         if panel.runModal() == .OK, let url = panel.url {
             cwdText = url.path
         }
     }
 
     private func labelledField<Content: View>(
-        _ title: String, @ViewBuilder content: () -> Content
+        _ title: Text, @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
+            title
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             content()
         }
     }
 
-    private func monospacedEditor(text: Binding<String>, height: CGFloat) -> some View {
+    private func monospacedEditor(text: Binding<String>, height: CGFloat, name: Text) -> some View {
         TextEditor(text: text)
             .themedCode(.small)
             .frame(height: height)
-            .padding(4)
-            .background(.appSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
+            .appEditorSurface()
+            .accessibilityLabel(name)
     }
 }
 
@@ -125,8 +127,11 @@ struct McpRemoteTransportFields: View {
                 Text("Server URL", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
-                TextField("https://example.com/sse", text: $urlText)
-                    .textFieldStyle(.roundedBorder)
+                TextField(text: $urlText, prompt: Text(verbatim: "https://example.com/sse")) {
+                    Text("Server URL", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
                 if !urlIsValid && !urlText.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text("Not a valid URL.", bundle: .module)
                         .themedFont(.tiny)
@@ -141,12 +146,8 @@ struct McpRemoteTransportFields: View {
                 TextEditor(text: $headersText)
                     .themedCode(.small)
                     .frame(height: 60)
-                    .padding(4)
-                    .background(.appSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
+                    .appEditorSurface()
+                    .accessibilityLabel(Text("Headers (Header: Value per line)", bundle: .module))
             }
         }
     }

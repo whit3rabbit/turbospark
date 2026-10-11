@@ -21,11 +21,11 @@ struct AudioPromptLibraryView: View {
                     name = String((controller.task == .music ? controller.recipe.caption : controller.recipe.text).prefix(60))
                     showingName = true
                 } label: { Text("Save Prompt", bundle: .module) }
+                    .appAction(.secondary)
                     .disabled(!controller.canSavePrompt)
             }
             Text("Choose a prompt, edit it, or write your own.", bundle: .module).foregroundStyle(.appSecondary)
-            TextField(text: $search) { Text("Search prompts", bundle: .module) }
-                .textFieldStyle(.roundedBorder)
+            AppSearchField(text: $search, prompt: Text("Search prompts", bundle: .module), maxWidth: .infinity)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     if controller.prompts(matching: search).isEmpty {
@@ -35,7 +35,7 @@ struct AudioPromptLibraryView: View {
                     ForEach(controller.prompts(matching: search)) { prompt in
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
-                                Text(prompt.name).themedFont(.base, weight: .semibold)
+                                Text(verbatim: prompt.name).themedFont(.base, weight: .semibold)
                                 Spacer()
                                 Menu {
                                     Button {
@@ -44,7 +44,7 @@ struct AudioPromptLibraryView: View {
                                     Button(role: .destructive) { deleting = prompt } label: { Text("Delete", bundle: .module) }
                                 } label: { Image(systemName: "ellipsis") }
                                     .menuStyle(.borderlessButton).fixedSize()
-                                    .accessibilityLabel(Text(prompt.name))
+                                    .accessibilityLabel(Text(verbatim: prompt.name))
                             }
                             Text(controller.task == .music ? prompt.recipe.caption : prompt.recipe.text)
                                 .lineLimit(4).foregroundStyle(.appSecondary)
@@ -52,10 +52,11 @@ struct AudioPromptLibraryView: View {
                                 Text(prompt.recipe.lyrics).lineLimit(2).themedFont(.small).foregroundStyle(.appSecondary)
                             }
                             Button { controller.loadPrompt(prompt); dismiss() } label: { Text("Load Prompt", bundle: .module) }
+                                .appAction(.secondary, size: .small)
                                 .disabled(controller.isBusy)
                         }
                         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+                        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
                     }
                 }
             }
@@ -63,7 +64,9 @@ struct AudioPromptLibraryView: View {
             HStack {
                 Text("Saved in this profile", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
                 Spacer()
-                Button { dismiss() } label: { Text("Close", bundle: .module) }.keyboardShortcut(.cancelAction)
+                Button { dismiss() } label: { Text("Close", bundle: .module) }
+                    .appAction(.secondary)
+                    .keyboardShortcut(.cancelAction)
             }
         }
         .padding(24).frame(width: 600, height: 540).themedFont(.base).background(.appPage)
@@ -81,6 +84,6 @@ struct AudioPromptLibraryView: View {
                 deleting = nil
             } label: { Text("Delete", bundle: .module) }
             Button(role: .cancel) { deleting = nil } label: { Text("Cancel", bundle: .module) }
-        } message: { if let deleting { Text(deleting.name) } }
+        } message: { if let deleting { Text(verbatim: deleting.name) } }
     }
 }

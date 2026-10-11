@@ -119,7 +119,7 @@ extension AppHookStore {
     /// empty until `refresh()` runs, so a mutation before that point wrote an
     /// empty list over the file. `AppJSONStore` quarantines instead.
     func loadCustomHooks() -> [AppHookCommand] {
-        AppJSONStore.load([AppHookCommand].self, from: customHooksFileURL, label: "custom hooks")
+        AppJSONStore.load([AppHookCommand].self, from: customHooksFileURL, label: "Custom hooks")
             ?? []
     }
 

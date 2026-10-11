@@ -152,7 +152,7 @@ public enum McpMarketplaceFileStore {
 
     public static func load() -> McpMarketplaceArchive {
         AppJSONStore.load(
-            McpMarketplaceArchive.self, from: archiveFileURL, label: "MCP marketplace archive")
+            McpMarketplaceArchive.self, from: archiveFileURL, label: "MCP marketplaces")
             ?? McpMarketplaceArchive.empty()
     }
 
@@ -194,16 +194,16 @@ public final class McpMarketplaceManager: @unchecked Sendable {
         public var errorDescription: String? {
             switch self {
             case .invalidURL(let raw):
-                return "Not a valid URL: \(raw)"
+                return AppStrings.localized("Not a valid URL: \(raw)")
             case .manifestNotFound(let path):
-                return "No catalog found at \(path)."
+                return AppStrings.localized("No catalog found at \(path).")
             case .emptyName:
-                return "This catalog entry has no server name."
+                return AppStrings.localized("This catalog entry has no server name.")
             case .commandNotFound(let command):
-                return "The command '\(command)' was not found on PATH or in any "
-                    + "standard tool directory. Install it first, then add this server."
+                return AppStrings.localized(
+                    "The command '\(command)' was not found on PATH or in any standard tool directory. Install it first, then add this server.")
             case .nameCollision(let name):
-                return "A server named '\(name)' already exists. Rename or remove it first."
+                return AppStrings.localized("A server named '\(name)' already exists. Rename or remove it first.")
             }
         }
     }

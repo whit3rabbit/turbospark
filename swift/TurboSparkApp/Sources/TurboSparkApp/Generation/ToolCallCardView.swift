@@ -338,8 +338,10 @@ struct ToolCallCardView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(summary.action) \(summary.target)")
-        .accessibilityValue(statusLabel + ", " + ((isExpanded || isPendingApproval || isActiveQuestionSet) ? String(localized: "Expanded", bundle: .module) : String(localized: "Collapsed", bundle: .module)))
+        // Mirrors the visible header (localized tool label, then target)
+        // rather than `summary.action`, an English verb.
+        .accessibilityLabel(Text(verbatim: "\(ToolPresentation.resolve(call.name).localizedLabel) \(summary.target)"))
+        .accessibilityValue(statusLabel + ", " + ((isExpanded || isPendingApproval || isActiveQuestionSet) ? AppStrings.localized("Expanded") : AppStrings.localized("Collapsed")))
     }
 
     @ViewBuilder
@@ -449,14 +451,14 @@ struct ToolCallCardView: View {
         HStack(spacing: 4) {
             Image(systemName: risk.level.systemImage)
                 .themedFont(.micro)
-            Text(risk.level.label)
+            Text(LocalizedStringKey(risk.level.label), bundle: .module)
                 .themedFont(.tiny, weight: .semibold)
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 1)
         .background(risk.level == .high ? Color.red.opacity(0.15) : Color.orange.opacity(0.12), in: Capsule())
         .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
-        .help("Security risk: \(risk.level.label)")
+        .help(Text("Security risk: \(Text(LocalizedStringKey(risk.level.label), bundle: .module))", bundle: .module))
     }
 
     private func riskWarningBox(_ risk: ToolRiskAssessment) -> some View {
@@ -1091,8 +1093,8 @@ struct ToolCallCardView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(isHighRisk ? Color.orange : TurboSparkTheme.accentColor)
-                    .help("Approve this tool call once")
-                    .accessibilityLabel("Approve once \(call.name)")
+                    .help(Text("Approve this tool call once", bundle: .module))
+                    .accessibilityLabel(Text("Approve once \(call.name)", bundle: .module))
 
                     if model.pendingToolCallClassifierNotice != nil, isPendingApproval {
                         Button {
@@ -1102,8 +1104,8 @@ struct ToolCallCardView: View {
                             Label { Text("Suspend Agent Mode", bundle: .module) } icon: { Image(systemName: "pause.circle") }
                         }
                         .buttonStyle(.bordered)
-                        .help("Approve once and stop using the classifier for the rest of this session")
-                        .accessibilityLabel("Suspend Agent mode for this session and approve once")
+                        .help(Text("Approve once and stop using the classifier for the rest of this session", bundle: .module))
+                        .accessibilityLabel(Text("Suspend Agent mode for this session and approve once", bundle: .module))
                     }
 
                     if call.category == .mcp,
@@ -1126,8 +1128,8 @@ struct ToolCallCardView: View {
                             Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.seal") }
                         }
                         .buttonStyle(.bordered)
-                        .help("Persist an allow rule for this MCP tool or server in project settings")
-                        .accessibilityLabel("Always allow \(call.name) in project settings")
+                        .help(Text("Persist an allow rule for this MCP tool or server in project settings", bundle: .module))
+                        .accessibilityLabel(Text("Always allow \(call.name) in project settings", bundle: .module))
                     } else {
                         Button {
                             model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
@@ -1135,16 +1137,16 @@ struct ToolCallCardView: View {
                             Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                         }
                         .buttonStyle(.bordered)
-                        .help("Always allow this tool and command in this session")
-                        .accessibilityLabel("Always allow \(call.name) in this session")
+                        .help(Text("Always allow this tool and command in this session", bundle: .module))
+                        .accessibilityLabel(Text("Always allow \(call.name) in this session", bundle: .module))
                     }
 
                     Button(role: .cancel) {
                         model.denyPendingToolCall(id: call.id)
                     } label: { Text("Deny", bundle: .module) }
                     .buttonStyle(.bordered)
-                    .help("Deny this tool call execution")
-                    .accessibilityLabel("Deny \(call.name)")
+                    .help(Text("Deny this tool call execution", bundle: .module))
+                    .accessibilityLabel(Text("Deny \(call.name)", bundle: .module))
                 }
                 .controlSize(.small)
             }

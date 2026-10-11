@@ -17,36 +17,33 @@ struct ExcludedScanPathsSectionView: View {
             Label { Text("Excluded from scan", bundle: .module) } icon: { Image(systemName: "eye.slash") }
                 .themedFont(.base, weight: .semibold)
 
-            if orgStore.excludedScanPaths.isEmpty {
-                Text("Models you remove from TurboSpark without deleting their files are listed here, so they can be restored.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-            } else {
-                ForEach(orgStore.excludedScanPaths.sorted(), id: \.self) { path in
-                    HStack(spacing: 8) {
-                        Image(systemName: "eye.slash")
-                            .foregroundStyle(.appSecondary)
-                        Text(path)
-                            .themedCode(.small)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        Button {
-                            orgStore.restoreToScan(path: path)
-                            model.refreshModels()
-                        } label: { Text("Restore", bundle: .module) }
-                        .controlSize(.small)
-                        .help("Include this path in model scans again")
-                        .accessibilityHint("Puts this model back in the installed list")
+            VStack(alignment: .leading, spacing: 10) {
+                if orgStore.excludedScanPaths.isEmpty {
+                    Text("Models you remove from TurboSpark without deleting their files are listed here, so they can be restored.", bundle: .module)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                } else {
+                    ForEach(orgStore.excludedScanPaths.sorted(), id: \.self) { path in
+                        HStack(spacing: 8) {
+                            Image(systemName: "eye.slash")
+                                .foregroundStyle(.appSecondary)
+                                .accessibilityHidden(true)
+                            SettingsPathText(path)
+                            Spacer()
+                            Button {
+                                orgStore.restoreToScan(path: path)
+                                model.refreshModels()
+                            } label: { Text("Restore", bundle: .module) }
+                            .appAction(.secondary, size: .small)
+                            .help(Text("Include this path in model scans again", bundle: .module))
+                            .accessibilityHint(Text("Puts this model back in the installed list", bundle: .module))
+                        }
+                        .padding(8)
+                        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                     }
-                    .padding(8)
-                    .background(
-                        Color(nsColor: .controlBackgroundColor),
-                        in: RoundedRectangle(cornerRadius: 8))
                 }
             }
+            .modelsSettingsCard()
         }
-        .padding(16)
-        .background(.appPage, in: RoundedRectangle(cornerRadius: 10))
     }
 }

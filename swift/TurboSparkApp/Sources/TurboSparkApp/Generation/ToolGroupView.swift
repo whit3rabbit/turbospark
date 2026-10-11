@@ -127,7 +127,7 @@ struct ToolGroupView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(groupLabel)")
+        .accessibilityLabel(Text(verbatim: groupLabel))
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     }
 }

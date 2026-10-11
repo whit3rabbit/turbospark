@@ -4,14 +4,19 @@ enum APIWorkspaceTab: Int, CaseIterable, Identifiable {
     case text, image, audio, typeSafe
 
     var id: Int { rawValue }
+    /// The English catalog key. Rendered through `titleText`, which follows
+    /// the in-app language picker; `String(localized:)` followed the system
+    /// language instead.
     var title: String {
         switch self {
-        case .text: return String(localized: "Text", bundle: .module)
-        case .image: return String(localized: "Image", bundle: .module)
-        case .audio: return String(localized: "Audio", bundle: .module)
-        case .typeSafe: return String(localized: "TypeSafe", bundle: .module)
+        case .text: return "Text"
+        case .image: return "Image"
+        case .audio: return "Audio"
+        case .typeSafe: return "TypeSafe"
         }
     }
+
+    var titleText: Text { Text(LocalizedStringKey(title), bundle: .module) }
 
     func moved(_ offset: Int) -> Self {
         Self(rawValue: min(max(rawValue + offset, 0), 3)) ?? self
@@ -27,13 +32,13 @@ struct APIWorkspaceSelector: View {
                 Button {
                     selection = tab
                 } label: {
-                    Text(tab.title)
+                    tab.titleText
                         .frame(minWidth: 88)
                 }
                 .buttonStyle(.bordered)
                 .tint(selection == tab ? .accentColor : .clear)
                 .accessibilityAddTraits(selection == tab ? .isSelected : [])
-                .accessibilityLabel(tab.title)
+                .accessibilityLabel(tab.titleText)
             }
         }
         .frame(maxWidth: .infinity)

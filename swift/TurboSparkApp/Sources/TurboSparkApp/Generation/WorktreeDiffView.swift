@@ -140,7 +140,7 @@ public struct WorktreeDiffView: View {
                     .foregroundStyle(copied ? .green : .secondary)
             }
             .buttonStyle(.plain)
-            .help("Copy raw diff")
+            .help(Text("Copy raw diff", bundle: .module))
 
             if let onClose = onClose {
                 Button(action: onClose) {
@@ -149,7 +149,7 @@ public struct WorktreeDiffView: View {
                         .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
-                .help("Close diff view")
+                .help(Text("Close diff view", bundle: .module))
             }
         }
         .padding(.horizontal, 10)

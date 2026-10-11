@@ -9,10 +9,9 @@ import SwiftUI
 @MainActor
 public struct PluginSettingsPaneView: View {
     @ObservedObject var model: AppModel
-    @ObservedObject private var hookStore = AppHookStore.shared
-    @Environment(\.appTheme) private var theme
 
     @State private var projectID: UUID?
+    @State private var searchQuery = ""
     @State private var selectedPluginID: String? = nil
     @State private var isShowingMarketplace = false
     @State private var pluginToRemove: LoadedPlugin? = nil
@@ -30,44 +29,48 @@ public struct PluginSettingsPaneView: View {
         return PluginManager.shared.resolve(projectURL: scopedProject?.rootDirectoryURL).plugins
     }
 
+    private var filteredPlugins: [LoadedPlugin] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return plugins }
+        return plugins.filter {
+            $0.name.lowercased().contains(query) ||
+            $0.id.lowercased().contains(query) ||
+            $0.pluginDescription.lowercased().contains(query)
+        }
+    }
+
     private var selectedPlugin: LoadedPlugin? {
         if let selectedPluginID {
             return plugins.first { $0.id == selectedPluginID }
         }
-        return plugins.first
+        return filteredPlugins.first
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            ExtensionScopePicker(model: model, projectID: $projectID)
-            headerControlBar
-                .padding(.horizontal, SettingsLayout.horizontalInset)
-                .padding(.vertical, SettingsLayout.headerBarVerticalPadding)
-                .background(.appPage)
-
-            Rectangle()
-                .fill(.appBorder)
-                .frame(height: 1)
+            header
 
             if plugins.isEmpty {
                 emptyState
+            } else if filteredPlugins.isEmpty {
+                ExtensionNoMatchesState(query: searchQuery)
             } else {
-                HStack(spacing: 0) {
+                ExtensionSplitView {
                     pluginList
-                        .frame(width: 220)
-                        .background(.appSurface.opacity(0.5))
-
-                    Rectangle()
-                        .fill(.appBorder)
-                        .frame(width: 1)
-
+                } detail: {
                     if let plugin = selectedPlugin {
-                        pluginDetail(plugin)
+                        PluginDetailView(
+                            model: model,
+                            plugin: plugin,
+                            scopedProject: scopedProject,
+                            onUninstall: {
+                                pluginToRemove = plugin
+                                isConfirmingRemove = true
+                            })
                     } else {
                         Text("Select a plugin to inspect its contributions.", bundle: .module)
                             .themedFont(.base)
                             .foregroundStyle(.appSecondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
             }
@@ -76,13 +79,15 @@ public struct PluginSettingsPaneView: View {
             PluginMarketplaceSheet(model: model, projectID: projectID)
         }
         .confirmationDialog(
-            "Remove Plugin",
+            Text("Remove Plugin", bundle: .module),
             isPresented: $isConfirmingRemove,
             presenting: pluginToRemove
         ) { plugin in
             ForEach(model.pluginInstallationScopes(plugin.id), id: \.label) { scope in
-                Button("Remove from \(scope.label)", role: .destructive) {
+                Button(role: .destructive) {
                     model.uninstallPlugin(plugin, scope: scope)
+                } label: {
+                    Text("Remove from \(Self.scopeName(scope))", bundle: .module)
                 }
             }
             if plugin.origin == .local {
@@ -94,31 +99,68 @@ public struct PluginSettingsPaneView: View {
         }
     }
 
+    /// `PluginInstallScope.label` is fixed English built in the model layer
+    /// (and is the dialog's row identity), so the shown name is composed here
+    /// from catalog keys.
+    static func scopeName(_ scope: PluginInstallScope) -> String {
+        switch scope {
+        case .user:
+            return AppStrings.localized("User (all chats)")
+        case .project(let project):
+            return AppStrings.localized("Project: \(project.name)")
+        }
+    }
+
     // MARK: - Header
 
-    private var headerControlBar: some View {
-        HStack(spacing: 10) {
-            Button {
-                isShowingMarketplace = true
-            } label: {
-                Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "cart") }
+    /// `[scope][search] ... [refresh][Import][Browse Marketplace]`, the same
+    /// row as Skills and MCP Servers. The marketplace is this pane's one
+    /// primary action (plugins are installed, not written here); a local
+    /// folder is the secondary source, in the Import menu.
+    private var header: some View {
+        ExtensionPaneHeader {
+            ExtensionPaneIntro(text: Text("Bundles of commands, skills, agents, hooks and MCP servers, installed from a marketplace or a local folder.", bundle: .module))
+        } filters: {
+            ExtensionScopePicker(model: model, projectID: $projectID)
+            AppSearchField(text: $searchQuery, prompt: Text("Search plugins...", bundle: .module))
+        } actions: {
+            ExtensionRefreshButton(label: Text("Refresh", bundle: .module), action: refresh)
+            ExtensionImportMenu { addLocalFolderItem }
+            browseMarketplaceButton
+        } compactActions: {
+            ExtensionMoreMenu {
+                Button(action: refresh) {
+                    Label { Text("Refresh", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
+                }
+                Divider()
+                addLocalFolderItem
             }
-            Button {
-                addLocalFolder()
-            } label: {
-                Label { Text("Add Local Folder", bundle: .module) } icon: { Image(systemName: "folder.badge.plus") }
-            }
-            Spacer()
-            Button {
-                model.reloadPlugins()
-                AppHookStore.shared.refresh(
-                    projectDirectory: model.selectedProject?.rootDirectoryPath)
-            } label: {
-                Label { Text("Refresh", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
-            }
-            .help("Re-scan both plugin roots")
+            browseMarketplaceButton
         }
-        .font(theme.ui(.base))
+    }
+
+    private var addLocalFolderItem: some View {
+        Button {
+            addLocalFolder()
+        } label: {
+            Label { Text("Add Local Folder...", bundle: .module) } icon: { Image(systemName: "folder.badge.plus") }
+        }
+    }
+
+    private var browseMarketplaceButton: some View {
+        Button {
+            isShowingMarketplace = true
+        } label: {
+            Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "cart") }
+        }
+        .appAction(.primary)
+    }
+
+    /// Re-scans both plugin roots and the hook sources plugins contribute.
+    private func refresh() {
+        model.reloadPlugins()
+        AppHookStore.shared.refresh(
+            projectDirectory: model.selectedProject?.rootDirectoryPath)
     }
 
     private func addLocalFolder() {
@@ -126,7 +168,7 @@ public struct PluginSettingsPaneView: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "Choose a folder containing .claude-plugin/plugin.json or plugin directories"
+        panel.message = AppStrings.localized("Choose a folder containing .claude-plugin/plugin.json or plugin directories")
         if panel.runModal() == .OK, let url = panel.url {
             model.addLocalPluginFolder(at: url.path, scope: scopedProject.map(PluginInstallScope.project) ?? .user)
         }
@@ -140,7 +182,7 @@ public struct PluginSettingsPaneView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(model.pluginLoadDiagnostics, id: \.self) { line in
                         Label(line, systemImage: "exclamationmark.triangle")
-                            .font(theme.ui(.small))
+                            .themedFont(.small)
                             .foregroundStyle(.orange)
                     }
                 }
@@ -151,7 +193,7 @@ public struct PluginSettingsPaneView: View {
 
             // One read of the enable stores per render, not per row.
             let enabledIDs = PluginManager.shared.enabledPluginIDs(projectURL: scopedProject?.rootDirectoryURL)
-            List(plugins, selection: $selectedPluginID) { plugin in
+            List(filteredPlugins, selection: $selectedPluginID) { plugin in
                 PluginListRow(
                     plugin: plugin,
                     isEnabled: enabledIDs.contains(plugin.id),
@@ -163,231 +205,18 @@ public struct PluginSettingsPaneView: View {
         }
     }
 
-    // MARK: - Detail
-
-    private func pluginDetail(_ plugin: LoadedPlugin) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(plugin.name)
-                        .font(theme.ui(.title3, weight: .semibold))
-                    Text(plugin.version)
-                        .font(theme.ui(.small))
-                        .foregroundStyle(.appSecondary)
-                    Spacer()
-                    originBadge(plugin)
-                }
-
-                if !plugin.pluginDescription.isEmpty {
-                    Text(plugin.pluginDescription)
-                        .font(theme.ui(.base))
-                        .foregroundStyle(.appSecondary)
-                }
-
-                LabeledRow(label: "ID", value: plugin.id)
-                LabeledRow(label: "Location", value: plugin.directoryURL.path)
-
-                contributionSummary(plugin)
-
-                if plugin.origin == .claudeInterop {
-                    Label(
-                        "Installed by Claude Code and managed read-only here. Removing it only clears TurboSpark's enable record.",
-                        systemImage: "info.circle")
-                        .font(theme.ui(.small))
-                        .foregroundStyle(.appSecondary)
-                }
-
-                if !plugin.manifest.unsupportedNotes.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Not applied by this client", bundle: .module)
-                            .font(theme.ui(.base, weight: .semibold))
-                        ForEach(plugin.manifest.unsupportedNotes, id: \.self) { note in
-                            Label(note, systemImage: "minus.circle")
-                                .font(theme.ui(.small))
-                                .foregroundStyle(.appSecondary)
-                        }
-                    }
-                }
-
-                optionsEditor(plugin)
-
-                if scopedProject != nil {
-                    projectOverrideSection(plugin)
-                }
-
-                HStack {
-                    Spacer()
-                    if plugin.origin == .marketplace || plugin.origin == .local {
-                        Button(role: .destructive) {
-                            pluginToRemove = plugin
-                            isConfirmingRemove = true
-                        } label: {
-                            Label { Text("Uninstall", bundle: .module) } icon: { Image(systemName: "trash") }
-                        }
-                    }
-                }
-            }
-            .padding(SettingsLayout.detailInset)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func originBadge(_ plugin: LoadedPlugin) -> some View {
-        let (text, color): (String, Color) = {
-            switch plugin.origin {
-            case .turboSpark: return ("TurboSpark", .blue)
-            case .marketplace: return ("Marketplace: \(plugin.marketplaceName ?? "?")", .green)
-            case .local: return ("Local folder", .orange)
-            case .claudeInterop: return ("Claude Code", .purple)
-            }
-        }()
-        return Text(text)
-            .themedFont(.tiny, weight: .medium)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.15)))
-            .foregroundStyle(color)
-    }
-
-    private func contributionSummary(_ plugin: LoadedPlugin) -> some View {
-        let counts = PluginContributionCounts(plugin: plugin)
-        return VStack(alignment: .leading, spacing: 6) {
-            Text("Contributions", bundle: .module)
-                .font(theme.ui(.base, weight: .semibold))
-            HStack(spacing: 14) {
-                ContributionCount(label: "Commands", count: counts.commands)
-                ContributionCount(label: "Skills", count: counts.skills)
-                ContributionCount(label: "Agents", count: counts.agents)
-                ContributionCount(label: "Hooks", count: counts.hooks)
-                ContributionCount(label: "MCP servers", count: counts.mcpServers)
-            }
-            Text("Counts reflect what this client loads from the plugin as installed. Hooks always pass the SHA-256 trust review before they run.", bundle: .module)
-                .font(theme.ui(.small))
-                .foregroundStyle(.appSecondary)
-        }
-    }
-
-    private func optionsEditor(_ plugin: LoadedPlugin) -> some View {
-        let specs = plugin.manifest.userConfig.map(\.optionSpec)
-        let sourceID = "plugin_\(plugin.name)"
-        return Group {
-            if !specs.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Options", bundle: .module)
-                    .settingsControl("Options", pane: .plugins, timing: .nextTurn)
-                        .font(theme.ui(.base, weight: .semibold))
-                    ForEach(specs) { spec in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(spec.title).font(theme.ui(.base))
-                                if !spec.description.isEmpty {
-                                    Text(spec.description)
-                                        .font(theme.ui(.small))
-                                        .foregroundStyle(.appSecondary)
-                                }
-                            }
-                            Spacer()
-                            optionField(spec: spec, sourceID: sourceID)
-                        }
-                    }
-                    Text("Values reach the plugin's hooks and MCP servers as CLAUDE_PLUGIN_OPTION_<KEY> environment variables and ${user_config.KEY} substitutions. Sensitive values are masked and never substituted into visible content.", bundle: .module)
-                        .font(theme.ui(.small))
-                        .foregroundStyle(.appSecondary)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func optionField(spec: AppHookOptionSpec, sourceID: String) -> some View {
-        let binding = Binding(
-            get: { hookStore.getOptionValue(sourceID: sourceID, key: spec.key, defaultVal: spec.defaultValue ?? "") },
-            set: {
-                hookStore.updateOptionValue(
-                    sourceID: sourceID, key: spec.key, value: $0,
-                    isSensitive: spec.isSensitive)
-            })
-        switch spec.type {
-        case .boolean:
-            Toggle("", isOn: Binding(
-                get: { (hookStore.getOptionValue(sourceID: sourceID, key: spec.key, defaultVal: spec.defaultValue ?? "false")) == "true" },
-                set: {
-                    hookStore.updateOptionValue(
-                        sourceID: sourceID, key: spec.key, value: $0 ? "true" : "false",
-                        isSensitive: spec.isSensitive)
-                }))
-                .labelsHidden()
-        default:
-            Group {
-                // The row already draws `spec.title`; on macOS the field's own
-                // title is a visible label too, so it rendered twice.
-                if spec.isSensitive {
-                    SecureField(spec.title, text: binding)
-                        .labelsHidden()
-                } else {
-                    TextField(spec.title, text: binding)
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 240)
-                }
-            }
-            .frame(maxWidth: 240)
-        }
-    }
-
-    private func projectOverrideSection(_ plugin: LoadedPlugin) -> some View {
-        let project = scopedProject!
-        let resolved = project.enabledPlugins[plugin.id].map { $0 ? "on" : "off" }
-        return VStack(alignment: .leading, spacing: 6) {
-            Text("Project override", bundle: .module)
-                    .settingsControl("Project override", pane: .plugins, timing: .nextTurn)
-                .font(theme.ui(.base, weight: .semibold))
-            HStack {
-                Text("For \(project.name):", bundle: .module)
-                    .font(theme.ui(.base))
-                Spacer()
-                Picker("", selection: Binding(
-                    get: { resolved ?? "inherit" },
-                    set: { newValue in
-                        switch newValue {
-                        case "on": model.setPluginPreference(id: plugin.id, enabled: true, scope: .project(project))
-                        case "off": model.setPluginPreference(id: plugin.id, enabled: false, scope: .project(project))
-                        default:
-                            model.setPluginPreference(id: plugin.id, enabled: nil, scope: .project(project))
-                        }
-                    })) {
-                    Text("Inherit user setting", bundle: .module)
-                    .settingsControl("Inherit user setting", pane: .plugins, timing: .nextTurn).tag("inherit")
-                    Text("Enabled", bundle: .module).tag("on")
-                    Text("Disabled", bundle: .module).tag("off")
-                }
-                .labelsHidden()
-                .frame(width: 200)
-            }
-        }
-    }
-
     // MARK: - Empty state
 
+    /// Secondary actions only: Browse Marketplace is the header's primary.
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "puzzlepiece.extension")
-                .themedFont(.display)
-                .foregroundStyle(.tertiary)
-            Text("No plugins installed.", bundle: .module)
-                .themedFont(.base)
-                .foregroundStyle(.appSecondary)
-            Text("Browse a marketplace, or add a local folder containing .claude-plugin/plugin.json.", bundle: .module)
-                .themedFont(.base)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-            HStack {
-                Button { isShowingMarketplace = true } label: { Text("Browse Marketplace", bundle: .module) }
-                Button { addLocalFolder() } label: { Text("Add Local Folder", bundle: .module) }
-            }
-            .padding(.top, 4)
+        AppEmptyState(
+            systemImage: "puzzlepiece.extension",
+            title: Text("No plugins installed.", bundle: .module),
+            message: Text("Browse a marketplace, or add a local folder containing .claude-plugin/plugin.json.", bundle: .module)
+        ) {
+            Button { addLocalFolder() } label: { Text("Add Local Folder...", bundle: .module) }
+                .appAction(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -407,46 +236,15 @@ private struct PluginListRow: View {
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Toggle("", isOn: Binding(get: { isEnabled }, set: toggle))
-                .labelsHidden()
-                .toggleStyle(.switch)
+            // Named by the plugin so VoiceOver does not announce an unnamed
+            // switch in every row.
+            Toggle(isOn: Binding(get: { isEnabled }, set: toggle)) {
+                Text(plugin.name)
+            }
+            .labelsHidden()
+            .toggleStyle(.switch)
         }
         .padding(.vertical, 2)
-    }
-}
-
-private struct ContributionCount: View {
-    let label: String
-    let count: Int
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text(verbatim: "\(count)")
-                .themedFont(.title3, weight: .semibold)
-            Text(label)
-                .themedFont(.tiny)
-                .foregroundStyle(.appSecondary)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(count) \(label)")
-    }
-}
-
-private struct LabeledRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .themedFont(.base, weight: .medium)
-                .frame(width: 80, alignment: .leading)
-            Text(value)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .textSelection(.enabled)
-            Spacer()
-        }
     }
 }
 

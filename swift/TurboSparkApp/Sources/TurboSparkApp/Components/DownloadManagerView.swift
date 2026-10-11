@@ -26,7 +26,7 @@ struct DownloadManagerView: View {
                             Text("Paused", bundle: .module)
                                 .foregroundStyle(.appSecondary)
                         } else if let fraction = model.installProgressFraction {
-                            Text(MetricFormat.percent(fraction * 100))
+                            Text(verbatim: MetricFormat.percent(fraction * 100))
                                 .monospacedDigit()
                         } else {
                             ProgressView().controlSize(.mini)
@@ -65,7 +65,7 @@ struct DownloadManagerView: View {
                     Text("Clear", bundle: .module)
                 }
                 .disabled(!model.modelDownloads.contains { $0.status.isTerminal })
-                .buttonStyle(.borderless)
+                .appAction(.quiet, size: .small)
                 .themedFont(.small)
             }
 
@@ -128,7 +128,7 @@ struct DownloadManagerView: View {
                 .foregroundStyle(.appAccent)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text(download.request.alias)
+                Text(verbatim: download.request.alias)
                     .themedFont(.small, weight: .medium)
                     .lineLimit(2)
                     .truncationMode(.middle)
@@ -138,7 +138,7 @@ struct DownloadManagerView: View {
                     .foregroundStyle(.appSecondary)
                 if download.downloadedBytes > 0 {
                     if download.status == .completed {
-                        Text(MetricFormat.storage(download.downloadedBytes))
+                        Text(verbatim: MetricFormat.storage(download.downloadedBytes))
                             .themedFont(.tiny)
                             .foregroundStyle(.appSecondary)
                     } else if let total = download.totalBytes, total > 0 {
@@ -157,7 +157,7 @@ struct DownloadManagerView: View {
                         .foregroundStyle(.appSecondary)
                 }
                 if let failure = download.failure {
-                    Text(failure)
+                    Text(verbatim: failure)
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)
                         .lineLimit(2)
@@ -169,8 +169,7 @@ struct DownloadManagerView: View {
                 Button { model.retryModelDownload(download) } label: {
                     Text("Retry", bundle: .module)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
                 .disabled(!model.canRetryModelDownload(download))
             }
         }

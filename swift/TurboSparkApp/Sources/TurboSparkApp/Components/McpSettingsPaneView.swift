@@ -6,6 +6,9 @@ import SwiftUI
 @MainActor
 public struct McpSettingsPaneView: View {
     @ObservedObject var model: AppModel
+    /// Supplied by `McpManagementView` so the scope picker sits in this
+    /// pane's header row; nil where the pane is shown without a scope choice.
+    private let scopeProjectID: Binding<UUID?>?
 
     @State private var searchText = ""
     @State private var showingEditorSheet = false
@@ -23,6 +26,12 @@ public struct McpSettingsPaneView: View {
 
     public init(model: AppModel) {
         self.model = model
+        self.scopeProjectID = nil
+    }
+
+    init(model: AppModel, scopeProjectID: Binding<UUID?>) {
+        self.model = model
+        self.scopeProjectID = scopeProjectID
     }
 
     private var filteredServers: [McpServerConfig] {
@@ -46,30 +55,37 @@ public struct McpSettingsPaneView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            headerBar
-            filterAndPillsBar
-            Divider()
-            codemodeFeatureToggle
+        VStack(spacing: 0) {
+            header
 
-            if filteredServers.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Servers", bundle: .module)
-                            .themedFont(.small, weight: .semibold)
-                            .foregroundStyle(.appSecondary)
+            VStack(alignment: .leading, spacing: 14) {
+                summaryBar
+                codemodeFeatureToggle
+                Divider()
 
-                        ForEach(filteredServers) { server in
-                            serverCard(server)
+                if model.globalMcpServers.isEmpty {
+                    emptyState
+                } else if filteredServers.isEmpty {
+                    ExtensionNoMatchesState(query: searchText)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Servers", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
+                                .foregroundStyle(.appSecondary)
+                                .accessibilityAddTraits(.isHeader)
+
+                            ForEach(filteredServers) { server in
+                                serverCard(server)
+                            }
                         }
+                        .padding(.vertical, 4)
                     }
-                    .padding(.vertical, 4)
                 }
             }
+            .padding(ExtensionPaneLayout.contentInsets)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(SettingsLayout.contentInsets)
         .sheet(isPresented: $showingEditorSheet) {
             McpServerEditorSheet(
                 existingConfig: editingServer,
@@ -101,6 +117,60 @@ public struct McpSettingsPaneView: View {
         }
     }
 
+    // MARK: - Header
+
+    /// `[scope][search] ... [Import][Add Server]`, the layout every extension
+    /// pane shares. Both import sources live in the one Import menu: four
+    /// bordered buttons beside the title and description truncated at the
+    /// Settings window's minimum width.
+    private var header: some View {
+        ExtensionPaneHeader {
+            ExtensionPaneIntro(
+                text: Text("Manage Model Context Protocol servers, external tools, and integrations.", bundle: .module),
+                documentation: URL(string: "https://modelcontextprotocol.io"),
+                documentationHint: Text("Opens the Model Context Protocol documentation in your browser.", bundle: .module))
+                .settingsControl("MCP Servers", pane: .mcp, timing: .nextTurn)
+        } filters: {
+            if let scopeProjectID {
+                ExtensionScopePicker(model: model, projectID: scopeProjectID)
+            }
+            AppSearchField(text: $searchText, prompt: Text("Search MCP servers", bundle: .module))
+        } actions: {
+            ExtensionImportMenu { importMenuItems }
+            addServerButton
+        }
+    }
+
+    @ViewBuilder
+    private var importMenuItems: some View {
+        Button {
+            showingAgentImportSheet = true
+        } label: {
+            Label { Text("From Other Agents...", bundle: .module) } icon: { Image(systemName: "person.2") }
+        }
+        .help(Text("Import servers from Claude, Codex, Cursor, or Gemini global configs; they are added disabled", bundle: .module))
+
+        Button {
+            showingImportSheet = true
+        } label: {
+            Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "square.grid.2x2") }
+        }
+        .help(Text("Install a server from a published catalog", bundle: .module))
+    }
+
+    private var addServerButton: some View {
+        Button {
+            editingServer = nil
+            showingEditorSheet = true
+        } label: {
+            Label { Text("Add Server", bundle: .module) } icon: { Image(systemName: "plus") }
+        }
+        .appAction(.primary)
+        .help(Text("Add a new global MCP server", bundle: .module))
+    }
+
+    // MARK: - Content
+
     /// Opt-in codemode scripting. Catalog advertisement and execution both
     /// read `CodemodeSettings.isEnabled`, which is this same `UserDefaults`
     /// key, so they agree with the switch; changes land on the next turn like
@@ -112,7 +182,7 @@ public struct McpSettingsPaneView: View {
                     .themedFont(.callout, weight: .medium)
             }
             .toggleStyle(.switch)
-            .help("Runs model-written JavaScript that can batch deferred MCP tool calls; every inner call still passes its permission and hook gates")
+            .help(Text("Runs model-written JavaScript that can batch deferred MCP tool calls; every inner call still passes its permission and hook gates", bundle: .module))
             .accessibilityLabel(Text("Codemode", bundle: .module))
             .accessibilityHint(Text("Batch MCP tool calls inside one sandboxed script.", bundle: .module))
             Text("Batch MCP tool calls inside one sandboxed script.", bundle: .module)
@@ -121,98 +191,22 @@ public struct McpSettingsPaneView: View {
         }
     }
 
-    private var headerBar: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("MCP Servers", bundle: .module)
-                    .settingsControl("MCP Servers", pane: .mcp, timing: .nextTurn)
-                    .themedFont(.title2, weight: .bold)
-                HStack(spacing: 4) {
-                    Text("Manage Model Context Protocol servers, external tools, and integrations.", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                    if let url = URL(string: "https://modelcontextprotocol.io") {
-                        Link("Documentation", destination: url)
-                            .themedFont(.small)
-                            .help("Open MCP official documentation: https://modelcontextprotocol.io")
-                            .accessibilityLabel("MCP Documentation")
-                            .accessibilityHint("Opens Model Context Protocol documentation in web browser")
-                            .accessibilityAddTraits(.isLink)
-                    }
-                }
-            }
-            Spacer()
-            Button {
-                showingAgentImportSheet = true
-            } label: {
-                Label { Text("From Other Agents...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .help("Import servers from Claude, Codex, Cursor, or Gemini global configs; they are added disabled")
-            .accessibilityLabel("Import MCP servers from other agent tools")
-            .accessibilityHint("Opens the import wizard listing servers found in other agents' global config files")
-
-            Button {
-                showingImportSheet = true
-            } label: {
-                Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "square.grid.2x2") }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .help("Install a server from a published catalog")
-            .accessibilityLabel("Browse MCP Marketplace")
-            .accessibilityHint("Opens a sheet to fetch a server catalog and install from it")
-
-            Button {
-                editingServer = nil
-                showingEditorSheet = true
-            } label: {
-                Label { Text("Add Server", bundle: .module) } icon: { Image(systemName: "plus") }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .help("Add a new global MCP server")
-            .accessibilityLabel("Add MCP Server")
-            .accessibilityHint("Opens editor sheet to configure a new MCP server")
+    /// Counts, not filters: these used to tint the first one as "selected",
+    /// which read as a filter that could not be changed.
+    private var summaryBar: some View {
+        HStack(spacing: 6) {
+            summaryPill(label: Text("Servers", bundle: .module), value: model.globalMcpServers.count)
+            summaryPill(label: Text("Active", bundle: .module), value: activeCount)
+            summaryPill(label: Text("Tools", bundle: .module), value: totalToolsCount)
         }
     }
 
-    private var filterAndPillsBar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 6) {
-                // Counts, not filters: these used to tint the first one as
-                // "selected", which read as a filter that could not be changed.
-                summaryPill(label: "Servers", value: "\(model.globalMcpServers.count)")
-                summaryPill(label: "Active", value: "\(activeCount)")
-                summaryPill(label: "Tools", value: "\(totalToolsCount)")
-            }
-
-            Spacer()
-
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.appSecondary)
-                    .themedFont(.small)
-                TextField("Search MCP servers", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .themedFont(.small)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(.appSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
-            .frame(width: 200)
-        }
-    }
-
-    private func summaryPill(label: String, value: String) -> some View {
+    private func summaryPill(label: Text, value: Int) -> some View {
         HStack(spacing: 4) {
-            Text(label)
+            label
                 .themedFont(.small, weight: .medium)
                 .foregroundStyle(.appSecondary)
-            Text(value)
+            Text(verbatim: "\(value)")
                 .themedFont(.small, weight: .bold).monospacedDigit()
                 .foregroundStyle(.appText)
         }
@@ -220,192 +214,58 @@ public struct McpSettingsPaneView: View {
         .padding(.vertical, 4)
         .background(Color.secondary.opacity(0.08))
         .clipShape(Capsule())
+        .accessibilityElement(children: .combine)
     }
 
     private func serverCard(_ server: McpServerConfig) -> some View {
-        let isExpanded = expandedServerIDs.contains(server.id)
-        let isTesting = testingServerID == server.id
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Image(systemName: "server.rack")
-                    .themedFont(.title3)
-                    .foregroundStyle(server.isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(server.name)
-                            .themedFont(.base, weight: .semibold)
-                            .foregroundStyle(.appText)
-
-                        if !server.discoveredTools.isEmpty {
-                            Text(verbatim: "\(server.discoveredTools.count) tools")
-                                .themedFont(.tiny, weight: .medium)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.12))
-                                .clipShape(Capsule())
-                        }
-                    }
-
-                    Text(server.commandSummary)
-                        .themedCode(.small)
-                        .foregroundStyle(.appSecondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                // Actions
-                HStack(spacing: 8) {
-                    Button {
-                        Task { await testServer(server) }
-                    } label: {
-                        if isTesting {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                                .frame(width: 16, height: 16)
-                        } else {
-                            Image(systemName: "bolt.fill")
-                                .themedFont(.small)
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Test connection and discover tools")
-                    .accessibilityLabel("Test connection for \(server.name)")
-
-                    Button {
-                        editingServer = server
-                        showingEditorSheet = true
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .themedFont(.small)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Edit server settings")
-                    .accessibilityLabel("Edit settings for \(server.name)")
-
-                    Toggle("Enable \(server.name)", isOn: Binding(
-                        get: { server.isEnabled },
-                        set: { model.toggleGlobalMcpServer(id: server.id, isEnabled: $0) }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .accessibilityLabel("Enable \(server.name)")
-
-                    Menu {
-                        Button {
-                            editingServer = server
-                            showingEditorSheet = true
-                        } label: {
-                            Label { Text("Edit Server", bundle: .module) } icon: { Image(systemName: "pencil") }
-                        }
-                        Button {
-                            Task { await testServer(server) }
-                        } label: {
-                            Label { Text("Re-query Tools", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
-                        }
-                        Divider()
-                        Button(role: .destructive) {
-                            model.deleteGlobalMcpServer(id: server.id)
-                        } label: {
-                            Label { Text("Delete Server", bundle: .module) } icon: { Image(systemName: "trash") }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .themedFont(.small)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .frame(width: 18)
-                    .help("Server actions")
-                    .accessibilityLabel("Server actions for \(server.name)")
-                }
-            }
-
-            if let toast = testResultToast, toast.id == server.id {
-                Text(toast.message)
-                    .themedFont(.small)
-                    .foregroundStyle(toast.isError ? .red : .green)
-                    .padding(6)
-                    .background(toast.isError ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-
-            if !server.discoveredTools.isEmpty {
-                Button {
-                    if isExpanded {
-                        expandedServerIDs.remove(server.id)
-                    } else {
+        McpServerCard(
+            model: model,
+            server: server,
+            isExpanded: Binding(
+                get: { expandedServerIDs.contains(server.id) },
+                set: { expanded in
+                    if expanded {
                         expandedServerIDs.insert(server.id)
+                    } else {
+                        expandedServerIDs.remove(server.id)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .themedFont(.tiny)
-                        Text(isExpanded ? "Hide Discovered Tools" : "Show Discovered Tools (\(server.discoveredTools.count))")
-                            .themedFont(.tiny, weight: .medium)
-                    }
-                    .foregroundStyle(.appSecondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isExpanded ? "Hide discovered tools for \(server.name)" : "Show \(server.discoveredTools.count) discovered tools for \(server.name)")
-
-                if isExpanded {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(server.discoveredTools) { tool in
-                            HStack(alignment: .top, spacing: 6) {
-                                Image(systemName: "wrench.and.screwdriver")
-                                    .themedFont(.tiny)
-                                    .foregroundStyle(.appAccent)
-                                    .padding(.top, 2)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(tool.name)
-                                        .themedCode(.small, weight: .semibold)
-                                    Text(tool.description)
-                                        .themedFont(.tiny)
-                                        .foregroundStyle(.appSecondary)
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
-                    }
-                    .padding(8)
-                    .background(.appSurface.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-            }
-        }
-        .padding(12)
-        .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.15), lineWidth: 0.5))
+                }),
+            isTesting: testingServerID == server.id,
+            result: testResult(for: server),
+            onTest: { Task { await testServer(server) } },
+            onEdit: {
+                editingServer = server
+                showingEditorSheet = true
+            })
     }
 
+    private func testResult(for server: McpServerConfig) -> (message: String, isError: Bool)? {
+        guard let toast = testResultToast, toast.id == server.id else { return nil }
+        return (message: toast.message, isError: toast.isError)
+    }
+
+    /// Empty-state actions are secondary: the header already carries the one
+    /// primary action (Add Server), so this offers the routes the Import menu
+    /// hides.
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "server.rack")
-                .themedFont(.display)
-                .foregroundStyle(.secondary.opacity(0.5))
-            Text("No MCP Servers Configured", bundle: .module)
-                .themedFont(.base, weight: .semibold)
-            Text("Add external MCP servers (like memory, GitHub, filesystem, database, or browser tools) to extend assistant capabilities.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
+        AppEmptyState(
+            systemImage: "server.rack",
+            title: Text("No MCP Servers Configured", bundle: .module),
+            message: Text("Add external MCP servers (like memory, GitHub, filesystem, database, or browser tools) to extend assistant capabilities.", bundle: .module)
+        ) {
             Button {
-                editingServer = nil
-                showingEditorSheet = true
+                showingAgentImportSheet = true
             } label: {
-                Label { Text("Add MCP Server", bundle: .module) } icon: { Image(systemName: "plus") }
+                Text("From Other Agents...", bundle: .module)
             }
-            .buttonStyle(.borderedProminent)
-            .padding(.top, 4)
+            .appAction(.secondary)
+            Button {
+                showingImportSheet = true
+            } label: {
+                Text("Browse Marketplace", bundle: .module)
+            }
+            .appAction(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
     }
 
     private func testServer(_ server: McpServerConfig) async {
@@ -415,9 +275,15 @@ public struct McpSettingsPaneView: View {
         switch result {
         case .success(let tools):
             model.setGlobalMcpDiscoveredTools(id: server.id, tools: tools, transport: server.transport)
-            testResultToast = (id: server.id, message: "Connected: Discovered \(tools.count) tools.", isError: false)
+            testResultToast = (
+                id: server.id,
+                message: AppStrings.localized("Connected. Tools discovered: \(tools.count)."),
+                isError: false)
         case .failure(let error):
-            testResultToast = (id: server.id, message: "Error: \(error.localizedDescription)", isError: true)
+            testResultToast = (
+                id: server.id,
+                message: AppStrings.localized("Error: \(error.localizedDescription)"),
+                isError: true)
         }
         testingServerID = nil
     }

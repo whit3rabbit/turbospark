@@ -15,11 +15,11 @@ enum AudioMediaIO {
         case invalidPCM, tooLong, conversion, noAudio, overlappingChunks
         var errorDescription: String? {
             switch self {
-            case .invalidPCM: return String(localized: "Audio samples or their format are invalid. Choose another audio file.", bundle: .module)
-            case .tooLong: return String(localized: "This audio window is too large. Process the recording in smaller sections.", bundle: .module)
-            case .conversion: return String(localized: "The audio format could not be converted. Try a WAV or M4A file.", bundle: .module)
-            case .noAudio: return String(localized: "There is no audio to play or export.", bundle: .module)
-            case .overlappingChunks: return String(localized: "Saved chunks from the same source overlap. Export each track separately.", bundle: .module)
+            case .invalidPCM: return AppStrings.localized("Audio samples or their format are invalid. Choose another audio file.")
+            case .tooLong: return AppStrings.localized("This audio window is too large. Process the recording in smaller sections.")
+            case .conversion: return AppStrings.localized("The audio format could not be converted. Try a WAV or M4A file.")
+            case .noAudio: return AppStrings.localized("There is no audio to play or export.")
+            case .overlappingChunks: return AppStrings.localized("Saved chunks from the same source overlap. Export each track separately.")
             }
         }
     }

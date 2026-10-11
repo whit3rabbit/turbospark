@@ -59,6 +59,9 @@ public struct HookSourceDetailSheet: View {
                     }
                     .buttonStyle(.plain)
                     .appPointerCursor()
+                    .keyboardShortcut(.cancelAction)
+                    .help(Text("Close", bundle: .module))
+                    .accessibilityLabel(Text("Close", bundle: .module))
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 20)
@@ -143,7 +146,7 @@ public struct HookSourceDetailSheet: View {
 
                 if group.unreviewedCount > 0 {
                     HStack(spacing: 12) {
-                        Text("\(group.unreviewedCount) hook\(group.unreviewedCount == 1 ? "" : "s") pending trust review", bundle: .module)
+                        Text("Pending trust review: \(group.unreviewedCount)", bundle: .module)
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
 
@@ -197,7 +200,7 @@ public struct HookSourceDetailSheet: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .themedFont(.tiny)
                             .foregroundStyle(.orange)
-                        Text("\(unreviewedInEvent) needs review", bundle: .module)
+                        Text("Needs review: \(unreviewedInEvent)", bundle: .module)
                             .themedFont(.tiny, weight: .medium)
                             .foregroundStyle(.orange)
                     }
@@ -266,7 +269,7 @@ public struct HookSourceDetailSheet: View {
                                 .padding(.vertical, 2)
                                 .background(Color.orange.opacity(0.12))
                                 .clipShape(Capsule())
-                                .help("Prompt-type hooks are not run by this client. The entry is shown so the gap is visible.")
+                                .help(Text("Prompt-type hooks are not run by this client. The entry is shown so the gap is visible.", bundle: .module))
                         }
                     }
                 }
@@ -283,12 +286,13 @@ public struct HookSourceDetailSheet: View {
                             .foregroundStyle(.appSecondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Reveal source file: \(sourcePath)")
+                    .help(Text("Reveal source file: \(sourcePath)", bundle: .module))
+                    .accessibilityLabel(Text("Reveal in Finder", bundle: .module))
                 }
 
                 // Expand/Collapse Chevron
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    TSMotion.animate(.easeInOut(duration: 0.18)) {
                         if isExpanded {
                             expandedHookIDs.remove(hook.id)
                         } else {
@@ -301,6 +305,9 @@ public struct HookSourceDetailSheet: View {
                         .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isExpanded
+                    ? Text("Hide details for \(hook.name)", bundle: .module)
+                    : Text("Show details for \(hook.name)", bundle: .module))
 
                 // Trust Button (if unreviewed)
                 if !isTrusted {
@@ -318,11 +325,14 @@ public struct HookSourceDetailSheet: View {
                     .tint(.orange)
                 }
 
-                // Toggle Switch
-                Toggle("", isOn: Binding(
+                // Named by the hook: an empty label left VoiceOver
+                // announcing an unnamed switch in every row.
+                Toggle(isOn: Binding(
                     get: { hook.isEnabled },
                     set: { _ in hookStore.toggleHookEnabled(id: hook.id) }
-                ))
+                )) {
+                    Text(hook.name)
+                }
                 .toggleStyle(.switch)
                 .labelsHidden()
                 .controlSize(.small)
@@ -336,7 +346,13 @@ public struct HookSourceDetailSheet: View {
                 VStack(alignment: .leading, spacing: 10) {
                     // Command box
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(hook.type == .command ? "Command Script" : (hook.type == .http ? "Webhook URL" : "Prompt"))
+                        Group {
+                            switch hook.type {
+                            case .command: Text("Command Script", bundle: .module)
+                            case .http: Text("Webhook URL", bundle: .module)
+                            case .prompt: Text("Prompt", bundle: .module)
+                            }
+                        }
                             .themedFont(.tiny, weight: .semibold)
                             .foregroundStyle(.appSecondary)
 
@@ -352,16 +368,16 @@ public struct HookSourceDetailSheet: View {
                     // Metadata row
                     HStack(spacing: 16) {
                         if let ifCond = hook.ifCondition, !ifCond.isEmpty {
-                            Label("If: \(ifCond)", systemImage: "line.3.horizontal.decrease.circle")
+                            Label { Text("If: \(ifCond)", bundle: .module) } icon: { Image(systemName: "line.3.horizontal.decrease.circle") }
                                 .themedFont(.small)
                                 .foregroundStyle(.appSecondary)
                         }
 
-                        Label("Shell: \(hook.shell.rawValue)", systemImage: "terminal")
+                        Label { Text("Shell: \(hook.shell.rawValue)", bundle: .module) } icon: { Image(systemName: "terminal") }
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
 
-                        Label("Timeout: \(Int(hook.timeoutSeconds))s", systemImage: "clock")
+                        Label { Text("Timeout: \(Int(hook.timeoutSeconds))s", bundle: .module) } icon: { Image(systemName: "clock") }
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
 
@@ -371,12 +387,12 @@ public struct HookSourceDetailSheet: View {
                             Button {
                                 editingHook = hook
                             } label: { Text("Edit...", bundle: .module) }
-                            .controlSize(.small)
+                            .appAction(.secondary, size: .small)
 
                             Button(role: .destructive) {
                                 hookStore.deleteCustomHook(id: hook.id)
                             } label: { Text("Delete", bundle: .module) }
-                            .controlSize(.small)
+                            .appAction(.destructive, size: .small)
                         }
                     }
                 }

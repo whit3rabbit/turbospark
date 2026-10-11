@@ -29,15 +29,19 @@ enum MarketplaceGit {
         let timedOut: Bool
 
         var errorDescription: String? {
+            // `step` is a git subcommand and `stderr` is git's own output:
+            // both are spliced verbatim.
+            let command = "git \(step)"
             if timedOut {
-                return "git \(step) timed out. The repository may be unreachable, "
-                    + "or it may require credentials this app cannot supply."
+                return AppStrings.localized(
+                    "\(command) timed out. The repository may be unreachable, or it may require credentials this app cannot supply.")
             }
+            let code = Int(exitCode)
             let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             if detail.isEmpty {
-                return "git \(step) failed with exit code \(exitCode)."
+                return AppStrings.localized("\(command) failed with exit code \(code).")
             }
-            return "git \(step) failed with exit code \(exitCode): \(detail)"
+            return AppStrings.localized("\(command) failed with exit code \(code): \(detail)")
         }
     }
 

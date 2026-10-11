@@ -28,12 +28,15 @@ struct ImageGalleryCarousel: View {
                         ImageGalleryActions(model: model, artifact: artifact) {
                             reuse(artifact); dismiss()
                         }
-                    } label: { Image(systemName: "ellipsis") }
-                    .menuStyle(.borderlessButton).fixedSize()
+                    } label: {
+                        Label { Text("Image actions", bundle: .module) } icon: { Image(systemName: "ellipsis") }
+                            .labelStyle(.iconOnly)
+                    }
+                    .appMenuAction()
                     .help(Text("Image actions", bundle: .module))
-                    .accessibilityLabel(Text("Image actions", bundle: .module))
                 }
                 Button { dismiss() } label: { Text("Done", bundle: .module) }
+                    .appAction(.secondary)
                     .keyboardShortcut(.cancelAction)
             }
             if let artifact {
@@ -46,7 +49,7 @@ struct ImageGalleryCarousel: View {
                         Label { Text("Image unavailable", bundle: .module) } icon: { Image(systemName: "photo") }
                     }
                 }
-                Text(artifact.imageRequest?.prompt ?? artifact.title)
+                Text(verbatim: artifact.imageRequest?.prompt ?? artifact.title)
                     .themedFont(.base).textSelection(.enabled).lineLimit(4)
                 if let request = artifact.imageRequest {
                     HStack {
@@ -57,22 +60,20 @@ struct ImageGalleryCarousel: View {
                     .themedFont(.tiny).foregroundStyle(.appSecondary)
                 }
                 HStack(spacing: 20) {
-                    Button { selectedID = artifacts[index - 1].id } label: {
-                        Image(systemName: "chevron.left")
+                    AppIconButton("chevron.left", label: Text("Previous", bundle: .module)) {
+                        selectedID = artifacts[index - 1].id
                     }
+                    .appAction(.secondary)
                     .disabled(index == 0).keyboardShortcut(.leftArrow, modifiers: [])
-                    .help(Text("Previous", bundle: .module))
-                    .accessibilityLabel(Text("Previous", bundle: .module))
                     Text(verbatim: "\(index + 1) / \(artifacts.count)").monospacedDigit()
-                    Button { selectedID = artifacts[index + 1].id } label: {
-                        Image(systemName: "chevron.right")
+                    AppIconButton("chevron.right", label: Text("Next", bundle: .module)) {
+                        selectedID = artifacts[index + 1].id
                     }
+                    .appAction(.secondary)
                     .disabled(index + 1 >= artifacts.count).keyboardShortcut(.rightArrow, modifiers: [])
-                    .help(Text("Next", bundle: .module))
-                    .accessibilityLabel(Text("Next", bundle: .module))
                     Spacer()
                     Button { reuse(artifact); dismiss() } label: { Text("Use prompt", bundle: .module) }
-                        .buttonStyle(.borderedProminent)
+                        .appAction(.primary)
                 }
                 .themedFont(.small)
             }

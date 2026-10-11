@@ -5,16 +5,9 @@ import TurboSpark
 struct ImageComposerView: View {
     @ObservedObject var model: AppModel
     @Binding var importing: Bool
-    @ObservedObject private var appearanceManager = AppearanceManager.shared
-    @Environment(\.appTheme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var expanded = false
 
     private var active: Bool { model.imageGenerationTask != nil }
-
-    private var reduceMotion: Bool {
-        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,89 +16,33 @@ struct ImageComposerView: View {
                 ImageModelDownloadOffer(model: model, importing: $importing)
             }
             VStack(spacing: 12) {
+                // The prompt is the pane's multi-line editor, so it takes the
+                // shared editor surface every other editor uses.
                 TextField(text: $model.promptText, axis: .vertical) {
                     Text("Describe the image you want to create.", bundle: .module)
                 }
                 .textFieldStyle(.plain)
                 .themedFont(.base)
                 .lineLimit(2...5)
+                .appEditorSurface(minHeight: 56)
                 .accessibilityLabel(Text("Image prompt", bundle: .module))
 
-                HStack(spacing: 12) {
-                    Button {
-                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
-                            expanded.toggle()
-                        }
-                    } label: {
-                        Label {
-                            Text("Settings", bundle: .module)
-                        } icon: { Image(systemName: "slider.horizontal.3") }
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(expanded ? theme.accent : theme.secondaryText)
-                    .accessibilityValue(Text(expanded ? "Expanded" : "Collapsed", bundle: .module))
-                    .help(Text("Image settings", bundle: .module))
-                    .accessibilityLabel(Text("Image settings", bundle: .module))
-
-                    ImageStyleMenu(model: model)
-
-                    Text(summary)
-                        .foregroundStyle(.appSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 0)
-                    if model.imageSession != nil {
-                        Button {
-                            model.unloadImageModel()
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "eject.fill")
-                                Text("Unload", bundle: .module)
-                            }
-                        }
-                        .buttonStyle(TSPressScaleStyle(scale: 0.94))
-                        .foregroundStyle(.appSecondary)
-                        .disabled(!model.canUnloadImageModel)
-                        .help(Text("Unload Model", bundle: .module))
-                        .accessibilityLabel(Text("Unload Model", bundle: .module))
-                    }
-                    if active {
-                        Button { model.cancelImageGeneration() } label: {
-                            Label { Text("Stop", bundle: .module) } icon: { Image(systemName: "stop.fill") }
-                        }
-                        .disabled(model.isCancellationPending)
-                    } else {
-                        Button { model.generateImage() } label: {
-                            Label { Text("Generate", bundle: .module) } icon: { Image(systemName: "arrow.up") }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!model.canGenerateImage || model.isInGhostChat)
-                        .keyboardShortcut(.return, modifiers: .command)
-                    }
-                }
-                .themedFont(.small)
+                controlRow
             }
-            .padding(16)
-            .background(theme.composerBackground, in: RoundedRectangle(cornerRadius: 16))
-            .overlay { RoundedRectangle(cornerRadius: 16).stroke(.appBorder, lineWidth: 1) }
 
             if expanded {
-                settings
+                ImageGenerationSettings(model: model, importing: $importing)
                     .padding(18)
-                    .background(.appSurface, in: UnevenRoundedRectangle(
-                        bottomLeadingRadius: 14, bottomTrailingRadius: 14))
-                    .padding(.horizontal, 10)
+                    .background(
+                        .appSurface,
+                        in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                            .stroke(.appBorder, lineWidth: 1))
+                    .padding(.top, 10)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            if model.isInGhostChat {
-                Text("Image generation is unavailable in a temporary chat.", bundle: .module)
-                    .themedFont(.tiny).foregroundStyle(.appSecondary).padding(.top, 8)
-            } else if model.imageModelPath.isEmpty {
-                Button { expanded = true } label: {
-                    Text("Choose an image model in Settings to get started.", bundle: .module)
-                }
-                .buttonStyle(.plain).themedFont(.tiny).foregroundStyle(.appAccent).padding(.top, 8)
-            }
+            guidance
         }
         .frame(maxWidth: 980)
         .padding(.horizontal, 24)
@@ -114,25 +51,102 @@ struct ImageComposerView: View {
         .background(.appPage)
     }
 
-    private var summary: String {
+    private var controlRow: some View {
+        HStack(spacing: 12) {
+            // Named "Image settings" rather than "Settings" so it cannot be
+            // read as the app's Settings window.
+            AppChip(
+                Text("Image settings", bundle: .module),
+                systemImage: "slider.horizontal.3",
+                isOn: expanded
+            ) {
+                TSMotion.animate(TSMotion.pane) { expanded.toggle() }
+            }
+
+            ImageStyleMenu(model: model)
+                .appMenuAction(size: .small)
+
+            summary
+                .foregroundStyle(.appSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+            if model.imageSession != nil {
+                Button {
+                    model.unloadImageModel()
+                } label: {
+                    Label { Text("Unload", bundle: .module) } icon: { Image(systemName: "eject.fill") }
+                }
+                .appAction(.quiet, size: .small)
+                .disabled(!model.canUnloadImageModel)
+                .help(Text("Unload Model", bundle: .module))
+                .accessibilityLabel(Text("Unload Model", bundle: .module))
+            }
+            if active {
+                Button { model.cancelImageGeneration() } label: {
+                    Label { Text("Stop", bundle: .module) } icon: { Image(systemName: "stop.fill") }
+                }
+                .appAction(.secondary)
+                .disabled(model.isCancellationPending)
+            } else {
+                Button { model.generateImage() } label: {
+                    Label { Text("Generate", bundle: .module) } icon: { Image(systemName: "arrow.up") }
+                }
+                .appAction(.primary)
+                .disabled(!model.canGenerateImage || model.isInGhostChat)
+                .keyboardShortcut(.return, modifiers: .command)
+            }
+        }
+        .themedFont(.small)
+    }
+
+    /// Names only controls that are on screen: the Download action (empty
+    /// gallery or the offer above the prompt) and the Image settings chip,
+    /// whose panel holds the model and quantization pickers. An older build
+    /// sent people to Settings, which has no image model picker.
+    @ViewBuilder
+    private var guidance: some View {
+        if model.isInGhostChat {
+            Text("Image generation is unavailable in a temporary chat.", bundle: .module)
+                .themedFont(.tiny).foregroundStyle(.appSecondary).padding(.top, 8)
+        } else if model.imageModelPath.isEmpty {
+            Button {
+                TSMotion.animate(TSMotion.pane) { expanded = true }
+            } label: {
+                Text("Download an image model, or choose one in Image settings.", bundle: .module)
+            }
+            .appAction(.quiet, size: .small)
+            .foregroundStyle(.appAccent)
+            .padding(.top, 8)
+        }
+    }
+
+    /// Model, quantization, size and count. Model names, sizes and
+    /// quantization labels are data and stay verbatim; the words around
+    /// them come from the catalog.
+    private var summary: Text {
         let unsupportedSelection = !model.imageModelPath.isEmpty
             && !model.hasSupportedSelectedImageModel
         let name = model.selectedImageModel.map { ImageModelPresentation.family($0.modelID) }
             ?? (model.imageModelPath.isEmpty ? "" : URL(fileURLWithPath: model.imageModelPath).lastPathComponent)
-        let quant = unsupportedSelection
-            ? "MLX required"
-            : (model.selectedImageModel.map { ImageModelPresentation.quantization($0.quantization) } ?? "")
-        let parts = [
-            name.isEmpty ? (model.hasInstalledMLXImageModel ? "" : "Z-Image Turbo") : name,
-            quant.isEmpty ? (model.hasInstalledMLXImageModel ? "" : String(localized: "Download", bundle: .module)) : quant,
-            model.imageModelPath.isEmpty ? "" : model.imageSizeLabel,
-            String(localized: "\(model.imageCount) image(s)", bundle: .module)
-        ].filter { !$0.isEmpty }
-        return parts.joined(separator: " / ")
+        var parts: [Text] = []
+        if !name.isEmpty {
+            parts.append(Text(verbatim: name))
+        } else if !model.hasInstalledMLXImageModel {
+            parts.append(Text(verbatim: "Z-Image Turbo"))
+        }
+        let quant = model.selectedImageModel.map { ImageModelPresentation.quantization($0.quantization) } ?? ""
+        if unsupportedSelection {
+            parts.append(Text("MLX required", bundle: .module))
+        } else if !quant.isEmpty {
+            parts.append(Text(verbatim: quant))
+        } else if !model.hasInstalledMLXImageModel {
+            parts.append(Text("Download", bundle: .module))
+        }
+        if !model.imageModelPath.isEmpty {
+            parts.append(Text(verbatim: model.imageSizeLabel))
+        }
+        parts.append(Text("\(model.imageCount) image(s)", bundle: .module))
+        return parts.dropFirst().reduce(parts[0]) { $0 + Text(verbatim: " / ") + $1 }
     }
-
-    private var settings: some View {
-        ImageGenerationSettings(model: model, importing: $importing)
-    }
-
 }

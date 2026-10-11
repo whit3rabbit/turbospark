@@ -46,7 +46,7 @@ extension InspectorView {
                     Text("Low Power Mode", bundle: .module)
                 }
                 LabeledContent {
-                    Text(t.thermalLevel.capitalized)
+                    Self.thermalLevelText(t.thermalLevel)
                         .themedFont(.small)
                         .foregroundStyle(t.thermalLevel == "nominal" ? Color.secondary : Color.orange)
                 } label: {
@@ -97,7 +97,10 @@ extension InspectorView {
                 }
                 if let block = info.speculation.block {
                     LabeledContent {
-                        Text("\(info.speculation.drafter?.rawValue ?? "on") x\(block)", bundle: .module)
+                        // The drafter name is the engine's identifier; only
+                        // the "on" fallback is a word.
+                        ((info.speculation.drafter.map { Text(verbatim: $0.rawValue) } ?? Text("On", bundle: .module))
+                            + Text(verbatim: " x\(block)"))
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
                     } label: {
@@ -105,7 +108,8 @@ extension InspectorView {
                     }
                 } else if let reason = info.speculation.reason {
                     LabeledContent {
-                        Text("Off (\(reason))", bundle: .module)
+                        // `reason` is the engine's own sentence, shown as sent.
+                        (Text("Off", bundle: .module) + Text(verbatim: " (\(reason))"))
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
                     } label: {
@@ -114,16 +118,24 @@ extension InspectorView {
                 }
                 if info.steering.active {
                     LabeledContent {
-                        Text(info.steering.summary ?? (info.steering.mode ?? "Active"))
-                            .themedFont(.small)
-                            .foregroundStyle(.appSecondary)
+                        Group {
+                            // Summary and mode come from the engine as sent;
+                            // only the fallback is ours to translate.
+                            if let summary = info.steering.summary ?? info.steering.mode {
+                                Text(verbatim: summary)
+                            } else {
+                                Text("Active", bundle: .module)
+                            }
+                        }
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
                     } label: {
                         Text("Active Steering", bundle: .module)
                     }
                 }
                 if !info.specialTokens.stopTokenIds.isEmpty {
                     LabeledContent {
-                        Text(info.specialTokens.stopTokenIds.map { "\($0)" }.joined(separator: ", "))
+                        Text(verbatim: info.specialTokens.stopTokenIds.map { "\($0)" }.joined(separator: ", "))
                         .themedFont(.tiny).monospacedDigit()
                         .foregroundStyle(.appSecondary)
                     } label: {
@@ -131,6 +143,19 @@ extension InspectorView {
                     }
                 }
             }
+        }
+    }
+
+    /// The thermal state in words. The engine reports `ProcessInfo`'s level
+    /// as a lowercase identifier, so capitalizing it gave English everywhere;
+    /// an unknown future level still shows as sent.
+    private static func thermalLevelText(_ level: String) -> Text {
+        switch level.lowercased() {
+        case "nominal": return Text("Nominal", bundle: .module)
+        case "fair": return Text("Fair", bundle: .module)
+        case "serious": return Text("Serious", bundle: .module)
+        case "critical": return Text("Critical", bundle: .module)
+        default: return Text(verbatim: level.capitalized)
         }
     }
 }

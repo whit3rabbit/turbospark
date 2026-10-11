@@ -1,6 +1,13 @@
 import SwiftUI
 
 /// Main Codex-style Hooks and Lifecycle Management Settings Pane.
+///
+/// Laid out like the other extension panes (`ExtensionPaneHeader`): purpose
+/// line, `[search] ... [refresh][Import][Add Hook]`, then the configuration
+/// sources. The shell already titles the pane, so the inner "Hooks" heading
+/// that repeated it is gone; its settings-search anchor moved to the purpose
+/// line.
+@MainActor
 public struct HooksSettingsPaneView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var hookStore: AppHookStore = .shared
@@ -8,6 +15,7 @@ public struct HooksSettingsPaneView: View {
     @State private var searchText = ""
     @State private var selectedGroupID: String? = nil
     @State private var showingAddHookSheet = false
+    @State private var showingPluginMarketplace = false
     @State private var activeDetailGroup: AppHookSourceGroup? = nil
     @State private var showDiagnosticsDetail = false
 
@@ -32,72 +40,27 @@ public struct HooksSettingsPaneView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            headerBar
-            if !hookStore.discoveryDiagnostics.isEmpty {
-                discoveryDiagnosticsBanner
-            }
-            searchBar
-            Divider()
+        VStack(spacing: 0) {
+            header
 
-            if filteredGroups.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        // Config groups section
-                        let configGroups = filteredGroups.filter { $0.sourceType == .userConfig || $0.sourceType == .projectConfig || $0.sourceType == .localConfig }
-                        if !configGroups.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("From Config", bundle: .module)
-                    .settingsControl("From Config", pane: .hooks, timing: .nextTurn)
-                                    .themedFont(.small, weight: .semibold)
-                                    .foregroundStyle(.appSecondary)
+            VStack(alignment: .leading, spacing: 14) {
+                if totalUnreviewedCount > 0 {
+                    reviewStatus
+                }
+                if !hookStore.discoveryDiagnostics.isEmpty {
+                    discoveryDiagnosticsBanner
+                }
 
-                                ForEach(configGroups) { group in
-                                    sourceGroupCard(group: group)
-                                }
-                            }
-                        }
-
-                        // Plugins section
-                        let pluginGroups = filteredGroups.filter { $0.sourceType == .plugin }
-                        if !pluginGroups.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Plugins", bundle: .module)
-                    .settingsControl("Plugins", pane: .hooks, timing: .nextTurn)
-                                    .themedFont(.small, weight: .semibold)
-                                    .foregroundStyle(.appSecondary)
-
-                                ForEach(pluginGroups) { group in
-                                    sourceGroupCard(group: group)
-                                }
-                            }
-                        }
-
-                        // Custom hooks section
-                        let customGroups = filteredGroups.filter { $0.sourceType == .custom }
-                        if !customGroups.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Custom & App Hooks", bundle: .module)
-                    .settingsControl("Custom & App Hooks", pane: .hooks, timing: .nextTurn)
-                                    .themedFont(.small, weight: .semibold)
-                                    .foregroundStyle(.appSecondary)
-
-                                ForEach(customGroups) { group in
-                                    sourceGroupCard(group: group)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
+                if filteredGroups.isEmpty {
+                    emptyState
+                } else {
+                    groupList
                 }
             }
+            .padding(ExtensionPaneLayout.contentInsets)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(SettingsLayout.contentInsets)
-        .onAppear {
-            hookStore.refresh(projectDirectory: model.selectedProject?.rootDirectoryPath)
-        }
+        .onAppear(perform: refresh)
         .sheet(item: $activeDetailGroup) { group in
             HookSourceDetailSheet(groupID: group.id)
         }
@@ -112,71 +75,135 @@ public struct HooksSettingsPaneView: View {
                 }
             )
         }
+        .sheet(isPresented: $showingPluginMarketplace, onDismiss: refresh) {
+            PluginMarketplaceSheet(model: model)
+        }
     }
 
-    // MARK: - Header Bar
+    private func refresh() {
+        hookStore.refresh(projectDirectory: model.selectedProject?.rootDirectoryPath)
+    }
 
-    private var headerBar: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Hooks", bundle: .module)
-                    .settingsControl("Hooks", pane: .hooks, timing: .nextTurn)
-                    .themedFont(.title2, weight: .bold)
-                HStack(spacing: 4) {
-                    Text("Manage lifecycle hooks from config and enabled plugins.", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                    Button {
-                        if let url = URL(string: "https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#hooks") {
-                            NSWorkspace.shared.open(url)
+    // MARK: - Header
+
+    /// Hooks arrive from config files and from plugins; the only thing to
+    /// import is a plugin, so the Import menu leads to the plugin
+    /// marketplace rather than a hooks-specific source that does not exist.
+    private var header: some View {
+        ExtensionPaneHeader {
+            ExtensionPaneIntro(
+                text: Text("Manage lifecycle hooks from config and enabled plugins.", bundle: .module),
+                documentation: URL(string: "https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#hooks"),
+                documentationHint: Text("Opens the Claude Code hooks documentation in your browser.", bundle: .module))
+                .settingsControl("Hooks", pane: .hooks, timing: .nextTurn)
+        } filters: {
+            AppSearchField(text: $searchText, prompt: Text("Search hooks, commands, plugins...", bundle: .module))
+        } actions: {
+            ExtensionRefreshButton(label: Text("Refresh", bundle: .module), action: refresh)
+            ExtensionImportMenu { pluginMarketplaceItem }
+            addHookButton
+        } compactActions: {
+            ExtensionMoreMenu {
+                Button(action: refresh) {
+                    Label { Text("Refresh", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
+                }
+                Divider()
+                pluginMarketplaceItem
+            }
+            addHookButton
+        }
+    }
+
+    private var pluginMarketplaceItem: some View {
+        Button {
+            showingPluginMarketplace = true
+        } label: {
+            Label { Text("Browse Plugin Marketplace", bundle: .module) } icon: { Image(systemName: "puzzlepiece.extension") }
+        }
+    }
+
+    private var addHookButton: some View {
+        Button {
+            showingAddHookSheet = true
+        } label: {
+            Label { Text("Add Hook", bundle: .module) } icon: { Image(systemName: "plus") }
+        }
+        .appAction(.primary)
+    }
+
+    /// Trust state, not an action: it used to sit among the header buttons.
+    private var reviewStatus: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .themedFont(.tiny)
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            Text("Needs review: \(totalUnreviewedCount)", bundle: .module)
+                .themedFont(.small, weight: .semibold)
+                .foregroundStyle(.orange)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color.orange.opacity(0.12))
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Groups
+
+    private var groupList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                let configGroups = filteredGroups.filter { $0.sourceType == .userConfig || $0.sourceType == .projectConfig || $0.sourceType == .localConfig }
+                if !configGroups.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("From Config", bundle: .module)
+                            .settingsControl("From Config", pane: .hooks, timing: .nextTurn)
+                            .themedFont(.small, weight: .semibold)
+                            .foregroundStyle(.appSecondary)
+                            .accessibilityAddTraits(.isHeader)
+
+                        ForEach(configGroups) { group in
+                            sourceGroupCard(group: group)
                         }
-                    } label: { Text("Learn more", bundle: .module) }
-                    .themedFont(.small)
-                    .buttonStyle(.link)
-                    .help("Open Hooks Documentation: https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#hooks")
-                    .accessibilityLabel("Learn more about hooks")
-                    .accessibilityHint("Opens Claude Code hooks documentation in web browser")
-                    .accessibilityAddTraits(.isLink)
+                    }
+                }
+
+                let pluginGroups = filteredGroups.filter { $0.sourceType == .plugin }
+                if !pluginGroups.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Plugins", bundle: .module)
+                            .settingsControl("Plugins", pane: .hooks, timing: .nextTurn)
+                            .themedFont(.small, weight: .semibold)
+                            .foregroundStyle(.appSecondary)
+                            .accessibilityAddTraits(.isHeader)
+
+                        ForEach(pluginGroups) { group in
+                            sourceGroupCard(group: group)
+                        }
+                    }
+                }
+
+                let customGroups = filteredGroups.filter { $0.sourceType == .custom }
+                if !customGroups.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Custom & App Hooks", bundle: .module)
+                            .settingsControl("Custom & App Hooks", pane: .hooks, timing: .nextTurn)
+                            .themedFont(.small, weight: .semibold)
+                            .foregroundStyle(.appSecondary)
+                            .accessibilityAddTraits(.isHeader)
+
+                        ForEach(customGroups) { group in
+                            sourceGroupCard(group: group)
+                        }
+                    }
                 }
             }
-
-            Spacer()
-
-            if totalUnreviewedCount > 0 {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .themedFont(.tiny)
-                        .foregroundStyle(.orange)
-                    Text("\(totalUnreviewedCount) needs review", bundle: .module)
-                        .themedFont(.small, weight: .semibold)
-                        .foregroundStyle(.orange)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.orange.opacity(0.12))
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
-                )
-            }
-
-            Button {
-                hookStore.refresh(projectDirectory: model.selectedProject?.rootDirectoryPath)
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .help("Refresh and re-scan hooks from disk")
-
-            Button {
-                showingAddHookSheet = true
-            } label: {
-                Label { Text("Add Hook", bundle: .module) } icon: { Image(systemName: "plus") }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
+            .padding(.vertical, 4)
         }
     }
 
@@ -191,7 +218,7 @@ public struct HooksSettingsPaneView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .themedFont(.small)
                         .foregroundStyle(.orange)
-                    Text("\(hookStore.discoveryDiagnostics.count) discovery issue\(hookStore.discoveryDiagnostics.count == 1 ? "" : "s") found while scanning hook config files", bundle: .module)
+                    Text("Issues found while scanning hook config files: \(hookStore.discoveryDiagnostics.count)", bundle: .module)
                         .themedFont(.small, weight: .medium)
                         .foregroundStyle(.orange)
                     Spacer()
@@ -224,37 +251,6 @@ public struct HooksSettingsPaneView: View {
         )
     }
 
-    // MARK: - Search Bar
-
-    private var searchBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.appSecondary)
-                .themedFont(.small)
-            TextField("Search hooks, commands, plugins...", text: $searchText)
-                .textFieldStyle(.plain)
-                .themedFont(.small)
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(.appBorder.opacity(0.3), lineWidth: 1)
-        )
-    }
-
     // MARK: - Source Group Card
 
     private func sourceGroupCard(group: AppHookSourceGroup) -> some View {
@@ -276,7 +272,7 @@ public struct HooksSettingsPaneView: View {
                         .themedFont(.small, weight: .semibold)
                         .foregroundStyle(.appText)
 
-                    Text("\(group.hooks.count) hook\(group.hooks.count == 1 ? "" : "s")", bundle: .module)
+                    Text("Hooks: \(group.hooks.count)", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
@@ -289,7 +285,7 @@ public struct HooksSettingsPaneView: View {
                         Image(systemName: "exclamationmark.circle.fill")
                             .themedFont(.tiny)
                             .foregroundStyle(.orange)
-                        Text("\(group.unreviewedCount) needs review", bundle: .module)
+                        Text("Needs review: \(group.unreviewedCount)", bundle: .module)
                             .themedFont(.tiny, weight: .medium)
                             .foregroundStyle(.orange)
                     }
@@ -326,30 +322,26 @@ public struct HooksSettingsPaneView: View {
         }
     }
 
+    /// Two states, two messages: a fresh install with no hooks used to read
+    /// `No hooks found matching ''`. Add Hook is the header's primary, so
+    /// the empty state offers the other source, plugins.
+    @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "link.badge.plus")
-                .themedFont(.display)
-                .foregroundStyle(.appSecondary)
-            // Two states, two sentences: a fresh install with no hooks used
-            // to read `No hooks found matching ''`.
-            if searchText.isEmpty {
-                Text("No hooks configured", bundle: .module)
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
+        if searchText.isEmpty {
+            AppEmptyState(
+                systemImage: "link.badge.plus",
+                title: Text("No hooks configured", bundle: .module),
+                message: Text("Hooks run a command at a point in the assistant's work, such as before a tool runs. Add one here, or install a plugin that brings its own.", bundle: .module)
+            ) {
                 Button {
-                    showingAddHookSheet = true
+                    showingPluginMarketplace = true
                 } label: {
-                    Label { Text("Add Hook", bundle: .module) } icon: { Image(systemName: "plus") }
+                    Text("Browse Plugin Marketplace", bundle: .module)
                 }
-                .buttonStyle(.bordered)
-            } else {
-                Text("No hooks found matching '\(searchText)'", bundle: .module)
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
+                .appAction(.secondary)
             }
+        } else {
+            ExtensionNoMatchesState(query: searchText)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
     }
 }

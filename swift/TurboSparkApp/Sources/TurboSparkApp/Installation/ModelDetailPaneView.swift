@@ -69,7 +69,7 @@ struct ModelDetailPaneView: View {
             .padding(24)
         }
         .confirmationDialog(
-            "Delete \(entry.alias)?",
+            Text("Delete \(entry.alias)?", bundle: .module),
             isPresented: $showingDeleteConfirm,
             titleVisibility: .visible
         ) {
@@ -90,7 +90,7 @@ struct ModelDetailPaneView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    Text(entry.name)
+                    Text(verbatim: entry.name)
                         .themedFont(.title2, weight: .bold)
                         .lineLimit(2)
 
@@ -105,7 +105,7 @@ struct ModelDetailPaneView: View {
                 }
 
                 HStack(spacing: 8) {
-                    Text(entry.alias)
+                    Text(verbatim: entry.alias)
                         .themedCode(.small, weight: .medium)
                         .foregroundStyle(.appSecondary)
 
@@ -116,16 +116,16 @@ struct ModelDetailPaneView: View {
                         Image(systemName: visuals.iconSystemName)
                             .themedFont(.tiny)
                             .foregroundStyle(visuals.accentColor)
-                        Text(visuals.family)
+                        Text(verbatim: visuals.family)
                     }
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
-                    .help("Model Family: \(visuals.family)")
+                    .help(Text("Model Family: \(visuals.family)", bundle: .module))
 
                     Text(verbatim: "\u{2022}")
                         .foregroundStyle(.tertiary)
 
-                    Text(entry.status.capitalized)
+                    statusText
                         .themedFont(.small, weight: .medium)
                         .foregroundStyle(statusTint)
                 }
@@ -150,16 +150,27 @@ struct ModelDetailPaneView: View {
             Image(systemName: "checkmark.seal.fill")
                 .themedFont(.title3)
                 .foregroundStyle(.appAccent)
-                .help("Verified: this port has run this row end to end")
+                .help(Text("Verified: this port has run this row end to end", bundle: .module))
                 .accessibilityHidden(true)
         case "caveat":
             Image(systemName: "exclamationmark.triangle.fill")
                 .themedFont(.title3)
                 .foregroundStyle(.orange)
-                .help("Runs with a caveat; see the notes below")
+                .help(Text("Runs with a caveat; see the model notes.", bundle: .module))
                 .accessibilityHidden(true)
         default:
             EmptyView()
+        }
+    }
+
+    /// The catalog row's `status` in words. An unexpected value is data
+    /// from `models.json` and is shown as written.
+    private var statusText: Text {
+        switch entry.status {
+        case "verified": return Text("Verified", bundle: .module)
+        case "caveat": return Text("Caveat", bundle: .module)
+        case "runs": return Text("Runs", bundle: .module)
+        default: return Text(verbatim: entry.status.capitalized)
         }
     }
 
@@ -177,13 +188,9 @@ struct ModelDetailPaneView: View {
             NSPasteboard.general.setString(entry.alias, forType: .string)
         } label: {
             Label { Text("Copy Alias", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
-                .themedFont(.small)
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .help("Copy model alias to clipboard")
-        .accessibilityLabel("Copy alias")
-        .accessibilityHint("Copies the model alias \(entry.alias) to the clipboard")
+        .appAction(.secondary, size: .small)
+        .help(Text("Copy model alias to clipboard", bundle: .module))
     }
 
     private var capabilityTags: some View {
@@ -193,7 +200,7 @@ struct ModelDetailPaneView: View {
                     Image(systemName: visuals.iconSystemName)
                         .themedFont(.tiny)
                         .foregroundStyle(visuals.accentColor)
-                    Text(visuals.family)
+                    Text(verbatim: visuals.family)
                         .themedFont(.small, weight: .semibold)
                 }
                 .padding(.horizontal, 8)
@@ -202,7 +209,9 @@ struct ModelDetailPaneView: View {
                 .overlay(Capsule().stroke(visuals.accentColor.opacity(0.3), lineWidth: 0.5))
 
                 ForEach(visuals.capabilities, id: \.self) { tag in
-                    Text(tag)
+                    // Capability words are catalog keys; a name with no key
+                    // renders as written.
+                    Text(LocalizedStringKey(tag), bundle: .module)
                         .themedFont(.small, weight: .medium)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -221,7 +230,7 @@ struct ModelDetailPaneView: View {
                         .themedFont(.small, weight: .medium)
                         .foregroundStyle(.appSecondary)
                     HStack(spacing: 6) {
-                        Text(visuals.formatLabel)
+                        Text(verbatim: visuals.formatLabel)
                             .themedFont(.base, weight: .semibold)
                         Text(verbatim: "\u{2022}")
                             .foregroundStyle(.tertiary)
@@ -264,25 +273,24 @@ struct ModelDetailPaneView: View {
                 Button(role: .cancel) {
                     model.cancelInstall()
                 } label: { Text("Cancel Download", bundle: .module) }
-                .controlSize(.regular)
+                .appAction(.secondary)
             } else if isActive {
                 Button {
                     model.activeSection = .chat
                 } label: {
                     Label { Text("Active in Chat", bundle: .module) } icon: { Image(systemName: "bubble.left.and.bubble.right.fill") }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-                .accessibilityHint("Opens the chat view with this model loaded")
+                .appAction(.primary)
+                .accessibilityHint(Text("Opens the chat view with this model loaded", bundle: .module))
 
                 Button {
                     model.unloadModel()
                 } label: { Text("Unload", bundle: .module) }
-                .controlSize(.regular)
+                .appAction(.secondary)
                 // state#85: `ModelLoaderControl` already read this predicate
                 // and the two detail panes did not.
                 .disabled(!model.canUnloadModel)
-                .accessibilityHint("Unloads the model from memory")
+                .accessibilityHint(Text("Unloads the model from memory", bundle: .module))
             } else if isInstalled {
                 Button {
                     if let inst = installedModel ?? model.installed.first(where: { $0.alias == entry.alias }) {
@@ -291,21 +299,15 @@ struct ModelDetailPaneView: View {
                 } label: {
                     Label { Text("Load & Chat", bundle: .module) } icon: { Image(systemName: "play.fill") }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .appAction(.primary)
                 .disabled(model.opening || model.isRunning)
-                .accessibilityHint("Loads the model into memory and opens chat")
+                .accessibilityHint(Text("Loads the model into memory and opens chat", bundle: .module))
 
-                Button(role: .destructive) {
+                AppIconButton("trash", label: Text("Delete Model", bundle: .module), role: .destructive) {
                     showingDeleteConfirm = true
-                } label: {
-                    Image(systemName: "trash")
-                        .accessibilityLabel("Delete \(entry.alias)")
                 }
-                .controlSize(.regular)
+                .appAction(.destructive)
                 .disabled(!model.canDeleteModel)
-                .help("Delete model from disk")
-                .accessibilityHint("Removes the model files from disk after confirmation")
             } else {
                 Button {
                     if case .confirm = installDecision {
@@ -316,12 +318,11 @@ struct ModelDetailPaneView: View {
                 } label: {
                     Label { Text("Download & Install", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .appAction(.primary)
                 .disabled(
                     model.isRunning || installDecision.isBlocked
                         || !model.canInstall(alias: entry.alias))
-                .accessibilityHint("Downloads and installs \(entry.alias)")
+                .accessibilityHint(Text("Downloads and installs \(entry.alias)", bundle: .module))
                 .alert(Text("Install anyway?", bundle: .module), isPresented: $showsInstallConfirm) {
                     Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
                     Button { model.installModel(alias: entry.alias) } label: { Text("Install", bundle: .module) }
@@ -337,14 +338,14 @@ struct ModelDetailPaneView: View {
             Divider()
 
             HStack {
-                Text(model.installStageText ?? "Downloading weights...")
+                stageText
                     .themedFont(.small, weight: .medium)
                     .foregroundStyle(.appText)
 
                 Spacer()
 
                 if let fraction = model.installProgressFraction {
-                    Text(MetricFormat.percent(fraction * 100))
+                    Text(verbatim: MetricFormat.percent(fraction * 100))
                         .themedFont(.small, weight: .semibold).monospacedDigit()
                         .foregroundStyle(Color.accentColor)
                 }
@@ -353,19 +354,19 @@ struct ModelDetailPaneView: View {
             // so VoiceOver reads "Downloading weights, 42%" rather than two
             // disjoint strings.
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(model.installStageText ?? "Downloading weights")
-            .accessibilityValue(model.installProgressFraction.map {
-                MetricFormat.percent($0 * 100)
-            } ?? "in progress")
+            .accessibilityLabel(stageText)
+            .accessibilityValue(
+                model.installProgressFraction.map { Text(verbatim: MetricFormat.percent($0 * 100)) }
+                    ?? Text("In progress", bundle: .module))
 
             if let fraction = model.installProgressFraction {
                 ProgressView(value: fraction)
                     .tint(Color.accentColor)
-                    .accessibilityLabel("Download progress")
+                    .accessibilityLabel(Text("Download progress", bundle: .module))
                     .accessibilityValue(MetricFormat.percent(fraction * 100))
             } else {
                 ProgressView()
-                    .accessibilityLabel("Download progress")
+                    .accessibilityLabel(Text("Download progress", bundle: .module))
             }
 
             HStack {
@@ -380,5 +381,12 @@ struct ModelDetailPaneView: View {
             .themedFont(.tiny).monospacedDigit()
             .foregroundStyle(.appSecondary)
         }
+    }
+
+    /// The installer's live stage line (already a display string), or the
+    /// catalog's placeholder before the first stage arrives.
+    private var stageText: Text {
+        if let stage = model.installStageText { return Text(stage) }
+        return Text("Downloading model files", bundle: .module)
     }
 }

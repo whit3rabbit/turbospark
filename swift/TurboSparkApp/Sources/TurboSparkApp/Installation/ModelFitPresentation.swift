@@ -114,7 +114,9 @@ struct ModelFitVerdictPill: View {
                     .themedFont(.micro, weight: .bold)
                     .accessibilityHidden(true)
             }
-            Text(compact ? p.compactLabel : p.label)
+            // The presentation keeps English values (tests and the hub filter
+            // compare them); display looks each one up in the catalog.
+            Text(LocalizedStringKey(compact ? p.compactLabel : p.label), bundle: .module)
         }
         .themedFont(compact ? .tiny : .small, weight: compact ? .semibold : .bold)
         .lineLimit(1)
@@ -123,6 +125,6 @@ struct ModelFitVerdictPill: View {
         .padding(.vertical, compact ? 1.5 : 3)
         .background(p.color.opacity(0.18), in: Capsule())
         .foregroundStyle(p.color)
-        .help(p.help)
+        .help(Text(LocalizedStringKey(p.help), bundle: .module))
     }
 }

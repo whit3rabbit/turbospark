@@ -141,7 +141,7 @@ struct InstalledModelDetailPaneView: View {
             loadedFit = rows?.first { $0.alias == alias }
         }
         .confirmationDialog(
-            "Delete \(installedModel.alias)?",
+            Text("Delete \(installedModel.alias)?", bundle: .module),
             isPresented: $showingDeleteConfirm,
             titleVisibility: .visible
         ) {

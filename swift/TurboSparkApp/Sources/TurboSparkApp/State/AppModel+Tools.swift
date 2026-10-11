@@ -498,7 +498,7 @@ extension AppModel {
                 }
             }
             if let reason = executed.stopReason {
-                if !reason.isEmpty { self.showToast("Turn stopped by hook: \(reason)", style: .warning) }
+                if !reason.isEmpty { self.showToast(AppStrings.localized("Turn stopped by hook: \(reason)"), style: .warning) }
                 return
             }
             // `continueOrStop` rather than `continueAgentLoop` directly: it is

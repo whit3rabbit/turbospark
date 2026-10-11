@@ -91,8 +91,8 @@ struct PromptComposerFooter: View {
             }
             .buttonStyle(.plain)
             .help(Text("Clear prompt", bundle: .module))
-            .accessibilityLabel("Clear prompt")
-            .accessibilityHint("Empties the prompt editor")
+            .accessibilityLabel(Text("Clear prompt", bundle: .module))
+            .accessibilityHint(Text("Empties the prompt editor", bundle: .module))
         }
     }
 }

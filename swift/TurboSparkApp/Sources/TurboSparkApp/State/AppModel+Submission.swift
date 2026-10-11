@@ -228,9 +228,12 @@ extension AppModel {
             // dead. The install already states WHY it refuses
             // (`info.vision.reason`), and that is the sentence a user needs.
             if !imageDocs.isEmpty && !visionIsActive {
-                let reason = visionRefusalReason ?? "the loaded model has no active vision tower"
+                let reason = visionRefusalReason
+                    ?? AppStrings.localized("the loaded model has no active vision tower")
                 showToast(
-                    "Cannot send \(imageDocs.count == 1 ? "this image" : "these images"): \(reason)",
+                    imageDocs.count == 1
+                        ? AppStrings.localized("Cannot send this image: \(reason)")
+                        : AppStrings.localized("Cannot send these images: \(reason)"),
                     style: .warning)
                 return
             }
@@ -274,14 +277,14 @@ extension AppModel {
                 return
             }
             if verdict.isBlocked {
-                self.error = verdict.blockReason ?? "Prompt blocked by a UserPromptSubmit hook."
+                self.error = verdict.blockReason ?? AppStrings.localized("Prompt blocked by a UserPromptSubmit hook.")
                 return
             }
             // The model can be unloaded while the hook runs only if something
             // widened `canUnloadModel`; this is the backstop, and it refuses
             // BEFORE the draft is cleared rather than after.
             guard self.session != nil else {
-                self.error = "The model was unloaded before this prompt could be sent."
+                self.error = AppStrings.localized("The model was unloaded before this prompt could be sent.")
                 return
             }
 

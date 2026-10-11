@@ -270,9 +270,10 @@ extension AppModel {
                 }
                 if fitted.removedTurnCount > 0 {
                     self.showToast(
-                        "Dropped \(fitted.removedTurnCount) older "
-                            + "\(fitted.removedTurnCount == 1 ? "turn" : "turns") to fit the "
-                            + "context window.",
+                        fitted.removedTurnCount == 1
+                            ? AppStrings.localized("Dropped 1 older turn to fit the context window.")
+                            : AppStrings.localized(
+                                "Dropped \(fitted.removedTurnCount) older turns to fit the context window."),
                         style: .warning)
                 }
                 // Calls the engine parsed, across every segment of the turn

@@ -31,10 +31,15 @@ struct ProbeReportCardView: View {
 
     private var verdictRow: some View {
         HStack(spacing: 8) {
-            Label(
-                report.runnable ? "Would run here" : "Would not run here",
-                systemImage: report.runnable ? "checkmark.seal.fill" : "xmark.octagon.fill"
-            )
+            Label {
+                if report.runnable {
+                    Text("Would run here", bundle: .module)
+                } else {
+                    Text("Would not run here", bundle: .module)
+                }
+            } icon: {
+                Image(systemName: report.runnable ? "checkmark.seal.fill" : "xmark.octagon.fill")
+            }
             .themedFont(.small, weight: .semibold)
             .foregroundStyle(report.runnable ? Color.green : Color.red)
             Spacer()
@@ -54,12 +59,14 @@ struct ProbeReportCardView: View {
             // `family` nil beside a non-nil `architecture` is the interesting
             // case and the reason both are shown: it means this port read the
             // architecture and has no flow for it.
-            specRow("Family here", report.family ?? "none")
+            specRow("Family here", report.family.map { Text(verbatim: $0) } ?? Text("none", bundle: .module))
             if let bytes = report.downloadBytes {
                 specRow("Download", MetricFormat.storage(bytes))
             }
             if let affine = report.affine {
-                specRow("Quantization", "MLX affine, \(affine.bits)-bit at group \(affine.groupSize)")
+                specRow(
+                    "Quantization",
+                    Text(verbatim: "MLX affine, \(affine.bits)-bit at group \(affine.groupSize)"))
             }
             if let stride = report.expertStride {
                 specRow("One expert", MetricFormat.storage(stride))
@@ -67,7 +74,7 @@ struct ProbeReportCardView: View {
             if let template = report.chatTemplate {
                 specRow("Chat template", template)
             } else {
-                specRow("Chat template", "none found")
+                specRow("Chat template", Text("none found", bundle: .module))
             }
         }
     }
@@ -95,7 +102,7 @@ struct ProbeReportCardView: View {
                 }
                 if fit.kvBytes > 0 { specRow("KV cache", MetricFormat.storage(fit.kvBytes)) }
                 if fit.largestContext > 0 {
-                    specRow("Largest context", "\(fit.largestContext.formatted()) tokens")
+                    specRow("Largest context", Text("\(fit.largestContext.formatted()) tokens", bundle: .module))
                 }
             }
 
@@ -119,8 +126,8 @@ struct ProbeReportCardView: View {
                 specRow(
                     "Reads",
                     fit.mappedSource == "download"
-                        ? "\(MetricFormat.storage(fit.mappedBytes)) as published"
-                        : MetricFormat.storage(fit.mappedBytes))
+                        ? Text("\(MetricFormat.storage(fit.mappedBytes)) as published", bundle: .module)
+                        : Text(verbatim: MetricFormat.storage(fit.mappedBytes)))
             }
         }
     }
@@ -134,7 +141,7 @@ struct ProbeReportCardView: View {
                 .foregroundStyle(.appSecondary)
             ForEach(report.types, id: \.name) { t in
                 HStack(spacing: 6) {
-                    Text(t.name)
+                    Text(verbatim: t.name)
                         .themedCode(.small)
                         .frame(width: 74, alignment: .leading)
                     Text("\(t.tensors) tensors", bundle: .module)
@@ -145,11 +152,11 @@ struct ProbeReportCardView: View {
                     // size is usually the one carrying the model, and a zero
                     // sorts to the bottom of a share column, which is the
                     // inverse of its real rank.
-                    Text(t.bytes.map(MetricFormat.storage) ?? "UNSIZED")
+                    (t.bytes.map { Text(verbatim: MetricFormat.storage($0)) } ?? Text("UNSIZED", bundle: .module))
                         .themedFont(.small).monospacedDigit()
                         .foregroundStyle(t.bytes == nil ? Color.orange : .secondary)
                         .frame(width: 84, alignment: .leading)
-                    Text(t.executable ? "has kernels" : "no kernels")
+                    (t.executable ? Text("has kernels", bundle: .module) : Text("no kernels", bundle: .module))
                         .themedFont(.small)
                         .foregroundStyle(t.executable ? Color.green : Color.red)
                     Spacer()
@@ -177,13 +184,19 @@ struct ProbeReportCardView: View {
 
     // MARK: - Bits
 
-    private func specRow(_ label: String, _ value: String) -> some View {
+    /// `label` is a catalog key. A `String` value is data from the report
+    /// (file names, sizes) and renders as written.
+    private func specRow(_ label: LocalizedStringKey, _ value: String) -> some View {
+        specRow(label, Text(verbatim: value))
+    }
+
+    private func specRow(_ label: LocalizedStringKey, _ value: Text) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label)
+            Text(label, bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
                 .frame(width: 118, alignment: .leading)
-            Text(value)
+            value
                 .themedFont(.small).monospacedDigit()
                 .textSelection(.enabled)
             Spacer()

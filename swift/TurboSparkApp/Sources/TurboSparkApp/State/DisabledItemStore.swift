@@ -75,7 +75,7 @@ enum DisabledItemStore {
     private static func loadLocked() -> Archive {
         if let cache { return cache }
         var archive =
-            AppJSONStore.load(Archive.self, from: fileURL, label: "disabled items") ?? Archive()
+            AppJSONStore.load(Archive.self, from: fileURL, label: "Disabled items") ?? Archive()
         // One-way migration: fold in whatever the old defaults hold, then
         // write once so the next launch reads only this file. The legacy keys
         // are left in place rather than deleted -- removing them would strand

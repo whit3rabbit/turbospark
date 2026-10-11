@@ -142,21 +142,18 @@ public struct BrowserSettings: Codable, Equatable, Sendable {
     public var defaultViewport: BrowserViewportPreference
     public var onboardingDone: Bool
     public private(set) var bookmarks: [BrowserBookmarkTree]
-    public var viewportPreference: BrowserViewportPreference
 
     public init(
         enabled: Bool = false,
         dialogPolicy: BrowserDialogPolicy = .ask,
         defaultViewport: BrowserViewportPreference = .standard,
-        onboardingDone: Bool = false,
-        viewportPreference: BrowserViewportPreference = .standard
+        onboardingDone: Bool = false
     ) {
         self.enabled = enabled
         self.dialogPolicy = dialogPolicy
         self.defaultViewport = defaultViewport
         self.onboardingDone = onboardingDone
         self.bookmarks = []
-        self.viewportPreference = viewportPreference
     }
 
     /// Replaces the saved tree only when its encoded JSON value fits the storage cap.
@@ -176,8 +173,8 @@ public struct BrowserSettings: Codable, Equatable, Sendable {
             BrowserViewportPreference.self, forKey: .defaultViewport, fallback: .standard)
         self.onboardingDone = container.decodeLenient(
             Bool.self, forKey: .onboardingDone, fallback: false)
-        self.viewportPreference = container.decodeLenient(
-            BrowserViewportPreference.self, forKey: .viewportPreference, fallback: .standard)
+        // A legacy `viewport_pref` (the popover's old saved copy) is ignored
+        // and dropped by the next save: `default_viewport` is the only one.
 
         let decodedBookmarks = container.decodeLenientElements(
             BrowserBookmarkTree.self, forKey: .bookmarks)
@@ -195,7 +192,6 @@ public struct BrowserSettings: Codable, Equatable, Sendable {
         case defaultViewport = "default_viewport"
         case onboardingDone = "onboarding_done"
         case bookmarks
-        case viewportPreference = "viewport_pref"
     }
 }
 
@@ -871,7 +867,7 @@ public enum MacAppSettingsFileStore {
     /// silently reset by the next write.
     public static func load() -> MacAppSettings {
         guard var settings = AppJSONStore.load(
-            MacAppSettings.self, from: settingsFileURL, label: "settings") else {
+            MacAppSettings.self, from: settingsFileURL, label: "Settings") else {
             return MacAppSettings()
         }
         if settings.normalizeChatRuntimeSettings() {

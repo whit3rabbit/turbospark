@@ -29,7 +29,7 @@ extension AudioWorkspaceController {
             switch result {
             case .success(let record):
                 self.installedPaths[record.alias] = record.path
-                self.status = String(localized: "Audio model installed", bundle: .module)
+                self.status = AppStrings.localized("Audio model installed")
                 self.refreshModels()
             case .failure(let failure): self.error = failure.localizedDescription
             }
@@ -62,7 +62,7 @@ extension AudioWorkspaceController {
             switch result {
             case .success:
                 self.installedPaths[profile.identity.alias] = nil
-                self.status = String(localized: "Model deleted", bundle: .module)
+                self.status = AppStrings.localized("Model deleted")
                 self.refreshModels()
             case .failure(let failure): self.error = failure.localizedDescription
             }

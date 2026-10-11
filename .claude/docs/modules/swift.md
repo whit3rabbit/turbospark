@@ -254,8 +254,11 @@ for EVERY language in the catalog in the same commit, and new strings
 are listed separately in the delivery so they are not
 reverse-engineered from the diff. `swift build` never compiles the
 catalog itself -- only `make compile-strings` does (`swift-app` runs it
-for you). The seven parity gates and the rest of the pipeline are
-`swift/docs/SWIFT_LOCALIZATION.md`.
+for you). The ten parity gates and the rest of the pipeline are
+`swift/docs/SWIFT_LOCALIZATION.md`. A `String` that reaches the UI without a
+`Text` (toast, alert or panel title, stored status) goes through
+`AppStrings.localized`, which follows the in-app language picker; controls
+come from the shared vocabulary in `DESIGN.md` at the repository root.
 
 **The edit-loop gate for any of the above** is
 `swift test --filter FontPropagationTests` (~0.3 s) plus a green

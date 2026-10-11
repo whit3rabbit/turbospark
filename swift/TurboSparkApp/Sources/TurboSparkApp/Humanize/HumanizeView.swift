@@ -27,18 +27,25 @@ struct HumanizeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            HumanizeHeader(model: model, controller: controller, showAdvanced: $showAdvanced) {
+                confirmingDelete = true
+            }
             Divider()
             HStack(alignment: .top, spacing: 16) {
                 VStack(spacing: 12) {
                     workspace
-                    feedback
+                    HumanizeFeedback(controller: controller)
                 }
                 if showAdvanced {
+                    let width = HumanizeMetrics.advancedWidth(theme)
                     HumanizeAdvancedPanel(controller: controller) {
-                        withAnimation(TSMotion.pane) { showAdvanced = false }
+                        TSMotion.animate(TSMotion.pane) { showAdvanced = false }
                     }
-                    .frame(width: 300)
+                    // Flexible rather than a fixed 300: the HStack sizes the
+                    // panel first, so it keeps its width while the window has
+                    // room, gives way to the cards in a narrow one, and widens
+                    // with the text size so its labels wrap instead of clip.
+                    .frame(minWidth: HumanizeMetrics.advancedMinWidth, idealWidth: width, maxWidth: width)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
@@ -62,7 +69,7 @@ struct HumanizeView: View {
                 HumanizeDiff.compare(source: source, rewrite: output, segments: segments)
             }.value
             guard !Task.isCancelled else { return }
-            withAnimation(TSMotion.hover) {
+            TSMotion.animate(TSMotion.hover) {
                 difference = comparison
                 reviewing = true
             }
@@ -74,26 +81,6 @@ struct HumanizeView: View {
         } message: {
             Text("This will remove the downloaded model files from disk.", bundle: .module)
         }
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "text.badge.checkmark")
-                .symbolRenderingMode(.monochrome)
-                .themedFont(.title2).foregroundStyle(.appAccent)
-                .accessibilityHidden(true)
-            Text("Humanize", bundle: .module)
-                .themedFont(.title2, weight: .semibold)
-                .accessibilityAddTraits(.isHeader)
-            Spacer(minLength: 12)
-            HumanizeModelBar(model: model, controller: controller) { confirmingDelete = true }
-            HumanizeChip(title: "Advanced", systemImage: "sidebar.right", isOn: showAdvanced) {
-                withAnimation(TSMotion.pane) { showAdvanced.toggle() }
-            }
-        }
-        .padding(.horizontal, 24).padding(.vertical, 12)
     }
 
     // MARK: - Workspace
@@ -108,7 +95,7 @@ struct HumanizeView: View {
             let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
             layout {
                 draftPanel.frame(width: panel.width, height: panel.height)
-                rewriteRail(wide: wide)
+                HumanizeRewriteRail(controller: controller, wide: wide)
                     .frame(width: wide ? rail : geometry.size.width, height: wide ? geometry.size.height : rail)
                 resultPanel.frame(width: panel.width, height: panel.height)
             }
@@ -160,21 +147,21 @@ struct HumanizeView: View {
                 .transition(.opacity)
             }
         } footer: {
-            HumanizeChip(title: "Paste", systemImage: "doc.on.clipboard") {
+            AppChip(Text("Paste", bundle: .module), systemImage: "doc.on.clipboard") {
                 if let text = NSPasteboard.general.string(forType: .string) {
                     controller.draft = text
                     reviewing = false
                 }
             }
             .disabled(controller.isBusy)
-            HumanizeChip(title: "Clear", systemImage: "eraser") {
+            AppChip(Text("Clear", bundle: .module), systemImage: "eraser") {
                 controller.draft = ""
                 reviewing = false
             }
             .disabled(controller.draft.isEmpty || controller.isBusy)
             if showsMarkedDraft {
-                HumanizeChip(title: "Edit", systemImage: "pencil") {
-                    withAnimation(TSMotion.hover) { reviewing = false }
+                AppChip(Text("Edit", bundle: .module), systemImage: "pencil") {
+                    TSMotion.animate(TSMotion.hover) { reviewing = false }
                     draftFocused = true
                 }
             }
@@ -202,7 +189,7 @@ struct HumanizeView: View {
                 if controller.isBusy {
                     VStack(alignment: .leading, spacing: 18) {
                         HumanizeSkeleton()
-                        progressStatus
+                        HumanizeProgressStatus(controller: controller)
                     }
                     .padding(.horizontal, 21).padding(.vertical, 22)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -230,7 +217,7 @@ struct HumanizeView: View {
             }
         } footer: {
             if controller.isBusy {
-                if !controller.rewrite.isEmpty { progressStatus }
+                if !controller.rewrite.isEmpty { HumanizeProgressStatus(controller: controller) }
             } else {
                 if let clean = checksClean { checksChip(clean: clean) }
                 if let stats = controller.stats {
@@ -241,17 +228,17 @@ struct HumanizeView: View {
             }
             Spacer(minLength: 8)
             if !controller.rewrite.isEmpty, !controller.isBusy {
-                HumanizeChip(title: "Regenerate", systemImage: "arrow.clockwise") { controller.run() }
+                AppChip(Text("Regenerate", bundle: .module), systemImage: "arrow.clockwise") { controller.run() }
                     .disabled(!controller.canRun)
             }
-            HumanizeChip(title: copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc",
-                         isOn: copied) {
+            AppChip(copied ? Text("Copied", bundle: .module) : Text("Copy", bundle: .module),
+                    systemImage: copied ? "checkmark" : "doc.on.doc", isOn: copied) {
                 NSPasteboard.general.clearContents()
                 copied = NSPasteboard.general.setString(controller.rewrite, forType: .string)
             }
             .disabled(controller.rewrite.isEmpty || controller.isBusy)
         }
-        .animation(TSMotion.hover, value: controller.rewrite.isEmpty)
+        .tsAnimation(TSMotion.hover, value: controller.rewrite.isEmpty)
     }
 
     @ViewBuilder private var rewriteStats: some View {
@@ -270,52 +257,11 @@ struct HumanizeView: View {
     }
 
     private func changesChip(iconOnly: Bool) -> some View {
-        HumanizeChip(title: "Show changes", systemImage: "highlighter", isOn: showChanges, iconOnly: iconOnly) {
-            withAnimation(TSMotion.hover) { showChanges.toggle() }
+        AppChip(Text("Show changes", bundle: .module), systemImage: "highlighter", isOn: showChanges,
+                iconOnly: iconOnly) {
+            TSMotion.animate(TSMotion.hover) { showChanges.toggle() }
         }
         .disabled(controller.rewrite.isEmpty || controller.isBusy)
-    }
-
-    /// The run button between the cards; a stop target while a rewrite runs.
-    private func rewriteRail(wide: Bool) -> some View {
-        let busy = controller.isBusy
-        let ready = busy || controller.canRun
-        let layout = wide ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 12))
-        return layout {
-            HumanizeRunButton(
-                busy: busy, ready: ready, prefill: busy ? controller.prefillProgress : nil,
-                arrow: wide ? "arrow.right" : "arrow.down",
-                invite: controller.canRun && controller.rewrite.isEmpty
-            ) {
-                if busy { controller.cancel() } else { controller.run() }
-            }
-            .disabled(!ready)
-            .keyboardShortcut(busy ? KeyEquivalent(".") : .return, modifiers: .command)
-            .help(busy ? Text("Stop", bundle: .module) : Text("Rewrite", bundle: .module))
-            .accessibilityLabel(busy ? Text("Stop", bundle: .module) : Text("Rewrite", bundle: .module))
-            .accessibilityIdentifier("humanize.run")
-            VStack(spacing: 4) {
-                Group {
-                    if busy { Text("Stop", bundle: .module) } else { Text("Rewrite", bundle: .module) }
-                }
-                .font(theme.ui(.micro, weight: .semibold))
-                .textCase(.uppercase)
-                .tracking(1)
-                if let part = controller.partProgress {
-                    ModelLoadProgressBar(
-                        fraction: Double(part.current - 1) / Double(part.total), tint: theme.accent)
-                        .frame(width: 40)
-                    Text(verbatim: "\(part.current)/\(part.total)").font(theme.ui(.micro)).monospacedDigit()
-                } else {
-                    Text(verbatim: busy ? "\u{2318}." : "\u{2318}\u{21A9}").font(theme.ui(.micro))
-                }
-            }
-            .foregroundStyle(.appSecondary)
-            .lineLimit(1)
-            .fixedSize()
-            .accessibilityHidden(true)
-        }
-        .animation(TSMotion.select, value: busy)
     }
 
     // MARK: - Pieces
@@ -334,38 +280,11 @@ struct HumanizeView: View {
         Text(verbatim: "\u{00B7}").accessibilityHidden(true)
     }
 
-    @ViewBuilder private var progressStatus: some View {
-        HStack(spacing: 8) {
-            ModelStatusDot(state: .opening, accent: theme.accent)
-            switch controller.phase {
-            case .idle: EmptyView()
-            case .loadingModel: Text("Loading the Humanizer model...", bundle: .module)
-            case .running:
-                if controller.prefillProgress != nil {
-                    Text("Reading the text...", bundle: .module)
-                } else {
-                    Text("Rewriting...", bundle: .module)
-                }
-            }
-            if let part = controller.partProgress {
-                Text("Part \(part.current) of \(part.total)", bundle: .module).monospacedDigit()
-            }
-        }
-        .font(theme.ui(.small))
-        .foregroundStyle(.appSecondary)
-        .lineLimit(1)
-    }
-
     /// Nil until something was checked: the model's audit, the user's rules,
     /// or both.
     private var checksClean: Bool? {
         guard controller.checks != nil || controller.ruleFindings != nil else { return nil }
         return (controller.checks?.isClean ?? true) && (controller.ruleFindings?.isEmpty ?? true)
-    }
-
-    private var warningLines: [String] {
-        (controller.checks.map(HumanizeAuditLines.lines(for:)) ?? [])
-            + (controller.ruleFindings.map(HumanizeAuditLines.lines(for:)) ?? [])
     }
 
     private func checksChip(clean: Bool) -> some View {
@@ -382,44 +301,9 @@ struct HumanizeView: View {
         .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .fixedSize()
         .help(clean
-              ? String(localized: "The automatic checks found nothing. Read it before you use it.", bundle: .module)
-              : warningLines.joined(separator: "\n"))
+              ? Text("The automatic checks found nothing. Read it before you use it.", bundle: .module)
+              : Text(verbatim: HumanizeAuditLines.warnings(for: controller).joined(separator: "\n")))
         .transition(.scale(scale: 0.9).combined(with: .opacity))
-    }
-
-    @ViewBuilder private var feedback: some View {
-        let plan = controller.currentPlan
-        VStack(alignment: .leading, spacing: 8) {
-            if let message = controller.errorMessage ?? controller.contextError {
-                Label(message, systemImage: "xmark.octagon").foregroundStyle(.red).textSelection(.enabled)
-            } else if let plan, !plan.fits {
-                Label(HumanizeError.passageTooLong.localizedDescription, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-            }
-            if let plan, plan.parts.count > 1 {
-                Label { Text("Long draft: rewritten in parts at paragraph breaks.", bundle: .module) }
-                    icon: { Image(systemName: "rectangle.split.3x1") }
-                    .foregroundStyle(.appSecondary)
-            }
-            if controller.wasTruncated {
-                Label { Text("The rewrite stopped at the length limit and may be cut off.", bundle: .module) }
-                    icon: { Image(systemName: "scissors") }
-                    .foregroundStyle(.orange)
-            }
-            if controller.stopReason == .cancelled {
-                Text("Stopped. The rewrite is incomplete.", bundle: .module).foregroundStyle(.appSecondary)
-            }
-            if !controller.rewrite.isEmpty, !controller.isBusy, controller.draft != controller.sourceDraft {
-                Text("The draft has changed. Highlights compare with the version used for this rewrite.", bundle: .module)
-                    .foregroundStyle(.appSecondary)
-            }
-            ForEach(warningLines, id: \.self) { line in
-                Label(line, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-            }
-        }
-        .font(theme.ui(.small))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(TSMotion.hover, value: warningLines)
     }
 
     // MARK: - Highlighting
@@ -492,45 +376,5 @@ private struct StatStyle: ViewModifier {
 
     func body(content: Content) -> some View {
         content.font(theme.ui(.small)).monospacedDigit().foregroundStyle(.appSecondary).lineLimit(1)
-    }
-}
-
-/// Localized sentences for the checks, built from their structured fields
-/// (the engine's own `warnings` are English only). Every line is a pointer
-/// for the proofreader, never a claim that the rewrite is wrong.
-enum HumanizeAuditLines {
-    static func lines(for checks: HumanizeChecks) -> [String] {
-        var out: [String] = []
-        if !checks.droppedNumbers.isEmpty {
-            let numbers = checks.droppedNumbers.joined(separator: ", ")
-            out.append(String(localized: "Numbers missing from the rewrite: \(numbers)", bundle: .module))
-        }
-        if !checks.inventedNumbers.isEmpty {
-            let numbers = checks.inventedNumbers.joined(separator: ", ")
-            out.append(String(localized: "Numbers not in the original: \(numbers)", bundle: .module))
-        }
-        if checks.languageDrift {
-            out.append(String(
-                localized: "The rewrite looks like a different language than the original.",
-                bundle: .module))
-        }
-        if checks.reuseFlagged {
-            out.append(String(
-                localized: "The rewrite copies long phrases from the original.", bundle: .module))
-        }
-        return out
-    }
-
-    static func lines(for findings: HumanizeRuleFindings) -> [String] {
-        var out: [String] = []
-        if !findings.missingProtected.isEmpty {
-            let terms = findings.missingProtected.joined(separator: ", ")
-            out.append(String(localized: "Protected terms missing from the rewrite: \(terms)", bundle: .module))
-        }
-        if !findings.avoidFound.isEmpty {
-            let terms = findings.avoidFound.joined(separator: ", ")
-            out.append(String(localized: "Words to avoid found in the rewrite: \(terms)", bundle: .module))
-        }
-        return out
     }
 }

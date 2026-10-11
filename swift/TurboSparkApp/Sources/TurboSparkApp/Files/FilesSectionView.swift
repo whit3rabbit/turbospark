@@ -39,83 +39,58 @@ struct FilesSectionView: View {
 
     // MARK: - Header
 
+    /// The search field and Add files action only appear once something is
+    /// attached: with nothing to filter, the empty state below carries the
+    /// one Add files action, so the pane never shows two primary buttons.
     private var header: some View {
-        HStack(spacing: 10) {
+        AppAdaptiveHeader {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Files", bundle: .module)
                     .themedFont(.callout, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Text(summaryText)
+                summaryText
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
-
-            Spacer(minLength: 8)
-
-            searchField
-
-            Button {
-                importError = nil
-                isImporting = true
-            } label: {
-                Group {
-                    if isExtracting {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label { Text("Add files", bundle: .module) } icon: { Image(systemName: "plus") }
-                            .themedFont(.tiny, weight: .medium)
-                    }
-                }
-                .frame(height: 22)
-                .padding(.horizontal, 9)
-                .contentShape(Rectangle())
+        } actions: {
+            if !model.allAttachments.isEmpty {
+                AppSearchField(text: $searchText, prompt: Text("Filter files...", bundle: .module))
+                addFilesButton
             }
-            .buttonStyle(.plain)
-            .background(.appAccent.opacity(0.14), in: Capsule())
-            .foregroundStyle(.appAccent)
-            .disabled(isExtracting || model.isRunning)
-            .help("Attach documents to the active chat")
-            .accessibilityLabel("Add files to the active chat")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
-    private var searchField: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "magnifyingglass")
-                .themedFont(.tiny)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
-            TextField("Filter", text: $searchText)
-                .textFieldStyle(.plain)
-                .themedFont(.tiny)
-                .frame(width: 120)
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .themedFont(.tiny)
+    /// The one Add files action, used by the header and the empty state.
+    /// The icon turns into a spinner while documents are extracted, and the
+    /// action stays disabled until extraction ends or the model finishes.
+    private var addFilesButton: some View {
+        Button {
+            importError = nil
+            isImporting = true
+        } label: {
+            Label {
+                Text("Add files", bundle: .module)
+            } icon: {
+                if isExtracting {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "plus")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
-                .help("Clear filter")
-                .accessibilityLabel("Clear filter")
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
-        .background(TurboSparkTheme.surfaceColor, in: Capsule())
-        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
-        .accessibilityLabel("Filter files by name")
+        .appAction(.primary)
+        .disabled(isExtracting || model.isRunning)
+        .help(Text("Attach documents to the active chat", bundle: .module))
     }
 
-    private var summaryText: String {
+    private var summaryText: Text {
         let all = model.allAttachments
-        guard !all.isEmpty else { return "No documents attached" }
-        let sizePart = MetricFormat.fileSize(model.allAttachmentsByteSize).map { " • \($0)" } ?? ""
-        return "\(all.count) document\(all.count == 1 ? "" : "s")\(sizePart)"
+        guard !all.isEmpty else { return Text("No documents attached", bundle: .module) }
+        let count = Text("Documents: \(all.count)", bundle: .module)
+        guard let size = MetricFormat.fileSize(model.allAttachmentsByteSize) else { return count }
+        return count + Text(verbatim: " \u{2022} \(size)")
     }
 
     private func errorRow(_ text: String) -> some View {
@@ -127,8 +102,7 @@ struct FilesSectionView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Button { importError = nil } label: { Text("Dismiss", bundle: .module) }
-                .buttonStyle(.plain)
-                .foregroundStyle(.appSecondary)
+                .appAction(.quiet, size: .small)
         }
         .themedFont(.small)
         .padding(.horizontal, 16)
@@ -163,24 +137,31 @@ struct FilesSectionView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Keyed on whether anything is attached at all, not on the search
+    /// text: detaching the last file while a filter is typed must still land
+    /// on the Add files state, since the header hides the field by then.
+    @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "folder")
-                .themedFont(.hero)
-                .foregroundStyle(.quaternary)
-                .accessibilityHidden(true)
-            Text(searchText.isEmpty ? "No files attached" : "No matching files")
-                .themedFont(.base, weight: .medium)
-            Text(searchText.isEmpty
-                 ? "Attach PDFs, Office documents, or source files to give a chat something to read."
-                 : "Nothing matches \u{201C}\(searchText)\u{201D}.")
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
+        if model.allAttachments.isEmpty {
+            AppEmptyState(
+                systemImage: "folder",
+                title: Text("No files attached", bundle: .module),
+                message: Text(
+                    "Attach PDFs, Office documents, or source files to give a chat something to read.",
+                    bundle: .module)
+            ) {
+                addFilesButton
+            }
+        } else {
+            AppEmptyState(
+                systemImage: "magnifyingglass",
+                title: Text("No matching files", bundle: .module),
+                message: Text("Nothing matches \u{201C}\(searchText)\u{201D}.", bundle: .module)
+            ) {
+                Button { searchText = "" } label: { Text("Clear search", bundle: .module) }
+                    .appAction(.secondary)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Import
@@ -205,7 +186,7 @@ struct FilesSectionView: View {
             isExtracting = false
             if outcome.importedCount > 0 {
                 model.showToast(
-                    "Attached \(outcome.importedCount) document\(outcome.importedCount == 1 ? "" : "s") to this chat.",
+                    AppStrings.localized("Documents attached to this chat: \(outcome.importedCount)"),
                     style: .success)
             }
         }
@@ -213,6 +194,7 @@ struct FilesSectionView: View {
 }
 
 /// One row of the Files list.
+@MainActor
 private struct FileRowView: View {
     @ObservedObject var model: AppModel
     let reference: AppAttachmentReference
@@ -250,11 +232,11 @@ private struct FileRowView: View {
                 Image(systemName: "questionmark.folder")
                     .themedFont(.tiny)
                     .foregroundStyle(.orange)
-                    .help("The source file has moved; only the extracted text remains.")
+                    .help(Text("The source file has moved; only the extracted text remains.", bundle: .module))
             }
 
             if isHovering || isSelected {
-                actionMenu
+                rowActions
             }
         }
         .padding(.horizontal, 10)
@@ -266,60 +248,75 @@ private struct FileRowView: View {
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onHover { isHovering = $0 }
         .onTapGesture { model.showPreview(attachmentID: attachment.id) }
-        .help("Preview \(attachment.fileName)")
+        .contextMenu { actionMenuItems }
+        .help(Text("Preview \(attachment.fileName)", bundle: .module))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(attachment.fileName)
         .accessibilityValue(detailText)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint("Opens this document in the preview pane")
+        .accessibilityHint(Text("Opens this document in the preview pane", bundle: .module))
     }
 
     private var detailText: String { reference.listDetailText }
 
-    private var actionMenu: some View {
-        Menu {
-            Button {
-                model.showPreview(attachmentID: attachment.id)
-            } label: {
-                Label { Text("Preview", bundle: .module) } icon: { Image(systemName: "eye") }
-            }
-            Button {
-                model.selectChat(id: reference.chatID)
-                model.activeSection = .chat
-            } label: {
-                Label { Text("Go to chat", bundle: .module) } icon: { Image(systemName: "bubble.left") }
+    /// The row's frequent actions as quiet, named icon buttons, the same
+    /// treatment every list row uses. Preview is the row tap itself, and the
+    /// full set (Open with default app included) stays in the context menu.
+    private var rowActions: some View {
+        HStack(spacing: 2) {
+            AppIconButton("bubble.left", label: Text("Go to chat", bundle: .module)) {
+                goToChat()
             }
             if attachment.sourceExists {
-                Divider()
-                Button {
+                AppIconButton("folder", label: Text("Reveal in Finder", bundle: .module)) {
                     model.revealAttachmentInFinder(attachment)
-                } label: {
-                    Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "folder") }
-                }
-                Button {
-                    model.openAttachmentExternally(attachment)
-                } label: {
-                    Label { Text("Open with default app", bundle: .module) } icon: { Image(systemName: "arrow.up.forward.app") }
                 }
             }
-            Divider()
-            Button(role: .destructive) {
+            AppIconButton("trash", label: Text("Detach", bundle: .module), role: .destructive) {
                 model.removeAttachment(reference: reference)
-            } label: {
-                Label { Text("Detach", bundle: .module) } icon: { Image(systemName: "trash") }
             }
             .disabled(model.isRunning)
-        } label: {
-            Image(systemName: "ellipsis")
-                .themedFont(.tiny, weight: .semibold)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
+        .appAction(.quiet, size: .small)
         .foregroundStyle(.appSecondary)
-        .help("Actions for \(attachment.fileName)")
-        .accessibilityLabel("Actions for \(attachment.fileName)")
+    }
+
+    @ViewBuilder
+    private var actionMenuItems: some View {
+        Button {
+            model.showPreview(attachmentID: attachment.id)
+        } label: {
+            Label { Text("Preview", bundle: .module) } icon: { Image(systemName: "eye") }
+        }
+        Button {
+            goToChat()
+        } label: {
+            Label { Text("Go to chat", bundle: .module) } icon: { Image(systemName: "bubble.left") }
+        }
+        if attachment.sourceExists {
+            Divider()
+            Button {
+                model.revealAttachmentInFinder(attachment)
+            } label: {
+                Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "folder") }
+            }
+            Button {
+                model.openAttachmentExternally(attachment)
+            } label: {
+                Label { Text("Open with default app", bundle: .module) } icon: { Image(systemName: "arrow.up.forward.app") }
+            }
+        }
+        Divider()
+        Button(role: .destructive) {
+            model.removeAttachment(reference: reference)
+        } label: {
+            Label { Text("Detach", bundle: .module) } icon: { Image(systemName: "trash") }
+        }
+        .disabled(model.isRunning)
+    }
+
+    private func goToChat() {
+        model.selectChat(id: reference.chatID)
+        model.activeSection = .chat
     }
 }

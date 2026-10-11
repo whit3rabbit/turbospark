@@ -76,7 +76,7 @@ extension AppModel {
         guard chatID != selectedChatID else { return }
         guard chats.first(where: { $0.id == chatID }) != nil else { return }
         guard !generating, !submitting, pendingToolCall == nil else {
-            showToast("Stop the current turn before switching chats.", style: .warning)
+            showToast(AppStrings.localized("Stop the current turn before switching chats."), style: .warning)
             return
         }
         let previous = selectedChatID

@@ -14,6 +14,16 @@ public struct SkillsSettingsPaneView: View {
         case project = "Project Scope"
 
         public var id: String { rawValue }
+
+        /// The label to show for the filter. The raw value is its identity
+        /// and is never displayed (it rendered English under every language).
+        public var title: Text {
+            switch self {
+            case .all: return Text("All Skills", bundle: .module)
+            case .user: return Text("User Scope", bundle: .module)
+            case .project: return Text("Project Scope", bundle: .module)
+            }
+        }
     }
 
     @State private var scopeFilter: SkillScopeFilter = .all
@@ -77,44 +87,36 @@ public struct SkillsSettingsPaneView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            ExtensionScopePicker(model: model, projectID: $projectID)
-            // Header bar
-            headerControlBar
-                .padding(.horizontal, SettingsLayout.horizontalInset)
-                .padding(.vertical, SettingsLayout.headerBarVerticalPadding)
-                .background(.appPage)
-
-            Rectangle()
-                .fill(.appBorder)
-                .frame(height: 1)
+            header
 
             if managedSkills.isEmpty {
                 emptyStateView
+            } else if filteredSkills.isEmpty {
+                ExtensionNoMatchesState(query: searchQuery)
             } else {
-                HStack(spacing: 0) {
-                    // Left list
+                ExtensionSplitView {
                     skillsListView
-                        .frame(width: 220)
-                        .background(.appSurface.opacity(0.5))
-
-                    Rectangle()
-                        .fill(.appBorder)
-                        .frame(width: 1)
-
-                    // Right detail
+                } detail: {
                     if let current = selectedSkill {
-                        skillDetailView(skill: current)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        SkillDetailView(
+                            model: model,
+                            skill: current,
+                            scopedProject: scopedProject,
+                            onEdit: { isEditingSkill = true },
+                            onDelete: {
+                                skillToDelete = current
+                                isConfirmingDelete = true
+                            })
                     } else {
                         VStack(spacing: 12) {
                             Image(systemName: "wand.and.stars")
                                 .themedFont(.display)
                                 .foregroundStyle(.tertiary)
+                                .accessibilityHidden(true)
                             Text("Select a skill to inspect instructions and parameters.", bundle: .module)
                                 .themedFont(.base)
                                 .foregroundStyle(.appSecondary)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
             }
@@ -135,15 +137,17 @@ public struct SkillsSettingsPaneView: View {
                 model: model, initialCategory: .skills, projectID: projectID)
         }
         .confirmationDialog(
-            "Delete Skill",
+            Text("Delete Skill", bundle: .module),
             isPresented: $isConfirmingDelete,
             presenting: skillToDelete
         ) { skill in
-            Button("Delete '\(skill.name)'", role: .destructive) {
+            Button(role: .destructive) {
                 model.removeSkill(skill)
                 if selectedSkillID == skill.sourceURL.path {
                     selectedSkillID = nil
                 }
+            } label: {
+                Text("Delete '\(skill.name)'", bundle: .module)
             }
             Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: { skill in
@@ -151,60 +155,57 @@ public struct SkillsSettingsPaneView: View {
         }
     }
 
-    // MARK: - Header Bar
-    private var headerControlBar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
-                TextField("Search skills...", text: $searchQuery)
-                    .textFieldStyle(.plain)
-                    .themedFont(.base)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.appSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(.appBorder, lineWidth: 1)
-            )
+    // MARK: - Header
 
-            Spacer()
-
-            Button {
-                model.reloadSkills()
-            } label: {
-                Image(systemName: "arrow.clockwise")
+    /// `[scope][search] ... [refresh][Import][New Skill]`, shared with the
+    /// other extension panes. Both import sources sit in the Import menu:
+    /// five controls in one row was what crowded this header.
+    private var header: some View {
+        ExtensionPaneHeader {
+            ExtensionPaneIntro(text: Text("Reusable instructions and workflows the assistant can load into a conversation.", bundle: .module))
+        } filters: {
+            ExtensionScopePicker(model: model, projectID: $projectID)
+            AppSearchField(text: $searchQuery, prompt: Text("Search skills...", bundle: .module))
+        } actions: {
+            ExtensionRefreshButton(label: Text("Refresh", bundle: .module)) { model.reloadSkills() }
+            ExtensionImportMenu { importMenuItems }
+            newSkillButton
+        } compactActions: {
+            ExtensionMoreMenu {
+                Button { model.reloadSkills() } label: {
+                    Label { Text("Refresh", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
+                }
+                Divider()
+                importMenuItems
             }
-            .buttonStyle(.bordered)
-            .help("Refresh skills from disk")
-
-            Button {
-                isImportingFromAgents = true
-            } label: {
-                Label { Text("Import...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
-            }
-            .buttonStyle(.bordered)
-            .help("Import skills, agents, or MCP servers from other agent tools")
-
-            Button {
-                isImportingSkill = true
-            } label: {
-                Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "globe") }
-            }
-            .buttonStyle(.bordered)
-            .help("Browse remote skill marketplaces")
-
-            Button {
-                isCreatingSkill = true
-            } label: {
-                Label { Text("New Skill", bundle: .module) } icon: { Image(systemName: "plus") }
-            }
-            .buttonStyle(.borderedProminent)
-            .fixedSize()
+            newSkillButton
         }
+    }
+
+    @ViewBuilder
+    private var importMenuItems: some View {
+        Button {
+            isImportingFromAgents = true
+        } label: {
+            Label { Text("From Other Agents...", bundle: .module) } icon: { Image(systemName: "person.2") }
+        }
+        .help(Text("Import skills, agents, or MCP servers from other agent tools", bundle: .module))
+
+        Button {
+            isImportingSkill = true
+        } label: {
+            Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "globe") }
+        }
+        .help(Text("Browse remote skill marketplaces", bundle: .module))
+    }
+
+    private var newSkillButton: some View {
+        Button {
+            isCreatingSkill = true
+        } label: {
+            Label { Text("New Skill", bundle: .module) } icon: { Image(systemName: "plus") }
+        }
+        .appAction(.primary)
     }
 
     // MARK: - Skills List View
@@ -226,6 +227,7 @@ public struct SkillsSettingsPaneView: View {
                 Image(systemName: "wand.and.stars")
                     .foregroundStyle(skill.isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
                     .themedFont(.small)
+                    .accessibilityHidden(true)
 
                 Text(skill.name)
                     .themedFont(.base, weight: .semibold)
@@ -233,8 +235,7 @@ public struct SkillsSettingsPaneView: View {
 
                 Spacer()
 
-                // Scope badge
-                scopeBadgeView(scope: skill.scope)
+                SkillScopeBadge(scope: skill.scope)
 
                 // Shadowing disclosure (swift/docs/SWIFT_SKILLS.md 3B): a USER skill a
                 // project skill currently overrides by name. Precedence
@@ -268,7 +269,7 @@ public struct SkillsSettingsPaneView: View {
                 // not a missing line, and is not claimed until it exists.
 
                 if !skill.referenceFiles.isEmpty {
-                    Text(verbatim: "\(skill.referenceFiles.count) files")
+                    Text("Files: \(skill.referenceFiles.count)", bundle: .module)
                         .themedFont(.tiny)
                         .foregroundStyle(.tertiary)
                 }
@@ -281,11 +282,6 @@ public struct SkillsSettingsPaneView: View {
     /// Whether a USER-scoped skill's name is currently overridden by a
     /// project skill (the comparison is the same case-insensitive key the
     /// precedence merge itself uses).
-    private func isPluginSkill(_ skill: AppSkill) -> Bool {
-        if case .plugin = skill.scope { return true }
-        return false
-    }
-
     private func isShadowedByProject(_ skill: AppSkill) -> Bool {
         guard skill.scope.isProjectScope == false else { return false }
         return SkillManager.shared.shadowedUserSkillNames(projectURL: scopedProject?.rootDirectoryURL).contains {
@@ -297,6 +293,7 @@ public struct SkillsSettingsPaneView: View {
         HStack(spacing: 3) {
             Image(systemName: "arrow.2.squarepath")
                 .themedFont(.micro)
+                .accessibilityHidden(true)
             Text("Shadowed", bundle: .module)
                 .themedFont(.micro, weight: .semibold)
         }
@@ -305,268 +302,31 @@ public struct SkillsSettingsPaneView: View {
         .background(Color.purple.opacity(0.15))
         .foregroundStyle(Color.purple)
         .clipShape(Capsule())
-        .help("A project skill with this name takes precedence while that project is open.")
-    }
-
-    private func scopeBadgeView(scope: SkillScope) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: scope.badgeIcon)
-                .themedFont(.micro)
-            Text(scope.label)
-                .themedFont(.micro, weight: .semibold)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(
-            scope.isProjectScope
-                ? Color.orange.opacity(0.15)
-                : Color.blue.opacity(0.15)
-        )
-        .foregroundStyle(
-            scope.isProjectScope ? Color.orange : Color.blue
-        )
-        .clipShape(Capsule())
-    }
-
-    // MARK: - Skill Detail View
-    private func skillDetailView(skill: AppSkill) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                // Header card
-                VStack(alignment: .leading, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 8) {
-                                Text(skill.name)
-                                    .themedFont(.title2, weight: .bold)
-                                scopeBadgeView(scope: skill.scope)
-                            }
-                            Text(skill.skillDescription)
-                                .themedFont(.base)
-                                .foregroundStyle(.appSecondary)
-                        }
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            if let project = scopedProject {
-                                ExtensionOverridePicker(enabled: Binding(
-                                    get: { project.enabledSkills[skill.name.lowercased()] },
-                                    set: { model.setSkillOverride(name: skill.name, enabled: $0, projectID: project.id) }))
-                            }
-                            // The list greys a disabled skill and this pane
-                            // had no way to re-enable it; the only toggle was
-                            // in the composer's plus menu.
-                            if scopedProject == nil && !isPluginSkill(skill) {
-                            Toggle(isOn: Binding(
-                                get: { skill.isEnabled },
-                                set: { _ in model.toggleSkillEnabled(skill) }
-                            )) {
-                                Text("Enabled", bundle: .module)
-                            }
-            .settingsControl("Enabled", pane: .skills, timing: .nextTurn)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            } else {
-                                Text(LocalizedStringKey(skill.isEnabled ? "Enabled" : "Disabled"), bundle: .module).themedFont(.small)
-                            }
-                            if case .plugin = skill.scope {
-                                Button { model.openSettings(tab: .plugins) } label: { Text("Manage plugin", bundle: .module) }
-                            }
-
-                            if SkillManager.shared.ownsSkill(skill) {
-                            Button {
-                                isEditingSkill = true
-                            } label: {
-                                Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
-                            }
-                            .buttonStyle(.bordered)
-
-                            }
-                            if !SkillManager.shared.ownsSkill(skill) {
-                                Menu {
-                                    Button { _ = model.importSkill(from: skill.skillDirectoryURL ?? skill.sourceURL, targetScope: .userGlobal) } label: { Text("Copy to User", bundle: .module) }
-                                    if let path = scopedProject?.rootDirectoryPath {
-                                        Button { _ = model.importSkill(from: skill.skillDirectoryURL ?? skill.sourceURL, targetScope: .projectLocal(projectPath: path)) } label: { Text("Copy to Project", bundle: .module) }
-                                    }
-                                } label: { Text("Copy to TurboSpark", bundle: .module)
-                    .settingsControl("Copy to TurboSpark", pane: .skills, timing: .nextTurn) }
-                                .help(Text("Skill actions", bundle: .module))
-                            }
-                            Button {
-                                NSWorkspace.shared.activateFileViewerSelecting([skill.sourceURL])
-                            } label: {
-                                Label { Text("Reveal", bundle: .module) } icon: { Image(systemName: "folder") }
-                            }
-                            .buttonStyle(.bordered)
-
-                            if SkillManager.shared.ownsSkill(skill) {
-                            Button(role: .destructive) {
-                                skillToDelete = skill
-                                isConfirmingDelete = true
-                            } label: {
-                                Image(systemName: "trash")
-                            }
-                            .buttonStyle(.bordered)
-                            .help(Text("Delete", bundle: .module))
-                            .accessibilityLabel(Text("Delete", bundle: .module))
-                            }
-                        }
-                    }
-
-                    Divider()
-                        .padding(.vertical, 4)
-
-                    // Metadata badges
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 12)], spacing: 8) {
-                        metaItemView(title: "Agent Origin", value: skill.agentOrigin.displayName, icon: "terminal")
-                        metaItemView(title: "Execution Context", value: skill.manifest.context.rawValue.capitalized, icon: "arrow.triangle.branch")
-                        metaItemView(title: "Shell Type", value: skill.manifest.shell.rawValue, icon: "apple.terminal")
-                        metaItemView(title: "Source Path", value: skill.sourceURL.lastPathComponent, icon: "doc.text")
-                    }
-                }
-                .padding(16)
-                .background(.appSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(.appBorder, lineWidth: 1)
-                )
-
-                // No "Allowed Tools & Permissions" section. `allowed-tools`
-                // is enforced by nothing (see the row comment on state#48
-                // above); this section rendered the same field with a green
-                // shield, one scroll below the comment saying why not.
-
-                // Path Triggers Section
-                if !skill.manifest.paths.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Activation Path Triggers", bundle: .module)
-                            .themedFont(.base, weight: .semibold)
-                        FlowLayout(spacing: 6, lineSpacing: 6) {
-                            ForEach(skill.manifest.paths, id: \.self) { pathPattern in
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.triangle.turn.up.right.diamond")
-                                        .themedFont(.tiny)
-                                    Text(pathPattern)
-                                        .themedCode(.small)
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.purple.opacity(0.12))
-                                .foregroundStyle(.purple)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }
-                        }
-                    }
-                }
-
-                // Reference Files Section
-                if !skill.referenceFiles.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Directory Reference Files (\(skill.referenceFiles.count))", bundle: .module)
-                            .themedFont(.base, weight: .semibold)
-                        VStack(spacing: 4) {
-                            ForEach(skill.referenceFiles, id: \.self) { fileName in
-                                HStack(spacing: 6) {
-                                    Image(systemName: "doc")
-                                        .themedFont(.small)
-                                        .foregroundStyle(.appSecondary)
-                                    Text(fileName)
-                                        .themedCode(.small)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(.appSurface.opacity(0.6))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }
-                        }
-                    }
-                }
-
-                // Instructions Markdown Content
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Instruction Body (SKILL.md)", bundle: .module)
-                            .themedFont(.base, weight: .semibold)
-                        Spacer()
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(skill.content, forType: .string)
-                        } label: {
-                            Label { Text("Copy", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
-                                .themedFont(.small)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-
-                    Text(skill.content)
-                        .themedCode(.base)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.appElevated)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(.appBorder, lineWidth: 1)
-                        )
-                }
-            }
-            .padding(SettingsLayout.detailInset)
-        }
-    }
-
-    private func metaItemView(title: String, value: String, icon: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
-                Text(value)
-                    .themedFont(.small, weight: .medium)
-                    .lineLimit(1)
-            }
-        }
+        .help(Text("A project skill with this name takes precedence while that project is open.", bundle: .module))
     }
 
     // MARK: - Empty State
+
+    /// Secondary actions only: New Skill is the header's primary action, and
+    /// this offers the import routes the header folds into its menu.
     private var emptyStateView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "wand.and.stars")
-                .themedFont(.display)
-                .foregroundStyle(.appSecondary)
-
-            Text("No Skills Installed", bundle: .module)
-                .themedFont(.title2, weight: .bold)
-
-            Text("Skills allow you to package and inject specialized prompts, workflow instructions, reference scripts, and tool permissions into conversations.", bundle: .module)
-                .themedFont(.base)
-                .foregroundStyle(.appSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 440)
-
-            HStack(spacing: 12) {
-                Button {
-                    isCreatingSkill = true
-                } label: {
-                    Label { Text("Create First Skill", bundle: .module) } icon: { Image(systemName: "plus") }
-                }
-                .buttonStyle(.borderedProminent)
-                .fixedSize()
-
-                Button {
-                    isImportingFromAgents = true
-                } label: {
-                    Label { Text("Import from Agents...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
-                }
-                .buttonStyle(.bordered)
+        AppEmptyState(
+            systemImage: "wand.and.stars",
+            title: Text("No Skills Installed", bundle: .module),
+            message: Text("Skills allow you to package and inject specialized prompts, workflow instructions, reference scripts, and tool permissions into conversations.", bundle: .module)
+        ) {
+            Button {
+                isImportingFromAgents = true
+            } label: {
+                Label { Text("Import from Agents...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
             }
-            .padding(.top, 8)
+            .appAction(.secondary)
+            Button {
+                isImportingSkill = true
+            } label: {
+                Label { Text("Browse Marketplace", bundle: .module) } icon: { Image(systemName: "globe") }
+            }
+            .appAction(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
     }
 }

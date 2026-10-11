@@ -45,7 +45,7 @@ struct ToolResultOutputView: View {
                     .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
-                .help("Expand complete output")
+                .help(Text("Expand complete output", bundle: .module))
             }
 
             ScrollView([.horizontal, .vertical], showsIndicators: true) {
@@ -205,7 +205,7 @@ struct ToolResultOutputView: View {
                 .foregroundStyle(isCopied ? Color.green : Color.secondary)
             }
             .buttonStyle(.plain)
-            .help("Copy full output to clipboard")
+            .help(Text("Copy full output to clipboard", bundle: .module))
         }
         .padding(.vertical, 2)
     }

@@ -67,6 +67,15 @@ let package = Package(
                     "-Xlinker", "../TurboSpark/Sources/CTurboSpark/libturbospark_ffi.a",
                     "-Xlinker", "-rpath",
                     "-Xlinker", "@executable_path/../Frameworks",
+                    // A bare SwiftPM executable has no Info.plist, so AppKit
+                    // pinned the menu bar to English whatever the language
+                    // picker wrote to AppleLanguages. The embedded copy
+                    // declares the catalog's languages (see the file).
+                    // Editing it needs a relink: SwiftPM does not track it.
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Localization/Info.plist",
                 ])
             ]
         ),

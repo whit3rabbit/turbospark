@@ -104,12 +104,14 @@ extension AppModel {
                         chats[chatIndex].artifacts[artifactIndex].lastKnownByteSize = Int(descriptor.byteCount)
                         chats[chatIndex].artifacts[artifactIndex].updatedAt = Date()
                         persistChats()
-                        showToast("Copied into the encrypted profile.", style: .success)
+                        showToast(AppStrings.localized("Copied into the encrypted profile."), style: .success)
                         return
                     }
                 }
             } catch {
-                showToast("Could not copy into profile: \(error.localizedDescription)", style: .error)
+                showToast(
+                    AppStrings.localized("Could not copy into profile: \(error.localizedDescription)"),
+                    style: .error)
             }
         }
     }

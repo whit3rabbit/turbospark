@@ -9,8 +9,8 @@ public enum SkillImportError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .destinationExists(let name):
-            return "A skill named '\(name)' is already installed here. "
-                + "Importing would replace it; rename or remove the existing one first."
+            return AppStrings.localized(
+                "A skill named '\(name)' is already installed here. Importing would replace it; rename or remove the existing one first.")
         }
     }
 }
@@ -26,15 +26,15 @@ public enum SkillParseError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .fileNotFound(let path):
-            return "Skill file not found at: \(path)"
+            return AppStrings.localized("Skill file not found at: \(path)")
         case .invalidEncoding(let path):
-            return "Could not read text with UTF-8 encoding from: \(path)"
+            return AppStrings.localized("Could not read text with UTF-8 encoding from: \(path)")
         case .escapesProjectRoot(let path):
-            return "Skill file resolves outside the project root: \(path)"
+            return AppStrings.localized("Skill file resolves outside the project root: \(path)")
         case .invalidFrontmatter(let msg):
-            return "Invalid skill frontmatter: \(msg)"
+            return AppStrings.localized("Invalid skill frontmatter: \(msg)")
         case .unreadableContent:
-            return "Skill content could not be read."
+            return AppStrings.localized("Skill content could not be read.")
         }
     }
 }

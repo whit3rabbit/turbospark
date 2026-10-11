@@ -48,7 +48,8 @@ public struct ToastOverlayView: View {
                 .foregroundStyle(toast.style.tintColor)
                 .accessibilityHidden(true)
 
-            Text(toast.message)
+            // The caller owns the message's localization.
+            Text(verbatim: toast.message)
                 .themedFont(.base, weight: .medium)
                 .foregroundStyle(.appText)
                 .lineLimit(2)
@@ -68,8 +69,8 @@ public struct ToastOverlayView: View {
             }
             .buttonStyle(.plain)
             .help(Text("Dismiss notification", bundle: .module))
-            .accessibilityLabel("Dismiss notification")
-            .accessibilityHint("Dismisses the current status message")
+            .accessibilityLabel(Text("Dismiss notification", bundle: .module))
+            .accessibilityHint(Text("Dismisses the current status message", bundle: .module))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -83,6 +84,17 @@ public struct ToastOverlayView: View {
                 }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(toast.style.rawValue): \(toast.message)")
+        .accessibilityLabel(accessibilityLabel(for: toast))
+    }
+
+    /// The severity is spoken first, in the UI language, because the icon
+    /// that carries it visually is hidden from VoiceOver.
+    private func accessibilityLabel(for toast: AppToast) -> Text {
+        switch toast.style {
+        case .info: return Text("Info: \(toast.message)", bundle: .module)
+        case .success: return Text("Success: \(toast.message)", bundle: .module)
+        case .warning: return Text("Warning: \(toast.message)", bundle: .module)
+        case .error: return Text("Error: \(toast.message)", bundle: .module)
+        }
     }
 }

@@ -212,7 +212,7 @@ public final class ProfileVaultCoordinator: ObservableObject {
                 }
             } catch {
                 opened.showToast(
-                    "Private file migration is incomplete: \(error.localizedDescription)",
+                    AppStrings.localized("Private file migration is incomplete: \(error.localizedDescription)"),
                     style: .error, duration: 10)
             }
         }

@@ -38,88 +38,96 @@ struct ImageAPIPaneView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             ServerHeaderBandView(model: model)
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Image API", bundle: .module).themedFont(.title3, weight: .semibold)
-                Text("The same address and API key as Text. One installed MLX image model can be attached at a time.", bundle: .module)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Picker("Image model", selection: $selectedAlias) {
-                        ForEach(supported) { item in
-                            Text(item.alias).tag(item.alias)
-                        }
-                    }
-                    .frame(maxWidth: 360)
-                    Button {
-                        if let selected { model.attachImageModelToServer(selected) }
-                    } label: { Text("Attach", bundle: .module) }
-                    .disabled(model.server == nil || selected == nil || model.serverImageAttachedModel != nil)
-                    Button { model.detachImageModelFromServer() } label: {
-                        Text("Detach", bundle: .module)
-                    }
-                        .disabled(model.serverImageAttachedModel == nil)
-                }
-                if supported.isEmpty {
-                    Text("Install a supported Z-Image or Qwen-Image model in Image Generation first.", bundle: .module)
-                        .foregroundStyle(.secondary)
-                }
-                if let info = model.serverInfo?.baseURL {
-                    Text(verbatim: "POST " + info.absoluteString + "/v1/images/generations")
-                        .themedCode(.callout)
-                        .textSelection(.enabled)
-                    Text(exampleBody)
-                        .themedCode(.small)
-                        .textSelection(.enabled)
-                }
-                Text(verbatim: "Attached: \(model.serverImageAttachedModel?.alias ?? "none")")
-                Text(verbatim: "Progress: \(model.serverImageProgress)")
-                    .accessibilityLabel(Text(verbatim: "Image progress: \(model.serverImageProgress)"))
-            }
-            .padding(16)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Test image request", bundle: .module).themedFont(.title3, weight: .semibold)
-                TextEditor(text: $prompt)
-                    .frame(height: 74)
-                    .border(.appBorder)
-                    .accessibilityLabel(Text("Image prompt", bundle: .module))
-                Picker("Size", selection: $size) {
-                    Text(verbatim: "512x512").tag("512x512")
-                    Text(verbatim: "768x768").tag("768x768")
-                    Text(verbatim: "1024x1024").tag("1024x1024")
-                }
-                .frame(maxWidth: 260)
-                HStack {
-                    Button {
-                        Task { await runTest() }
-                    } label: { Text("Generate", bundle: .module) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(testing || model.serverImageAttachedModel == nil || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    if testing { ProgressView().controlSize(.small) }
-                    if let elapsed { Text(String(format: "%.1f s", elapsed)) }
-                }
-                if let errorMessage { Text(errorMessage).foregroundStyle(.red).textSelection(.enabled) }
-                if let result, let image = NSImage(data: result) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 420)
-                        .accessibilityLabel(Text("Generated image preview", bundle: .module))
-                    Button {
-                        saved = model.saveAPIImageToGallery(
-                            png: result, prompt: resultPrompt, seed: resultSeed ?? 0,
-                            width: UInt32(resultSize.split(separator: "x").first.flatMap { Int($0) } ?? 1024),
-                            height: UInt32(resultSize.split(separator: "x").last.flatMap { Int($0) } ?? 1024))
-                    } label: { Text("Save to gallery", bundle: .module) }
-                    .disabled(saved)
-                }
-            }
-            .padding(16)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+            servingPanel
+            testPanel
         }
         .onAppear { if selectedAlias.isEmpty { selectedAlias = supported.first?.alias ?? "" } }
         .onChange(of: supported) { _, items in
             if !items.contains(where: { $0.alias == selectedAlias }) { selectedAlias = items.first?.alias ?? "" }
+        }
+    }
+
+    private var servingPanel: some View {
+        APIPanel(
+            title: Text("Image API", bundle: .module),
+            subtitle: Text("The same address and API key as Text. One installed MLX image model can be attached at a time.", bundle: .module)
+        ) {
+            Picker(selection: $selectedAlias) {
+                ForEach(supported) { item in
+                    Text(verbatim: item.alias).tag(item.alias)
+                }
+            } label: { Text("Image model", bundle: .module) }
+            .frame(minWidth: 180, idealWidth: 280, maxWidth: 360)
+            Button {
+                if let selected { model.attachImageModelToServer(selected) }
+            } label: { Text("Attach", bundle: .module) }
+            .appAction(.primary, size: APIControlSize.panel)
+            .disabled(model.server == nil || selected == nil || model.serverImageAttachedModel != nil)
+        } content: {
+            if supported.isEmpty {
+                Text("Install a supported Z-Image or Qwen-Image model in Image Generation first.", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+            }
+            APIRowList {
+                if let attached = model.serverImageAttachedModel {
+                    APIServedModelRow(
+                        name: attached.alias,
+                        detachHelp: Text("Stop serving this and release it from memory.", bundle: .module),
+                        detach: { model.detachImageModelFromServer() }
+                    ) {
+                        Text("Image model", bundle: .module)
+                    }
+                } else {
+                    APINothingServedRow()
+                }
+            }
+            APIStatusLine(label: Text("Progress", bundle: .module), value: APIStatusText.text(model.serverImageProgress))
+            if let info = model.serverInfo?.baseURL {
+                APIRequestPreview(method: "POST", url: info.absoluteString + "/v1/images/generations", example: exampleBody)
+            }
+        }
+    }
+
+    private var testPanel: some View {
+        APIPanel(title: Text("Test image request", bundle: .module)) {
+            TextEditor(text: $prompt)
+                .themedFont(.base)
+                .frame(height: 74)
+                .appEditorSurface()
+                .accessibilityLabel(Text("Image prompt", bundle: .module))
+            Picker(selection: $size) {
+                Text(verbatim: "512x512").tag("512x512")
+                Text(verbatim: "768x768").tag("768x768")
+                Text(verbatim: "1024x1024").tag("1024x1024")
+            } label: { Text("Size", bundle: .module) }
+            .frame(minWidth: 160, idealWidth: 220, maxWidth: 260)
+            HStack(spacing: AppMetrics.actionSpacing) {
+                Button {
+                    Task { await runTest() }
+                } label: { Text("Generate", bundle: .module) }
+                .appAction(.primary, size: APIControlSize.panel)
+                .disabled(testing || model.serverImageAttachedModel == nil || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                APIRunIndicator(running: testing, elapsed: elapsed)
+            }
+            if let errorMessage {
+                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
+            }
+            if let result, let image = NSImage(data: result) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 420)
+                    .accessibilityLabel(Text("Generated image preview", bundle: .module))
+                Button {
+                    saved = model.saveAPIImageToGallery(
+                        png: result, prompt: resultPrompt, seed: resultSeed ?? 0,
+                        width: UInt32(resultSize.split(separator: "x").first.flatMap { Int($0) } ?? 1024),
+                        height: UInt32(resultSize.split(separator: "x").last.flatMap { Int($0) } ?? 1024))
+                } label: { Text("Save to gallery", bundle: .module) }
+                .appAction(.secondary, size: APIControlSize.panel)
+                .disabled(saved)
+            }
         }
     }
 
@@ -155,7 +163,7 @@ struct ImageAPIPaneView: View {
                   let encoded = item["b64_json"] as? String,
                   let png = Data(base64Encoded: encoded) else {
                 throw NSError(domain: "Image API", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: String(data: data.prefix(2048), encoding: .utf8) ?? "Invalid image response"
+                    NSLocalizedDescriptionKey: String(data: data.prefix(2048), encoding: .utf8) ?? AppStrings.localized("Invalid image response")
                 ])
             }
             result = png

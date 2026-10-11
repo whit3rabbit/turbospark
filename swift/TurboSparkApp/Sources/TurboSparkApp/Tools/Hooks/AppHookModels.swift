@@ -23,34 +23,36 @@ public enum AppHookEvent: String, Codable, CaseIterable, Identifiable, Sendable 
 
     public var displayName: String { rawValue }
 
+    /// UI text for the hook detail sheet, in the UI language. Not sent to a
+    /// model and not persisted.
     public var eventDescription: String {
         switch self {
         case .preToolUse:
-            return "Before a tool executes"
+            return AppStrings.localized("Before a tool executes")
         case .postToolUse:
-            return "After a tool executes"
+            return AppStrings.localized("After a tool executes")
         case .postToolUseFailure:
-            return "When a tool execution encounters an error"
+            return AppStrings.localized("When a tool execution encounters an error")
         case .sessionStart:
-            return "When a new session starts"
+            return AppStrings.localized("When a new session starts")
         case .sessionEnd:
-            return "When a session ends or is cleared"
+            return AppStrings.localized("When a session ends or is cleared")
         case .userPromptSubmit:
-            return "When a user submits a prompt message"
+            return AppStrings.localized("When a user submits a prompt message")
         case .stop:
-            return "When generation turn finishes"
+            return AppStrings.localized("When generation turn finishes")
         case .permissionRequest:
-            return "When a permission prompt is triggered"
+            return AppStrings.localized("When a permission prompt is triggered")
         case .permissionDenied:
-            return "When a tool call is denied (by the user or by permissions)"
+            return AppStrings.localized("When a tool call is denied (by the user or by permissions)")
         case .subagentStart:
-            return "When a subagent run starts"
+            return AppStrings.localized("When a subagent run starts")
         case .subagentStop:
-            return "When a subagent run finishes"
+            return AppStrings.localized("When a subagent run finishes")
         case .notification:
-            return "When an agent notification is dispatched"
+            return AppStrings.localized("When an agent notification is dispatched")
         case .preCompact:
-            return "Before the conversation is compacted into a summary"
+            return AppStrings.localized("Before the conversation is compacted into a summary")
         }
     }
 

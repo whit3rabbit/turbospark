@@ -11,7 +11,7 @@ struct HardwareScanCard: View {
                 Image(systemName: "memorychip")
                     .themedFont(.base, weight: .semibold)
                     .foregroundStyle(.appAccent)
-                    .help("Apple Silicon unified memory and hardware analysis")
+                    .help(Text("Apple Silicon unified memory and hardware analysis", bundle: .module))
                     .accessibilityHidden(true)
                 Text("Hardware & Memory Analysis", bundle: .module)
                     .themedFont(.base, weight: .semibold)
@@ -55,7 +55,7 @@ struct HardwareScanCard: View {
         }
         .padding(16)
         .background(
-            Color(nsColor: .controlBackgroundColor).opacity(0.8),
+            .appSurface,
             in: RoundedRectangle(cornerRadius: 14)
         )
         .overlay(
@@ -64,17 +64,19 @@ struct HardwareScanCard: View {
         )
     }
 
-    private func statItem(label: String, value: String, icon: String) -> some View {
+    /// `label` is a catalog key; `value` is a reading and renders as written.
+    private func statItem(label: LocalizedStringKey, value: String, icon: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
-                Text(label)
+                    .accessibilityHidden(true)
+                Text(label, bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
-            Text(value)
+            Text(verbatim: value)
                 .themedFont(.base, weight: .semibold)
                 .lineLimit(1)
         }
@@ -90,7 +92,7 @@ struct MoESpotlightCard: View {
                 Image(systemName: "sparkles")
                     .themedFont(.base, weight: .semibold)
                     .foregroundStyle(Color.purple)
-                    .help("Mixture of Experts architecture details")
+                    .help(Text("Mixture of Experts architecture details", bundle: .module))
                     .accessibilityHidden(true)
                 Text("MoE (Mixture of Experts) Architecture Spotlight", bundle: .module)
                     .themedFont(.small, weight: .bold)
@@ -123,7 +125,7 @@ struct MoESpotlightCard: View {
             LinearGradient(
                 colors: [
                     Color.purple.opacity(0.12),
-                    Color(nsColor: .controlBackgroundColor).opacity(0.6),
+                    Color.clear,
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -136,13 +138,13 @@ struct MoESpotlightCard: View {
         )
     }
 
-    private func featurePill(icon: String, text: String) -> some View {
+    private func featurePill(icon: String, text: LocalizedStringKey) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
                 .themedFont(.tiny)
                 .foregroundStyle(Color.purple)
                 .accessibilityHidden(true)
-            Text(text)
+            Text(text, bundle: .module)
                 .themedFont(.tiny, weight: .medium)
                 .foregroundStyle(.appText)
         }
@@ -161,30 +163,37 @@ struct ActiveInstallCard: View {
             HStack {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(model.installStageText ?? "Downloading model...")
-                        .themedFont(.base, weight: .semibold)
+                    Group {
+                        if let stage = model.installStageText {
+                            Text(stage)
+                        } else {
+                            Text("Downloading model files", bundle: .module)
+                        }
+                    }
+                    .themedFont(.base, weight: .semibold)
                 }
                 Spacer()
                 Button(action: model.cancelInstall) { Text("Cancel", bundle: .module) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Cancel model download")
-                    .accessibilityLabel("Cancel download")
-                    .accessibilityHint("Cancels the download; nothing is kept, and the model can be re-installed after the cancelled walk exits")
+                    .appAction(.secondary, size: .small)
+                    .help(Text("Cancel model download", bundle: .module))
+                    .accessibilityLabel(Text("Cancel Download", bundle: .module))
+                    .accessibilityHint(Text(
+                        "Cancels the download; nothing is kept, and the model can be re-installed after the cancelled walk exits",
+                        bundle: .module))
             }
 
             if let fraction = model.installProgressFraction {
                 ProgressView(value: fraction)
                     .tint(TurboSparkTheme.accentColor)
-                    .accessibilityLabel("Download progress")
-                    .accessibilityValue(MetricFormat.percent(fraction * 100))
+                    .accessibilityLabel(Text("Download progress", bundle: .module))
+                    .accessibilityValue(Text(verbatim: MetricFormat.percent(fraction * 100)))
 
                 HStack {
                     if let downloaded = model.installDownloadedBytes, let total = model.installTotalBytes {
                         Text("\(MetricFormat.storage(downloaded)) of \(MetricFormat.storage(total))", bundle: .module)
                     }
                     Spacer()
-                    Text(MetricFormat.percent(fraction * 100))
+                    Text(verbatim: MetricFormat.percent(fraction * 100))
                 }
                 .themedFont(.small).monospacedDigit()
                 .foregroundStyle(.appSecondary)

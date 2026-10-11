@@ -133,7 +133,7 @@ extension AppModel {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if argument.lowercased().hasPrefix("project ") {
             guard let root = memoryProject()?.rootDirectoryURL else {
-                showToast("Attach a project before saving project memory.", style: .warning)
+                showToast(AppStrings.localized("Attach a project before saving project memory."), style: .warning)
                 return
             }
             let text = String(argument.dropFirst("project ".count))
@@ -141,14 +141,20 @@ extension AppModel {
                 try MemoryLedgerStore.shared.saveUserClaim(
                     text, scope: "project:\(MemoryStore.projectKey(forProjectRoot: root))",
                     kind: "decision")
-                showToast("Saved to project memory.", style: .success)
-            } catch { showToast("Could not save memory: \(error.localizedDescription)", style: .error) }
+                showToast(AppStrings.localized("Saved to project memory."), style: .success)
+            } catch {
+                showToast(AppStrings.localized("Could not save memory: \(error.localizedDescription)"), style: .error)
+            }
             return
         }
         if argument.lowercased().hasPrefix("search ") {
             let query = String(argument.dropFirst("search ".count))
             let results = MemoryLedgerStore.shared.search(query, scope: nil)
-            showToast(results.isEmpty ? "No matching approved memories." : results.map(\.text).joined(separator: "\n"), style: .info)
+            showToast(
+                results.isEmpty
+                    ? AppStrings.localized("No matching approved memories.")
+                    : results.map(\.text).joined(separator: "\n"),
+                style: .info)
             return
         }
         if !argument.isEmpty {
@@ -178,9 +184,9 @@ extension AppModel {
             let row = AppChatMessage(
                 role: .user, content: UserMemoryInputMessage.wrapping(text))
             mutateTurnMessages(for: chatID) { $0.append(row) }
-            showToast("Saved to profile memory.", style: .success)
+            showToast(AppStrings.localized("Saved to profile memory."), style: .success)
         } catch {
-            showToast("Could not save memory: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Could not save memory: \(error.localizedDescription)"), style: .error)
         }
     }
 
@@ -189,9 +195,11 @@ extension AppModel {
         do {
             try MemoryLedgerStore.shared.saveUserClaim(text, scope: "profile")
             promptText = ""
-            showToast("Saved to profile memory.", style: .success)
+            showToast(AppStrings.localized("Saved to profile memory."), style: .success)
         } catch {
-            showToast("Could not save profile memory: \(error.localizedDescription)", style: .error)
+            showToast(
+                AppStrings.localized("Could not save profile memory: \(error.localizedDescription)"),
+                style: .error)
         }
     }
 }

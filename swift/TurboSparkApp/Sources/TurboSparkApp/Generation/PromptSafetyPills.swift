@@ -30,7 +30,7 @@ struct ForgeGuardrailsPillControl: View {
                         .font(theme.ui(.tiny, weight: .semibold))
                         .foregroundStyle(isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
 
-                    Text("Guardrails \(isEnabled ? "On" : "Off")", bundle: .module)
+                    (isEnabled ? Text("Guardrails On", bundle: .module) : Text("Guardrails Off", bundle: .module))
                         .font(theme.ui(.small, weight: .medium))
                         .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
                         .lineLimit(1)
@@ -44,15 +44,17 @@ struct ForgeGuardrailsPillControl: View {
             .help(Self.helpText(
                 inertReason: inertReason,
                 isGlobalFixed: isGlobalFixed,
-                modeLabel: model.guardrailsMode.label,
+                modeLabel: AppStrings.localized(String.LocalizationValue(model.guardrailsMode.label)),
                 isEnabled: isEnabled,
                 nativeReason: model.toolCallingNativeReason
             ))
-            .accessibilityLabel("Forge Guardrails: \(isEnabled ? "Enabled" : "Disabled")")
+            .accessibilityLabel(Text("Forge Guardrails", bundle: .module))
+            .accessibilityValue(isEnabled ? Text("On", bundle: .module) : Text("Off", bundle: .module))
+            // The inert reason is the model's own English diagnosis.
             .accessibilityHint(
-                inertReason ?? (isGlobalFixed
-                    ? "Managed by global settings"
-                    : "Toggles tool-call guardrails for this context"))
+                inertReason.map { Text($0) } ?? (isGlobalFixed
+                    ? Text("Managed by global settings", bundle: .module)
+                    : Text("Toggles tool-call guardrails for this context", bundle: .module)))
 
             Button {
                 model.openSettings(tab: .engine)
@@ -63,9 +65,9 @@ struct ForgeGuardrailsPillControl: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Tool-call guardrails rescue a call the decoder could not parse and check its arguments against the schema you sent. Click to open Settings.")
-            .accessibilityLabel("Forge Guardrails information")
-            .accessibilityHint("Opens Engine Settings to configure Guardrails")
+            .help(Text("Tool-call guardrails rescue a call the decoder could not parse and check its arguments against the schema you sent. Click to open Settings.", bundle: .module))
+            .accessibilityLabel(Text("Forge Guardrails information", bundle: .module))
+            .accessibilityHint(Text("Opens Engine Settings to configure Guardrails", bundle: .module))
         }
     }
 }
@@ -76,7 +78,8 @@ extension ForgeGuardrailsPillControl {
     /// A pure static so it can be asserted without a model (`swift/CLAUDE.md`
     /// Gotcha 26). The ORDER is the point: an inert control explains itself
     /// first, because a user looking at a greyed pill wants to know why it is
-    /// grey before anything else.
+    /// grey before anything else. The fixed sentences come from the catalog
+    /// in the UI language; the reasons passed in are the engine's own words.
     static func helpText(
         inertReason: String?,
         isGlobalFixed: Bool,
@@ -85,17 +88,17 @@ extension ForgeGuardrailsPillControl {
         nativeReason: String?
     ) -> String {
         if let inertReason { return inertReason }
-        if isGlobalFixed { return "Forge Guardrails is fixed to \(modeLabel) in Settings" }
+        if isGlobalFixed { return AppStrings.localized("Forge Guardrails is fixed to \(modeLabel) in Settings") }
         var text =
             isEnabled
-            ? "Forge Guardrails active: click to disable"
-            : "Forge Guardrails disabled: click to enable"
+            ? AppStrings.localized("Forge Guardrails active: click to disable")
+            : AppStrings.localized("Forge Guardrails disabled: click to enable")
         // A checkpoint that frames no calls of its own is the case the rescue
         // helps MOST, so this reads as a reason to leave guardrails on rather
         // than as a limitation.
         if let nativeReason {
-            text += ". This model hands no framed call over (" + nativeReason
-                + "), so the rescue is what makes tool calls work here."
+            text += ". " + AppStrings.localized(
+                "This model hands no framed call over (\(nativeReason)), so the rescue is what makes tool calls work here.")
         }
         return text
     }
@@ -124,7 +127,7 @@ struct SteeringPillControl: View {
                     Image(systemName: isOn ? "dial.medium.fill" : "dial.medium")
                         .font(theme.ui(.tiny, weight: .semibold))
                         .foregroundStyle(isOn ? TurboSparkTheme.accentColor : Color.secondary)
-                    Text(isOn ? "Steering On" : "Steering Off")
+                    (isOn ? Text("Steering On", bundle: .module) : Text("Steering Off", bundle: .module))
                         .font(theme.ui(.small, weight: .medium))
                         .foregroundStyle(isOn ? Color.primary : Color.secondary)
                         .lineLimit(1)
@@ -146,8 +149,9 @@ struct SteeringPillControl: View {
                 needsReload: pending,
                 summary: model.activeSteeringSummary
             ))
-            .accessibilityLabel("Directional steering: \(isOn ? "On" : "Off")")
-            .accessibilityHint(disabledReason ?? "Applied when a model loads")
+            .accessibilityLabel(Text("Directional steering", bundle: .module))
+            .accessibilityValue(isOn ? Text("On", bundle: .module) : Text("Off", bundle: .module))
+            .accessibilityHint(disabledReason.map { Text($0) } ?? Text("Applied when a model loads", bundle: .module))
 
             Button {
                 model.openSettings(tab: .safety)
@@ -158,9 +162,9 @@ struct SteeringPillControl: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Register and choose a steering direction. Click to open Settings.")
-            .accessibilityLabel("Directional steering information")
-            .accessibilityHint("Opens Safety and Steering settings")
+            .help(Text("Register and choose a steering direction. Click to open Settings.", bundle: .module))
+            .accessibilityLabel(Text("Directional steering information", bundle: .module))
+            .accessibilityHint(Text("Opens Safety and Steering settings", bundle: .module))
         }
     }
 
@@ -173,11 +177,11 @@ struct SteeringPillControl: View {
     ) -> String {
         if let disabledReason { return disabledReason }
         if needsReload {
-            return "Reload the model to apply this. Steering is resolved when a model opens, "
-                + "so the one loaded now is unchanged."
+            return AppStrings.localized(
+                "Reload the model to apply this. Steering is resolved when a model opens, so the one loaded now is unchanged.")
         }
-        if isOn, let summary { return "Running: " + summary }
-        if isOn { return "On at the next model load." }
-        return "Off. No edit is applied to the residual stream."
+        if isOn, let summary { return AppStrings.localized("Running: \(summary)") }
+        if isOn { return AppStrings.localized("On at the next model load.") }
+        return AppStrings.localized("Off. No edit is applied to the residual stream.")
     }
 }

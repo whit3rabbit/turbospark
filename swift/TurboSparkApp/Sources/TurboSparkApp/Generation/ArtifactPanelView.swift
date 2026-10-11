@@ -87,13 +87,13 @@ struct ArtifactPanelView: View {
     }
 
     private var title: String {
-        resolvedArtifact?.title ?? resolvedPreview?.title ?? "Preview"
+        resolvedArtifact?.title ?? resolvedPreview?.title ?? AppStrings.localized("Preview")
     }
 
     private var subtitle: String {
         if let artifact = resolvedArtifact { return artifact.detailText }
-        if resolvedPreview != nil { return "HTML • in memory" }
-        return "No longer available"
+        if resolvedPreview != nil { return AppStrings.localized("HTML \u{2022} in memory") }
+        return AppStrings.localized("No longer available")
     }
 
     private var symbolName: String {
@@ -145,12 +145,12 @@ struct ArtifactPanelView: View {
             .pickerStyle(.segmented)
             .controlSize(.mini)
             .fixedSize()
-            .help("Switch between the rendered page and its source")
+            .help(Text("Switch between the rendered page and its source", bundle: .module))
 
             headerButton(
                 isCopied ? "checkmark" : "doc.on.doc",
-                help: isCopied ? "Copied" : "Copy source",
-                label: isCopied ? "Copied source" : "Copy source")
+                help: isCopied ? Text("Copied", bundle: .module) : Text("Copy source", bundle: .module),
+                label: isCopied ? Text("Copied source", bundle: .module) : Text("Copy source", bundle: .module))
             {
                 copySource()
             }
@@ -161,23 +161,23 @@ struct ArtifactPanelView: View {
                    artifact.path.flatMap(ManagedAssetStore.assetID(from:)) == nil {
                     headerButton(
                         "lock.doc",
-                        help: "Copy \(title) into this encrypted profile",
-                        label: "Copy into profile")
+                        help: Text("Copy \(title) into this encrypted profile", bundle: .module),
+                        label: Text("Copy into profile", bundle: .module))
                     {
                         model.copyArtifactIntoProfile(id: artifact.id)
                     }
                 }
                 headerButton(
                     "arrow.down.to.line",
-                    help: "Save a copy of \(title)",
-                    label: "Save a copy")
+                    help: Text("Save a copy of \(title)", bundle: .module),
+                    label: Text("Save a copy", bundle: .module))
                 {
                     exportArtifact()
                 }
                 headerButton(
                     "folder",
-                    help: "Reveal \(title) in Finder",
-                    label: "Reveal in Finder")
+                    help: Text("Reveal \(title) in Finder", bundle: .module),
+                    label: Text("Reveal in Finder", bundle: .module))
                 {
                     if let url = resolvedArtifact?.url {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -186,8 +186,8 @@ struct ArtifactPanelView: View {
             } else if resolvedPreview != nil {
                 headerButton(
                     "arrow.down.to.line",
-                    help: "Save the html to a file",
-                    label: "Save")
+                    help: Text("Save the html to a file", bundle: .module),
+                    label: Text("Save", bundle: .module))
                 {
                     exportPreview()
                 }
@@ -195,13 +195,13 @@ struct ArtifactPanelView: View {
 
             headerButton(
                 "arrow.up.left.and.arrow.down.right",
-                help: "Open a larger preview",
-                label: "Open a larger preview")
+                help: Text("Open a larger preview", bundle: .module),
+                label: Text("Open a larger preview", bundle: .module))
             {
                 isMaximized = true
             }
 
-            headerButton("xmark", help: "Close preview", label: "Close preview") {
+            headerButton("xmark", help: Text("Close preview", bundle: .module), label: Text("Close preview", bundle: .module)) {
                 close()
             }
         }
@@ -209,10 +209,13 @@ struct ArtifactPanelView: View {
         .padding(.vertical, 8)
     }
 
+    /// `label` names the action for VoiceOver and is followed by the
+    /// artifact's title, so a reader moving between panels knows which
+    /// document the control acts on.
     private func headerButton(
         _ systemImage: String,
-        help: String,
-        label: String,
+        help: Text,
+        label: Text,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -224,7 +227,7 @@ struct ArtifactPanelView: View {
         .buttonStyle(.plain)
         .foregroundStyle(Color.secondary)
         .help(help)
-        .accessibilityLabel("\(label) \(title)")
+        .accessibilityLabel(label + Text(verbatim: " " + title))
     }
 
     // MARK: - Network banner
@@ -248,8 +251,8 @@ struct ArtifactPanelView: View {
             } label: {
                 Text("Allow", bundle: .module)
             }
-            .controlSize(.mini)
-            .help("Let this preview load remote resources")
+            .appAction(.secondary, size: .mini)
+            .help(Text("Let this preview load remote resources", bundle: .module))
             Button {
                 isBannerDismissed = true
             } label: {
@@ -261,7 +264,7 @@ struct ArtifactPanelView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.appSecondary)
             .help(Text("Dismiss", bundle: .module))
-            .accessibilityLabel("Dismiss network banner")
+            .accessibilityLabel(Text("Dismiss network banner", bundle: .module))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -331,14 +334,14 @@ struct ArtifactPanelView: View {
                 VStack(spacing: 0) {
                     QuickLookPreviewView(url: url)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .accessibilityLabel("Quick Look preview of \(title)")
+                        .accessibilityLabel(Text("Quick Look preview of \(title)", bundle: .module))
                     Divider()
                     Button {
                         NSWorkspace.shared.open(url)
                     } label: {
                         Text("Open with default app", bundle: .module)
                     }
-                    .controlSize(.small)
+                    .appAction(.secondary, size: .small)
                     .padding(.vertical, 6)
                 }
             } else {
@@ -384,7 +387,7 @@ struct ArtifactPanelView: View {
             } label: {
                 Text("Close", bundle: .module)
             }
-            .controlSize(.small)
+            .appAction(.secondary, size: .small)
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -412,7 +415,7 @@ struct ArtifactPanelView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.appSecondary)
                 .help(Text("Close", bundle: .module))
-                .accessibilityLabel("Close maximized preview")
+                .accessibilityLabel(Text("Close maximized preview", bundle: .module))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -461,10 +464,10 @@ struct ArtifactPanelView: View {
         guard let sourceText else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(sourceText, forType: .string)
-        withAnimation(.easeInOut(duration: 0.15)) { isCopied = true }
+        TSMotion.animate(.easeInOut(duration: 0.15)) { isCopied = true }
         Task {
             try? await Task.sleep(for: .seconds(1.5))
-            withAnimation(.easeOut(duration: 0.15)) { isCopied = false }
+            TSMotion.animate(.easeOut(duration: 0.15)) { isCopied = false }
         }
     }
 
@@ -488,7 +491,7 @@ struct ArtifactPanelView: View {
                     try fm.copyItem(at: url, to: destination)
                 }
             } catch {
-                model.showToast("Could not save a copy: \(error.localizedDescription)", style: .error)
+                model.showToast(AppStrings.localized("Could not save a copy: \(error.localizedDescription)"), style: .error)
             }
         }
     }
@@ -502,7 +505,7 @@ struct ArtifactPanelView: View {
             do {
                 try preview.html.write(to: destination, atomically: true, encoding: .utf8)
             } catch {
-                model.showToast("Could not export the preview: \(error.localizedDescription)", style: .error)
+                model.showToast(AppStrings.localized("Could not export the preview: \(error.localizedDescription)"), style: .error)
             }
         }
     }

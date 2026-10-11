@@ -21,15 +21,15 @@ enum ProfileVaultCrypto {
         var errorDescription: String? {
             switch self {
             case .invalidPassphraseLength:
-                return "Use a passphrase between 15 and 1,024 characters."
+                return AppStrings.localized("Use a passphrase between 15 and 1,024 characters.")
             case .randomGenerationFailed:
-                return "Secure random data could not be generated."
+                return AppStrings.localized("Secure random data could not be generated.")
             case .keyDerivationFailed:
-                return "The passphrase key could not be derived."
+                return AppStrings.localized("The passphrase key could not be derived.")
             case .malformedEnvelope:
-                return "The encrypted key envelope is malformed."
+                return AppStrings.localized("The encrypted key envelope is malformed.")
             case .authenticationFailed:
-                return "The passphrase is incorrect or the encrypted key was modified."
+                return AppStrings.localized("The passphrase is incorrect or the encrypted key was modified.")
             }
         }
     }
@@ -156,11 +156,11 @@ struct ProfileVaultKeychain: ProfileVaultKeychainProtocol {
         var errorDescription: String? {
             switch self {
             case .unavailable:
-                return "Touch ID or Mac login authentication is not available."
+                return AppStrings.localized("Touch ID or Mac login authentication is not available.")
             case .accessControl:
-                return "The protected Keychain item could not be created."
+                return AppStrings.localized("The protected Keychain item could not be created.")
             case .status(let status):
-                return "Keychain operation failed (\(status))."
+                return AppStrings.localized("Keychain operation failed (\(Int(status))).")
             }
         }
     }
@@ -196,7 +196,7 @@ struct ProfileVaultKeychain: ProfileVaultKeychainProtocol {
     }
 
     func load(profileID: String, context: LAContext) throws -> Data {
-        context.localizedReason = "Unlock this TurboSpark profile"
+        context.localizedReason = AppStrings.localized("Unlock this TurboSpark profile")
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

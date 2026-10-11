@@ -268,8 +268,20 @@ public final class SystemPermissionsManager: ObservableObject {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        panel.prompt = "Grant Access"
-        panel.message = "Select your \(folder.rawValue) folder to grant TurboSpark access."
+        panel.prompt = AppStrings.localized("Grant Access")
+        // One whole sentence per folder rather than a folder name spliced
+        // into a template: the raw values are English, and several
+        // languages inflect the noun inside the sentence.
+        switch folder {
+        case .documents:
+            panel.message = AppStrings.localized("Select your Documents folder to grant TurboSpark access.")
+        case .downloads:
+            panel.message = AppStrings.localized("Select your Downloads folder to grant TurboSpark access.")
+        case .desktop:
+            panel.message = AppStrings.localized("Select your Desktop folder to grant TurboSpark access.")
+        case .home:
+            panel.message = AppStrings.localized("Select your home folder to grant TurboSpark access.")
+        }
 
         if let defaultURL = folder.defaultURL {
             panel.directoryURL = defaultURL
@@ -299,8 +311,8 @@ public final class SystemPermissionsManager: ObservableObject {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.prompt = "Allow Folder"
-        panel.message = "Select a folder to authorize for TurboSpark tool and project access."
+        panel.prompt = AppStrings.localized("Allow Folder")
+        panel.message = AppStrings.localized("Select a folder to authorize for TurboSpark tool and project access.")
 
         panel.begin { [weak self] response in
             guard let self = self, response == .OK, let selectedURL = panel.url else { return }
@@ -350,7 +362,7 @@ public final class SystemPermissionsManager: ObservableObject {
     private func loadCustomFolders() {
         var loaded =
             AppJSONStore.load(
-                [GrantedCustomFolder].self, from: Self.storeURL, label: "granted folders") ?? []
+                [GrantedCustomFolder].self, from: Self.storeURL, label: "Granted folders") ?? []
         if loaded.isEmpty,
             let legacy = UserDefaults.standard.data(forKey: Self.customFoldersStorageKey),
             let migrated = try? JSONDecoder().decode([GrantedCustomFolder].self, from: legacy),

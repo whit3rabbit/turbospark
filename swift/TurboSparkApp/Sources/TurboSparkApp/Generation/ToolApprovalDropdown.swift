@@ -21,7 +21,7 @@ struct ToolApprovalDropdown: View {
                     .themedFont(.tiny, weight: .semibold)
                     .foregroundStyle(Color.secondary)
 
-                Text(currentMode.label)
+                currentMode.approvalLabelText
                     .font(theme.ui(.small, weight: .medium))
                     .foregroundStyle(Color.primary.opacity(0.85))
                     .lineLimit(1)
@@ -40,8 +40,8 @@ struct ToolApprovalDropdown: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .help("Tool call approval mode: \(currentMode.label)")
-        .accessibilityLabel("Tool call approval: \(currentMode.label)")
+        .help(Text("Tool call approval mode: \(currentMode.approvalLabelText)", bundle: .module))
+        .accessibilityLabel(Text("Tool call approval: \(currentMode.approvalLabelText)", bundle: .module))
         .popover(
             isPresented: $isMenuPresented,
             arrowEdge: .top
@@ -123,11 +123,11 @@ private struct ToolApprovalOptionRow: View {
                     .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(mode.label)
+                    mode.approvalLabelText
                         .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
                         .foregroundStyle(Color.primary)
 
-                    Text(mode.descriptionText)
+                    mode.approvalDescriptionText
                         .font(theme.ui(.tiny))
                         .foregroundStyle(.appSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -154,4 +154,14 @@ private struct ToolApprovalOptionRow: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
     }
+}
+
+extension AppPermissionMode {
+    /// `label` in the UI language. Every label and description is a catalog
+    /// key, so the composer, the Add menu and the project sheet show the
+    /// same translated names for the same consequential choice.
+    var approvalLabelText: Text { Text(LocalizedStringKey(label), bundle: .module) }
+
+    /// `descriptionText` in the UI language: what the mode allows.
+    var approvalDescriptionText: Text { Text(LocalizedStringKey(descriptionText), bundle: .module) }
 }

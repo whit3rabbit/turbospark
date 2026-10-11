@@ -245,6 +245,13 @@ PLIST
 
 printf 'APPL????' > "$contents/PkgInfo"
 
+# The in-app language picker writes AppleLanguages, which AppKit honors only
+# for languages the main bundle declares. One list, shared with the SwiftPM
+# executable that embeds it: swift/TurboSparkApp/Localization/Info.plist.
+plutil -replace CFBundleLocalizations -json \
+  "$(plutil -extract CFBundleLocalizations json -o - "$root/swift/TurboSparkApp/Localization/Info.plist")" \
+  "$contents/Info.plist"
+
 plutil -lint "$contents/Info.plist" >/dev/null
 
 echo "==> codesign (identity: ${identity})"

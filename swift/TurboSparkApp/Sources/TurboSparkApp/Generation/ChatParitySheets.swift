@@ -91,16 +91,16 @@ struct TasksStatusSheet: View {
                 }
                 Spacer()
                 if run.status == "running" {
-                    Button {
+                    Button(role: .destructive) {
                         onStop(run.id)
                     } label: { Text("Stop", bundle: .module) }
-                    .buttonStyle(.plain)
+                    .appAction(.quiet, size: .small)
                     .foregroundStyle(Color.red.opacity(0.8))
                 } else if run.isRecordedComplete {
                     Button {
                         onDismiss(run.id)
                     } label: { Text("Dismiss", bundle: .module) }
-                    .buttonStyle(.plain)
+                    .appAction(.quiet, size: .small)
                 }
                 Text(run.status)
                     .themedCode(.tiny)
@@ -124,10 +124,10 @@ struct TasksStatusSheet: View {
                     .foregroundStyle(.tertiary)
             }
             Spacer()
-            Button {
+            Button(role: .destructive) {
                 model.killBackgroundShell(id: shell.id)
             } label: { Text("Kill", bundle: .module) }
-            .buttonStyle(.plain)
+            .appAction(.quiet, size: .small)
             .foregroundStyle(Color.red.opacity(0.8))
         }
         .accessibilityElement(children: .combine)
@@ -178,14 +178,16 @@ struct StatusSheet: View {
                     statusRow("Profile", model.currentProfile.name)
                     statusRow("UI language", UserDefaults.standard.string(
                         forKey: AppLanguage.storageKey) ?? AppLanguage.system.rawValue)
-                    statusRow("Permission mode", model.effectivePermissionMode.label)
+                    statusRow("Permission mode", model.effectivePermissionMode.approvalLabelText)
                 }
                 statusGroup("Engine") {
-                    statusRow("Model", model.selected?.alias ?? "none loaded")
-                    statusRow(
-                        "Context window",
-                        model.resolvedContextTokens.formatted(.number.notation(.compactName))
-                            + " tokens")
+                    if let alias = model.selected?.alias {
+                        statusRow("Model", alias)
+                    } else {
+                        statusRow("Model", Text("none loaded", bundle: .module))
+                    }
+                    let contextTokens = model.resolvedContextTokens.formatted(.number.notation(.compactName))
+                    statusRow("Context window", Text("\(contextTokens) tokens", bundle: .module))
                     statusRow("Chip", model.telemetry?.chip ?? "-")
                     statusRow("Thermal", model.telemetry?.thermalLevel ?? "-")
                     statusRow("Memory pressure", model.telemetry?.memoryPressure ?? "-")
@@ -242,14 +244,18 @@ struct RewindSheet: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Rewind to prompt: \(target.preview)")
+                        .accessibilityLabel(Text("Rewind to prompt: \(target.preview)", bundle: .module))
                     }
                 }
                 HStack {
                     Spacer()
                     Button { dismiss() } label: { Text("Cancel", bundle: .module) }
+                        .appAction(.secondary)
                         .keyboardShortcut(.cancelAction)
-                    Button(action: rewind) { Text("Rewind", bundle: .module) }
+                    // Destructive: everything after the chosen prompt is
+                    // dropped from the conversation.
+                    Button(role: .destructive, action: rewind) { Text("Rewind", bundle: .module) }
+                        .appAction(.destructive)
                         .keyboardShortcut(.defaultAction)
                         .disabled(selectedTargetID == nil)
                 }
@@ -297,14 +303,19 @@ struct RecapSheet: View {
                         NSPasteboard.general.setString(model.recapText, forType: .string)
                         isCopied = true
                     } label: {
-                        Label(isCopied ? "Copied" : "Copy", systemImage: "doc.on.doc")
+                        Label {
+                            isCopied ? Text("Copied", bundle: .module) : Text("Copy", bundle: .module)
+                        } icon: {
+                            Image(systemName: "doc.on.doc")
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .appAction(.secondary)
                     // Copying before the recap lands would blank the clipboard.
                     .disabled(model.recapText.isEmpty)
                     .onChange(of: model.recapText) { _, _ in isCopied = false }
                     Spacer()
                     Button { dismiss() } label: { Text("Close", bundle: .module) }
+                        .appAction(.primary)
                         .keyboardShortcut(.defaultAction)
                 }
             }
@@ -320,7 +331,7 @@ struct RecapSheet: View {
 @MainActor
 @ViewBuilder
 private func sheetFrame<Content: View>(
-    title: String, iconName: String, dismiss: DismissAction,
+    title: LocalizedStringKey, iconName: String, dismiss: DismissAction,
     @ViewBuilder content: () -> Content
 ) -> some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -328,18 +339,17 @@ private func sheetFrame<Content: View>(
             Image(systemName: iconName)
                 .foregroundStyle(.appAccent)
                 .accessibilityHidden(true)
-            Text(LocalizedStringKey(title), bundle: .module)
+            Text(title, bundle: .module)
                 .themedFont(.callout, weight: .semibold)
             Spacer()
-            Button {
+            AppIconButton(
+                "xmark.circle.fill",
+                label: Text("Close \(Text(title, bundle: .module))", bundle: .module)
+            ) {
                 dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)
-            .help(Text("Close", bundle: .module))
-            .accessibilityLabel("Close \(title)")
+            .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -356,15 +366,15 @@ private func sheetFrame<Content: View>(
     .frame(width: 520, height: 460)
 }
 
-private func sectionHeader(_ title: String) -> some View {
-    Text(title)
+private func sectionHeader(_ title: LocalizedStringKey) -> some View {
+    Text(title, bundle: .module)
         .themedFont(.small, weight: .bold)
         .foregroundStyle(.appSecondary)
         .textCase(.uppercase)
 }
 
-private func emptyText(_ text: String) -> some View {
-    Text(text)
+private func emptyText(_ text: LocalizedStringKey) -> some View {
+    Text(text, bundle: .module)
         .themedFont(.small)
         .foregroundStyle(.appSecondary)
         .padding(.vertical, 20)
@@ -373,7 +383,7 @@ private func emptyText(_ text: String) -> some View {
 
 @ViewBuilder
 private func statusGroup<Content: View>(
-    _ title: String, @ViewBuilder rows: () -> Content
+    _ title: LocalizedStringKey, @ViewBuilder rows: () -> Content
 ) -> some View {
     VStack(alignment: .leading, spacing: 6) {
         sectionHeader(title)
@@ -381,13 +391,19 @@ private func statusGroup<Content: View>(
     }
 }
 
-private func statusRow(_ label: String, _ value: String) -> some View {
+/// A row whose value is data (a version, an id, a name): shown as is.
+private func statusRow(_ label: LocalizedStringKey, _ value: String) -> some View {
+    statusRow(label, Text(value))
+}
+
+/// Every row label is a catalog key.
+private func statusRow(_ label: LocalizedStringKey, _ value: Text) -> some View {
     HStack(alignment: .firstTextBaseline) {
-        Text(label)
+        Text(label, bundle: .module)
             .themedFont(.small)
             .foregroundStyle(.appSecondary)
         Spacer(minLength: 12)
-        Text(value)
+        value
             .themedCode(.small)
             .textSelection(.enabled)
             .lineLimit(1)

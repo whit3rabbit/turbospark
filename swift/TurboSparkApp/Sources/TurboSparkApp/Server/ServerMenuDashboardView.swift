@@ -12,27 +12,36 @@ struct ServerMenuDashboardView: View {
                 Spacer()
                 Menu {
                     ServerMenuBarView(model: model)
-                } label: { Image(systemName: "ellipsis.circle") }
+                } label: {
+                    Label { Text("More", bundle: .module) } icon: { Image(systemName: "ellipsis.circle") }
+                        .labelStyle(.iconOnly)
+                }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .help(Text("More", bundle: .module))
             }
             if let info = model.serverInfo {
-                Text(info.baseURL?.absoluteString ?? "\(info.host):\(info.port)")
+                Text(verbatim: info.baseURL?.absoluteString ?? "\(info.host):\(info.port)")
                     .themedCode(.small).textSelection(.enabled)
                 ServerLiveChartsView(model: model, compact: true)
             }
             HStack {
-                Button {
-                    model.server == nil ? model.startServer() : model.stopServer()
-                } label: {
-                    if model.server == nil { Text("Start Server", bundle: .module) }
-                    else { Text("Stop Server", bundle: .module) }
+                // Same roles as the API pane's status band: Start is the
+                // primary action, Stop is secondary.
+                if model.server == nil {
+                    Button { model.startServer() } label: { Text("Start Server", bundle: .module) }
+                        .appAction(.primary, size: APIControlSize.panel)
+                        .disabled(model.serverBusy)
+                } else {
+                    Button { model.stopServer() } label: { Text("Stop Server", bundle: .module) }
+                        .appAction(.secondary, size: APIControlSize.panel)
+                        .disabled(model.serverBusy)
                 }
-                .disabled(model.serverBusy)
                 Spacer()
                 Button { model.showMainWindow(navigatingTo: .server) } label: {
                     Text("Admin Panel", bundle: .module)
                 }
+                .appAction(.secondary, size: APIControlSize.panel)
             }
         }
         .padding(16)

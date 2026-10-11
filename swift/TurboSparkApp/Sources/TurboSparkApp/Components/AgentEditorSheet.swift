@@ -36,10 +36,14 @@ public struct AgentEditorSheet: View {
     public var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(agentToEdit == nil
-                    ? "Create New Agent"
-                    : "Edit Agent: \(name)", bundle: .module)
-                    .themedFont(.base, weight: .semibold)
+                Group {
+                    if agentToEdit == nil {
+                        Text("Create New Agent", bundle: .module)
+                    } else {
+                        Text("Edit Agent: \(name)", bundle: .module)
+                    }
+                }
+                .themedFont(.base, weight: .semibold)
                 Spacer()
                 Button {
                     dismiss()
@@ -62,8 +66,11 @@ public struct AgentEditorSheet: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Agent Name", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            TextField("e.g. deploy-auditor, doc-writer", text: $name)
-                                .textFieldStyle(.roundedBorder)
+                            TextField(text: $name, prompt: Text(verbatim: "deploy-auditor, doc-writer")) {
+                                Text("Agent Name", bundle: .module)
+                            }
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                                 .disabled(agentToEdit != nil)
                             Text("The name the `agent` tool and /slash commands resolve. Fixed once created.",
                                  bundle: .module)
@@ -92,8 +99,11 @@ public struct AgentEditorSheet: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Display Name", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            TextField("e.g. Deploy Auditor", text: $displayNameText)
-                                .textFieldStyle(.roundedBorder)
+                            TextField(text: $displayNameText, prompt: Text("e.g. Deploy Auditor", bundle: .module)) {
+                                Text("Display Name", bundle: .module)
+                            }
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
@@ -111,16 +121,22 @@ public struct AgentEditorSheet: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Description (when to use)", bundle: .module)
                             .themedFont(.small, weight: .semibold)
-                        TextField("Shown to the model in the agent listing and in Settings; state when this agent should be picked...", text: $descriptionText)
-                            .textFieldStyle(.roundedBorder)
+                        TextField(text: $descriptionText, prompt: Text("Shown to the model in the agent listing and in Settings; state when this agent should be picked...", bundle: .module)) {
+                            Text("Description (when to use)", bundle: .module)
+                        }
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
                     }
 
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Allowed Tools (Comma-separated)", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            TextField("e.g. FileRead, Grep, Bash", text: $allowedToolsText)
-                                .textFieldStyle(.roundedBorder)
+                            TextField(text: $allowedToolsText, prompt: Text(verbatim: "FileRead, Grep, Bash")) {
+                                Text("Allowed Tools (Comma-separated)", bundle: .module)
+                            }
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                             Text("Leave empty for the default tool set.", bundle: .module)
                                 .themedFont(.tiny)
                                 .foregroundStyle(.appSecondary)
@@ -129,8 +145,11 @@ public struct AgentEditorSheet: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Disallowed Tools (Comma-separated)", bundle: .module)
                                 .themedFont(.small, weight: .semibold)
-                            TextField("e.g. FileWrite, FileEdit, agent", text: $disallowedToolsText)
-                                .textFieldStyle(.roundedBorder)
+                            TextField(text: $disallowedToolsText, prompt: Text(verbatim: "FileWrite, FileEdit, agent")) {
+                                Text("Disallowed Tools (Comma-separated)", bundle: .module)
+                            }
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
                             Text("Refused even if the allowlist would permit them.", bundle: .module)
                                 .themedFont(.tiny)
                                 .foregroundStyle(.appSecondary)
@@ -142,14 +161,8 @@ public struct AgentEditorSheet: View {
                             .themedFont(.small, weight: .semibold)
                         TextEditor(text: $systemPrompt)
                             .themedCode(.base)
-                            .frame(minHeight: 180)
-                            .padding(4)
-                            .background(.appElevated)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(.appBorder, lineWidth: 1)
-                            )
+                            .appEditorSurface(minHeight: 180)
+                            .accessibilityLabel(Text("System Prompt", bundle: .module))
                     }
                 }
                 .padding(20)
@@ -164,10 +177,13 @@ public struct AgentEditorSheet: View {
                 Button {
                     saveAction()
                 } label: {
-                    Text(agentToEdit == nil ? "Create Agent" : "Save", bundle: .module)
+                    if agentToEdit == nil {
+                        Text("Create Agent", bundle: .module)
+                    } else {
+                        Text("Save", bundle: .module)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(TurboSparkTheme.accentColor)
+                .appAction(.primary)
                 .disabled(!canSave)
                 .keyboardShortcut(.defaultAction)
             }

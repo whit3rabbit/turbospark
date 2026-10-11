@@ -22,18 +22,18 @@ struct AudioGenerationProgress {
 
     var title: String {
         switch phase {
-        case .preparing: return String(localized: "Encoding prompt", bundle: .module)
-        case .composing: return String(localized: "Generating music", bundle: .module)
-        case .rendering: return String(localized: "Rendering audio", bundle: .module)
-        case .saving: return String(localized: "Saving audio", bundle: .module)
+        case .preparing: return AppStrings.localized("Encoding prompt")
+        case .composing: return AppStrings.localized("Generating music")
+        case .rendering: return AppStrings.localized("Rendering audio")
+        case .saving: return AppStrings.localized("Saving audio")
         }
     }
 
     var counter: String? {
         guard let total else { return nil }
         let label = phase == .composing
-            ? String(localized: "Frames", bundle: .module)
-            : String(localized: "Chunks", bundle: .module)
+            ? AppStrings.localized("Frames")
+            : AppStrings.localized("Chunks")
         return "\(label): \(completed) / \(total)"
     }
 
@@ -48,7 +48,7 @@ struct AudioGenerationProgress {
                 detail = nil
             } else if event.stage == "depth", let count = event.total, count > 0 {
                 // These are completed inner steps, not completed audio frames.
-                let label = String(localized: "Steps", bundle: .module)
+                let label = AppStrings.localized("Steps")
                 detail = "\(label): \(max(0, min(count, event.completed))) / \(count)"
             }
         case "flow_chunk":
@@ -60,8 +60,8 @@ struct AudioGenerationProgress {
             guard phase == .rendering else { return }
             if let count = event.total, count > 0 {
                 let label = event.stage == "euler"
-                    ? String(localized: "Denoising", bundle: .module)
-                    : String(localized: "Decoding", bundle: .module)
+                    ? AppStrings.localized("Denoising")
+                    : AppStrings.localized("Decoding")
                 detail = "\(label): \(max(0, min(count, event.completed))) / \(count)"
             }
         default: return
@@ -90,10 +90,10 @@ extension AudioWorkspaceController {
             progress = generation.fraction
         } else {
             switch update.stage {
-            case "Preparing reference audio": status = String(localized: "Preparing reference audio", bundle: .module)
-            case "Loading speech model": status = String(localized: "Loading speech model", bundle: .module)
-            case "Generating speech", "diffusion": status = String(localized: "Generating speech", bundle: .module)
-            case "reference": status = String(localized: "Preparing reference audio", bundle: .module)
+            case "Preparing reference audio": status = AppStrings.localized("Preparing reference audio")
+            case "Loading speech model": status = AppStrings.localized("Loading speech model")
+            case "Generating speech", "diffusion": status = AppStrings.localized("Generating speech")
+            case "reference": status = AppStrings.localized("Preparing reference audio")
             default: status = update.stage
             }
             progress = update.total.flatMap { $0 > 0 ? Double(max(0, min($0, update.completed))) / Double($0) : nil }
@@ -105,7 +105,7 @@ extension AudioWorkspaceController {
               (1...8).contains(audio.format.channels), !audio.samples.isEmpty,
               audio.samples.count % Int(audio.format.channels) == 0,
               audio.samples.allSatisfy(\.isFinite) else {
-            throw AudioWorkspaceError.message(String(localized: "There is no audio to play or export.", bundle: .module))
+            throw AudioWorkspaceError.message(AppStrings.localized("There is no audio to play or export."))
         }
         return audio
     }

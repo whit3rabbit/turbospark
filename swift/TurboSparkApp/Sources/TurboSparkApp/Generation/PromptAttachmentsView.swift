@@ -57,10 +57,10 @@ struct PromptAttachmentChipView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Preview \(attachment.fileName)")
-            .accessibilityLabel("Preview \(attachment.fileName)")
+            .help(Text("Preview \(attachment.fileName)", bundle: .module))
+            .accessibilityLabel(Text("Preview \(attachment.fileName)", bundle: .module))
             .accessibilityValue(detailText)
-            .accessibilityHint("Opens this document in the preview pane")
+            .accessibilityHint(Text("Opens this document in the preview pane", bundle: .module))
 
             Button(action: onRemove) {
                 Image(systemName: "xmark")
@@ -71,9 +71,9 @@ struct PromptAttachmentChipView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.tertiary)
             .disabled(isRunning)
-            .help("Remove \(attachment.fileName)")
-            .accessibilityLabel("Remove attachment \(attachment.fileName)")
-            .accessibilityHint("Detaches this document from the prompt")
+            .help(Text("Remove \(attachment.fileName)", bundle: .module))
+            .accessibilityLabel(Text("Remove attachment \(attachment.fileName)", bundle: .module))
+            .accessibilityHint(Text("Detaches this document from the prompt", bundle: .module))
         }
         .frame(maxWidth: 220, alignment: .leading)
         .padding(.leading, 8)

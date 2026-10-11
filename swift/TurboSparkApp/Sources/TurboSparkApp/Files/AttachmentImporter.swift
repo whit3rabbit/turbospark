@@ -111,9 +111,7 @@ enum AttachmentImporter {
         }
         if overContextCount > 0 {
             model.showToast(
-                String(
-                    localized: "Some attached files may not fit the free context window.",
-                    bundle: .module),
+                AppStrings.localized("Some attached files may not fit the free context window."),
                 style: .warning,
                 duration: 6)
         }
@@ -142,7 +140,8 @@ enum AttachmentImporter {
         guard !collectedURLs.isEmpty else {
             return Outcome(
                 importedCount: 0,
-                failures: ["No supported code, text, or document files found in \(folderURL.lastPathComponent)."]
+                failures: [AppStrings.localized(
+                    "No supported code, text, or document files found in \(folderURL.lastPathComponent).")]
             )
         }
 

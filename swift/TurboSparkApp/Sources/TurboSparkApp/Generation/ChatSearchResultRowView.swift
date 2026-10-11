@@ -30,11 +30,15 @@ struct ChatSearchResultRowView: View {
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: 2) {
                 if hit.matchCount > 0 {
-                    Text(hit.matchCount == 1 ? "1 match" : "\(hit.matchCount) matches")
+                    // A label rather than "N matches": the fragment format
+                    // carries no plural variants, and "Matches: N" reads
+                    // correctly for every count in every language.
+                    Text("Matches: \(hit.matchCount)", bundle: .module)
                         .font(theme.ui(.tiny, weight: .medium))
                         .foregroundStyle(.appAccent)
                 }
-                Text(ChatSearch.dateBucket(hit.updatedAt))
+                // Every bucket `dateBucket` returns is a catalog key.
+                Text(LocalizedStringKey(ChatSearch.dateBucket(hit.updatedAt)), bundle: .module)
                     .font(theme.ui(.tiny))
                     .foregroundStyle(.tertiary)
             }
@@ -48,7 +52,7 @@ struct ChatSearchResultRowView: View {
     /// Folds the snippet's pre-cut segments into one `Text`, coloring the
     /// matched tokens. The engine did the searching; this only renders it.
     private func snippetText(_ snippet: ChatSearch.Snippet) -> Text {
-        var text = Text("")
+        var text = Text(verbatim: "")
         for segment in snippet.segments {
             let piece = Text(segment.text)
             text = text + (segment.isMatch

@@ -41,21 +41,20 @@ struct NewChatSuggestionBanner: View {
                     Text("Dismiss", bundle: .module)
                         .themedFont(.small)
                 }
-                .buttonStyle(.plain)
+                .appAction(.quiet, size: .small)
                 .foregroundStyle(.appSecondary)
-                .help("Hide this suggestion for this chat")
-                .accessibilityLabel("Dismiss new chat suggestion")
+                .help(Text("Hide this suggestion for this chat", bundle: .module))
+                .accessibilityLabel(Text("Dismiss new chat suggestion", bundle: .module))
                 Button {
                     model.createChat()
                 } label: {
                     Text("New Chat", bundle: .module)
                         .themedFont(.small, weight: .semibold)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .appAction(.primary, size: .small)
                 .disabled(model.isRunning)
-                .help("Start a fresh conversation (Cmd+N)")
-                .accessibilityLabel("Start a new chat")
+                .help(Text("Start a fresh conversation (Cmd+N)", bundle: .module))
+                .accessibilityLabel(Text("Start a new chat", bundle: .module))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)

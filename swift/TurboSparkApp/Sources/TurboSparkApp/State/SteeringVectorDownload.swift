@@ -80,15 +80,16 @@ enum SteeringVectorDownloadError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .invalidSource(message): return message
-        case .invalidResponse: return "Hugging Face returned an invalid download response."
+        case .invalidResponse: return AppStrings.localized("Hugging Face returned an invalid download response.")
         case let .httpStatus(status):
             if status == 401 || status == 403 {
-                return "Hugging Face denied this file. Sign in under Settings > Models if it is gated."
+                return AppStrings.localized(
+                    "Hugging Face denied this file. Sign in under Settings > Models if it is gated.")
             }
-            if status == 404 { return "That repository, revision, or .gguf file was not found." }
-            return "Hugging Face returned HTTP " + String(status) + "."
+            if status == 404 { return AppStrings.localized("That repository, revision, or .gguf file was not found.") }
+            return AppStrings.localized("Hugging Face returned HTTP \(status).")
         case .tooLarge:
-            return "This file is larger than the 32 MB control-vector limit."
+            return AppStrings.localized("This file is larger than the 32 MB control-vector limit.")
         case let .shapeMismatch(message): return message
         }
     }
@@ -213,7 +214,7 @@ enum SteeringVectorDownloader {
     ) async throws -> DownloadedSteeringVector {
         guard let url = source.downloadURL else {
             throw SteeringVectorDownloadError.invalidSource(
-                source.validationError ?? "Invalid Hugging Face vector source.")
+                source.validationError ?? AppStrings.localized("Invalid Hugging Face vector source."))
         }
 
         var request = URLRequest(url: url)
@@ -252,19 +253,17 @@ enum SteeringVectorDownloader {
         do {
             info = try TurboSparkCatalog.controlVectorInfo(path: temporary.path)
         } catch {
-            throw SteeringVectorDownloadError.invalidSource(
-                "The downloaded file is not a control vector this engine can read: "
-                    + error.localizedDescription)
+            let detail = error.localizedDescription
+            throw SteeringVectorDownloadError.invalidSource(AppStrings.localized(
+                "The downloaded file is not a control vector this engine can read: \(detail)"))
         }
         if let expectedHidden, info.hidden != expectedHidden {
-            throw SteeringVectorDownloadError.shapeMismatch(
-                "This vector is " + String(info.hidden) + " wide, but this model is "
-                    + String(expectedHidden) + " wide.")
+            throw SteeringVectorDownloadError.shapeMismatch(AppStrings.localized(
+                "This vector is \(info.hidden) wide, but this model is \(expectedHidden) wide."))
         }
         if let expectedLayers, info.spannedLayers > expectedLayers {
-            throw SteeringVectorDownloadError.shapeMismatch(
-                "This vector spans " + String(info.spannedLayers)
-                    + " layers, but this model has " + String(expectedLayers) + ".")
+            throw SteeringVectorDownloadError.shapeMismatch(AppStrings.localized(
+                "This vector spans \(info.spannedLayers) layers, but this model has \(expectedLayers)."))
         }
 
         let destination = managedPath(for: source)

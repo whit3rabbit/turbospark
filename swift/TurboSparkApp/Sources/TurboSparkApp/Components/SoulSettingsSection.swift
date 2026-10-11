@@ -34,7 +34,7 @@ struct SoulSettingsSection: View {
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
 
-                    Text(verbatim: statusDescription)
+                    statusDescription
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
@@ -42,9 +42,9 @@ struct SoulSettingsSection: View {
             .padding(.vertical, 4)
 
             Picker(selection: selectedSoulBinding) {
-                Text(verbatim: "None").tag(UUID?.none)
+                Text("None", bundle: .module).tag(UUID?.none)
                 ForEach(model.soulPrompts) { soul in
-                    Text(soul.name).tag(Optional(soul.id))
+                    Text(verbatim: soul.name).tag(Optional(soul.id))
                 }
             } label: {
                 Text("Active Soul", bundle: .module)
@@ -54,64 +54,15 @@ struct SoulSettingsSection: View {
 
             TextEditor(text: $content)
                 .themedCode(.base)
-                .frame(minHeight: 150)
+                .appEditorSurface(minHeight: 150)
                 .disabled(!model.soulPromptEnabled)
                 .accessibilityLabel(Text("SOUL.md content", bundle: .module))
 
-            HStack {
-                Button {
-                    save()
-                } label: {
-                    Text("Save", bundle: .module)
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!model.soulPromptEnabled || model.selectedSoulPrompt == nil)
-
-                Button {
-                    showingSaveAsNewSheet = true
-                } label: {
-                    Text("Save As New...", bundle: .module)
-                }
-                .disabled(!model.soulPromptEnabled)
-
-                if model.selectedSoulPrompt != nil {
-                    Button(role: .destructive) {
-                        deleteSelected()
-                    } label: {
-                        Text("Delete Selected", bundle: .module)
-                    }
-                    .disabled(!model.soulPromptEnabled)
-                }
-
-                ForEach(model.detectedSoulImportSources) { source in
-                    Button {
-                        importSource(source)
-                    } label: {
-                        importLabel(for: source.kind)
-                    }
-                }
-
-                if !hermesDetected {
-                    Button {
-                        createHermes()
-                    } label: {
-                        Text("Create Hermes SOUL.md", bundle: .module)
-                            .settingsControl("Create Hermes SOUL.md", pane: .soul, timing: .nextTurn)
-                    }
-                }
-
-                Spacer()
-            }
-
-            Button {
-                isImportingFile = true
-            } label: {
-                Text("Load File...", bundle: .module)
-            }
-            .settingsControl("Load File...", pane: .soul, timing: .nextTurn)
+            editActions
+            importActions
 
             if let statusMessage {
-                Text(statusMessage)
+                Text(verbatim: statusMessage)
                     .themedFont(.small)
                     .foregroundStyle(.appAccent)
             }
@@ -129,19 +80,97 @@ struct SoulSettingsSection: View {
         .sheet(isPresented: $showingSaveAsNewSheet) {
             SoulNameSheet(content: content) { name in
                 let prompt = model.addSoulPrompt(name: name, content: content)
-                statusMessage = "Saved \(prompt.name)."
+                statusMessage = AppStrings.localized("Saved \(prompt.name).")
             }
         }
     }
 
-    private var statusDescription: String {
+    /// What the editor writes back: a fixed set, so the row cannot grow.
+    private var editActions: some View {
+        HStack(spacing: AppMetrics.actionSpacing) {
+            Button {
+                save()
+            } label: {
+                Text("Save", bundle: .module)
+            }
+            .appAction(.primary, size: .small)
+            .keyboardShortcut(.defaultAction)
+            .disabled(!model.soulPromptEnabled || model.selectedSoulPrompt == nil)
+
+            Button {
+                showingSaveAsNewSheet = true
+            } label: {
+                Text("Save As New...", bundle: .module)
+            }
+            .appAction(.secondary, size: .small)
+            .disabled(!model.soulPromptEnabled)
+
+            if model.selectedSoulPrompt != nil {
+                Button(role: .destructive) {
+                    deleteSelected()
+                } label: {
+                    Text("Delete Selected", bundle: .module)
+                }
+                .appAction(.destructive, size: .small)
+                .disabled(!model.soulPromptEnabled)
+            }
+
+            Spacer()
+        }
+    }
+
+    /// Every way in, behind one labeled menu. The detected sources used to be
+    /// one button each in the save row, which grew with every app found on
+    /// the machine. The items keep their own search anchors; a menu item is
+    /// not mounted until the menu opens, so the menu carries one too.
+    private var importActions: some View {
+        HStack(spacing: AppMetrics.actionSpacing) {
+            Menu {
+                ForEach(model.detectedSoulImportSources) { source in
+                    Button {
+                        importSource(source)
+                    } label: {
+                        importLabel(for: source.kind)
+                    }
+                }
+                if !model.detectedSoulImportSources.isEmpty {
+                    Divider()
+                }
+                Button {
+                    isImportingFile = true
+                } label: {
+                    Text("Load File...", bundle: .module)
+                        .settingsControl("Load File...", pane: .soul, timing: .nextTurn)
+                }
+            } label: {
+                Label { Text("Import", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+            }
+            .appMenuAction(size: .small)
+            .help(Text("Import SOUL.md from a detected app or a file", bundle: .module))
+            .settingsControl("Import", pane: .soul, timing: .nextTurn)
+
+            if !hermesDetected {
+                Button {
+                    createHermes()
+                } label: {
+                    Text("Create Hermes SOUL.md", bundle: .module)
+                        .settingsControl("Create Hermes SOUL.md", pane: .soul, timing: .nextTurn)
+                }
+                .appAction(.secondary, size: .small)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var statusDescription: Text {
         if !model.soulPromptEnabled {
-            return "SOUL.md is disabled. Imports stay available and take effect when enabled."
+            return Text("SOUL.md is disabled. Imports stay available and take effect when enabled.", bundle: .module)
         }
         guard let selected = model.selectedSoulPrompt else {
-            return "Enabled. No soul selected."
+            return Text("Enabled. No soul selected.", bundle: .module)
         }
-        return "Using saved soul \"\(selected.name)\"."
+        return Text("Using saved soul \"\(selected.name)\".", bundle: .module)
     }
 
     private var selectedSoulBinding: Binding<UUID?> {
@@ -158,7 +187,7 @@ struct SoulSettingsSection: View {
     private func save() {
         guard let selected = model.selectedSoulPrompt else { return }
         model.updateSoulPrompt(id: selected.id, content: content)
-        statusMessage = "SOUL.md saved."
+        statusMessage = AppStrings.localized("SOUL.md saved.")
     }
 
     private func deleteSelected() {
@@ -182,11 +211,13 @@ struct SoulSettingsSection: View {
         do {
             try model.importSoul(from: source)
             reload()
+            // Hermes and OpenClaw are product names; only the frame translates.
+            let sourceName = source.displayName
             statusMessage = model.soulPromptEnabled
-                ? "Imported \(source.displayName) SOUL.md."
-                : "Imported \(source.displayName) SOUL.md. Enable SOUL.md to use it."
+                ? AppStrings.localized("Imported \(sourceName) SOUL.md.")
+                : AppStrings.localized("Imported \(sourceName) SOUL.md. Enable SOUL.md to use it.")
         } catch {
-            statusMessage = "Could not import SOUL.md: \(error.localizedDescription)"
+            statusMessage = AppStrings.localized("Could not import SOUL.md: \(error.localizedDescription)")
         }
     }
 
@@ -199,19 +230,19 @@ struct SoulSettingsSection: View {
             try model.importSoul(from: url, name: name)
             reload()
             statusMessage = model.soulPromptEnabled
-                ? "Loaded \(name) SOUL.md."
-                : "Loaded \(name) SOUL.md. Enable SOUL.md to use it."
+                ? AppStrings.localized("Loaded \(name) SOUL.md.")
+                : AppStrings.localized("Loaded \(name) SOUL.md. Enable SOUL.md to use it.")
         } catch {
-            statusMessage = "Could not load SOUL.md: \(error.localizedDescription)"
+            statusMessage = AppStrings.localized("Could not load SOUL.md: \(error.localizedDescription)")
         }
     }
 
     private func createHermes() {
         do {
             try model.createHermesSoul(content: content)
-            statusMessage = "Created Hermes SOUL.md."
+            statusMessage = AppStrings.localized("Created Hermes SOUL.md.")
         } catch {
-            statusMessage = "Could not create SOUL.md: \(error.localizedDescription)"
+            statusMessage = AppStrings.localized("Could not create SOUL.md: \(error.localizedDescription)")
         }
     }
 }
@@ -244,7 +275,9 @@ private struct SoulNameSheet: View {
             Divider()
 
             Form {
-                TextField("Name", text: $name)
+                TextField(text: $name) {
+                    Text("Name", bundle: .module)
+                }
             }
             .formStyle(.grouped)
 
@@ -256,6 +289,7 @@ private struct SoulNameSheet: View {
                     onSave(name)
                     dismiss()
                 } label: { Text("Save", bundle: .module) }
+                    .appAction(.primary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSave)
             }

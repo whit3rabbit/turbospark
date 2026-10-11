@@ -85,8 +85,8 @@ struct ProjectPermissionsSectionView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .themedFont(.small)
-                .accessibilityLabel("Permission presets")
-                .accessibilityHint("Applies a recommended set of tool permissions")
+                .accessibilityLabel(Text("Permission presets", bundle: .module))
+                .accessibilityHint(Text("Applies a recommended set of tool permissions", bundle: .module))
             }
 
             // Mode Selector
@@ -97,17 +97,23 @@ struct ProjectPermissionsSectionView: View {
 
                 Picker(selection: $permissionMode) {
                     ForEach(AppPermissionMode.allCases) { mode in
-                        Label(mode.shortLabel, systemImage: mode.systemImage).tag(mode)
+                        // Every short label is a catalog key.
+                        Label {
+                            Text(LocalizedStringKey(mode.shortLabel), bundle: .module)
+                        } icon: {
+                            Image(systemName: mode.systemImage)
+                        }
+                        .tag(mode)
                     }
                 } label: { Text("Execution Mode", bundle: .module) }
                 .pickerStyle(.menu)
-                .accessibilityLabel("Permission execution mode")
+                .accessibilityLabel(Text("Permission execution mode", bundle: .module))
 
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: permissionMode.systemImage)
                         .foregroundStyle(.appAccent)
                         .themedFont(.small)
-                    Text(permissionMode.descriptionText)
+                    permissionMode.approvalDescriptionText
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)
                 }
@@ -140,14 +146,16 @@ struct ProjectPermissionsSectionView: View {
                         .foregroundStyle(.appSecondary)
                 }
                 Spacer()
-                Picker("", selection: $guardrailsOption) {
+                Picker(selection: $guardrailsOption) {
                     Text("Auto (Model Default)", bundle: .module).tag(AppProjectGuardrailsOption.auto)
                     Text("Always Enabled", bundle: .module).tag(AppProjectGuardrailsOption.enabled)
                     Text("Always Disabled", bundle: .module).tag(AppProjectGuardrailsOption.disabled)
+                } label: {
+                    Text("Forge Guardrails project preference", bundle: .module)
                 }
                 .pickerStyle(.menu)
+                .labelsHidden()
                 .frame(width: 175)
-                .accessibilityLabel("Forge Guardrails project preference")
             }
             .padding(12)
             .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
@@ -160,15 +168,16 @@ struct ProjectPermissionsSectionView: View {
                 .themedFont(.base, weight: .medium)
 
             Picker(
-                "Browser access",
                 selection: Binding(
                     get: { browserPermissionModel.permission },
                     set: { browserPermissionModel.setPermission($0) }
                 )
             ) {
                 ForEach(AppToolPermission.allCases) { permission in
-                    Text(permission.label).tag(permission)
+                    Text(LocalizedStringKey(permission.label), bundle: .module).tag(permission)
                 }
+            } label: {
+                Text("Browser access", bundle: .module)
             }
             .pickerStyle(.menu)
             .accessibilityLabel(Text("Browser access", bundle: .module))
@@ -189,23 +198,33 @@ struct ProjectPermissionsSectionView: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer(minLength: 4)
-                            Button("Remove", role: .destructive) {
+                            Button(role: .destructive) {
                                 browserPermissionModel.revokeOrigin(origin)
+                            } label: {
+                                Text("Remove", bundle: .module)
                             }
-                            .buttonStyle(.borderless)
+                            .appAction(.quiet, size: .small)
                         }
                     }
                 }
             }
 
             HStack(spacing: 8) {
-                TextField("https://example.com", text: $browserPermissionModel.originDraft)
+                // The prompt is an example origin, not prose.
+                TextField(
+                    text: $browserPermissionModel.originDraft,
+                    prompt: Text(verbatim: "https://example.com")
+                ) {
+                    Text("Exact HTTP(S) origin", bundle: .module)
+                }
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel(Text("Exact HTTP(S) origin", bundle: .module))
-                Button("Add") {
+                Button {
                     browserPermissionModel.addOrigin()
+                } label: {
+                    Text("Add", bundle: .module)
                 }
-                .buttonStyle(.bordered)
+                .appAction(.secondary)
             }
 
             if let feedback = browserPermissionModel.feedback {
@@ -219,24 +238,30 @@ struct ProjectPermissionsSectionView: View {
         .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private func permissionRow(title: String, desc: String, selection: Binding<AppToolPermission>) -> some View {
+    /// `title` and `desc` are catalog keys; the picker carries `title` as
+    /// its accessible name, so VoiceOver says which category it sets.
+    private func permissionRow(
+        title: LocalizedStringKey, desc: LocalizedStringKey, selection: Binding<AppToolPermission>
+    ) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(title, bundle: .module)
                     .themedFont(.base, weight: .medium)
-                Text(desc)
+                Text(desc, bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Picker("", selection: selection) {
+            Picker(selection: selection) {
                 ForEach(AppToolPermission.allCases) { perm in
-                    Text(perm.label).tag(perm)
+                    Text(LocalizedStringKey(perm.label), bundle: .module).tag(perm)
                 }
+            } label: {
+                Text(title, bundle: .module)
             }
             .pickerStyle(.menu)
+            .labelsHidden()
             .frame(width: 175)
-            .accessibilityLabel("\(title) permission")
         }
     }
 

@@ -53,19 +53,21 @@ extension AppModel {
     public func generateImage() {
         let prompt = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
-            showToast("Enter an image prompt first.", style: .warning)
+            showToast(AppStrings.localized("Enter an image prompt first."), style: .warning)
             return
         }
         guard !imageModelPath.isEmpty else {
-            showToast("Select an image .gturbo install first.", style: .warning)
+            showToast(AppStrings.localized("Select an image .gturbo install first."), style: .warning)
             return
         }
         guard hasSupportedSelectedImageModel else {
-            showToast("Select a supported MLX image model from the curated list.", style: .warning)
+            showToast(
+                AppStrings.localized("Select a supported MLX image model from the curated list."),
+                style: .warning)
             return
         }
         guard !isInGhostChat else {
-            showToast("Image generation is unavailable in a temporary chat.", style: .warning)
+            showToast(AppStrings.localized("Image generation is unavailable in a temporary chat."), style: .warning)
             return
         }
         guard canStartImageGeneration else { return }
@@ -76,7 +78,7 @@ extension AppModel {
         } else if let parsed = UInt64(seedText) {
             seed = parsed
         } else {
-            showToast("Seed must be an unsigned integer or blank for random.", style: .warning)
+            showToast(AppStrings.localized("Seed must be an unsigned integer or blank for random."), style: .warning)
             return
         }
         let options = imageGenerateOptions(prompt: prompt, seed: seed)
@@ -147,11 +149,13 @@ extension AppModel {
     public func regenerateImage() {
         guard let job = imageJob else { return }
         guard !imageModelPath.isEmpty else {
-            showToast("Select an image .gturbo install first.", style: .warning)
+            showToast(AppStrings.localized("Select an image .gturbo install first."), style: .warning)
             return
         }
         guard hasSupportedSelectedImageModel else {
-            showToast("Select a supported MLX image model from the curated list.", style: .warning)
+            showToast(
+                AppStrings.localized("Select a supported MLX image model from the curated list."),
+                style: .warning)
             return
         }
         guard canStartImageGeneration else { return }
@@ -160,15 +164,17 @@ extension AppModel {
 
     public func regenerateImage(from artifact: AppArtifact) {
         guard let request = artifact.imageRequest else {
-            showToast("This saved image has no request metadata to regenerate.", style: .warning)
+            showToast(AppStrings.localized("This saved image has no request metadata to regenerate."), style: .warning)
             return
         }
         guard !imageModelPath.isEmpty else {
-            showToast("Select an image .gturbo install first.", style: .warning)
+            showToast(AppStrings.localized("Select an image .gturbo install first."), style: .warning)
             return
         }
         guard hasSupportedSelectedImageModel else {
-            showToast("Select a supported MLX image model from the curated list.", style: .warning)
+            showToast(
+                AppStrings.localized("Select a supported MLX image model from the curated list."),
+                style: .warning)
             return
         }
         guard canStartImageGeneration else { return }
@@ -200,7 +206,7 @@ extension AppModel {
             registerSavedImage(job: job, asset: asset)
             return true
         } catch {
-            showToast("Could not save image: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Could not save image: \(error.localizedDescription)"), style: .error)
             return false
         }
     }
@@ -211,7 +217,7 @@ extension AppModel {
         png: Data, prompt: String, seed: UInt64, width: UInt32, height: UInt32
     ) -> Bool {
         guard !isInGhostChat else {
-            showToast("Saving is unavailable in a temporary chat.", style: .warning)
+            showToast(AppStrings.localized("Saving is unavailable in a temporary chat."), style: .warning)
             return false
         }
         let chatID = selectedChatID
@@ -225,10 +231,10 @@ extension AppModel {
             let asset = try ManagedAssetStore.shared.store(
                 data: png, fileName: "\(job.id.uuidString).png", mimeType: "image/png")
             registerSavedImage(job: job, asset: asset)
-            showToast("Image saved to gallery", style: .success)
+            showToast(AppStrings.localized("Image saved to gallery"), style: .success)
             return true
         } catch {
-            showToast("Could not save image: \(error.localizedDescription)", style: .error)
+            showToast(AppStrings.localized("Could not save image: \(error.localizedDescription)"), style: .error)
             return false
         }
     }
@@ -238,7 +244,9 @@ extension AppModel {
     ) {
         guard imageGenerationTask == nil else { return }
         guard hasSupportedSelectedImageModel else {
-            showToast("Select a supported MLX image model from the curated list.", style: .warning)
+            showToast(
+                AppStrings.localized("Select a supported MLX image model from the curated list."),
+                style: .warning)
             return
         }
         let requests = ImageGenerationSequence.requests(options: options, count: count)
@@ -322,7 +330,9 @@ extension AppModel {
                     current.status = .failed
                     self.imageJob = current
                 }
-                self.showToast("Image generation failed: \(error.localizedDescription)", style: .error)
+                self.showToast(
+                    AppStrings.localized("Image generation failed: \(error.localizedDescription)"),
+                    style: .error)
             }
             // A cancelled stream ends the consumer at once, but the detached
             // MLX producer keeps going until its next cancellation point.

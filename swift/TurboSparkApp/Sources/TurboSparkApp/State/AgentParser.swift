@@ -11,13 +11,13 @@ public enum AgentParseError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .fileNotFound(let path):
-            return "Agent file not found at: \(path)"
+            return AppStrings.localized("Agent file not found at: \(path)")
         case .invalidEncoding(let path):
-            return "Could not read agent file with UTF-8 encoding from: \(path)"
+            return AppStrings.localized("Could not read agent file with UTF-8 encoding from: \(path)")
         case .escapesProjectRoot(let path):
-            return "Agent file resolves outside the project root: \(path)"
+            return AppStrings.localized("Agent file resolves outside the project root: \(path)")
         case .invalidFormat(let msg):
-            return "Invalid agent format: \(msg)"
+            return AppStrings.localized("Invalid agent format: \(msg)")
         }
     }
 }
@@ -131,7 +131,8 @@ public enum AgentParser {
     ) throws -> AppAgentDefinition {
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw AgentParseError.invalidFormat("Malformed JSON in agent definition.")
+            throw AgentParseError.invalidFormat(
+                AppStrings.localized("Malformed JSON in agent definition."))
         }
 
         var fallbackName = sourceURL.deletingPathExtension().lastPathComponent

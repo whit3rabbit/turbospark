@@ -3,6 +3,9 @@ import SwiftUI
 import TurboSpark
 
 /// Moves the managed TurboSpark store to a new, empty root.
+// Isolated explicitly: its helpers call each other, and only `body` is
+// isolated by the protocol on the macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
+@MainActor
 struct ModelStoreMigrationSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -28,8 +31,8 @@ struct ModelStoreMigrationSheet: View {
                 .foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            locationRow(title: "Current store", path: currentRoot)
-            locationRow(title: "New store", path: destination.isEmpty ? "Choose a folder" : destination)
+            locationRow(title: Text("Current store", bundle: .module), path: currentRoot)
+            locationRow(title: Text("New store", bundle: .module), path: destination.isEmpty ? nil : destination)
 
             if !model.canRelocateModelStore {
                 Label {
@@ -61,20 +64,23 @@ struct ModelStoreMigrationSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack {
+            HStack(spacing: AppMetrics.actionSpacing) {
+                Button { chooseDestination() } label: {
+                    Text("Choose Folder...", bundle: .module)
+                }
+                .appAction(.secondary)
+                .disabled(isMoving)
                 Spacer()
                 Button(role: .cancel) { dismiss() } label: {
                     Text("Cancel", bundle: .module)
                 }
-                .disabled(isMoving)
-                Button { chooseDestination() } label: {
-                    Text("Choose Folder...", bundle: .module)
-                }
+                .keyboardShortcut(.cancelAction)
                 .disabled(isMoving)
                 Button { moveStore() } label: {
                     Text("Move Store", bundle: .module)
                 }
-                .buttonStyle(.borderedProminent)
+                .appAction(.primary)
+                .keyboardShortcut(.defaultAction)
                 .disabled(!canMove)
             }
         }
@@ -82,27 +88,35 @@ struct ModelStoreMigrationSheet: View {
         .frame(width: 560)
     }
 
-    private func locationRow(title: String, path: String) -> some View {
+    /// `path` is nil until a destination is chosen. The placeholder used to
+    /// be the English sentinel string itself, compared by value and resolved
+    /// through `String(localized:)`, which follows the system language
+    /// rather than the in-app picker.
+    private func locationRow(title: Text, path: String?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(LocalizedStringKey(title), bundle: .module)
+            title
                 .themedFont(.tiny, weight: .semibold)
                 .foregroundStyle(.appSecondary)
-            Text(path == "Choose a folder" ? String(localized: "Choose a folder", bundle: .module) : path)
-                .themedCode(.small)
-                .textSelection(.enabled)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(9)
-                .background(.appSurface, in: RoundedRectangle(cornerRadius: 7))
+            Group {
+                if let path {
+                    SettingsPathText(path)
+                } else {
+                    Text("Choose a folder", bundle: .module)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(9)
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
     }
 
     private func chooseDestination() {
         let panel = NSOpenPanel()
-        panel.title = "Choose TurboSpark Store Location"
-        panel.message = "Choose an empty folder on this Mac or an external drive."
-        panel.prompt = "Choose Store"
+        panel.title = AppStrings.localized("Choose TurboSpark Store Location")
+        panel.message = AppStrings.localized("Choose an empty folder on this Mac or an external drive.")
+        panel.prompt = AppStrings.localized("Choose Store")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
@@ -132,7 +146,9 @@ struct ModelStoreMigrationSheet: View {
                         ModelStoreRootRecord.save(result.destination)
                         model.persistSettings()
                         model.refreshModels()
-                        model.showToast("Moved TurboSpark models to \(result.destination)", style: .success, duration: 5)
+                        model.showToast(
+                            AppStrings.localized("Moved TurboSpark models to \(result.destination)"),
+                            style: .success, duration: 5)
                         isMoving = false
                         dismiss()
                     }

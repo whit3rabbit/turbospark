@@ -49,7 +49,7 @@ struct SidebarSectionNavView: View {
             }
         }
         .padding(.horizontal, 8)
-        .animation(TSMotion.select, value: model.activeSection)
+        .tsAnimation(TSMotion.select, value: model.activeSection)
     }
 
     private func sectionRow(_ section: AppModel.AppNavigationSection) -> some View {
@@ -111,7 +111,7 @@ struct SidebarSectionNavView: View {
         .accessibilityLabel(Text(LocalizedStringKey(section.title), bundle: .module))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .onHover { hovering in
-            withAnimation(TSMotion.hover) {
+            TSMotion.animate(TSMotion.hover) {
                 if hovering {
                     hoveredSection = section
                 } else if hoveredSection == section {

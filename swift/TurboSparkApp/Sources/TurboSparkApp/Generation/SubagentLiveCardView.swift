@@ -17,9 +17,19 @@ struct SubagentLiveCardView: View {
 
     private var isRunning: Bool { state.status == "running" }
 
-    private var statusText: String {
-        if isRunning { return "Turn \(state.turns)" }
-        return state.status
+    /// The run's status in the UI language. The engine reports a small set
+    /// of lowercase states; one it adds later shows as sent rather than
+    /// vanishing.
+    private var statusText: Text {
+        if isRunning { return Text("Turn \(state.turns)", bundle: .module) }
+        switch state.status {
+        case "completed": return Text("Completed", bundle: .module)
+        case "killed": return Text("Killed", bundle: .module)
+        case "cancelled": return Text("Cancelled", bundle: .module)
+        case "error": return Text("Error", bundle: .module)
+        case "failed": return Text("Failed", bundle: .module)
+        default: return Text(verbatim: state.status)
+        }
     }
 
     var body: some View {
@@ -88,18 +98,18 @@ struct SubagentLiveCardView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(isRunning
                     ? TurboSparkTheme.accentColor.opacity(0.45)
-                    : Color(nsColor: .separatorColor).opacity(0.35),
+                    : TurboSparkTheme.hairlineColor,
                     lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Subagent \(state.displayName), \(statusText)")
+        .accessibilityLabel(Text("Subagent \(state.displayName), \(statusText)", bundle: .module))
     }
 
     private var header: some View {
         HStack(spacing: 6) {
             Button {
-                withAnimation(.easeInOut(duration: 0.12)) { isExpanded.toggle() }
+                TSMotion.animate(.easeInOut(duration: 0.12)) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "person.2.wave.2")
@@ -118,13 +128,15 @@ struct SubagentLiveCardView: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") subagent \(state.displayName)")
+            .accessibilityLabel(isExpanded
+                                ? Text("Collapse subagent \(state.displayName)", bundle: .module)
+                                : Text("Expand subagent \(state.displayName)", bundle: .module))
 
             Spacer(minLength: 8)
 
             if isRunning {
                 TaskProgressFlameIcon(size: 14)
-                Text(statusText)
+                statusText
                     .themedFont(.small, weight: .medium)
                     .foregroundStyle(theme.metadataForeground)
                 Text(state.startedAt, style: .timer)
@@ -137,11 +149,11 @@ struct SubagentLiveCardView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(Color.red.opacity(0.8))
-                    .help("Stop this background subagent")
-                    .accessibilityLabel("Stop subagent \(state.displayName)")
+                    .help(Text("Stop this background subagent", bundle: .module))
+                    .accessibilityLabel(Text("Stop subagent \(state.displayName)", bundle: .module))
                 }
             } else {
-                Text(statusText)
+                statusText
                     .themedFont(.small, weight: .medium)
                     .foregroundStyle(statusColor)
                 if let onDismiss {
@@ -151,8 +163,8 @@ struct SubagentLiveCardView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(theme.metadataForeground)
-                    .help("Dismiss this finished subagent")
-                    .accessibilityLabel("Dismiss subagent \(state.displayName)")
+                    .help(Text("Dismiss this finished subagent", bundle: .module))
+                    .accessibilityLabel(Text("Dismiss subagent \(state.displayName)", bundle: .module))
                 }
             }
         }

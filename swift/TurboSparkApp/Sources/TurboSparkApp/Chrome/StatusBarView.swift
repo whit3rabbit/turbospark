@@ -85,14 +85,14 @@ struct StatusBarView: View {
 
     private var viewModeToggleButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(.easeInOut(duration: 0.15)) {
                 appearanceManager.statusBarViewMode = isGraphMode ? .text : .graphs
             }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: isGraphMode ? "chart.xyaxis.line" : "number")
                     .font(theme.ui(.tiny, weight: .medium))
-                    .foregroundStyle(isGraphMode ? TurboSparkTheme.accentColor : Color.secondary)
+                    .foregroundStyle(isGraphMode ? TurboSparkTheme.accentColor : theme.secondaryText)
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
@@ -100,9 +100,11 @@ struct StatusBarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
-        .help(isGraphMode ? "Benchmarks view: Live Graphs (click to switch to Numbers)" : "Benchmarks view: Numbers (click to switch to Live Graphs)")
-        .accessibilityLabel("Toggle benchmarks graph view")
-        .accessibilityValue(isGraphMode ? "Live Graphs" : "Numbers")
+        .help(isGraphMode
+            ? Text("Benchmarks view: Live Graphs (click to switch to Numbers)", bundle: .module)
+            : Text("Benchmarks view: Numbers (click to switch to Live Graphs)", bundle: .module))
+        .accessibilityLabel(Text("Toggle benchmarks graph view", bundle: .module))
+        .accessibilityValue(isGraphMode ? Text("Live Graphs", bundle: .module) : Text("Numbers", bundle: .module))
         .appPointerCursor()
     }
 
@@ -142,24 +144,23 @@ struct StatusBarView: View {
                 .accessibilityHidden(true)
             MeterBar(fraction: fraction, tint: hint?.urgent == true ? .orange : TurboSparkTheme.accentColor)
                 .frame(width: 38)
-            Text(
-                hint?.text
-                    ?? "\(model.estimatedContextTokens.formatted(.number.notation(.compactName))) / \(model.resolvedContextTokens.formatted(.number.notation(.compactName)))"
-            )
+            (hint?.text
+                ?? Text(verbatim: "\(model.estimatedContextTokens.formatted(.number.notation(.compactName))) / \(model.resolvedContextTokens.formatted(.number.notation(.compactName)))"))
             .monospacedDigit()
         }
-        .help(hint?.help ?? "Estimated conversation length against the loaded context window")
+        .help(hint?.help ?? Text("Estimated conversation length against the loaded context window", bundle: .module))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Context used")
+        .accessibilityLabel(Text("Context used", bundle: .module))
         .accessibilityValue(
-            hint?.text ?? "\(model.estimatedContextTokens) of \(model.resolvedContextTokens) tokens")
+            hint?.text
+                ?? Text("\(model.estimatedContextTokens) of \(model.resolvedContextTokens) tokens", bundle: .module))
     }
 
     /// One line of readout text for the context meter while compaction is
     /// relevant, or nil when the plain used/limit numbers should show.
     private struct CompactionHint {
-        let text: String
-        let help: String
+        let text: Text
+        let help: Text
         let urgent: Bool
     }
 
@@ -173,8 +174,8 @@ struct StatusBarView: View {
         guard model.session != nil else { return nil }
         if model.isCompacting {
             return CompactionHint(
-                text: "Compacting conversation",
-                help: "Summarizing older turns so the conversation keeps fitting the window",
+                text: Text("Compacting conversation...", bundle: .module),
+                help: Text("Summarizing older turns so the conversation keeps fitting the window", bundle: .module),
                 urgent: true)
         }
         guard model.autoCompactEnabled else { return nil }
@@ -188,8 +189,8 @@ struct StatusBarView: View {
         let percentLeft = Int(((trigger - used) / trigger * 100).rounded())
         guard percentLeft <= 40 else { return nil }
         return CompactionHint(
-            text: "\(max(0, percentLeft))% until auto-compact",
-            help: "Older turns are summarized automatically once this reaches 0%",
+            text: Text("\(max(0, percentLeft))% until auto-compact", bundle: .module),
+            help: Text("Older turns are summarized automatically once this reaches zero.", bundle: .module),
             urgent: percentLeft <= 15)
     }
 
@@ -206,30 +207,30 @@ struct StatusBarView: View {
                     tint: TurboSparkTheme.accentColor
                 )
             }
-            Text(rateText)
+            Text(verbatim: rateText)
                 .monospacedDigit()
                 .foregroundStyle(.appText)
             Text("tok/s", bundle: .module)
                 .foregroundStyle(.tertiary)
         }
-        .help("Live or last run decoding throughput (tokens per second)")
+        .help(Text("Live or last run decoding throughput (tokens per second)", bundle: .module))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Decode rate")
-        .accessibilityValue("\(rateText) tokens per second")
+        .accessibilityLabel(Text("Decode rate", bundle: .module))
+        .accessibilityValue(Text("\(rateText) tokens per second", bundle: .module))
     }
 
     private var tokenReadout: some View {
         HStack(spacing: 5) {
-            Text(tokensText)
+            Text(verbatim: tokensText)
                 .monospacedDigit()
                 .foregroundStyle(.appText)
             Text("tokens", bundle: .module)
                 .foregroundStyle(.tertiary)
         }
-        .help("Total tokens generated in this turn or previous run")
+        .help(Text("Total tokens generated in this turn or previous run", bundle: .module))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Tokens generated")
-        .accessibilityValue(tokensText)
+        .accessibilityLabel(Text("Tokens generated", bundle: .module))
+        .accessibilityValue(Text(verbatim: tokensText))
     }
 
     private var rateText: String {
@@ -252,7 +253,7 @@ struct StatusBarView: View {
             switch level.lowercased() {
             case "critical": return .red
             case "serious", "fair": return .orange
-            default: return .secondary
+            default: return theme.secondaryText
             }
         }()
 
@@ -261,42 +262,54 @@ struct StatusBarView: View {
                 .font(theme.ui(.tiny))
                 .foregroundStyle(tintColor)
                 .accessibilityHidden(true)
-            Text(level.capitalized)
-                .foregroundStyle(isAbnormal ? tintColor : .primary)
+            Text(verbatim: thermalLevelName(level))
+                .foregroundStyle(isAbnormal ? tintColor : theme.foreground)
             Text("Temp", bundle: .module)
                 .foregroundStyle(.tertiary)
         }
         .help(thermalHelp(level))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Thermal status")
-        .accessibilityValue(level)
+        .accessibilityLabel(Text("Thermal status", bundle: .module))
+        .accessibilityValue(Text(verbatim: thermalLevelName(level)))
     }
 
-    private func thermalHelp(_ level: String) -> String {
-        if level.lowercased() == "nominal" {
-            return "Thermal status is Nominal: machine is operating at normal temperature and full performance."
+    /// The engine reports `ThermalLevel`'s lowercased case name, so these four
+    /// are the whole vocabulary; anything else is shown as received.
+    private func thermalLevelName(_ level: String) -> String {
+        switch level.lowercased() {
+        case "nominal": return AppStrings.localized("Nominal")
+        case "fair": return AppStrings.localized("Fair")
+        case "serious": return AppStrings.localized("Serious")
+        case "critical": return AppStrings.localized("Critical")
+        default: return level.capitalized
         }
-        return "Thermal pressure is \(level.capitalized); engine throughput and power figures may throttle down."
+    }
+
+    private func thermalHelp(_ level: String) -> Text {
+        if level.lowercased() == "nominal" {
+            return Text("Thermal status is Nominal: machine is operating at normal temperature and full performance.", bundle: .module)
+        }
+        return Text("Thermal pressure is \(thermalLevelName(level)); engine throughput and power figures may throttle down.", bundle: .module)
     }
 
     // MARK: - Memory Pressure
 
-    /// The kernel's own memory-pressure verdict.
+    /// The kernel's own memory-pressure verdict. `MemoryPressure` has three
+    /// cases and `normal` never reaches this readout, so anything short of
+    /// critical is the warn level.
     private func memoryPressureReadout(_ level: String) -> some View {
-        HStack(spacing: 5) {
+        let isCritical = level.lowercased() == "critical"
+        return HStack(spacing: 5) {
             Image(systemName: "exclamationmark.triangle")
                 .font(theme.ui(.tiny))
                 .accessibilityHidden(true)
-            Text("Memory \(level.capitalized)", bundle: .module)
+            isCritical ? Text("Memory Critical", bundle: .module) : Text("Memory Warning", bundle: .module)
         }
-        .foregroundStyle(level.lowercased() == "critical" ? .red : .orange)
-        .help(
-            "The system is short of memory. Generation is being paced down; "
-                + "closing an idle model or another app will relieve it."
-        )
+        .foregroundStyle(isCritical ? .red : .orange)
+        .help(Text("The system is short of memory. Generation is being paced down; closing an idle model or another app will relieve it.", bundle: .module))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Memory pressure")
-        .accessibilityValue(level)
+        .accessibilityLabel(Text("Memory pressure", bundle: .module))
+        .accessibilityValue(isCritical ? Text("Critical", bundle: .module) : Text("Warning", bundle: .module))
     }
 }
 
@@ -379,7 +392,7 @@ private struct MeterBar: View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.primary.opacity(0.1))
+                    .fill(.appText.opacity(0.1))
                 Capsule()
                     .fill(tint)
                     .frame(width: max(2, geometry.size.width * fraction))

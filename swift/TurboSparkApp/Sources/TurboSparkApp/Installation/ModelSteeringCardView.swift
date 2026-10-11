@@ -44,10 +44,12 @@ struct ModelSteeringCardView: View {
             header
 
             if !descriptor.isSteeringReady {
-                Label(
-                    "This model family does not support live steering.",
-                    systemImage: "xmark.octagon.fill")
-                    .foregroundStyle(.secondary)
+                Label {
+                    Text("This model family does not support live steering.", bundle: .module)
+                } icon: {
+                    Image(systemName: "xmark.octagon.fill")
+                }
+                .foregroundStyle(.secondary)
             } else if installedModel == nil {
                 notInstalledMessage
             } else {
@@ -121,10 +123,11 @@ struct ModelSteeringCardView: View {
                         Image(systemName: "arrow.down.circle")
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .appAction(.secondary, size: .small)
                 .disabled(model.generating || model.opening)
-                .accessibilityHint("Downloads a GGUF control vector, checks its shape, and selects it for this model")
+                .accessibilityHint(Text(
+                    "Downloads a GGUF control vector, checks its shape, and selects it for this model",
+                    bundle: .module))
 
                 Text(verbatim: "or")
                     .foregroundStyle(.tertiary)

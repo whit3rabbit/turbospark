@@ -24,65 +24,26 @@ public struct ThemeConfigCardView: View {
         self.manager = manager
     }
 
+    /// The card's visible title, from the catalog: `title` is a key
+    /// ("Light theme", "Dark theme").
+    private var titleText: Text {
+        Text(LocalizedStringKey(title), bundle: .module)
+    }
+
+    /// "Light theme, Accent": the mode first, so the light and dark copies of
+    /// each control stay distinguishable in VoiceOver's control list.
+    private func spokenName(_ control: Text) -> Text {
+        titleText + Text(verbatim: ", ") + control
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack {
-                Text(title)
+            AppAdaptiveHeader {
+                titleText
                     .font(theme.ui(.large, weight: .semibold))
-
-                Spacer()
-
-                HStack(spacing: 8) {
-                    Button(importFailed ? "Not a theme" : "Import") {
-                        importThemePreset()
-                    }
-                    .buttonStyle(.plain)
-                    .font(theme.ui(.small))
-                    .foregroundStyle(.appSecondary)
-                    .appPointerCursor()
-
-                    Button(copiedToast ? "Copied!" : "Copy theme") {
-                        copyThemeJSON()
-                    }
-                    .buttonStyle(.plain)
-                    .font(theme.ui(.small))
-                    .foregroundStyle(.appSecondary)
-                    .appPointerCursor()
-
-                    // Preset menu
-                    Menu {
-                        ForEach(ThemePreset.presets) { preset in
-                            Button(preset.name) {
-                                manager.applyPreset(preset, forMode: isDark)
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(verbatim: "Aa")
-                                .font(theme.ui(.small, weight: .bold))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 2)
-                                .background(Color.accentColor.opacity(0.15))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                            Text(config.preset)
-                                .font(theme.ui(.small))
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(theme.ui(.tiny))
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.appSurface)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
-                        )
-                    }
-                    .menuStyle(.borderlessButton)
-                    .appPointerCursor()
-                }
+                    .accessibilityAddTraits(.isHeader)
+            } actions: {
+                headerActions
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -112,11 +73,74 @@ public struct ThemeConfigCardView: View {
             }
         }
         .background(.appSurface.opacity(0.7))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .stroke(.appBorder.opacity(0.4), lineWidth: 1)
         )
+    }
+
+    /// Clipboard import and copy, then the preset menu. Quiet small actions:
+    /// they sit inside a card next to a picker, and none of them is the
+    /// pane's main action.
+    @ViewBuilder
+    private var headerActions: some View {
+        Button {
+            importThemePreset()
+        } label: {
+            importFailed ? Text("Not a theme", bundle: .module) : Text("Import", bundle: .module)
+        }
+        .appAction(.quiet, size: .small)
+        .appPointerCursor()
+
+        Button {
+            copyThemeJSON()
+        } label: {
+            copiedToast ? Text("Copied!", bundle: .module) : Text("Copy theme", bundle: .module)
+        }
+        .appAction(.quiet, size: .small)
+        .appPointerCursor()
+
+        // Preset names are palette names, shown as written.
+        Menu {
+            ForEach(ThemePreset.presets) { preset in
+                Button {
+                    manager.applyPreset(preset, forMode: isDark)
+                } label: {
+                    Text(verbatim: preset.name)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(verbatim: "Aa")
+                    .font(theme.ui(.small, weight: .bold))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .accessibilityHidden(true)
+
+                Text(verbatim: config.preset)
+                    .font(theme.ui(.small))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.ui(.tiny))
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.appSurface)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                    .stroke(.appBorder.opacity(0.4), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .appPointerCursor()
+        .help(Text("Preset", bundle: .module))
+        .accessibilityLabel(spokenName(Text("Preset", bundle: .module)))
+        .accessibilityValue(Text(verbatim: config.preset))
     }
 
     private var accentRow: some View {
@@ -133,22 +157,25 @@ public struct ThemeConfigCardView: View {
                 selectedHex: config.accentHex,
                 selectedName: config.accentName)
 
-            Picker("", selection: $config.accentHex) {
+            Picker(selection: $config.accentHex) {
                 ForEach(accentOptions) { option in
                     HStack {
                         Circle()
                             .fill(Color(hex: option.hex) ?? .primary)
                             .frame(width: 8, height: 8)
-                        Text(option.name)
+                        // Curated names are catalog keys; a carried preset
+                        // or custom name has no key and shows as written.
+                        Text(LocalizedStringKey(option.name), bundle: .module)
                             .font(theme.ui(.base))
                     }
                     .tag(option.hex)
                 }
+            } label: {
+                spokenName(Text("Accent", bundle: .module))
             }
             .pickerStyle(.menu)
-            .frame(width: 140)
             .labelsHidden()
-            .accessibilityLabel("\(title) accent color")
+            .frame(minWidth: 120, idealWidth: 140, maxWidth: 200)
             .onChange(of: config.accentHex) { _, newHex in
                 config.accentName = AccentOption.name(forHex: newHex, isDark: isDark)
             }
@@ -157,25 +184,30 @@ public struct ThemeConfigCardView: View {
         .padding(.vertical, 10)
     }
 
+    /// `label` is a catalog key ("Background", "Foreground").
     private func colorRow(label: String, hexString: Binding<String>) -> some View {
-        HStack {
-            Text(label)
+        let name = Text(LocalizedStringKey(label), bundle: .module)
+        return HStack {
+            name
                 .font(theme.ui(.base))
             Spacer()
 
             HStack(spacing: 8) {
-                ColorPicker("", selection: Binding(
+                ColorPicker(selection: Binding(
                     get: { Color(hex: hexString.wrappedValue) ?? (isDark ? .black : .white) },
                     set: { hexString.wrappedValue = $0.toHex() }
-                ), supportsOpacity: false)
+                ), supportsOpacity: false) {
+                    spokenName(name)
+                }
                 .labelsHidden()
-                .accessibilityLabel("\(title) \(label) color")
 
-                TextField("", text: hexString)
-                    .font(theme.code(.small))
-                    .frame(width: 80)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("\(title) \(label) hex code")
+                TextField(text: hexString, prompt: Text(verbatim: "#RRGGBB")) {
+                    spokenName(name) + Text(verbatim: ", ") + Text("Hex code", bundle: .module)
+                }
+                .labelsHidden()
+                .font(theme.code(.small))
+                .frame(minWidth: 84, idealWidth: 96, maxWidth: 120)
+                .textFieldStyle(.roundedBorder)
             }
         }
         .padding(.horizontal, 16)
@@ -189,14 +221,21 @@ public struct ThemeConfigCardView: View {
                 .font(theme.ui(.base))
             Spacer()
 
-            Toggle("", isOn: $config.translucentSidebar)
-                .toggleStyle(.switch)
-                .labelsHidden()
-                .accessibilityLabel("\(title) translucent sidebar")
-                .appPointerCursor()
+            Toggle(isOn: $config.translucentSidebar) {
+                spokenName(Text("Translucent sidebar", bundle: .module))
+            }
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .appPointerCursor()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    /// Locale-aware percent ("45 %" in French), shared by the readout and
+    /// the slider's VoiceOver value.
+    private var contrastPercent: String {
+        (config.contrast / 100).formatted(.percent.precision(.fractionLength(0)))
     }
 
     private var contrastRow: some View {
@@ -206,15 +245,19 @@ public struct ThemeConfigCardView: View {
                 .font(theme.ui(.base))
             Spacer()
 
-            Slider(value: $config.contrast, in: 0...100, step: 1)
-                .frame(width: 160)
-                .accessibilityLabel("\(title) contrast")
-                .accessibilityValue("\(Int(config.contrast)) percent")
+            Slider(value: $config.contrast, in: 0...100, step: 1) {
+                spokenName(Text("Contrast", bundle: .module))
+            }
+            .labelsHidden()
+            .frame(minWidth: 120, idealWidth: 160, maxWidth: 220)
+            .accessibilityValue(Text(verbatim: contrastPercent))
 
-            Text(verbatim: "\(Int(config.contrast))%")
+            Text(verbatim: contrastPercent)
                 .font(theme.ui(.small).monospacedDigit())
                 .foregroundStyle(.appSecondary)
-                .frame(width: 36, alignment: .trailing)
+                .fixedSize()
+                .frame(minWidth: 36, alignment: .trailing)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

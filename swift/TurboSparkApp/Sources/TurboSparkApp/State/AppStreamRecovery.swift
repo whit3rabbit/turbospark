@@ -77,13 +77,13 @@ enum ContinuationGenerationError: Error, Equatable, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .exhausted(let limit, _):
-            return "The reply reached the limit of \(limit) automatic continuations."
+            return AppStrings.localized("The reply reached the limit of \(limit) automatic continuations.")
         case .outputBudgetExhausted(let totalBudget):
-            return "The reply reached its total output budget of \(totalBudget) tokens."
+            return AppStrings.localized("The reply reached its total output budget of \(totalBudget) tokens.")
         case .continuationContextDoesNotFit:
-            return "The continuation prompt no longer fits in the model context window."
+            return AppStrings.localized("The continuation prompt no longer fits in the model context window.")
         case .missingResult:
-            return "Generation ended without a result."
+            return AppStrings.localized("Generation ended without a result.")
         }
     }
 }

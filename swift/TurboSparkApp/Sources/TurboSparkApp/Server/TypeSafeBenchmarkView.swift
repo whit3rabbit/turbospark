@@ -29,19 +29,20 @@ struct TypeSafeBenchmarkView: View {
                         Text(verbatim: "\(repetitions)")
                     }
                 }
-                .frame(width: 230)
+                .fixedSize()
                 Spacer()
                 if isRunning {
                     Button { stopRequested = true } label: { Text("Stop", bundle: .module) }
+                        .appAction(.secondary, size: APIControlSize.panel)
                         .disabled(stopRequested)
                 } else {
                     Button { task = Task { await run() } } label: { Text("Run", bundle: .module) }
-                        .buttonStyle(.borderedProminent)
+                        .appAction(.primary, size: APIControlSize.panel)
                         .disabled(service == nil || selectedModels.isEmpty)
                 }
             }
             if loadedModels.isEmpty {
-                Text("Select a model to load", bundle: .module).foregroundStyle(.secondary)
+                Text("Select a model to load", bundle: .module).foregroundStyle(.appSecondary)
             }
             ForEach(loadedModels, id: \.self) { name in
                 Toggle(isOn: Binding(
@@ -50,7 +51,7 @@ struct TypeSafeBenchmarkView: View {
                         if selected { selectedModels.insert(name) }
                         else { selectedModels.remove(name) }
                     }
-                )) { Text(name) }
+                )) { Text(verbatim: name) }
             }
             if isRunning {
                 ProgressView(value: Double(completed), total: Double(max(total, 1))) {
@@ -60,12 +61,12 @@ struct TypeSafeBenchmarkView: View {
                 }
             }
             if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
             }
             ForEach(results.keys.sorted(), id: \.self) { name in
                 if let result = results[name] {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(name).themedFont(.callout, weight: .semibold)
+                        Text(verbatim: name).themedFont(.callout, weight: .semibold)
                         Text(verbatim: String(format: "n=%d  mean %.1f ms  p50 %.1f ms  p95 %.1f ms  min %.1f ms  max %.1f ms",
                                               result.count, result.mean, result.p50, result.p95,
                                               result.minimum, result.maximum))
@@ -74,9 +75,7 @@ struct TypeSafeBenchmarkView: View {
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+        .apiCard()
         .onAppear { selectedModels.formUnion(loadedModels) }
         .onChange(of: loadedModels) { _, names in
             selectedModels.formIntersection(names)

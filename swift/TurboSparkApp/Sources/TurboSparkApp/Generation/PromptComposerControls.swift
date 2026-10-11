@@ -18,8 +18,8 @@ struct PromptTipsButton: View {
         .buttonStyle(.borderless)
         .foregroundStyle(.appSecondary)
         .help(Text("Prompt tips", bundle: .module))
-        .accessibilityLabel("Prompt tips")
-        .accessibilityHint("Shows a popover with prompt writing guidance")
+        .accessibilityLabel(Text("Prompt tips", bundle: .module))
+        .accessibilityHint(Text("Shows a popover with prompt writing guidance", bundle: .module))
         .popover(isPresented: $showingTips,
                  attachmentAnchor: .point(.top),
                  arrowEdge: .top) {
@@ -48,10 +48,10 @@ struct PromptTipsGuideView: View {
         .padding(18)
     }
 
-    private func tipSection(_ title: String, _ detail: String) -> some View {
+    private func tipSection(_ title: LocalizedStringKey, _ detail: LocalizedStringKey) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).fontWeight(.semibold)
-            Text(detail).foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
+            Text(title, bundle: .module).fontWeight(.semibold)
+            Text(detail, bundle: .module).foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -85,51 +85,31 @@ struct PromptAttachDocumentButton: View {
         .foregroundStyle(.appSecondary)
         .onHover { isHovered = $0 }
         .disabled(isRunning || isExtracting)
-        .help("Attach PDF, Word, Excel, code, or text files")
+        .help(Text("Attach PDF, Word, Excel, code, or text files", bundle: .module))
         .accessibilityLabel(isExtracting
-                            ? "Extracting document text"
-                            : "Attach documents")
-        .accessibilityHint("Opens a file picker to attach documents to this prompt")
+                            ? Text("Extracting document text", bundle: .module)
+                            : Text("Attach documents", bundle: .module))
+        .accessibilityHint(Text("Opens a file picker to attach documents to this prompt", bundle: .module))
     }
 }
 
-/// Web search toggle button in the chat composer bar.
+/// Web search toggle in the composer bar.
+///
+/// Drawn by the shared `AppChip` so the chat composer and Humanize offer one
+/// chip instead of two copies that drift. The chip's label is its VoiceOver
+/// name and the `isSelected` trait carries on/off; the longer tooltip below
+/// keeps saying what turning it on actually does.
 struct SearchToggleButton: View {
-    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
-    @State private var isHovered: Bool = false
 
     var body: some View {
-        Button {
+        AppChip(Text("Search", bundle: .module), systemImage: "globe", isOn: model.webSearchEnabled) {
             model.webSearchEnabled.toggle()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "globe")
-                    .themedFont(.tiny, weight: .medium)
-                Text("Search", bundle: .module)
-                    .font(theme.ui(.small, weight: .medium))
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .foregroundStyle(model.webSearchEnabled ? Color.primary : Color.secondary)
-            .background(
-                model.webSearchEnabled
-                    ? TurboSparkTheme.accentColor.opacity(0.14)
-                    : Color.primary.opacity(isHovered ? 0.08 : 0.04),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-            .overlay {
-                if model.webSearchEnabled {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(.appAccent.opacity(0.3), lineWidth: 0.5)
-                }
-            }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .help(model.webSearchEnabled ? "Web search enabled: tools will search the web for real-time information" : "Enable web search")
-        .accessibilityLabel("Web search: \(model.webSearchEnabled ? "Enabled" : "Disabled")")
+        .help(model.webSearchEnabled
+              ? Text("Web search enabled: tools will search the web for real-time information", bundle: .module)
+              : Text("Enable web search", bundle: .module))
+        .accessibilityValue(model.webSearchEnabled ? Text("On", bundle: .module) : Text("Off", bundle: .module))
     }
 }
 
@@ -155,7 +135,7 @@ struct PromptAudioInputButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .help("Start voice dictation")
-        .accessibilityLabel("Voice input dictation")
+        .help(Text("Start voice dictation", bundle: .module))
+        .accessibilityLabel(Text("Voice input dictation", bundle: .module))
     }
 }

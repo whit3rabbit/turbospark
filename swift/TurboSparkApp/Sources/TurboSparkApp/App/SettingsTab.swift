@@ -5,7 +5,7 @@ extension AppSettingsView {
         case general = "General"
         case profiles = "Profiles"
         case appearance = "Appearance"
-        case shortcuts = "Keyboard shortcuts"
+        case shortcuts = "Keyboard Shortcuts"
         case permissions = "Files & Permissions"
         case models = "Models & Storage"
         case engine = "Engine"

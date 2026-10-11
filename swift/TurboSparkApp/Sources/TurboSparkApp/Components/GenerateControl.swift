@@ -39,7 +39,7 @@ struct GenerateControl: View {
         // The swap between the two is a real change of state, not a redraw:
         // animating it stops the footer from flickering at the moment a turn
         // starts or ends.
-        .animation(TSMotion.select, value: model.isRunning)
+        .tsAnimation(TSMotion.select, value: model.isRunning)
     }
 
     // MARK: - Idle
@@ -48,8 +48,8 @@ struct GenerateControl: View {
         let ready = model.canRun
         let fill = ready
             ? AnyShapeStyle(theme.accent.gradient)
-            : AnyShapeStyle(Color.primary.opacity(0.08))
-        let ink = ready ? theme.accent.contrastForeground : Color.secondary.opacity(0.5)
+            : AnyShapeStyle(theme.foreground.opacity(0.08))
+        let ink = ready ? theme.accent.contrastForeground : theme.secondaryText.opacity(0.5)
 
         return Button {
             model.run()
@@ -61,7 +61,7 @@ struct GenerateControl: View {
                 .background(Circle().fill(fill))
                 .overlay {
                     Circle().stroke(
-                        ready ? Color.white.opacity(0.2) : Color.primary.opacity(0.06),
+                        ready ? Color.white.opacity(0.2) : theme.foreground.opacity(0.06),
                         lineWidth: 0.5)
                 }
                 // Only the enabled button gets a shadow. It is the affordance
@@ -74,9 +74,11 @@ struct GenerateControl: View {
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
         .keyboardShortcut(.return, modifiers: .command)
         .disabled(!ready)
-        .animation(TSMotion.hover, value: ready)
-        .help(ready ? "Generate (Cmd+Return)" : "Type a message first")
-        .accessibilityLabel("Generate")
+        .tsAnimation(TSMotion.hover, value: ready)
+        .help(ready
+            ? Text("Generate (Cmd+Return)", bundle: .module)
+            : Text("Type a message first", bundle: .module))
+        .accessibilityLabel(Text("Generate", bundle: .module))
     }
 
     // MARK: - Running
@@ -107,7 +109,7 @@ struct GenerateControl: View {
                             .stroke(ink, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                             .rotationEffect(.degrees(-90))
                             .frame(width: 22, height: 22)
-                            .animation(TSMotion.select, value: fraction)
+                            .tsAnimation(TSMotion.select, value: fraction)
                     } else {
                         Circle()
                             .fill(ink.opacity(0.16))
@@ -129,11 +131,11 @@ struct GenerateControl: View {
         .overlay { Capsule().stroke(ink.opacity(0.16), lineWidth: 0.5) }
         .keyboardShortcut(".", modifiers: .command)
         .disabled(!model.canCancel)
-        .help("Stop generation (Cmd+.)")
+        .help(Text("Stop generation (Cmd+.)", bundle: .module))
         // The pill combines live status text and a stop icon. VoiceOver
         // should hear the live value as the action's current state and know
         // the button is "Stop", not whatever symbol happens to be on it.
-        .accessibilityLabel("Stop generation")
+        .accessibilityLabel(Text("Stop generation", bundle: .module))
         .accessibilityValue(stopButtonStatusText)
     }
 
@@ -148,9 +150,16 @@ struct GenerateControl: View {
                     .themedFont(.base, weight: .medium)
                     .lineLimit(1)
             } else {
-                Text(job.stage.map { "\($0) \(job.completed)/\(max(job.total, 1))" } ?? String(localized: "Generating image", bundle: .module))
-                    .themedFont(.base, weight: .medium)
-                    .lineLimit(1)
+                Group {
+                    if let stage = job.stage {
+                        Self.imageStageText(stage)
+                            + Text(verbatim: " \(job.completed)/\(max(job.total, 1))")
+                    } else {
+                        Text("Generating image", bundle: .module)
+                    }
+                }
+                .themedFont(.base, weight: .medium)
+                .lineLimit(1)
             }
         } else if model.phase == .prefill {
             Text("Reading \(model.livePrefillDone)/\(max(model.livePrefillTotal, 1))", bundle: .module)
@@ -158,7 +167,7 @@ struct GenerateControl: View {
                 .monospacedDigit()
                 .contentTransition(.numericText())
         } else {
-            Text(String(format: "%.1f tok/s", model.liveTokensPerSecond))
+            (Text(verbatim: String(format: "%.1f ", model.liveTokensPerSecond)) + Text("tok/s", bundle: .module))
                 .themedFont(.base, weight: .semibold)
                 .monospacedDigit()
                 // Digits roll rather than jump. This is the one per-token
@@ -177,24 +186,43 @@ struct GenerateControl: View {
         return min(1, CGFloat(model.livePrefillDone) / CGFloat(model.livePrefillTotal))
     }
 
-    private var stopButtonStatusText: String {
-        if model.isCancellationPending { return "Stopping" }
+    private var stopButtonStatusText: Text {
+        if model.isCancellationPending { return Text("Stopping", bundle: .module) }
         if model.imageModeEnabled, let job = model.imageJob {
             if job.status == .waiting {
-                return String(localized: "Waiting for image slot", bundle: .module)
+                return Text("Waiting for image slot", bundle: .module)
             }
             if let stage = job.stage {
-                return "\(stage), \(job.completed) of \(max(job.total, 1))"
+                return Self.imageStageText(stage) + Text(verbatim: ", ")
+                    + Text("\(job.completed) of \(max(job.total, 1))", bundle: .module)
             }
-            return String(localized: "Generating image", bundle: .module)
+            return Text("Generating image", bundle: .module)
         }
         switch model.phase {
         case .prefill:
-            return "Reading \(model.livePrefillDone) of \(max(model.livePrefillTotal, 1))"
+            return Text("Reading \(model.livePrefillDone) of \(max(model.livePrefillTotal, 1))", bundle: .module)
         case .decode:
-            return String(format: "%.1f tokens per second", model.liveTokensPerSecond)
+            return Text("\(String(format: "%.1f", model.liveTokensPerSecond)) tokens per second", bundle: .module)
         case .idle:
-            return "Running"
+            return Text("Running", bundle: .module)
+        }
+    }
+
+    /// `AppImageJob.stage` holds the pipeline's snake_case stage id, which
+    /// this pill used to print raw ("transformer 3/20"). Same names as the
+    /// Images pane's progress card, so the two surfaces agree.
+    static func imageStageText(_ stage: String) -> Text {
+        switch stage {
+        case "downloading_model": return Text("Downloading model files", bundle: .module)
+        case "loading_tokenizer": return Text("Loading tokenizer", bundle: .module)
+        case "loading_text_encoder": return Text("Loading text encoder", bundle: .module)
+        case "loading_transformer": return Text("Loading transformer", bundle: .module)
+        case "loading_vae": return Text("Loading VAE", bundle: .module)
+        case "text_encoder": return Text("Encoding prompt", bundle: .module)
+        case "transformer": return Text("Denoising", bundle: .module)
+        case "vae_decoder": return Text("Decoding image", bundle: .module)
+        case "png_encode": return Text("Saving image", bundle: .module)
+        default: return Text("Loading model", bundle: .module)
         }
     }
 }

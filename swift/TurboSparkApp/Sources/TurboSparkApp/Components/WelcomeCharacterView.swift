@@ -136,7 +136,7 @@ public struct WelcomeHeroView: View {
             .buttonStyle(TSPressScaleStyle(scale: 0.985))
             .help(Text("Click to change greeting phrase", bundle: .module))
             .accessibilityLabel(displayGreeting)
-            .accessibilityHint("Changes the greeting phrase")
+            .accessibilityHint(Text("Changes the greeting phrase", bundle: .module))
 
             Text("Everything here runs on your Mac. Nothing leaves it.", bundle: .module)
                 .font(theme.ui(.callout))
@@ -155,14 +155,14 @@ public struct WelcomeHeroView: View {
             return greeting.text(for: activeLanguage)
         }
         let initial = GreetingProvider.shared.availableGreetings().randomElement()
-        return initial?.text(for: activeLanguage) ?? "Welcome!"
+        return initial?.text(for: activeLanguage) ?? AppStrings.localized("Welcome!")
     }
 
     /// Cycles to another greeting from the currently valid time-of-day candidates.
     private func cycleGreeting() {
         let pool = GreetingProvider.shared.availableGreetings()
         let alternatives = pool.filter { $0.id != currentGreeting?.id }
-        withAnimation(TSMotion.select) {
+        TSMotion.animate(TSMotion.select) {
             currentGreeting = alternatives.randomElement() ?? pool.randomElement()
         }
     }

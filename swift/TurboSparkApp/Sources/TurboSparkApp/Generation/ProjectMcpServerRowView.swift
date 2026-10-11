@@ -53,22 +53,21 @@ struct ProjectMcpServerRowView: View {
                                 .themedFont(.small)
                         }
                     }
-                    .buttonStyle(.borderless)
-                    .help("Test connection")
+                    .appAction(.quiet, size: .small)
+                    .help(Text("Test connection", bundle: .module))
+                    .accessibilityLabel(Text("Test connection", bundle: .module))
 
-                    Button {
+                    AppIconButton("gearshape", label: Text("Edit server settings", bundle: .module)) {
                         onEdit()
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .themedFont(.small)
                     }
-                    .buttonStyle(.borderless)
-                    .help("Edit server settings")
+                    .appAction(.quiet, size: .small)
 
-                    Toggle("", isOn: Binding(
+                    Toggle(isOn: Binding(
                         get: { server.isEnabled },
                         set: { onToggleEnabled($0) }
-                    ))
+                    )) {
+                        Text("Enabled", bundle: .module)
+                    }
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
@@ -91,13 +90,14 @@ struct ProjectMcpServerRowView: View {
                             Label { Text("Delete Server", bundle: .module) } icon: { Image(systemName: "trash") }
                         }
                     } label: {
-                        Image(systemName: "ellipsis")
+                        Label { Text("Server actions", bundle: .module) } icon: { Image(systemName: "ellipsis") }
+                            .labelStyle(.iconOnly)
                             .themedFont(.small)
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
                     .frame(width: 18)
-                    .help("Server actions")
+                    .help(Text("Server actions", bundle: .module))
                 }
             }
 
@@ -117,7 +117,9 @@ struct ProjectMcpServerRowView: View {
                     HStack(spacing: 4) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .themedFont(.tiny)
-                        Text(isExpanded ? "Hide Discovered Tools" : "Show Discovered Tools (\(server.discoveredTools.count))")
+                        (isExpanded
+                            ? Text("Hide Discovered Tools", bundle: .module)
+                            : Text("Show Discovered Tools (\(server.discoveredTools.count))", bundle: .module))
                             .themedFont(.tiny, weight: .medium)
                     }
                     .foregroundStyle(.appSecondary)

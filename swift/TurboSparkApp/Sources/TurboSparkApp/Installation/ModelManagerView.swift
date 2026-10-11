@@ -46,16 +46,33 @@ struct ModelManagerView: View {
         }
     }
 
+    /// The model-type switch plus the scope line. The picker's label is
+    /// hidden (it is the VoiceOver name only) and the control sizes itself:
+    /// the old 240pt frame squeezed a visible label until it wrapped.
+    /// Audio installs live in the Audio workspace, so the scope line says so
+    /// and offers the way there instead of leaving a third category missing.
     private var managerSectionPicker: some View {
-        HStack {
-            Picker("Installed model type", selection: $managerSection) {
+        AppAdaptiveHeader {
+            Picker(selection: $managerSection) {
                 Text("Text Models", bundle: .module).tag(ManagerSection.text)
                 Text("Image Models", bundle: .module).tag(ManagerSection.images)
+            } label: {
+                Text("Installed model type", bundle: .module)
             }
+            .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 240)
-            .accessibilityLabel("Installed model type")
-            Spacer()
+            .fixedSize()
+        } actions: {
+            Text("Audio models are managed in Audio.", bundle: .module)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                model.activeSection = .audio
+            } label: {
+                Label { Text("Open Audio", bundle: .module) } icon: { Image(systemName: "waveform") }
+            }
+            .appAction(.quiet, size: .small)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -114,11 +131,11 @@ struct ModelManagerView: View {
                             }
                         } header: {
                             HStack {
-                                Text(group.groupTitle)
+                                Text(LocalizedStringKey(group.groupTitle), bundle: .module)
                                     .themedFont(.small, weight: .bold)
                                     .foregroundStyle(.appSecondary)
                                 Spacer()
-                                Text("\(group.models.count)", bundle: .module)
+                                Text(verbatim: "\(group.models.count)")
                                     .themedFont(.tiny).monospacedDigit()
                                     .foregroundStyle(.tertiary)
                             }
@@ -147,38 +164,29 @@ struct ModelManagerView: View {
         )
     }
 
+    @ViewBuilder
     private var emptyListState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "internaldrive")
-                .themedFont(.hero)
-                .foregroundStyle(.quaternary)
-            Text(model.installed.isEmpty ? "No Models Installed" : "No Matching Models")
-                .themedFont(.base, weight: .medium)
-            Text(model.installed.isEmpty
-                ? "Download models from the Discover catalog or scan an external folder."
-                : "Try clearing search or filter terms.")
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 240)
-
-            if model.installed.isEmpty {
+        if model.installed.isEmpty {
+            AppEmptyState(
+                systemImage: "internaldrive",
+                title: Text("No Models Installed", bundle: .module),
+                message: Text("Download models from the Discover catalog or scan an external folder.", bundle: .module)
+            ) {
                 Button {
                     model.activeSection = .modelHub
                 } label: {
-                    Label { Text("Discover Models in Hub", bundle: .module) } icon: { Image(systemName: "shippingbox.fill") }
-                        .themedFont(.small, weight: .medium)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+                    Label { Text("Discover Models", bundle: .module) } icon: { Image(systemName: "shippingbox") }
                 }
-                .buttonStyle(.plain)
-                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 6))
-                .foregroundStyle(.white)
+                .appAction(.secondary, size: .small)
             }
+            .padding(.top, 8)
+        } else {
+            AppEmptyState(
+                systemImage: "line.3.horizontal.decrease.circle",
+                title: Text("No Matching Models", bundle: .module),
+                message: Text("Try clearing search or filter terms.", bundle: .module))
+            .padding(.top, 8)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 16)
-        .padding(.top, 40)
     }
 
     // MARK: - Detail Pane
@@ -188,19 +196,12 @@ struct ModelManagerView: View {
         if let selectedModel {
             InstalledModelDetailPaneView(model: model, installedModel: selectedModel)
         } else {
-            VStack(spacing: 8) {
-                Image(systemName: "internaldrive")
-                    .themedFont(.hero)
-                    .foregroundStyle(.quaternary)
-                Text("No Model Selected", bundle: .module)
-                    .themedFont(.base, weight: .medium)
-                Text("Select an installed model to view specifications, runtime options, or load it into memory.", bundle: .module)
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 300)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            AppEmptyState(
+                systemImage: "internaldrive",
+                title: Text("No Model Selected", bundle: .module),
+                message: Text(
+                    "Select an installed model to view specifications, runtime options, or load it into memory.",
+                    bundle: .module))
         }
     }
 

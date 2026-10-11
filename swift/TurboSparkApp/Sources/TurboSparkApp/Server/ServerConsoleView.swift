@@ -48,7 +48,13 @@ struct ServerConsoleView: View {
             toolbar
             Divider()
             if rows.isEmpty {
-                Text(model.serverMetrics.records.isEmpty ? "No traffic yet." : "Nothing matches.")
+                Group {
+                    if model.serverMetrics.records.isEmpty {
+                        Text("No traffic yet.", bundle: .module)
+                    } else {
+                        Text("Nothing matches.", bundle: .module)
+                    }
+                }
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -81,11 +87,7 @@ struct ServerConsoleView: View {
                 .themedFont(.small, weight: .semibold)
                 .foregroundStyle(.appSecondary)
 
-            TextField("Filter", text: $search)
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .frame(minWidth: 80, maxWidth: 160)
-                .labelsHidden()
+            AppSearchField(text: $search, prompt: Text("Filter", bundle: .module), minWidth: 80, idealWidth: 140, maxWidth: 200)
 
             Toggle(isOn: $showErrorsOnly) {
                 Text("Errors only", bundle: .module)
@@ -97,7 +99,7 @@ struct ServerConsoleView: View {
                 Picker(selection: $modelFilter) {
                     Text("All models", bundle: .module).tag(String?.none)
                     ForEach(model.serverMetrics.servingModels, id: \.self) { name in
-                        Text(name).tag(String?.some(name))
+                        Text(verbatim: name).tag(String?.some(name))
                     }
                 } label: { Text("Model", bundle: .module) }
                 .pickerStyle(.menu)
@@ -109,12 +111,14 @@ struct ServerConsoleView: View {
             Spacer()
 
             if model.serverMetrics.droppedEvents > 0 {
-                Label("\(model.serverMetrics.droppedEvents) events dropped", systemImage: "exclamationmark.triangle")
+                Label {
+                    Text("\(String(model.serverMetrics.droppedEvents)) events dropped", bundle: .module)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                }
                     .themedFont(.small)
                     .foregroundStyle(.orange)
-                    .help(
-                        "The engine's buffer overran while this pane was not polling. "
-                            + "Those rows are gone rather than delayed.")
+                    .help(Text("The engine's buffer overran while this pane was not polling. Those rows are gone rather than delayed.", bundle: .module))
             }
 
             Button {
@@ -124,19 +128,29 @@ struct ServerConsoleView: View {
                 }
                 paused.toggle()
             } label: {
-                Image(systemName: paused ? "play.fill" : "pause.fill")
+                Label {
+                    paused ? Text("Resume", bundle: .module) : Text("Pause", bundle: .module)
+                } icon: {
+                    Image(systemName: paused ? "play.fill" : "pause.fill")
+                }
+                .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
-            .help(paused ? "Resume" : "Pause console display. Metrics continue updating.")
+            .help(paused ? Text("Resume", bundle: .module) : Text("Pause console display. Metrics continue updating.", bundle: .module))
 
             Button {
                 copyAll()
             } label: {
-                Image(systemName: copiedAll ? "checkmark" : "doc.on.doc")
-                    .foregroundStyle(copiedAll ? .green : .secondary)
+                Label {
+                    Text("Copy the visible rows as JSON", bundle: .module)
+                } icon: {
+                    Image(systemName: copiedAll ? "checkmark" : "doc.on.doc")
+                        .foregroundStyle(copiedAll ? .green : .secondary)
+                }
+                .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
-            .help(copiedAll ? "Copied visible rows as JSON" : "Copy the visible rows as JSON")
+            .help(copiedAll ? Text("Copied visible rows as JSON", bundle: .module) : Text("Copy the visible rows as JSON", bundle: .module))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -145,22 +159,22 @@ struct ServerConsoleView: View {
     private func row(_ record: ServerRequestRecord) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Text(statusText(record))
+                Text(verbatim: statusText(record))
                     .font(theme.code(.small, weight: .semibold))
                     .foregroundStyle(statusColor(record))
                     .frame(width: 34, alignment: .leading)
 
-                Text(record.method)
+                Text(verbatim: record.method)
                     .font(theme.code(.small))
                     .foregroundStyle(.appSecondary)
                     .frame(width: 38, alignment: .leading)
 
-                Text(record.path)
+                Text(verbatim: record.path)
                     .font(theme.code(.small))
                     .lineLimit(1)
 
                 if record.isError, let err = record.errorMessage, !err.isEmpty {
-                    Text(err)
+                    Text(verbatim: err)
                         .font(theme.code(.small))
                         .foregroundStyle(.red.opacity(0.85))
                         .lineLimit(1)
@@ -169,7 +183,7 @@ struct ServerConsoleView: View {
                 Spacer(minLength: 8)
 
                 if let served = record.servedModel {
-                    Text(served)
+                    Text(verbatim: served)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                         .lineLimit(1)
@@ -178,7 +192,8 @@ struct ServerConsoleView: View {
                     Image(systemName: "dot.radiowaves.right")
                         .themedFont(.micro)
                         .foregroundStyle(.appSecondary)
-                        .help("Streamed")
+                        .help(Text("Streamed", bundle: .module))
+                        .accessibilityLabel(Text("Streamed", bundle: .module))
                 }
                 if let tokens = record.newTokens, tokens > 0 {
                     Text(verbatim: "\(tokens) tok")
@@ -197,12 +212,19 @@ struct ServerConsoleView: View {
                 Button {
                     copyRowAction(record)
                 } label: {
-                    Image(systemName: copiedRecordID == record.id ? "checkmark" : "doc.on.doc")
-                        .themedFont(.micro)
-                        .foregroundStyle(copiedRecordID == record.id ? Color.green : Color.secondary)
+                    Label {
+                        record.isError
+                            ? Text("Copy error or request summary", bundle: .module)
+                            : Text("Copy request summary", bundle: .module)
+                    } icon: {
+                        Image(systemName: copiedRecordID == record.id ? "checkmark" : "doc.on.doc")
+                            .themedFont(.micro)
+                            .foregroundStyle(copiedRecordID == record.id ? Color.green : Color.secondary)
+                    }
+                    .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
-                .help(record.isError ? "Copy error or request summary" : "Copy request summary")
+                .help(record.isError ? Text("Copy error or request summary", bundle: .module) : Text("Copy request summary", bundle: .module))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
@@ -218,20 +240,20 @@ struct ServerConsoleView: View {
                 if let err = record.errorMessage, !err.isEmpty {
                     Button {
                         copyText(err)
-                        model.showToast("Copied error message", style: .info)
+                        model.showToast(AppStrings.localized("Copied error message"), style: .info)
                     } label: { Text("Copy Error Message", bundle: .module) }
                 }
                 Button {
                     copyRecordSummary(record)
-                    model.showToast("Copied request summary", style: .info)
+                    model.showToast(AppStrings.localized("Copied request summary"), style: .info)
                 } label: { Text("Copy Request Log Line", bundle: .module) }
                 Button {
                     copyRecordAsJSON(record)
-                    model.showToast("Copied request as JSON", style: .info)
+                    model.showToast(AppStrings.localized("Copied request as JSON"), style: .info)
                 } label: { Text("Copy Request as JSON", bundle: .module) }
                 Button {
                     copyText(record.path)
-                    model.showToast("Copied path", style: .info)
+                    model.showToast(AppStrings.localized("Copied path"), style: .info)
                 } label: { Text("Copy Path", bundle: .module) }
             }
 
@@ -249,30 +271,35 @@ struct ServerConsoleView: View {
             }
 
             if let requested = record.requestedModel, requested != record.servedModel {
-                detailLine("asked for", requested)
+                detailLine(Text("asked for", bundle: .module), Text(verbatim: requested))
             }
-            if let served = record.servedModel { detailLine("served by", served) }
-            if let prompt = record.promptTokens { detailLine("prompt", "\(prompt) tokens") }
-            if let tokens = record.newTokens { detailLine("generated", "\(tokens) tokens") }
+            if let served = record.servedModel { detailLine(Text("served by", bundle: .module), Text(verbatim: served)) }
+            if let prompt = record.promptTokens {
+                detailLine(Text("prompt", bundle: .module), Text("\(String(prompt)) tokens", bundle: .module))
+            }
+            if let tokens = record.newTokens {
+                detailLine(Text("generated", bundle: .module), Text("\(String(tokens)) tokens", bundle: .module))
+            }
             if let prefill = record.prefillSeconds {
-                detailLine("prefill", String(format: "%.3f s", prefill))
+                detailLine(Text("prefill", bundle: .module), Text(verbatim: String(format: "%.3f s", prefill)))
             }
             if let decode = record.decodeSeconds {
-                detailLine("decode", String(format: "%.3f s", decode))
+                detailLine(Text("decode", bundle: .module), Text(verbatim: String(format: "%.3f s", decode)))
             }
             if let rate = record.tokensPerSecond {
-                detailLine("rate", String(format: "%.1f tok/s", rate))
+                detailLine(Text("rate", bundle: .module), Text(verbatim: String(format: "%.1f tok/s", rate)))
             }
             if let queued = record.queuedSeconds {
                 detailLine(
-                    "queued", String(format: "%.3f s", queued),
-                    help: "Waiting for the runner. One turn at a time per model.")
+                    Text("queued", bundle: .module), Text(verbatim: String(format: "%.3f s", queued)),
+                    help: Text("Waiting for the runner. One turn at a time per model.", bundle: .module))
             }
-            if let reason = record.stopReason { detailLine("stopped", reason) }
+            // The stop reason is the engine's own token (stop, length, ...).
+            if let reason = record.stopReason { detailLine(Text("stopped", bundle: .module), Text(verbatim: reason)) }
             if record.generations > 1 {
                 detailLine(
-                    "generations", "\(record.generations)",
-                    help: "The tool-call guardrails re-asked. Both turns really ran.")
+                    Text("generations", bundle: .module), Text(verbatim: "\(record.generations)"),
+                    help: Text("The tool-call guardrails re-asked. Both turns really ran.", bundle: .module))
             }
 
             let matchingEvents = (paused ? frozenEvents : model.serverEventLog).filter { $0.requestID == record.id }
@@ -300,18 +327,20 @@ struct ServerConsoleView: View {
                 if let err = record.errorMessage, !err.isEmpty {
                     Button {
                         copyText(err)
-                        model.showToast("Copied error message", style: .info)
+                        model.showToast(AppStrings.localized("Copied error message"), style: .info)
                     } label: {
-                        Image(systemName: "doc.on.doc")
-                            .themedFont(.micro)
+                        Label { Text("Copy error message", bundle: .module) } icon: {
+                            Image(systemName: "doc.on.doc").themedFont(.micro)
+                        }
+                        .labelStyle(.iconOnly)
                     }
                     .buttonStyle(.borderless)
-                    .help("Copy error message")
+                    .help(Text("Copy error message", bundle: .module))
                 }
             }
 
             if let err = record.errorMessage, !err.isEmpty {
-                Text(err)
+                Text(verbatim: err)
                     .font(theme.code(.small))
                     .foregroundStyle(.red.opacity(0.95))
                     .textSelection(.enabled)
@@ -339,16 +368,19 @@ struct ServerConsoleView: View {
                 Spacer()
                 Button {
                     copyEvents(events)
-                    model.showToast("Copied \(events.count) events", style: .info)
+                    model.showToast(AppStrings.localized("Copied \(events.count) events"), style: .info)
                 } label: {
-                    Image(systemName: "doc.on.doc")
-                        .themedFont(.micro)
+                    Label { Text("Copy raw events", bundle: .module) } icon: {
+                        Image(systemName: "doc.on.doc").themedFont(.micro)
+                    }
+                    .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
-                .help("Copy raw events")
+                .help(Text("Copy raw events", bundle: .module))
             }
             ForEach(Array(events.enumerated()), id: \.offset) { _, ev in
-                Text(eventDescription(ev))
+                // Raw engine events, the same lines Copy puts on the clipboard.
+                Text(verbatim: eventDescription(ev))
                     .font(theme.code(.small))
                     .foregroundStyle(.appSecondary)
                     .textSelection(.enabled)
@@ -360,13 +392,13 @@ struct ServerConsoleView: View {
         .cornerRadius(4)
     }
 
-    private func detailLine(_ label: String, _ value: String, help: String? = nil) -> some View {
+    private func detailLine(_ label: Text, _ value: Text, help: Text? = nil) -> some View {
         HStack(spacing: 6) {
-            Text(label)
+            label
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
-                .frame(width: 78, alignment: .leading)
-            Text(value)
+                .frame(minWidth: 78, alignment: .leading)
+            value
                 .font(theme.code(.small))
                 .textSelection(.enabled)
             if let help {
@@ -374,6 +406,7 @@ struct ServerConsoleView: View {
                     .themedFont(.micro)
                     .foregroundStyle(.appSecondary)
                     .help(help)
+                    .accessibilityLabel(help)
             }
         }
     }
@@ -415,13 +448,13 @@ struct ServerConsoleView: View {
                 withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         else { return }
         copyText(String(decoding: data, as: UTF8.self))
-        withAnimation {
+        TSMotion.animate(TSMotion.hover) {
             copiedAll = true
         }
-        model.showToast("Copied \(rows.count) requests to clipboard", style: .info)
+        model.showToast(AppStrings.localized("Copied \(rows.count) requests to clipboard"), style: .info)
         Task {
             try? await Task.sleep(nanoseconds: 1_800_000_000)
-            withAnimation {
+            TSMotion.animate(TSMotion.hover) {
                 copiedAll = false
             }
         }
@@ -430,17 +463,17 @@ struct ServerConsoleView: View {
     private func copyRowAction(_ record: ServerRequestRecord) {
         if let err = record.errorMessage, !err.isEmpty {
             copyText(err)
-            model.showToast("Copied error message", style: .info)
+            model.showToast(AppStrings.localized("Copied error message"), style: .info)
         } else {
             copyRecordSummary(record)
-            model.showToast("Copied request summary", style: .info)
+            model.showToast(AppStrings.localized("Copied request summary"), style: .info)
         }
-        withAnimation {
+        TSMotion.animate(TSMotion.hover) {
             copiedRecordID = record.id
         }
         Task {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            withAnimation {
+            TSMotion.animate(TSMotion.hover) {
                 if copiedRecordID == record.id {
                     copiedRecordID = nil
                 }

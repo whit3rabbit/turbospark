@@ -73,19 +73,18 @@ struct ImageModelControls: View {
                                 AppModel.supportsMLXImageModel(modelID: $0.modelID)
                                     && ImageModelPresentation.family($0.modelID) == name
                             }) { model.selectImageModel(first) }
-                        } label: { Text(name) }
+                        } label: { Text(verbatim: name) }
                     }
                     Divider()
                     Button { importing = true } label: { Text("Choose Folder...", bundle: .module) }
                 } label: {
-                    HStack(spacing: 4) {
-                        Text(family ?? String(localized: "Choose Folder...", bundle: .module))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .themedFont(.tiny)
-                            .foregroundStyle(.appSecondary)
+                    if let family {
+                        Text(verbatim: family).lineLimit(1)
+                    } else {
+                        Text("Choose Folder...", bundle: .module).lineLimit(1)
                     }
                 }
+                .appMenuAction(size: .small)
                 .help(Text("Model", bundle: .module))
                 .accessibilityLabel(Text("Model", bundle: .module))
             }
@@ -96,9 +95,11 @@ struct ImageModelControls: View {
                 Menu {
                     ForEach(installed) { item in
                         Button { model.selectImageModel(item) } label: {
-                            Label(
-                                ImageModelPresentation.quantization(item.quantization) + " (" + item.alias + ")",
-                                systemImage: model.imageModelPath == item.path ? "checkmark" : "internaldrive")
+                            Label {
+                                Text(verbatim: ImageModelPresentation.quantization(item.quantization) + " (" + item.alias + ")")
+                            } icon: {
+                                Image(systemName: model.imageModelPath == item.path ? "checkmark" : "internaldrive")
+                            }
                         }
                     }
                     if !installed.isEmpty && !sources.isEmpty { Divider() }
@@ -106,27 +107,23 @@ struct ImageModelControls: View {
                         Button { model.installImageModel(source) } label: {
                             Label {
                                 Text("Download", bundle: .module)
-                                Text(ImageModelPresentation.quantization(source.quantization))
+                                    + Text(verbatim: " " + ImageModelPresentation.quantization(source.quantization))
                             } icon: { Image(systemName: "arrow.down.circle") }
                         }
                         .disabled(!model.canInstallImageModel(alias: source.alias))
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        if let selected = model.selectedImageModel,
-                           AppModel.supportsMLXImageModel(modelID: selected.modelID),
-                           ImageModelPresentation.family(selected.modelID) == family {
-                            Text(ImageModelPresentation.quantization(selected.quantization))
-                        } else if let firstSource = sources.first {
-                            Text(ImageModelPresentation.quantization(firstSource.quantization))
-                        } else {
-                            Text("Download", bundle: .module)
-                        }
-                        Image(systemName: "chevron.up.chevron.down")
-                            .themedFont(.tiny)
-                            .foregroundStyle(.appSecondary)
+                    if let selected = model.selectedImageModel,
+                       AppModel.supportsMLXImageModel(modelID: selected.modelID),
+                       ImageModelPresentation.family(selected.modelID) == family {
+                        Text(verbatim: ImageModelPresentation.quantization(selected.quantization))
+                    } else if let firstSource = sources.first {
+                        Text(verbatim: ImageModelPresentation.quantization(firstSource.quantization))
+                    } else {
+                        Text("Download", bundle: .module)
                     }
                 }
+                .appMenuAction(size: .small)
                 .disabled(installed.isEmpty && sources.isEmpty)
                 .help(Text("Quantization", bundle: .module))
                 .accessibilityLabel(Text("Quantization", bundle: .module))
@@ -146,8 +143,8 @@ struct ImageModelControls: View {
                             Image(systemName: "arrow.down.circle.fill")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    // Secondary: Generate is the composer's one primary action.
+                    .appAction(.secondary, size: .small)
                     .disabled(!model.canInstallImageModel(alias: source.alias))
                 }
             }
@@ -165,15 +162,13 @@ struct ImageModelControls: View {
                             Image(systemName: "eject.fill")
                         }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .appAction(.secondary, size: .small)
                     .disabled(!model.canUnloadImageModel)
                     .help(Text("Unload Model", bundle: .module))
                     .accessibilityLabel(Text("Unload Model", bundle: .module))
                 }
             }
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden)
         .themedFont(.small)
         .disabled(model.isRunning)
         .onChange(of: model.imageModelPath) { browsingFamily = nil }

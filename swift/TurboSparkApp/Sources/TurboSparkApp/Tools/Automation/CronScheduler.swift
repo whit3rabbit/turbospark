@@ -166,54 +166,104 @@ public struct CronSchedule: Equatable, Sendable {
     /// A human sentence for the schedule, the way `CronList`'s
     /// `humanSchedule` field reads. Falls back to the raw expression for a
     /// shape the simple recognizers do not name.
-    public func describe() -> String {
+    /// The named shapes a schedule is described by. One classification
+    /// feeds two renderings: `describe()` stays English because CronList
+    /// returns it to the model and tests pin it, and `localizedDescription()`
+    /// is the same shape in the UI language for the Scheduled Tasks pane.
+    private enum Shape {
+        case everyMinute
+        case everyMinutes(Int)
+        case hourlyAt(minute: Int)
+        case dailyAt(String)
+        case weeklyOn(weekday: Int, time: String)
+        case weekdaysAt(String)
+        case custom
+    }
+
+    private var shape: Shape {
         func single(_ set: Set<Int>) -> Int? { set.count == 1 ? set.first : nil }
         // The named shapes below only describe the minute/hour fields, so
         // they are valid only when no month or day restriction narrows them;
         // otherwise "Custom schedule" is the honest label.
         guard month.count == 12, dayOfMonth.count == 31, dayOfWeek.count == 7 else {
-            return describeRestrictedDays()
+            return restrictedDaysShape
         }
-        if minute.count == 60 && hour.count == 24 { return "Every minute" }
+        if minute.count == 60 && hour.count == 24 { return .everyMinute }
         // "Every N minutes" covers the evenly-stepped minute field with an
         // otherwise-wild expression.
         if hour.count == 24 {
             let minutes = minute.sorted()
             if minutes.count > 1, minutes == Array(stride(from: minutes[0], to: 60, by: minutes[1] - minutes[0])) {
-                return "Every \(minutes[1] - minutes[0]) minutes"
+                return .everyMinutes(minutes[1] - minutes[0])
             }
         }
         if let minuteValue = single(minute), hour.count == 24 {
-            return "Hourly at :\(String(format: "%02d", minuteValue))"
+            return .hourlyAt(minute: minuteValue)
         }
         if let minuteValue = single(minute), let hourValue = single(hour) {
-            let time = String(format: "%02d:%02d", hourValue, minuteValue)
-            return "Daily at \(time)"
+            return .dailyAt(String(format: "%02d:%02d", hourValue, minuteValue))
         }
-        return "Custom schedule"
+        return .custom
     }
 
-    /// Labels for the one restricted-day shape the pane names: a single
-    /// time on a weekday restriction with the day-of-month and month wild.
-    private func describeRestrictedDays() -> String {
+    /// The one restricted-day shape the pane names: a single time on a
+    /// weekday restriction with the day-of-month and month wild.
+    private var restrictedDaysShape: Shape {
         if month.count == 12, dayOfMonth.count == 31,
             let minuteValue = minute.count == 1 ? minute.first : nil,
             let hourValue = hour.count == 1 ? hour.first : nil
         {
             let time = String(format: "%02d:%02d", hourValue, minuteValue)
             if dayOfWeek.count == 1, let weekday = dayOfWeek.first {
-                return "Weekly on \(weekdayName(weekday)) at \(time)"
+                return .weeklyOn(weekday: weekday, time: time)
             }
             if dayOfWeek == Set([1, 2, 3, 4, 5]) {
-                return "Weekdays at \(time)"
+                return .weekdaysAt(time)
             }
         }
-        return "Custom schedule"
+        return .custom
+    }
+
+    public func describe() -> String {
+        switch shape {
+        case .everyMinute: return "Every minute"
+        case .everyMinutes(let step): return "Every \(step) minutes"
+        case .hourlyAt(let minute): return "Hourly at :\(String(format: "%02d", minute))"
+        case .dailyAt(let time): return "Daily at \(time)"
+        case .weeklyOn(let weekday, let time): return "Weekly on \(weekdayName(weekday)) at \(time)"
+        case .weekdaysAt(let time): return "Weekdays at \(time)"
+        case .custom: return "Custom schedule"
+        }
+    }
+
+    /// `describe()` in the UI language, with weekday names from the UI
+    /// locale's calendar rather than the catalog.
+    public func localizedDescription() -> String {
+        switch shape {
+        case .everyMinute: return AppStrings.localized("Every minute")
+        case .everyMinutes(let step): return AppStrings.localized("Every \(step) minutes")
+        case .hourlyAt(let minute):
+            let padded = String(format: "%02d", minute)
+            return AppStrings.localized("Hourly at :\(padded)")
+        case .dailyAt(let time): return AppStrings.localized("Daily at \(time)")
+        case .weeklyOn(let weekday, let time):
+            let day = localizedWeekdayName(weekday)
+            return AppStrings.localized("Weekly on \(day) at \(time)")
+        case .weekdaysAt(let time): return AppStrings.localized("Weekdays at \(time)")
+        case .custom: return AppStrings.localized("Custom schedule")
+        }
     }
 
     private func weekdayName(_ value: Int) -> String {
         let names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
         return names[value % 7]
+    }
+
+    private func localizedWeekdayName(_ value: Int) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = AppStrings.currentLanguage.locale
+        let names = formatter.standaloneWeekdaySymbols ?? []
+        return names.count == 7 ? names[value % 7] : weekdayName(value)
     }
 }
 
@@ -245,6 +295,15 @@ public struct AppCronJob: Codable, Equatable, Sendable, Identifiable {
             return "Once at \(fireAt.formatted(date: .abbreviated, time: .shortened))"
         }
         return CronSchedule(cron)?.describe() ?? cron
+    }
+
+    /// `humanSchedule` in the UI language, for the Scheduled Tasks pane.
+    /// `humanSchedule` stays English because CronList returns it to the model.
+    public var localizedHumanSchedule: String {
+        if let fireAt {
+            return AppStrings.localized("Once at \(fireAt.formatted(date: .abbreviated, time: .shortened))")
+        }
+        return CronSchedule(cron)?.localizedDescription() ?? cron
     }
 
     public struct CronRunRecord: Codable, Equatable, Sendable {
@@ -338,7 +397,7 @@ public final class CronScheduler: @unchecked Sendable {
 
     private func load() {
         guard let archive = AppJSONStore.load(
-            [AppCronJob].self, from: fileURL, label: "cron jobs")
+            [AppCronJob].self, from: fileURL, label: "Cron jobs")
         else { return }
         jobs = archive
         // A job that fired before the app quit has a stale nextFireAt; a

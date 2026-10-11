@@ -41,7 +41,13 @@ struct PromptModelSelectorPill: View {
             }
         } label: {
             HStack(spacing: 3) {
-                Text(model.selected?.alias ?? "Select Model")
+                Group {
+                    if let alias = model.selected?.alias {
+                        Text(alias)
+                    } else {
+                        Text("Select Model", bundle: .module)
+                    }
+                }
                     .font(theme.ui(.small, weight: .medium))
                     .foregroundStyle(.appSecondary)
                     .lineLimit(1)
@@ -101,9 +107,9 @@ struct PromptProjectContextPill: View {
             .background(.appAccent.opacity(0.1), in: Capsule())
             .overlay(Capsule().stroke(.appAccent.opacity(0.25), lineWidth: 0.5))
             .fixedSize()
-            .help("Active project: \(project.name)")
+            .help(Text("Active project: \(project.name)", bundle: .module))
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Active project: \(project.name)")
+            .accessibilityLabel(Text("Active project: \(project.name)", bundle: .module))
         }
     }
 }
@@ -119,15 +125,18 @@ struct PromptReasoningPillControl: View {
         Menu {
             Section(header: Text("Thinking / Reasoning Effort", bundle: .module)) {
                 ForEach(model.availableReasoningLevels) { level in
-                    let title = model.reasoningLabel(for: level)
-                        + " - " + model.reasoningDescription(for: level)
+                    // Level labels and descriptions are catalog keys, the
+                    // same lookup the model loader's reasoning menu makes.
+                    let title = Text(LocalizedStringKey(model.reasoningLabel(for: level)), bundle: .module)
+                        + Text(verbatim: " - ")
+                        + Text(LocalizedStringKey(model.reasoningDescription(for: level)), bundle: .module)
                     Button {
                         model.setReasoning(level)
                     } label: {
                         if model.reasoning == level {
-                            Label(title, systemImage: "checkmark")
+                            Label { title } icon: { Image(systemName: "checkmark") }
                         } else {
-                            Text(title)
+                            title
                         }
                     }
                 }
@@ -142,7 +151,7 @@ struct PromptReasoningPillControl: View {
             }
         } label: {
             HStack(spacing: 3) {
-                Text(model.reasoningLabel(for: model.reasoning))
+                Text(LocalizedStringKey(model.reasoningLabel(for: model.reasoning)), bundle: .module)
                     .font(theme.ui(.small, weight: .medium))
                     .foregroundStyle(isThinkingActive ? Color.primary : Color.secondary)
 
@@ -156,6 +165,6 @@ struct PromptReasoningPillControl: View {
         .fixedSize()
         .help(Text("Adjust reasoning effort", bundle: .module))
         .accessibilityLabel(Text("Reasoning Effort", bundle: .module))
-        .accessibilityValue(model.reasoning.label)
+        .accessibilityValue(Text(LocalizedStringKey(model.reasoningLabel(for: model.reasoning)), bundle: .module))
     }
 }

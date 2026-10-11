@@ -73,7 +73,7 @@ struct NavigationRailView: View {
         .frame(maxHeight: .infinity)
         .background(TurboSparkTheme.railBackgroundColor(
             isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
-        .animation(TSMotion.select, value: model.activeSection)
+        .tsAnimation(TSMotion.select, value: model.activeSection)
     }
 
     private func railButton(_ section: AppModel.AppNavigationSection) -> some View {
@@ -116,7 +116,7 @@ struct NavigationRailView: View {
         .accessibilityLabel(Text(LocalizedStringKey(section.title), bundle: .module))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .onHover { hovering in
-            withAnimation(TSMotion.hover) {
+            TSMotion.animate(TSMotion.hover) {
                 if hovering {
                     hoveredSection = section
                 } else if hoveredSection == section {
@@ -143,7 +143,7 @@ struct NavigationRailView: View {
         .help(Text("Settings", bundle: .module) + Text(verbatim: " (Cmd+,)"))
         .accessibilityLabel(Text("Settings", bundle: .module))
         .onHover { hovering in
-            withAnimation(TSMotion.select) { isSettingsHovered = hovering }
+            TSMotion.animate(TSMotion.select) { isSettingsHovered = hovering }
         }
     }
 }

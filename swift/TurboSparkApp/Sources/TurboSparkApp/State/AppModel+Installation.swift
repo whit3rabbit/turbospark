@@ -58,7 +58,7 @@ extension AppModel {
         // does nothing reads as a broken button.
         if let why = installBlockReason(alias: alias) {
             showToast(
-                "'\(alias)' will not run on this machine. \(why)",
+                AppStrings.localized("'\(alias)' will not run on this machine. \(why)"),
                 style: .warning, duration: 8.0)
             return
         }
@@ -87,7 +87,7 @@ extension AppModel {
         installEpoch += 1
         let myEpoch = installEpoch
         isInstallingModel = true
-        installStageText = "Preparing install..."
+        installStageText = AppStrings.localized("Preparing install...")
         installProgressFraction = nil
         installDownloadedBytes = nil
         installTotalBytes = nil
@@ -133,7 +133,7 @@ extension AppModel {
                     case .finished(let model):
                         guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown else { return }
                         self.setModelDownloadStatus(.loading)
-                        self.installStageText = "Installation complete!"
+                        self.installStageText = AppStrings.localized("Installation complete!")
                         self.refreshModels()
                         self.selected = model
                         // **THE TOAST FOLLOWS THE OPEN, NOT THE INSTALL**
@@ -148,11 +148,11 @@ extension AppModel {
                         self.setModelDownloadStatus(.completed)
                         if self.session != nil, self.selected?.path == model.path {
                             self.showToast(
-                                "Successfully installed and loaded '\(model.alias)'",
+                                AppStrings.localized("Successfully installed and loaded '\(model.alias)'"),
                                 style: .success, duration: 4.0)
                         } else {
                             self.showToast(
-                                "Installed '\(model.alias)'. Load it from the Installed pane.",
+                                AppStrings.localized("Installed '\(model.alias)'. Load it from the Installed pane."),
                                 style: .info, duration: 5.0)
                         }
                     }
@@ -161,14 +161,16 @@ extension AppModel {
                 // A stale consumer must not clear another install's progress.
                 guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown else { return }
                 self.setModelDownloadStatus(.cancelled)
-                self.installStageText = "Stopped watching install"
+                self.installStageText = AppStrings.localized("Stopped watching install")
             } catch {
                 guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown else { return }
                 if !self.isCancellingModelInstall {
                     self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
                     self.error = error.localizedDescription
                     self.installStageText = nil
-                    self.showToast("Installation failed: \(error.localizedDescription)", style: .error, duration: 5.0)
+                    self.showToast(
+                        AppStrings.localized("Installation failed: \(error.localizedDescription)"),
+                        style: .error, duration: 5.0)
                 }
             }
             guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown else { return }
@@ -226,7 +228,7 @@ extension AppModel {
         installEpoch += 1
         let myEpoch = installEpoch
         isInstallingModel = true
-        installStageText = "Connecting to Hugging Face..."
+        installStageText = AppStrings.localized("Connecting to Hugging Face...")
         installProgressFraction = nil
         installDownloadedBytes = nil
         installTotalBytes = nil
@@ -277,7 +279,7 @@ extension AppModel {
                     case .finished(let model):
                         guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown else { return }
                         self.setModelDownloadStatus(.loading)
-                        self.installStageText = "Installation complete!"
+                        self.installStageText = AppStrings.localized("Installation complete!")
                         self.refreshModels()
                         self.selected = model
                         // **THE TOAST FOLLOWS THE OPEN, NOT THE INSTALL**
@@ -292,11 +294,11 @@ extension AppModel {
                         self.setModelDownloadStatus(.completed)
                         if self.session != nil, self.selected?.path == model.path {
                             self.showToast(
-                                "Successfully installed and loaded '\(model.alias)'",
+                                AppStrings.localized("Successfully installed and loaded '\(model.alias)'"),
                                 style: .success, duration: 4.0)
                         } else {
                             self.showToast(
-                                "Installed '\(model.alias)'. Load it from the Installed pane.",
+                                AppStrings.localized("Installed '\(model.alias)'. Load it from the Installed pane."),
                                 style: .info, duration: 5.0)
                         }
                     }
@@ -305,16 +307,20 @@ extension AppModel {
                 // A stale consumer must not clear another install's progress.
                 guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown else { return }
                 self.setModelDownloadStatus(.cancelled)
-                self.installStageText = "Stopped watching install"
+                self.installStageText = AppStrings.localized("Stopped watching install")
             } catch {
                 guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown else { return }
                 if !self.isCancellingModelInstall {
                     let desc = error.localizedDescription
                     self.setModelDownloadStatus(.failed, failure: desc)
                     if desc.contains("401") || desc.contains("403") || desc.contains("gated") || desc.localizedCaseInsensitiveContains("unauthorized") {
-                        self.showToast("Installation failed: Authentication required. Check your Hugging Face API token in Settings.", style: .error, duration: 6.0)
+                        self.showToast(
+                            AppStrings.localized("Installation failed: Authentication required. Check your Hugging Face API token in Settings."),
+                            style: .error, duration: 6.0)
                     } else {
-                        self.showToast("Installation failed: \(desc)", style: .error, duration: 5.0)
+                        self.showToast(
+                            AppStrings.localized("Installation failed: \(desc)"),
+                            style: .error, duration: 5.0)
                     }
                 }
             }

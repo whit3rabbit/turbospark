@@ -12,167 +12,109 @@ struct ModelHubFilterBarView: View {
     let recommendations: [String: ModelRecommendation]
 
     var body: some View {
-        HStack(spacing: 8) {
+        // Same row as the Installed filter bar: search first, then the
+        // filters in the shared menu treatment, wrapping to a second line
+        // instead of scrolling sideways or truncating.
+        FlowLayout(spacing: 8, lineSpacing: 6) {
+            AppSearchField(
+                text: $filter.searchText,
+                prompt: Text("Filter", bundle: .module))
+                .help(Text("Filters by alias, name, family or notes", bundle: .module))
+
+            // "Installed only" narrows the CATALOG to entries already on this
+            // Mac. It is not the Installed workspace, and the tooltip says so.
             Picker(selection: $filter.tab) {
                 ForEach(ModelHubFilter.Tab.allCases) { tab in
                     tabText(tab).tag(tab)
                 }
-            } label: { Text("View", bundle: .module) }
+            } label: { Text("Catalog view", bundle: .module) }
             .pickerStyle(.segmented)
             .controlSize(.small)
-            .themedFont(.tiny)
-            .frame(width: 260)
             .labelsHidden()
-            .accessibilityLabel("Catalog view")
+            .fixedSize()
+            .help(Text(
+                "Recommended: catalog entries that fit this Mac. Discover: the whole catalog. Installed only: catalog entries already on this Mac.",
+                bundle: .module))
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    filterChip(
-                        title: "Format & Package",
-                        options: ModelHubFilter.formatOptions(for: catalog),
-                        selection: $filter.format)
+            filterMenu(
+                name: Text("Format & Package", bundle: .module),
+                options: ModelHubFilter.formatOptions(for: catalog),
+                selection: $filter.format)
 
-                    filterChip(
-                        title: "Architecture",
-                        options: ModelHubFilter.capabilityOptions(for: catalog),
-                        selection: $filter.capability)
+            filterMenu(
+                name: Text("Architecture", bundle: .module),
+                options: ModelHubFilter.capabilityOptions(for: catalog),
+                selection: $filter.capability)
 
-                    filterChip(
-                        title: "Fits Memory",
-                        options: ModelHubFilter.fitOptions(
-                            for: catalog,
-                            recommendations: recommendations),
-                        selection: $filter.fit)
+            filterMenu(
+                name: Text("Fits Memory", bundle: .module),
+                options: ModelHubFilter.fitOptions(
+                    for: catalog,
+                    recommendations: recommendations),
+                selection: $filter.fit)
 
-                    sortChip
-
-                    if filter.isNarrowed {
-                        Button {
-                            filter.clearNarrowing()
-                        } label: {
-                            Label { Text("Clear", bundle: .module) } icon: { Image(systemName: "xmark") }
-                                .themedFont(.tiny, weight: .medium)
-                                .labelStyle(.titleOnly)
-                                .padding(.horizontal, 8)
-                                .frame(height: 22)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.appSecondary)
-                        .help("Clear every filter")
-                        .accessibilityLabel("Clear filters")
+            ModelFilterMenu(
+                name: Text("Sort By", bundle: .module),
+                value: sortOptionText(filter.sort)
+            ) {
+                Picker(selection: $filter.sort) {
+                    ForEach(ModelHubFilter.SortOption.allCases) { option in
+                        sortOptionText(option).tag(option)
                     }
+                } label: { Text("Sort By", bundle: .module) }
+                .pickerStyle(.inline)
+            }
+
+            if filter.isNarrowed {
+                Button {
+                    filter.clearNarrowing()
+                } label: {
+                    Label { Text("Clear filters", bundle: .module) } icon: { Image(systemName: "xmark") }
                 }
-                .padding(.trailing, 4)
+                .appAction(.quiet, size: .small)
+                .help(Text("Clear every filter", bundle: .module))
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
     }
 
-    /// A dropdown that reads "Format" when inactive and "MLX INT4" when set,
-    /// so an active filter is visible without opening it.
-    private func filterChip(
-        title: LocalizedStringKey,
+    /// A dropdown that reads "Format & Package" when inactive and "MLX INT4"
+    /// when set, so an active filter is visible without opening it. Options
+    /// are catalog data: words with a catalog key (Reasoning, Tight fit) are
+    /// translated, names and format labels render as written.
+    private func filterMenu(
+        name: Text,
         options: [String],
         selection: Binding<ModelHubFilter.Selection>
     ) -> some View {
-        Menu {
-            Button { selection.wrappedValue = nil } label: {
-                Text("All", bundle: .module)
-            }
-            if !options.isEmpty {
-                Divider()
-                ForEach(options, id: \.self) { option in
-                    Button {
-                        selection.wrappedValue = option
-                    } label: {
-                        if selection.wrappedValue == option {
-                            Label(option, systemImage: "checkmark")
-                        } else {
-                            Text(option)
-                        }
+        ModelFilterMenu(
+            name: name,
+            value: selection.wrappedValue.map(optionText) ?? name
+        ) {
+            Picker(selection: selection) {
+                Text("All", bundle: .module).tag(ModelHubFilter.Selection.none)
+                if !options.isEmpty {
+                    Divider()
+                    ForEach(options, id: \.self) { option in
+                        optionText(option).tag(ModelHubFilter.Selection.some(option))
                     }
                 }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                if let selected = selection.wrappedValue {
-                    Text(selected)
-                        .themedFont(.tiny, weight: .medium)
-                        .lineLimit(1)
-                } else {
-                    Text(title, bundle: .module)
-                        .themedFont(.tiny)
-                        .lineLimit(1)
-                }
-                Image(systemName: "chevron.down")
-                    .themedFont(.micro, weight: .bold)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 9)
-            .frame(height: 22)
-            .contentShape(Rectangle())
+            } label: { name }
+            .pickerStyle(.inline)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .foregroundStyle(selection.wrappedValue == nil ? Color.secondary : TurboSparkTheme.accentColor)
-        .background(
-            selection.wrappedValue == nil
-                ? TurboSparkTheme.surfaceColor
-                : TurboSparkTheme.accentColor.opacity(0.14),
-            in: Capsule())
-        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
         .disabled(options.isEmpty && selection.wrappedValue == nil)
-        .help(Text(title, bundle: .module))
-        .accessibilityLabel(Text(title, bundle: .module))
-        .accessibilityValue(
-            selection.wrappedValue.map { Text(verbatim: $0) }
-                ?? Text("All", bundle: .module))
     }
 
-    private var sortChip: some View {
-        Menu {
-            ForEach(ModelHubFilter.SortOption.allCases) { option in
-                Button {
-                    filter.sort = option
-                } label: {
-                    if filter.sort == option {
-                        Label { sortOptionText(option) } icon: { Image(systemName: "checkmark") }
-                    } else {
-                        sortOptionText(option)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.up.arrow.down")
-                    .themedFont(.micro, weight: .bold)
-                sortOptionText(filter.sort)
-                    .themedFont(.tiny)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 9)
-            .frame(height: 22)
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .foregroundStyle(.appSecondary)
-        .background(TurboSparkTheme.surfaceColor, in: Capsule())
-        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.5) }
-        .help(Text("Sort and group models", bundle: .module))
-        .accessibilityLabel(Text("Sort By", bundle: .module))
-        .accessibilityValue(sortOptionText(filter.sort))
+    private func optionText(_ option: String) -> Text {
+        Text(LocalizedStringKey(option), bundle: .module)
     }
 
     private func tabText(_ tab: ModelHubFilter.Tab) -> Text {
         switch tab {
         case .recommended: return Text("Recommended", bundle: .module)
         case .discover: return Text("Discover", bundle: .module)
-        case .onDevice: return Text("Installed", bundle: .module)
+        case .onDevice: return Text("Installed only", bundle: .module)
         }
     }
 

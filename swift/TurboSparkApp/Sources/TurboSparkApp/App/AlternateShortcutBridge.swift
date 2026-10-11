@@ -11,7 +11,9 @@ import SwiftUI
 /// the menus show only the primary chord.
 ///
 /// Every button's disabled state mirrors the menu command it shadows, so an
-/// alternate never reaches an action the advertised key would refuse.
+/// alternate never reaches an action the advertised key would refuse. The
+/// labels are verbatim: the buttons are invisible and hidden from VoiceOver,
+/// so no reader ever sees or hears them.
 struct AlternateShortcutBridge: View {
     @ObservedObject var model: AppModel
     let toggleSidebar: () -> Void
@@ -20,20 +22,20 @@ struct AlternateShortcutBridge: View {
         VStack {
             // unsloth newChat: Cmd+Shift+O. Its own Cmd+N alternate is the
             // chord the Chat menu already advertises.
-            Button("New Chat Alternate") { model.createChat() }
+            Button { model.createChat() } label: { Text(verbatim: "New Chat Alternate") }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
                 .disabled(model.isRunning)
 
             // unsloth previousChat / nextChat: Cmd+Shift+[ and Cmd+Shift+].
-            Button("Previous Chat Alternate") { model.selectPreviousChat() }
+            Button { model.selectPreviousChat() } label: { Text(verbatim: "Previous Chat Alternate") }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
                 .disabled(model.isRunning || model.orderedChats.isEmpty)
-            Button("Next Chat Alternate") { model.selectNextChat() }
+            Button { model.selectNextChat() } label: { Text(verbatim: "Next Chat Alternate") }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
                 .disabled(model.isRunning || model.orderedChats.isEmpty)
 
             // unsloth toggleSidebar: Cmd+B.
-            Button("Toggle Chat Sidebar Alternate") { toggleSidebar() }
+            Button { toggleSidebar() } label: { Text(verbatim: "Toggle Chat Sidebar Alternate") }
                 .keyboardShortcut("b", modifiers: .command)
 
             // unsloth switchToChat..switchToExport: Ctrl+1..Ctrl+9 on macOS.

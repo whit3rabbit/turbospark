@@ -57,11 +57,11 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         case permission, unavailable, noSource, alreadyRecording, invalidFormat
         var errorDescription: String? {
             switch self {
-            case .permission: return String(localized: "Microphone access is off. Allow TurboSpark in System Settings > Privacy & Security > Microphone, then try again.", bundle: .module)
-            case .unavailable: return String(localized: "The selected audio source is unavailable. Select an available microphone or application.", bundle: .module)
-            case .noSource: return String(localized: "Select a microphone or system audio source before recording.", bundle: .module)
-            case .alreadyRecording: return String(localized: "A recording is already active. Stop it before starting another.", bundle: .module)
-            case .invalidFormat: return String(localized: "The audio source has an unsupported format. Choose another input device.", bundle: .module)
+            case .permission: return AppStrings.localized("Microphone access is off. Allow TurboSpark in System Settings > Privacy & Security > Microphone, then try again.")
+            case .unavailable: return AppStrings.localized("The selected audio source is unavailable. Select an available microphone or application.")
+            case .noSource: return AppStrings.localized("Select a microphone or system audio source before recording.")
+            case .alreadyRecording: return AppStrings.localized("A recording is already active. Stop it before starting another.")
+            case .invalidFormat: return AppStrings.localized("The audio source has an unsupported format. Choose another input device.")
             }
         }
     }
@@ -234,10 +234,10 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         let frames = CMSampleBufferGetNumSamples(sampleBuffer)
         guard format.sampleRate.isFinite, (8_000...192_000).contains(format.sampleRate),
               frames > 0, frames <= Int(format.sampleRate * 5), (1...8).contains(format.channelCount),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else { fail(String(localized: "System audio returned an invalid buffer. Stop and select the source again.", bundle: .module)); return }
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else { fail(AppStrings.localized("System audio returned an invalid buffer. Stop and select the source again.")); return }
         buffer.frameLength = AVAudioFrameCount(frames)
         let result = CMSampleBufferCopyPCMDataIntoAudioBufferList(sampleBuffer, at: 0, frameCount: Int32(frames), into: buffer.mutableAudioBufferList)
-        guard result == noErr else { fail(String(localized: "System audio could not be read. Stop and select the source again.", bundle: .module)); return }
+        guard result == noErr else { fail(AppStrings.localized("System audio could not be read. Stop and select the source again.")); return }
         let hostTime = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
         enqueue(buffer, hostTime: hostTime, source: "system")
     }
@@ -265,14 +265,14 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         starting = false
         if let engine {
             configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
-                self?.fail(String(localized: "The microphone configuration changed. Saved audio is safe. Select the input again and start a new recording.", bundle: .module), interruption: true)
+                self?.fail(AppStrings.localized("The microphone configuration changed. Saved audio is safe. Select the input again and start a new recording."), interruption: true)
             }
         }
         if case .application(let pid) = source {
             applicationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: nil) { [weak self] notification in
                 guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                       app.processIdentifier == pid else { return }
-                self?.fail(String(localized: "The recorded application closed. Saved audio is safe. Select an available source and start a new recording.", bundle: .module), interruption: true)
+                self?.fail(AppStrings.localized("The recorded application closed. Saved audio is safe. Select an available source and start a new recording."), interruption: true)
             }
         }
         return true
@@ -295,7 +295,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         guard format.sampleRate > 0, format.channelCount > 0, format.channelCount <= 8,
               format.commonFormat == .pcmFormatFloat32 else { throw CaptureError.invalidFormat }
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
-            guard time.isHostTimeValid else { self?.fail(String(localized: "Microphone timestamps are unavailable. Choose another input device.", bundle: .module)); return }
+            guard time.isHostTimeValid else { self?.fail(AppStrings.localized("Microphone timestamps are unavailable. Choose another input device.")); return }
             self?.enqueue(buffer, hostTime: AVAudioTime.seconds(forHostTime: time.hostTime), source: "microphone")
         }
         engine.prepare()
@@ -308,7 +308,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         let bytes = Int(buffer.frameLength) * Int(buffer.format.channelCount) * MemoryLayout<Float>.size
         guard budget.reserve(bytes) else {
             lock.unlock()
-            fail(String(localized: "Recording stopped because storage could not keep up. Saved chunks are safe. Free disk space or choose a faster storage volume.", bundle: .module))
+            fail(AppStrings.localized("Recording stopped because storage could not keep up. Saved chunks are safe. Free disk space or choose a faster storage volume."))
             return
         }
         // Queue insertion and acceptance shutdown share this lock. Otherwise a

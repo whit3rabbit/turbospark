@@ -31,6 +31,7 @@ struct ImageGenerationSettings: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Style", bundle: .module).themedFont(.tiny, weight: .medium)
             ImageStyleMenu(model: model)
+                .appMenuAction(size: .small)
         }
     }
 
@@ -40,7 +41,7 @@ struct ImageGenerationSettings: View {
             Picker(selection: $model.imageCount) {
                 ForEach(1...4, id: \.self) { count in Text(verbatim: String(count)).tag(count) }
             } label: { Text("Number of images", bundle: .module) }
-            .labelsHidden().pickerStyle(.segmented).frame(width: 150)
+            .labelsHidden().pickerStyle(.segmented).fixedSize()
         }
     }
 
@@ -49,7 +50,7 @@ struct ImageGenerationSettings: View {
             Text("Image size", bundle: .module).themedFont(.tiny, weight: .medium)
             Picker(selection: $model.imageResolution) {
                 ForEach(ImageResolutionPreset.allCases) { resolution in
-                    Text(resolution.label).tag(resolution)
+                    Text(verbatim: resolution.label).tag(resolution)
                 }
             } label: {
                 Text("Image size", bundle: .module)

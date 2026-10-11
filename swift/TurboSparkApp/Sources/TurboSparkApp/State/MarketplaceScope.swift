@@ -51,11 +51,8 @@ extension AppModel {
         case .nameTakenByDifferentSource:
             throw PluginLoadError(
                 pluginName: nil,
-                reason: String(
-                    format: String(
-                        localized: "A source named \"%@\" already exists and points somewhere else. Choose a different name, or remove the existing source first.",
-                        bundle: .module),
-                    name))
+                reason: AppStrings.localized(
+                    "A source named \"\(name)\" already exists and points somewhere else. Choose a different name, or remove the existing source first."))
         }
         return decision
     }
@@ -76,7 +73,7 @@ extension AppModel {
         }
         if let projectID {
             guard var project = projects.first(where: { $0.id == projectID }) else {
-                throw PluginLoadError(pluginName: nil, reason: String(localized: "The target project no longer exists.", bundle: .module))
+                throw PluginLoadError(pluginName: nil, reason: AppStrings.localized("The target project no longer exists."))
             }
             project.marketplaces.sources[kind.rawValue, default: [:]][name] = source
             project.marketplaces.hidden[kind.rawValue, default: []].remove(name)
@@ -108,7 +105,7 @@ extension AppModel {
                 }
             }
         } else {
-            throw PluginLoadError(pluginName: nil, reason: String(localized: "The target project no longer exists.", bundle: .module))
+            throw PluginLoadError(pluginName: nil, reason: AppStrings.localized("The target project no longer exists."))
         }
     }
 

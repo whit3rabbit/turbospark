@@ -101,7 +101,7 @@ struct PromptComposerView: View {
                     y: 2
                 )
         }
-        .animation(.easeInOut(duration: 0.15), value: promptFocused)
+        .tsAnimation(.easeInOut(duration: 0.15), value: promptFocused)
         .fileImporter(
             isPresented: $isImportingDocuments,
             allowedContentTypes: model.attachmentContentTypes,
@@ -254,7 +254,7 @@ struct PromptComposerView: View {
             }
             documentImportError = allFailures.isEmpty ? nil : allFailures.joined(separator: "\n")
             if totalCount > 0 {
-                model.showToast("Attached \(totalCount) files from folder.", style: .info)
+                model.showToast(AppStrings.localized("Files attached from folder: \(totalCount)."), style: .info)
             }
             isExtractingDocuments = false
         }
@@ -300,9 +300,13 @@ private struct QueuedPromptsSection: View {
                         HStack(spacing: 6) {
                             Image(systemName: "text.badge.clock")
                                 .accessibilityHidden(true)
-                            Text(entry.text.isEmpty
-                                ? "(attachment only)"
-                                : String(entry.text.prefix(80)))
+                            Group {
+                                if entry.text.isEmpty {
+                                    Text("(attachment only)", bundle: .module)
+                                } else {
+                                    Text(String(entry.text.prefix(80)))
+                                }
+                            }
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                             Spacer(minLength: 0)
@@ -319,8 +323,8 @@ private struct QueuedPromptsSection: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Queued message. Click to edit it before it sends.")
-                    .help("Queued: sends after the current turn. Click to edit it now.")
+                    .accessibilityLabel(Text("Queued message. Click to edit it before it sends.", bundle: .module))
+                    .help(Text("Queued: sends after the current turn. Click to edit it now.", bundle: .module))
                 }
                 Text("Queued behind the running turn; drains when it finishes.",
                      bundle: .module)

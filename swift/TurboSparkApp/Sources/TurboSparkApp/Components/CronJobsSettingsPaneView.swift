@@ -8,8 +8,12 @@ import SwiftUI
 /// this pane is the human surface over the same store, which is why there
 /// is no create form: describing a schedule in prose to the assistant is
 /// the intended path and re-implementing it here would fork the validation.
+/// "Schedule a Task..." makes that path visible: it opens the chat with an
+/// editable request the user finishes and sends (`AppModel.composeInChat`),
+/// so nothing reaches the model until they do. No copy here names the tool:
+/// a tool identifier means nothing to someone who has never seen one.
+@MainActor
 struct CronJobsSettingsPaneView: View {
-    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     /// Bumped to re-read the store after a mutation; `CronScheduler` is not
     /// observable, and a refresh button is honest about that.
@@ -27,12 +31,15 @@ struct CronJobsSettingsPaneView: View {
             if jobs.isEmpty {
                 emptyState
             } else {
-                jobList
+                VStack(spacing: 0) {
+                    header
+                    jobList
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .alert(
-            "Delete scheduled task?",
+            Text("Delete scheduled task?", bundle: .module),
             isPresented: deletionAlertPresented,
             presenting: jobPendingDeletion
         ) { job in
@@ -52,65 +59,67 @@ struct CronJobsSettingsPaneView: View {
             set: { if !$0 { jobPendingDeletion = nil } })
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "clock.badge.questionmark")
-                .font(theme.ui(.title2))
-                .foregroundStyle(.tertiary)
-                .padding(.bottom, 2)
-                .accessibilityHidden(true)
-            Text("No scheduled tasks", bundle: .module)
-                .themedFont(.base, weight: .medium)
-            Text("Ask the assistant to schedule one, for example: \"every morning at 9, summarize my notes\" -- it will use CronCreate and the job appears here.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
+    /// Seeds the chat composer with a scheduling request to complete. The
+    /// draft is in the UI language: it is the user's own message, edited
+    /// and sent by them, and the assistant reads any language.
+    private func scheduleInChat() {
+        model.composeInChat(AppStrings.localized("Schedule a task for me. When: every weekday at 9 AM. What to do: "))
+    }
+
+    private var scheduleButton: some View {
+        Button(action: scheduleInChat) {
+            Label { Text("Schedule a Task...", bundle: .module) } icon: { Image(systemName: "calendar.badge.plus") }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .padding(24)
+        .appAction(.primary)
+        .help(Text("Opens a chat with a scheduling request for you to finish and send", bundle: .module))
+    }
+
+    private var emptyState: some View {
+        AppEmptyState(
+            systemImage: "clock.badge.questionmark",
+            title: Text("No scheduled tasks", bundle: .module),
+            message: Text("A scheduled task runs a prompt for you on a timetable, such as every weekday morning. Describe what you want done and when in a chat, and the assistant sets it up. Tasks appear here so you can pause or delete them.", bundle: .module)
+        ) {
+            scheduleButton
+        }
+    }
+
+    private var header: some View {
+        ExtensionPaneHeader {
+            ExtensionPaneIntro(text: Text("Tasks fire while the app is running and submit their prompt into the chat they were created in. One-shot tasks remove themselves after firing.", bundle: .module))
+        } filters: {
+            Text("Scheduled tasks: \(jobs.count)", bundle: .module)
+                .themedFont(.small, weight: .semibold)
+                .foregroundStyle(.appSecondary)
+        } actions: {
+            ExtensionRefreshButton(label: Text("Refresh", bundle: .module)) { revision += 1 }
+            scheduleButton
+        }
     }
 
     private var jobList: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Scheduled tasks: \(jobs.count)", bundle: .module)
-                    .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.appSecondary)
-                Spacer()
-                Button {
-                    revision += 1
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(jobs) { job in
+                    jobRow(job)
                 }
-                .buttonStyle(.plain)
-                .help(Text("Refresh", bundle: .module))
-                .accessibilityLabel("Refresh scheduled tasks")
             }
-
-            ForEach(jobs) { job in
-                jobRow(job)
-            }
-
-            Text("Tasks fire while the app is running and submit their prompt into the chat they were created in. One-shot tasks remove themselves after firing.", bundle: .module)
-                .themedFont(.tiny)
-                .foregroundStyle(.tertiary)
+            .padding(ExtensionPaneLayout.contentInsets)
         }
-        .padding(SettingsLayout.contentInsets)
     }
 
     /// Composed OUTSIDE `Text` so the call stays a catalog-key call; these
-    /// are status readouts, not translatable prose yet.
+    /// are status readouts. `AppStrings` so they follow the in-app language.
     private func runSummary(of job: AppCronJob) -> String {
-        if job.recentRuns.isEmpty { return String(localized: "No runs yet", bundle: .module) }
+        if job.recentRuns.isEmpty { return AppStrings.localized("No runs yet") }
         let relative = job.recentRuns[0].date.formatted(.relative(presentation: .named))
-        return String(
-            localized: "Last run \(relative) (\(job.recentRuns.count) recorded)",
-            bundle: .module)
+        return AppStrings.localized("Last run \(relative). Runs recorded: \(job.recentRuns.count)")
     }
 
     private func jobRow(_ job: AppCronJob) -> some View {
-        let schedule = CronSchedule(job.cron)?.describe() ?? job.cron
+        // A one-shot wakeup's cron field is a placeholder; only
+        // `localizedHumanSchedule` knows to read `fireAt` instead.
+        let schedule = job.localizedHumanSchedule
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Image(systemName: job.enabled ? "clock.fill" : "clock")
@@ -140,18 +149,22 @@ struct CronJobsSettingsPaneView: View {
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
-                Toggle("", isOn: Binding(
+                // Named by the schedule it controls; on/off is its value.
+                Toggle(isOn: Binding(
                     get: { job.enabled },
                     set: { enabled in
                         _ = CronScheduler.shared.setEnabled(id: job.id, enabled: enabled)
                         revision += 1
                     }
-                ))
+                )) {
+                    Text(schedule)
+                }
                 .toggleStyle(.switch)
                 .labelsHidden()
                 .controlSize(.small)
-                .help(job.enabled ? "Pause this schedule" : "Resume this schedule")
-                .accessibilityLabel("\(job.enabled ? "Pause" : "Resume") schedule \(schedule)")
+                .help(job.enabled
+                    ? Text("Pause this schedule", bundle: .module)
+                    : Text("Resume this schedule", bundle: .module))
                 Button {
                     jobPendingDeletion = job
                 } label: {
@@ -159,8 +172,8 @@ struct CronJobsSettingsPaneView: View {
                         .foregroundStyle(Color.red.opacity(0.75))
                 }
                 .buttonStyle(.plain)
-                .help("Delete scheduled task")
-                .accessibilityLabel("Delete scheduled task \(schedule)")
+                .help(Text("Delete scheduled task", bundle: .module))
+                .accessibilityLabel(Text("Delete scheduled task \(schedule)", bundle: .module))
             }
 
             Text(job.prompt)
@@ -177,8 +190,8 @@ struct CronJobsSettingsPaneView: View {
                         ? Color.orange : Color.secondary)
             }
             .buttonStyle(.plain)
-            .help("Show run history")
-            .accessibilityLabel("Run history for \(schedule)")
+            .help(Text("Show run history", bundle: .module))
+            .accessibilityLabel(Text("Run history for \(schedule)", bundle: .module))
 
             if expandedJobID == job.id {
                 VStack(alignment: .leading, spacing: 3) {
@@ -196,11 +209,15 @@ struct CronJobsSettingsPaneView: View {
                                 .accessibilityHidden(true)
                             Text(run.date.formatted(date: .abbreviated, time: .shortened))
                                 .themedFont(.tiny)
-                            Text(run.status == "fired"
-                                ? String(localized: "delivered", bundle: .module)
-                                : String(localized: "chat missing", bundle: .module))
-                                .themedFont(.tiny)
-                                .foregroundStyle(.appSecondary)
+                            Group {
+                                if run.status == "fired" {
+                                    Text("delivered", bundle: .module)
+                                } else {
+                                    Text("chat missing", bundle: .module)
+                                }
+                            }
+                            .themedFont(.tiny)
+                            .foregroundStyle(.appSecondary)
                         }
                     }
                 }

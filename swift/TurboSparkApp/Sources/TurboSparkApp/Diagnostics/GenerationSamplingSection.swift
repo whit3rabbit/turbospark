@@ -52,14 +52,14 @@ struct GenerationSamplingSection: View {
                     set: { model.setReasoning($0) }
                 )) {
                     ForEach(model.availableReasoningLevels) { level in
-                        Text(model.reasoningLabel(for: level)).tag(level)
+                        Text(LocalizedStringKey(model.reasoningLabel(for: level)), bundle: .module).tag(level)
                     }
                 } label: { Text("Thinking", bundle: .module) }
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .fixedSize()
                 .disabled(!model.reasoningPickerEnabled)
-                .accessibilityLabel("Thinking effort")
+                .accessibilityLabel(Text("Thinking effort", bundle: .module))
             } label: { Text("Thinking", bundle: .module) }
 
             if model.session == nil {
@@ -77,14 +77,14 @@ struct GenerationSamplingSection: View {
                     Text(verbatim: "\(settings.maxNewTokens)").monospacedDigit()
                 }
                 .fixedSize()
-                .accessibilityLabel("Max new tokens")
-                .accessibilityValue("\(settings.maxNewTokens)")
+                .accessibilityLabel(Text("Max new tokens", bundle: .module))
+                .accessibilityValue(Text(verbatim: "\(settings.maxNewTokens)"))
             } label: { Text("Max New Tokens", bundle: .module) }
 
             LabeledContent {
                 HStack(spacing: 8) {
                     Slider(value: scopeSettings.temperature, in: 0...2, step: 0.05)
-                        .accessibilityLabel("Temperature")
+                        .accessibilityLabel(Text("Temperature", bundle: .module))
                         .accessibilityValue(String(format: "%.2f", settings.temperature))
                     Text(settings.temperature, format: .number.precision(.fractionLength(2)))
                         .monospacedDigit()
@@ -102,8 +102,8 @@ struct GenerationSamplingSection: View {
                         Text(verbatim: "\(settings.topK)").monospacedDigit()
                     }
                     .fixedSize()
-                    .accessibilityLabel("Top-K value")
-                    .accessibilityValue("\(settings.topK)")
+                    .accessibilityLabel(Text("Top-K value", bundle: .module))
+                    .accessibilityValue(Text(verbatim: "\(settings.topK)"))
                 } label: {
                     Text("K value", bundle: .module)
                 }
@@ -117,7 +117,7 @@ struct GenerationSamplingSection: View {
                 LabeledContent {
                     HStack(spacing: 8) {
                         Slider(value: scopeSettings.topP, in: 0.01...1, step: 0.01)
-                            .accessibilityLabel("Top-P value")
+                            .accessibilityLabel(Text("Top-P value", bundle: .module))
                             .accessibilityValue(String(format: "%.2f", settings.topP))
                         Text(settings.topP, format: .number.precision(.fractionLength(2)))
                             .monospacedDigit()
@@ -136,7 +136,7 @@ struct GenerationSamplingSection: View {
                 LabeledContent {
                     HStack(spacing: 8) {
                         Slider(value: scopeSettings.repetitionPenalty, in: 1.0...2.0, step: 0.05)
-                            .accessibilityLabel("Repetition penalty")
+                            .accessibilityLabel(Text("Repetition penalty", bundle: .module))
                             .accessibilityValue(String(format: "%.2f", settings.repetitionPenalty))
                         Text(settings.repetitionPenalty, format: .number.precision(.fractionLength(2)))
                             .monospacedDigit()
@@ -153,23 +153,27 @@ struct GenerationSamplingSection: View {
                 .toggleStyle(.switch)
             if settings.seedEnabled {
                 LabeledContent {
-                    TextField("Seed", value: scopeSettings.seed, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
-                        .accessibilityLabel("Seed value")
-                        .accessibilityValue("\(settings.seed)")
+                    TextField(value: scopeSettings.seed, format: .number) {
+                        Text("Seed", bundle: .module)
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 100)
+                    .accessibilityLabel(Text("Seed value", bundle: .module))
+                    .accessibilityValue(Text(verbatim: "\(settings.seed)"))
                 } label: {
                     Text("Seed value", bundle: .module)
                 }
             }
 
             LabeledContent {
-                TextField("Comma separated strings", text: scopeSettings.stopSequences)
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .themedFont(.small)
-                    .accessibilityLabel("Stop sequences")
-                    .accessibilityHint("Comma-separated strings that stop generation when produced")
+                TextField(text: scopeSettings.stopSequences) {
+                    Text("Comma separated strings", bundle: .module)
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .themedFont(.small)
+                .accessibilityLabel(Text("Stop sequences", bundle: .module))
+                .accessibilityHint(Text("Comma-separated strings that stop generation when produced", bundle: .module))
             } label: { Text("Stop Sequences", bundle: .module) }
 
             Divider()
@@ -191,8 +195,8 @@ struct GenerationSamplingSection: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .fixedSize()
-            .accessibilityLabel("Sampling edit scope")
-            .accessibilityHint("Whether the sampling controls below edit the app-wide defaults or this conversation only")
+            .accessibilityLabel(Text("Sampling edit scope", bundle: .module))
+            .accessibilityHint(Text("Whether the sampling controls below edit the app-wide defaults or this conversation only", bundle: .module))
         } label: { Text("Edits apply to", bundle: .module) }
     }
 
@@ -205,8 +209,8 @@ struct GenerationSamplingSection: View {
                 model.removeChatSamplingOverride(id: model.selectedChatID)
                 scope = .appDefaults
             } label: { Text("Remove Override", bundle: .module) }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Remove this chat's sampling override")
+            .appAction(.destructive, size: .small)
+            .accessibilityLabel(Text("Remove this chat's sampling override", bundle: .module))
         } label: {
             Text("This chat's sampling", bundle: .module)
         }
@@ -259,20 +263,21 @@ struct GenerationSamplingSection: View {
                             Button {
                                 applyPreset(preset)
                             } label: { Text("Apply", bundle: .module) }
-                            .buttonStyle(.bordered)
-                            .accessibilityLabel("Apply sampling preset \(preset.name)")
+                            .appAction(.secondary, size: .small)
+                            .accessibilityLabel(Text("Apply sampling preset \(preset.name)", bundle: .module))
 
                             // A visible delete affordance beside the
                             // right-click one below: this was context-menu
                             // only, unlike "Remove Override" above, whose
                             // destructive action is a plainly visible button.
-                            Button(role: .destructive) {
+                            AppIconButton(
+                                "trash",
+                                label: Text("Delete sampling preset \(preset.name)", bundle: .module),
+                                role: .destructive
+                            ) {
                                 model.deleteSamplingPreset(preset.id)
-                            } label: {
-                                Image(systemName: "trash")
                             }
-                            .buttonStyle(.borderless)
-                            .accessibilityLabel("Delete sampling preset \(preset.name)")
+                            .appAction(.quiet, size: .small)
                         }
                     } label: {
                         Text(preset.name)
@@ -286,14 +291,16 @@ struct GenerationSamplingSection: View {
             }
 
             HStack {
-                TextField("Preset name", text: $newPresetName)
-                    .textFieldStyle(.roundedBorder)
-                    .themedFont(.small)
-                    .accessibilityLabel("New sampling preset name")
+                TextField(text: $newPresetName) {
+                    Text("Preset name", bundle: .module)
+                }
+                .textFieldStyle(.roundedBorder)
+                .themedFont(.small)
+                .accessibilityLabel(Text("New sampling preset name", bundle: .module))
                 Button(action: savePreset) { Text("Save Preset", bundle: .module) }
-                    .buttonStyle(.bordered)
+                    .appAction(.secondary, size: .small)
                     .disabled(presetName.isEmpty)
-                    .accessibilityLabel("Save current sampling as a preset")
+                    .accessibilityLabel(Text("Save current sampling as a preset", bundle: .module))
             }
         }
     }

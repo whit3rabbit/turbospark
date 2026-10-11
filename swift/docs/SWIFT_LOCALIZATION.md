@@ -81,15 +81,29 @@ Deliberately NOT localized, and not defects:
   matters. This form is also INVISIBLE to the source-scan gate, which can
   only see calls whose argument starts with a literal.
 - The app name (`Window("TurboSpark")`, `MenuBarExtra("TurboSpark", ...)`).
-- The wider untranslated surface: `Label`/`Button`/`Picker`/`Section`/
-  `TextField` titles outside the commands block (~300 Label call sites),
-  and most of the few hundred remaining English literals. The catalog
-  covers the audited `Text` surface plus the menu bar; growing it is
-  ordinary feature work, gated by the tests below.
+
+The rest of the key-only surface is no longer an exception. The UI audit of
+2026-10-11 converted the remaining `Label`/`Button`/`Picker`/`Section`/
+`TextField` titles, `.help` tooltips, `.accessibilityLabel`/`Hint` names and
+dialog titles (about 760 call sites) to bundled `Text`, and gate 8 below keeps
+them that way. The spellings:
+
+    Label { Text("Add", bundle: .module) } icon: { Image(systemName: "plus") }
+    Toggle(isOn: $x) { Text("Top-P Sampling", bundle: .module) }.labelsHidden()
+    TextField(text: $q, prompt: Text("Search...", bundle: .module)) { Text("Search...", bundle: .module) }
+    .confirmationDialog(Text("Delete Skill", bundle: .module), isPresented: $shown) { ... }
+
+A `String` that reaches the UI without a `Text` (a toast, an `NSAlert` or
+`NSOpenPanel` title, a status string stored in a model, a chat draft seeded by
+a button) uses `AppStrings.localized("Key")` (`Theme/AppStrings.swift`).
+`String(localized:bundle:)` resolves through the PROCESS's preferred
+languages, so with the in-app picker on French and the system on English it
+returned English beside French `Text`. `AppStrings` resolves the compiled
+`.lproj` of the picker's language first and falls back to `Bundle.module`.
 
 ## The gates (`Tests/TurboSparkAppTests/LocalizationParityTests.swift`)
 
-Seven tests, each mutation-checked to redden only its own case:
+Ten tests, each mutation-checked to redden only its own case:
 
 1. **Full key x language parity.** Every key has a `translated`, non-empty
    entry for every `AppLanguage`. Adding a UI string means translating it
@@ -119,7 +133,8 @@ Seven tests, each mutation-checked to redden only its own case:
 6. **greetings.json parity.** The greeting data must cover exactly the
    picker's language set, per greeting, in both directions.
 7. **Bundled literal has a key.** Every NON-INTERPOLATED literal that
-   passes `bundle: .module` resolves to a catalog key. Gate 5 is only
+   passes `bundle: .module`, and every literal given to
+   `AppStrings.localized`, resolves to a catalog key. Gate 5 is only
    half the rule and this is the other half: a bundled literal with no
    key renders its English source under all 21 languages, silently and
    indistinguishably from never having been converted. That is not a
@@ -129,6 +144,78 @@ Seven tests, each mutation-checked to redden only its own case:
    the catalog and fixed in the same change. `\u{2022}`-style escapes
    are resolved before the lookup, because a literal spelled that way
    and one spelled with the character itself are the SAME key.
+
+8. **Key-only initializers outside `Text` never take a bare literal.**
+   `.help(`, `.accessibilityLabel(`/`Hint(`/`Value(`, `TextField(`,
+   `SecureField(`, `Button(`, `Toggle(`, `Picker(`, `Label(`, `Section(`,
+   `Stepper(`, `Link(`, `Menu(`, `.confirmationDialog(`, `.alert(`,
+   `.navigationTitle(`, `LabeledContent(`, `GroupBox(`, `DisclosureGroup(`,
+   `ProgressView(`, `.badge(`, `CommandMenu(` and `ControlGroup(` all have a
+   `LocalizedStringKey` overload with no `bundle:` parameter, which resolves
+   against the empty `Bundle.main`. An EMPTY literal counts too: `Toggle("")`
+   is a control with no accessible name. Like gate 5 the scan reads comments,
+   so a comment quoting one of these call shapes must paraphrase it.
+
+9. **Enum-backed display strings are catalog keys.** Fixed English held in
+   an enum and rendered through `Text(LocalizedStringKey(value), bundle:
+   .module)` passes a variable, so gates 5, 7 and 8 cannot see it. The test
+   enumerates those enums (Settings tab titles and categories, the
+   "Applies ..." timing hints, navigation sections, interaction modes,
+   status bar modes, appearance and text size options, the Keyboard
+   Shortcuts catalog, the generated settings search titles, and the
+   built-in slash command summaries) and requires every value to be a key. Nine tab titles
+   and all five timing hints were English under every language until it
+   existed. A new enum rendered this way joins the list in the same change.
+
+10. **Non-Latin scripts are not English or transliterated.** Gate 1 only
+    asks for a non-empty value, which an English paraphrase or a Latin
+    transliteration satisfies, and both shipped (the Codemode caption in
+    every language, eight Russian image-model strings such as "Vse
+    podobrannye varianty"). For ar, he, hi, ja, ko, ru, uk, zh-Hans and
+    zh-Hant, a value of three or more ASCII words, after format specifiers
+    are removed, fails. A value identical to its key (a file name) is
+    allowed. Latin-script languages are not covered: an English sentence
+    there is indistinguishable from a translation by script alone.
+
+**The menu bar and system panels follow the picker at relaunch.** The
+picker reaches window content through `.environment(\.locale)` on each
+scene's root view. `Commands` are not inside those views, and a scene-level
+`\.locale` does not reach them either, so menu titles and AppKit's own menus
+and panels follow the PROCESS language, which AppKit picks once at launch
+from `AppleLanguages`. It honors that key only for languages the MAIN bundle
+declares in `CFBundleLocalizations`. A bare SwiftPM executable has no
+Info.plist and the `.app` declared none, so until 2026-10-11 the menu bar
+stayed English under every picker choice (measured with a probe app:
+`AppleLanguages` alone changed nothing; with the key declared, the custom
+and AppKit menus both switched). Now:
+
+- `Localization/Info.plist` declares the 21 languages. `Package.swift` embeds
+  it into the executable (`-sectcreate __TEXT __info_plist`, untracked by
+  SwiftPM, so relink after editing it) and `make-app-bundle.sh` copies
+  the list into the `.app`. It has no `CFBundleIdentifier`, which would move
+  a debug build's defaults domain. `ProcessLocalizationTests` pins the list
+  to `AppLanguage`.
+- A picker change writes `AppleLanguages = [code]` in the app's own domain,
+  or removes it for System (`AppLanguage.writeProcessLanguages`, from the
+  main Window scene's `onChange`, which every writer of the key reaches). A
+  toast says the menu bar and system dialogs switch after a relaunch,
+  unless they already show that language. `TurboSparkAppMain.main` writes it
+  again at startup, before AppKit reads it, so an older choice or
+  `-TurboSpark.language` applies on that same launch (the debug app run with
+  `-TurboSpark.language de` showed Bearbeiten, Darstellung, Erscheinungsbild,
+  Fenster and Hilfe).
+- System is resolved live (`AppLanguage.systemResolved`, from
+  `Locale.preferredLanguages`) for `\.locale`, layout direction and
+  `AppStrings`. `Locale.current` and `Bundle.module.preferredLocalizations`
+  keep the launch language for the life of the process, so switching from
+  German back to System would otherwise leave the windows German until
+  relaunch.
+- Formatting: views format with `\.locale` at once. Code that formats with
+  the process locale (`.formatted()` outside a view, `Locale.current`)
+  follows the picker after a relaunch, as the picked language with the
+  system region (`de_US`), and keeps the launch language until then.
+- With System picked on a non-English Mac, AppKit's menus and panels now use
+  the system language instead of English.
 
 The two gates fail in opposite directions and neither substitutes for
 the other: gate 5 catches a literal that never reached the catalog's

@@ -22,7 +22,7 @@ struct OutputPaneView: View {
             guard responseCopyFeedbackID != nil else { return }
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.15)) {
+            TSMotion.animate(.easeOut(duration: 0.15)) {
                 responseCopyFeedbackID = nil
             }
         }
@@ -119,7 +119,7 @@ struct OutputPaneView: View {
         }
         // `/delete` asks first, exactly like the sidebar's Delete action.
         .alert(
-            "Delete this chat?",
+            Text("Delete this chat?", bundle: .module),
             isPresented: $model.confirmDeleteChat
         ) {
             Button(role: .destructive) {
@@ -142,12 +142,15 @@ struct OutputPaneView: View {
                 // never got its second press.
                 model.disarmEscCancel()
                 let count = model.liveTokenCount
+                // Spoken, so in the UI language like any visible string.
                 let message = count > 0
-                    ? "Generation finished. \(count) tokens."
-                    : "Generation finished."
+                    ? AppStrings.localized("Generation finished. \(count) tokens.")
+                    : AppStrings.localized("Generation finished.")
                 _ = AccessibilityNotification.Announcement.post(.init(message))
             } else if !wasRunning && isRunning {
-                let message = model.reasoning != .off ? "Generation started. Thinking." : "Generation started."
+                let message = model.reasoning != .off
+                    ? AppStrings.localized("Generation started. Thinking.")
+                    : AppStrings.localized("Generation started.")
                 _ = AccessibilityNotification.Announcement.post(.init(message))
             }
             lastRunningState = isRunning
@@ -178,7 +181,7 @@ struct OutputPaneView: View {
 
     private func copyResponse() {
         copy(model.outputResponsePlainText)
-        withAnimation(.easeIn(duration: 0.15)) {
+        TSMotion.animate(.easeIn(duration: 0.15)) {
             responseCopyFeedbackID = UUID()
         }
     }
@@ -230,7 +233,7 @@ struct MessageRowView: View {
     /// Opens an ```html fence in the sandboxed preview panel. Inline bytes:
     /// the fence is not a file, so nothing joins the artifact archive.
     private var previewHTML: (String) -> Void {
-        { model.openHTMLPreview(title: "HTML preview", html: $0) }
+        { model.openHTMLPreview(title: AppStrings.localized("HTML preview"), html: $0) }
     }
 
     /// One chip per artifact this message's tool calls produced, anchored by
@@ -276,8 +279,8 @@ struct MessageRowView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Open \(artifact.fileName) in the artifact panel")
-            .accessibilityLabel("Open artifact \(artifact.fileName)")
+            .help(Text("Open \(artifact.fileName) in the artifact panel", bundle: .module))
+            .accessibilityLabel(Text("Open artifact \(artifact.fileName)", bundle: .module))
         }
     }
 
@@ -291,9 +294,13 @@ struct MessageRowView: View {
                     .frame(maxHeight: 420)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .accessibilityLabel("Attached image")
+                    .accessibilityLabel(Text("Attached image", bundle: .module))
             } else {
-                Label("Image is no longer at its saved path", systemImage: "photo.badge.exclamationmark")
+                Label {
+                    Text("Image is no longer at its saved path", bundle: .module)
+                } icon: {
+                    Image(systemName: "photo.badge.exclamationmark")
+                }
                     .themedFont(.small)
                     .foregroundStyle(.secondary)
             }
@@ -592,7 +599,7 @@ struct MessageRowView: View {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
         }
@@ -608,28 +615,32 @@ struct MessageRowView: View {
             )
         }
         .accessibilityElement(children: .contain)
-        .accessibilityAction(named: "Copy message") {
+        .accessibilityAction(named: Text("Copy message", bundle: .module)) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(message.content, forType: .string)
         }
-        .accessibilityAction(named: isCurrentlySpeakingThis ? "Stop reading message out loud" : "Read message out loud") {
+        .accessibilityAction(
+            named: isCurrentlySpeakingThis
+                ? Text("Stop reading message out loud", bundle: .module)
+                : Text("Read message out loud", bundle: .module)
+        ) {
             if isCurrentlySpeakingThis {
                 speechManager.stop()
             } else {
                 speechManager.speak(text: message.content, messageID: message.id)
             }
         }
-        .accessibilityAction(named: "Edit message") {
+        .accessibilityAction(named: Text("Edit message", bundle: .module)) {
             if canEditThisInPlace {
                 _ = model.beginEdit(messageID: message.id)
             }
         }
-        .accessibilityAction(named: "Regenerate response") {
+        .accessibilityAction(named: Text("Regenerate response", bundle: .module)) {
             if model.canRetry(response: message) {
                 _ = model.regenerateResponse()
             }
         }
-        .accessibilityAction(named: "Branch conversation") {
+        .accessibilityAction(named: Text("Branch conversation", bundle: .module)) {
             if canBranchThis {
                 branchTarget = AppModel.BranchTarget(id: message.id, originalText: message.content)
             }
@@ -661,15 +672,19 @@ struct ActiveStreamingRowView: View {
             if isRunning && output.isEmpty && reasoning.isEmpty {
                 HStack(spacing: 8) {
                     TaskProgressFlameIcon(size: 16)
-                    Text(waitingStatusText)
+                    waitingStatusText
                         .themedFont(.base)
                         .foregroundStyle(theme.metadataForeground)
                 }
                 .padding(.vertical, 8)
                 // Combine the spinner and status into one announcement.
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(model.reasoning != .off ? "Thinking" : "Generating response")
-                .accessibilityHint(model.reasoning != .off ? "The model is reasoning before producing a response" : "The model is preparing a response")
+                .accessibilityLabel(model.reasoning != .off
+                                    ? Text("Thinking", bundle: .module)
+                                    : Text("Generating response", bundle: .module))
+                .accessibilityHint(model.reasoning != .off
+                                   ? Text("The model is reasoning before producing a response", bundle: .module)
+                                   : Text("The model is preparing a response", bundle: .module))
             } else {
                 if !reasoning.isEmpty {
                     ReasoningDisclosureView(reasoning: reasoning, defaultExpanded: true)
@@ -698,15 +713,15 @@ struct ActiveStreamingRowView: View {
 
     /// Copy shown while nothing has streamed yet: which of the waiting
     /// states (tool approval, prefill, reasoning, or plain decode) the turn is in.
-    private var waitingStatusText: String {
+    private var waitingStatusText: Text {
         if model.pendingToolCall != nil {
-            "Awaiting tool confirmation..."
+            Text("Awaiting tool confirmation...", bundle: .module)
         } else if model.phase == .prefill {
-            "Reading prompt..."
+            Text("Reading prompt...", bundle: .module)
         } else if model.reasoning != .off {
-            "Thinking..."
+            Text("Thinking...", bundle: .module)
         } else {
-            "Generating response..."
+            Text("Generating response...", bundle: .module)
         }
     }
 
@@ -823,7 +838,7 @@ struct BackgroundShellsStripView: View {
             Text(shell.startedAt, style: .timer)
                 .themedFont(.small)
                 .foregroundStyle(theme.metadataForeground)
-            Button {
+            Button(role: .destructive) {
                 model.killBackgroundShell(id: shell.id)
             } label: {
                 Image(systemName: "stop.fill")
@@ -831,8 +846,8 @@ struct BackgroundShellsStripView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.red.opacity(0.8))
-            .help("Kill this background shell (its child processes are killed with it)")
-            .accessibilityLabel("Kill background shell \(shell.id)")
+            .help(Text("Kill this background shell (its child processes are killed with it)", bundle: .module))
+            .accessibilityLabel(Text("Kill background shell \(shell.id)", bundle: .module))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -843,7 +858,7 @@ struct BackgroundShellsStripView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Background shell \(shell.id) running, \(shell.commandHead)")
+        .accessibilityLabel(Text("Background shell \(shell.id) running, \(shell.commandHead)", bundle: .module))
     }
 }
 
@@ -878,18 +893,20 @@ struct CompactionDividerView: View {
                     .themedFont(.tiny)
                     .foregroundStyle(.appAccent)
                     .accessibilityHidden(true)
-                Text(
-                    summarizedRows == 1
-                        ? "Earlier message compacted into a summary"
-                        : "\(summarizedRows) earlier messages compacted into a summary"
-                )
+                Group {
+                    if summarizedRows == 1 {
+                        Text("Earlier message compacted into a summary", bundle: .module)
+                    } else {
+                        Text("Earlier messages compacted into a summary: \(summarizedRows)", bundle: .module)
+                    }
+                }
                 .themedFont(.small, weight: .medium)
                 .foregroundStyle(theme.metadataForeground)
             }
         }
         .padding(.vertical, 2)
-        .accessibilityLabel("Earlier conversation compacted into a summary")
-        .accessibilityHint("Expands to show the summary the model sees instead of those messages")
+        .accessibilityLabel(Text("Earlier conversation compacted into a summary", bundle: .module))
+        .accessibilityHint(Text("Expands to show the summary the model sees instead of those messages", bundle: .module))
     }
 }
 
@@ -937,8 +954,8 @@ private struct ReasoningDisclosureView: View {
             }
         }
         .padding(.vertical, 2)
-        .help("Model thought process and reasoning trace")
-        .accessibilityLabel("Thought process")
-        .accessibilityHint("Expands to reveal the model's chain-of-thought reasoning")
+        .help(Text("Model thought process and reasoning trace", bundle: .module))
+        .accessibilityLabel(Text("Thought process", bundle: .module))
+        .accessibilityHint(Text("Expands to reveal the model's chain-of-thought reasoning", bundle: .module))
     }
 }

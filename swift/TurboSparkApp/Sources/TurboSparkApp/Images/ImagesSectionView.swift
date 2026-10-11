@@ -71,53 +71,56 @@ struct ImagesSectionView: View {
         }
     }
 
+    /// Title and count on the leading side, the mode switch as the header's
+    /// action. `AppAdaptiveHeader` drops the switch under the title when a
+    /// translation or the largest text size no longer fits one row; the old
+    /// fixed 210pt segmented control truncated its labels instead.
     private var header: some View {
-        HStack(spacing: 20) {
-            Text("Image Generation", bundle: .module).themedFont(.title2, weight: .semibold)
+        AppAdaptiveHeader {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Image Generation", bundle: .module)
+                    .themedFont(.title2, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
+                Text("\(model.savedImageArtifacts.count) image(s)", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+            }
+        } actions: {
             Picker(selection: $organizing) {
                 Text("Create", bundle: .module).tag(false)
                 Text("Organize", bundle: .module).tag(true)
-            } label: { Text("Image Generation", bundle: .module) }
-            .labelsHidden().pickerStyle(.segmented).frame(width: 210)
-            Spacer(minLength: 0)
-            Text("\(model.savedImageArtifacts.count) image(s)", bundle: .module)
-                .themedFont(.small).foregroundStyle(.appSecondary)
+            } label: { Text("Image mode", bundle: .module) }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .fixedSize()
         }
         .padding(.horizontal, 24).padding(.vertical, 18)
     }
 
     private var organizationToolbar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.appSecondary)
-                TextField(text: $search) { Text("Search images", bundle: .module) }
-                    .textFieldStyle(.plain)
-                if !search.isEmpty {
-                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain)
-                        .help(Text("Clear search", bundle: .module))
-                        .accessibilityLabel(Text("Clear search", bundle: .module))
-                }
-            }
-            .padding(10).background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
-            .frame(maxWidth: 360)
-            Spacer(minLength: 0)
+        AppAdaptiveHeader {
+            AppSearchField(text: $search, prompt: Text("Search images", bundle: .module))
+        } actions: {
             if selecting {
                 Text(verbatim: String(selection.count)).monospacedDigit()
+                    .foregroundStyle(.appSecondary)
                 Button { selection = Set(artifacts.map(\.id)) } label: {
                     Text("Select all", bundle: .module)
                 }
+                .appAction(.secondary)
                 Button(role: .destructive) {
                     selection.subtract(model.trashGeneratedImages(ids: selection))
                 } label: {
                     Label { Text("Move to Trash", bundle: .module) } icon: { Image(systemName: "trash") }
                 }
+                .appAction(.destructive)
                 .disabled(selection.isEmpty)
             }
             Button { selecting.toggle(); selection.removeAll() } label: {
                 if selecting { Text("Done", bundle: .module) }
                 else { Text("Select", bundle: .module) }
             }
+            .appAction(.secondary)
             .disabled(model.savedImageArtifacts.isEmpty)
         }
         .themedFont(.small).padding(.horizontal, 24).padding(.vertical, 12)
@@ -127,39 +130,7 @@ struct ImagesSectionView: View {
     private var gallery: some View {
         if artifacts.isEmpty && model.imageGenerationTask == nil
             && (organizing || model.imageJob?.result == nil || model.imageJob?.savedPath != nil) {
-            VStack(spacing: 14) {
-                Image(systemName: organizing ? "square.grid.2x2" : "photo.badge.plus")
-                    .themedFont(.hero).foregroundStyle(.appAccent)
-                Text(organizing ? "No images found" : "Create your first image", bundle: .module)
-                    .themedFont(.title2, weight: .semibold)
-                Text(organizing ? "Your saved images appear here." : "Describe an idea below. Your images will be saved here automatically.", bundle: .module)
-                    .themedFont(.small).foregroundStyle(.appSecondary)
-                    .multilineTextAlignment(.center).frame(maxWidth: 380)
-                if organizing && !search.isEmpty {
-                    Button { search = "" } label: { Text("Clear search", bundle: .module) }
-                } else if !organizing && model.imageModelPath.isEmpty {
-                    if let source = model.imageDownloadChoices.first {
-                        Button {
-                            model.installImageModel(source)
-                        } label: {
-                            Label {
-                                HStack(spacing: 4) {
-                                    Text("Download", bundle: .module)
-                                    Text(ImageModelPresentation.family(source.modelID))
-                                    Text(ImageModelPresentation.quantization(source.quantization))
-                                }
-                            } icon: {
-                                Image(systemName: "arrow.down.circle.fill")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.regular)
-                        .disabled(!model.canInstallImageModel(alias: source.alias))
-                        .padding(.top, 4)
-                    }
-                }
-            }
-            .padding(32)
+            emptyGallery
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -184,6 +155,46 @@ struct ImagesSectionView: View {
                     }
                 }
                 .padding(24)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var emptyGallery: some View {
+        if organizing {
+            AppEmptyState(
+                systemImage: "square.grid.2x2",
+                title: Text("No images found", bundle: .module),
+                message: Text("Your saved images appear here.", bundle: .module)
+            ) {
+                if !search.isEmpty {
+                    Button { search = "" } label: { Text("Clear search", bundle: .module) }
+                        .appAction(.secondary)
+                }
+            }
+        } else {
+            AppEmptyState(
+                systemImage: "photo.badge.plus",
+                title: Text("Create your first image", bundle: .module),
+                message: Text(
+                    "Describe an idea below. Your images will be saved here automatically.",
+                    bundle: .module)
+            ) {
+                if model.imageModelPath.isEmpty, let source = model.imageDownloadChoices.first {
+                    Button {
+                        model.installImageModel(source)
+                    } label: {
+                        Label {
+                            Text("Download", bundle: .module)
+                                + Text(verbatim: " \(ImageModelPresentation.family(source.modelID))")
+                                + Text(verbatim: " \(ImageModelPresentation.quantization(source.quantization))")
+                        } icon: {
+                            Image(systemName: "arrow.down.circle.fill")
+                        }
+                    }
+                    .appAction(.primary)
+                    .disabled(!model.canInstallImageModel(alias: source.alias))
+                }
             }
         }
     }
@@ -247,11 +258,13 @@ struct ImagesSectionView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 260)
                 Text("This image has not been saved.", bundle: .module).themedFont(.small)
-                HStack {
+                HStack(spacing: AppMetrics.actionSpacing) {
                     Button { model.saveImage() } label: { Text("Save", bundle: .module) }
+                        .appAction(.secondary, size: .small)
                     Button(role: .destructive) { model.discardUnsavedImage() } label: {
                         Text("Remove", bundle: .module)
                     }
+                    .appAction(.destructive, size: .small)
                 }
                 .disabled(model.imageGenerationTask != nil)
             }

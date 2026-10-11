@@ -55,9 +55,11 @@ struct BrowserDialogApprovalView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if request.kind == .prompt {
-                    TextField("", text: $promptResponse)
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel(Text("Page prompt", bundle: .module))
+                    TextField(text: $promptResponse, prompt: nil) {
+                        Text("Page prompt", bundle: .module)
+                    }
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
                 }
 
                 HStack {

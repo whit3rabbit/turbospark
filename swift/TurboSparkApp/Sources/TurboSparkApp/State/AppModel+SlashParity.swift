@@ -52,7 +52,7 @@ extension AppModel {
             createChat(projectID: selectedProjectID)
         case "clear":
             guard !generating, !submitting else {
-                showToast("Stop the current turn before clearing.", style: .warning)
+                showToast(AppStrings.localized("Stop the current turn before clearing."), style: .warning)
                 return
             }
             clearOutput()
@@ -78,7 +78,7 @@ extension AppModel {
             runRecapCommand()
         case "reset":
             guard !generating, !submitting else {
-                showToast("Stop the current turn before resetting.", style: .warning)
+                showToast(AppStrings.localized("Stop the current turn before resetting."), style: .warning)
                 return
             }
             clearOutput()
@@ -105,12 +105,12 @@ extension AppModel {
         case .copied(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-            showToast("Copied to the clipboard.", style: .success)
+            showToast(AppStrings.localized("Copied to the clipboard."), style: .success)
         case .nothingFound(let what):
-            showToast("Nothing to copy: \(what).", style: .info)
+            showToast(AppStrings.localized("Nothing to copy: \(what)."), style: .info)
         case .indexOutOfRange(let requested, let available, let noun):
             showToast(
-                "No \(noun) number \(requested): the last answer has \(available).",
+                AppStrings.localized("No \(noun) number \(requested): the last answer has \(available)."),
                 style: .warning)
         case .notACopyCommand:
             break
@@ -122,34 +122,37 @@ extension AppModel {
     private func runModelCommand(_ arguments: [String]) {
         let query = arguments.joined(separator: " ").lowercased()
         guard !query.isEmpty else {
+            let loaded = selected?.alias ?? AppStrings.localized("None")
+            let example = installed.first?.alias ?? "gemma4"
             showToast(
-                "Loaded model: \(selected?.alias ?? "none"). Give a name to switch, "
-                    + "e.g. /model \(installed.first?.alias ?? "gemma4").",
+                AppStrings.localized("Loaded model: \(loaded). Give a name to switch, e.g. /model \(example)."),
                 style: .info)
             return
         }
         let matches = installed.filter { $0.alias.lowercased().contains(query) }
         switch matches.count {
         case 0:
-            showToast("No installed model matches '\(query)'.", style: .warning)
+            showToast(AppStrings.localized("No installed model matches '\(query)'."), style: .warning)
         case 1:
             // Switching replaces the session: under a streaming reply, a
             // pending approval card (which lowers `generating`) or a running
             // UserPromptSubmit hook that would pull the model out from under
             // the in-flight work.
             guard !generating, !submitting, !opening, pendingToolCall == nil else {
-                showToast("Finish or stop the current turn before switching models.", style: .warning)
+                showToast(
+                    AppStrings.localized("Finish or stop the current turn before switching models."),
+                    style: .warning)
                 return
             }
             if selectModel(matches[0]) {
-                showToast("Switched to \(matches[0].alias).", style: .success)
+                showToast(AppStrings.localized("Switched to \(matches[0].alias)."), style: .success)
             } else {
-                showToast("\(matches[0].alias) is already loaded.", style: .info)
+                showToast(AppStrings.localized("\(matches[0].alias) is already loaded."), style: .info)
             }
         default:
             let names = matches.prefix(4).map(\.alias).joined(separator: ", ")
             showToast(
-                "'\(query)' matches \(matches.count) models: \(names). Be more specific.",
+                AppStrings.localized("'\(query)' matches \(matches.count) models: \(names). Be more specific."),
                 style: .info)
         }
     }
@@ -158,18 +161,18 @@ extension AppModel {
 
     private func runThemeCommand(_ argument: String?) {
         guard let argument, !argument.isEmpty else {
+            let current = AppearanceManager.shared.appearance.rawValue
             showToast(
-                "Appearance is \(AppearanceManager.shared.appearance.rawValue). "
-                    + "Use /theme light, /theme dark or /theme system.",
+                AppStrings.localized("Appearance is \(current). Use /theme light, /theme dark or /theme system."),
                 style: .info)
             return
         }
         guard let appearance = AppAppearance(rawValue: argument.lowercased()) else {
-            showToast("Unknown theme '\(argument)': use light, dark or system.", style: .warning)
+            showToast(AppStrings.localized("Unknown theme '\(argument)': use light, dark or system."), style: .warning)
             return
         }
         AppearanceManager.shared.appearance = appearance
-        showToast("Appearance set to \(appearance.rawValue).", style: .success)
+        showToast(AppStrings.localized("Appearance set to \(appearance.rawValue)."), style: .success)
     }
 
     private func runLanguageCommand(_ argument: String?) {
@@ -177,7 +180,7 @@ extension AppModel {
             let current = UserDefaults.standard.string(forKey: AppLanguage.storageKey)
                 ?? AppLanguage.system.rawValue
             showToast(
-                "UI language is \(current). Give a code, e.g. /language de or /language zh-Hans.",
+                AppStrings.localized("UI language is \(current). Give a code, e.g. /language de or /language zh-Hans."),
                 style: .info)
             return
         }
@@ -188,18 +191,19 @@ extension AppModel {
         }
         guard let match else {
             let codes = AppLanguage.allCases.map(\.rawValue).joined(separator: ", ")
-            showToast("Unknown language '\(argument)'. Codes: \(codes).", style: .warning)
+            showToast(AppStrings.localized("Unknown language '\(argument)'. Codes: \(codes)."), style: .warning)
             return
         }
         UserDefaults.standard.set(match.rawValue, forKey: AppLanguage.storageKey)
-        showToast("UI language set to \(match.label).", style: .success)
+        showToast(AppStrings.localized("UI language set to \(match.label)."), style: .success)
     }
 
     private func runApprovalModeCommand(_ argument: String?) {
         guard let argument, !argument.isEmpty else {
+            let modes = AppPermissionMode.allCases.map(\.rawValue).joined(separator: "|")
             showToast(
-                "Permission mode is \(effectivePermissionMode.rawValue). Use /approval-mode "
-                    + AppPermissionMode.allCases.map(\.rawValue).joined(separator: "|") + ".",
+                AppStrings.localized(
+                    "Permission mode is \(effectivePermissionMode.rawValue). Use /approval-mode \(modes)."),
                 style: .info)
             return
         }
@@ -208,14 +212,12 @@ extension AppModel {
             $0.rawValue.lowercased().contains(query) || $0.label.lowercased().contains(query)
         }
         guard let match else {
-            showToast(
-                "Unknown mode '\(argument)': use "
-                    + AppPermissionMode.allCases.map(\.rawValue).joined(separator: ", ") + ".",
-                style: .warning)
+            let modes = AppPermissionMode.allCases.map(\.rawValue).joined(separator: ", ")
+            showToast(AppStrings.localized("Unknown mode '\(argument)': use \(modes)."), style: .warning)
             return
         }
         setEffectivePermissionMode(match)
-        showToast("Permission mode set to \(match.label).", style: .success)
+        showToast(AppStrings.localized("Permission mode set to \(match.label)."), style: .success)
     }
 
     // MARK: - /rename
@@ -223,7 +225,7 @@ extension AppModel {
     private func runRenameCommand(_ title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            showToast("Give the new title: /rename My Topic.", style: .info)
+            showToast(AppStrings.localized("Give the new title: /rename My Topic."), style: .info)
             return
         }
         renameChat(id: selectedChatID, title: trimmed)
@@ -237,13 +239,17 @@ extension AppModel {
     public func setChatArchived(id: UUID, archived: Bool) {
         guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
         if chats[index].isGhost {
-            showToast("A temporary chat cannot be archived; end Ghost Mode instead.", style: .info)
+            showToast(
+                AppStrings.localized("A temporary chat cannot be archived; end Ghost Mode instead."),
+                style: .info)
             return
         }
         guard chats[index].isArchived != archived else { return }
         chats[index].isArchived = archived
         persistChats()
-        showToast(archived ? "Chat archived." : "Chat restored.", style: .success)
+        showToast(
+            archived ? AppStrings.localized("Chat archived.") : AppStrings.localized("Chat restored."),
+            style: .success)
     }
 
     /// Duplicates the selected chat under fresh identities and selects the
@@ -255,7 +261,7 @@ extension AppModel {
             !chats[index].isGhost
         else {
             if chats.first(where: { $0.id == id })?.isGhost == true {
-                showToast("A temporary chat cannot be duplicated.", style: .info)
+                showToast(AppStrings.localized("A temporary chat cannot be duplicated."), style: .info)
             }
             return nil
         }
@@ -264,7 +270,7 @@ extension AppModel {
         chats.insert(copy, at: 0)
         selectedChatID = copy.id
         persistChats()
-        showToast("Duplicated as '\(copy.title)'.", style: .success)
+        showToast(AppStrings.localized("Duplicated as '\(copy.title)'."), style: .success)
         return copy.id
     }
 
@@ -332,7 +338,7 @@ extension AppModel {
     /// otherwise replay onto a conversation they predate.
     public func rewindTo(anchorMessageID: UUID) {
         guard !generating, !submitting, pendingToolCall == nil else {
-            showToast("Stop the current turn before rewinding.", style: .warning)
+            showToast(AppStrings.localized("Stop the current turn before rewinding."), style: .warning)
             return
         }
         guard let index = chats.firstIndex(where: { $0.id == selectedChatID }),
@@ -357,7 +363,11 @@ extension AppModel {
         outputReasoningText = ""
         persistChats()
         updateTokenEstimate()
-        showToast("Rewound \(removed) message\(removed == 1 ? "" : "s").", style: .success)
+        showToast(
+            removed == 1
+                ? AppStrings.localized("Rewound 1 message.")
+                : AppStrings.localized("Rewound \(removed) messages."),
+            style: .success)
     }
 
     // MARK: - /branch
@@ -373,8 +383,8 @@ extension AppModel {
         else {
             showToast(
                 selectedChat.isGhost
-                    ? "A temporary chat cannot be branched."
-                    : "Nothing to branch yet.",
+                    ? AppStrings.localized("A temporary chat cannot be branched.")
+                    : AppStrings.localized("Nothing to branch yet."),
                 style: .info)
             return nil
         }
@@ -386,7 +396,7 @@ extension AppModel {
         } ?? (selectedChat.title + " (branch)")
         chats.insert(fork, at: 0)
         persistChats()
-        showToast("Branched into '\(fork.title)'.", style: .success)
+        showToast(AppStrings.localized("Branched into '\(fork.title)'."), style: .success)
         return fork.id
     }
 
@@ -402,7 +412,7 @@ extension AppModel {
     private func runBtwCommand(_ question: String) {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            showToast("Give the question: /btw What did we decide about retries?", style: .info)
+            showToast(AppStrings.localized("Give the question: /btw What did we decide about retries?"), style: .info)
             return
         }
         launchParityAgent(
@@ -421,7 +431,9 @@ extension AppModel {
     private func runForkCommand(_ directive: String) {
         let trimmed = directive.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            showToast("Give the directive: /fork Turn the last answer into a test plan.", style: .info)
+            showToast(
+                AppStrings.localized("Give the directive: /fork Turn the last answer into a test plan."),
+                style: .info)
             return
         }
         let transcript = AppChatCompaction.renderTranscript(
@@ -449,11 +461,11 @@ extension AppModel {
         taskPrompt: String, taskDescription: String
     ) {
         guard let agent = effectiveAgents.first else {
-            showToast("No enabled agent definition to run this on.", style: .warning)
+            showToast(AppStrings.localized("No enabled agent definition to run this on."), style: .warning)
             return
         }
         guard session != nil else {
-            showToast("Load a model first: a side task needs one to run.", style: .warning)
+            showToast(AppStrings.localized("Load a model first: a side task needs one to run."), style: .warning)
             return
         }
         let chatID = selectedChatID
@@ -468,7 +480,7 @@ extension AppModel {
                     // run launch further background agents and nest one
                     // level deeper than the cap.
                     depth: 1, userSystemPrompt: ""))
-                showToast("Side task \(id) started in the background.", style: .success)
+                showToast(AppStrings.localized("Side task \(id) started in the background."), style: .success)
             } catch {
                 showToast(error.localizedDescription, style: .error)
             }
@@ -482,16 +494,16 @@ extension AppModel {
     /// replacement, so it is safe on a ghost chat and safe mid-thread.
     public func runRecapCommand() {
         guard !isRecapping else {
-            showToast("A recap is already running.", style: .info)
+            showToast(AppStrings.localized("A recap is already running."), style: .info)
             return
         }
         guard session != nil else {
-            showToast("Load a model first: a recap needs one to run.", style: .warning)
+            showToast(AppStrings.localized("Load a model first: a recap needs one to run."), style: .warning)
             return
         }
         let rows = turnMessages(for: selectedChatID)
         guard !rows.isEmpty else {
-            showToast("Nothing to recap yet.", style: .info)
+            showToast(AppStrings.localized("Nothing to recap yet."), style: .info)
             return
         }
         let transcript = String(
@@ -532,12 +544,12 @@ extension AppModel {
             } catch is CancellationError {
                 return
             } catch {
-                showToast("Recap failed: \(error.localizedDescription)", style: .error)
+                showToast(AppStrings.localized("Recap failed: \(error.localizedDescription)"), style: .error)
                 showRecapSheet = false
             }
             let finished = recapText.trimmingCharacters(in: .whitespacesAndNewlines)
             if finished.isEmpty {
-                showToast("The model returned an empty recap.", style: .warning)
+                showToast(AppStrings.localized("The model returned an empty recap."), style: .warning)
                 showRecapSheet = false
             }
         }

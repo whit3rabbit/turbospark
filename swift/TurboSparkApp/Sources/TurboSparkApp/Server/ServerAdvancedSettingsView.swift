@@ -13,7 +13,6 @@ import TurboSpark
 /// (`HfEndpointResolution`, `swift/docs/SWIFT_SETTINGS_AUDIT.md`).
 struct ServerAdvancedSettingsView: View {
     @ObservedObject var model: AppModel
-    @State private var copiedKey: Bool = false
 
     private var isRunning: Bool { model.server != nil }
 
@@ -30,11 +29,11 @@ struct ServerAdvancedSettingsView: View {
             }
 
             field(
-                "API key",
-                help: "Required on every route except /health, as x-api-key or a Bearer token. Stored in the Keychain, not settings.json."
+                Text("API key", bundle: .module),
+                help: Text("Required on every route except /health, as x-api-key or a Bearer token. Stored in the Keychain, not settings.json.", bundle: .module)
             ) {
                 HStack(spacing: 6) {
-                    SecureField("", text: $model.serverAPIKeyInput)
+                    SecureField(text: $model.serverAPIKeyInput) { Text("API key", bundle: .module) }
                         .textFieldStyle(.roundedBorder)
                         .labelsHidden()
                         .frame(maxWidth: .infinity)
@@ -47,32 +46,16 @@ struct ServerAdvancedSettingsView: View {
                     // the key is read at START; copy stays live while the
                     // server runs, since handing the running key to a client
                     // is the reason to have it on this pane at all.
-                    Button {
+                    AppIconButton("wand.and.stars", label: Text("Generate a random API key", bundle: .module)) {
                         model.serverAPIKeyInput = ServerAPIKeyGenerator.generate()
-                    } label: {
-                        Image(systemName: "wand.and.stars")
                     }
                     .buttonStyle(.borderless)
                     .disabled(isRunning)
-                    .help("Generate a random key")
-                    .accessibilityLabel("Generate a random API key")
 
-                    Button {
-                        guard let key = AppModel.serverAPIKey(from: model.serverAPIKeyInput) else { return }
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(key, forType: .string)
-                        copiedKey = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            copiedKey = false
-                        }
-                    } label: {
-                        Image(systemName: copiedKey ? "checkmark" : "doc.on.doc")
+                    APICopyButton(label: Text("Copy API key to clipboard", bundle: .module)) {
+                        AppModel.serverAPIKey(from: model.serverAPIKeyInput)
                     }
-                    .buttonStyle(.borderless)
                     .disabled(AppModel.serverAPIKey(from: model.serverAPIKeyInput) == nil)
-                    .help("Copy API key to clipboard")
-                    .accessibilityLabel("Copy API key")
-                    .accessibilityValue(copiedKey ? "Copied" : "")
                 }
             }
 
@@ -80,18 +63,23 @@ struct ServerAdvancedSettingsView: View {
             // process on this machine, which is not the same as private to
             // this app, and a key of nothing but spaces trims to none.
             if AppModel.serverAPIKey(from: model.serverAPIKeyInput) == nil {
-                Label(
-                    "With no key, any process on this machine can drive your models.",
-                    systemImage: "exclamationmark.triangle")
+                Label {
+                    Text("With no key, any process on this machine can drive your models.", bundle: .module)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                }
                     .themedFont(.tiny)
                     .foregroundStyle(.orange)
             }
 
             field(
-                "Embedding model",
-                help: "Path or alias to an encoder model (e.g. snowflake-arctic-embed-m) to enable /v1/embeddings."
+                Text("Embedding model", bundle: .module),
+                help: Text("Path or alias to an encoder model (e.g. snowflake-arctic-embed-m) to enable /v1/embeddings.", bundle: .module)
             ) {
-                TextField("snowflake-arctic-embed-m or /path/to/encoder", text: $model.serverEmbeddingModelInput)
+                TextField(
+                    text: $model.serverEmbeddingModelInput,
+                    prompt: Text("snowflake-arctic-embed-m or /path/to/encoder", bundle: .module)
+                ) { Text("Embedding model", bundle: .module) }
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
                     .frame(maxWidth: .infinity)
@@ -102,10 +90,12 @@ struct ServerAdvancedSettingsView: View {
             }
 
             field(
-                "HF mirror endpoint",
-                help: "Base URL for Hugging Face downloads ($HF_ENDPOINT), e.g. https://hf-mirror.com for restricted regions."
+                Text("HF mirror endpoint", bundle: .module),
+                help: Text("Base URL for Hugging Face downloads ($HF_ENDPOINT), e.g. https://hf-mirror.com for restricted regions.", bundle: .module)
             ) {
-                TextField("https://huggingface.co", text: $model.hfEndpointInput)
+                TextField(text: $model.hfEndpointInput, prompt: Text(verbatim: "https://huggingface.co")) {
+                    Text("HF mirror endpoint", bundle: .module)
+                }
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
                     .frame(maxWidth: .infinity)
@@ -132,18 +122,19 @@ struct ServerAdvancedSettingsView: View {
             }
 
             field(
-                "Memory guard tier",
-                help: "How much of the machine a model may commit when it loads, matching CLI --load-guard. The same value as Settings > Models & Storage, where Custom takes a byte ceiling."
+                Text("Memory guard tier", bundle: .module),
+                help: Text("How much of the machine a model may commit when it loads, matching CLI --load-guard. The same value as Settings > Models & Storage, where Custom takes a byte ceiling.", bundle: .module)
             ) {
                 // Built from the enum, not restated: a hardcoded four-entry
                 // list omitted `.custom`, so after choosing Custom in Models &
                 // Storage this picker rendered BLANK and any touch of it
                 // discarded the ceiling (swift/CLAUDE.md Gotcha 22).
-                Picker("", selection: $model.runtimeOptions.loadGuard) {
+                Picker(selection: $model.runtimeOptions.loadGuard) {
                     ForEach(AppLoadGuardOption.allCases) { tier in
-                        Text(tier.menuLabel).tag(tier)
+                        Text(LocalizedStringKey(tier.menuLabel), bundle: .module).tag(tier)
                     }
-                }
+                } label: { Text("Memory guard tier", bundle: .module) }
+                .labelsHidden()
                 .pickerStyle(.menu)
                 .frame(maxWidth: .infinity)
                 .disabled(isRunning)
@@ -153,24 +144,25 @@ struct ServerAdvancedSettingsView: View {
             }
 
             field(
-                "Default reasoning effort",
-                help: "Default reasoning effort for incoming requests that do not specify reasoning_effort, matching CLI --reasoning."
+                Text("Default reasoning effort", bundle: .module),
+                help: Text("Default reasoning effort for incoming requests that do not specify reasoning_effort, matching CLI --reasoning.", bundle: .module)
             ) {
                 // Same binding and same option source as the Engine pane.
                 // Binding `$model.reasoning` directly skipped `setReasoning`,
                 // so the per-model memory (state#96) was never written from
                 // here, and hardcoding all five levels offered ones the loaded
                 // checkpoint refuses (swift/CLAUDE.md Gotcha 9).
-                Picker("", selection: Binding(
+                Picker(selection: Binding(
                     get: { model.reasoning },
                     set: { model.setReasoning($0) }
                 )) {
                     ForEach(model.session == nil
                             ? GenerateOptions.Reasoning.allCases
                             : model.availableReasoningLevels) { level in
-                        Text(model.reasoningLabel(for: level)).tag(level)
+                        Text(LocalizedStringKey(model.reasoningLabel(for: level)), bundle: .module).tag(level)
                     }
-                }
+                } label: { Text("Default reasoning effort", bundle: .module) }
+                .labelsHidden()
                 .pickerStyle(.menu)
                 .frame(maxWidth: .infinity)
                 .disabled(isRunning)
@@ -195,8 +187,8 @@ struct ServerAdvancedSettingsView: View {
     /// the Terminal output says which of the three happened.
     private var codingAgents: some View {
         field(
-            "Coding agents",
-            help: "Opens Terminal and launches the agent against the background server; it is started or reused as needed."
+            Text("Coding agents", bundle: .module),
+            help: Text("Opens Terminal and launches the agent against the background server; it is started or reused as needed.", bundle: .module)
         ) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
@@ -209,6 +201,7 @@ struct ServerAdvancedSettingsView: View {
                             Image(systemName: "terminal")
                         }
                     }
+                    .appAction(.secondary, size: .small)
                     .disabled(cliURL == nil)
 
                     Button {
@@ -220,12 +213,15 @@ struct ServerAdvancedSettingsView: View {
                             Image(systemName: "terminal")
                         }
                     }
+                    .appAction(.secondary, size: .small)
                     .disabled(cliURL == nil)
                 }
                 if cliURL == nil {
-                    Label(
-                        "turbospark CLI not found",
-                        systemImage: "exclamationmark.triangle")
+                    Label {
+                        Text("turbospark CLI not found", bundle: .module)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
                         .themedFont(.tiny)
                         .foregroundStyle(.orange)
                 }
@@ -257,29 +253,29 @@ struct ServerAdvancedSettingsView: View {
                 command = AgentTerminalLaunch.commandExportingAPIKey(command, keyFilePath: keyFile)
             } catch {
                 model.showToast(
-                    "Could not pass the API key to the launch: \(error.localizedDescription)",
+                    AppStrings.localized("Could not pass the API key to the launch: \(error.localizedDescription)"),
                     style: .error)
                 return
             }
         }
         do {
             try AgentTerminalLaunch.openInTerminal(command: command)
-            model.showToast("Opening Terminal...", style: .info)
+            model.showToast(AppStrings.localized("Opening Terminal..."), style: .info)
         } catch {
             AgentTerminalLaunch.copyToClipboard(command)
             model.showToast(
-                "Could not open Terminal: \(error.localizedDescription). The command was copied to the clipboard instead.",
+                AppStrings.localized("Could not open Terminal: \(error.localizedDescription). The command was copied to the clipboard instead."),
                 style: .error)
         }
     }
 
     private func field<Content: View>(
-        _ label: String, help: String, @ViewBuilder content: () -> Content
+        _ label: Text, help: Text, @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).themedFont(.tiny, weight: .medium)
+            label.themedFont(.tiny, weight: .medium)
             content()
-            Text(help)
+            help
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
         }

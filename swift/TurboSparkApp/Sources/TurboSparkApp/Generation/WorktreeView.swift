@@ -121,7 +121,9 @@ struct WorktreeView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Toggle Tree / List view (\(worktree.viewMode == .tree ? "Flat List" : "Tree View"))")
+                .help(worktree.viewMode == .tree
+                    ? Text("Show as flat list", bundle: .module)
+                    : Text("Show as tree", bundle: .module))
             }
 
             branchMenu
@@ -158,7 +160,7 @@ struct WorktreeView: View {
                         .foregroundStyle(worktree.isSearchVisible ? TurboSparkTheme.accentColor : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Filter changed files")
+                .help(Text("Filter changed files", bundle: .module))
             }
 
             Button {
@@ -174,7 +176,7 @@ struct WorktreeView: View {
                     )
             }
             .buttonStyle(.plain)
-            .help("Refresh Git changes")
+            .help(Text("Refresh Git changes", bundle: .module))
 
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) {
@@ -196,7 +198,7 @@ struct WorktreeView: View {
                     .foregroundStyle(.appSecondary)
             }
             .buttonStyle(.plain)
-            .help("Close inspector")
+            .help(Text("Close inspector", bundle: .module))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

@@ -34,7 +34,7 @@ struct PromptExamplesView: View {
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Prompt examples")
+        .accessibilityLabel(Text("Prompt examples", bundle: .module))
     }
 
     @ViewBuilder
@@ -69,8 +69,10 @@ struct PromptExamplesView: View {
                     }
             }
             .help(preset.title)
-            .accessibilityLabel("\(preset.title): \(preset.prompt)")
-            .accessibilityHint("Populates the prompt composer with this example")
+            // The preset's own title and prompt (bundled data that is sent to
+            // the model as written), not UI chrome.
+            .accessibilityLabel(Text(verbatim: "\(preset.title): \(preset.prompt)"))
+            .accessibilityHint(Text("Populates the prompt composer with this example", bundle: .module))
         }
     }
 
@@ -89,7 +91,7 @@ struct PromptExamplesView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help(Text("More prompt examples", bundle: .module))
-        .accessibilityLabel("More prompt examples")
+        .accessibilityLabel(Text("More prompt examples", bundle: .module))
     }
 
     private var columns: [GridItem] {

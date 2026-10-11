@@ -42,9 +42,7 @@ struct MessageActionBarView: View {
                         Image(systemName: isStandingInstruction ? "pin.fill" : "pin")
                             .themedFont(.tiny, weight: .medium)
                             .accessibilityHidden(true)
-                        Text(
-                            isStandingInstruction ? "Unpin instruction" : "Pin instruction",
-                            bundle: .module)
+                        standingInstructionTitle
                             .themedFont(.tiny, weight: .medium)
                     }
                     .foregroundStyle(
@@ -59,12 +57,8 @@ struct MessageActionBarView: View {
                 .buttonStyle(.plain)
                 .disabled(actionsDisabled)
                 .opacity(actionsDisabled ? 0.4 : 1)
-                .help(Text(
-                    isStandingInstruction ? "Unpin instruction" : "Pin instruction",
-                    bundle: .module))
-                .accessibilityLabel(Text(
-                    isStandingInstruction ? "Unpin instruction" : "Pin instruction",
-                    bundle: .module))
+                .help(standingInstructionTitle)
+                .accessibilityLabel(standingInstructionTitle)
                 .accessibilityIdentifier("message-standing-instruction-toggle")
             }
 
@@ -79,6 +73,7 @@ struct MessageActionBarView: View {
                 MessagePillActionButton(
                     icon: "pencil", label: "Edit",
                     help: "Edit this message and regenerate the reply",
+                    accessibilityName: "Edit message",
                     disabled: actionsDisabled, action: editAction)
             }
 
@@ -86,6 +81,7 @@ struct MessageActionBarView: View {
                 MessagePillActionButton(
                     icon: "arrow.triangle.branch", label: "Branch",
                     help: "Edit this message in a branched copy of the conversation",
+                    accessibilityName: "Branch message",
                     disabled: actionsDisabled, action: branchAction)
             }
 
@@ -93,20 +89,31 @@ struct MessageActionBarView: View {
                 MessagePillActionButton(
                     icon: "arrow.clockwise", label: "Retry",
                     help: "Generate a new reply to the same prompt",
+                    accessibilityName: "Retry message",
                     disabled: actionsDisabled, action: retryAction)
             }
 
             MessageTimestampBadge(date: date)
         }
     }
+
+    private var standingInstructionTitle: Text {
+        isStandingInstruction
+            ? Text("Unpin instruction", bundle: .module)
+            : Text("Pin instruction", bundle: .module)
+    }
 }
 
 /// The shared pill button the editing affordances render as. Matches the
 /// existing copy/share pills' look without restating them.
+///
+/// `label`, `help` and `accessibilityName` are catalog keys; the name is its
+/// own key rather than "label + message" so each language words it whole.
 struct MessagePillActionButton: View {
     let icon: String
-    let label: String
-    let help: String
+    let label: LocalizedStringKey
+    let help: LocalizedStringKey
+    let accessibilityName: LocalizedStringKey
     let disabled: Bool
     let action: () -> Void
 
@@ -116,7 +123,7 @@ struct MessagePillActionButton: View {
                 Image(systemName: icon)
                     .themedFont(.tiny, weight: .medium)
                     .accessibilityHidden(true)
-                Text(label)
+                Text(label, bundle: .module)
                     .themedFont(.tiny, weight: .medium)
             }
             .foregroundStyle(Color.secondary)
@@ -128,8 +135,8 @@ struct MessagePillActionButton: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.4 : 1)
-        .help(help)
-        .accessibilityLabel("\(label) message")
+        .help(Text(help, bundle: .module))
+        .accessibilityLabel(Text(accessibilityName, bundle: .module))
     }
 }
 
@@ -154,7 +161,7 @@ struct MessageShareButton: View {
         }
         .buttonStyle(.plain)
         .help(Text("Share message", bundle: .module))
-        .accessibilityLabel("Share message")
+        .accessibilityLabel(Text("Share message", bundle: .module))
     }
 }
 
@@ -176,7 +183,7 @@ struct MessageSpeechButton: View {
                 Image(systemName: isSpeakingThis ? "stop.fill" : "speaker.wave.2")
                     .themedFont(.tiny, weight: .medium)
                     .accessibilityHidden(true)
-                Text(isSpeakingThis ? "Stop" : "Read")
+                (isSpeakingThis ? Text("Stop", bundle: .module) : Text("Read", bundle: .module))
                     .themedFont(.tiny, weight: .medium)
             }
             .foregroundStyle(isSpeakingThis ? TurboSparkTheme.accentColor : Color.secondary)
@@ -189,8 +196,12 @@ struct MessageSpeechButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(isSpeakingThis ? "Stop reading out loud" : "Read message out loud")
-        .accessibilityLabel(isSpeakingThis ? "Stop reading message out loud" : "Read message out loud")
+        .help(isSpeakingThis
+              ? Text("Stop reading out loud", bundle: .module)
+              : Text("Read message out loud", bundle: .module))
+        .accessibilityLabel(isSpeakingThis
+                            ? Text("Stop reading message out loud", bundle: .module)
+                            : Text("Read message out loud", bundle: .module))
     }
 }
 
@@ -215,12 +226,14 @@ struct MessageTimestampBadge: View {
         .padding(.vertical, 4)
         .background(Color.primary.opacity(isHovered ? 0.08 : 0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
         }
         .help(MessageTimestampFormatter.exactString(for: date, locale: locale))
-        .accessibilityLabel("Sent \(MessageTimestampFormatter.relativeString(for: date, locale: locale)), \(MessageTimestampFormatter.exactString(for: date, locale: locale))")
+        .accessibilityLabel(Text(
+            "Sent \(MessageTimestampFormatter.relativeString(for: date, locale: locale)), \(MessageTimestampFormatter.exactString(for: date, locale: locale))",
+            bundle: .module))
     }
 }
 
@@ -233,7 +246,7 @@ struct MessageCopyButton: View {
         Button {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-            withAnimation(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(.easeInOut(duration: 0.15)) {
                 isCopied = true
             }
         } label: {
@@ -241,7 +254,7 @@ struct MessageCopyButton: View {
                 Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                     .themedFont(.tiny, weight: .medium)
                     .accessibilityHidden(true)
-                Text(isCopied ? "Copied" : "Copy")
+                (isCopied ? Text("Copied", bundle: .module) : Text("Copy", bundle: .module))
                     .themedFont(.tiny, weight: .medium)
             }
             .foregroundStyle(isCopied ? TurboSparkTheme.accentColor : Color.secondary)
@@ -252,13 +265,13 @@ struct MessageCopyButton: View {
         }
         .buttonStyle(.plain)
         .help(Text("Copy message text", bundle: .module))
-        .accessibilityLabel(isCopied ? "Copied" : "Copy message")
-        .accessibilityHint("Copies this message to the clipboard")
+        .accessibilityLabel(isCopied ? Text("Copied", bundle: .module) : Text("Copy message", bundle: .module))
+        .accessibilityHint(Text("Copies this message to the clipboard", bundle: .module))
         .task(id: isCopied) {
             guard isCopied else { return }
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.15)) {
+            TSMotion.animate(.easeOut(duration: 0.15)) {
                 isCopied = false
             }
         }

@@ -24,7 +24,7 @@ struct ModelRecommendationRow: View {
             // Info
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(recommendation.alias)
+                    Text(verbatim: recommendation.alias)
                         .themedFont(.base, weight: .bold)
 
                     if isMoE {
@@ -39,13 +39,13 @@ struct ModelRecommendationRow: View {
                         .padding(.vertical, 1.5)
                         .background(Color.purple.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
                         .foregroundStyle(Color.purple)
-                        .help("Streams weights dynamically with minimal RAM footprint")
+                        .help(Text("Streams weights dynamically with minimal RAM footprint", bundle: .module))
                     }
 
                     RecommendationVerdictBadge(verdict: recommendation.verdict)
                 }
 
-                Text(recommendation.name)
+                Text(verbatim: recommendation.name)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .lineLimit(1)
@@ -54,11 +54,16 @@ struct ModelRecommendationRow: View {
                     HStack(spacing: 3) {
                         Image(systemName: "memorychip")
                             .themedFont(.tiny)
-                        Text(isMoE ? "RAM: ~\(MetricFormat.storage(recommendation.countedBytes)) (Cache)" : "RAM: ~\(MetricFormat.storage(recommendation.countedBytes))")
+                            .accessibilityHidden(true)
+                        if isMoE {
+                            Text("RAM: ~\(MetricFormat.storage(recommendation.countedBytes)) (Cache)", bundle: .module)
+                        } else {
+                            Text("RAM: ~\(MetricFormat.storage(recommendation.countedBytes))", bundle: .module)
+                        }
                     }
                     .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(.appSecondary)
-                    .help("Estimated unified memory footprint")
+                    .help(Text("Estimated unified memory footprint", bundle: .module))
 
                     Text(verbatim: "-")
                         .themedFont(.tiny)
@@ -71,13 +76,13 @@ struct ModelRecommendationRow: View {
                     }
                     .themedFont(.tiny, weight: .medium)
                     .foregroundStyle(.appSecondary)
-                    .help("On-disk installation size")
+                    .help(Text("On-disk installation size", bundle: .module))
 
                     if let minRate = recommendation.toksPerSecondMin, let maxRate = recommendation.toksPerSecondMax {
                         Text(verbatim: "-")
                             .themedFont(.tiny)
                             .foregroundStyle(.tertiary)
-                        Text("\(Int(minRate))-\(Int(maxRate)) tok/s", bundle: .module)
+                        Text(verbatim: "\(Int(minRate))-\(Int(maxRate)) tok/s")
                             .themedFont(.tiny).monospacedDigit()
                             .foregroundStyle(.appAccent)
                     }
@@ -90,29 +95,22 @@ struct ModelRecommendationRow: View {
             Button {
                 model.installModel(alias: recommendation.alias)
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .accessibilityHidden(true)
-                    Text("Install & Start", bundle: .module)
-                }
-                .themedFont(.base, weight: .semibold)
+                Label { Text("Install & Start", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
+            .appAction(.secondary)
             .disabled(model.isRunning || !model.canInstall(alias: recommendation.alias))
-            .help("Install and start \(recommendation.alias)")
-            .accessibilityLabel("Install and start \(recommendation.alias)")
-            .accessibilityHint("Downloads the model and starts a new chat with it")
+            .help(Text("Downloads the model and starts a new chat with it", bundle: .module))
+            .accessibilityLabel(Text("Install and start \(recommendation.alias)", bundle: .module))
         }
         .padding(12)
         .background(
-            Color(nsColor: .controlBackgroundColor).opacity(0.6),
+            .appSurface,
             in: RoundedRectangle(cornerRadius: 12)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(
-                    isMoE ? Color.purple.opacity(0.3) : Color(nsColor: .separatorColor).opacity(0.5),
+                    isMoE ? AnyShapeStyle(Color.purple.opacity(0.3)) : AnyShapeStyle(.appBorder),
                     lineWidth: isMoE ? 1 : 0.5
                 )
         )
@@ -130,6 +128,12 @@ struct ModelRecommendationRow: View {
 struct RecommendationVerdictBadge: View {
     let verdict: ModelRecommendation.FitVerdict
 
+    /// The same words the fit pill uses, so a verdict reads the same in
+    /// every surface (`ModelFitPresentation` owns the mapping).
+    private var verdictHelp: Text {
+        Text(LocalizedStringKey(ModelFitPresentation.of(verdict).help), bundle: .module)
+    }
+
     var body: some View {
         switch verdict {
         case .resident:
@@ -144,7 +148,7 @@ struct RecommendationVerdictBadge: View {
             .padding(.vertical, 1.5)
             .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.green)
-            .help("Fits entirely in unified memory")
+            .help(verdictHelp)
         case .streams:
             HStack(spacing: 3) {
                 Image(systemName: "bolt.fill")
@@ -157,7 +161,7 @@ struct RecommendationVerdictBadge: View {
             .padding(.vertical, 1.5)
             .background(Color.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.blue)
-            .help("Streams experts dynamically from fast NVMe storage")
+            .help(verdictHelp)
         case .tight:
             HStack(spacing: 3) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -169,7 +173,7 @@ struct RecommendationVerdictBadge: View {
             .padding(.vertical, 1.5)
             .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.orange)
-            .help("Fits with tight memory headroom")
+            .help(verdictHelp)
         case .refused:
             HStack(spacing: 3) {
                 Image(systemName: "xmark.octagon.fill")
@@ -181,7 +185,7 @@ struct RecommendationVerdictBadge: View {
             .padding(.vertical, 1.5)
             .background(Color.red.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
             .foregroundStyle(.red)
-            .help("Exceeds available system memory")
+            .help(verdictHelp)
         case .unknown:
             EmptyView()
         }

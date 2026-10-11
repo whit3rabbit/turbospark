@@ -21,9 +21,9 @@ struct ServerLiveChartsView: View {
                 else { Text("HTTP body bandwidth", bundle: .module) }
             }.themedFont(.small, weight: .semibold)
             HStack {
-                Text(verbatim: "IN \(rate(points.last?.receivedPerSecond))")
+                Text("In: \(rate(points.last?.receivedPerSecond))", bundle: .module)
                 Spacer()
-                Text(verbatim: "OUT \(rate(points.last?.sentPerSecond))")
+                Text("Out: \(rate(points.last?.sentPerSecond))", bundle: .module)
             }.themedCode(.small).lineLimit(1).minimumScaleFactor(0.8)
             Chart(points) { point in
                 if let value = point.receivedPerSecond {
@@ -39,7 +39,7 @@ struct ServerLiveChartsView: View {
             .chartLegend(.hidden)
             .frame(height: compact ? 50 : 130)
         }
-        .padding(14).background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
+        .padding(14).background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private var memory: some View {
@@ -62,7 +62,7 @@ struct ServerLiveChartsView: View {
             .chartYScale(domain: 0...max(1, Double(model.telemetry?.physicalMemoryBytes ?? 1_073_741_824) / 1_073_741_824))
             .frame(height: compact ? 50 : 130)
         }
-        .padding(14).background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
+        .padding(14).background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private func rate(_ value: Double?) -> String {
@@ -87,9 +87,10 @@ struct ServerTextPreviewView: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString((model.serverInfo?.traffic?.previews ?? []).joined(separator: "\n"), forType: .string)
                 } label: { Text("Copy", bundle: .module) }
+                .appAction(.secondary, size: .small)
             }
             ScrollView([.horizontal, .vertical]) {
-                Text((model.serverInfo?.traffic?.previews ?? []).joined(separator: "\n"))
+                Text(verbatim: (model.serverInfo?.traffic?.previews ?? []).joined(separator: "\n"))
                     .themedCode(.small).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

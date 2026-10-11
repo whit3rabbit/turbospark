@@ -61,7 +61,7 @@ private struct ThinkingLevelControl: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
-                        .help("These levels were read from the loaded checkpoint's chat template at open, not from a per-family table.")
+                        .help(Text("These levels were read from the loaded checkpoint's chat template at open, not from a per-family table.", bundle: .module))
                 }
             }
 
@@ -70,22 +70,25 @@ private struct ThinkingLevelControl: View {
                     get: { model.reasoning },
                     set: { model.setReasoning($0) }
                 )) {
+                    // Level names and descriptions are fixed English in
+                    // `GenerateOptions.Reasoning` and `ReasoningLevelPolicy`;
+                    // each one is a catalog key.
                     ForEach(model.availableReasoningLevels) { level in
-                        Text(model.reasoningLabel(for: level)).tag(level)
+                        Text(LocalizedStringKey(model.reasoningLabel(for: level)), bundle: .module).tag(level)
                     }
                 } label: { Text("Thinking level", bundle: .module) }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .accessibilityLabel("Thinking level")
-                .accessibilityValue(model.reasoningLabel(for: model.reasoning))
+                .accessibilityLabel(Text("Thinking level", bundle: .module))
+                .accessibilityValue(Text(LocalizedStringKey(model.reasoningLabel(for: model.reasoning)), bundle: .module))
 
                 // The description belongs to the SELECTED level, so the
                 // segmented control does not need a subtitle per segment.
-                Text(model.reasoningDescription(for: model.reasoning))
+                Text(LocalizedStringKey(model.reasoningDescription(for: model.reasoning)), bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(theme.metadataForeground)
                     .fixedSize(horizontal: false, vertical: true)
-                    .animation(TSMotion.hover, value: model.reasoning)
+                    .tsAnimation(TSMotion.hover, value: model.reasoning)
             } else {
                 unavailableExplanation
             }
@@ -106,11 +109,13 @@ private struct ThinkingLevelControl: View {
                 .themedFont(.small)
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
-            Text(
-                model.session == nil
-                    ? "Load the model to see which thinking levels it accepts."
-                    : "This checkpoint's chat template has no reasoning levels."
-            )
+            Group {
+                if model.session == nil {
+                    Text("Load the model to see which thinking levels it accepts.", bundle: .module)
+                } else {
+                    Text("This checkpoint's chat template has no reasoning levels.", bundle: .module)
+                }
+            }
             .themedFont(.small)
             .foregroundStyle(theme.metadataForeground)
             .fixedSize(horizontal: false, vertical: true)
@@ -203,7 +208,7 @@ struct ContextLadderPicker: View {
         }
         .onAppear { syncIsCustom() }
         .onChange(of: model.maxContextTokens) { _, _ in syncIsCustom() }
-        .animation(.smooth(duration: 0.2), value: isCustom)
+        .tsAnimation(.smooth(duration: 0.2), value: isCustom)
     }
 
     private var customSizeRow: some View {
@@ -221,8 +226,8 @@ struct ContextLadderPicker: View {
                     ),
                     in: 512...131072
                 )
-                .accessibilityLabel("Custom context size")
-                .accessibilityValue("\(model.maxContextTokens) tokens")
+                .accessibilityLabel(Text("Custom context size", bundle: .module))
+                .accessibilityValue(Text("\(model.maxContextTokens.formatted()) tokens", bundle: .module))
                 Text(verbatim: "\(model.maxContextTokens.formatted())")
                     .themedFont(.small).monospacedDigit()
                     .frame(width: 55, alignment: .trailing)
@@ -304,260 +309,5 @@ struct ContextLadderPicker: View {
             loadFailed = true
         }
         syncIsCustom()
-    }
-}
-
-/// The collapsed control: one row showing the current selection, tapping it
-/// opens `ContextSelectionPopover`.
-private struct ContextSelectionButton: View {
-    @Environment(\.appTheme) private var theme
-    @ObservedObject var model: AppModel
-    let ladder: ContextLadder?
-    @Binding var isCustom: Bool
-    @State private var isPresented = false
-
-    private var currentRung: ContextLadderRung? {
-        ladder?.rungs.first { Int($0.context) == model.maxContextTokens }
-    }
-
-    var body: some View {
-        Button {
-            isPresented = true
-        } label: {
-            HStack(spacing: 6) {
-                summary
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.up.chevron.down")
-                    .themedFont(.micro, weight: .semibold)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .contentShape(.rect(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Context window")
-        .accessibilityValue(summaryAccessibilityValue)
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            ContextSelectionPopover(
-                model: model,
-                ladder: ladder,
-                isCustom: $isCustom,
-                onDismiss: { isPresented = false })
-        }
-    }
-
-    // `.small`/`.tiny` are the sidebar rows' own roles in the canonical type
-    // scale, so this button renders at the same size as the sidebar and chat
-    // chrome it sits beside.
-    @ViewBuilder
-    private var summary: some View {
-        if let rung = currentRung {
-            let presentation = ModelFitPresentation.of(rung.verdict)
-            Circle()
-                .fill(presentation.color)
-                .frame(width: 7, height: 7)
-                .accessibilityHidden(true)
-            Text(rung.context.formatted())
-                .font(theme.ui(.small, weight: .semibold))
-                .monospacedDigit()
-            Text(MetricFormat.storage(rung.counted))
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.appSecondary)
-                .monospacedDigit()
-            Text(presentation.compactLabel)
-                .font(theme.ui(.tiny))
-                .foregroundStyle(presentation.color)
-        } else if model.maxContextTokens == 0 {
-            Text("Auto (\(model.resolvedContextTokens.formatted()))", bundle: .module)
-                .font(theme.ui(.small, weight: .semibold))
-        } else if isCustom {
-            Text(verbatim: "Custom \u{00B7} \(model.maxContextTokens.formatted())")
-                .font(theme.ui(.small, weight: .semibold))
-                .monospacedDigit()
-        } else {
-            Text(model.maxContextTokens.formatted())
-                .font(theme.ui(.small, weight: .semibold))
-                .monospacedDigit()
-        }
-    }
-
-    private var summaryAccessibilityValue: String {
-        if let rung = currentRung {
-            let presentation = ModelFitPresentation.of(rung.verdict)
-            return "\(rung.context.formatted()) tokens, \(MetricFormat.storage(rung.counted)), \(presentation.label)"
-        }
-        if model.maxContextTokens == 0 {
-            return "Auto, \(model.resolvedContextTokens.formatted()) tokens"
-        }
-        return "\(model.maxContextTokens.formatted()) tokens"
-    }
-}
-
-/// The popover's contents: Auto, then every priced rung (or, with no ladder,
-/// the fixed presets), then Custom. One `onSelect` per row, mirroring
-/// `ToolApprovalMenuPopover`'s shape (icon/dot, one or two lines of text, a
-/// trailing checkmark on the current selection) -- that view is this app's
-/// existing precedent for a rich per-row menu, needed because a native
-/// `Picker`/`Menu` on macOS can only show plain text per row
-/// (`ModelLoaderControl.swift`'s `.menuStyle(.button)` gotcha).
-private struct ContextSelectionPopover: View {
-    @Environment(\.appTheme) private var theme
-    @ObservedObject var model: AppModel
-    let ladder: ContextLadder?
-    @Binding var isCustom: Bool
-    let onDismiss: () -> Void
-
-    var body: some View {
-        VStack(spacing: 2) {
-            autoRow
-
-            if let rungs = ladder?.rungs, !rungs.isEmpty {
-                ForEach(rungs) { rung in
-                    rungRow(rung)
-                }
-            } else {
-                ForEach(AppContextLengthOption.allCases.filter { $0 != .auto }) { option in
-                    fixedOptionRow(option)
-                }
-            }
-
-            customRow
-        }
-        .padding(6)
-        .frame(width: 300)
-        .background(TurboSparkTheme.surfaceColor)
-    }
-
-    private var autoRow: some View {
-        optionRow(
-            isSelected: model.maxContextTokens == 0,
-            primary: Text("Auto", bundle: .module),
-            secondary: Text("\(model.resolvedContextTokens.formatted()) tokens, resolved from the checkpoint and this machine", bundle: .module),
-            dotColor: nil,
-            disabled: false
-        ) {
-            isCustom = false
-            model.maxContextTokens = 0
-            onDismiss()
-        }
-    }
-
-    private func rungRow(_ rung: ContextLadderRung) -> some View {
-        let presentation = ModelFitPresentation.of(rung.verdict)
-        let isSelected = !isCustom && Int(rung.context) == model.maxContextTokens
-        let isRefused = rung.verdict == .refused
-        var secondary = "\(MetricFormat.storage(rung.counted)) \u{00B7} \(presentation.label)"
-        if let marker = marker(rung) {
-            secondary += " \u{00B7} \(marker)"
-        }
-
-        return optionRow(
-            isSelected: isSelected,
-            primary: Text(rung.context.formatted()),
-            secondary: Text(secondary),
-            dotColor: presentation.color,
-            disabled: isRefused
-        ) {
-            isCustom = false
-            model.maxContextTokens = Int(rung.context)
-            onDismiss()
-        }
-        .help(
-            isRefused
-                ? "Needs more memory than this Mac has, with this model loaded."
-                : "Use a \(rung.context.formatted()) token window (\(MetricFormat.storage(rung.counted)) of KV cache)")
-        .accessibilityLabel("\(rung.context.formatted()) tokens")
-        .accessibilityValue("\(MetricFormat.storage(rung.counted)), \(presentation.label)"
-            + (isRefused ? ", too large for this Mac" : ""))
-    }
-
-    private func fixedOptionRow(_ option: AppContextLengthOption) -> some View {
-        optionRow(
-            isSelected: !isCustom && model.maxContextTokens == option.tokens,
-            primary: Text(option.menuLabel),
-            secondary: nil,
-            dotColor: nil,
-            disabled: false
-        ) {
-            isCustom = false
-            model.maxContextTokens = option.tokens
-            onDismiss()
-        }
-    }
-
-    private var customRow: some View {
-        optionRow(
-            isSelected: isCustom,
-            primary: Text("Custom\u{2026}", bundle: .module),
-            secondary: Text("Pick any size from 512 to 131,072", bundle: .module),
-            dotColor: nil,
-            disabled: false
-        ) {
-            if model.maxContextTokens == 0 {
-                model.maxContextTokens = model.resolvedContextTokens
-            }
-            isCustom = true
-            onDismiss()
-        }
-    }
-
-    /// One short word, or nothing. Mirrors the marker this control used to
-    /// show as a separate trailing column on its always-visible rows; here it
-    /// is folded into the secondary line since the popover has room for it.
-    private func marker(_ rung: ContextLadderRung) -> String? {
-        if rung.pastTrained { return "beyond" }
-        if rung.isTrainedMax { return "trained" }
-        if rung.isLargestFitting { return "max fit" }
-        return nil
-    }
-
-    @ViewBuilder
-    private func optionRow(
-        isSelected: Bool,
-        primary: Text,
-        secondary: Text?,
-        dotColor: Color?,
-        disabled: Bool,
-        onSelect: @escaping () -> Void
-    ) -> some View {
-        Button(action: onSelect) {
-            HStack(spacing: 8) {
-                if let dotColor {
-                    Circle()
-                        .fill(dotColor)
-                        .frame(width: 7, height: 7)
-                        .accessibilityHidden(true)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    primary
-                        .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(Color.primary)
-                    if let secondary {
-                        secondary
-                            .font(theme.ui(.tiny))
-                            .foregroundStyle(.appSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 4)
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .themedFont(.tiny, weight: .bold)
-                        .foregroundStyle(Color.primary)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                isSelected ? theme.accent.opacity(0.12) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(.rect(cornerRadius: 6))
-        }
-        .buttonStyle(TSPressScaleStyle(scale: 0.99))
-        .disabled(disabled)
-        .opacity(disabled ? 0.45 : 1)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }

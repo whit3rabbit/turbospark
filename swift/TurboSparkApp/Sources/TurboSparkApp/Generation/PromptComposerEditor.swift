@@ -40,8 +40,8 @@ struct PromptComposerEditor: View {
     var body: some View {
         Color.clear
             .frame(height: min(max(measuredTextHeight, editorMinHeight), currentMaxHeight))
-            .animation(.smooth(duration: 0.15), value: measuredTextHeight)
-            .animation(.smooth(duration: 0.2), value: isExpanded)
+            .tsAnimation(.smooth(duration: 0.15), value: measuredTextHeight)
+            .tsAnimation(.smooth(duration: 0.2), value: isExpanded)
             .background(alignment: .topLeading) {
                 Text(model.promptText.isEmpty ? " " : model.promptText)
                     .font(theme.uiFont)
@@ -78,8 +78,8 @@ struct PromptComposerEditor: View {
             }
             .overlay(alignment: .topLeading) {
                 TextEditor(text: $model.promptText)
-                    .accessibilityLabel("Prompt")
-                    .accessibilityHint("Type your message here. Press Return to send, Shift-Return for a new line.")
+                    .accessibilityLabel(Text("Prompt", bundle: .module))
+                    .accessibilityHint(Text("Type your message here. Press Return to send, Shift-Return for a new line.", bundle: .module))
                     .font(theme.uiFont)
                     .scrollContentBackground(.hidden)
                     .focused(promptFocused)
@@ -182,7 +182,7 @@ struct PromptComposerEditor: View {
             .overlay(alignment: .topTrailing) {
                 if measuredTextHeight > editorMinHeight + 6 || isExpanded {
                     Button {
-                        withAnimation(.smooth(duration: 0.2)) {
+                        TSMotion.animate(.smooth(duration: 0.2)) {
                             isExpanded.toggle()
                         }
                     } label: {
@@ -195,8 +195,10 @@ struct PromptComposerEditor: View {
                     .buttonStyle(.plain)
                     .padding(.top, 2)
                     .padding(.trailing, 2)
-                    .help(isExpanded ? "Collapse editor" : "Expand editor")
-                    .accessibilityLabel(isExpanded ? "Collapse editor" : "Expand editor")
+                    .help(isExpanded ? Text("Collapse editor", bundle: .module) : Text("Expand editor", bundle: .module))
+                    .accessibilityLabel(isExpanded
+                                        ? Text("Collapse editor", bundle: .module)
+                                        : Text("Expand editor", bundle: .module))
                     .transition(.opacity)
                 }
             }
