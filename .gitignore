@@ -63,3 +63,4 @@ ig2-work/
 docs/experiments
 docs/verification
 testdata/
+!crates/audio/testdata/*.json
