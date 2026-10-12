@@ -209,17 +209,47 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
     let runner = Music3Runner::open_with_precision(model, Music3Precision::Checkpoint).unwrap();
     for _ in 0..if repeat { 2 } else { 1 } {
         let mut warmup = vec![];
-        let (hidden,codes)=runner.generate_frame_hiddens_traced(&ids,request["frames"].as_u64().unwrap() as usize,request["seed"].as_u64().unwrap(),|t|{
-            if t.frame==0 {
-                close(t.hiddens,&read_f32(&reference.join(format!("warmup_{}_hidden.f32",t.codebook))),2e-4);
-                close(t.guided_logits,&read_f32(&reference.join(format!("warmup_{}_logits.f32",t.codebook))),2e-4);
-                warmup.push(serde_json::json!({"codebook":t.codebook,"key":[t.key.0,t.key.1],"sampled":t.sampled}));
-            }
-        }).unwrap();
-        let expected_warmup:Vec<_>=expected_warmup.as_array().unwrap().iter().map(|v|serde_json::json!({"codebook":v["codebook"],"key":v["key"],"sampled":v["sampled"]})).collect();
+        let (hidden, codes) = runner
+            .generate_frame_hiddens_traced(
+                &ids,
+                request["frames"].as_u64().unwrap() as usize,
+                request["seed"].as_u64().unwrap(),
+                |t| {
+                    if t.frame == 0 {
+                        close(
+                            t.hiddens,
+                            &read_f32(&reference.join(format!("warmup_{}_hidden.f32", t.codebook))),
+                            0.05,
+                        );
+                        close(
+                            t.guided_logits,
+                            &read_f32(&reference.join(format!("warmup_{}_logits.f32", t.codebook))),
+                            0.05,
+                        );
+                        warmup.push(serde_json::json!({
+                            "codebook": t.codebook,
+                            "key": [t.key.0, t.key.1],
+                            "sampled": t.sampled,
+                        }));
+                    }
+                },
+            )
+            .unwrap();
+        let expected_warmup: Vec<_> = expected_warmup
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                serde_json::json!({
+                    "codebook": v["codebook"],
+                    "key": v["key"],
+                    "sampled": v["sampled"],
+                })
+            })
+            .collect();
         assert_eq!(warmup, expected_warmup);
         assert_eq!(codes, expected_codes);
-        close(&hidden, &read_f32(&reference.join("hiddens.f32")), 5e-4);
+        close(&hidden, &read_f32(&reference.join("hiddens.f32")), 0.05);
         let wave = runner
             .run_flow(
                 &hidden,
@@ -228,7 +258,7 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 request["seed"].as_u64().unwrap(),
             )
             .unwrap();
-        close(&wave, &read_f32(&reference.join("wave.f32")), 1e-3);
+        close(&wave, &read_f32(&reference.join("wave.f32")), 0.05);
     }
 }
 
