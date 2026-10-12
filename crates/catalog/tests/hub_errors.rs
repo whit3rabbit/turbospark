@@ -98,6 +98,9 @@ fn fixture_status_server(
                 }
             };
             stream
+                .set_nonblocking(false)
+                .expect("make accepted fixture stream blocking");
+            stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .expect("set request timeout");
             let mut reader = BufReader::new(stream.try_clone().expect("clone fixture stream"));
