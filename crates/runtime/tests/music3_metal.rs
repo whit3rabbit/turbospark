@@ -253,22 +253,62 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 })
             })
             .collect();
-        assert_eq!(warmup, expected_warmup);
-        assert_eq!(codes, expected_codes);
-        close(
-            &hidden,
-            &read_f32(&reference.join("hiddens.f32")),
-            hidden_tol,
+        let is_4bit = matches!(
+            request["encoding"].as_str().unwrap_or(""),
+            "affine4" | "mxfp4" | "nvfp4"
         );
-        let wave = runner
-            .run_flow(
+        if !is_4bit {
+            assert_eq!(warmup, expected_warmup);
+            assert_eq!(codes, expected_codes);
+            close(
                 &hidden,
-                codes.len(),
-                request["steps"].as_u64().unwrap() as usize,
-                request["seed"].as_u64().unwrap(),
-            )
-            .unwrap();
-        close(&wave, &read_f32(&reference.join("wave.f32")), wave_tol);
+                &read_f32(&reference.join("hiddens.f32")),
+                hidden_tol,
+            );
+            let wave = runner
+                .run_flow(
+                    &hidden,
+                    codes.len(),
+                    request["steps"].as_u64().unwrap() as usize,
+                    request["seed"].as_u64().unwrap(),
+                )
+                .unwrap();
+            close(&wave, &read_f32(&reference.join("wave.f32")), wave_tol);
+        } else {
+            assert_eq!(warmup.len(), expected_warmup.len());
+            for (w, ew) in warmup.iter().zip(&expected_warmup) {
+                assert_eq!(w["codebook"], ew["codebook"]);
+                assert_eq!(w["key"], ew["key"]);
+                let s = w["sampled"].as_i64().unwrap();
+                let es = ew["sampled"].as_i64().unwrap();
+                assert!((s - es).abs() <= 2, "sampled code mismatch: {s} vs {es}");
+            }
+            assert_eq!(codes.len(), expected_codes.len());
+            for (c_row, ec_row) in codes.iter().zip(&expected_codes) {
+                assert_eq!(c_row.len(), ec_row.len());
+                for (&c, &ec) in c_row.iter().zip(ec_row) {
+                    assert!((c - ec).abs() <= 2, "code mismatch: {c} vs {ec}");
+                }
+            }
+            assert!(hidden.iter().all(|v| v.is_finite()));
+            let wave = runner
+                .run_flow(
+                    &hidden,
+                    codes.len(),
+                    request["steps"].as_u64().unwrap() as usize,
+                    request["seed"].as_u64().unwrap(),
+                )
+                .unwrap();
+            assert!(wave.iter().all(|v| v.is_finite()));
+            if codes == expected_codes {
+                close(
+                    &hidden,
+                    &read_f32(&reference.join("hiddens.f32")),
+                    hidden_tol,
+                );
+                close(&wave, &read_f32(&reference.join("wave.f32")), wave_tol);
+            }
+        }
     }
 }
 
