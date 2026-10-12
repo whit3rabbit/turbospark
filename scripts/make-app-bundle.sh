@@ -180,12 +180,10 @@ done
 # Bundle convention is @executable_path/../Frameworks. This edit invalidates
 # the exe's existing (build-time) signature, which the codesign pass below
 # then re-establishes.
-exe_rpaths="$(otool -l "$contents/MacOS/TurboSparkApp" | awk '/LC_RPATH/{getline; print $2}')"
-case "$exe_rpaths" in
-  *"@executable_path/../Frameworks"*) ;;
-  *) install_name_tool -add_rpath @executable_path/../Frameworks \
-       "$contents/MacOS/TurboSparkApp" ;;
-esac
+if ! otool -l "$contents/MacOS/TurboSparkApp" | grep -A2 LC_RPATH | grep -q "@executable_path/../Frameworks"; then
+  install_name_tool -add_rpath @executable_path/../Frameworks \
+    "$contents/MacOS/TurboSparkApp"
+fi
 
 # Copy application icon if available
 if [ -f "$root/assets/icons/AppIcon.icns" ]; then
