@@ -480,6 +480,38 @@ which has no `qwen3_5_mtp` module) settled five design questions at zero cost
 and confirmed the priming requirement independently. The same lesson is
 recorded for this family's mrope question on 2026-08-14.
 
+## Prefill with the head open (2026-10-11)
+
+The speculative loop used to prefill one token at a time: every prompt token
+through the headful `produce` (the 248K-row lm_head included), then
+`prime_drafter`. On a dense qwen install with the head open it now takes the
+prompt in the chunked driver's 128-token spans instead
+(`SpeculativeProducer::prefill_chunk_priming_drafter`). The trunk runs the
+batched prefill arm (Steel at a 64-row micro-batch, `docs/BATCHED_PREFILL.md`),
+and after each micro-batch the head is primed row by row from the trunk
+hidden states that micro-batch left in `scratch.x`, with the next token taken
+across micro-batch and chunk boundaries. The last prompt position stays
+unprimed, as before, and its hidden state is copied to row 0 for the first
+draft step. `TURBOSPARK_MTP_CHUNKED_PREFILL=0` restores the token walk.
+DFlash2 still prefills token by token: its context write needs aux captures
+the chunked driver does not encode.
+
+`crates/runtime/tests/real_forward_qwen35_mtp_chunked.rs` holds the priming
+to the token walk: on the INT4 fixture the per-token and scalar batched arms
+reproduce the walk's first draft and last trunk logits bit for bit at 1 to
+150 prompt tokens, and the Steel arm stays within 1% of the largest logit.
+Removing the row-0 copy, priming from the wrong row, or dropping the
+cross-chunk lookahead each fails it. On the real `qwen38-27b-mtp` trunk at
+block 2, greedy:
+
+| prompt | chunked | token walk |
+| ---: | ---: | ---: |
+| 1,094 tokens | 10.74 s | 53.08 s |
+| 2,727 tokens | 24.59 s | 181.73 s |
+
+Generated text was md5-identical between the two and to the non-speculative
+runs, and `mtp_generation_gate` stays lossless at blocks 2 and 4.
+
 ## Sources
 
 - Head weights, standalone: `mlx-community/Qwen3.8-27B-MTP-4bit` (31 tensors, INT4 affine group 64)

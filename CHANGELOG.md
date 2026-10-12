@@ -54,6 +54,32 @@ when this file gets updated relative to the version bump and the tag.
   vault cleanly locked instead of unlocking or erroring over the lock.
 
 ### Changed
+- `crates/runtime`: Qwen3.8-27B (and the other `qwen35` dense installs)
+  decode with the GQA-shared attention partial by default. Long-context
+  decode measured 1.24x at 5.8K tokens and 1.76x at 18K with greedy output
+  unchanged in those runs. The reduction order moved three frozen quality
+  rows at near-ties, and they are re-frozen with the old values recorded:
+  `qwen38` 4.9432 -> 4.9444, `ternary27b` 6.8350 -> 6.8351, `bonsai2`
+  5.8134 -> 5.8141. `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` restores the old
+  kernel and the old rows.
+- `crates/runtime`, `crates/gpu`: MTP speculative decoding skips the
+  full-vocab lm_head on each round's row-only draft step, and the
+  gated-DeltaNet rollback snapshot is a GPU blit into pooled buffers instead
+  of a 147 MiB host copy (3.7 ms to 0.06 ms per round on the host). Block-2
+  MTP on Qwen3.8 measured 29.65 -> 32.16 tok/s with output byte-identical.
+- `crates/runtime`: dense qwen chunked prefill takes the batched arm by
+  default wherever the install qualifies (INT4, unfolded, text-only, no
+  `--kv-bits`), with its INT4 GEMMs on the vendored Steel kernel at a
+  64-row micro-batch. A 2,727-token Qwen3.8 prompt prefills in 21.0 s,
+  against 46.6 s for the scalar batched arm and 138.6 s per token, with
+  greedy output identical across all three. `TURBOSPARK_BATCHED_GEMV=0`
+  keeps the per-token arm and `TURBOSPARK_PREFILL_STEEL=0` the scalar
+  kernel.
+- `crates/runtime`: an MTP install prefills through the chunked driver,
+  priming the MTP head after each micro-batch instead of running a full
+  forward pass per prompt token. 2,727 tokens: 24.6 s, down from 181.7 s,
+  output identical. `TURBOSPARK_MTP_CHUNKED_PREFILL=0` restores the token
+  walk. DFlash2 still prefills one token at a time.
 - `crates/ffi`: with nothing attached, the embedded HTTP server now answers
   503 for a named model unless `allowRequestModelLoad` is set (previously
   the loader answered 404 with suggestions). Hosts attaching models
@@ -137,6 +163,19 @@ when this file gets updated relative to the version bump and the tag.
   adding RAII cleanup guards to prevent memory exhaustion and DoS on malformed audio.
 
 ### Added
+- `crates/gpu`: `attention_decode_gqa_partial`, a one-row decode attention
+  partial that loads each K/V row once for every Q head of its group and
+  runs positions across simdgroups with no per-position barrier. 3-13x the
+  barrier kernel from 512 to 32K positions at Qwen3.8's shape. Opt-in per
+  `AttentionScratch` (`with_decode_kernel`).
+- `crates/gpu`: `encode_dequant_int4_gemm_steel`, Apple MLX's Steel quantized
+  GEMM vendored from MLX v0.31.1 (MIT, `NOTICE`) and adapted to the resident
+  INT4 layout by `scripts/vendor_mlx_steel_qmm.py`. 2.5-3.1x the scalar
+  batched INT4 kernel at 32-128 rows. Prefill only, since it is not
+  bit-exact against the decode kernels.
+- `crates/bench`: `qwen38_prefill_arm_probe`, which holds the default
+  prefill arm to a KL bound against the per-token arm on the real install
+  (2.0e-5 nats mean measured).
 - `crates/audio`: added MegaTTS3 zero-shot voice cloning pipeline (latent diffusion
   transformer over WavVAE latents, prompt aligner, duration LM, relative transformer,
   text G2P frontend subset, and `MegaTts3` facade) with full test fixtures.

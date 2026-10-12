@@ -138,17 +138,52 @@ impl RealForwardRunner {
         start_position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
-        if tokens.is_empty() {
-            return Err(RealForwardError::Unsupported(
-                "prefill_chunk called with an empty chunk".to_string(),
-            ));
-        }
         if self.real_mtp.is_some() || self.real_dflash.is_some() {
             return Err(RealForwardError::Unsupported(
                 "the qwen chunked prefill driver does not encode the drafter's aux capture; \
                  open without TURBOSPARK_MTP_DRAFT / TURBOSPARK_DFLASH_DRAFT to use it, or prefill \
                  sequentially"
                     .to_string(),
+            ));
+        }
+        self.prefill_chunk_real_qwen_dense_inner(tokens, start_position, logits, None)
+    }
+
+    /// [`Self::prefill_chunk_real_qwen_dense`] with the MTP head open,
+    /// priming it over every prompt position whose NEXT token is known, the
+    /// way the sequential speculative prefill calls `prime_drafter` after
+    /// each token. `next_token` is the prompt token after this chunk, `None`
+    /// when the chunk ends the prompt: that last position is left for the
+    /// decode loop's first draft step, which reads its hidden state from row
+    /// 0 of `scratch.x` exactly as it reads the last `produce`'s.
+    pub(crate) fn prefill_chunk_real_qwen_dense_priming_mtp(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        next_token: Option<i32>,
+    ) -> Result<(), RealForwardError> {
+        if self.real_mtp.is_none() || self.real_dflash.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "MTP-priming chunked prefill needs an open MTP head and no DFlash2 drafter"
+                    .to_string(),
+            ));
+        }
+        self.prefill_chunk_real_qwen_dense_inner(tokens, start_position, logits, Some(next_token))
+    }
+
+    /// `prime_mtp`: `None` primes nothing; `Some(next)` primes the MTP head
+    /// per row, `next` being the prompt token after this chunk.
+    fn prefill_chunk_real_qwen_dense_inner(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        prime_mtp: Option<Option<i32>>,
+    ) -> Result<(), RealForwardError> {
+        if tokens.is_empty() {
+            return Err(RealForwardError::Unsupported(
+                "prefill_chunk called with an empty chunk".to_string(),
             ));
         }
         // WHICH ARM. `TURBOSPARK_BATCHED_GEMV=1` (or `set_batched_gemv_prefill
@@ -198,7 +233,66 @@ impl RealForwardRunner {
                 batched,
                 logits,
             )?;
+            if let Some(chunk_next) = prime_mtp {
+                // The micro-batch's command buffer has completed and left one
+                // row per token in `scratch.x`; the row after the last is the
+                // next micro-batch's first token, or the chunk's `next`.
+                let after = if last {
+                    chunk_next
+                } else {
+                    Some(tokens[offset + take])
+                };
+                self.prime_mtp_rows(
+                    &tokens[offset..offset + take],
+                    start_position + offset,
+                    after,
+                )?;
+            }
             offset += take;
+        }
+        Ok(())
+    }
+
+    /// Primes the MTP head over a completed micro-batch: row `t` holds the
+    /// trunk's residual for `start + t`, and the head's input pair for that
+    /// position is that hidden state and the token at `start + t + 1`. Rows
+    /// go in increasing order because each step overwrites row 0 after
+    /// reading its own row. A row with no known next token ends the prompt:
+    /// it is copied to row 0, where the decode loop's first draft step reads
+    /// the last prompt position's hidden state.
+    fn prime_mtp_rows(
+        &mut self,
+        tokens: &[i32],
+        start: usize,
+        after: Option<i32>,
+    ) -> Result<(), RealForwardError> {
+        let m = tokens.len();
+        for t in 0..m {
+            let next = if t + 1 < m {
+                Some(tokens[t + 1])
+            } else {
+                after
+            };
+            match next {
+                Some(next) => self.mtp_prime_step_row(next, start + t, t)?,
+                None if t > 0 => {
+                    let hidden = self.arch.hidden_size as u32;
+                    let row_bytes = u64::from(hidden) * 2;
+                    let pass = self.context.begin_pass_labeled("mtp last prompt row");
+                    gpu::encode_dflash_copy_rows(
+                        &mut self.context,
+                        &pass,
+                        (&self.scratch.x, t as u64 * row_bytes),
+                        (&self.scratch.x, 0),
+                        1,
+                        hidden,
+                        hidden,
+                    )
+                    .map_err(RealForwardError::Gpu)?;
+                    pass.commit_and_wait();
+                }
+                None => {}
+            }
         }
         Ok(())
     }

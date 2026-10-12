@@ -157,6 +157,32 @@ pub trait SpeculativeProducer: LogitProducer {
     /// verdict about speculation rather than as a bug.
     fn prime_drafter(&mut self, next: TokenId, position: usize) -> Result<(), String>;
 
+    /// Whether [`Self::prefill_chunk_priming_drafter`] can take the prompt in
+    /// chunks with the drafter open, priming it as it goes. The default is
+    /// no, and the speculative loop then prefills one token at a time.
+    fn supports_chunked_drafter_prefill(&self) -> bool {
+        false
+    }
+
+    /// One prompt chunk through the target's chunked prefill, priming the
+    /// drafter over every position whose next token is known, the same
+    /// pairs the token-at-a-time walk primes with [`Self::prime_drafter`].
+    /// `next_token` is the prompt token after this chunk, `None` when the
+    /// chunk ends the prompt; that last position is left for the first
+    /// draft step, as in the token-at-a-time walk. Writes the logits for the
+    /// position after the chunk's last token. Called only when
+    /// [`Self::supports_chunked_drafter_prefill`] is true.
+    fn prefill_chunk_priming_drafter(
+        &mut self,
+        tokens: &[TokenId],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        next_token: Option<TokenId>,
+    ) -> Result<(), String> {
+        let _ = (tokens, start_position, logits, next_token);
+        Err("this producer has no chunked drafter prefill".to_string())
+    }
+
     /// One drafting step. Writes the DRAFTER's logits, so the caller samples
     /// with the same shaping the target is sampled with and, once rejection
     /// sampling lands, still has the proposal distribution it needs.

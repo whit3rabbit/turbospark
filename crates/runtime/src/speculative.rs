@@ -170,7 +170,53 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
     let prefill_start = Instant::now();
     let mut position = reused;
     history.extend_from_slice(&prompt_ids[..reused]);
-    for (i, &token) in prompt_ids.iter().enumerate().skip(reused) {
+    // A producer that can prime its drafter from a chunked prefill takes the
+    // prompt in the chunked driver's spans instead: the same drafter pairs,
+    // primed after each micro-batch, at the batched trunk's prefill speed
+    // rather than one full forward pass (head included) per prompt token.
+    let chunked = producer.supports_chunked_drafter_prefill();
+    if chunked {
+        let spans = foundation::prefill_chunk_spans(
+            prompt_ids.len() - reused,
+            reused,
+            foundation::DEFAULT_CHUNK_SIZE as usize,
+        );
+        for span in &spans {
+            let begin = reused + span.token_offset;
+            let end = begin + span.token_count;
+            let chunk = &prompt_ids[begin..end];
+            producer
+                .prefill_chunk_priming_drafter(
+                    chunk,
+                    span.start_position,
+                    &mut logits,
+                    prompt_ids.get(end).copied(),
+                )
+                .map_err(RuntimeError::Producer)?;
+            history.extend_from_slice(chunk);
+            position = reused + span.completed_count;
+            on_progress(RawDecodeProgress::Prefill {
+                done: position,
+                total: prompt_ids.len(),
+            });
+            if cancel() {
+                return Ok(crate::raw_completion::cancelled_during_prefill(
+                    history,
+                    position,
+                    prompt_ids.len(),
+                    prefill_start,
+                    reused,
+                    producer.session_slot_evicted(),
+                ));
+            }
+        }
+    }
+    for (i, &token) in
+        prompt_ids
+            .iter()
+            .enumerate()
+            .skip(if chunked { prompt_ids.len() } else { reused })
+    {
         let last = i + 1 == prompt_ids.len();
         if last || !headless {
             producer

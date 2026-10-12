@@ -92,7 +92,7 @@ impl RealForwardRunner {
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
-        self.mtp_step(next_token, position, Some(logits))
+        self.mtp_step(next_token, position, 0, Some(logits))
     }
 
     /// A step taken for its KV ROW alone, skipping the full-vocab head.
@@ -109,7 +109,22 @@ impl RealForwardRunner {
         next_token: i32,
         position: usize,
     ) -> Result<(), RealForwardError> {
-        self.mtp_step(next_token, position, None)
+        self.mtp_step(next_token, position, 0, None)
+    }
+
+    /// [`Self::mtp_prime_step`] reading the trunk's hidden state from row
+    /// `h_row` of `scratch.x` rather than row 0: the chunked prefill driver
+    /// leaves one row per prompt token of a micro-batch there
+    /// (`families/qwen/prefill.rs`). The step writes only row 0 (its `fc`
+    /// output and block run single-row), so priming rows in increasing
+    /// order reads every row before anything overwrites it.
+    pub(crate) fn mtp_prime_step_row(
+        &mut self,
+        next_token: i32,
+        position: usize,
+        h_row: usize,
+    ) -> Result<(), RealForwardError> {
+        self.mtp_step(next_token, position, h_row, None)
     }
 
     /// Drops head rows at `[position, cursor)`, so the head can follow the
@@ -145,6 +160,7 @@ impl RealForwardRunner {
         &mut self,
         next_token: i32,
         position: usize,
+        h_row: usize,
         logits: Option<&mut [LogitValue]>,
     ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
@@ -163,6 +179,12 @@ impl RealForwardRunner {
         if (next_token as usize) >= vocab {
             return Err(RealForwardError::Unsupported(format!(
                 "draft token id {next_token} outside vocab {vocab}"
+            )));
+        }
+        if h_row >= crate::real_forward_types::MAX_PREFILL_ROWS {
+            return Err(RealForwardError::Unsupported(format!(
+                "MTP hidden row {h_row} is past scratch.x's {} rows",
+                crate::real_forward_types::MAX_PREFILL_ROWS
             )));
         }
         if let Some(out) = logits.as_ref() {
@@ -229,7 +251,7 @@ impl RealForwardRunner {
         gpu::encode_rms_norm_bf16w(
             context,
             &pass,
-            (&scratch.x, 0),
+            (&scratch.x, (h_row * hidden * 2) as u64),
             trunk_norm,
             (&scratch.normed, 0),
             hidden as u32,

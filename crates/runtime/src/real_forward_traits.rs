@@ -271,6 +271,47 @@ impl SpeculativeProducer for RealForwardRunner {
     // one is ever open in practice: the CLI refuses a request that names
     // both. If both somehow are, the BLOCK drafter wins here, which keeps
     // `drafts_block_passes` and the priming/rewind pair in one branch.
+    // The MTP head on the dense qwen flow only. DFlash2's context write reads
+    // per-layer aux captures the chunked driver does not encode, and an image
+    // prompt already keeps the speculative loop off (the verify is
+    // vision-blind). `TURBOSPARK_MTP_CHUNKED_PREFILL=0` keeps the
+    // token-at-a-time walk, for A/B runs and as a kill switch.
+    fn supports_chunked_drafter_prefill(&self) -> bool {
+        std::env::var("TURBOSPARK_MTP_CHUNKED_PREFILL").as_deref() != Ok("0")
+            && self.real_mtp.is_some()
+            && self.real_dflash.is_none()
+            && self.real_qwen.as_ref().is_some_and(|q| q.dense)
+            && self.prompt_vision.is_none()
+    }
+
+    fn prefill_chunk_priming_drafter(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        next_token: Option<i32>,
+    ) -> Result<(), String> {
+        // As `prefill_chunk`: a chunk pass overwrites the scratch the verify
+        // tape lives in, and the KV it writes is a reusable prefix.
+        self.batched_tape = None;
+        self.batched_tape_row0 = None;
+        let result = gpu::autorelease_pool(|| {
+            self.prefill_chunk_real_qwen_dense_priming_mtp(
+                tokens,
+                start_position,
+                logits,
+                next_token,
+            )
+            .map_err(|e| e.to_string())
+        });
+        if result.is_ok() {
+            self.kv_prefix.record(tokens, start_position);
+        } else {
+            self.kv_prefix.taint();
+        }
+        result
+    }
+
     fn prime_drafter(&mut self, next: i32, position: usize) -> Result<(), String> {
         gpu::autorelease_pool(|| {
             if self.real_dflash.is_some() {
