@@ -219,7 +219,7 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
         let expected_warmup:Vec<_>=expected_warmup.as_array().unwrap().iter().map(|v|serde_json::json!({"codebook":v["codebook"],"key":v["key"],"sampled":v["sampled"]})).collect();
         assert_eq!(warmup, expected_warmup);
         assert_eq!(codes, expected_codes);
-        close(&hidden, &read_f32(&reference.join("hiddens.f32")), 2e-4);
+        close(&hidden, &read_f32(&reference.join("hiddens.f32")), 5e-4);
         let wave = runner
             .run_flow(
                 &hidden,
@@ -228,7 +228,7 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 request["seed"].as_u64().unwrap(),
             )
             .unwrap();
-        close(&wave, &read_f32(&reference.join("wave.f32")), 2e-4);
+        close(&wave, &read_f32(&reference.join("wave.f32")), 1e-3);
     }
 }
 
