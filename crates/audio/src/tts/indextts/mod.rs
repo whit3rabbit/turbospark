@@ -44,6 +44,9 @@ use vocoder::BigvganConditioning;
 
 /// Reference sample rate (the deployed vocoder emits 24 kHz mono).
 pub const DEFAULT_SAMPLE_RATE: u32 = 24000;
+/// Log-mel bins per reference frame (the conformer input and the
+/// `num_mels` of the reference extractor).
+pub const REF_MEL_BINS: usize = 100;
 
 /// The GPT-side settings (`GPTConfig`).
 #[derive(Debug, Clone)]
@@ -377,6 +380,16 @@ impl Model {
     /// through the Conformer and the perceiver resampler, yielding the
     /// `[condition_num_latent, model_dim]` context rows.
     pub fn get_conditioning(&self, mel: &[f32], frames: usize) -> Result<Vec<f32>> {
+        // The encoder trusts `frames`; a flat buffer of any other length
+        // would be read with the wrong row stride.
+        if frames == 0 || mel.len() != frames * REF_MEL_BINS {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "reference mel holds {} values, expected {frames} rows of {REF_MEL_BINS} bins",
+                    mel.len()
+                ),
+            });
+        }
         let latent = self.conditioning_encoder.forward(mel, frames)?;
         let context_frames = latent.len() / self.config.gpt.condition_module.output_size;
         self.perceiver_encoder.forward(&latent, context_frames)
@@ -478,12 +491,32 @@ impl Model {
         params: &GenerateParams,
         seed: u64,
     ) -> Result<Generated> {
+        // Negative temperatures invert the distribution and NaN passes
+        // every comparison. Zero is the greedy path, handled below.
+        if !params.temperature.is_finite() || params.temperature < 0.0 {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "temperature must be finite and >= 0, got {}",
+                    params.temperature
+                ),
+            });
+        }
         let gpt = &self.config.gpt;
         let dim = gpt.model_dim;
         let frames = ref_mel.len();
         if frames == 0 {
             return Err(SpeechError::Input {
                 why: "empty reference mel".into(),
+            });
+        }
+        // Every row must be a full mel frame. The flat concat below assumes
+        // a fixed stride, so a ragged row would shift all later frames.
+        if let Some(row) = ref_mel.iter().find(|row| row.len() != REF_MEL_BINS) {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "reference mel row has {} bins, expected {REF_MEL_BINS}",
+                    row.len()
+                ),
             });
         }
         let mel_rows: Vec<f32> = ref_mel.concat();

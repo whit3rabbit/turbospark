@@ -291,7 +291,8 @@ impl Model {
             });
         }
         let mut hidden_stack: Vec<f32> = hidden[hidden.len() - hidden_size..].to_vec();
-        let mut tokens: Vec<i32> = Vec::with_capacity(params.max_tokens);
+        // Hint only, capped so a huge caller max_tokens does not allocate up front.
+        let mut tokens: Vec<i32> = Vec::with_capacity(params.max_tokens.min(4096));
         let mut keys = crate::music::minimax_music3::rng::KeySequence::new(seed);
         let mut step_logits = logits;
 

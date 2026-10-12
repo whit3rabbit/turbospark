@@ -176,15 +176,19 @@ fn replace_all(
     out
 }
 
-/// A digit run at `pos` returns (start, end, value).
-fn digit_run(chars: &[char], pos: usize) -> Option<(usize, usize, u64)> {
+/// A digit run at `pos` returns (start, end, value). The value is `None`
+/// when the run exceeds u64: saturating it would speak u64::MAX in place of
+/// the caller's digits. Callers keep such runs verbatim, and must do so
+/// for the whole run, since a suffix of it would still fit.
+fn digit_run(chars: &[char], pos: usize) -> Option<(usize, usize, Option<u64>)> {
     let start = pos;
-    let mut value: u64 = 0;
+    let mut value: Option<u64> = Some(0);
     let mut end = pos;
     while end < chars.len() && chars[end].is_ascii_digit() {
+        let digit = chars[end].to_digit(10).expect("ascii digit") as u64;
         value = value
-            .saturating_mul(10)
-            .saturating_add(chars[end].to_digit(10).expect("ascii digit") as u64);
+            .and_then(|v| v.checked_mul(10))
+            .and_then(|v| v.checked_add(digit));
         end += 1;
     }
     if end == start {
@@ -362,14 +366,20 @@ fn normalize_numbers(text: &str) -> String {
         if parts.len() > 2 {
             return Some((pos, end, format!("{match_text} dollars")));
         }
-        let dollars: u64 = if parts[0].is_empty() {
-            0
+        // A value past u64 must not collapse to zero (it would be spoken
+        // as "zero dollars"). Speak the digits, the same fallback as the
+        // multi-decimal branch above.
+        let dollars: Option<u64> = if parts[0].is_empty() {
+            Some(0)
         } else {
-            parts[0].parse().unwrap_or(0)
+            parts[0].parse().ok()
         };
-        let cents: u64 = match parts.get(1) {
-            Some(cents) if !cents.is_empty() => cents.parse().unwrap_or(0),
-            _ => 0,
+        let cents: Option<u64> = match parts.get(1) {
+            Some(cents) if !cents.is_empty() => cents.parse().ok(),
+            _ => Some(0),
+        };
+        let (Some(dollars), Some(cents)) = (dollars, cents) else {
+            return Some((pos, end, format!("{match_text} dollars")));
         };
         let replacement = match (dollars, cents) {
             (0, 0) => "zero dollars".to_owned(),
@@ -401,12 +411,18 @@ fn normalize_numbers(text: &str) -> String {
         if !matches!(suffix.as_str(), "st" | "nd" | "rd" | "th") {
             return None;
         }
+        let Some(value) = value else {
+            return Some((pos, end, chars[pos..end].iter().collect()));
+        };
         Some((pos, end + 2, ordinal_to_words(value)))
     });
     // 6. `\\d+` -> the year-aware number expansion.
     let chars: Vec<char> = out.chars().collect();
     out = replace_all(&chars, |chars, pos| {
         let (_, end, value) = digit_run(chars, pos)?;
+        let Some(value) = value else {
+            return Some((pos, end, chars[pos..end].iter().collect()));
+        };
         if (1000..3000).contains(&value) {
             if value == 2000 {
                 return Some((pos, end, "two thousand".to_owned()));

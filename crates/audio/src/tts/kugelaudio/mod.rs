@@ -367,6 +367,20 @@ pub struct Model {
 /// the checkpoint carries no `lm_head` (the tied fallback is inert for
 /// `forward_hidden`; the family applies its own head through
 /// `forward_hidden_and_logits`).
+/// Reads an optional checkpoint scalar. An absent tensor keeps `default`.
+/// A tensor that is present but unreadable (wrong shape, bad data) is an
+/// error: falling back would silently change the decoded audio.
+fn optional_scalar(weights: &Weights, name: &str, default: f32) -> Result<f32> {
+    if !weights.contains_absolute(name) {
+        return Ok(default);
+    }
+    Ok(weights
+        .tensor_absolute(name, &[])?
+        .first()
+        .copied()
+        .unwrap_or(default))
+}
+
 fn load_language_model(weights: &Weights, dense: &crate::lm::DenseConfig) -> Result<Backbone> {
     let mut dense = dense.clone();
     if !dense.tie_word_embeddings
@@ -456,20 +470,10 @@ impl Model {
             &head_config.ddpm_beta_schedule,
             &head_config.prediction_type,
         )?;
-        // The scaling factors are checkpoint scalars with 1.0 / 0.0
-        // defaults.
-        // The scaling factors are top-level checkpoint scalars outside
-        // the backbone prefix, with 1.0 / 0.0 defaults.
-        let speech_scaling_factor = weights
-            .tensor_absolute("speech_scaling_factor", &[])
-            .ok()
-            .and_then(|v| v.first().copied())
-            .unwrap_or(1.0);
-        let speech_bias_factor = weights
-            .tensor_absolute("speech_bias_factor", &[])
-            .ok()
-            .and_then(|v| v.first().copied())
-            .unwrap_or(0.0);
+        // Top-level checkpoint scalars outside the backbone prefix, with
+        // 1.0 / 0.0 defaults.
+        let speech_scaling_factor = optional_scalar(weights, "speech_scaling_factor", 1.0)?;
+        let speech_bias_factor = optional_scalar(weights, "speech_bias_factor", 0.0)?;
         Ok(Self {
             config,
             language_model,
@@ -595,6 +599,13 @@ impl Model {
         if prompt_tokens.is_empty() {
             return Err(SpeechError::Input {
                 why: "empty prompt".into(),
+            });
+        }
+        // Zero steps leaves the scheduler with no timesteps, so the loop
+        // would return the initial Gaussian as the latent with no error.
+        if params.ddpm_steps == Some(0) {
+            return Err(SpeechError::Input {
+                why: "ddpm_steps must be at least 1".into(),
             });
         }
         let cfg_scale = params.cfg_scale;

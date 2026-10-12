@@ -122,6 +122,10 @@ impl IstftHead {
     /// Window and overlap-add the ifft frames into the signal and the
     /// squared-window envelope.
     fn overlap_add(&self, frames: &[Vec<f32>]) -> (Vec<f32>, Vec<f32>) {
+        // No frames means no signal; `frames.len() - 1` would underflow.
+        if frames.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
         let output_size = (frames.len() - 1) * self.hop + self.n_fft;
         let mut audio = vec![0.0f32; output_size];
         let mut env = vec![0.0f32; output_size];
@@ -263,6 +267,11 @@ impl Decoder {
     /// The linear upsample over `[rows, channels]` with the reference
     /// `(i + 0.5) / scale - 0.5` index mapping.
     fn linear_upsample(&self, x: &[f32], rows: usize, channels: usize) -> Vec<f32> {
+        // Zero input rows have no neighbour to clamp to; `clamp(0, -1)`
+        // would panic.
+        if rows == 0 {
+            return Vec::new();
+        }
         let scale = self.patch_size;
         let out_rows = rows * scale;
         let mut out = vec![0.0f32; out_rows * channels];
@@ -288,7 +297,8 @@ impl Decoder {
 
     /// `_streaming_linear_upsample` over `[rows, channels]` chunks.
     /// `None` input with `is_last == false` keeps the state untouched.
-    /// Returns the emitted chunk, if any.
+    /// Returns the emitted chunk, if any. Errors when a call has no input
+    /// and nothing is buffered to work from, instead of panicking.
     fn streaming_upsample(
         &self,
         x: Option<&[f32]>,
@@ -296,21 +306,24 @@ impl Decoder {
         channels: usize,
         state: &mut UpsampleState,
         is_last: bool,
-    ) -> Option<Vec<f32>> {
+    ) -> Result<Option<Vec<f32>>> {
+        let no_input = || SpeechError::Input {
+            why: "streaming upsample got no input chunk and none is buffered".into(),
+        };
         if x.is_none() && !is_last {
-            return None;
+            return Ok(None);
         }
         let first_use = state.prev_chunk.is_none();
         if first_use && is_last {
-            let out = self.upsample(x.expect("last chunk input"), rows, channels);
+            let out = self.upsample(x.ok_or_else(no_input)?, rows, channels);
             *state = UpsampleState::default();
-            return Some(out);
+            return Ok(Some(out));
         }
         let mut outputs: Vec<Vec<f32>> = Vec::new();
         if state.prev_chunk.is_none() {
-            state.prev_chunk = Some(x.expect("first chunk input").to_vec());
+            state.prev_chunk = Some(x.ok_or_else(no_input)?.to_vec());
             if !is_last {
-                return None;
+                return Ok(None);
             }
         }
         if let Some(prev) = state.prev_chunk.clone() {
@@ -341,7 +354,11 @@ impl Decoder {
             state.prev_chunk = x.map(|chunk| chunk.to_vec());
         }
         if is_last {
-            let prev = state.prev_chunk.clone().expect("previous chunk");
+            // A final call with no input clears `prev_chunk` above, so there
+            // is nothing left to flush from. Refuse rather than panic.
+            let prev = state.prev_chunk.clone().ok_or_else(|| SpeechError::Input {
+                why: "streaming upsample cannot flush after a None chunk".into(),
+            })?;
             let prev_rows = prev.len() / channels;
             let history = state
                 .history_last
@@ -354,9 +371,9 @@ impl Decoder {
             *state = UpsampleState::default();
         }
         if outputs.is_empty() {
-            return None;
+            return Ok(None);
         }
-        Some(outputs.concat())
+        Ok(Some(outputs.concat()))
     }
 
     /// `low_level_reconstruct` with `use_cache=True`, the reference
@@ -383,7 +400,7 @@ impl Decoder {
                 hidden_dim,
                 upsample_state,
                 last_chunk,
-            ) {
+            )? {
                 Some(chunk) => chunk,
                 None => return Ok(Vec::new()),
             }
@@ -608,5 +625,25 @@ impl Encoder {
             }
         }
         Ok((latent, rows))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `overlap_add` is private, so this lives beside it rather than in
+    /// `tests.rs`.
+    #[test]
+    fn overlap_add_with_no_frames_is_empty_not_an_underflow() {
+        let head = IstftHead {
+            out: Linear::new(vec![0.0], None, 1, 1),
+            n_fft: 4,
+            hop: 2,
+            window: vec![1.0; 4],
+        };
+        let (audio, env) = head.overlap_add(&[]);
+        assert!(audio.is_empty());
+        assert!(env.is_empty());
     }
 }

@@ -40,3 +40,36 @@ inference module in `crates/audio/src/tts`.
   - Sample Rate: 24,000 Hz.
   - Speed: RTF < 0.20 on Apple Silicon M-series CPUs.
   - Memory: ~180 MiB resident footprint.
+
+## Additional Implemented TTS Family Ports
+
+The full inventory of ported and scaffolded families is maintained in [`crates/audio/MODELS.md`](../../crates/audio/MODELS.md). Family ports in `crates/audio/src/tts/` include:
+
+| Family | Backend / Codec | Status & Documentation |
+|---|---|---|
+| `bailingmm` | Audio VAE | [Family port](../../crates/audio/src/tts/bailingmm/README.md) |
+| `bark` | EnCodec 24kHz | [Family port](../../crates/audio/src/tts/bark/README.md) (semantic + coarse + fine transformers) |
+| `breeze_tts` | Qwen3-TTS speech tokenizer | [Family port](../../crates/audio/src/tts/breeze_tts/README.md) |
+| `confucius4` | BigVGAN | [Family port](../../crates/audio/src/tts/confucius4/README.md) |
+| `dia` | Descript DAC | [Family port](../../crates/audio/src/tts/dia/README.md) |
+| `echo_tts` | Fish S1 DAC | [Family port](../../crates/audio/src/tts/echo_tts/README.md) |
+| `fish_qwen3_omni` | Dual-track transformer | [Family port](../../crates/audio/src/tts/fish_qwen3_omni/README.md) |
+| `higgs_audio` | HiggsAudio Codec | [Family port](../../crates/audio/src/tts/higgs_audio/README.md) |
+| `higgs_audio_v3` | HiggsAudio Codec | [Family port](../../crates/audio/src/tts/higgs_audio_v3/README.md) |
+| `indextts` | Neural vocoder | [Family port](../../crates/audio/src/tts/indextts/README.md) |
+| `kitten_tts` | Acoustic decoder | [Family port](../../crates/audio/src/tts/kitten_tts/README.md) |
+| `kugelaudio` | VibeVoice decoder / DiT | [Family port](../../crates/audio/src/tts/kugelaudio/README.md) |
+| `llama` | SNAC | [Family port](../../crates/audio/src/tts/llama/README.md) |
+| `longcat_audiodit` | AudioDiT | [Family port](../../crates/audio/src/tts/longcat_audiodit/README.md) |
+| `melotts` | Bert frontend | [Family port](../../crates/audio/src/tts/melotts/README.md) |
+| `moss_tts` | Qwen3 backbone | [Family port](../../crates/audio/src/tts/moss_tts/README.md) |
+| `moss_tts_nano` | Transformer | [Family port](../../crates/audio/src/tts/moss_tts_nano/README.md) |
+| `omnivoice` | HiggsAudio Codec | [Family port](../../crates/audio/src/tts/omnivoice/README.md) |
+| `outetts` | Audio tokenizer | [Family port](../../crates/audio/src/tts/outetts/README.md) |
+| `pocket_tts` | Lightweight vocoder | [Family port](../../crates/audio/src/tts/pocket_tts/README.md) |
+| `qwen3` | SNAC | [Family port](../../crates/audio/src/tts/qwen3/README.md) |
+| `rumik_oss` | Acoustic decoder | [Family port](../../crates/audio/src/tts/rumik_oss/README.md) |
+| `sesame` | Transformer | [Family port](../../crates/audio/src/tts/sesame/README.md) |
+| `soprano` | Flow-matching | [Family port](../../crates/audio/src/tts/soprano/README.md) |
+| `spark` | BiCodec | [Family port](../../crates/audio/src/tts/spark/README.md) |
+| `zonos2` | DAC / Diffusion | [Family port](../../crates/audio/src/tts/zonos2/README.md) |

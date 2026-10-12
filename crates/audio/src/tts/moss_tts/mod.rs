@@ -193,6 +193,14 @@ impl ModelConfig {
             .get("n_vq")
             .and_then(Value::as_u64)
             .unwrap_or(DEFAULT_N_VQ as u64) as usize;
+        // Zero channels leaves no audio tables and makes the delay frame
+        // width (`n_vq - 1` trims) degenerate. Refused before any sizing.
+        if n_vq == 0 {
+            return Err(SpeechError::BadConfig {
+                field: "n_vq".into(),
+                why: "must be at least 1".into(),
+            });
+        }
         let audio_vocab_size = value
             .get("audio_vocab_size")
             .and_then(Value::as_u64)
@@ -625,7 +633,18 @@ impl Model {
                 .zip(&codes_list)
             {
                 let delayed = apply_delay_pattern(codes, pad_code, n_vq)?;
-                blocks.push(vec![vec![pad_code; n_vq]; start_index - prefix_index + 1]);
+                // A start id before the previous end id means interleaved or
+                // reordered placeholders; `-` would underflow (panic in debug).
+                let gap =
+                    start_index
+                        .checked_sub(prefix_index)
+                        .ok_or_else(|| SpeechError::Input {
+                            why: format!(
+                                "audio start at {start_index} precedes the previous audio end at \
+                             {prefix_index}; placeholders must be ordered"
+                            ),
+                        })?;
+                blocks.push(vec![vec![pad_code; n_vq]; gap + 1]);
                 blocks.push(delayed);
                 prefix_index = end_index;
             }
@@ -703,7 +722,10 @@ impl Model {
                 add_generation_prompt,
             )?;
             let code_refs: Vec<&[Vec<i32>]> = codes.iter().map(|block| block.as_slice()).collect();
-            rows.extend(self.build_delay_unified_codes(&content_ids, &code_refs, !generation)?);
+            // Reference processor: truncation is continuation mode AND not a
+            // user message. User audio keeps its trailing text pad rows.
+            let truncation = !generation && message.role != Role::User;
+            rows.extend(self.build_delay_unified_codes(&content_ids, &code_refs, truncation)?);
         }
         Ok(rows)
     }
@@ -875,6 +897,18 @@ impl Model {
     ) -> Result<Self> {
         let hidden = config.language_config.hidden_size();
         let local_config = config.local_gpt2_config()?;
+        // The local stack consumes the global hidden states with no
+        // projection, so its width must equal the backbone hidden size.
+        // A mismatch otherwise surfaces as an opaque shape error mid-decode.
+        if local_config.n_embd != hidden {
+            return Err(SpeechError::BadConfig {
+                field: "gpt2_config.n_embd".into(),
+                why: format!(
+                    "must equal the backbone hidden size {hidden} (got {})",
+                    local_config.n_embd
+                ),
+            });
+        }
         // The local transformer tensors are top level in the checkpoint,
         // so they load through the prefix-free view.
         let local_transformer = LocalGpt2::load(weights, "local_transformer", &local_config)?;
@@ -1141,18 +1175,18 @@ impl Model {
             } else if !is_stopping {
                 let mut text_scores = text_logits;
                 if is_audio {
-                    keep_only_logits(&mut text_scores, &text_keep_inside_audio);
+                    keep_only_logits(&mut text_scores, &text_keep_inside_audio)?;
                 } else {
-                    set_logits_to_neg_inf(&mut text_scores, &text_exclude_outside_audio);
+                    set_logits_to_neg_inf(&mut text_scores, &text_exclude_outside_audio)?;
                 }
                 if time_step == 0 {
                     set_logits_to_neg_inf(
                         &mut text_scores,
                         &[config.audio_assistant_delay_slot_token_id],
-                    );
+                    )?;
                 }
                 if time_step <= n_vq {
-                    set_logits_to_neg_inf(&mut text_scores, &[config.im_end_token_id]);
+                    set_logits_to_neg_inf(&mut text_scores, &[config.im_end_token_id])?;
                 }
                 next_text_token_value = family_sampling::sample_token(
                     &text_scores,
@@ -1184,7 +1218,7 @@ impl Model {
                     continue;
                 }
                 let mut channel_scores = audio_logits[codebook_index].clone();
-                set_logits_to_neg_inf(&mut channel_scores, &[config.audio_pad_code]);
+                set_logits_to_neg_inf(&mut channel_scores, &[config.audio_pad_code])?;
                 let previous: Vec<i32> = generation_rows
                     .iter()
                     .map(|row| row[codebook_index + 1])
@@ -1472,8 +1506,10 @@ impl Model {
             let mut audio = tokenizer.decode(&books)?;
             if start_length > 0 && audio_segments.is_empty() && !codes.is_empty() {
                 let first_codes_length = codes.len();
-                let trim_ratio = (start_length as f32 / first_codes_length as f32).clamp(0.0, 1.0);
-                let trim_samples = ((audio.len() as f32 * trim_ratio) as usize).min(audio.len());
+                // f64 like the reference: f32 loses integer precision past
+                // 2^24 samples, which long generations reach.
+                let trim_ratio = (start_length as f64 / first_codes_length as f64).clamp(0.0, 1.0);
+                let trim_samples = ((audio.len() as f64 * trim_ratio) as usize).min(audio.len());
                 audio.drain(..trim_samples);
             }
             audio_segments.push(audio);
@@ -1893,35 +1929,40 @@ fn scale(mut logits: Vec<f32>, factor: f32) -> Vec<f32> {
     logits
 }
 
-/// `_set_logits_to_neg_inf` (out-of-range ids are ignored like the
-/// reference's advanced indexing would fail loudly; the generation loops
-/// only pass valid ids).
-fn set_logits_to_neg_inf(logits: &mut [f32], token_ids: &[i32]) {
+/// Index of `id` in a logits row of `len` entries. Out-of-range ids are an
+/// error, not a silent no-op: a config id past the vocab would otherwise
+/// drop a constraint and let the sampler pick a token the model never
+/// allowed.
+fn logit_index(id: i32, len: usize) -> Result<usize> {
+    usize::try_from(id)
+        .ok()
+        .filter(|&index| index < len)
+        .ok_or_else(|| SpeechError::Input {
+            why: format!("token id {id} is outside the logits row of {len} entries"),
+        })
+}
+
+/// `_set_logits_to_neg_inf`.
+fn set_logits_to_neg_inf(logits: &mut [f32], token_ids: &[i32]) -> Result<()> {
     for &id in token_ids {
-        if let Ok(index) = usize::try_from(id) {
-            if index < logits.len() {
-                logits[index] = f32::NEG_INFINITY;
-            }
-        }
+        logits[logit_index(id, logits.len())?] = f32::NEG_INFINITY;
     }
+    Ok(())
 }
 
 /// `_keep_only_logits`: everything outside `token_ids` goes to negative
 /// infinity.
-fn keep_only_logits(logits: &mut [f32], token_ids: &[i32]) {
+fn keep_only_logits(logits: &mut [f32], token_ids: &[i32]) -> Result<()> {
     let mut keep = vec![false; logits.len()];
     for &id in token_ids {
-        if let Ok(index) = usize::try_from(id) {
-            if index < keep.len() {
-                keep[index] = true;
-            }
-        }
+        keep[logit_index(id, logits.len())?] = true;
     }
     for (index, value) in logits.iter_mut().enumerate() {
         if !keep[index] {
             *value = f32::NEG_INFINITY;
         }
     }
+    Ok(())
 }
 
 /// Embedding row lookup refusing negative and out-of-range ids.

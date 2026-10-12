@@ -58,7 +58,7 @@ const STYLE_SPLIT: usize = 128;
 // Config
 // ---------------------------------------------------------------------------
 
-/// The `plbert` sub-config (`AlbertModelArgs`), defaults per the dataclass.
+/// The `plbert` sub-config (`AlbertModelArgs`). Parsed strictly by `from_json`.
 #[derive(Debug, Clone)]
 pub struct AlbertConfig {
     pub num_hidden_layers: usize,
@@ -91,28 +91,39 @@ impl Default for AlbertConfig {
 }
 
 impl AlbertConfig {
-    fn from_json(value: &serde_json::Value) -> Self {
-        let num = |key: &str, default: usize| -> usize {
+    /// Every field is required. The dataclass defaults are not applied
+    /// when a key is missing: a silently defaulted width would make the
+    /// weight shapes disagree with the checkpoint in a way that is hard
+    /// to trace back to the config.
+    fn from_json(value: &serde_json::Value) -> Result<Self> {
+        let num = |key: &str| -> Result<usize> {
             value
                 .get(key)
                 .and_then(serde_json::Value::as_u64)
-                .unwrap_or(default as u64) as usize
+                .map(|v| v as usize)
+                .ok_or_else(|| SpeechError::BadConfig {
+                    field: format!("plbert.{key}"),
+                    why: "plbert config field missing or not an integer".to_string(),
+                })
         };
-        Self {
-            num_hidden_layers: num("num_hidden_layers", 12),
-            num_attention_heads: num("num_attention_heads", 12),
-            hidden_size: num("hidden_size", 768),
-            intermediate_size: num("intermediate_size", 3072),
-            max_position_embeddings: num("max_position_embeddings", 512),
-            embedding_size: num("embedding_size", 128),
-            inner_group_num: num("inner_group_num", 1),
-            num_hidden_groups: num("num_hidden_groups", 1),
-            type_vocab_size: num("type_vocab_size", 2),
+        Ok(Self {
+            num_hidden_layers: num("num_hidden_layers")?,
+            num_attention_heads: num("num_attention_heads")?,
+            hidden_size: num("hidden_size")?,
+            intermediate_size: num("intermediate_size")?,
+            max_position_embeddings: num("max_position_embeddings")?,
+            embedding_size: num("embedding_size")?,
+            inner_group_num: num("inner_group_num")?,
+            num_hidden_groups: num("num_hidden_groups")?,
+            type_vocab_size: num("type_vocab_size")?,
             layer_norm_eps: value
                 .get("layer_norm_eps")
                 .and_then(serde_json::Value::as_f64)
-                .unwrap_or(1e-12) as f32,
-        }
+                .ok_or_else(|| SpeechError::BadConfig {
+                    field: "plbert.layer_norm_eps".to_string(),
+                    why: "plbert config field missing or not a number".to_string(),
+                })? as f32,
+        })
     }
 }
 
@@ -170,7 +181,7 @@ impl IstftnetConfig {
                     why: "istftnet config field missing".to_string(),
                 })
         };
-        Ok(Self {
+        let config = Self {
             resblock_kernel_sizes: nums("resblock_kernel_sizes"),
             upsample_rates: nums("upsample_rates"),
             upsample_initial_channel: get_usize("upsample_initial_channel")?,
@@ -178,7 +189,68 @@ impl IstftnetConfig {
             upsample_kernel_sizes: nums("upsample_kernel_sizes"),
             gen_istft_n_fft: get_usize("gen_istft_n_fft")?,
             gen_istft_hop_size: get_usize("gen_istft_hop_size")?,
-        })
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Shape checks the generator's load and forward code rely on. They
+    /// run at config time so a malformed file fails here, not as an
+    /// index panic or a division by zero later.
+    fn validate(&self) -> Result<()> {
+        let bad = |field: &str, why: &str| SpeechError::BadConfig {
+            field: field.to_string(),
+            why: why.to_string(),
+        };
+        // The harmonic-spectrum framing divides by the hop, and the iSTFT
+        // needs an FFT of at least two points (fft_size = 2 * (n_fft / 2)).
+        if self.gen_istft_hop_size == 0 {
+            return Err(bad("gen_istft_hop_size", "must be positive"));
+        }
+        if self.gen_istft_n_fft < 2 {
+            return Err(bad("gen_istft_n_fft", "must be at least 2"));
+        }
+        if self.upsample_rates.is_empty() {
+            return Err(bad("upsample_rates", "must not be empty"));
+        }
+        if self.upsample_kernel_sizes.len() != self.upsample_rates.len() {
+            return Err(bad(
+                "upsample_kernel_sizes",
+                "must have one entry per upsample_rates entry",
+            ));
+        }
+        // ConvTranspose padding is (kernel - rate) / 2, which only makes
+        // sense when the kernel covers the stride.
+        for (rate, kernel) in self.upsample_rates.iter().zip(&self.upsample_kernel_sizes) {
+            if *rate == 0 || kernel < rate {
+                return Err(bad(
+                    "upsample_kernel_sizes",
+                    "each kernel must be at least its upsample rate, and rates must be positive",
+                ));
+            }
+        }
+        if self.resblock_kernel_sizes.is_empty() {
+            return Err(bad("resblock_kernel_sizes", "must not be empty"));
+        }
+        if self.resblock_dilation_sizes.len() != self.resblock_kernel_sizes.len() {
+            return Err(bad(
+                "resblock_dilation_sizes",
+                "must have one row per resblock_kernel_sizes entry",
+            ));
+        }
+        // The residual blocks are built from exactly three dilations per
+        // kernel; extra entries would be silently ignored.
+        if self
+            .resblock_dilation_sizes
+            .iter()
+            .any(|row| row.len() != 3)
+        {
+            return Err(bad(
+                "resblock_dilation_sizes",
+                "each row must hold exactly three dilations",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -260,10 +332,12 @@ impl ModelConfig {
                         .collect()
                 })
                 .unwrap_or_default(),
-            plbert: value
-                .get("plbert")
-                .map(AlbertConfig::from_json)
-                .unwrap_or_default(),
+            plbert: AlbertConfig::from_json(value.get("plbert").ok_or_else(|| {
+                SpeechError::BadConfig {
+                    field: "plbert".to_string(),
+                    why: "plbert config missing".to_string(),
+                }
+            })?)?,
             istftnet: match value.get("istftnet") {
                 Some(nested) => IstftnetConfig::from_json(nested)?,
                 None => {
@@ -1803,6 +1877,9 @@ struct Generator {
 
 impl Generator {
     fn load(file: &SafetensorsFile, base: &str, istftnet: &IstftnetConfig) -> Result<Self> {
+        // Re-checked here because the fields are pub: a hand-built config
+        // skips from_json, and the indexing below assumes these shapes.
+        istftnet.validate()?;
         let resblock_kernel_sizes = &istftnet.resblock_kernel_sizes;
         let resblock_dilation_sizes = &istftnet.resblock_dilation_sizes;
         let upsample_rates = &istftnet.upsample_rates;
@@ -2057,6 +2134,11 @@ impl Generator {
         // length None in the reference: the full centered region,
         // (frames - 1) * hop samples.
         let original_len = (spectra_inv.len() - 1) * self.hop;
+        // Kept as expect: this fn returns Vec<f32>, and threading a Result
+        // through forward_with_har, Generator::forward, and the decoder
+        // is a wider change. istft only fails for an invalid FFT size or
+        // hop, and Generator::load (via IstftnetConfig::validate) rules
+        // both out.
         istft(&spectra_inv, &opts, original_len).expect("generator iSTFT")
     }
 
@@ -2277,7 +2359,17 @@ impl Model {
                 .descriptor(name)
                 .map(|d| d.shape.clone())
                 .unwrap_or_default();
-            let rows = shape.first().copied().unwrap_or(0);
+            // The row width must be the style vector length (ref and
+            // prosody halves). prepare_segment slices rows by this width,
+            // so a narrower table would index past the end.
+            let cols = config.style_dim * 2;
+            if shape.len() != 2 || shape[1] != cols {
+                return Err(SpeechError::Tensor {
+                    name: voice_file_name.clone(),
+                    why: format!("voices tensor must be [rows, {cols}], got {shape:?}"),
+                });
+            }
+            let rows = shape[0];
             let values = voice_file.load_as_f32(name)?;
             let voice = "test-voice".to_string();
             voices.insert(voice.clone(), values);
@@ -2299,9 +2391,21 @@ impl Model {
     }
 
     /// Installs a voice table directly (`name -> [rows, 2 * style_dim]`).
-    pub fn install_voice(&mut self, name: &str, values: Vec<f32>, rows: usize) {
+    pub fn install_voice(&mut self, name: &str, values: Vec<f32>, rows: usize) -> Result<()> {
+        let cols = self.config.style_dim * 2;
+        // checked_mul: rows comes from the caller and may be huge.
+        if rows == 0 || rows.checked_mul(cols) != Some(values.len()) {
+            return Err(SpeechError::Tensor {
+                name: name.to_string(),
+                why: format!(
+                    "voice table must hold {rows} x {cols} values, got {}",
+                    values.len()
+                ),
+            });
+        }
         self.voices.insert(name.to_string(), values);
         self.voice_rows.insert(name.to_string(), rows);
+        Ok(())
     }
 
     /// Maps a phonemized string to ids the way the reference does:
@@ -2345,10 +2449,12 @@ impl Model {
         ids.extend(TextCleaner::new().clean(&basic_english_tokenize(phonemes).join(" ")));
         ids.push(0);
         let cols = self.config.style_dim * 2;
-        if rows == 0 || values.len() < cols {
+        // Exact match, not just a minimum length: the slice below is
+        // bounded by rows * cols, so a longer or shorter table is a bug.
+        if rows == 0 || rows.checked_mul(cols) != Some(values.len()) {
             return Err(SpeechError::Tensor {
                 name: "voices".to_string(),
-                why: "voice table is empty".to_string(),
+                why: "voice table does not match its row count and style width".to_string(),
             });
         }
         let ref_id = text_len.min(rows - 1);
@@ -2433,6 +2539,24 @@ impl Model {
         rng: &mut Rng,
     ) -> Result<Vec<f32>> {
         ids_checked(input_ids)?;
+        // Checked here, not only in generate_segment, so every caller
+        // (chunked synthesis included) is covered. A zero, negative, or NaN
+        // speed sends the duration logits to inf or NaN, and `as usize`
+        // then saturates to a multi-gigabyte frame count.
+        if !speed.is_finite() || speed <= 0.0 || ref_s.iter().any(|v| !v.is_finite()) {
+            return Err(SpeechError::Input {
+                why: "speed must be finite and positive, and the style must be finite".to_string(),
+            });
+        }
+        if ref_s.len() != 2 * self.config.style_dim {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "ref_s must be {} values, got {}",
+                    2 * self.config.style_dim,
+                    ref_s.len()
+                ),
+            });
+        }
         let seq = input_ids.len();
         // KittenAlbert duration features.
         let bert_out = self.albert.forward(input_ids)?;
@@ -2538,6 +2662,12 @@ impl Model {
         fade_out_ms: i64,
         tail_silence_ms: i64,
     ) -> Result<Vec<Vec<f32>>> {
+        // Reject overflowing millisecond arguments before any work: the
+        // crossfade and tail helpers multiply them by the sample rate.
+        let rate = self.config.sample_rate as i64;
+        ms_to_samples(rate, crossfade_ms, "crossfade_ms")?;
+        ms_to_samples(rate, fade_out_ms, "fade_out_ms")?;
+        ms_to_samples(rate, tail_silence_ms, "tail_silence_ms")?;
         let text = text.trim();
         if text.is_empty() {
             return Ok(Vec::new());
@@ -2556,7 +2686,7 @@ impl Model {
         // compounds across chunks.
         let mut speed = speed;
         for chunk in &chunks {
-            let cleaned = preprocessor.process(chunk);
+            let cleaned = preprocessor.process(chunk)?;
             let phonemes = phonemize(&cleaned);
             let segment = self.prepare_segment(&phonemes, cleaned.chars().count(), voice, speed)?;
             speed = segment.speed;
@@ -2577,7 +2707,7 @@ impl Model {
             }
         }
         if let Some(pending) = pending {
-            segments.push(self.apply_tail(&pending, crossfade_ms, fade_out_ms, tail_silence_ms));
+            segments.push(self.apply_tail(&pending, crossfade_ms, fade_out_ms, tail_silence_ms)?);
         }
         Ok(segments)
     }
@@ -2590,10 +2720,10 @@ impl Model {
         _crossfade_ms: i64,
         fade_out_ms: i64,
         tail_silence_ms: i64,
-    ) -> Vec<f32> {
+    ) -> Result<Vec<f32>> {
         let rate = self.config.sample_rate as i64;
-        let fade_out_samples = (rate * fade_out_ms.max(0) / 1000) as usize;
-        let tail_silence_samples = (rate * tail_silence_ms.max(0) / 1000) as usize;
+        let fade_out_samples = ms_to_samples(rate, fade_out_ms, "fade_out_ms")?;
+        let tail_silence_samples = ms_to_samples(rate, tail_silence_ms, "tail_silence_ms")?;
         let mut audio = audio.to_vec();
         // Trim spurious trailing spurts after a brief silence (a common
         // end artifact): scan the last second in 10 ms frames backwards.
@@ -2682,8 +2812,21 @@ impl Model {
         if tail_silence_samples > 0 {
             audio.resize(audio.len() + tail_silence_samples, 0.0);
         }
-        audio
+        Ok(audio)
     }
+}
+
+/// `rate * ms / 1000` as a sample count. Negative durations clamp to zero
+/// (the reference does the same). An i64 overflow is refused rather than
+/// wrapped, since `ms` is a caller-supplied value.
+fn ms_to_samples(rate: i64, ms: i64, field: &str) -> Result<usize> {
+    let product = rate
+        .checked_mul(ms.max(0))
+        .ok_or_else(|| SpeechError::BadConfig {
+            field: field.to_string(),
+            why: "duration is too large to convert to samples".to_string(),
+        })?;
+    Ok((product / 1000) as usize)
 }
 
 /// The reference `_crossfade`: overlap the tail of `prev` with the head

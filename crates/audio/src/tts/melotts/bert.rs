@@ -111,13 +111,14 @@ impl Layer {
                         * scale;
                 }
             }
-            // The additive attention mask: masked key columns get -inf
-            // (`mx.where(attention_mask == 0, -inf, 0.0)` in the
-            // reference).
+            // The additive attention mask: masked KEY columns get -inf in
+            // every query row (`attention_mask[:, None, None, :]` in the
+            // reference). Masking by query row would leave the padded key
+            // visible to every valid query.
             if let Some(mask) = mask {
-                for (row, masked) in scores.chunks_mut(tokens).zip(mask) {
-                    if *masked == 0 {
-                        for slot in row.iter_mut() {
+                for row in scores.chunks_mut(tokens) {
+                    for (slot, masked) in row.iter_mut().zip(mask) {
+                        if *masked == 0 {
                             *slot = f32::NEG_INFINITY;
                         }
                     }
@@ -264,6 +265,23 @@ impl BertModel {
                 why: "bert input must fit the position table".to_string(),
             });
         }
+        // Per-token inputs must line up with the tokens. A short slice would
+        // otherwise pair trailing tokens with the wrong type or key mask.
+        if token_type_ids.len() != n {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "bert token_type_ids ({}) != input tokens ({n})",
+                    token_type_ids.len()
+                ),
+            });
+        }
+        if let Some(mask) = mask {
+            if mask.len() != n {
+                return Err(SpeechError::Input {
+                    why: format!("bert attention mask ({}) != input tokens ({n})", mask.len()),
+                });
+            }
+        }
         let h = self.hidden;
         let mut x = vec![0.0f32; n * h];
         for (i, &id) in input_ids.iter().enumerate() {
@@ -272,7 +290,7 @@ impl BertModel {
                     why: "bert input ids do not fit the word embedding".to_string(),
                 });
             }
-            let token_type = *token_type_ids.first().unwrap_or(&0) as usize;
+            let token_type = token_type_ids[i] as usize;
             if token_type * h >= self.token_type_emb.len() {
                 return Err(SpeechError::Input {
                     why: "bert token type ids do not fit the type embedding".to_string(),
@@ -394,5 +412,117 @@ fn softmax_rows(values: &mut [f32], columns: usize) {
         for v in row.iter_mut() {
             *v /= sum;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BertModel, Layer};
+
+    const HIDDEN: usize = 4;
+    const MLP: usize = 4;
+    const VOCAB: usize = 10;
+    const MAX_POS: usize = 8;
+
+    /// Deterministic pseudo-random weights in [-0.5, 0.5); no assets needed.
+    fn det(n: usize, seed: u32) -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                let x = (i as u32).wrapping_mul(2_654_435_761).wrapping_add(seed);
+                (x % 1000) as f32 / 1000.0 - 0.5
+            })
+            .collect()
+    }
+
+    fn layer(seed: u32) -> Layer {
+        Layer {
+            query_w: det(HIDDEN * HIDDEN, seed + 1),
+            query_b: det(HIDDEN, seed + 2),
+            key_w: det(HIDDEN * HIDDEN, seed + 3),
+            key_b: det(HIDDEN, seed + 4),
+            value_w: det(HIDDEN * HIDDEN, seed + 5),
+            value_b: det(HIDDEN, seed + 6),
+            out_w: det(HIDDEN * HIDDEN, seed + 7),
+            out_b: det(HIDDEN, seed + 8),
+            ln1_w: vec![1.0; HIDDEN],
+            ln1_b: vec![0.0; HIDDEN],
+            linear1_w: det(MLP * HIDDEN, seed + 9),
+            linear1_b: det(MLP, seed + 10),
+            mlp: MLP,
+            linear2_w: det(HIDDEN * MLP, seed + 11),
+            linear2_b: det(HIDDEN, seed + 12),
+            ln2_w: vec![1.0; HIDDEN],
+            ln2_b: vec![0.0; HIDDEN],
+        }
+    }
+
+    /// A 3-layer, 2-head BERT with nonzero value/key weights so attention
+    /// actually mixes tokens (zero weights would hide a masking bug).
+    fn tiny_model() -> BertModel {
+        BertModel {
+            word_emb: det(VOCAB * HIDDEN, 1),
+            token_type_emb: det(2 * HIDDEN, 2),
+            position_emb: det(MAX_POS * HIDDEN, 3),
+            norm_w: vec![1.0; HIDDEN],
+            norm_b: vec![0.0; HIDDEN],
+            embedding_eps: 1e-12,
+            layers: (0..3).map(|i| layer(100 * (i + 1))).collect(),
+            pooler_w: det(HIDDEN * HIDDEN, 4),
+            pooler_b: det(HIDDEN, 5),
+            max_position_embeddings: MAX_POS,
+            num_heads: 2,
+            hidden: HIDDEN,
+        }
+    }
+
+    /// With the key-column mask, a padded token must not influence the
+    /// valid rows at all (its attention weight is exactly 0), and nothing
+    /// may come out NaN. The old per-row mask left the padded key visible
+    /// to valid queries and turned the padded row into all -inf (NaN).
+    #[test]
+    fn padded_key_gets_no_attention_weight() {
+        let model = tiny_model();
+        let types = [0u32, 0, 0];
+        let mask = [1u32, 1, 0];
+        // Same valid prefix [1, 2]; only the padded token's id differs.
+        let a = model
+            .extract_features(&[1, 2, 3], &types, Some(&mask))
+            .unwrap();
+        let b = model
+            .extract_features(&[1, 2, 7], &types, Some(&mask))
+            .unwrap();
+        assert!(a.iter().all(|v| v.is_finite()), "non-finite output");
+        assert!(b.iter().all(|v| v.is_finite()), "non-finite output");
+        let valid = 2 * HIDDEN;
+        for k in 0..valid {
+            assert!(
+                (a[k] - b[k]).abs() <= 1e-6,
+                "valid row {} depends on the padded token",
+                k / HIDDEN
+            );
+        }
+    }
+
+    /// token_type_ids are per token, so changing one token's type must
+    /// change that token's features. A length mismatch is an input error.
+    #[test]
+    fn token_type_ids_are_indexed_per_token() {
+        let model = tiny_model();
+        let ids = [1u32, 2, 3];
+        let zeros = model.extract_features(&ids, &[0, 0, 0], None).unwrap();
+        let mixed = model.extract_features(&ids, &[0, 1, 0], None).unwrap();
+        // Row 1 of the returned layer is token 1 (the stack is len-3 = 1).
+        let row1 = HIDDEN..2 * HIDDEN;
+        let diff: f32 = zeros[row1.clone()]
+            .iter()
+            .zip(&mixed[row1])
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0, f32::max);
+        assert!(diff > 1e-4, "token 1 ignored its token_type_id");
+
+        assert!(model.extract_features(&ids, &[0, 1], None).is_err());
+        assert!(model
+            .extract_features(&ids, &[0, 0, 0], Some(&[1, 1]))
+            .is_err());
     }
 }

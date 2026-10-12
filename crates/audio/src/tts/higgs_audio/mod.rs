@@ -156,6 +156,19 @@ impl ModelConfig {
             Some(text) => TextConfig::from_json(text),
             None => defaults_text,
         };
+        // head_dim is `hidden_size / num_attention_heads` (llama default), so
+        // zero heads divides by zero and a non-divisor silently truncates.
+        if text_config.num_attention_heads == 0
+            || text_config.hidden_size % text_config.num_attention_heads != 0
+        {
+            return Err(SpeechError::BadConfig {
+                field: "text_config.num_attention_heads".into(),
+                why: format!(
+                    "must be non-zero and divide hidden_size {} (got {})",
+                    text_config.hidden_size, text_config.num_attention_heads
+                ),
+            });
+        }
         let u = |key: &str, fallback: u64| -> usize {
             value.get(key).and_then(Value::as_u64).unwrap_or(fallback) as usize
         };
@@ -414,7 +427,10 @@ impl Model {
             text.rope_scaling.as_ref(),
             None,
         )?;
-        let mut layers = Vec::with_capacity(text.num_hidden_layers);
+        // No pre-sizing from `num_hidden_layers`: it is an untrusted config
+        // value, and the loop fails on the first missing tensor before any
+        // large allocation matters.
+        let mut layers = Vec::new();
         for index in 0..text.num_hidden_layers {
             let layer = bp(&format!("layers.{index}."));
             layers.push(DualFfnLayer {
@@ -463,6 +479,7 @@ impl Model {
                     scale: (head_dim(text) as f64).powf(-0.5) as f32,
                     rope: Some(rope.clone()),
                     window: None,
+                    bidirectional: false,
                 },
                 post_attention_layernorm: RmsNorm::new(
                     weights.tensor_absolute(
@@ -950,7 +967,16 @@ pub fn lookup_audio_embedding(
     for (codebook, book) in codebook_ids.iter().enumerate() {
         let shift = codebooks_stride(codebook, stride)?;
         for (step, &token) in book.iter().enumerate() {
-            let row = embed_row(table, shift + index_of(token)?, hidden)?;
+            // Each codebook owns `stride` rows. A larger code on a non-last
+            // book would otherwise read the next codebook's row silently; the
+            // table bound only catches the last book.
+            let index = index_of(token)?;
+            if index >= stride {
+                return Err(SpeechError::Input {
+                    why: format!("codebook {codebook} code {token} is outside its {stride} rows"),
+                });
+            }
+            let row = embed_row(table, shift + index, hidden)?;
             for (col, value) in out[step * hidden..(step + 1) * hidden]
                 .iter_mut()
                 .enumerate()

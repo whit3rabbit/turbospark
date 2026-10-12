@@ -600,6 +600,23 @@ impl EuclideanCodebook {
     }
 }
 
+/// Rejects codes outside `[0, bins)` before `EuclideanCodebook::row`
+/// slices the table. A negative code wraps to a huge usize and an
+/// oversized one reads past the codebook, so both panic without this.
+fn check_codes(codebook: &EuclideanCodebook, codes: &[i32]) -> Result<()> {
+    let bins = codebook
+        .embedding
+        .len()
+        .checked_div(codebook.dim)
+        .unwrap_or(0);
+    match codes.iter().find(|&&c| c < 0 || c as usize >= bins) {
+        Some(&bad) => Err(SpeechError::Input {
+            why: format!("code {bad} outside codebook of {bins}"),
+        }),
+        None => Ok(()),
+    }
+}
+
 /// One vector-quantization level: linear projections (dim != codebook
 /// dim) plus the codebook. All in channel-major.
 struct MimiVq {
@@ -713,6 +730,7 @@ impl MimiRvq {
         }
         let mut out = vec![0.0f32; self.dim * frames];
         for (layer, level) in self.layers.iter().zip(codes) {
+            check_codes(&layer.codebook, level)?;
             let part = layer.decode(level, frames);
             for (o, v) in out.iter_mut().zip(&part) {
                 *o += v;
@@ -755,6 +773,7 @@ impl SplitRvq {
                 why: format!("expected {} code levels, got {}", self.nq, codes.len()),
             });
         }
+        check_codes(&self.first.codebook, &codes[0])?;
         let first_q = self.first.decode(&codes[0], frames);
         let first_out = matvec(
             &self.first_proj_out,

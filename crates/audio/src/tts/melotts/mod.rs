@@ -978,6 +978,30 @@ impl TextEncoder {
                 x[ti * hidden + d] += self.language_emb[id as usize * hidden + d];
             }
         }
+        // The bert features are channel-major `[in_ch, t]`. `zip` below
+        // would silently truncate a short slice (and a projection whose
+        // output width differs from `hidden` would be truncated the same
+        // way), so require exact shapes.
+        for (name, proj, feats) in [
+            ("bert", &self.bert_proj, bert),
+            ("ja_bert", &self.ja_bert_proj, ja_bert),
+        ] {
+            if proj.out_ch != hidden {
+                return Err(SpeechError::BadConfig {
+                    field: format!("{name}_proj"),
+                    why: format!("output width {} != hidden {hidden}", proj.out_ch),
+                });
+            }
+            if feats.len() != proj.in_ch * t {
+                return Err(SpeechError::Input {
+                    why: format!(
+                        "{name} features ({}) != {} channels x {t} tokens",
+                        feats.len(),
+                        proj.in_ch
+                    ),
+                });
+            }
+        }
         // The projections are channel-major `[hidden, t]` (the
         // `Conv1dPT` output layout), so transpose the row-major
         // embedding sum first and add them in the channel-major layout
@@ -1219,8 +1243,59 @@ struct HifiGan {
     num_kernels: usize,
 }
 
+/// Checks the HiFi-GAN list lengths that `HifiGan::load` indexes by
+/// position. A short list used to panic, `k - u` underflowed when a
+/// kernel was smaller than its stride, and an empty resblock kernel list
+/// divided by zero (NaN audio).
+fn check_hifigan_lists(config: &ModelConfig) -> Result<()> {
+    let bad = |field: &str, why: String| SpeechError::BadConfig {
+        field: field.to_string(),
+        why,
+    };
+    if config.resblock_kernel_sizes.is_empty() {
+        return Err(bad(
+            "resblock_kernel_sizes",
+            "at least one resblock kernel is required".to_string(),
+        ));
+    }
+    if config.upsample_kernel_sizes.len() < config.upsample_rates.len() {
+        return Err(bad(
+            "upsample_kernel_sizes",
+            format!(
+                "{} kernels for {} upsample rates",
+                config.upsample_kernel_sizes.len(),
+                config.upsample_rates.len()
+            ),
+        ));
+    }
+    for (k, u) in config
+        .upsample_kernel_sizes
+        .iter()
+        .zip(&config.upsample_rates)
+    {
+        if k < u {
+            return Err(bad(
+                "upsample_kernel_sizes",
+                format!("kernel {k} is smaller than its stride {u}"),
+            ));
+        }
+    }
+    if config.resblock_dilation_sizes.len() < config.resblock_kernel_sizes.len() {
+        return Err(bad(
+            "resblock_dilation_sizes",
+            format!(
+                "{} dilation lists for {} resblock kernels",
+                config.resblock_dilation_sizes.len(),
+                config.resblock_kernel_sizes.len()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 impl HifiGan {
     fn load(file: &SafetensorsFile, base: &str, config: &ModelConfig) -> Result<Self> {
+        check_hifigan_lists(config)?;
         let mut conv_pre = load_conv(file, &format!("{base}.conv_pre"))?;
         conv_pre.padding = 3;
         let cond = if config.gin_channels != 0 {

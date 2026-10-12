@@ -15,6 +15,8 @@
 
 use std::collections::HashMap;
 
+use crate::{Result, SpeechError};
+
 // ---------------------------------------------------------------------------
 // TextCleaner symbol table
 // ---------------------------------------------------------------------------
@@ -221,7 +223,18 @@ const ONES: [&str; 20] = [
 const TENS: [&str; 10] = [
     "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
 ];
-const SCALE: [&str; 5] = ["", "thousand", "million", "billion", "trillion"];
+// Covers the full i64 range (up to 9 quintillion). number_to_words takes
+// an i64, so no value can exceed this table; before the last two names
+// were added, anything >= 10^15 was silently dropped.
+const SCALE: [&str; 7] = [
+    "",
+    "thousand",
+    "million",
+    "billion",
+    "trillion",
+    "quadrillion",
+    "quintillion",
+];
 
 const ORDINAL_EXCEPTIONS: [(&str, &str); 10] = [
     ("one", "first"),
@@ -1502,11 +1515,14 @@ impl TextPreprocessor {
         Self
     }
 
-    pub fn process(&self, text: &str) -> String {
+    pub fn process(&self, text: &str) -> Result<String> {
         let mut text = text.to_string();
         text = remove_html_tags(&text);
         text = remove_urls(&text);
         text = remove_emails(&text);
+        // Checked after URL and email removal so ids inside them do not
+        // trip the range check.
+        check_integer_literals(&text)?;
         text = expand_contractions(&text);
         text = expand_ip_addresses(&text);
         text = normalize_leading_decimals(&text);
@@ -1526,6 +1542,51 @@ impl TextPreprocessor {
         text = remove_punctuation(&text);
         text = text.to_lowercase();
         text = remove_extra_whitespace(&text);
-        text
+        Ok(text)
     }
+}
+
+/// Bound used by `replace_numbers`: integers below it are spelled out.
+/// Larger values pass through as raw digits, which the cleaner drops.
+const SPELLED_INTEGER_LIMIT: i64 = 9_000_000_000_000_000;
+
+/// Refuses integer literals the number helpers cannot spell out. The
+/// helpers parse with `unwrap_or(0)`, so an oversized literal would
+/// otherwise be read as "zero". Refusing matches the kokoro frontend,
+/// which rejects numbers above 999999999. Digits after a '.' are a decimal
+/// fraction (read one digit at a time) and are not checked.
+fn check_integer_literals(text: &str) -> Result<()> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let fraction = i > 0 && bytes[i - 1] == b'.';
+        let mut digits = String::new();
+        while i < bytes.len() {
+            if bytes[i].is_ascii_digit() {
+                digits.push(char::from(bytes[i]));
+                i += 1;
+            } else if bytes[i] == b',' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                // Thousands separator inside a literal ("1,000,000").
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        let spellable = digits
+            .parse::<i64>()
+            .is_ok_and(|v| v < SPELLED_INTEGER_LIMIT);
+        if !fraction && !spellable {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "integer with {} digits is at or above {SPELLED_INTEGER_LIMIT}; write it in English",
+                    digits.len()
+                ),
+            });
+        }
+    }
+    Ok(())
 }

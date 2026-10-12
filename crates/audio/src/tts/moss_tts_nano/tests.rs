@@ -375,6 +375,22 @@ fn config_defaults_match_the_reference_dataclasses() {
 }
 
 #[test]
+fn config_refuses_zero_heads_and_zero_channels() {
+    // n_head = 0 used to panic on `n_embd % n_head` at the first stack load.
+    assert!(ModelConfig::from_json(&serde_json::json!({
+        "gpt2_config": {"n_head": 0},
+    }))
+    .is_err());
+    // n_head must divide n_embd (the head_dim division depends on it).
+    assert!(ModelConfig::from_json(&serde_json::json!({
+        "gpt2_config": {"n_embd": 30, "n_head": 4},
+    }))
+    .is_err());
+    // Zero VQ channels leaves no audio tables and a degenerate frame width.
+    assert!(ModelConfig::from_json(&serde_json::json!({"n_vq": 0})).is_err());
+}
+
+#[test]
 fn resolve_nq_and_prompt_widths_are_validated() {
     let mut model = model();
     assert_eq!(model.resolve_nq(None).unwrap(), 4);

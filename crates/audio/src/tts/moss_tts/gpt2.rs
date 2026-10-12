@@ -108,7 +108,9 @@ impl LocalGpt2 {
         } else {
             1.0
         };
-        let mut blocks = Vec::with_capacity(config.n_layer);
+        // No pre-sizing from `n_layer` (untrusted config); the loop fails on
+        // the first missing tensor before a large count matters.
+        let mut blocks = Vec::new();
         for index in 0..config.n_layer {
             let layer = format!("{name}.h.{index}.");
             let fused = weights.linear(
@@ -142,6 +144,7 @@ impl LocalGpt2 {
                 scale: layer_scale,
                 rope: Some(rope.clone()),
                 window: None,
+                bidirectional: false,
             };
             let mlp = Mlp {
                 fc_in: weights.linear(

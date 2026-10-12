@@ -465,6 +465,7 @@ impl BailingMoeModel {
                     scale: (head_dim as f64).powf(-0.5) as f32,
                     rope: Some(rope.clone()),
                     window: None,
+                    bidirectional: false,
                 },
                 mlp,
                 input_layernorm: RmsNorm::new(

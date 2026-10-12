@@ -352,6 +352,7 @@ impl Model {
             .and_then(Value::as_u64)
             .map(|n| n as usize)
             .unwrap_or(patch_size);
+        check_patch_geometry(latent_dim, patch_size, history_patch_size)?;
         let ditar_hidden = usize_field(ditar, "hidden_size")?;
         let ditar_depth = usize_field(ditar, "depth")?;
         let ditar_heads = usize_field(ditar, "num_heads")?;
@@ -580,6 +581,13 @@ impl Model {
                 why: "No audio chunks were generated".into(),
             });
         }
+        // The loop reads the last hidden row with `len - hidden`, which
+        // underflows when there are no input rows.
+        if input_embeds.is_empty() {
+            return Err(SpeechError::Input {
+                why: "input embeddings are empty".into(),
+            });
+        }
         let hidden = match &self.llm {
             Llm::Moe(model) => model.config.hidden_size,
             Llm::Dense(model) => model.config.hidden_size,
@@ -606,6 +614,12 @@ impl Model {
         // voice-clone latent flush right.
         let mut latent_history = vec![0.0f32; self.history_patch_size * self.latent_dim];
         if let Some(latent) = prompt_latent {
+            // A misaligned latent would make the copies below length-mismatch.
+            if latent.len() % self.latent_dim != 0 {
+                return Err(SpeechError::Input {
+                    why: "prompt latent is not a multiple of the latent dim".into(),
+                });
+            }
             let rows = latent.len() / self.latent_dim;
             let start = self.history_patch_size as i64 - rows as i64;
             if start < 0 {
@@ -710,6 +724,38 @@ impl Model {
         let mut noise = SeededNoise::new(seed);
         self.generate(input_embeds, prompt_latent, params, &mut noise)
     }
+}
+
+/// The patch geometry the generate loop relies on. Zero sizes divide by
+/// zero in the latent-step count and in the patch row math, and a history
+/// shorter than one patch makes `latent_history.drain(..patch * latent_dim)`
+/// run past its end.
+fn check_patch_geometry(
+    latent_dim: usize,
+    patch_size: usize,
+    history_patch_size: usize,
+) -> Result<()> {
+    if latent_dim == 0 {
+        return Err(SpeechError::BadConfig {
+            field: "latent_dim".into(),
+            why: "latent_dim must be > 0".into(),
+        });
+    }
+    if patch_size == 0 {
+        return Err(SpeechError::BadConfig {
+            field: "ditar_config.patch_size".into(),
+            why: "patch_size must be > 0".into(),
+        });
+    }
+    if history_patch_size < patch_size {
+        return Err(SpeechError::BadConfig {
+            field: "ditar_config.history_patch_size".into(),
+            why: format!(
+                "history_patch_size {history_patch_size} must be >= patch_size {patch_size}"
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn usize_field(value: &Value, key: &str) -> Result<usize> {

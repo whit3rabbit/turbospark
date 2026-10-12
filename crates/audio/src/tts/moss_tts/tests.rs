@@ -280,6 +280,49 @@ fn delay_prompt_rows_match_the_reference_grids() {
 }
 
 #[test]
+fn continuation_user_audio_keeps_its_trailing_text() {
+    // The reference forces truncation off for user messages, so the text
+    // after a user's reference audio survives continuation mode. Only the
+    // assistant block is truncated.
+    const TRAILING: i32 = 4242;
+    let model = delay_model("delay_generate");
+    let n_vq = delay_config().n_vq;
+    let template = super::ChatTemplateIds {
+        user_role: &[],
+        assistant_role: &[],
+        after_im_end: &[],
+    };
+    let user_codes = vec![vec![1; n_vq]; 3];
+    let assistant_codes = vec![vec![2; n_vq]; 3];
+    let user_pieces = [
+        super::ContentPiece::Text(&[10]),
+        super::ContentPiece::Audio(&user_codes),
+        super::ContentPiece::Text(&[TRAILING]),
+    ];
+    let assistant_pieces = [
+        super::ContentPiece::Text(&[20]),
+        super::ContentPiece::Audio(&assistant_codes),
+    ];
+    let messages = [
+        DelayMessage {
+            role: Role::User,
+            pieces: &user_pieces,
+        },
+        DelayMessage {
+            role: Role::Assistant,
+            pieces: &assistant_pieces,
+        },
+    ];
+    let rows = model
+        .build_delay_prompt(&messages, &template, DelayMode::Continuation)
+        .expect("continuation prompt rows");
+    assert!(
+        rows.iter().any(|row| row[0] == TRAILING),
+        "user trailing text was dropped by continuation truncation"
+    );
+}
+
+#[test]
 fn delay_pattern_round_trip_matches_the_reference() {
     let traces = read_json(&testdata("delay_pattern/traces.json"));
     let codes = i32_rows(&traces["codes"]);
@@ -598,6 +641,94 @@ fn family_sampler_matches_the_reference_on_fixed_logits() {
             assert_eq!(got, token as usize, "case {} greedy", case["name"]);
         }
     }
+}
+
+#[test]
+fn v15_local_refuses_a_gpt2_width_that_differs_from_the_backbone() {
+    // The local stack takes global hidden states with no projection, so a
+    // gpt2 width other than the backbone hidden size must be refused at
+    // load, before any local tensor is read.
+    let dir = testdata("v15_generate");
+    let mut config = v15_config();
+    let hidden = config.language_config.hidden_size();
+    config.gpt2_config.as_mut().expect("v15 gpt2_config").n_embd = hidden + 8;
+    let transformer = super::open_backbone_weights(&dir, "transformer").expect("transformer");
+    let weights = crate::lm::Weights::open(&dir).expect("weights");
+    let err = Model::load_v15_local(&transformer, &weights, config)
+        .err()
+        .expect("width mismatch refused");
+    match err {
+        crate::SpeechError::BadConfig { field, .. } => {
+            assert_eq!(field, "gpt2_config.n_embd");
+        }
+        other => panic!("expected BadConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn backbone_refuses_zero_kv_heads_at_load() {
+    // The GQA group size is `heads / kv_heads`; zero kv heads used to panic
+    // on the first forward. The shared engine now refuses it at load.
+    let dir = testdata("v15_generate");
+    let weights = crate::lm::Weights::open(&dir).expect("weights");
+    let mut dense = v15_config().language_config.dense.clone();
+    dense.num_key_value_heads = 0;
+    let err = crate::lm::engine::Backbone::load(&weights, dense)
+        .err()
+        .expect("zero kv heads refused");
+    match err {
+        crate::SpeechError::BadConfig { field, .. } => {
+            assert_eq!(field, "num_key_value_heads");
+        }
+        other => panic!("expected BadConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn logit_masks_refuse_out_of_vocab_ids() {
+    // A config id past the logits row used to be dropped silently, which
+    // removed the constraint. Now it is an error at both mask helpers.
+    let mut logits = vec![0.0f32; 4];
+    assert!(super::set_logits_to_neg_inf(&mut logits, &[7]).is_err());
+    assert!(super::keep_only_logits(&mut logits, &[-1]).is_err());
+    super::set_logits_to_neg_inf(&mut logits, &[3]).expect("in range");
+    assert_eq!(logits[3], f32::NEG_INFINITY);
+    assert_eq!(logits[0], 0.0);
+}
+
+#[test]
+fn unified_codes_refuse_interleaved_audio_placeholders() {
+    // Start ids that precede the previous block's end used to underflow the
+    // pad-gap subtraction. Two starts before two ends must be an input error.
+    let config = delay_config();
+    let model = delay_model("delay_generate");
+    let n_vq = config.n_vq;
+    let start = config.audio_start_token_id;
+    let end = config.audio_end_token_id;
+    let content = [start, start, end, end];
+    let codes = vec![vec![1; n_vq]];
+    let blocks: [&[Vec<i32>]; 2] = [&codes, &codes];
+    let err = model
+        .build_delay_unified_codes(&content, &blocks, false)
+        .err()
+        .expect("interleaved placeholders refused");
+    assert!(
+        matches!(err, crate::SpeechError::Input { .. }),
+        "expected Input, got {err:?}"
+    );
+}
+
+#[test]
+fn config_refuses_zero_channels_and_zero_heads() {
+    // n_vq = 0 leaves no audio tables; the moss gpt2 config reuses the nano
+    // parser, so a zero head count must be refused there too (it used to
+    // panic on `n_embd % n_head`).
+    assert!(ModelConfig::from_json(&serde_json::json!({"n_vq": 0})).is_err());
+    assert!(ModelConfig::from_json(&serde_json::json!({
+        "model_type": "moss_tts_local",
+        "gpt2_config": {"n_head": 0},
+    }))
+    .is_err());
 }
 
 #[test]

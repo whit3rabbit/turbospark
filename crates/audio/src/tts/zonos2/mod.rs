@@ -300,6 +300,18 @@ pub fn silence_prompt_tokens(
         .collect()
 }
 
+/// Per-step sampling seed. `seed + step` made seed `s` at step `k` equal
+/// seed `s + k` at step 0, so nearby requests shared draws. Two rounds of
+/// splitmix64 (Steele et al.) break that linear relation.
+fn step_seed(seed: u64, step: usize) -> u64 {
+    fn splitmix64(mut z: u64) -> u64 {
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    splitmix64(splitmix64(seed).wrapping_add(step as u64))
+}
+
 /// `Zonos2Config` (config.py), fully resolved.
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
@@ -361,6 +373,14 @@ impl ModelConfig {
         };
         let dim = uint("dim", 2048);
         let head_dim = uint("head_dim", 128);
+        // Checked before `dim / head_dim` below: the n_heads default is
+        // computed eagerly, so a zero head_dim would panic there first.
+        if head_dim == 0 {
+            return Err(SpeechError::BadConfig {
+                field: "head_dim".into(),
+                why: "head_dim must be > 0".to_string(),
+            });
+        }
         let n_heads = data
             .get("n_heads")
             .and_then(Value::as_u64)
@@ -373,6 +393,12 @@ impl ModelConfig {
             .unwrap_or(4);
         let ffn_dim_multiplier = f64v("ffn_dim_multiplier", 1.5);
         let multiple_of = uint("multiple_of", 256);
+        if multiple_of == 0 {
+            return Err(SpeechError::BadConfig {
+                field: "multiple_of".into(),
+                why: "multiple_of must be > 0".to_string(),
+            });
+        }
         let raw = (ffn_dim_multiplier * dim as f64) as usize;
         let intermediate_size = multiple_of * raw.div_ceil(multiple_of);
         let text_vocab = data
@@ -390,7 +416,13 @@ impl ModelConfig {
                     field: "special_topk_layers".into(),
                     why: format!("layer key {k:?} is not an integer"),
                 })?;
-                special_topk_layers.insert(layer, v.as_u64().unwrap_or(1) as usize);
+                // A missing or non-integer value used to become top-1
+                // silently; that changes routing, so refuse it.
+                let topk = v.as_u64().ok_or_else(|| SpeechError::BadConfig {
+                    field: "special_topk_layers".into(),
+                    why: format!("top-k for layer {k:?} is not a non-negative integer"),
+                })?;
+                special_topk_layers.insert(layer, topk as usize);
             }
         }
         // The explicit counts win; otherwise the labeled
@@ -408,17 +440,26 @@ impl ModelConfig {
             _ => {
                 let buckets = data.get("quality_buckets").and_then(Value::as_object);
                 match data.get("quality_features").and_then(Value::as_array) {
+                    // Each feature maps to its bucket count by position, so a
+                    // non-string or unknown name must fail rather than be
+                    // skipped (which shifts later indices) or counted as 0.
                     Some(features) if !features.is_empty() => features
                         .iter()
-                        .filter_map(|f| f.as_str())
-                        .map(|name| {
+                        .map(|f| {
+                            let name = f.as_str().ok_or_else(|| SpeechError::BadConfig {
+                                field: "quality_features".into(),
+                                why: format!("feature {f} is not a string"),
+                            })?;
                             buckets
                                 .and_then(|b| b.get(name))
                                 .and_then(Value::as_array)
                                 .map(|a| a.len())
-                                .unwrap_or(0)
+                                .ok_or_else(|| SpeechError::BadConfig {
+                                    field: "quality_features".into(),
+                                    why: format!("feature {name:?} has no list in quality_buckets"),
+                                })
                         })
-                        .collect(),
+                        .collect::<Result<Vec<usize>>>()?,
                     _ => buckets
                         .map(|b| {
                             b.values()
@@ -437,13 +478,29 @@ impl ModelConfig {
             .get("speaker_lda_dim")
             .and_then(Value::as_u64)
             .map(|v| v as usize);
-        let balancing = data
-            .get("moe_balancing_strategy")
-            .and_then(Value::as_str)
-            .unwrap_or("legacy")
-            .trim()
-            .to_lowercase()
-            .replace('-', "_");
+        // The router only tests for "quantile" and treats everything else
+        // as legacy, so a typo would silently change routing. Accept the
+        // two known names only; an absent or null field keeps the legacy
+        // default.
+        let balancing = match data.get("moe_balancing_strategy").filter(|v| !v.is_null()) {
+            None => "legacy".to_string(),
+            Some(value) => {
+                let raw = value.as_str().ok_or_else(|| SpeechError::BadConfig {
+                    field: "moe_balancing_strategy".into(),
+                    why: format!("expected a string, got {value}"),
+                })?;
+                let normalized = raw.trim().to_lowercase().replace('-', "_");
+                if normalized != "legacy" && normalized != "quantile" {
+                    return Err(SpeechError::BadConfig {
+                        field: "moe_balancing_strategy".into(),
+                        why: format!(
+                            "unknown strategy {raw:?}; expected \"legacy\" or \"quantile\""
+                        ),
+                    });
+                }
+                normalized
+            }
+        };
         let config = Self {
             n_layers: uint("n_layers", 28),
             dim,
@@ -512,6 +569,54 @@ impl ModelConfig {
                 field: "head_dim".into(),
                 why: format!("dim {} must be a multiple of head_dim", self.dim),
             });
+        }
+        // Attention maps query head h to KV head h / (n_heads / n_kv_heads),
+        // so the ratio must be an exact positive integer.
+        if self.n_kv_heads == 0 || self.n_heads % self.n_kv_heads != 0 {
+            return Err(SpeechError::BadConfig {
+                field: "n_kv_heads".into(),
+                why: format!(
+                    "n_heads {} must be a positive multiple of n_kv_heads {}",
+                    self.n_heads, self.n_kv_heads
+                ),
+            });
+        }
+        // The silence prompt table has one column per codebook; wider
+        // configs would slice past the row, and 0 codebooks emit nothing.
+        let silence_width = SILENCE_TOKENS_0_2S[0].len();
+        if self.n_codebooks == 0 || self.n_codebooks > silence_width {
+            return Err(SpeechError::BadConfig {
+                field: "n_codebooks".into(),
+                why: format!(
+                    "n_codebooks must be in 1..={silence_width}, got {}",
+                    self.n_codebooks
+                ),
+            });
+        }
+        // The DAC code clamp is `0..=codebook_size - 1`.
+        if self.codebook_size == 0 {
+            return Err(SpeechError::BadConfig {
+                field: "codebook_size".into(),
+                why: "codebook_size must be > 0".to_string(),
+            });
+        }
+        // Top-k selects that many experts per token, so it must be in
+        // 1..=moe_n_experts. Only checked when MoE layers exist: with
+        // one expert or fewer, the router is never built.
+        if self.moe_n_experts > 1 {
+            let topks = std::iter::once(self.moe_router_topk)
+                .chain(self.special_topk_layers.values().copied());
+            for topk in topks {
+                if topk == 0 || topk > self.moe_n_experts {
+                    return Err(SpeechError::BadConfig {
+                        field: "moe_router_topk".into(),
+                        why: format!(
+                            "top-k {topk} must be in 1..={} (moe_n_experts)",
+                            self.moe_n_experts
+                        ),
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -1658,7 +1763,7 @@ impl Model {
         let mut state =
             GenerationState::new(config.n_codebooks, config.eoa_id, config.text_vocab as i32);
         for step in 0..params.max_tokens {
-            let mut keys = rng::KeySequence::new(seed.wrapping_add(step as u64));
+            let mut keys = rng::KeySequence::new(step_seed(seed, step));
             let frame = sample_frame(
                 &last_logits,
                 config.n_codebooks,

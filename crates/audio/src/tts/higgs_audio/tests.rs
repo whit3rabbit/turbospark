@@ -465,6 +465,32 @@ fn family_config_defaults_and_refusals_match_the_reference() {
 }
 
 #[test]
+fn lookup_refuses_a_code_past_its_own_codebook_rows() {
+    // Two books, stride 4, hidden 2: table rows 0..8. A code of 4 on book 0
+    // would read book 1's row 0 without the per-book bound.
+    let table: Vec<f32> = (0..16).map(|v| v as f32).collect();
+    let err = lookup_audio_embedding(&table, &[vec![4], vec![0]], 4, 2).unwrap_err();
+    assert!(err.to_string().contains("codebook 0"), "{err}");
+    // The largest valid code on the same book still resolves.
+    let ok = lookup_audio_embedding(&table, &[vec![3], vec![0]], 4, 2).expect("in range");
+    assert_eq!(ok.len(), 2);
+}
+
+#[test]
+fn config_refuses_zero_or_non_dividing_attention_heads() {
+    // head_dim = hidden / heads: zero heads divided by zero at load, and a
+    // non-divisor silently truncated the head width.
+    assert!(ModelConfig::from_json(&serde_json::json!({
+        "text_config": {"hidden_size": 8, "num_attention_heads": 0},
+    }))
+    .is_err());
+    assert!(ModelConfig::from_json(&serde_json::json!({
+        "text_config": {"hidden_size": 10, "num_attention_heads": 4},
+    }))
+    .is_err());
+}
+
+#[test]
 fn generate_refuses_an_empty_prompt() {
     let mut model = generate_model();
     let codec = generate_codec();

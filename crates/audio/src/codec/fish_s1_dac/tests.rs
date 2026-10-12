@@ -185,3 +185,44 @@ fn real_checkpoint_gate() {
     assert_eq!(audio.len(), n);
     assert!(audio.iter().all(|v| v.is_finite()));
 }
+
+#[test]
+fn encode_zq_decode_zq_roundtrip_matches_shapes() {
+    let model = load_tiny();
+    let traces = read_json("traces.json");
+    for tag in ["a", "b"] {
+        let (_, wave) = read_npy(&format!("{tag}_wave.npy"));
+        let (zq, frames) = model.encode_zq(&wave).unwrap();
+        // The continuous latents sit at the downsampled code rate.
+        assert_eq!(
+            frames,
+            wave.len() / model.config.frame_length(),
+            "tag {tag} zq frames"
+        );
+        assert_eq!(zq.len(), frames * model.config.latent_dim);
+        // The codes path sees the same frame count.
+        let (codes, code_len) = model.encode(&wave).unwrap();
+        assert_eq!(code_len, frames);
+        assert_eq!(codes[0].len(), frames);
+        // Deterministic.
+        let (zq2, frames2) = model.encode_zq(&wave).unwrap();
+        assert_eq!(zq, zq2);
+        assert_eq!(frames, frames2);
+        let _ = traces[format!("{tag}_codes_shape").as_str()].clone();
+        // decode_zq of the continuous latents returns the full waveform.
+        let audio = model.decode_zq(&zq, frames).unwrap();
+        assert_eq!(audio.len(), frames * model.config.frame_length());
+        assert!(audio.iter().all(|v| v.is_finite()));
+    }
+}
+
+#[test]
+fn decode_zq_validates_lengths() {
+    let model = load_tiny();
+    let frames = 2;
+    let latent_dim = model.config.latent_dim;
+    let zq = vec![0.01f32; frames * latent_dim];
+    assert!(model.decode_zq(&zq, frames).is_ok());
+    assert!(model.decode_zq(&zq[..zq.len() - 1], frames).is_err());
+    assert!(model.decode_zq(&zq, frames + 1).is_err());
+}

@@ -186,24 +186,46 @@ pub struct ModelConfig {
 impl ModelConfig {
     /// `ModelConfig` over a checkpoint `config.json` dict.
     pub fn from_json(value: &Value) -> Result<Self> {
-        Ok(Self {
-            backbone: lm::qwen2::from_json(value)?,
-            sample_rate: value
+        // Narrow with try_from: a bare `as` cast wraps an out-of-range id or
+        // rate silently, and the wrapped value then drives generation.
+        let out_of_range = |field: &str| SpeechError::BadConfig {
+            field: field.into(),
+            why: "value does not fit the field's integer type".into(),
+        };
+        let sample_rate = u32::try_from(
+            value
                 .get("sample_rate")
                 .and_then(Value::as_u64)
-                .unwrap_or(16000) as u32,
-            eos_token_id: value
+                .unwrap_or(16000),
+        )
+        .map_err(|_| out_of_range("sample_rate"))?;
+        let eos_token_id = i32::try_from(
+            value
                 .get("eos_token_id")
                 .and_then(Value::as_i64)
-                .unwrap_or(151645) as i32,
-            bos_token_id: value
+                .unwrap_or(151645),
+        )
+        .map_err(|_| out_of_range("eos_token_id"))?;
+        let bos_token_id = i32::try_from(
+            value
                 .get("bos_token_id")
                 .and_then(Value::as_i64)
-                .unwrap_or(151643) as i32,
-            vocab_size: value
+                .unwrap_or(151643),
+        )
+        .map_err(|_| out_of_range("bos_token_id"))?;
+        let vocab_size = usize::try_from(
+            value
                 .get("vocab_size")
                 .and_then(Value::as_u64)
-                .unwrap_or(166000) as usize,
+                .unwrap_or(166000),
+        )
+        .map_err(|_| out_of_range("vocab_size"))?;
+        Ok(Self {
+            backbone: lm::qwen2::from_json(value)?,
+            sample_rate,
+            eos_token_id,
+            bos_token_id,
+            vocab_size,
         })
     }
 }

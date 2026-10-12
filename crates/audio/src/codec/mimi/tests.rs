@@ -386,3 +386,22 @@ fn attention_matches_original_bitwise() {
         }
     }
 }
+
+#[test]
+fn decode_refuses_codes_outside_the_codebook() {
+    // Out-of-range codes used to panic in the codebook row slice.
+    let model = load_tiny();
+    let (_, wave) = read_npy("a_wave.npy");
+    let codes = model.encode(&wave).unwrap();
+    assert!(model.decode(&codes).is_ok());
+
+    let mut negative = codes.clone();
+    negative[0][0] = -1;
+    let error = model.decode(&negative).unwrap_err();
+    assert!(error.to_string().contains("outside codebook"), "{error}");
+
+    let mut oversized = codes.clone();
+    oversized[0][0] = i32::MAX;
+    let error = model.decode(&oversized).unwrap_err();
+    assert!(error.to_string().contains("outside codebook"), "{error}");
+}

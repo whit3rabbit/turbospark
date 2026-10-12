@@ -190,6 +190,19 @@ pub(crate) struct CausalConvTranspose {
     pub(crate) stride: usize,
 }
 
+/// `forward` trims `kernel - stride` samples, which underflows (a panic
+/// in debug, a wrapped trim in release) when the kernel is smaller than
+/// the stride. A zero stride would also divide by zero in the transpose.
+pub(super) fn check_conv_transpose_geometry(kernel: usize, stride: usize) -> Result<()> {
+    if stride == 0 || kernel < stride {
+        return Err(SpeechError::BadConfig {
+            field: "acoustic_decoder upsample".to_string(),
+            why: format!("kernel {kernel} must be at least stride {stride}, and stride >= 1"),
+        });
+    }
+    Ok(())
+}
+
 impl CausalConvTranspose {
     #[allow(clippy::too_many_arguments)]
     fn load(
@@ -201,6 +214,7 @@ impl CausalConvTranspose {
         stride: usize,
         has_bias: bool,
     ) -> Result<Self> {
+        check_conv_transpose_geometry(kernel, stride)?;
         // The converted checkpoints store the MLX ConvTranspose1d
         // layout `[out, kernel, in]`; ops::conv_transpose1d takes the
         // PyTorch `[in, out, kernel]`, so the axes rotate (2, 0, 1).

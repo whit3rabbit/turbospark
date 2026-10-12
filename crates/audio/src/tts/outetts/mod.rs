@@ -230,10 +230,11 @@ impl Speaker {
                     why: "speaker word is missing c1".into(),
                 })?
                 .iter()
-                .map(|v| v.as_i64().map(|x| x as i32))
+                // `as i32` would wrap 2^32+5 to 5; out-of-range codes are rejected.
+                .map(|v| v.as_i64().and_then(|x| i32::try_from(x).ok()))
                 .collect::<Option<Vec<i32>>>()
                 .ok_or_else(|| SpeechError::Input {
-                    why: "speaker word c1 codes must be integers".into(),
+                    why: "speaker word c1 codes must be i32 integers".into(),
                 })?;
             let c2 = word
                 .get("c2")
@@ -242,10 +243,10 @@ impl Speaker {
                     why: "speaker word is missing c2".into(),
                 })?
                 .iter()
-                .map(|v| v.as_i64().map(|x| x as i32))
+                .map(|v| v.as_i64().and_then(|x| i32::try_from(x).ok()))
                 .collect::<Option<Vec<i32>>>()
                 .ok_or_else(|| SpeechError::Input {
-                    why: "speaker word c2 codes must be integers".into(),
+                    why: "speaker word c2 codes must be i32 integers".into(),
                 })?;
             words.push(SpeakerWord {
                 word: word
@@ -709,7 +710,8 @@ impl Model {
         // each generated token.
         let mut context: Vec<i32> = Vec::with_capacity(params.max_tokens + 1);
         context.push(last[last.len() - 1]);
-        let mut tokens = Vec::with_capacity(params.max_tokens);
+        // Hint only; capped so a huge caller max_tokens does not allocate up front.
+        let mut tokens = Vec::with_capacity(params.max_tokens.min(4096));
         let mut stopped_by = StopReason::MaxTokens;
         let mut keys = rng::KeySequence::new(seed);
 

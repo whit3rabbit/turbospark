@@ -557,3 +557,28 @@ fn masked(value: &Value) -> Vec<f32> {
         })
         .collect()
 }
+
+fn speaker_json_with_c1(c1: Value) -> Value {
+    serde_json::json!({
+        "text": "hi",
+        "words": [{
+            "word": "hi",
+            "duration": 0.5,
+            "c1": c1,
+            "c2": [1],
+            "features": {"energy": 1, "spectral_centroid": 2, "pitch": 3}
+        }]
+    })
+}
+
+#[test]
+fn speaker_codes_outside_i32_are_refused_not_wrapped() {
+    // 2^32 + 5 used to wrap to 5 through `as i32`.
+    let ok = Speaker::from_json(&speaker_json_with_c1(serde_json::json!([5])));
+    assert_eq!(ok.expect("in-range code parses").words[0].c1, vec![5]);
+
+    let error = Speaker::from_json(&speaker_json_with_c1(serde_json::json!([4294967301i64])))
+        .err()
+        .expect("out-of-range code must be refused");
+    assert!(error.to_string().contains("i32"), "{error}");
+}

@@ -478,12 +478,19 @@ struct Block {
 /// module's own defaults (low 1, high 4, old context 8192, factor from
 /// the config `rope_scaling`), applied with the adjacent-pair convention.
 fn family_rope(config: &lm::DenseConfig) -> Result<lm::rope::Rope> {
-    let factor = config
-        .rope_scaling
-        .as_ref()
-        .and_then(|s| s.get("factor"))
-        .and_then(Value::as_f64)
-        .unwrap_or(1.0);
+    // Absent rope_scaling means unscaled RoPE. A present block without a
+    // numeric factor is an error: defaulting to 1.0 would silently drop
+    // the scaling the checkpoint asked for.
+    let factor = match config.rope_scaling.as_ref() {
+        None => 1.0,
+        Some(scaling) => scaling
+            .get("factor")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| SpeechError::BadConfig {
+                field: "rope_scaling.factor".into(),
+                why: "rope_scaling is present but factor is missing or not a number".into(),
+            })?,
+    };
     let scaling = serde_json::json!({
         "rope_type": "llama3",
         "factor": factor,
@@ -555,6 +562,7 @@ impl Transformer {
                 scale: (config.head_dim as f64).powf(-0.5) as f32,
                 rope: Some(rope.clone()),
                 window: None,
+                bidirectional: false,
             };
             let mlp = Mlp {
                 gate_proj: weights.linear(
@@ -757,10 +765,15 @@ impl Model {
                     continue;
                 }
                 let token = tokens[base + codebook];
-                let index = codebook * audio_vocab
-                    + usize::try_from(token).map_err(|_| SpeechError::Input {
-                        why: format!("negative audio token {token}"),
+                // Range-check before indexing: a code at or past
+                // audio_vocab would read the next codebook's rows.
+                let code = usize::try_from(token)
+                    .ok()
+                    .filter(|&c| c < audio_vocab)
+                    .ok_or_else(|| SpeechError::Input {
+                        why: format!("audio token {token} outside codebook of {audio_vocab}"),
                     })?;
+                let index = codebook * audio_vocab + code;
                 let embed = self.embedding_row(&self.audio_embeddings, dim, index)?;
                 for (col, value) in out[row * dim..(row + 1) * dim].iter_mut().enumerate() {
                     *value += embed[col];
@@ -913,6 +926,14 @@ impl Model {
             if book.len() != frames {
                 return Err(SpeechError::Input {
                     why: "ragged codebooks".into(),
+                });
+            }
+        }
+        let audio_vocab = self.config.audio_vocab_size;
+        for book in codes {
+            if let Some(&bad) = book.iter().find(|&&c| c < 0 || c as usize >= audio_vocab) {
+                return Err(SpeechError::Input {
+                    why: format!("audio code {bad} outside codebook of {audio_vocab}"),
                 });
             }
         }

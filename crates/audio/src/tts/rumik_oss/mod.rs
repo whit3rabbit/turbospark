@@ -484,17 +484,26 @@ impl Model {
 
         let hidden_size = self.config.backbone.hidden_size;
         let mut step: usize = 0;
-        let mut tokens = Vec::with_capacity(params.max_tokens);
+        // Hint only; capped so a huge caller max_tokens does not allocate up front.
+        let mut tokens = Vec::with_capacity(params.max_tokens.min(4096));
         let mut keys = rng::KeySequence::new(seed);
 
         loop {
             let last_hidden = &hidden[hidden.len() - hidden_size..];
+            // The reference processor consults the stop predictor only once
+            // min_tokens is reached. Evaluating it earlier lets a predictor
+            // error fail steps the reference never scores.
+            let stop_probability = if step < params.min_tokens {
+                0.0
+            } else {
+                self.stop_predictor.probability(last_hidden)?
+            };
             let processed = process_audio_logits(
                 &logits,
                 step,
                 params.min_tokens,
                 &self.audio,
-                self.stop_predictor.probability(last_hidden)?,
+                stop_probability,
             );
             let logprobs = sampling::log_softmax(&processed);
             let next = if params.temperature == 0.0 {

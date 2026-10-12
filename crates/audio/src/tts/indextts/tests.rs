@@ -287,3 +287,32 @@ fn generate_refuses_an_empty_mel() {
         .unwrap_err();
     assert!(error.to_string().contains("empty reference mel"), "{error}");
 }
+
+#[test]
+fn generate_refuses_bad_temperature_and_ragged_mel() {
+    // Negative and NaN temperatures used to pass straight into the sampler.
+    let mut model = fixture_model();
+    let mel_row = vec![0.0f32; super::REF_MEL_BINS];
+    let good_mel = vec![mel_row.clone(), mel_row.clone()];
+    for bad in [-0.5f32, f32::NAN, f32::INFINITY] {
+        let params = GenerateParams {
+            temperature: bad,
+            ..GenerateParams::default()
+        };
+        let error = model
+            .generate(&good_mel, &[5, 6, 7], &params, 0)
+            .unwrap_err();
+        assert!(error.to_string().contains("temperature"), "{error}");
+    }
+
+    // A short row used to shift every later frame in the flat concat.
+    let ragged = vec![mel_row.clone(), mel_row[..99].to_vec()];
+    let error = model
+        .generate(&ragged, &[5, 6, 7], &GenerateParams::default(), 0)
+        .unwrap_err();
+    assert!(error.to_string().contains("bins"), "{error}");
+
+    // The flat conditioning entry checks the buffer length against frames.
+    let error = model.get_conditioning(&[0.0; 150], 2).unwrap_err();
+    assert!(error.to_string().contains("expected 2 rows"), "{error}");
+}

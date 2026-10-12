@@ -497,3 +497,53 @@ fn generate_validates_the_reference_guards() {
         .unwrap_err();
     assert!(error.to_string().contains("codebooks"), "{error}");
 }
+
+#[test]
+fn config_refuses_bad_gqa_ratios_and_zero_codebooks() {
+    // A KV head count that does not divide the query heads is refused at load.
+    let error = ModelConfig::from_json(&serde_json::json!({
+        "text_encoder_config": {"num_attention_heads": 8, "num_key_value_heads": 3},
+    }))
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("must be a positive multiple of"),
+        "{error}"
+    );
+    let error = ModelConfig::from_json(&serde_json::json!({
+        "depth_decoder_config": {"num_attention_heads": 8, "num_key_value_heads": 0},
+    }))
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("must be a positive multiple of"),
+        "{error}"
+    );
+    // Zero codebooks would underflow `num_codebooks - 1` in depth_tokens.
+    let error = ModelConfig::from_json(&serde_json::json!({"num_codebooks": 0})).unwrap_err();
+    assert!(
+        error.to_string().contains("num_codebooks must be > 0"),
+        "{error}"
+    );
+}
+
+#[test]
+fn out_of_range_codes_are_refused_not_read_from_the_next_codebook() {
+    let model = generate_model();
+    // Fixture vocab is 64 per codebook. Id 64 in codebook 0 would index
+    // row 64, which is codebook 1's first row.
+    let error = model.embed_audio_frame(&[64, 0, 0, 0]).unwrap_err();
+    assert!(
+        error.to_string().contains("outside codebook vocab 64"),
+        "{error}"
+    );
+    let error = model.embed_audio_frame(&[0, -1, 0, 0]).unwrap_err();
+    assert!(
+        error.to_string().contains("outside codebook vocab 64"),
+        "{error}"
+    );
+    // The depth path shares the bound.
+    let error = model.depth_decoder.next_logits(&[0, 64], &[]).unwrap_err();
+    assert!(
+        error.to_string().contains("outside codebook vocab 64"),
+        "{error}"
+    );
+}

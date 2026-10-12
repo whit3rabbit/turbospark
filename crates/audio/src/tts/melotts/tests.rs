@@ -56,10 +56,18 @@ fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
         a.len(),
         b.len()
     );
+    // `f32::max` silently drops NaN, so a NaN output would read as a zero
+    // diff. Propagate NaN explicitly so the `<= tolerance` check fails.
     a.iter()
         .zip(b)
         .map(|(x, y)| (x - y).abs())
-        .fold(0.0f32, f32::max)
+        .fold(0.0f32, |m, d| {
+            if m.is_nan() || d.is_nan() {
+                f32::NAN
+            } else {
+                m.max(d)
+            }
+        })
 }
 
 fn assert_close(got: &[f32], want: &[f32], tolerance: f32, stage: &str) {
@@ -239,6 +247,10 @@ fn bert_features_match_the_reference() {
         let pooled = bert
             .pooled(&ids_u32, &types_u32, Some(&mask_u32))
             .expect("pooled");
+        assert!(
+            pooled.iter().all(|v| v.is_finite()),
+            "bert pooled {name}: non-finite output"
+        );
         assert_close(
             &pooled,
             &f32_vec(&case["pooled"]),
@@ -499,6 +511,64 @@ fn stage_pipeline_matches_the_reference() {
     );
     let audio = model.dec.forward(&latent, Some(&g));
     assert_close(&audio, &f32_vec(&case["audio"]), AUDIO_TOLERANCE, "audio");
+}
+
+/// The bert and ja_bert slices must match `in_ch x tokens` exactly. The
+/// old `zip` accepted short or long slices and silently dropped data.
+#[test]
+fn enc_p_rejects_mismatched_bert_lengths() {
+    let model = family_model();
+    let ids = [0u32, 1, 2];
+    let tones = [7u32; 3];
+    let langs = [2u32; 3];
+    let bert_ch = model.enc_p.bert_proj.in_ch;
+    let ja_ch = model.enc_p.ja_bert_proj.in_ch;
+    let bert = vec![0.0f32; bert_ch * 3];
+    let ja = vec![0.0f32; ja_ch * 3];
+    model
+        .enc_p
+        .forward(&ids, &tones, &langs, &bert, &ja, 3, None)
+        .expect("exact lengths are accepted");
+    let short_bert = &bert[..bert.len() - 1];
+    assert!(model
+        .enc_p
+        .forward(&ids, &tones, &langs, short_bert, &ja, 3, None)
+        .is_err());
+    let long_ja = vec![0.0f32; ja_ch * 3 + 1];
+    assert!(model
+        .enc_p
+        .forward(&ids, &tones, &langs, &bert, &long_ja, 3, None)
+        .is_err());
+}
+
+/// Malformed HiFi-GAN lists are rejected at load instead of panicking or
+/// underflowing (`k - u`) or dividing by zero resblock kernels.
+#[test]
+fn hifigan_rejects_malformed_list_lengths() {
+    let config = |kernels: &str, rates: &str, upk: &str, dil: &str| {
+        super::ModelConfig::from_json(
+            &serde_json::from_str(&format!(
+                r#"{{"symbols": [], "resblock_kernel_sizes": {kernels},
+                    "resblock_dilation_sizes": {dil}, "upsample_rates": {rates},
+                    "upsample_kernel_sizes": {upk}}}"#
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let ok_dil = "[[1,3,5],[1,3,5],[1,3,5]]";
+    super::check_hifigan_lists(&config("[3,7,11]", "[8,8]", "[16,16]", ok_dil))
+        .expect("well-formed lists are accepted");
+    // Fewer upsample kernels than rates.
+    assert!(super::check_hifigan_lists(&config("[3,7,11]", "[8,8]", "[16]", ok_dil)).is_err());
+    // Kernel smaller than its stride would underflow `k - u`.
+    assert!(super::check_hifigan_lists(&config("[3,7,11]", "[8,8]", "[4,16]", ok_dil)).is_err());
+    // Fewer dilation lists than resblock kernels.
+    assert!(
+        super::check_hifigan_lists(&config("[3,7,11]", "[8,8]", "[16,16]", "[[1,3,5]]")).is_err()
+    );
+    // No resblock kernels would divide by zero in the average.
+    assert!(super::check_hifigan_lists(&config("[]", "[8,8]", "[16,16]", "[]")).is_err());
 }
 
 #[test]

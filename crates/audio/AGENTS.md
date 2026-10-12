@@ -24,7 +24,7 @@ Unified portable audio crate: DSP primitives (waveform, WAV I/O, resampling, FFT
 All models and model families reside under their respective role directories:
 - `src/music/<family>/`: Music generation (e.g. `minimax_music3`)
 - `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
-- `src/tts/<family>/`: Text-to-speech (e.g. `bailingmm`, `breeze_tts`, `higgs_audio`, `higgs_audio_v3`, `indextts`, `kitten_tts`, `kokoro`, `kugelaudio`, `llama`, `megatts3`, `moss_tts`, `moss_tts_nano`, `outetts`, `qwen3`, `rumik_oss`, `sesame`, `soprano`, `spark`, `zonos2`)
+- `src/tts/<family>/`: Text-to-speech (e.g. `bailingmm`, `bark`, `breeze_tts`, `confucius4`, `dia`, `echo_tts`, `fish_qwen3_omni`, `higgs_audio`, `higgs_audio_v3`, `indextts`, `kitten_tts`, `kokoro`, `kugelaudio`, `llama`, `longcat_audiodit`, `megatts3`, `melotts`, `moss_tts`, `moss_tts_nano`, `omnivoice`, `outetts`, `pocket_tts`, `qwen3`, `rumik_oss`, `sesame`, `soprano`, `spark`, `zonos2`)
 - `src/vad/<family>/`: Voice activity detection and diarization (e.g. `silero_vad`, `sortformer`, `nemotron_diarization`)
 - `src/sts/<family>/`: Speech-to-speech and enhancement (e.g. `deepfilternet`)
 - `src/codec/<family>/`: Neural audio codecs and vocoders (e.g. `bigvgan`, `dacvae`, `descript`, `ecapa_tdnn`, `encodec`, `fish_s1_dac`, `higgs_audio`, `mimi`, `mimo_audio_tokenizer`, `moss_audio_tokenizer`, `nemotron_voicechat`, `s3`, `snac`, `spark_bicodec`, `stepaudio2`, `vocos`, `wavvae`)
@@ -64,6 +64,14 @@ Every model family directory contains its implementation code, configuration, we
 - Text frontends (G2P, phonemizers) are part of the model module that needs
   them. They follow the reference implementation's behavior, including its
   fallbacks, and pin their behavior with tests.
+- Composite TTS architectures compose shared neural codecs: `confucius4` over
+  `bigvgan`, `dia` over `descript` DAC, `echo_tts` over `fish_s1_dac`,
+  `omnivoice` over `higgs_audio`, and `megatts3` over `wavvae`.
+- Zero-shot voice cloning (MegaTTS3): caller must acknowledge consent up
+  front (`consent = true`) due to unverified community WavVAE encoder
+  provenance. Diffusion steps default to 16 (Balanced; Fast=8, Best=32). Metal
+  runs by default on macOS, with portable CPU fallback only under explicit
+  opt-in.
 
 ## Numeric contracts and signal processing rules
 

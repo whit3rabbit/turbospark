@@ -299,7 +299,8 @@ impl Model {
         // each generated token.
         let mut context: Vec<i32> = Vec::with_capacity(params.max_tokens + 1);
         context.push(last[last.len() - 1]);
-        let mut tokens = Vec::with_capacity(params.max_tokens);
+        // Hint only; capped so a huge caller max_tokens does not allocate up front.
+        let mut tokens = Vec::with_capacity(params.max_tokens.min(4096));
         let mut stopped_by = StopReason::MaxTokens;
         let mut keys = rng::KeySequence::new(seed);
 

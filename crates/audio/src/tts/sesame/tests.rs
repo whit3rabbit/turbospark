@@ -356,3 +356,34 @@ fn watermark_stage_is_refused_with_a_descriptive_error() {
     assert!(message.contains("silentcipher"), "{message}");
     assert!(message.contains("watermark"), "{message}");
 }
+
+#[test]
+fn tokenize_audio_refuses_codes_outside_their_codebook() {
+    // A code at or past audio_vocab_size used to read the next codebook's
+    // rows instead of failing.
+    let model = generate_model("generate");
+    let k = model.config.audio_num_codebooks;
+    let vocab = model.config.audio_vocab_size as i32;
+    let mut books = vec![vec![0i32]; k];
+    assert!(model.tokenize_audio(&books, false).is_ok());
+    books[0][0] = vocab;
+    let error = model.tokenize_audio(&books, false).unwrap_err();
+    assert!(error.to_string().contains("outside codebook"), "{error}");
+    books[0][0] = -1;
+    assert!(model.tokenize_audio(&books, false).is_err());
+}
+
+#[test]
+fn rope_scaling_without_a_factor_is_refused() {
+    // Absent rope_scaling stays unscaled. A present block with no factor
+    // used to fall back to 1.0 silently.
+    let model = generate_model("generate");
+    let mut backbone = model.config.backbone.clone();
+    backbone.rope_scaling = None;
+    assert!(super::family_rope(&backbone).is_ok());
+    backbone.rope_scaling = Some(serde_json::json!({"rope_type": "llama3"}));
+    let error = super::family_rope(&backbone)
+        .err()
+        .expect("factor is required");
+    assert!(error.to_string().contains("factor"), "{error}");
+}

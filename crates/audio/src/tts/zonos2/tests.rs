@@ -9,6 +9,7 @@ use super::{
     shear, shear_up, silence_prompt_tokens, text_to_byte_ids, GenerationState, Model, ModelConfig,
     TtsSamplingParams,
 };
+use crate::SpeechError;
 
 fn testdata(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -285,4 +286,133 @@ fn config_defaults_and_moe_layout() {
     assert_eq!(config.num_experts_per_tok(1), 1);
     assert_eq!(config.num_experts_per_tok(2), 2);
     assert_eq!(config.frame_width(), 4);
+}
+
+/// The `(field, why)` of a `BadConfig` load failure; any other outcome
+/// fails the test.
+fn config_error(value: serde_json::Value) -> (String, String) {
+    match ModelConfig::from_json(&value) {
+        Err(SpeechError::BadConfig { field, why }) => (field, why),
+        other => panic!("expected BadConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn zero_head_dim_and_multiple_of_are_bad_config_not_panics() {
+    assert_eq!(
+        config_error(serde_json::json!({"text_vocab": 512, "head_dim": 0})).0,
+        "head_dim"
+    );
+    assert_eq!(
+        config_error(serde_json::json!({"text_vocab": 512, "multiple_of": 0})).0,
+        "multiple_of"
+    );
+}
+
+#[test]
+fn gqa_ratio_must_be_an_exact_positive_divisor() {
+    // The default n_heads is dim / head_dim = 16.
+    assert_eq!(
+        config_error(serde_json::json!({"text_vocab": 512, "n_kv_heads": 0})).0,
+        "n_kv_heads"
+    );
+    assert_eq!(
+        config_error(serde_json::json!({"text_vocab": 512, "n_kv_heads": 3})).0,
+        "n_kv_heads"
+    );
+    assert!(
+        ModelConfig::from_json(&serde_json::json!({"text_vocab": 512, "n_kv_heads": 8})).is_ok()
+    );
+}
+
+#[test]
+fn moe_topk_must_be_between_one_and_the_expert_count() {
+    assert_eq!(
+        config_error(serde_json::json!({"text_vocab": 512, "moe_router_topk": 0})).0,
+        "moe_router_topk"
+    );
+    assert_eq!(
+        config_error(serde_json::json!({
+            "text_vocab": 512, "moe_n_experts": 4, "moe_router_topk": 5
+        }))
+        .0,
+        "moe_router_topk"
+    );
+    // A per-layer override is checked the same way.
+    assert_eq!(
+        config_error(serde_json::json!({
+            "text_vocab": 512, "moe_n_experts": 4, "special_topk_layers": {"3": 0}
+        }))
+        .0,
+        "moe_router_topk"
+    );
+}
+
+#[test]
+fn codebook_layout_is_bounded_by_the_silence_table() {
+    // The silence prompt table is 9 columns wide.
+    assert_eq!(
+        config_error(serde_json::json!({"text_vocab": 512, "n_codebooks": 10})).0,
+        "n_codebooks"
+    );
+    assert_eq!(
+        config_error(serde_json::json!({"text_vocab": 512, "n_codebooks": 0})).0,
+        "n_codebooks"
+    );
+    assert_eq!(
+        config_error(serde_json::json!({"text_vocab": 512, "codebook_size": 0})).0,
+        "codebook_size"
+    );
+}
+
+#[test]
+fn balancing_strategy_accepts_only_the_two_known_names() {
+    let (field, _) = config_error(serde_json::json!({
+        "text_vocab": 512, "moe_balancing_strategy": "quantil"
+    }));
+    assert_eq!(field, "moe_balancing_strategy");
+    let (field, _) = config_error(serde_json::json!({
+        "text_vocab": 512, "moe_balancing_strategy": 1
+    }));
+    assert_eq!(field, "moe_balancing_strategy");
+    let quantile = ModelConfig::from_json(&serde_json::json!({
+        "text_vocab": 512, "moe_balancing_strategy": " Quantile "
+    }))
+    .unwrap();
+    assert_eq!(quantile.moe_balancing_strategy, "quantile");
+    // An absent field keeps the legacy default.
+    let absent = ModelConfig::from_json(&serde_json::json!({"text_vocab": 512})).unwrap();
+    assert_eq!(absent.moe_balancing_strategy, "legacy");
+}
+
+#[test]
+fn quality_features_and_special_topk_fail_loudly() {
+    // An unknown feature name used to count as 0 buckets.
+    let (field, _) = config_error(serde_json::json!({
+        "text_vocab": 512,
+        "quality_features": ["clarity"],
+        "quality_buckets": {"other": [1, 2]}
+    }));
+    assert_eq!(field, "quality_features");
+    // A non-integer per-layer top-k used to become top-1.
+    let (field, _) = config_error(serde_json::json!({
+        "text_vocab": 512, "moe_n_experts": 4, "special_topk_layers": {"3": "two"}
+    }));
+    assert_eq!(field, "special_topk_layers");
+}
+
+#[test]
+fn neighbouring_seeds_do_not_share_step_streams() {
+    // Under the old `seed + step` rule, seed 1000 at step 1 equaled seed
+    // 1001 at step 0. The derived per-step seeds must stay disjoint.
+    let steps = 8;
+    let a: Vec<u64> = (0..steps).map(|k| super::step_seed(1000, k)).collect();
+    let b: Vec<u64> = (0..steps).map(|k| super::step_seed(1001, k)).collect();
+    for x in &a {
+        assert!(!b.contains(x), "seed streams overlap at {x:#x}");
+    }
+    let mut all = a.clone();
+    all.sort_unstable();
+    all.dedup();
+    assert_eq!(all.len(), steps);
 }

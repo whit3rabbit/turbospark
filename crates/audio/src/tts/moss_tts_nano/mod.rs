@@ -119,6 +119,14 @@ impl Gpt2Config {
         } else {
             u_or("intermediate_size", DEFAULT_N_INNER)
         };
+        // Refuse here, before any `n_embd % n_head` or head_dim division:
+        // a zero head count would otherwise panic on the first stack load.
+        if n_head == 0 || n_embd % n_head != 0 {
+            return Err(SpeechError::BadConfig {
+                field: "n_head".into(),
+                why: format!("n_head {n_head} must be non-zero and divide n_embd {n_embd}"),
+            });
+        }
         let position_embedding_type = value
             .get("position_embedding_type")
             .and_then(Value::as_str)
@@ -187,6 +195,14 @@ impl ModelConfig {
     pub fn from_json(value: &Value) -> Result<Self> {
         let gpt2_config = Gpt2Config::from_json(value.get("gpt2_config").unwrap_or(&Value::Null))?;
         let n_vq = value.get("n_vq").and_then(Value::as_u64).unwrap_or(16) as usize;
+        // Zero channels would make the per-channel tables and the frame
+        // width degenerate (and `n_vq + 1` context math assumes at least one).
+        if n_vq == 0 {
+            return Err(SpeechError::BadConfig {
+                field: "n_vq".into(),
+                why: "must be at least 1".into(),
+            });
+        }
         let audio_vocab_size = value
             .get("audio_vocab_size")
             .and_then(Value::as_u64)
@@ -359,7 +375,10 @@ impl Gpt2 {
         } else {
             1.0
         };
-        let mut blocks = Vec::with_capacity(config.n_layer);
+        // No pre-sizing: `n_layer` is an untrusted config value and the loop
+        // below fails on the first missing tensor, so a huge count cannot
+        // reach an allocation.
+        let mut blocks = Vec::new();
         for index in 0..config.n_layer {
             let layer = format!("{name}.h.{index}.");
             let fused = weights.linear(
@@ -393,6 +412,7 @@ impl Gpt2 {
                 scale: layer_scale,
                 rope: Some(rope.clone()),
                 window: None,
+                bidirectional: false,
             };
             let mlp = Mlp {
                 fc_in: weights.linear(

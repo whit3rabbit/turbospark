@@ -106,7 +106,9 @@ fn preprocessor_matches_the_reference_cases() {
     let traces = read_json(&testdata("frontend/traces.json"));
     let preprocessor = TextPreprocessor::new();
     for case in traces["preprocess_cases"].as_array().expect("cases") {
-        let got = preprocessor.process(case["input"].as_str().expect("input"));
+        let got = preprocessor
+            .process(case["input"].as_str().expect("input"))
+            .expect("preprocess");
         assert_eq!(
             got,
             case["output"].as_str().expect("output"),
@@ -704,6 +706,7 @@ fn config_parses_fields_and_defaults() {
         "hidden_dim": 16, "max_conv_dim": 16, "max_dur": 4, "n_layer": 1,
         "n_token": 32, "style_dim": 128, "text_encoder_kernel_size": 5,
         "asr_res_dim": 2,
+        "plbert": minimal_plbert(),
         "istftnet": {
             "resblock_kernel_sizes": [3], "upsample_rates": [4],
             "upsample_initial_channel": 8, "resblock_dilation_sizes": [[1,3,5]],
@@ -721,6 +724,199 @@ fn config_parses_fields_and_defaults() {
     assert!(minimal.activation_quant_modules.is_empty());
 }
 
+/// A complete `plbert` block (every field is required by from_json).
+fn minimal_plbert() -> Value {
+    serde_json::json!({
+        "num_hidden_layers": 1, "num_attention_heads": 1, "hidden_size": 16,
+        "intermediate_size": 32, "max_position_embeddings": 64, "embedding_size": 128,
+        "inner_group_num": 1, "num_hidden_groups": 1, "type_vocab_size": 2,
+        "layer_norm_eps": 1e-12
+    })
+}
+
+fn minimal_config() -> Value {
+    serde_json::json!({
+        "hidden_dim": 16, "max_conv_dim": 16, "max_dur": 4, "n_layer": 1,
+        "n_token": 32, "style_dim": 128, "text_encoder_kernel_size": 5,
+        "asr_res_dim": 2,
+        "plbert": minimal_plbert(),
+        "istftnet": {
+            "resblock_kernel_sizes": [3], "upsample_rates": [4],
+            "upsample_initial_channel": 8, "resblock_dilation_sizes": [[1,3,5]],
+            "upsample_kernel_sizes": [8], "gen_istft_n_fft": 16, "gen_istft_hop_size": 4
+        }
+    })
+}
+
+fn is_bad_config(error: &crate::SpeechError, field: &str) -> bool {
+    matches!(error, crate::SpeechError::BadConfig { field: f, .. } if f == field)
+}
+
+#[test]
+fn config_refuses_missing_and_malformed_fields() {
+    let parse = |edit: &dyn Fn(&mut Value)| {
+        let mut config = minimal_config();
+        edit(&mut config);
+        ModelConfig::from_json(&config)
+    };
+    assert!(parse(&|_| {}).is_ok(), "the unedited minimal config parses");
+    // A missing plbert section or field must not fall back to the
+    // 12-layer BERT defaults.
+    let error = parse(&|c| {
+        c.as_object_mut().expect("object").remove("plbert");
+    })
+    .unwrap_err();
+    assert!(is_bad_config(&error, "plbert"), "{error}");
+    let error = parse(&|c| {
+        c["plbert"]
+            .as_object_mut()
+            .expect("object")
+            .remove("hidden_size");
+    })
+    .unwrap_err();
+    assert!(is_bad_config(&error, "plbert.hidden_size"), "{error}");
+    // A zero hop divides in the harmonic-spectrum framing.
+    let error = parse(&|c| c["istftnet"]["gen_istft_hop_size"] = serde_json::json!(0)).unwrap_err();
+    assert!(is_bad_config(&error, "gen_istft_hop_size"), "{error}");
+    let error = parse(&|c| c["istftnet"]["gen_istft_n_fft"] = serde_json::json!(1)).unwrap_err();
+    assert!(is_bad_config(&error, "gen_istft_n_fft"), "{error}");
+    // The generator indexes kernels, rates, and dilations by position.
+    let error =
+        parse(&|c| c["istftnet"]["upsample_kernel_sizes"] = serde_json::json!([3])).unwrap_err();
+    assert!(is_bad_config(&error, "upsample_kernel_sizes"), "{error}");
+    let error = parse(&|c| c["istftnet"]["upsample_rates"] = serde_json::json!([])).unwrap_err();
+    assert!(is_bad_config(&error, "upsample_rates"), "{error}");
+    let error = parse(&|c| c["istftnet"]["resblock_dilation_sizes"] = serde_json::json!([[1, 3]]))
+        .unwrap_err();
+    assert!(is_bad_config(&error, "resblock_dilation_sizes"), "{error}");
+    let error =
+        parse(&|c| c["istftnet"]["resblock_kernel_sizes"] = serde_json::json!([])).unwrap_err();
+    assert!(is_bad_config(&error, "resblock_kernel_sizes"), "{error}");
+}
+
+#[test]
+fn number_words_cover_the_full_i64_range() {
+    use super::frontend::number_to_words;
+    // These used to be dropped (empty output) at 10^15 and above.
+    assert_eq!(number_to_words(1_000_000_000_000_000), "one quadrillion");
+    assert_eq!(
+        number_to_words(1_000_000_000_000_000_000),
+        "one quintillion"
+    );
+    assert_eq!(
+        number_to_words(i64::MAX),
+        "nine quintillion two hundred twenty-three quadrillion three hundred seventy-two \
+         trillion thirty-six billion eight hundred fifty-four million seven hundred \
+         seventy-five thousand eight hundred seven"
+    );
+}
+
+#[test]
+fn oversized_integers_are_refused_not_read_as_zero() {
+    let preprocessor = TextPreprocessor::new();
+    // The number helpers parse with unwrap_or(0); a 25-digit literal used
+    // to come out as "zero".
+    let error = preprocessor
+        .process("the count is 1234567890123456789012345 today")
+        .unwrap_err();
+    assert!(error.to_string().contains("25 digits"), "{error}");
+    let error = preprocessor
+        .process("total 1,234,567,890,123,456,789,012,345")
+        .unwrap_err();
+    assert!(error.to_string().contains("25 digits"), "{error}");
+    // Up to the replace_numbers bound (9e15) is spelled out in full.
+    let in_range = preprocessor
+        .process("the count is 8999999999999999 today")
+        .expect("below the bound");
+    assert!(in_range.contains("quadrillion"), "{in_range}");
+    let error = preprocessor
+        .process("the count is 9000000000000000 today")
+        .unwrap_err();
+    assert!(error.to_string().contains("16 digits"), "{error}");
+    // Decimal fraction digits are read one at a time and never parsed.
+    assert!(preprocessor
+        .process("pi is 3.14159265358979323846264338")
+        .is_ok());
+}
+
+#[test]
+fn install_voice_refuses_mismatched_tables() {
+    let mut model = stage_model();
+    // Half-width rows would be sliced past the end of the table.
+    let error = model
+        .install_voice("narrow", vec![0.25f32; 4 * 128], 4)
+        .unwrap_err();
+    assert!(error.to_string().contains("4 x 256"), "{error}");
+    assert!(model
+        .install_voice("short", vec![0.25f32; 4 * 256 - 1], 4)
+        .is_err());
+    assert!(model.install_voice("empty", Vec::new(), 0).is_err());
+    assert!(model
+        .install_voice("huge", vec![0.25f32; 4], usize::MAX)
+        .is_err());
+    model
+        .install_voice("exact", vec![0.25f32; 4 * 256], 4)
+        .expect("exact table installs");
+}
+
+#[test]
+fn generation_refuses_bad_speed_and_short_style_on_every_entry_point() {
+    let model = stage_model();
+    let ids = [0u32, 5, 9, 0];
+    let ref_s = vec![0.0f32; 256];
+    // generate_segment checks these too; the durations entry point used
+    // to skip the check and reach the predictor with a bad speed.
+    for speed in [0.0f32, -1.0, f32::NAN, f32::INFINITY] {
+        assert!(
+            model
+                .generate_segment_with_durations(&ids, &ref_s, speed)
+                .is_err(),
+            "speed {speed} must be refused"
+        );
+    }
+    let error = model
+        .generate_segment_with_durations(&ids, &ref_s[..128], 1.0)
+        .unwrap_err();
+    assert!(error.to_string().contains("ref_s must be"), "{error}");
+    // The chunked path reaches the same guard through its resolved speed.
+    let phonemize = |_: &str| "həlˈoʊ".to_string();
+    assert!(model
+        .synthesize_with(
+            "hello there",
+            &phonemize,
+            "test-voice",
+            0.0,
+            400,
+            20,
+            200,
+            200
+        )
+        .is_err());
+}
+
+#[test]
+fn tail_timing_overflow_is_refused_before_any_work() {
+    let model = stage_model();
+    let error = model
+        .apply_tail(&[0.0f32; 4], 20, 200, i64::MAX)
+        .unwrap_err();
+    assert!(is_bad_config(&error, "tail_silence_ms"), "{error}");
+    let phonemize = |_: &str| "həlˈoʊ".to_string();
+    let error = model
+        .synthesize_with(
+            "hello",
+            &phonemize,
+            "test-voice",
+            1.0,
+            400,
+            20,
+            200,
+            i64::MAX,
+        )
+        .unwrap_err();
+    assert!(is_bad_config(&error, "tail_silence_ms"), "{error}");
+}
+
 #[test]
 fn end_to_end_segments_match_the_reference() {
     let traces = read_json(&testdata("generate/traces.json"));
@@ -733,7 +929,7 @@ fn end_to_end_segments_match_the_reference() {
         let phonemes = scenario["phonemes"].as_str().expect("phonemes");
         let chunk = scenario["chunk"].as_str().expect("chunk");
         let voice = scenario["voice"].as_str().expect("voice");
-        let cleaned = TextPreprocessor::new().process(chunk);
+        let cleaned = TextPreprocessor::new().process(chunk).expect("preprocess");
         let segment = model
             .prepare_segment(phonemes, cleaned.chars().count(), voice, 1.0)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -775,7 +971,7 @@ fn end_to_end_segments_match_the_reference() {
         // The tail treatment's trim decisions depend on the (divergent)
         // waveform content, so only the mechanism is pinned: the
         // synthetic apply_tail fixture case above gates it exactly.
-        let _tailed = model.apply_tail(&raw, 20, 200, 200);
+        let _tailed = model.apply_tail(&raw, 20, 200, 200).expect("tail");
     }
 }
 
@@ -793,7 +989,9 @@ fn chunked_synthesis_matches_the_reference_structure() {
     let preprocessor = TextPreprocessor::new();
     let mut phonemes_by_cleaned: HashMap<String, String> = HashMap::new();
     for chunk in scenario["chunks"].as_array().expect("chunks") {
-        let cleaned = preprocessor.process(chunk["chunk"].as_str().expect("chunk"));
+        let cleaned = preprocessor
+            .process(chunk["chunk"].as_str().expect("chunk"))
+            .expect("preprocess");
         phonemes_by_cleaned
             .entry(cleaned)
             .or_insert_with(|| chunk["phonemes"].as_str().expect("phonemes").to_string());
@@ -814,7 +1012,7 @@ fn chunked_synthesis_matches_the_reference_structure() {
     {
         let phonemes = chunk["phonemes"].as_str().expect("phonemes");
         let chunk_text_value = chunk["chunk"].as_str().expect("chunk");
-        let cleaned = preprocessor.process(chunk_text_value);
+        let cleaned = preprocessor.process(chunk_text_value).expect("preprocess");
         let segment = model
             .prepare_segment(phonemes, cleaned.chars().count(), "test-voice", 1.0)
             .unwrap_or_else(|e| panic!("chunk {i}: {e}"));
@@ -886,7 +1084,9 @@ fn apply_tail_matches_the_reference_case() {
     let traces = read_json(&testdata("frontend/traces.json"));
     let model = stage_model();
     for case in traces["tail_cases"].as_array().expect("cases") {
-        let got = model.apply_tail(&f32_vec(&case["input"]), 20, 200, 200);
+        let got = model
+            .apply_tail(&f32_vec(&case["input"]), 20, 200, 200)
+            .expect("tail");
         assert_close(&got, &f32_vec(&case["output"]), 1e-6, "apply_tail");
     }
 }
@@ -984,7 +1184,7 @@ fn prepare_segment_resolves_aliases_and_priors() {
 fn install_voice_replaces_the_table() {
     let mut model = stage_model();
     let values = vec![0.25f32; 4 * 256];
-    model.install_voice("manual", values, 4);
+    model.install_voice("manual", values, 4).expect("install");
     let segment = model
         .prepare_segment("həlˈoʊ", 2, "manual", 1.0)
         .expect("prepare");

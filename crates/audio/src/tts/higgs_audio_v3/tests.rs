@@ -16,8 +16,8 @@ use serde_json::Value;
 
 use super::{
     apply_delay_pattern, apply_masked_filter, greedy_sample_audio, reverse_delay_pattern,
-    GenerateParams, Model, ModelConfig, PromptBuilder, ReferenceCodes, SamplerState, StopReason,
-    AUDIO_PLACEHOLDER_ID,
+    GenerateParams, Model, ModelConfig, PromptBuilder, PromptParts, ReferenceCodes, SamplerState,
+    StopReason, AUDIO_PLACEHOLDER_ID,
 };
 use crate::codec::higgs_audio::HiggsAudioTokenizer;
 use crate::lm;
@@ -537,6 +537,70 @@ fn family_config_defaults_and_encoder_fallbacks_match_the_reference() {
     }))
     .unwrap_err();
     assert!(refused.to_string().contains("positive"), "{refused}");
+}
+
+#[test]
+fn embed_refuses_a_code_past_its_codebook_rows() {
+    // A code equal to the stride would read the next codebook's rows.
+    let model = generate_model();
+    let k = model.config.audio_num_codebooks;
+    let stride = model.config.codebook_stride() as i32;
+    let mut frame = vec![0; k];
+    frame[0] = stride;
+    let err = model.embed_audio_codes(&frame).unwrap_err();
+    assert!(err.to_string().contains("codebook 0"), "{err}");
+    model
+        .embed_audio_codes(&vec![0; k])
+        .expect("zero codes are in range");
+}
+
+#[test]
+fn empty_transcript_adds_no_ref_text_marker() {
+    // The reference tests `if reference.text`: an empty transcript must not
+    // emit a <|ref_text|> marker with no text after it.
+    const REF_TEXT: i32 = 999;
+    let builder = PromptBuilder {
+        tts_id: 1,
+        ref_audio_id: 2,
+        text_id: 3,
+        audio_id: 4,
+        ref_text_id: Some(REF_TEXT),
+    };
+    let reference = |text_ids: Option<Vec<i32>>| ReferenceCodes {
+        text_ids,
+        delayed_codes: vec![vec![0]],
+    };
+    let empty = builder
+        .build_prompt(&[5], &[reference(Some(Vec::new()))])
+        .expect("builds");
+    assert!(
+        !empty.token_ids.contains(&REF_TEXT),
+        "{:?}",
+        empty.token_ids
+    );
+    let spoken = builder
+        .build_prompt(&[5], &[reference(Some(vec![7]))])
+        .expect("builds");
+    assert!(spoken.token_ids.contains(&REF_TEXT));
+}
+
+#[test]
+fn prompt_embeddings_refuse_out_of_range_segments() {
+    // Pub PromptParts fields are caller-controlled: a segment past the end,
+    // or one that starts before the previous segment ends, must be an error.
+    let model = generate_model();
+    let k = model.config.audio_num_codebooks;
+    let row = vec![0; k];
+    let past_end = PromptParts {
+        token_ids: vec![1, 2, 3],
+        audio_segments: vec![(2, vec![row.clone(); 3])],
+    };
+    assert!(model.build_prompt_embeddings(&past_end).is_err());
+    let overlapping = PromptParts {
+        token_ids: vec![1, 2, 3, 4],
+        audio_segments: vec![(2, vec![row.clone()]), (1, vec![row.clone()])],
+    };
+    assert!(model.build_prompt_embeddings(&overlapping).is_err());
 }
 
 #[test]

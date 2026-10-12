@@ -193,6 +193,7 @@ impl Gpt2Model {
                 scale: ((dim / config.n_head) as f64).powf(-0.5) as f32,
                 rope: None,
                 window: None,
+                bidirectional: false,
             };
             let mlp = Gpt2Mlp {
                 c_fc: weights.linear(&format!("{layer}mlp.c_fc"), dim, 4 * dim, Bias::Required)?,

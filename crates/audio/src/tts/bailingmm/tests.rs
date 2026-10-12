@@ -552,3 +552,64 @@ fn family_defaults_match_the_reference_generate() {
     };
     assert_eq!(flow.patch, 2);
 }
+
+#[test]
+fn generate_refuses_empty_input_and_misaligned_prompt_latent() {
+    let mut model = Model::open(&testdata("moe_generate")).expect("model loads");
+    let traces = read_json(&testdata("moe_generate/traces.json"));
+    let params = params(&traces);
+    // Empty embeddings used to underflow the last-row index.
+    let error = model
+        .generate(&[], None, &params, &mut super::dit::SeededNoise::new(0))
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("input embeddings are empty"),
+        "{error}"
+    );
+    let case = case_segments(&traces);
+    let segments = PromptSegments {
+        prompt: &case.prompt,
+        text: &case.text,
+        instruction: None,
+        prompt_text: None,
+        prompt_latent: None,
+        skip_text_input_header: false,
+    };
+    let (embeds, _) = model
+        .prepare_input_embeds(&case.markers, &segments)
+        .unwrap();
+    // One stray float past whole latent rows used to hit copy_from_slice.
+    let misaligned = vec![0.0f32; model.latent_dim() + 1];
+    let error = model
+        .generate(
+            &embeds,
+            Some(&misaligned),
+            &params,
+            &mut super::dit::SeededNoise::new(0),
+        )
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("not a multiple of the latent dim"),
+        "{error}"
+    );
+}
+
+#[test]
+fn patch_geometry_refuses_zero_sizes_and_a_short_history() {
+    assert!(super::check_patch_geometry(4, 2, 2).is_ok());
+    assert!(super::check_patch_geometry(4, 2, 3).is_ok());
+    let error = super::check_patch_geometry(0, 2, 2).unwrap_err();
+    assert!(
+        error.to_string().contains("latent_dim must be > 0"),
+        "{error}"
+    );
+    let error = super::check_patch_geometry(4, 0, 2).unwrap_err();
+    assert!(
+        error.to_string().contains("patch_size must be > 0"),
+        "{error}"
+    );
+    let error = super::check_patch_geometry(4, 4, 2).unwrap_err();
+    assert!(error.to_string().contains(">= patch_size 4"), "{error}");
+}

@@ -255,16 +255,16 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 |---|---|---|---|---|
 | `arktts` | Source | 79 | Default task-qualified family | None |
 | `bailingmm` | README | 42 | Ming Omni MoE | [Family port](src/tts/bailingmm/README.md) |
-| `bark` | Source | 65 | Default task-qualified family | None |
+| `bark` | Source | 65 | Default task-qualified family | [Partial family port](src/tts/bark/README.md); semantic prefill fixture-verified, end-to-end scenario parity blocked by a reference-side fixture reproducibility issue |
 | `breeze_tts` | Source | 66 | Aliases `breeze`, `breeze-tts` | [Family port](src/tts/breeze_tts/README.md); ends at codebook frames, waveform decode needs the unported Qwen3-TTS speech tokenizer |
 | `chatterbox` | README | 32 | Default task-qualified family | None |
 | `chatterbox_turbo` | Source | 67 | Default task-qualified family | None |
-| `confucius4` | Source | 68 | Default task-qualified family | None |
+| `confucius4` | Source | 68 | Default task-qualified family | [Family port](src/tts/confucius4/README.md) over the shared [BigVGAN codec port](src/codec/bigvgan/README.md) |
 | `dense` | README | 41 | Ming Omni Dense; rides the bailingmm module per the alias policy | [Family port](src/tts/bailingmm/README.md) |
-| `dia` | README | 31 | Default task-qualified family | None |
-| `dramabox` | Source | 69 | Alias `dramabox-tts` | None |
-| `echo_tts` | Source | 70 | Default task-qualified family | None |
-| `fish_qwen3_omni` | Source | 71 | Default task-qualified family | None |
+| `dia` | README | 31 | Default task-qualified family | [Family port](src/tts/dia/README.md) over the [Descript DAC codec port](src/codec/descript/README.md) |
+| `dramabox` | Source | 69 | Alias `dramabox-tts` | [Family port](src/tts/dramabox/README.md) over the shared [lm engine](src/lm/README.md); ends at the mel latents (the in-checkpoint AudioVAE decoder and vocoder are the open porting item) and caller-owned Gemma text conditioning (the text encoder is a separate download) |
+| `echo_tts` | Source | 70 | Default task-qualified family | [Family port](src/tts/echo_tts/README.md) over the [Fish S1 DAC codec port](src/codec/fish_s1_dac/README.md) |
+| `fish_qwen3_omni` | Source | 71 | Default task-qualified family | [Family port](src/tts/fish_qwen3_omni/README.md) over the [Fish S1 DAC codec port](src/codec/fish_s1_dac/README.md) |
 | `higgs_audio` | README | 34 | Default task-qualified family | [Family port](src/tts/higgs_audio/README.md) over the [codec port](src/codec/higgs_audio/README.md) |
 | `higgs_audio_v3` | README | 45 | Alias `higgs_multimodal_qwen3` | [Family port](src/tts/higgs_audio_v3/README.md) over the [codec port](src/codec/higgs_audio/README.md) |
 | `indextts` | Source | 72 | Default task-qualified family | [Family port](src/tts/indextts/README.md) over the [gpt2 backbone](src/lm/README.md) |
@@ -273,24 +273,24 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `kokoro` | README | 24 | Default task-qualified family | [Flat port](src/tts/kokoro/mod.rs) |
 | `kugelaudio` | README | 40 | Default task-qualified family | [Family port](src/tts/kugelaudio/README.md) over the shared [lm qwen2 backbone](src/lm/README.md) and the vibevoice decoder/diffusion-head/scheduler modules |
 | `llama` | Source | 63 | SNAC TTS wrapper over generic Llama backbone | [Family port](src/tts/llama/README.md) |
-| `longcat_audiodit` | README | 39 | Aliases `audiodit`, `longcat` | None |
+| `longcat_audiodit` | README | 39 | Aliases `audiodit`, `longcat` | [Family port](src/tts/longcat_audiodit/README.md) |
 | `megatts3` | PyTorch (not in mlx-audio) | None | Zero-shot voice cloning; staged port with PyTorch parity fixtures | [Partial family port](src/tts/megatts3/README.md) (DiT, sampler, text encoder, duration LM, aligner, G2P, English frontend subset, `MegaTts3` pipeline) over the [WavVAE codec](src/codec/wavvae/README.md); whole pipeline matches the reference on real weights; wired through runtime (`megatts3`), FFI, server and Swift with required consent; Metal by default for the DiT and WavVAE decoder, matching the CPU path across 8 speakers; 16 steps by default after a step study; catalog row `megatts3-f32` |
 | `melotts` | README | 27 | Default task-qualified family | [Family port](src/tts/melotts/README.md); the g2p intake is caller-owned |
 | `moss_tts` | README | 44 | Delay-pattern and local-transformer variants | [Family port](src/tts/moss_tts/README.md) over the shared [lm qwen3 backbone](src/lm/README.md); the legacy local-transformer checkpoints are refused |
 | `moss_tts_delay` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (delay-pattern variant) |
 | `moss_tts_local` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (v1.5 local-transformer variant) |
 | `moss_tts_nano` | README | 33 | Default task-qualified family | [Family port](src/tts/moss_tts_nano/README.md) |
-| `omnivoice` | README | 38 | Default task-qualified family | None |
+| `omnivoice` | README | 38 | Default task-qualified family | [Family port](src/tts/omnivoice/README.md) over the shared [lm qwen3 backbone](src/lm/README.md) and the [HiggsAudio codec port](src/codec/higgs_audio/README.md) |
 | `outetts` | README | 29 | Default task-qualified family | [Family port](src/tts/outetts/README.md) |
-| `pocket_tts` | Source | 74 | Default task-qualified family | None |
+| `pocket_tts` | Source | 74 | Default task-qualified family | [Family port](src/tts/pocket_tts/README.md); ends at the scaled Mimi latents, the pocket Mimi streaming decoder has no Rust port |
 | `qwen3` | Source | 64 | SNAC TTS wrapper over generic Qwen3 backbone | [Family port](src/tts/qwen3/README.md) |
 | `qwen3_tts` | Swift MLX | 35 | [Base cloning, CustomVoice, VoiceDesign](../../docs/QWEN3_TTS.md); no Rust inference module | Five pinned app profiles |
 | `rumik_oss` | README | 36 | Default task-qualified family | [Family port](src/tts/rumik_oss/README.md) |
 | `sesame` | README | 30 | CSM / MisoTTS; aliases `csm`, `marvis` | [Family port](src/tts/sesame/README.md) |
 | `soprano` | README | 26 | Default task-qualified family | [Family port](src/tts/soprano/README.md) |
 | `spark` | README | 28 | Default task-qualified family; waveform decode through the [BiCodec codec port](src/codec/spark_bicodec/README.md) | [Family port](src/tts/spark/README.md) |
-| `tada` | Source | 75 | Default task-qualified family | None |
-| `vibevoice` | Source | 76 | Alias `vibevoice_streaming` | None |
+| `tada` | Source | 75 | Default task-qualified family | [Family port](src/tts/tada/README.md) over the shared [lm llama backbone](src/lm/README.md); ends at the de-normalized acoustic features and gray-code durations (the tada-codec decoder is a separate download), caller-owned tokenization |
+| `vibevoice` | Source | 76 | Alias `vibevoice_streaming` | [Family port](src/tts/vibevoice/README.md) over the shared [lm qwen2 backbone](src/lm/README.md) (split lower/upper halves) with the deterministic DPM-Solver++, voice-cache conditioning, and the VAE acoustic decoder; non-streaming single batch, caller-owned tokenization |
 | `voxcpm` | Source | 77 | Alias `voxcpm1.5` | None |
 | `voxcpm2` | README | 37 | Default task-qualified family | None |
 | `voxtral_tts` | README | 43 | Default task-qualified family | None |
@@ -333,6 +333,7 @@ Forced alignment and audio understanding retain their own capabilities.
 | `voxtral_realtime` | [Family port](src/stt/voxtral_realtime/README.md) | 19 | Pinned `mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit` @ `fdebf7b2af834a1db4b8a3c99ab7480b333adf9e`; Rust checkpoint transcript byte-identical, chunked-vs-full encoder bit-exact; offline path ported, streaming session refused | [Family port](src/stt/voxtral_realtime/mod.rs) |
 | `wav2vec` | [Family port](src/stt/wav2vec/README.md) | None | Pinned `facebook/wav2vec2-base-960h` @ `22aad52d435eb6dbaf354bdad9b0da84ce7d6156`; post-norm encoder plus the checkpoint's own CTC head; Rust checkpoint transcript byte-identical (`THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG`); upstream does not auto-route this family | [Family port](src/stt/wav2vec/mod.rs) |
 | `whisper` | README | 6, 7 | Whisper and distilled profiles share one family | [Port](src/stt/whisper/mod.rs) & [Runtime](../runtime/src/whisper/mod.rs) |
+| `whistle` | [Native CQ CPU port](src/stt/whistle/README.md) | None | Pinned Needle `.cact` checkpoint @ `b358ddadd89b7a713b5aa131f23032d3cca1b251`; CQ2/CQ4 Hadamard quant, Conformer encoder, causal text decoder with engrams; transcript matches released CPU oracle on English clips | [Family port](src/stt/whistle/mod.rs) |
 
 ### Initial pinned MLX reference runs
 
@@ -349,6 +350,7 @@ the shared small WAV remains in `/tmp` for further checks.
 
 | Profile | Hugging Face repository | Revision | Result |
 |---|---|---|---|
+| Whistle | `Cactus-Compute/whistle` | `b358ddadd89b7a713b5aa131f23032d3cca1b251` | Released CPU reference oracle and Rust loaded the pin and matched transcript on English clips; Needle `.cact` format |
 | Nemotron 3.5 ASR | `mlx-community/nemotron-3.5-asr-streaming-0.6b` | `e550040c0478027ed679b2b6b0d055502c103663` | MLX 0.5.7 and Rust loaded the pin and returned "The quick brown fox jumps over the lazy dog." on the same clip |
 | Canary-1B-v2 q8 | `Mediform/canary-1b-v2-mlx-q8` | `0b6b32ee10f30c89e3ead7249bb636445e3019ee` | MLX 0.5.7 loaded and transcribed the same clip |
 | TDT v2 | `mlx-community/parakeet-tdt-0.6b-v2` | `8ae155301e23d820d82aa60d24817c900e69e487` | MLX load and transcription passed |

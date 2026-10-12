@@ -355,9 +355,12 @@ impl PromptBuilder {
         let mut segments = Vec::with_capacity(references.len());
         ids.push(self.tts_id);
         for reference in references {
-            if let (Some(text_ids), Some(ref_text_id)) =
-                (reference.text_ids.as_ref(), self.ref_text_id)
-            {
+            // The reference tests `if reference.text` (truthy): an empty
+            // transcript adds no <|ref_text|> marker.
+            if let (Some(text_ids), Some(ref_text_id)) = (
+                reference.text_ids.as_ref().filter(|ids| !ids.is_empty()),
+                self.ref_text_id,
+            ) {
                 ids.push(ref_text_id);
                 ids.extend_from_slice(text_ids);
             }
@@ -723,9 +726,17 @@ impl Model {
         let stride = self.config.codebook_stride();
         let mut out = vec![0.0f32; hidden];
         for (codebook, &code) in codes.iter().enumerate() {
+            // Each codebook owns `stride` rows; a larger code would read the
+            // next codebook's row instead of failing.
+            let index = index_of(code)?;
+            if index >= stride {
+                return Err(SpeechError::Input {
+                    why: format!("codebook {codebook} code {code} is outside its {stride} rows"),
+                });
+            }
             let row = embed_row(
                 &self.multimodal_embedding,
-                codebook * stride + index_of(code)?,
+                codebook * stride + index,
                 hidden,
             )?;
             for (col, value) in out.iter_mut().enumerate() {
@@ -773,6 +784,23 @@ impl Model {
         let mut pieces: Vec<Vec<f32>> = Vec::new();
         let mut cursor = 0usize;
         for (start, delayed_codes) in &parts.audio_segments {
+            // Segments must be ordered, non-overlapping, and inside the prompt;
+            // the slices below would panic otherwise.
+            let end = start
+                .checked_add(delayed_codes.len())
+                .filter(|&end| end <= parts.token_ids.len());
+            let end = match end {
+                Some(end) if *start >= cursor => end,
+                _ => {
+                    return Err(SpeechError::Input {
+                        why: format!(
+                            "audio segment at {start} with {} rows is outside the prompt or \
+                             overlaps the previous segment",
+                            delayed_codes.len()
+                        ),
+                    })
+                }
+            };
             pieces.push(crate::lm::engine::lookup_embeddings(
                 self.backbone.embed_table(),
                 vocab,
@@ -780,7 +808,7 @@ impl Model {
                 &parts.token_ids[cursor..*start],
             )?);
             pieces.push(self.embed_audio_codes_rows(delayed_codes)?);
-            cursor = start + delayed_codes.len();
+            cursor = end;
         }
         let tail = &parts.token_ids[cursor..];
         if tail.contains(&AUDIO_PLACEHOLDER_ID) {

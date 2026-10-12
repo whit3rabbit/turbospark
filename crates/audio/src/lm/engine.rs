@@ -98,6 +98,11 @@ pub(crate) struct Attention {
     /// no mask: the ring only holds positions inside the window). `None`
     /// is plain causal.
     pub(crate) window: Option<usize>,
+    /// Bidirectional attention (no causal bound): every query attends the
+    /// whole buffer. The OmniVoice NAR diffusion backbone disables the
+    /// causal mask (`backbone.py`); every autoregressive family leaves
+    /// this false.
+    pub(crate) bidirectional: bool,
 }
 
 /// SwiGLU feed-forward shared with the sibling backbone modules.
@@ -119,7 +124,9 @@ pub struct Backbone {
     pub config: DenseConfig,
     embed_tokens: Vec<f32>,
     layers: Vec<Block>,
-    norm: RmsNorm,
+    /// The final RMSNorm. Absent for the split-LM lower halves the
+    /// vibevoice family loads with `use_norm=False`.
+    norm: Option<RmsNorm>,
     /// Untied head; a tied head reuses `embed_tokens` as the weight.
     lm_head: Option<Linear>,
 }
@@ -133,6 +140,24 @@ impl Backbone {
         Self::load_with_embed_table(weights, config, "embed_tokens")
     }
 
+    /// Loads the backbone layers and final norm but no embedding table,
+    /// for the upper halves of split-LM families that never read token
+    /// ids (the vibevoice `tts_language_model` carries a reused table in
+    /// the checkpoint that generation never touches; skipping it avoids
+    /// holding a dead vocabulary-sized buffer). A [`Input::Tokens`]
+    /// forward or a tied-head logits call on such a backbone is an error.
+    pub fn load_without_embed_table(weights: &Weights, config: DenseConfig) -> Result<Self> {
+        Self::load_impl(weights, config, None, true)
+    }
+
+    /// Loads the backbone layers and embed table but no final norm,
+    /// for the lower halves of split-LM families (`use_norm=False`): the
+    /// checkpoint carries no `norm` tensor there and the hidden states
+    /// continue straight into the upper backbone.
+    pub fn load_without_final_norm(weights: &Weights, config: DenseConfig) -> Result<Self> {
+        Self::load_impl(weights, config, Some("embed_tokens"), false)
+    }
+
     /// [`Backbone::load`] with an alternative embed-table tensor base name
     /// (the prefix still applies). The higgs_audio_v3 raw-checkpoint layout
     /// keeps the text embedding at `tied.embedding.text_embedding` while
@@ -144,10 +169,32 @@ impl Backbone {
         config: DenseConfig,
         embed_table: &str,
     ) -> Result<Self> {
+        Self::load_impl(weights, config, Some(embed_table), true)
+    }
+
+    fn load_impl(
+        weights: &Weights,
+        config: DenseConfig,
+        embed_table: Option<&str>,
+        final_norm: bool,
+    ) -> Result<Self> {
         if let Some(window) = config.sliding_window {
             return Err(SpeechError::Unsupported {
                 why: format!(
                     "sliding_attention layers (window {window}) need layer-type-aware caches, which the dense engine does not configure; cohere2 owns the rotating cache path"
+                ),
+            });
+        }
+        // GQA group size is `heads / kv_heads` at forward time. Zero kv heads
+        // would divide by zero there (first forward, not load), so refuse here.
+        if config.num_key_value_heads == 0
+            || config.num_attention_heads % config.num_key_value_heads != 0
+        {
+            return Err(SpeechError::BadConfig {
+                field: "num_key_value_heads".into(),
+                why: format!(
+                    "must be non-zero and divide num_attention_heads {} (got {})",
+                    config.num_attention_heads, config.num_key_value_heads
                 ),
             });
         }
@@ -254,6 +301,7 @@ impl Backbone {
                     scale: (config.head_dim as f64).powf(-0.5) as f32,
                     rope: Some(rope.clone()),
                     window: None,
+                    bidirectional: false,
                 },
                 mlp: Mlp {
                     gate_proj,
@@ -264,8 +312,18 @@ impl Backbone {
                 post_attention_layernorm,
             });
         }
-        let embed_tokens = weights.embedding(embed_table, config.vocab_size, hidden)?;
-        let norm = RmsNorm::new(weights.tensor("norm", &[hidden])?, config.rms_norm_eps);
+        let embed_tokens = match embed_table {
+            Some(table) => weights.embedding(table, config.vocab_size, hidden)?,
+            None => Vec::new(),
+        };
+        let norm = if final_norm {
+            Some(RmsNorm::new(
+                weights.tensor("norm", &[hidden])?,
+                config.rms_norm_eps,
+            ))
+        } else {
+            None
+        };
         let lm_head = if config.tie_word_embeddings {
             None
         } else {
@@ -288,6 +346,15 @@ impl Backbone {
         &self.embed_tokens
     }
 
+    /// Disables the causal mask on every layer (the OmniVoice NAR
+    /// diffusion backbone). Additive opt-in: the autoregressive families
+    /// never call this.
+    pub fn set_bidirectional(&mut self, bidirectional: bool) {
+        for block in &mut self.layers {
+            block.attention.bidirectional = bidirectional;
+        }
+    }
+
     /// Runs the backbone and returns logits `[positions, vocab_size]`.
     /// `caches` may be `None` for a cacheless call (the reference passes
     /// `cache=None`); when present it must hold one cache per layer, and it
@@ -298,7 +365,7 @@ impl Backbone {
         caches: Option<&mut LayerCaches>,
     ) -> Result<Vec<f32>> {
         let projected = self.forward_hidden(input, caches)?;
-        Ok(self.apply_head(&projected))
+        self.apply_head(&projected)
     }
 
     /// Runs the backbone once and returns both the post-norm hidden states
@@ -313,24 +380,27 @@ impl Backbone {
         caches: Option<&mut LayerCaches>,
     ) -> Result<(Vec<f32>, Vec<f32>)> {
         let hidden = self.forward_hidden(input, caches)?;
-        let logits = self.apply_head(&hidden);
+        let logits = self.apply_head(&hidden)?;
         Ok((logits, hidden))
     }
 
     /// The tied or untied LM head over post-norm hidden states
     /// `[positions, hidden_size]`, yielding `[positions, vocab_size]`.
-    fn apply_head(&self, projected: &[f32]) -> Vec<f32> {
+    fn apply_head(&self, projected: &[f32]) -> Result<Vec<f32>> {
         let len = projected.len() / self.config.hidden_size;
         match &self.lm_head {
-            Some(head) => head.forward(projected, len),
-            None => ops::linear(
+            Some(head) => Ok(head.forward(projected, len)),
+            None if self.embed_tokens.is_empty() => Err(SpeechError::Input {
+                why: "tied head without an embed table".into(),
+            }),
+            None => Ok(ops::linear(
                 projected,
                 &self.embed_tokens,
                 None,
                 len,
                 self.config.hidden_size,
                 self.config.vocab_size,
-            ),
+            )),
         }
     }
 
@@ -398,7 +468,9 @@ impl Backbone {
                 }
             }
         }
-        self.norm.apply(&mut h, len);
+        if let Some(norm) = &self.norm {
+            norm.apply(&mut h, len);
+        }
         Ok(h)
     }
 }
@@ -469,12 +541,18 @@ impl Attention {
                 // those rows), and a single-position call passes no mask
                 // because the ring only ever retains the last
                 // `min(offset, w)` positions.
-                let (low, high) = match self.window {
-                    None => (0, g),
-                    Some(_) if len == 1 => (0, total - 1),
-                    Some(w) => {
-                        let end = offset.min(w - 1) + i;
-                        (end.saturating_sub(w - 1), end)
+                let (low, high) = if self.bidirectional {
+                    // The NAR diffusion backbones disable the causal mask:
+                    // every query attends the whole buffer.
+                    (0, total - 1)
+                } else {
+                    match self.window {
+                        None => (0, g),
+                        Some(_) if len == 1 => (0, total - 1),
+                        Some(w) => {
+                            let end = offset.min(w - 1) + i;
+                            (end.saturating_sub(w - 1), end)
+                        }
                     }
                 };
                 let high = high.min(total - 1);

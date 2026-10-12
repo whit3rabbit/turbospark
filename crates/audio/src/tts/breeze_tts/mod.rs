@@ -61,6 +61,22 @@ pub struct ModelConfig {
     pub sample_rate: u32,
 }
 
+/// Grouped-query attention needs `heads` to be an exact positive multiple
+/// of `kv_heads`. The attention loop divides by the ratio and indexes the
+/// KV table with it, so zero or a non-divisor panics or reads the wrong head.
+fn check_gqa(stack: &str, heads: usize, kv_heads: usize) -> Result<()> {
+    if heads == 0 || kv_heads == 0 || heads % kv_heads != 0 {
+        return Err(SpeechError::BadConfig {
+            field: format!("{stack}.num_key_value_heads"),
+            why: format!(
+                "num_attention_heads {heads} must be a positive multiple of \
+                 num_key_value_heads {kv_heads}"
+            ),
+        });
+    }
+    Ok(())
+}
+
 impl ModelConfig {
     /// `ModelConfig.from_dict` over a checkpoint `config.json` dict.
     pub fn from_json(value: &Value) -> Result<Self> {
@@ -112,7 +128,7 @@ impl ModelConfig {
             None => backbone_hidden,
         };
 
-        Ok(ModelConfig {
+        let config = ModelConfig {
             backbone: breeze_backbone_config(value, backbone_hidden)?,
             num_codebooks,
             vocab_size,
@@ -141,7 +157,31 @@ impl ModelConfig {
                 .and_then(Value::as_i64)
                 .unwrap_or(0) as i32,
             sample_rate,
-        })
+        };
+        check_gqa(
+            "backbone",
+            config.backbone.num_attention_heads,
+            config.backbone.num_key_value_heads,
+        )?;
+        check_gqa(
+            "text_encoder_config",
+            config.text_encoder.num_attention_heads,
+            config.text_encoder.num_key_value_heads,
+        )?;
+        check_gqa(
+            "depth_decoder_config",
+            config.depth_decoder.num_attention_heads,
+            config.depth_decoder.num_key_value_heads,
+        )?;
+        // depth_tokens runs `num_codebooks - 1` head steps, so 0 would
+        // underflow there.
+        if config.num_codebooks == 0 {
+            return Err(SpeechError::BadConfig {
+                field: "num_codebooks".into(),
+                why: "num_codebooks must be > 0".into(),
+            });
+        }
+        Ok(config)
     }
 }
 
@@ -1005,6 +1045,7 @@ impl DepthDecoder {
                     scale: (config.head_dim as f64).powf(-0.5) as f32,
                     rope: Some(rope.clone()),
                     window: None,
+                    bidirectional: false,
                 },
                 mlp: Mlp {
                     gate_proj: weights.linear_absolute(
@@ -1112,9 +1153,18 @@ impl DepthDecoder {
             if position == 0 {
                 continue;
             }
-            let index = usize::try_from(token).map_err(|_| SpeechError::Input {
-                why: format!("negative depth token {token}"),
-            })? + (position - 1) * config.vocab_size;
+            // Range-check against the per-codebook vocab. An id at or above
+            // it would land in the next codebook's rows and embed silently.
+            let code = usize::try_from(token)
+                .ok()
+                .filter(|&c| c < config.vocab_size)
+                .ok_or_else(|| SpeechError::Input {
+                    why: format!(
+                        "depth token {token} outside codebook vocab {}",
+                        config.vocab_size
+                    ),
+                })?;
+            let index = code + (position - 1) * config.vocab_size;
             let source = embed_slice(&self.embed_tokens, index, width)?;
             embeds[position * width..(position + 1) * width].copy_from_slice(source);
         }
@@ -1250,6 +1300,7 @@ impl AudioBackbone {
                     scale: (config.head_dim as f64).powf(-0.5) as f32,
                     rope: Some(rope.clone()),
                     window: None,
+                    bidirectional: false,
                 },
                 mlp: Mlp {
                     gate_proj: weights.linear_absolute(
@@ -1451,9 +1502,18 @@ impl Model {
         }
         let mut summed = vec![0.0f32; width];
         for (codebook, &code) in codes.iter().enumerate() {
-            let index = usize::try_from(code).map_err(|_| SpeechError::Input {
-                why: format!("negative audio code {code}"),
-            })? + codebook * self.config.vocab_size;
+            // Same bound as the depth path: codes come from user reference
+            // prompts too, and an out-of-range id reads the next codebook.
+            let within = usize::try_from(code)
+                .ok()
+                .filter(|&c| c < self.config.vocab_size)
+                .ok_or_else(|| SpeechError::Input {
+                    why: format!(
+                        "audio code {code} outside codebook vocab {}",
+                        self.config.vocab_size
+                    ),
+                })?;
+            let index = within + codebook * self.config.vocab_size;
             let source = embed_slice(&self.audio_embed_tokens, index, width)?;
             for (col, value) in summed.iter_mut().enumerate() {
                 *value += source[col];

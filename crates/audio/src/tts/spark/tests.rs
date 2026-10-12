@@ -216,3 +216,16 @@ fn token_maps_extract_codes_in_order() {
     let globals = maps.extract_global(&[41, 101, 42]);
     assert_eq!(globals, vec![1, 2]);
 }
+
+#[test]
+fn config_refuses_values_that_do_not_fit_their_fields() {
+    // `as` casts used to wrap these silently. 2^40 does not fit i32 or u32.
+    let mut value = read_json("generate/config.json");
+    value["eos_token_id"] = serde_json::json!(1i64 << 40);
+    let error = super::ModelConfig::from_json(&value).unwrap_err();
+    assert!(error.to_string().contains("does not fit"), "{error}");
+    let mut value = read_json("generate/config.json");
+    value["sample_rate"] = serde_json::json!(1u64 << 40);
+    let error = super::ModelConfig::from_json(&value).unwrap_err();
+    assert!(error.to_string().contains("does not fit"), "{error}");
+}

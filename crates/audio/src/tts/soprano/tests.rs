@@ -274,3 +274,17 @@ fn sampled_path_runs_and_stops_with_the_shared_sampler() {
         got.tokens.len()
     );
 }
+
+#[test]
+fn oversized_dollar_amounts_are_not_spoken_as_zero() {
+    // u64 overflow used to parse to 0 and read as "zero dollars".
+    let got = clean_text("$99999999999999999999");
+    assert!(!got.contains("zero"), "{got}");
+    assert!(got.contains("99999999999999999999"), "{got}");
+    // Normal amounts keep the word form.
+    assert!(
+        clean_text("$5").contains("five dollars"),
+        "{}",
+        clean_text("$5")
+    );
+}

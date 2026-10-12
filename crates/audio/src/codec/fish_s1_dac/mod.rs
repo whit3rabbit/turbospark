@@ -1082,6 +1082,13 @@ impl FishDownsampleRvq {
                 why: "codes must carry at least the semantic book".to_string(),
             });
         }
+        let z = self.quantized_from_codes(codes, frames)?;
+        Ok(self.latents_through_post(&z, frames))
+    }
+
+    /// The reference `quantizer.decode` head: clipped-code embedding sums
+    /// (semantic book plus the residual books) at the downsampled rate.
+    fn quantized_from_codes(&self, codes: &[Vec<i32>], frames: usize) -> Result<Vec<f32>> {
         let semantic = self.semantic.from_codes(&codes[..1], frames)?;
         let z_q = if codes.len() > 1 {
             self.residual.from_codes(&codes[1..], frames)?
@@ -1092,8 +1099,15 @@ impl FishDownsampleRvq {
         for (v, pair) in z.iter_mut().zip(semantic.iter().zip(z_q.iter())) {
             *v = pair.0 + pair.1;
         }
+        Ok(z)
+    }
+
+    /// The post transformer plus the mirrored upsample stack: downsampled
+    /// channel-major latents -> encoder-frame-rate channel-major latents.
+    fn latents_through_post(&self, zq: &[f32], frames: usize) -> (Vec<f32>, usize) {
         let in_dim = self.semantic.input_dim;
-        let mut seq = frames;
+        let seq = frames;
+        let mut z = zq.to_vec();
         let mut rows = vec![0.0f32; z.len()];
         for t in 0..seq {
             for d in 0..in_dim {
@@ -1108,10 +1122,11 @@ impl FishDownsampleRvq {
         }
         for (conv, block) in &self.upsample {
             z = conv.forward(&z);
-            seq = z.len() / conv.conv.out_ch;
-            block.forward(&mut z, seq);
+            let out_seq = z.len() / conv.conv.out_ch;
+            block.forward(&mut z, out_seq);
         }
-        Ok((z, seq))
+        let seq = z.len() / in_dim;
+        (z, seq)
     }
 }
 
@@ -1122,7 +1137,6 @@ pub struct FishS1Dac {
     encoder_blocks: Vec<FishEncoderBlock>,
     encoder_alpha: Vec<f32>,
     encoder_conv_out: FishCausalConv,
-    encoder_out_ch: usize,
     quantizer: FishDownsampleRvq,
     decoder_conv_in: FishCausalConv,
     decoder_blocks: Vec<FishDecoderBlock>,
@@ -1323,8 +1337,6 @@ impl FishS1Dac {
             1,
             true,
         )?;
-        let encoder_out_ch = config.latent_dim;
-
         let quantizer = FishDownsampleRvq::load(&config, file)?;
 
         let dec = config.decoder_dim;
@@ -1372,7 +1384,6 @@ impl FishS1Dac {
             encoder_blocks,
             encoder_alpha,
             encoder_conv_out,
-            encoder_out_ch,
             quantizer,
             decoder_conv_in,
             decoder_blocks,
@@ -1384,6 +1395,37 @@ impl FishS1Dac {
     /// Mono samples -> codes per book plus the code length. Pads to a
     /// frame-length multiple exactly like the reference `encode`.
     pub fn encode(&self, samples: &[f32]) -> Result<(Vec<Vec<i32>>, usize)> {
+        let (z, frames) = self.encode_z(samples)?;
+        let (_quantized, codes) = self.quantizer_residual_encode(&z, frames);
+        let code_len = codes.first().map_or(0, |c| c.len());
+        Ok((codes, code_len))
+    }
+
+    /// Mono samples -> continuous latents `[latent_dim, frames]` at the
+    /// downsampled frame rate plus the frame count: the reference
+    /// `encode_zq` (the quantized `from_codes` sums over the padded
+    /// encoder output, before the post transformer and upsample).
+    pub fn encode_zq(&self, samples: &[f32]) -> Result<(Vec<f32>, usize)> {
+        let (z, frames) = self.encode_z(samples)?;
+        let (_quantized, codes) = self.quantizer_residual_encode(&z, frames);
+        let frames = codes.first().map_or(0, |c| c.len());
+        if codes.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let mut zq = self.quantizer.semantic.from_codes(&codes[..1], frames)?;
+        if codes.len() > 1 {
+            let residual = self.quantizer.residual.from_codes(&codes[1..], frames)?;
+            for (value, res) in zq.iter_mut().zip(residual) {
+                *value += res;
+            }
+        }
+        Ok((zq, frames))
+    }
+
+    /// The padded waveform through the encoder stack: channel-major
+    /// latents at the hop rate plus the frame count. Shared by
+    /// [`Self::encode`] and [`Self::encode_zq`].
+    fn encode_z(&self, samples: &[f32]) -> Result<(Vec<f32>, usize)> {
         if samples.is_empty() {
             return Err(SpeechError::Input {
                 why: "empty waveform".to_string(),
@@ -1422,13 +1464,16 @@ impl FishS1Dac {
                 }
             }
         }
-        let seq = h.len() / self.encoder_out_ch;
-        snake1d(&mut h, &self.encoder_alpha, self.encoder_out_ch, seq);
+        // The reference tail is Snake1d(d_model) with d_model the last
+        // block channel count (encoder_dim * 2^len(rates)), then the
+        // 3-tap conv down to the latent dim; the two only coincide in
+        // the build_ae geometry.
+        let channels = self.encoder_alpha.len();
+        let seq = h.len() / channels;
+        snake1d(&mut h, &self.encoder_alpha, channels, seq);
         let z = self.encoder_conv_out.forward(&h, seq);
         let frames = z.len() / self.config.quantizer.input_dim;
-        let (_quantized, codes) = self.quantizer_residual_encode(&z, frames);
-        let code_len = codes.first().map_or(0, |c| c.len());
-        Ok((codes, code_len))
+        Ok((z, frames))
     }
 
     fn quantizer_residual_encode(&self, z: &[f32], frames: usize) -> (Vec<f32>, Vec<Vec<i32>>) {
@@ -1548,7 +1593,30 @@ impl FishS1Dac {
                 why: format!("upsampled frames {seq} do not match the code length"),
             });
         }
-        let mut h = self.decoder_conv_in.forward(&z, seq);
+        self.decoder_stack(&z, seq)
+    }
+
+    /// Continuous channel-major latents `[latent_dim, frames]` at the
+    /// downsampled frame rate -> mono samples: the reference `decode_zq`
+    /// (post transformer, upsample stack, decoder).
+    pub fn decode_zq(&self, zq: &[f32], frames: usize) -> Result<Vec<f32>> {
+        let in_dim = self.config.quantizer.input_dim;
+        if frames * in_dim != zq.len() {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "zq length {} does not match latent dim {in_dim} x frames {frames}",
+                    zq.len()
+                ),
+            });
+        }
+        let (z, seq) = self.quantizer.latents_through_post(zq, frames);
+        self.decoder_stack(&z, seq)
+    }
+
+    /// The decoder stack over channel-major latents at the hop rate:
+    /// conv in, transposed-conv blocks, snake tail, conv out, tanh.
+    fn decoder_stack(&self, z: &[f32], seq: usize) -> Result<Vec<f32>> {
+        let mut h = self.decoder_conv_in.forward(z, seq);
         for block in &self.decoder_blocks {
             let seq_in = h.len() / block.in_ch;
             let mut h2 = h.clone();

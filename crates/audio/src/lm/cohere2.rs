@@ -247,6 +247,7 @@ impl Cohere2Model {
                     } else {
                         None
                     },
+                    bidirectional: false,
                 },
                 mlp: Mlp {
                     gate_proj: weights.linear(
