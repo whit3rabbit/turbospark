@@ -202,6 +202,22 @@ impl RealForwardRunner {
         self.prefill_steel = on;
     }
 
+    /// `TURBOSPARK_MTP_BATCHED_PRIME` for tests: whether the qwen dense
+    /// batched prefill arm primes an open MTP head per micro-batch (`true`)
+    /// or per row.
+    #[doc(hidden)]
+    pub fn set_mtp_batched_prime(&mut self, on: bool) {
+        self.mtp_batched_prime = on;
+    }
+
+    /// `TURBOSPARK_PREFILL_ROWS_ATTN` for tests: whether the qwen dense
+    /// batched prefill arm runs its attention through the multi-row GQA
+    /// partial. Takes effect at the next chunk.
+    #[doc(hidden)]
+    pub fn set_prefill_rows_attention(&mut self, on: bool) {
+        self.prefill_rows_attention = on;
+    }
+
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the
     /// per-layer K/V buffers are sized `max_context * kv_stride` up front
     /// (the decode hot path never allocates), so generation past

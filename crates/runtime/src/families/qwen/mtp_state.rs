@@ -41,10 +41,13 @@ pub(crate) struct MtpState {
     /// One full-attention layer. See the module header for why this is not
     /// the trunk's cache widened by one.
     pub(crate) kv: gpu::KvCacheManager,
-    /// `[2 * hidden]` halfs: the normalized next-token embedding in the low
-    /// half and the normalized trunk hidden state in the high half. `fc` is
-    /// the only tensor in the model whose input is `2 * hidden` wide, so
-    /// nothing else can be read through this buffer by accident.
+    /// `[MAX_PREFILL_ROWS, 2 * hidden]` halfs: per row, the normalized
+    /// next-token embedding in the low half and the normalized trunk hidden
+    /// state in the high half. A draft step uses row 0; priming a chunked
+    /// prefill micro-batch uses one row per prompt position
+    /// (`mtp_prime_rows_batched`). `fc` is the only tensor in the model whose
+    /// input is `2 * hidden` wide, so nothing else can be read through this
+    /// buffer by accident.
     pub(crate) concat: gpu::MetalBuffer,
     /// How many tokens a round proposes, from `TURBOSPARK_MTP_DRAFT`.
     pub(crate) depth: usize,
@@ -148,9 +151,12 @@ impl MtpState {
         )
         .map_err(RealForwardError::Gpu)?;
         let dump_dir = dump_dir();
+        // 1.25 MiB at this architecture's 64 Steel rows, paid only with a head
+        // open, so the frozen MTP-off oracle row does not move.
+        let rows = crate::real_forward_types::MAX_PREFILL_ROWS as u64;
         Ok(Some(Self {
             kv,
-            concat: context.new_output_buffer(2 * hidden * 2),
+            concat: context.new_output_buffer(rows * 2 * hidden * 2),
             depth,
             batched,
             dump_dir,

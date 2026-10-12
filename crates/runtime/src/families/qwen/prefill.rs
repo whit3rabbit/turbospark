@@ -207,11 +207,12 @@ impl RealForwardRunner {
             // `batched_prefill()` below it is infallible.
             let arch = self.arch.clone();
             let steel = self.prefill_steel;
+            let rows_attention = self.prefill_rows_attention;
             let context = &mut self.context;
             self.real_qwen
                 .as_mut()
                 .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?
-                .ensure_batched_prefill(context, &arch, steel)?;
+                .ensure_batched_prefill(context, &arch, steel, rows_attention)?;
         }
         // The batched arm's micro-batch is whatever its scratch was sized
         // for (64 rows with Steel, 16 without); the per-token arm's is 16.
@@ -246,6 +247,7 @@ impl RealForwardRunner {
                     &tokens[offset..offset + take],
                     start_position + offset,
                     after,
+                    batched,
                 )?;
             }
             offset += take;
@@ -260,13 +262,37 @@ impl RealForwardRunner {
     /// reading its own row. A row with no known next token ends the prompt:
     /// it is copied to row 0, where the decode loop's first draft step reads
     /// the last prompt position's hidden state.
+    ///
+    /// On the batched arm the whole micro-batch primes in one command buffer
+    /// on that arm's M-row scratch (`mtp_prime_rows_batched`), with the same
+    /// rows, tokens and row-0 copy. The per-token arm, a dump run
+    /// (`TURBOSPARK_MTP_DUMP`, which reads one step's intermediates), and
+    /// `TURBOSPARK_MTP_BATCHED_PRIME=0` prime per row.
     fn prime_mtp_rows(
         &mut self,
         tokens: &[i32],
         start: usize,
         after: Option<i32>,
+        batched: bool,
     ) -> Result<(), RealForwardError> {
         let m = tokens.len();
+        let head_kv_wraps = self
+            .real_mtp
+            .as_ref()
+            .is_some_and(|mtp| start % mtp.kv.capacity(0) + m > mtp.kv.capacity(0));
+        if batched
+            && self.mtp_batched_prime
+            && !head_kv_wraps
+            && self
+                .real_mtp
+                .as_ref()
+                .is_some_and(|mtp| mtp.dump_dir.is_none())
+        {
+            let mut next: Vec<i32> = tokens[1..].to_vec();
+            next.extend(after);
+            let copy_to_row0 = (after.is_none() && m > 1).then_some(m - 1);
+            return self.mtp_prime_rows_batched(&next, start, copy_to_row0);
+        }
         for t in 0..m {
             let next = if t + 1 < m {
                 Some(tokens[t + 1])

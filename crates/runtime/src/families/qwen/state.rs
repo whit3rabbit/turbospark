@@ -343,7 +343,8 @@ impl RealQwenState {
     }
 
     /// Allocates the chunked driver's M-row scratch the first time its
-    /// batched-GEMV arm asks for it, and is a no-op afterwards.
+    /// batched-GEMV arm asks for it. Afterwards it only adds or drops the
+    /// multi-row attention partials to match `rows_attention`.
     ///
     /// Idempotent rather than "call once", because the entry point that
     /// calls it (`prefill_chunk_real_qwen_dense`) is reached once per CHUNK
@@ -364,10 +365,42 @@ impl RealQwenState {
         context: &mut gpu::MetalContext,
         arch: &ArchConfig,
         steel: bool,
+        rows_attention: bool,
     ) -> Result<(), RealForwardError> {
-        if self.batched_prefill.is_some() {
-            return Ok(());
+        if self.batched_prefill.is_none() {
+            self.allocate_batched_prefill(context, arch, steel)?;
         }
+        // Reconciled on every call, unlike the Steel choice, so one runner
+        // can A/B it (`qwen38_prefill_arm_probe`). 3.1 MiB of partials at
+        // Qwen3.8's shape and 64 rows, allocated only where the shape is one
+        // the kernel serves.
+        let (heads, kv_heads, head_dim) = (
+            arch.num_heads as u32,
+            arch.num_full_kv_heads as u32,
+            arch.full_head_dim as u32,
+        );
+        let scratch = self.batched_prefill.as_mut().expect("allocated just above");
+        let want = rows_attention && gpu::attention_decode_gqa_supported(head_dim, heads, kv_heads);
+        if want && scratch.rows_attention.is_none() {
+            scratch.rows_attention = Some(gpu::GqaRowsScratch::new(
+                context,
+                scratch.batch as u32,
+                heads,
+                head_dim,
+                gpu::GQA_ROWS_SCRATCH_CHUNKS,
+            ));
+        } else if !want {
+            scratch.rows_attention = None;
+        }
+        Ok(())
+    }
+
+    fn allocate_batched_prefill(
+        &mut self,
+        context: &mut gpu::MetalContext,
+        arch: &ArchConfig,
+        steel: bool,
+    ) -> Result<(), RealForwardError> {
         let rows = if steel {
             crate::real_forward_types::QWEN_STEEL_PREFILL_BATCH
         } else {

@@ -2,7 +2,7 @@ use model_io::{ArchConfig, ResidentIndex};
 
 use super::batched::BatchedScratch;
 use crate::families::qwen::{
-    layer_tensor, prefixed_layer_tensor, RealQwenState, RMS_EPS, TRUNK_PREFIX,
+    layer_tensor, prefixed_layer_tensor, QkNormConvention, RealQwenState, RMS_EPS,
 };
 use crate::real_forward_dispatch::encode_gemm_rows;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
@@ -16,6 +16,11 @@ use crate::real_forward_utils::norm_view;
 /// output is token-major with a row stride of `kv_dim` halfs, which is the
 /// cache's own per-token stride; the assertion below is what keeps that a
 /// checked fact rather than a coincidence.
+///
+/// `prefix`, `layer` and `qk_norms` name the block as the single-row
+/// `attn::encode_full_attention_block` does: the trunk's layers, or the MTP
+/// head's one block (`MTP_PREFIX`, layer 0, its own KV, centered q/k norms)
+/// when the chunked driver primes the head over a micro-batch.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_full_attention_block_batched(
     context: &mut gpu::MetalContext,
@@ -27,7 +32,9 @@ pub(crate) fn encode_full_attention_block_batched(
     scratch: &DecodeScratch,
     batched: &BatchedScratch,
     kv: &gpu::KvCacheManager,
+    prefix: &str,
     layer: usize,
+    qk_norms: QkNormConvention,
     start_position: usize,
     batch: usize,
 ) -> Result<(), RealForwardError> {
@@ -38,8 +45,7 @@ pub(crate) fn encode_full_attention_block_batched(
     let head_dim = arch.full_head_dim as u32;
     let q_dim = (num_heads * head_dim) as usize;
     let kv_dim = (num_kv * head_dim) as usize;
-    let name =
-        |suffix: &str| prefixed_layer_tensor(TRUNK_PREFIX, layer, &format!("self_attn.{suffix}"));
+    let name = |suffix: &str| prefixed_layer_tensor(prefix, layer, &format!("self_attn.{suffix}"));
 
     // `--kv-bits` is not wired to this M-row GEMM path (`crate::kv_write`'s
     // module doc): it writes K/V straight into the cache via a batched
@@ -97,6 +103,11 @@ pub(crate) fn encode_full_attention_block_batched(
 
     let q_norm = norm_view(weights, index, &name("q_norm.weight"), head_dim as usize)?;
     let k_norm = norm_view(weights, index, &name("k_norm.weight"), head_dim as usize)?;
+    // Per TENSOR, never per family: see `QkNormConvention`.
+    let encode_qk_norm = match qk_norms {
+        QkNormConvention::Plain => gpu::encode_rms_norm_bf16w_perhead,
+        QkNormConvention::Centered => gpu::encode_rms_norm_bf16w_perhead_centered,
+    };
     let theta = arch.full_rope_theta as f32;
     for m in 0..batch {
         let position = start_position + m;
@@ -113,12 +124,9 @@ pub(crate) fn encode_full_attention_block_batched(
 
         let q_row = (&batched.q, (m * q_dim) as u64 * 2);
         let k_row = (k_buf, (k_off + m * kv_dim * 2) as u64);
-        // The TRUNK's q/k norms are plain; only its MTP head's are centered.
         for (data, weight, heads) in [(q_row, q_norm, num_heads), (k_row, k_norm, num_kv)] {
-            gpu::encode_rms_norm_bf16w_perhead(
-                context, pass, data, weight, data, heads, head_dim, RMS_EPS,
-            )
-            .map_err(gpu_err)?;
+            encode_qk_norm(context, pass, data, weight, data, heads, head_dim, RMS_EPS)
+                .map_err(gpu_err)?;
         }
         for (data, heads) in [(q_row, num_heads), (k_row, num_kv)] {
             gpu::encode_rope_neox_subdim(
@@ -144,25 +152,60 @@ pub(crate) fn encode_full_attention_block_batched(
     // at short context, where widening it measured not worth a kernel; its
     // long-context cost is what the GQA-shared partial behind
     // `encode_attention_decode` addresses (`real_forward_types.rs`).
-    for m in 0..batch {
-        gpu::encode_attention_decode(
+    //
+    // The chunked-prefill scratch can instead run all M queries through the
+    // multi-row GQA partial: one dispatch for the batch where the loop pays
+    // two per row, each too small to fill the GPU. Not bit-exact against the
+    // loop (its chunk boundaries are shared by the batch), so the verify
+    // scratch, which must match sequential decode, has no `rows_attention`
+    // and keeps the loop. A single row keeps the loop too, where the
+    // multi-row kernel measured 0.89-1.07x. It follows the scratch's one-row
+    // kernel choice, so `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` still
+    // restores the loop.
+    let rows_attention = batched.rows_attention.as_ref().filter(|_| {
+        batch > 1 && scratch.attn.decode_kernel() == gpu::DecodeAttentionKernel::GqaShared
+    });
+    if let Some(rows) = rows_attention {
+        gpu::encode_attention_decode_gqa_rows(
             context,
             pass,
-            (&batched.q, (m * q_dim) as u64 * 2),
+            (&batched.q, 0),
             k_buf,
             v_buf,
-            &scratch.attn,
-            (&batched.attn_out, (m * q_dim) as u64 * 2),
+            rows,
+            (&batched.attn_out, 0),
             head_dim,
             num_heads,
             num_kv,
-            (start_position + m + 1) as u32,
+            start_position as u32,
+            batch as u32,
             0,
             0,
             arch.attention_scale as f32,
-            None,
         )
         .map_err(gpu_err)?;
+    }
+    for m in 0..batch {
+        if rows_attention.is_none() {
+            gpu::encode_attention_decode(
+                context,
+                pass,
+                (&batched.q, (m * q_dim) as u64 * 2),
+                k_buf,
+                v_buf,
+                &scratch.attn,
+                (&batched.attn_out, (m * q_dim) as u64 * 2),
+                head_dim,
+                num_heads,
+                num_kv,
+                (start_position + m + 1) as u32,
+                0,
+                0,
+                arch.attention_scale as f32,
+                None,
+            )
+            .map_err(gpu_err)?;
+        }
         gpu::encode_sigmoid_gate_mul(
             context,
             pass,
@@ -501,7 +544,8 @@ pub(crate) fn replay_linear_state_batched(
 }
 
 /// The dense FFN at M rows: batched gate/up, `silu_mul` per token, batched
-/// down, then the raw residual add per token.
+/// down, then the raw residual add per token. `prefix` is `TRUNK_PREFIX`,
+/// or `MTP_PREFIX` for the head, whose FFN is the trunk's dense width.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_dense_ffn_batched(
     context: &mut gpu::MetalContext,
@@ -510,6 +554,7 @@ pub(crate) fn encode_dense_ffn_batched(
     index: &ResidentIndex,
     scratch: &DecodeScratch,
     batched: &BatchedScratch,
+    prefix: &str,
     layer: usize,
     hidden: usize,
     inter: usize,
@@ -526,7 +571,7 @@ pub(crate) fn encode_dense_ffn_batched(
             pass,
             weights,
             index,
-            &prefixed_layer_tensor(TRUNK_PREFIX, layer, suffix),
+            &prefixed_layer_tensor(prefix, layer, suffix),
             inter,
             hidden,
             (&batched.moe_x, 0),
@@ -559,7 +604,7 @@ pub(crate) fn encode_dense_ffn_batched(
         pass,
         weights,
         index,
-        &prefixed_layer_tensor(TRUNK_PREFIX, layer, "mlp.down_proj.weight"),
+        &prefixed_layer_tensor(prefix, layer, "mlp.down_proj.weight"),
         hidden,
         inter,
         (&batched.ffn_act, 0),

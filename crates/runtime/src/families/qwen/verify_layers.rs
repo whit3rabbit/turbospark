@@ -4,7 +4,7 @@ use model_io::{ArchConfig, ResidentIndex};
 
 use super::batched_layers::{encode_full_attention_block_batched, encode_linear_block_batched};
 use super::moe_batch::encode_qwen_layer_moe_batched;
-use super::{layer_tensor, BatchedScratch, RealQwenState, RMS_EPS};
+use super::{layer_tensor, BatchedScratch, QkNormConvention, RealQwenState, RMS_EPS, TRUNK_PREFIX};
 use crate::real_forward_init::MappedResidency;
 use crate::real_forward_layout::RoutedLayerLayout;
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
@@ -192,7 +192,9 @@ pub(crate) fn encode_qwen_layer_attn_and_norms_batched(
             scratch,
             batched,
             kv,
+            TRUNK_PREFIX,
             layer,
+            QkNormConvention::Plain,
             start_position,
             batch,
         )?;

@@ -278,6 +278,17 @@ pub struct RealForwardRunner {
     /// `TURBOSPARK_PREFILL_STEEL=0`. Prefill only: decode and the drafters'
     /// verify never see it.
     pub(crate) prefill_steel: bool,
+    /// Whether the qwen dense chunked driver's batched arm primes an open
+    /// MTP head one micro-batch at a time (`mtp_prime_rows_batched`) rather
+    /// than one command buffer per prompt row. On unless
+    /// `TURBOSPARK_MTP_BATCHED_PRIME=0`. The per-token arm always primes per
+    /// row.
+    pub(crate) mtp_batched_prime: bool,
+    /// Whether the qwen dense batched prefill arm runs a micro-batch's
+    /// attention through the multi-row GQA partial, one K/V read per group
+    /// of rows, instead of the one-row kernel per row. On unless
+    /// `TURBOSPARK_PREFILL_ROWS_ATTN=0`. Prefill only, like Steel.
+    pub(crate) prefill_rows_attention: bool,
     /// Which layout each layer's routed expert blobs use, PER PHASE.
     pub(crate) routed_layouts: Vec<RoutedLayerLayout>,
     /// Per-layer expert-selection histogram, `None` unless

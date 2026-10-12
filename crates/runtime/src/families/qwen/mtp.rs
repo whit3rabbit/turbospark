@@ -49,6 +49,7 @@
 
 use foundation::LogitValue;
 
+use super::batched_layers::{encode_dense_ffn_batched, encode_full_attention_block_batched};
 pub(crate) use super::mtp_state::MtpState;
 use super::mtp_state::{
     FC, FINAL_NORM, PRE_FC_NORM_EMBEDDING, PRE_FC_NORM_HIDDEN, TRUNK_FINAL_NORM,
@@ -58,7 +59,7 @@ use crate::families::qwen::{
     RMS_EPS,
 };
 use crate::real_forward::{RealForwardError, RealForwardRunner};
-use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
+use crate::real_forward_dispatch::{encode_embed_any, encode_gemm_rows, encode_gemv_any};
 use crate::real_forward_utils::norm_view;
 use crate::vision::RopePosition;
 
@@ -125,6 +126,246 @@ impl RealForwardRunner {
         h_row: usize,
     ) -> Result<(), RealForwardError> {
         self.mtp_step(next_token, position, h_row, None)
+    }
+
+    /// [`Self::mtp_prime_step_row`] over a whole micro-batch at once: row
+    /// `t` of `scratch.x` holds the trunk's hidden state for `start + t`,
+    /// and `next_tokens[t]` is the token at `start + t + 1`. Runs on the
+    /// chunked driver's batched-arm scratch, so each head weight is read
+    /// once per micro-batch through `encode_gemm_rows` (Steel when that
+    /// scratch says so) and the whole priming is one command buffer, where
+    /// the per-row step costs one buffer and one GEMV per weight per row.
+    ///
+    /// The head's residual stream overwrites rows `[0, k)` of `scratch.x`,
+    /// exactly as the per-row step overwrites row 0. `copy_to_row0` names a
+    /// row at or past `k` (the last prompt position, which has no next token
+    /// and is not primed) to copy to row 0 after the block, where the decode
+    /// loop's first draft step reads it.
+    pub(crate) fn mtp_prime_rows_batched(
+        &mut self,
+        next_tokens: &[i32],
+        start: usize,
+        copy_to_row0: Option<usize>,
+    ) -> Result<(), RealForwardError> {
+        let arch = self.arch.clone();
+        let hidden = arch.hidden_size as usize;
+        let inter = arch.intermediate_size as usize;
+        let vocab = arch.vocab_size as usize;
+        let use_silu = arch.hidden_activation.contains("silu");
+        let k = next_tokens.len();
+        let gpu_err = RealForwardError::Gpu;
+        let row = |t: usize| (t * hidden * 2) as u64;
+
+        let Some(mtp) = self.real_mtp.as_ref() else {
+            return Err(RealForwardError::Unsupported(
+                "no MTP head state to prime".to_string(),
+            ));
+        };
+        // The same cursor rule as `mtp_step`: the block attends over
+        // `[0, start + t]` and writes rows `[start, start + k)`.
+        let cursor = mtp.kv_position();
+        if start != cursor {
+            return Err(RealForwardError::Unsupported(format!(
+                "MTP batched prime at position {start} but the head's KV covers [0, {cursor})"
+            )));
+        }
+        // The batched K/V projections write `k` ADJACENT slots, so they
+        // cannot straddle the cache's capacity (the trunk's backstop in
+        // `prefill.rs`, for the head's own one-layer cache).
+        let capacity = mtp.kv.capacity(0);
+        if start % capacity + k > capacity {
+            return Err(RealForwardError::Unsupported(format!(
+                "MTP batched prime of {k} rows at {start} wraps the head's KV capacity {capacity}"
+            )));
+        }
+        if let Some(&bad) = next_tokens.iter().find(|&&t| (t as usize) >= vocab) {
+            return Err(RealForwardError::Unsupported(format!(
+                "prime token id {bad} outside vocab {vocab}"
+            )));
+        }
+        let qwen = self
+            .real_qwen
+            .as_ref()
+            .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?;
+        let Some(batched) = qwen.batched_prefill.as_ref() else {
+            return Err(RealForwardError::Unsupported(
+                "MTP batched prime needs the chunked driver's batched-arm scratch".to_string(),
+            ));
+        };
+        if k > batched.batch || copy_to_row0.is_some_and(|r| r < k || r >= batched.batch) {
+            return Err(RealForwardError::Unsupported(format!(
+                "MTP batched prime of {k} rows (row-0 copy {copy_to_row0:?}) does not fit the \
+                 {}-row prefill scratch",
+                batched.batch
+            )));
+        }
+
+        let embed_name = "language_model.model.embed_tokens.weight";
+        let pass = self.context.begin_pass_labeled("mtp batched prime");
+        let (context, weights, index, scratch) =
+            (&mut self.context, &self.weights, &self.index, &self.scratch);
+
+        if k > 0 {
+            // 1. `fc`'s input per row, as `mtp_step` builds it: the trunk's
+            //    POST-final-norm hidden state into the high half, then the
+            //    next token's embedding into the low half, each through its
+            //    own centered norm. `batched.normed` is the per-row temporary
+            //    `scratch.normed` is there, and every hidden half is read
+            //    before the embeddings overwrite it.
+            let trunk_norm = norm_view(weights, index, TRUNK_FINAL_NORM, hidden)?;
+            let pre_h = norm_view(weights, index, PRE_FC_NORM_HIDDEN, hidden)?;
+            for t in 0..k {
+                gpu::encode_rms_norm_bf16w(
+                    context,
+                    &pass,
+                    (&scratch.x, row(t)),
+                    trunk_norm,
+                    (&batched.normed, row(t)),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+                gpu::encode_rms_norm_bf16w_centered(
+                    context,
+                    &pass,
+                    (&batched.normed, row(t)),
+                    pre_h,
+                    (&mtp.concat, 2 * row(t) + hidden as u64 * 2),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+            }
+            let pre_e = norm_view(weights, index, PRE_FC_NORM_EMBEDDING, hidden)?;
+            for (t, &token) in next_tokens.iter().enumerate() {
+                encode_embed_any(
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    embed_name,
+                    (&batched.normed, row(t)),
+                    token as u32,
+                    hidden as u32,
+                    vocab,
+                    1.0,
+                )?;
+                gpu::encode_rms_norm_bf16w_centered(
+                    context,
+                    &pass,
+                    (&batched.normed, row(t)),
+                    pre_e,
+                    (&mtp.concat, 2 * row(t)),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+            }
+            // `fc`'s output is the head's residual stream for these rows.
+            encode_gemm_rows(
+                context,
+                &pass,
+                weights,
+                index,
+                FC,
+                hidden,
+                2 * hidden,
+                (&mtp.concat, 0),
+                (&scratch.x, 0),
+                k,
+                batched.steel_gemm,
+            )?;
+
+            // 2. The block: a trunk full-attention layer under the head's
+            //    prefix, against the head's own KV, with its centered norms.
+            let input_norm = norm_view(
+                weights,
+                index,
+                &prefixed_layer_tensor(MTP_PREFIX, 0, "input_layernorm.weight"),
+                hidden,
+            )?;
+            for t in 0..k {
+                gpu::encode_rms_norm_bf16w_centered(
+                    context,
+                    &pass,
+                    (&scratch.x, row(t)),
+                    input_norm,
+                    (&batched.normed, row(t)),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+            }
+            encode_full_attention_block_batched(
+                context,
+                &pass,
+                weights,
+                index,
+                &arch,
+                qwen,
+                scratch,
+                batched,
+                &mtp.kv,
+                MTP_PREFIX,
+                0,
+                QkNormConvention::Centered,
+                start,
+                k,
+            )?;
+            let post_attn = norm_view(
+                weights,
+                index,
+                &prefixed_layer_tensor(MTP_PREFIX, 0, "post_attention_layernorm.weight"),
+                hidden,
+            )?;
+            for t in 0..k {
+                // RAW residual add, as in `mtp_step` (no sandwich norms).
+                gpu::encode_residual_add(
+                    context,
+                    &pass,
+                    (&scratch.x, row(t)),
+                    (&batched.o, row(t)),
+                    hidden as u32,
+                )
+                .map_err(gpu_err)?;
+                gpu::encode_rms_norm_bf16w_centered(
+                    context,
+                    &pass,
+                    (&scratch.x, row(t)),
+                    post_attn,
+                    (&batched.moe_x, row(t)),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+            }
+            encode_dense_ffn_batched(
+                context, &pass, weights, index, scratch, batched, MTP_PREFIX, 0, hidden, inter,
+                use_silu, k,
+            )?;
+            // No final norm and no head: priming wants the KV rows alone.
+        }
+
+        // After the block, so its writes to row 0 land first.
+        if let Some(r) = copy_to_row0 {
+            gpu::encode_dflash_copy_rows(
+                context,
+                &pass,
+                (&scratch.x, row(r)),
+                (&scratch.x, 0),
+                1,
+                hidden as u32,
+                hidden as u32,
+            )
+            .map_err(gpu_err)?;
+        }
+        pass.commit_and_wait();
+        self.real_mtp
+            .as_mut()
+            .expect("checked above")
+            .kv
+            .advance_by(k);
+        Ok(())
     }
 
     /// Drops head rows at `[position, cursor)`, so the head can follow the

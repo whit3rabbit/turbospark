@@ -13,6 +13,10 @@
 //! fixture, so those comparisons are `==`. The Steel arm rounds weights to
 //! FP16 operands and is held to a bound instead. Prompt lengths cross the
 //! 16-row and 64-row micro-batches and the 128-token chunk.
+//!
+//! The batched arms prime the head one micro-batch at a time
+//! (`mtp_prime_rows_batched`) unless `set_mtp_batched_prime(false)`, which
+//! keeps the per-row step; both are covered on the scalar arm.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -132,6 +136,22 @@ fn the_scalar_batched_arm_primes_the_head_exactly_too() {
     let mut runner = open_with_head("scalar-batched");
     runner.set_batched_gemv_prefill(true);
     runner.set_prefill_steel(false);
+    runner.set_mtp_batched_prime(true);
+    for n in LENGTHS {
+        let ids = prompt(n);
+        let want = reference(&mut runner, &ids);
+        let got = chunked(&mut runner, &ids);
+        assert_eq!(got.0, want.0, "{n} tokens: the trunk's last logits differ");
+        assert_eq!(got.1, want.1, "{n} tokens: the first draft differs");
+    }
+}
+
+#[test]
+fn the_scalar_batched_arm_primes_the_head_exactly_per_row_too() {
+    let mut runner = open_with_head("scalar-batched-per-row");
+    runner.set_batched_gemv_prefill(true);
+    runner.set_prefill_steel(false);
+    runner.set_mtp_batched_prime(false);
     for n in LENGTHS {
         let ids = prompt(n);
         let want = reference(&mut runner, &ids);
@@ -146,6 +166,7 @@ fn the_steel_arm_primes_the_head_within_the_bound() {
     let mut runner = open_with_head("steel");
     runner.set_batched_gemv_prefill(true);
     runner.set_prefill_steel(true);
+    runner.set_mtp_batched_prime(true);
     for n in LENGTHS {
         let ids = prompt(n);
         let want = reference(&mut runner, &ids);

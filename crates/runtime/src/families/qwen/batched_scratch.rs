@@ -62,6 +62,14 @@ pub(crate) struct BatchedScratch {
     /// bit-exact against the scalar GEMV, and the drafters' verify pass must
     /// reproduce sequential decode exactly, so their scratch keeps `false`.
     pub(crate) steel_gemm: bool,
+    /// The multi-row GQA attention partials
+    /// (`gpu::encode_attention_decode_gqa_rows`), `Some` only on the
+    /// chunked-prefill driver's instance with `TURBOSPARK_PREFILL_ROWS_ATTN`
+    /// on (`RealQwenState::ensure_batched_prefill`). It reads each K/V tile
+    /// once per group of rows instead of once per row, and like Steel it is
+    /// not bit-exact against the one-row kernel, so the drafters' verify
+    /// scratch never carries it.
+    pub(crate) rows_attention: Option<gpu::GqaRowsScratch>,
 }
 
 /// The tape buffers. One `qkv_raw` row set and one `a`/`b` row set per
@@ -202,6 +210,7 @@ impl BatchedScratch {
             routed,
             verify_tape,
             steel_gemm: false,
+            rows_attention: None,
         })
     }
 }

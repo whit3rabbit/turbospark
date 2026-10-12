@@ -305,8 +305,18 @@ impl RealForwardRunner {
                 // one buffer exactly as it did before the routed half
                 // existed. This branch's bytes do not move.
                 encode_dense_ffn_batched(
-                    context, &pass, weights, index, scratch, batched, layer, hidden, inter,
-                    use_silu, batch,
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    scratch,
+                    batched,
+                    super::TRUNK_PREFIX,
+                    layer,
+                    hidden,
+                    inter,
+                    use_silu,
+                    batch,
                 )?;
             } else {
                 pass = super::verify_layers::encode_qwen_moe_layer_batched_step(

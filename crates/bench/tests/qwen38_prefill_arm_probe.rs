@@ -12,6 +12,10 @@
 //! steel) in nats over the full vocabulary, the worst logit difference, and
 //! top-1 and top-5 agreement.
 //!
+//! The Steel arm runs twice, with the multi-row GQA attention partial (the
+//! default) and with the one-row kernel per row, and each is held to the
+//! bound.
+//!
 //! One runner, the reference arm first: the Steel scratch is allocated the
 //! first time the batched arm runs, so nothing the reference arm does can
 //! see it. Not run by default (needs the ~16 GB install):
@@ -66,7 +70,11 @@ fn steel_prefill_stays_within_the_distribution_bound() {
         eprintln!("TURBOSPARK_QWEN38_INSTALL_DIR is not set; skipping");
         return;
     };
-    for var in ["TURBOSPARK_BATCHED_GEMV", "TURBOSPARK_PREFILL_STEEL"] {
+    for var in [
+        "TURBOSPARK_BATCHED_GEMV",
+        "TURBOSPARK_PREFILL_STEEL",
+        "TURBOSPARK_PREFILL_ROWS_ATTN",
+    ] {
         assert!(
             std::env::var_os(var).is_none(),
             "{var} is set; this probe chooses the arms itself"
@@ -107,19 +115,42 @@ fn steel_prefill_stays_within_the_distribution_bound() {
         .map(|p| prefill(&mut runner, p, vocab))
         .collect();
 
-    // Back to the default: the automatic batched pick with Steel on.
+    // Back to the default: the automatic batched pick with Steel on, with
+    // the multi-row attention partial (the default) and without it.
     let mut steel_runner = runner;
     steel_runner.set_batched_gemv_prefill(true);
     steel_runner.set_prefill_steel(true);
+    steel_runner.set_prefill_rows_attention(true);
     let steel: Vec<Vec<f64>> = prompts
         .iter()
         .map(|p| prefill(&mut steel_runner, p, vocab))
         .collect();
+    steel_runner.set_prefill_rows_attention(false);
+    let steel_per_row: Vec<Vec<f64>> = prompts
+        .iter()
+        .map(|p| prefill(&mut steel_runner, p, vocab))
+        .collect();
 
+    for (label, arm) in [
+        ("steel, multi-row attention", &steel),
+        ("steel, per-row attention", &steel_per_row),
+    ] {
+        let mean_kl = compare(label, &reference, arm);
+        assert!(
+            mean_kl < MEAN_KL_BOUND,
+            "{label}: mean KL {mean_kl} nats over the {MEAN_KL_BOUND} bound"
+        );
+    }
+}
+
+/// Prints the per-length table for one arm against the reference and
+/// returns its mean KL.
+fn compare(label: &str, reference: &[Vec<f64>], arm: &[Vec<f64>]) -> f64 {
     let mut kls = Vec::new();
     let mut top1_agree = 0;
-    eprintln!("tokens   KL(ref||steel)   max|dlogit|   top1   top5 overlap");
-    for ((n, r), s) in LENGTHS.iter().zip(&reference).zip(&steel) {
+    eprintln!("{label}");
+    eprintln!("tokens   KL(ref||arm)     max|dlogit|   top1   top5 overlap");
+    for ((n, r), s) in LENGTHS.iter().zip(reference).zip(arm) {
         let (lr, ls) = (log_softmax(r), log_softmax(s));
         let kl: f64 = lr.iter().zip(&ls).map(|(a, b)| a.exp() * (a - b)).sum();
         let max_d = r
@@ -142,8 +173,5 @@ fn steel_prefill_stays_within_the_distribution_bound() {
         "mean KL {mean_kl:.3e} nats, top-1 agreement {top1_agree}/{}",
         LENGTHS.len()
     );
-    assert!(
-        mean_kl < MEAN_KL_BOUND,
-        "mean KL {mean_kl} nats over the {MEAN_KL_BOUND} bound"
-    );
+    mean_kl
 }

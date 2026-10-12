@@ -281,6 +281,9 @@ impl RealForwardRunner {
             batched_gemv_prefill: std::env::var("TURBOSPARK_BATCHED_GEMV").as_deref() == Ok("1"),
             batched_gemv_prefill_auto: std::env::var_os("TURBOSPARK_BATCHED_GEMV").is_none(),
             prefill_steel: std::env::var("TURBOSPARK_PREFILL_STEEL").as_deref() != Ok("0"),
+            mtp_batched_prime: std::env::var("TURBOSPARK_MTP_BATCHED_PRIME").as_deref() != Ok("0"),
+            prefill_rows_attention: std::env::var("TURBOSPARK_PREFILL_ROWS_ATTN").as_deref()
+                != Ok("0"),
             routed_layouts,
             router_hist,
             ffn_hist,

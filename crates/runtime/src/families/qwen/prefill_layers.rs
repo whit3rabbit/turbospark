@@ -71,7 +71,9 @@ pub(crate) fn encode_qwen_dense_layer_batched_prefill(
             scratch,
             batched,
             kv,
+            TRUNK_PREFIX,
             layer,
+            QkNormConvention::Plain,
             start_position,
             m,
         )?;
@@ -102,7 +104,18 @@ pub(crate) fn encode_qwen_dense_layer_batched_prefill(
 
     // Encodes its own per-row residual add back into `scratch.x`.
     encode_dense_ffn_batched(
-        context, pass, weights, index, scratch, batched, layer, hidden, inter, use_silu, m,
+        context,
+        pass,
+        weights,
+        index,
+        scratch,
+        batched,
+        TRUNK_PREFIX,
+        layer,
+        hidden,
+        inter,
+        use_silu,
+        m,
     )?;
 
     // ONE M-row steering dispatch rather than m.
