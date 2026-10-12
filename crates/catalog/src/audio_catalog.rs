@@ -1172,13 +1172,12 @@ fn validate_assets(assets: &[AudioAsset]) -> Result<(), String> {
     Ok(())
 }
 fn validate_frontend(frontend: &AudioFrontendProvenance) -> Result<(), String> {
+    use audio::tts::kokoro::frontend::bundled as files;
     use sha2::{Digest, Sha256};
     // Bundled pins remain separate from upstream byte hashes after ASCII JSON
     // transcoding. Both participate in the persisted catalog identity.
-    let provenance: serde_json::Value = serde_json::from_str(include_str!(
-        "../../audio/src/tts/kokoro/frontend/resources/provenance.json"
-    ))
-    .map_err(|e| e.to_string())?;
+    let provenance: serde_json::Value =
+        serde_json::from_str(files::PROVENANCE_JSON).map_err(|e| e.to_string())?;
     let assets = provenance["assets"]
         .as_array()
         .ok_or("missing bundled frontend provenance")?;
@@ -1204,12 +1203,12 @@ fn validate_frontend(frontend: &AudioFrontendProvenance) -> Result<(), String> {
         return Err("invalid Kokoro frontend source/license provenance".into());
     }
     let bundled: [&[u8]; 6] = [
-        include_bytes!("../../audio/src/tts/kokoro/frontend/resources/us_gold.json"),
-        include_bytes!("../../audio/src/tts/kokoro/frontend/resources/us_silver.json"),
-        include_bytes!("../../audio/src/tts/kokoro/frontend/licenses/MISAKI-APACHE-2.0.txt"),
-        include_bytes!("../../audio/src/tts/kokoro/frontend/resources/pos_weights.json"),
-        include_bytes!("../../audio/src/tts/kokoro/frontend/resources/pos_tags.json"),
-        include_bytes!("../../audio/src/tts/kokoro/frontend/resources/pos_classes.txt"),
+        files::US_GOLD_JSON,
+        files::US_SILVER_JSON,
+        files::MISAKI_APACHE_LICENSE,
+        files::POS_WEIGHTS_JSON,
+        files::POS_TAGS_JSON,
+        files::POS_CLASSES_TXT,
     ];
     let mut paths = std::collections::HashSet::new();
     for resource in &frontend.resources {
@@ -1225,8 +1224,7 @@ fn validate_frontend(frontend: &AudioFrontendProvenance) -> Result<(), String> {
             );
         }
     }
-    let license_bytes =
-        include_bytes!("../../audio/src/tts/kokoro/frontend/licenses/MISAKI-RS-MIT.txt");
+    let license_bytes = files::MISAKI_RS_MIT_LICENSE;
     if frontend.bundled_license_size != license_bytes.len() as u64
         || frontend.bundled_license_sha256 != format!("{:x}", Sha256::digest(license_bytes))
     {

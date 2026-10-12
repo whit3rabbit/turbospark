@@ -573,7 +573,10 @@ when this file gets updated relative to the version bump and the tag.
   runs on `macos-15`, because `turbospark-server` does not compile against
   `turbospark-runtime`'s macOS-gated API on Linux. The `turbospark-audio` and
   `turbospark-gpu` packages exclude their test-only fixtures to stay under the
-  crates.io size limit.
+  crates.io size limit. `turbospark-catalog` reads the bundled Kokoro frontend
+  files through `turbospark-audio` (`tts::kokoro::frontend::bundled`) instead
+  of a relative path into that crate's source tree, which a published crate
+  cannot reach.
 
 ### Fixed
 - `crates/catalog`: an audio catalog install downloaded every file and then

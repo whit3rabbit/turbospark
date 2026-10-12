@@ -115,7 +115,10 @@ building it for the host, and `turbospark-server` does not compile on Linux.
 `turbospark-audio` and `turbospark-gpu` exclude their test-only fixtures in
 `Cargo.toml` (`exclude = [...]`); without that both exceed the crates.io
 10 MB `.crate` limit. A new `include_str!` of a fixture outside
-`#[cfg(test)]` would break the published crate, which the dry run catches.
+`#[cfg(test)]` would break the published crate, and so would any
+`include_*!` that reaches into a sibling crate's directory: expose the bytes
+from the owning crate instead (see `audio::tts::kokoro::frontend::bundled`).
+The local `--workspace` dry run catches both.
 
 `turbospark-bench` (`publish = false`) is an internal dev harness and is never
 published. `turbospark-ffi` (`publish = false`) is the C ABI static library

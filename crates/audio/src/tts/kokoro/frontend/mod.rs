@@ -9,6 +9,20 @@ mod lexicon;
 mod normalize;
 mod tagger;
 
+/// The frontend's bundled files, byte for byte. The catalog pins installs to
+/// these digests and must read them from here: a published crate cannot
+/// `include_bytes!` a path in a sibling crate's source tree.
+pub mod bundled {
+    pub static PROVENANCE_JSON: &str = include_str!("resources/provenance.json");
+    pub static US_GOLD_JSON: &[u8] = include_bytes!("resources/us_gold.json");
+    pub static US_SILVER_JSON: &[u8] = include_bytes!("resources/us_silver.json");
+    pub static POS_WEIGHTS_JSON: &[u8] = include_bytes!("resources/pos_weights.json");
+    pub static POS_TAGS_JSON: &[u8] = include_bytes!("resources/pos_tags.json");
+    pub static POS_CLASSES_TXT: &[u8] = include_bytes!("resources/pos_classes.txt");
+    pub static MISAKI_APACHE_LICENSE: &[u8] = include_bytes!("licenses/MISAKI-APACHE-2.0.txt");
+    pub static MISAKI_RS_MIT_LICENSE: &[u8] = include_bytes!("licenses/MISAKI-RS-MIT.txt");
+}
+
 use crate::{Result, SpeechError};
 use lexicon::{Lexicon, TokenContext};
 use normalize::Punctuation;
