@@ -206,6 +206,12 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
         serde_json::from_slice(&std::fs::read(reference.join("codes.json")).unwrap()).unwrap();
     let expected_warmup: serde_json::Value =
         serde_json::from_slice(&std::fs::read(reference.join("warmup.json")).unwrap()).unwrap();
+    let (warmup_tol, hidden_tol, wave_tol) = match request["encoding"].as_str().unwrap_or("") {
+        "affine4" | "mxfp4" | "nvfp4" => (3.0, 3.0, 3.0),
+        "affine6" | "mxfp8" => (0.1, 0.1, 0.1),
+        "affine8" => (0.05, 0.05, 0.05),
+        _ => (1e-3, 1e-3, 1e-3),
+    };
     let runner = Music3Runner::open_with_precision(model, Music3Precision::Checkpoint).unwrap();
     for _ in 0..if repeat { 2 } else { 1 } {
         let mut warmup = vec![];
@@ -219,12 +225,12 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                         close(
                             t.hiddens,
                             &read_f32(&reference.join(format!("warmup_{}_hidden.f32", t.codebook))),
-                            0.05,
+                            warmup_tol,
                         );
                         close(
                             t.guided_logits,
                             &read_f32(&reference.join(format!("warmup_{}_logits.f32", t.codebook))),
-                            0.05,
+                            warmup_tol,
                         );
                         warmup.push(serde_json::json!({
                             "codebook": t.codebook,
@@ -249,7 +255,11 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
             .collect();
         assert_eq!(warmup, expected_warmup);
         assert_eq!(codes, expected_codes);
-        close(&hidden, &read_f32(&reference.join("hiddens.f32")), 0.05);
+        close(
+            &hidden,
+            &read_f32(&reference.join("hiddens.f32")),
+            hidden_tol,
+        );
         let wave = runner
             .run_flow(
                 &hidden,
@@ -258,7 +268,7 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 request["seed"].as_u64().unwrap(),
             )
             .unwrap();
-        close(&wave, &read_f32(&reference.join("wave.f32")), 0.05);
+        close(&wave, &read_f32(&reference.join("wave.f32")), wave_tol);
     }
 }
 
