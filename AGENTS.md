@@ -86,8 +86,10 @@ The root references are:
   the Qwen MoE experiment found no repeatable startup gain. Read
   [MoE startup](docs/MOE_STARTUP.md) before changing the default.
 - Read [MLX kernel experiments](docs/MLX_KERNELS.md) before reusing oMLX
-  kernels. Steel has synthetic prefill evidence; runtime defaults still
-  require real-model quality, memory, and paired performance gates.
+  or MLX kernels, and the [speedup playbook](docs/SPEEDUP_PLAYBOOK.md)
+  before kernel performance work. Steel is the dense qwen prefill default.
+  Another family still needs its own real-model quality, memory, and paired
+  performance gates before it takes Steel or the GQA decode attention.
 - Voice cloning with MegaTTS3 requires explicit caller consent up front
   (`consent: true`) because community WavVAE encoder provenance is unverified.
   On macOS it defaults to Metal; the portable CPU reference path is an opt-in

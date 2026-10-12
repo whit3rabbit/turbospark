@@ -135,6 +135,9 @@ synthetic M=32 ratio cannot be reported as a shipped prefill speedup.
 
 ## open-jet megakernel review, 2026-10-11
 
+What came of it, how each change was qualified, and how to apply the same
+moves to other kernels, families, and drafters: [speedup playbook](SPEEDUP_PLAYBOOK.md).
+
 [open-jet](https://github.com/L-Forster/open-jet)'s `megakernel/` is a CUDA
 engine for the same model (Qwen3.8-27B, llama.cpp arch `qwen35`: 48
 Gated-DeltaNet and 16 gated-attention layers plus an MTP block) at Q4_K_M on

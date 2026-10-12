@@ -60,9 +60,9 @@ to ~26 s. The memory oracle peak did not move (661 MiB). Perplexity went
   mutation-checked: each new test was broken on purpose (wrong head mapping,
   dropped rescale, swapped nibbles, missing bias, under-dispatched grid,
   and missing row copy) and had to fail.
-- **Byte identity where the arithmetic allows it.** The MTP head skip, the
-  GPU snapshot, and chunked priming on the per-token and scalar batched arms
-  are bit-exact. Their tests say `==`.
+- **Byte identity where the arithmetic allows it.** Three changes are
+  bit-exact: the MTP head skip, the GPU snapshot, and chunked priming on the
+  per-token and scalar batched arms. Their tests say `==`.
 - **A distribution bound where it does not.** Steel rounds weights to FP16
   and reorders the reduction. On the real install it is held to a KL bound
   against the per-token arm (`crates/bench/tests/qwen38_prefill_arm_probe.rs`,
@@ -140,7 +140,7 @@ probe like `qwen38_prefill_arm_probe` before making it the default.
   a full-vocab GEMV to throw it away. Look for the same in DFlash2's block
   draft and any drafter that runs a step only for its KV row.
 - **Never copy state on the host per round.** The GDN snapshot pool fits any
-  recurrent state, and qwen4's QSA and n-gram context are the other cases.
+  recurrent state. qwen4's QSA and n-gram context are the other cases.
   The step past the blit is open-jet's lazy commit. Commit the recurrent
   state only through the surely-accepted token, and replay accepted drafts
   from their saved `(k, v, g, beta)` inputs at the start of the next verify.
@@ -227,7 +227,7 @@ identity, so it can take the multi-row kernel before verify does.
 
 Gates:
 
-- a parity test: the multi-row kernel equals the per-row kernel bit for bit
-  for verify, and stays within the prefill bound for prefill;
-- `mtp_generation_gate` and the quality gate;
-- long-context timing at 4K, 16K, and 32K.
+- A parity test. The multi-row kernel equals the per-row kernel bit for bit
+  for verify, and stays within the prefill bound for prefill.
+- `mtp_generation_gate` and the quality gate.
+- Long-context timing at 4K, 16K, and 32K.
