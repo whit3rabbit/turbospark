@@ -1,0 +1,17 @@
+{
+  "a_codes_shape": [
+    4,
+    1
+  ],
+  "a_decoded_len": 32,
+  "b_codes_shape": [
+    4,
+    2
+  ],
+  "b_decoded_len": 64,
+  "rand_codes_shape": [
+    4,
+    2
+  ],
+  "rand_decoded_len": 64
+}

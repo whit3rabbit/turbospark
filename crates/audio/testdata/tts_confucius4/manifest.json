@@ -1,0 +1,18 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "generator": "tools/gen_confucius4_fixtures.py",
+  "files": {
+    "manifest.json": "sha256:6d3c398060c225ae76989c9ae13b324a4edb0be80919a74bb33b27721284c3c3",
+    "pipeline/bigvgan_mlx.safetensors": "sha256:adfe4ae02b69f06e6ddde2c58577785c1a576facefd40fd4bfaf5d0d1b9f6921",
+    "pipeline/campplus.safetensors": "sha256:be2f1925db99cde4f4c2ff3cf2366506bae05154595571d19c29aa7ae5a9bdda",
+    "pipeline/config.json": "sha256:538c6d96016ceb441a4caea6434c55aeb39362585bc49a56f86d5e6c39b91f23",
+    "pipeline/fbank_filters.npz": "sha256:3d1fcc9f683ca92b2f6e061fc19f0524c28742d37db83699d195819145d8f30f",
+    "pipeline/fbank_filters.safetensors": "sha256:cd964a46ee118ca5f66add4a0e958ec5bfd2374d93d40f8f8232769cd9a0baa7",
+    "pipeline/s2a_mlx.safetensors": "sha256:c598b3e65368c21507c86e9ca2355cefddeb6afac8765a4d852e96f3dbfb2d82",
+    "pipeline/t2s_model.safetensors": "sha256:f5147ed15862f18e49c79ac351e8f4e42656771905f907e3857bbc943a34ded7",
+    "pipeline/traces.json": "sha256:f245368c9624400e68ed254613fec585948feb73984754bccdeb753953e72fe6",
+    "pipeline/w2v_stats.npz": "sha256:51999b9b2b54010f7a11ff0b28eb14998f3313afa1b18f13992d20e2ed7d0fe8",
+    "pipeline/w2v_stats.safetensors": "sha256:c61890fb1a4e4f3c9b6a765b3373b361d5fb1b77d7763afc49403fc828f1233e",
+    "pipeline/w2vbert_mlx.safetensors": "sha256:24fd59f09280960e272fb66dda4a36d47374b785842f11b094fe88eded003437"
+  }
+}

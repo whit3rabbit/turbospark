@@ -1,0 +1,11 @@
+{
+  "model_type": "gpt2",
+  "n_ctx": 64,
+  "n_embd": 32,
+  "n_head": 4,
+  "n_layer": 2,
+  "n_positions": 64,
+  "layer_norm_epsilon": 1e-05,
+  "vocab_size": 96,
+  "num_key_value_heads": 4
+}

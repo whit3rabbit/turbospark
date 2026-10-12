@@ -1,0 +1,21 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_moss_tts_nano_fixtures.py",
+  "continue_seed": 0,
+  "stop_seed": 31,
+  "files": {
+    "decode/config.json": "dd84a099376e0498d061b2581ba28d3af096c503831d34a60517eb1a7704e222",
+    "decode/model.safetensors": "a52f36eda533bbde053f1e9021cf22d36de844c1e7946198df1b7816662b0903",
+    "decode/traces.json": "d01f7954f1ae1fe3df248040695ac75f743e49ebc66164c8b6139d63192599ab",
+    "generate/config.json": "ca33074cb6b24f6d4642c36ab4a388ebb326f33a82807c1a4c2835310fd3c4bd",
+    "generate/model.safetensors": "e54dcacf6589999d46624e21d9183bf39ee9c1705d249f3e2fc094647583bf52",
+    "generate/traces.json": "0f7154e73664160d97d8d0c5ccdec864ccc120a4ebb59c8e7e19c0a66807e579",
+    "generate_stop/config.json": "ca33074cb6b24f6d4642c36ab4a388ebb326f33a82807c1a4c2835310fd3c4bd",
+    "generate_stop/model.safetensors": "72ea09aeebe28961b4ab9086f757e2a4aac3524993d746d1ba678bb0618e69be",
+    "generate_stop/traces.json": "d9aebd52ee33ace8f1b10a62160a7d20352fdbcb2192bc0381dd44f52dea5925",
+    "manifest.json": "e05205ef9ebf005e921f3592db22062dc4de01c0ed81f734bf705c016aaa246b",
+    "prompt/traces.json": "781b92bf2eae4169a45469d93b07897cf26fc0ebdcbee4b5ba20a5705d780194",
+    "sampling/traces.json": "f692007ac665ad9db2e8b7de6e5fbe67f1c541fc5a5e9250ea9904c8bcaf7204"
+  }
+}

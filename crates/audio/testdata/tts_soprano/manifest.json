@@ -1,0 +1,16 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_soprano_fixtures.py",
+  "backbone_seed": 11,
+  "files": {
+    "decoder/config.json": "6a97b48b650299686ac5dabe4c6c46212326a5627e5abbd6563dff2a91530252",
+    "decoder/model.safetensors": "f3cd13170aea1750e376c5a635dece54d7b94f863c5bfdb59401f40b0ad3883f",
+    "decoder/traces.json": "d67eddbfce5ef62e62c313de26d303e51b6b6da68f8808a8968b87551b31c723",
+    "generate/config.json": "6a97b48b650299686ac5dabe4c6c46212326a5627e5abbd6563dff2a91530252",
+    "generate/model.safetensors": "226c97962e4abc444bb1c8c7c7b20f848017d35e15973d670c6deca0c9743181",
+    "generate/traces.json": "630556b1cc9cab451eee4204bf8032362c2ea9651cc895d8097f4d02aa6a73c3",
+    "manifest.json": "4791847bc8494caf3a6478677324c875782ec354c5764374529ec688e1690d89",
+    "text/traces.json": "37314124f734b814e45af4eb956465ecfccb909fd03f18fc9e62e40d6ac4681e"
+  }
+}

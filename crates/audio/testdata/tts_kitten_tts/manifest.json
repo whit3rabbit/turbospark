@@ -1,0 +1,19 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_kitten_tts_fixtures.py",
+  "model_seed": 11,
+  "e2e_seed": 1234,
+  "espeak_library": "/opt/homebrew/lib/libespeak-ng.dylib",
+  "files": {
+    "frontend/traces.json": "29631ded09035b1c14ac18dde2f19b4d6f692f5fb0a7e4a87b7d0fa1668dd9be",
+    "generate/config.json": "3abd1b7caf756f3afddd204d938de2e4de26724f4021250ec5c42c98ae833e08",
+    "generate/traces.json": "43628e37c5dbecdfd068e95caaaa943362ed0ee1f6c191b4f89d673eb8b3a99b",
+    "generate/voices.safetensors": "5d945bee894c583db8b3b8a58793db3fef74ae0dcfcbbad783be65b4d41de566",
+    "manifest.json": "c85458e5416256e9a21fd95546ab6ca4feef6aa9531ee0f9050cef15460d04a2",
+    "stages/config.json": "3abd1b7caf756f3afddd204d938de2e4de26724f4021250ec5c42c98ae833e08",
+    "stages/model.safetensors": "74492ab7f2ca1eaac550a7397d2c53598fde58d57bc038eb6886f3de4dd2f8d6",
+    "stages/traces.json": "5f313497e27245b97bd9a7683f3b94dfc0db1c4c4888c092bcdcfe2658d8cbc5",
+    "stages/voices.safetensors": "5d945bee894c583db8b3b8a58793db3fef74ae0dcfcbbad783be65b4d41de566"
+  }
+}

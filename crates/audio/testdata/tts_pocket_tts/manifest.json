@@ -1,0 +1,14 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_pocket_tts_fixtures.py",
+  "model_seed": 0,
+  "files": {
+    "flow/traces.json": "3a81f940ba692d12b1ff3ed69e2bcb6678736953f04d1f4a70d120354cc5c264",
+    "generate/config.json": "6abbbc9e1c5f90f2d5602d827080c46a84760aac9b83b28fe62c76c34cfcf36c",
+    "generate/model.safetensors": "29d4e713222e1f21daca66bc7e2897c52afeddfb3109d260aa76df7fa2eefca8",
+    "generate/traces.json": "a75edde7aa2bbe1dade234688ec0d38390e6e2c25e5a1ee0e7c40415c1124518",
+    "manifest.json": "1b804ca10278697fa2454089ea161be4847cee1ced72069584be365b43bb43c2",
+    "text/traces.json": "d3781a2e3f9056abd917f22858cd6658aef24136e7d2461bd3945c0bcdbc1470"
+  }
+}

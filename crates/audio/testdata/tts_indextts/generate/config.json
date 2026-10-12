@@ -1,0 +1,71 @@
+{
+  "bigvgan": {
+    "num_mels": 100,
+    "upsample_rates": [
+      8,
+      8
+    ],
+    "upsample_kernel_sizes": [
+      16,
+      16
+    ],
+    "upsample_initial_channel": 32,
+    "resblock": "1",
+    "resblock_kernel_sizes": [
+      3,
+      7
+    ],
+    "resblock_dilation_sizes": [
+      [
+        1,
+        3
+      ],
+      [
+        1,
+        3
+      ]
+    ],
+    "activation": "snakebeta",
+    "snake_logscale": true,
+    "use_bias_at_final": true,
+    "use_tanh_at_final": true,
+    "gpt_dim": 32,
+    "speaker_embedding_dim": 4,
+    "cond_d_vector_in_each_upsampling_layer": true
+  },
+  "gpt": {
+    "model_dim": 32,
+    "heads": 4,
+    "layers": 2,
+    "max_mel_tokens": 48,
+    "max_text_tokens": 48,
+    "number_text_tokens": 24,
+    "number_mel_codes": 16,
+    "start_mel_token": 14,
+    "stop_mel_token": 15,
+    "start_text_token": 22,
+    "stop_text_token": 23,
+    "use_mel_codes_as_input": true,
+    "mel_length_compression": 1024,
+    "condition_type": "conformer_perceiver",
+    "max_conditioning_inputs": 1,
+    "condition_num_latent": 8,
+    "condition_module": {
+      "input_size": 100,
+      "output_size": 32,
+      "num_blocks": 2,
+      "linear_units": 64,
+      "attention_heads": 4,
+      "pos_enc_layer_type": "rel_pos",
+      "input_layer": "conv2d2",
+      "cnn_module_kernel": 5,
+      "pos_emb_max_len": 256,
+      "use_bias": true,
+      "xscaling": true,
+      "macaron_style": false,
+      "perceiver_mult": 2
+    }
+  },
+  "tokenizer_name": "fixture",
+  "sample_rate": 24000
+}

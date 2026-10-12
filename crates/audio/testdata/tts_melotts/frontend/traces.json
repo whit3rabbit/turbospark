@@ -1,0 +1,579 @@
+{
+ "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+ "symbols": [
+  "_",
+  "V",
+  "aa",
+  "ae",
+  "ah",
+  "ao",
+  "aw",
+  "ay",
+  "b",
+  "ch",
+  "d",
+  "dh",
+  "eh",
+  "er",
+  "ey",
+  "f",
+  "g",
+  "hh",
+  "ih",
+  "iy",
+  "jh",
+  "k",
+  "l",
+  "m",
+  "n",
+  "ng",
+  "ow",
+  "oy",
+  "p",
+  "r",
+  "s",
+  "sh",
+  "t",
+  "th",
+  "uh",
+  "uw",
+  "w",
+  "y",
+  "z",
+  "zh",
+  "!",
+  "?",
+  "...",
+  ",",
+  ".",
+  "'",
+  "-",
+  "SP",
+  "UNK"
+ ],
+ "normalize_cases": [
+  {
+   "name": "plain",
+   "input": "Hello World.",
+   "output": "hello world."
+  },
+  {
+   "name": "mr",
+   "input": "Mr. Smith met Mrs. Jones and Dr. Who.",
+   "output": "mister smith met missis jones and doctor who."
+  },
+  {
+   "name": "titles",
+   "input": "St. Peter followed Capt. Cook and Sgt. Pepper.",
+   "output": "saint peter followed captain cook and sergeant pepper."
+  },
+  {
+   "name": "company",
+   "input": "They worked at Co. Ltd and Ltd companies.",
+   "output": "they worked at company ltd and ltd companies."
+  },
+  {
+   "name": "military",
+   "input": "Maj. Gen. Smith met Lt. Col. Brown and Hon. Esq.",
+   "output": "major general smith met lieutenant colonel brown and honorable esquire"
+  },
+  {
+   "name": "reverend",
+   "input": "Rev. Green spoke to the group.",
+   "output": "reverend green spoke to the group."
+  },
+  {
+   "name": "fort",
+   "input": "The fort at Ft. Knox is well guarded.",
+   "output": "the fort at fort knox is well guarded."
+  },
+  {
+   "name": "comma number",
+   "input": "The population is 7,900,000 people.",
+   "output": "the population is seven thousand nine hundred thousand people."
+  },
+  {
+   "name": "decimal",
+   "input": "Pi is approximately 3.14.",
+   "output": "pi is approximately three point one four."
+  },
+  {
+   "name": "integer",
+   "input": "There are 1200 students and 42 teachers.",
+   "output": "there are one thousand two hundred students and forty two teachers."
+  },
+  {
+   "name": "zero",
+   "input": "There were 0 errors.",
+   "output": "there were zero errors."
+  },
+  {
+   "name": "big",
+   "input": "It costs 1234567 dollars.",
+   "output": "it costs one thousand two hundred thirty four thousand five hundred sixty seven dollars."
+  },
+  {
+   "name": "negative",
+   "input": "The value is -5 degrees.",
+   "output": "the value is -five degrees."
+  }
+ ],
+ "g2p_cases": [
+  {
+   "name": "hello world",
+   "norm_text": "hello world",
+   "word_phones": [
+    [
+     "HH",
+     "AH0",
+     "L",
+     "OW1"
+    ],
+    [
+     "W",
+     "ER0",
+     "L",
+     "D"
+    ]
+   ],
+   "phones": [
+    "_",
+    "hh",
+    "ah",
+    "l",
+    "ow",
+    "w",
+    "er",
+    "l",
+    "d",
+    "_"
+   ],
+   "tones": [
+    0,
+    0,
+    1,
+    0,
+    2,
+    0,
+    1,
+    0,
+    0,
+    0
+   ],
+   "word2ph": [
+    1,
+    4,
+    4,
+    1
+   ],
+   "phone_ids": [
+    0,
+    17,
+    4,
+    22,
+    26,
+    36,
+    13,
+    22,
+    10,
+    0
+   ],
+   "tone_ids": [
+    7,
+    7,
+    8,
+    7,
+    9,
+    7,
+    8,
+    7,
+    7,
+    7
+   ],
+   "lang_ids": [
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ]
+  },
+  {
+   "name": "tts",
+   "norm_text": "tts",
+   "word_phones": [
+    [
+     "T",
+     "IY1",
+     "T",
+     "IY1",
+     "EH1",
+     "S"
+    ]
+   ],
+   "phones": [
+    "_",
+    "t",
+    "iy",
+    "t",
+    "iy",
+    "eh",
+    "s",
+    "_"
+   ],
+   "tones": [
+    0,
+    0,
+    2,
+    0,
+    2,
+    2,
+    0,
+    0
+   ],
+   "word2ph": [
+    1,
+    6,
+    1
+   ],
+   "phone_ids": [
+    0,
+    32,
+    19,
+    32,
+    19,
+    12,
+    30,
+    0
+   ],
+   "tone_ids": [
+    7,
+    7,
+    9,
+    7,
+    9,
+    9,
+    7,
+    7
+   ],
+   "lang_ids": [
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ]
+  },
+  {
+   "name": "cats and dogs",
+   "norm_text": "cats and dogs",
+   "word_phones": [
+    [
+     "K",
+     "AE1",
+     "T",
+     "S"
+    ],
+    [
+     "AE1",
+     "N",
+     "D"
+    ],
+    [
+     "D",
+     "AO1",
+     "G",
+     "Z"
+    ]
+   ],
+   "phones": [
+    "_",
+    "k",
+    "ae",
+    "t",
+    "s",
+    "ae",
+    "n",
+    "d",
+    "d",
+    "ao",
+    "g",
+    "z",
+    "_"
+   ],
+   "tones": [
+    0,
+    0,
+    2,
+    0,
+    0,
+    2,
+    0,
+    0,
+    0,
+    2,
+    0,
+    0,
+    0
+   ],
+   "word2ph": [
+    1,
+    4,
+    3,
+    4,
+    1
+   ],
+   "phone_ids": [
+    0,
+    21,
+    3,
+    32,
+    30,
+    3,
+    24,
+    10,
+    10,
+    5,
+    16,
+    38,
+    0
+   ],
+   "tone_ids": [
+    7,
+    7,
+    9,
+    7,
+    7,
+    9,
+    7,
+    7,
+    7,
+    9,
+    7,
+    7,
+    7
+   ],
+   "lang_ids": [
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ]
+  },
+  {
+   "name": "hello.",
+   "norm_text": "hello.",
+   "word_phones": [
+    [
+     "HH",
+     "AH0",
+     "L",
+     "OW1"
+    ]
+   ],
+   "phones": [
+    "_",
+    "hh",
+    "ah",
+    "l",
+    "ow",
+    "_"
+   ],
+   "tones": [
+    0,
+    0,
+    1,
+    0,
+    2,
+    0
+   ],
+   "word2ph": [
+    1,
+    4,
+    1
+   ],
+   "phone_ids": [
+    0,
+    17,
+    4,
+    22,
+    26,
+    0
+   ],
+   "tone_ids": [
+    7,
+    7,
+    8,
+    7,
+    9,
+    7
+   ],
+   "lang_ids": [
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ]
+  }
+ ],
+ "add_blank_case": {
+  "input_phones": [
+   "_",
+   "hh",
+   "ah",
+   "l",
+   "ow",
+   "w",
+   "er",
+   "l",
+   "d",
+   "_"
+  ],
+  "input_tones": [
+   0,
+   0,
+   1,
+   0,
+   2,
+   0,
+   1,
+   0,
+   0,
+   0
+  ],
+  "phones": [
+   "_",
+   "_",
+   "_",
+   "hh",
+   "_",
+   "ah",
+   "_",
+   "l",
+   "_",
+   "ow",
+   "_",
+   "w",
+   "_",
+   "er",
+   "_",
+   "l",
+   "_",
+   "d",
+   "_",
+   "_",
+   "_"
+  ],
+  "tones": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   1,
+   0,
+   0,
+   0,
+   2,
+   0,
+   0,
+   0,
+   1,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "phone_ids": [
+   0,
+   0,
+   0,
+   17,
+   0,
+   4,
+   0,
+   22,
+   0,
+   26,
+   0,
+   36,
+   0,
+   13,
+   0,
+   22,
+   0,
+   10,
+   0,
+   0,
+   0
+  ],
+  "tone_ids": [
+   7,
+   7,
+   7,
+   7,
+   7,
+   8,
+   7,
+   7,
+   7,
+   9,
+   7,
+   7,
+   7,
+   8,
+   7,
+   7,
+   7,
+   7,
+   7,
+   7,
+   7
+  ],
+  "lang_ids": [
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2,
+   2
+  ]
+ }
+}

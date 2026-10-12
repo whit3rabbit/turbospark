@@ -1,0 +1,859 @@
+{
+  "tiny": [
+    {
+      "name": "decoder.dconv1.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.dconv1.conv.weight",
+      "shape": [
+        32,
+        2,
+        32
+      ]
+    },
+    {
+      "name": "decoder.dconv1.norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.dconv1.norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.dconv2.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.dconv2.conv.weight",
+      "shape": [
+        8,
+        3,
+        32
+      ]
+    },
+    {
+      "name": "decoder.dconv2.norm.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.dconv2.norm.weight",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.fc1.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "decoder.layers.0.fc1.weight",
+      "shape": [
+        64,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.fc2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.fc2.weight",
+      "shape": [
+        32,
+        64
+      ]
+    },
+    {
+      "name": "decoder.layers.0.final_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.final_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.self_attn.k_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.self_attn.out_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.self_attn.out_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.self_attn.q_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.self_attn.q_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.self_attn.v_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.self_attn.v_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.self_attn_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.0.self_attn_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.fc1.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "decoder.layers.1.fc1.weight",
+      "shape": [
+        64,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.fc2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.fc2.weight",
+      "shape": [
+        32,
+        64
+      ]
+    },
+    {
+      "name": "decoder.layers.1.final_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.final_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.self_attn.k_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.self_attn.out_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.self_attn.out_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.self_attn.q_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.self_attn.q_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.self_attn.v_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.self_attn.v_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.self_attn_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.layers.1.self_attn_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.vocoder.embeddings.weight",
+      "shape": [
+        16,
+        8
+      ]
+    },
+    {
+      "name": "decoder.vocoder.head.istft.window",
+      "shape": [
+        40
+      ]
+    },
+    {
+      "name": "decoder.vocoder.head.out.bias",
+      "shape": [
+        42
+      ]
+    },
+    {
+      "name": "decoder.vocoder.head.out.weight",
+      "shape": [
+        42,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layer_norm.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layer_norm.weight",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.fc1.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.fc1.weight",
+      "shape": [
+        32,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.fc2.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.fc2.weight",
+      "shape": [
+        16,
+        32
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.final_layer_norm.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.final_layer_norm.weight",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.self_attn.k_proj.weight",
+      "shape": [
+        16,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.self_attn.out_proj.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.self_attn.out_proj.weight",
+      "shape": [
+        16,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.self_attn.q_proj.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.self_attn.q_proj.weight",
+      "shape": [
+        16,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.self_attn.v_proj.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.self_attn.v_proj.weight",
+      "shape": [
+        16,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.self_attn_layer_norm.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.0.self_attn_layer_norm.weight",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.fc1.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.fc1.weight",
+      "shape": [
+        32,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.fc2.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.fc2.weight",
+      "shape": [
+        16,
+        32
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.final_layer_norm.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.final_layer_norm.weight",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.self_attn.k_proj.weight",
+      "shape": [
+        16,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.self_attn.out_proj.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.self_attn.out_proj.weight",
+      "shape": [
+        16,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.self_attn.q_proj.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.self_attn.q_proj.weight",
+      "shape": [
+        16,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.self_attn.v_proj.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.self_attn.v_proj.weight",
+      "shape": [
+        16,
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.self_attn_layer_norm.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.vocoder.layers.1.self_attn_layer_norm.weight",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.conv1.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.conv1.weight",
+      "shape": [
+        32,
+        3,
+        8
+      ]
+    },
+    {
+      "name": "encoder.conv2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.conv2.weight",
+      "shape": [
+        32,
+        3,
+        32
+      ]
+    },
+    {
+      "name": "encoder.down_sample_layer.layers.0.weight",
+      "shape": [
+        32,
+        2,
+        32
+      ]
+    },
+    {
+      "name": "encoder.down_sample_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.down_sample_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.fc1.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.layers.0.fc1.weight",
+      "shape": [
+        64,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.fc2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.fc2.weight",
+      "shape": [
+        32,
+        64
+      ]
+    },
+    {
+      "name": "encoder.layers.0.final_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.final_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.self_attn.k_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.self_attn.out_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.self_attn.out_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.self_attn.q_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.self_attn.q_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.self_attn.v_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.self_attn.v_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.self_attn_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.0.self_attn_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.fc1.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.layers.1.fc1.weight",
+      "shape": [
+        64,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.fc2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.fc2.weight",
+      "shape": [
+        32,
+        64
+      ]
+    },
+    {
+      "name": "encoder.layers.1.final_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.final_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.self_attn.k_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.self_attn.out_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.self_attn.out_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.self_attn.q_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.self_attn.q_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.self_attn.v_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.self_attn.v_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.self_attn_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.1.self_attn_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.fc1.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.layers.2.fc1.weight",
+      "shape": [
+        64,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.fc2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.fc2.weight",
+      "shape": [
+        32,
+        64
+      ]
+    },
+    {
+      "name": "encoder.layers.2.final_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.final_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.self_attn.k_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.self_attn.out_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.self_attn.out_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.self_attn.q_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.self_attn.q_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.self_attn.v_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.self_attn.v_proj.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.self_attn_layer_norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.layers.2.self_attn_layer_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.quantizer.codebooks.0.weight",
+      "shape": [
+        8,
+        32
+      ]
+    },
+    {
+      "name": "encoder.quantizer.codebooks.1.weight",
+      "shape": [
+        6,
+        32
+      ]
+    },
+    {
+      "name": "encoder.quantizer.codebooks.2.weight",
+      "shape": [
+        5,
+        32
+      ]
+    }
+  ]
+}

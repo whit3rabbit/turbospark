@@ -1,0 +1,16 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_breeze_tts_fixtures.py",
+  "backbone_seed": 1,
+  "cfg_scale": 2.0,
+  "files": {
+    "generate/config.json": "8cb3a297cd6f494490e13140516476ed7ddb05b429f88b4889f326c871612cc0",
+    "generate/model.safetensors": "ea767def029f6dca44502f91447bba5b1aca1bff0cd7c0c4bacb8c442553d1b8",
+    "generate/traces.json": "63e5be0ead3ed3260c89adfb17c2142ed6d25f7017cacee14cb8655406df6bcc",
+    "generate_eos/config.json": "8cb3a297cd6f494490e13140516476ed7ddb05b429f88b4889f326c871612cc0",
+    "generate_eos/model.safetensors": "a7bbcc3423e490b4a9d7a8af1f73e88b83dc5f2010c188dc9c5b53287f047e15",
+    "generate_eos/traces.json": "7366a6b38128679a8e19b6de6420e21a4709213e921ac5eb54ea1eda0f2a1cd2",
+    "math/traces.json": "57413abf4394179f0262207066ce3ccc701e03696c7d810120c375a4b575cdec"
+  }
+}

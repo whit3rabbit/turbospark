@@ -1,0 +1,19 @@
+{
+  "a_input_len": 240,
+  "a_codes_shape": [
+    5,
+    3
+  ],
+  "a_min_margin": 0.09844970703125,
+  "b_input_len": 200,
+  "b_codes_shape": [
+    5,
+    2
+  ],
+  "b_min_margin": 0.03887939453125,
+  "rand_codes_shape": [
+    5,
+    3
+  ],
+  "rand_decoded_len": 240
+}

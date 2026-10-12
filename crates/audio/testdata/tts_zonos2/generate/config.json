@@ -1,0 +1,48 @@
+{
+  "model_type": "zonos2",
+  "n_layers": 4,
+  "dim": 16,
+  "head_dim": 8,
+  "n_kv_heads": 1,
+  "ffn_dim_multiplier": 1.5,
+  "multiple_of": 8,
+  "norm_eps": 1e-05,
+  "rope_theta": 10000.0,
+  "max_seqlen": 128,
+  "n_codebooks": 3,
+  "codebook_size": 1024,
+  "eoa_id": 1024,
+  "audio_pad_id": 1025,
+  "text_vocab": 455,
+  "loss_softcap": 15.0,
+  "sample_rate": 44100,
+  "speaker_enabled": true,
+  "speaker_embedding_dim": 8,
+  "speaker_lda_dim": 4,
+  "speaker_encoder_model_id": "unused",
+  "speaker_encoder_path": null,
+  "speaker_encoder_sample_rate": 24000,
+  "speaking_rate_num_buckets": 2,
+  "quality_num_buckets": 2,
+  "quality_features": [
+    "lufs"
+  ],
+  "quality_buckets": {
+    "lufs": [
+      "a",
+      "b"
+    ]
+  },
+  "speaker_background_token_enabled": true,
+  "accurate_mode_token_enabled": true,
+  "moe_n_experts": 4,
+  "moe_router_topk": 1,
+  "special_topk_layers": {
+    "2": 2
+  },
+  "moe_router_dim": 8,
+  "moe_start_from_layer": 1,
+  "moe_end_from_layer": 1,
+  "norm_topk_prob": false,
+  "moe_balancing_strategy": "legacy"
+}

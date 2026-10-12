@@ -1,0 +1,53 @@
+audio_tokenizer:
+  mel_params:
+    sample_rate: 16000
+    n_fft: 64
+    win_length: 64
+    hop_length: 32
+    mel_fmin: 0.0
+    mel_fmax: null
+    num_mels: 8
+  encoder:
+    input_channels: 4
+    vocos_dim: 12
+    vocos_intermediate_dim: 24
+    vocos_num_layers: 1
+    out_channels: 16
+    sample_ratios: [1, 1]
+  quantizer:
+    input_dim: 16
+    codebook_size: 64
+    codebook_dim: 4
+    commitment: 0.02
+    codebook_loss_weight: 2.0
+  decoder:
+    input_channel: 12
+    channels: 8
+    rates: [2, 2]
+    kernel_sizes: [4, 4]
+    d_out: 1
+  speaker_encoder:
+    input_dim: 8
+    out_dim: 12
+    latent_dim: 6
+    token_num: 4
+    fsq_levels: [3, 3, 3, 3]
+    fsq_num_quantizers: 1
+  prenet:
+    input_channels: 16
+    vocos_dim: 12
+    vocos_intermediate_dim: 24
+    vocos_num_layers: 2
+    out_channels: 12
+    condition_dim: 12
+    sample_ratios: [1, 1]
+    use_tanh_at_final: False
+  postnet:
+    input_channels: 12
+    vocos_dim: 12
+    vocos_intermediate_dim: 24
+    vocos_num_layers: 1
+    out_channels: 12
+    condition_dim: 12
+    sample_ratios: [1, 1]
+    use_tanh_at_final: False

@@ -1,0 +1,31 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_moss_tts_fixtures.py",
+  "delay_generate_seed": 0,
+  "delay_stop_seed": 0,
+  "v15_generate_seed": 0,
+  "v15_stop_seed": 31,
+  "files": {
+    "decode/config.json": "dd84a099376e0498d061b2581ba28d3af096c503831d34a60517eb1a7704e222",
+    "decode/model.safetensors": "a52f36eda533bbde053f1e9021cf22d36de844c1e7946198df1b7816662b0903",
+    "decode/traces.json": "a3b55bc8fe0f10c61a5b6caec5714a2b846f6d096c5a9d2c27fd5d3ccc0370b1",
+    "delay_generate/config.json": "9565b511564700849ad9d5128f17ed53ed4cd0791969268f904ef381712395e4",
+    "delay_generate/model.safetensors": "a8f2948ffce30df95706946574464a037ff940b44933e15f6e3713d3805496ac",
+    "delay_generate/traces.json": "97e61a32efccf7661ef988ec6c15843d10bd8f6f9df1170a576c4f356ac27aa0",
+    "delay_pattern/traces.json": "13adad281f1a772320a02e49805f69858a2bbc5b8ac4d417c9e79742f26482a7",
+    "delay_prompt/traces.json": "6d641976647e118f00c1d5b99c20c291d6628876709e6a341fe4a2bc2115f09e",
+    "delay_stop/config.json": "9565b511564700849ad9d5128f17ed53ed4cd0791969268f904ef381712395e4",
+    "delay_stop/model.safetensors": "f92703bde578839e1dd8372c584c4824690da860535daec962b91dfdc660628d",
+    "delay_stop/traces.json": "693c4c75a53356113fdcf33f48c048151ac79e6bcd616d56234326bde91f0ef4",
+    "manifest.json": "b771b04e73381d6b7712333b98c4ff9267466c50584a3a54b3b57b8fc3941a0e",
+    "sampling/traces.json": "3f9f0415c4980e84a63fbbf8952e4596641f454b364f3a97d575d51e1083e018",
+    "v15_generate/config.json": "be269eb6b50e28556d83ea61094c2eec2063dbf98cad3c7d1e31a383ebdb7b15",
+    "v15_generate/model.safetensors": "a15cfffda8662d344897e1af0299a3adc5824fb3ac6eeda7c2be3252ad0af81a",
+    "v15_generate/traces.json": "378be4fdf9e7a4425846b6bae412a44ace8a89f449b03e858ef5249f09b5df69",
+    "v15_prompt/traces.json": "8795d7786cce19587c902b137f598b34333ff984f1c1c850bd68575c76cba0fa",
+    "v15_stop/config.json": "be269eb6b50e28556d83ea61094c2eec2063dbf98cad3c7d1e31a383ebdb7b15",
+    "v15_stop/model.safetensors": "ceeadcb32ee81f743295cc585e463b4d10eccb566479704e9c42e273e0ac1442",
+    "v15_stop/traces.json": "b73d76580cc8bf7ef69d3f6dd9c62add251306bc9f3747f0f7353bc4f96fa4ad"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_sesame_fixtures.py",
+  "backbone_seed": 0,
+  "eos_seed": 11,
+  "files": {
+    "decode/config.json": "b497546bfdca99c005dd84ca899fc6a02270e49b37d6805d50903f9833be740e",
+    "decode/model.safetensors": "f4e7e55397cf51735a2e2ef2e22f46171553e0455be7c92c423ed429fb73c37b",
+    "decode/traces.json": "d4de586bed9906e15eeb3ade19d06d32115bfbcce9ebf607c993c8e795ff66ba",
+    "flavors/traces.json": "96c44292f7ba5ffc42730de2121095e066137d43ef787a3559a353c74b617177",
+    "generate/config.json": "196ff3c4abb180ffd9589e3963b9775a20a8369d780681446792e4e89811bf72",
+    "generate/model.safetensors": "35287fe793a009391c926970ee07a8fe78217df1816d9d54c6fce3dc9824ee93",
+    "generate/traces.json": "a89eb26bbcb0c86c4bbd01d89b4e006bfc2be9ef7d0e2b47a41efba4dd76f350",
+    "generate_eos/config.json": "196ff3c4abb180ffd9589e3963b9775a20a8369d780681446792e4e89811bf72",
+    "generate_eos/model.safetensors": "f34892cb07f7c697521db7d7188b23b57b09b76f4a9fe687b5fc1e1e6e231ef7",
+    "generate_eos/traces.json": "42ead5ce6b5ac50f64cccf1232c78a6ae99d545566fab9f0d25c1e7c9a73f8ff",
+    "manifest.json": "beb49b20b5fa6a6678c85bc619f19a58f4854806b1d6b2c208acb5266b864201",
+    "sampling/traces.json": "eeb4051ca451fdfbba024e6b85918e027d2f30e3459edbcb30142359715efc0c"
+  }
+}

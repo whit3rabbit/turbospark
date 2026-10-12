@@ -1,0 +1,54 @@
+{
+  "model_type": "dramabox-tts",
+  "sample_rate": 8000,
+  "text_encoder": "tiny-gemma",
+  "text_encoder_hidden_size": 8,
+  "num_gemma_layers": 3,
+  "transformer": {
+    "num_layers": 2,
+    "audio_num_attention_heads": 4,
+    "audio_attention_head_dim": 8,
+    "audio_in_channels": 16,
+    "audio_out_channels": 16,
+    "audio_cross_attention_dim": 32,
+    "norm_eps": 1e-06,
+    "attention_type": "default",
+    "positional_embedding_theta": 10000.0,
+    "audio_positional_embedding_max_pos": [
+      20.0
+    ],
+    "timestep_scale_multiplier": 1000,
+    "use_middle_indices_grid": true,
+    "rope_type": "split",
+    "frequencies_precision": "float64",
+    "apply_gated_attention": true,
+    "cross_attention_adaln": true,
+    "caption_proj_before_connector": true,
+    "audio_connector_attention_head_dim": 8,
+    "audio_connector_num_attention_heads": 4,
+    "connector_num_layers": 1,
+    "connector_positional_embedding_max_pos": [
+      4096
+    ],
+    "connector_num_learnable_registers": 4
+  },
+  "audio": {
+    "sample_rate": 8000,
+    "latent_sample_rate": 16000,
+    "hop_length": 160,
+    "latent_downsample_factor": 4,
+    "vae_channels": 4,
+    "mel_bins": 4,
+    "fps": 25.0
+  },
+  "inference_defaults": {
+    "cfg_scale": 2.0,
+    "stg_scale": 1.0,
+    "stg_block": 1,
+    "rescale_scale": "auto",
+    "modality_scale": 1.0,
+    "duration_multiplier": 1.1,
+    "seed": 42,
+    "steps": 30
+  }
+}

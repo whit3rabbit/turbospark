@@ -1,0 +1,16 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_zonos2_fixtures.py",
+  "seed": 5,
+  "files": {
+    "dac/config.json": "02fc9f392ad7b178b56fe908f730db83d0e5ebe898997a2e4a03bf355911780e",
+    "dac/model.safetensors": "a8eec008922ce10da9f39e37067c5ce640b65c012666928ab2aa4c2cb01b4fd7",
+    "forward/traces.json": "b1615221c35da2601cbff6df3d5bef753f290241fa69dcfc7682e27b297a481f",
+    "generate/config.json": "3898b1b4c25ec3137960a64002fa2c245339ea93e10a2f57784af80256ca9a23",
+    "generate/model.safetensors": "1fbcf06142a77516397be480a1dbe4fcb6b1ca9935655c2b02f0b0e5824ee234",
+    "generate/traces.json": "e4369beccb7546494e3aa5973a01c34cada9ede3301ea3a0e62fe2226619d14a",
+    "prompt/traces.json": "1eb26957d2b466e52ff877cec327e25ee96e3d7aeab1b721ac0ff47cf1fa8c5e",
+    "sampling/traces.json": "2739e74a2d7f43c9611bb318fc2d838218d93b443d058defb738bc67644e4e6c"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_fish_qwen3_omni_fixtures.py",
+  "files": {
+    "generate/config.json": "c657e13e8c3a3b4f94dd09d1c20bf32b2b8df244bdf84cbb1634c1ace9f18962",
+    "generate/model.safetensors": "43ddf68a498ac8249bf2a1f3738c00ecbae82b4b5e8efb85e18536876f316cc0",
+    "generate/traces.json": "4b8070b4c04c0a90cbdd1d425fdcb744accf23410778decbcd70536913a812ba",
+    "manifest.json": "4c11bc51b82ac54635f26537b4351d3a5e278f56bd1244160369506339b488bd",
+    "prompt/traces.json": "2e709de6ab54a2a924b9306cb0ebfc6ab2c44b9a1a55870a642e983481a397e9",
+    "sampling/traces.json": "fce37f7df5af789b10afc6693ca6c74f3eb5ee329cf9b334a9764a4bf6a87c37",
+    "speed/traces.json": "2b4fb1c46a095f0a2c048a5e8b69c56089b1dbe9a87b42bb2147407b856db0ca"
+  }
+}

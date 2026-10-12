@@ -1,0 +1,65 @@
+{
+  "in_channels": 48,
+  "audio_codec": {
+    "encoder_dim": 8,
+    "encoder_rates": [
+      2,
+      4
+    ],
+    "latent_dim": 16,
+    "decoder_dim": 72,
+    "decoder_rates": [
+      4,
+      2
+    ],
+    "n_codebooks": 4,
+    "codebook_size": 64,
+    "codebook_dim": 8,
+    "sample_rate": 24000
+  },
+  "text_encoder": {
+    "name": "t5-tiny-fixture",
+    "max_length": 64,
+    "pad_mode": "longest",
+    "dim": 32
+  },
+  "t5_arch": {
+    "vocab_size": 64,
+    "d_model": 32,
+    "d_kv": 16,
+    "d_ff": 64,
+    "num_layers": 2,
+    "num_heads": 2,
+    "relative_attention_num_buckets": 32,
+    "relative_attention_max_distance": 128,
+    "is_gated_act": true,
+    "layer_norm_epsilon": 1e-06
+  },
+  "transformer": {
+    "dim": 64,
+    "n_heads": 4,
+    "n_layers": 2,
+    "dropout": 0.1,
+    "norm_eps": 1e-05,
+    "qk_norm": true,
+    "fc_bias": false,
+    "ffn_exp": 4,
+    "ffn_dim_multiplier": 1,
+    "multiple_of": 8,
+    "non_linearity": "swiglu",
+    "use_rope": true,
+    "max_positions": 1024,
+    "frequency_embedding_dim": 32,
+    "timestep_non_linearity": "swiglu",
+    "t_block_non_linearity": "silu",
+    "t_block_bias": true,
+    "context_dim": 64,
+    "context_non_linearity": "swiglu",
+    "context_embedder_dropout": 0.0,
+    "context_norm": false,
+    "out_channels": 16,
+    "in_channels": null
+  },
+  "num_anchors": 3,
+  "anchor_embedding_dim": 8
+}

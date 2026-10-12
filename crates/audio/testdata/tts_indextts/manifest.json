@@ -1,0 +1,14 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_indextts_fixtures.py",
+  "backbone_seed": 30,
+  "amplify_stop": 1.8,
+  "sample_rate": 24000,
+  "files": {
+    "generate/config.json": "d65a282f2c987c9062723d8b5c594d899de0d31e14700e843f562c79d1cd098a",
+    "generate/model.safetensors": "b39bc6b2e9485844d0c97f26de3350ab13e3bbebc3c8c03587b0f3d71f7526aa",
+    "generate/traces.json": "fba4ebfad2b75e2283696582f3aa0bc285b305f28bedec874ed5f0f1d2c24917",
+    "sampler/traces.json": "34c930f5b0610705727f2acfe7598456a7dcaf18b063bec0c7f85f0e16aa2c0d"
+  }
+}

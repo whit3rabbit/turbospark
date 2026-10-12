@@ -1,0 +1,24 @@
+{
+  "generator": "tools/gen_mel_roformer_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "bands.npy": "7dfc7ec3c6da553511eb7ff73479ec4af29d34798ae8be1ff08f6feba1913183",
+    "config.json": "c4543fa38d6be2d8c383e37e50693fe069c02334a1eb055c5ab7ca4bdf67ca24",
+    "full_mask.npy": "3f50a3fcaf3446a577ecd92fd834cb8f1215b69511e6201a405d99c8202e6e70",
+    "mask_band_0.npy": "af582648b1abcf26b7acd1181a87b7a34cc4f3d5213f4177e88fd439401abf10",
+    "mask_band_23.npy": "a80e5bb02ec2029f99e3c80a355683a664915744e7df09ed41cb2d4ccfe90d1f",
+    "mask_band_5.npy": "f5ce9aaf9244972d4fbb7348988bc90338b6c301a5e308f088779a2afc6d47a4",
+    "ops_rmsnorm.npy": "807326ae1a5af4dcb3190cc2f5f9ca653f8611001982373d7680e2d87fdb4762",
+    "ops_rope_applied.npy": "81e8611824f068303c5b91f02f80af6fa284ddba0861f13e67803ad6c27c8e52",
+    "ops_rope_cos.npy": "d82d56c0fe9b4a3df2bc2eebc589faa47a0818c5d376e4b072621139db3fb5c9",
+    "ops_rope_sin.npy": "9b1994fb2d60078d65db778bec12ca48d077a35d6cabb4e6c76c028b10de9d0e",
+    "separated.npy": "7d8441ea02aca79abfa49b3a3fc0446274d52781cd3798f33531cd1195f03668",
+    "stft_imag.npy": "6ad4ab25b6627f1bc1d9cd5a520308c774669fb71d71ced13e8c5878f9fe507c",
+    "stft_real.npy": "b63be3f57632d5556ebcb686bd7b9d8066c3e64776618cf706159a0be84b05d7",
+    "tiny_weights.safetensors": "f00d4b47e45fa4a7173a5f9b20ea111bd8b059882453e47f15860a2ed0a2f286",
+    "traces.json": "b64da268036975b4568de50daaf295213676bbdbdeda93387dd25a7eb3bc11b2",
+    "transformer_out.npy": "9c55172fe5a2d6c25956ff56039e54d48b94f5b525f7a3354ff78b8cd7e7c36b",
+    "wave.npy": "cfde1b3c46bef8e4fdcfbb9261af90b564514abcee016c80f8370a8445f3daa6"
+  }
+}

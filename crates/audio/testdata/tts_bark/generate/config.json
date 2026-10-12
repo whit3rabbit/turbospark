@@ -1,0 +1,41 @@
+{
+  "semantic_config": {
+    "bad_words_ids": null,
+    "block_size": 1024,
+    "input_vocab_size": 129600,
+    "output_vocab_size": 10016,
+    "n_layer": 2,
+    "n_head": 2,
+    "n_embd": 16,
+    "bias": false,
+    "model_type": "semantic",
+    "dropout": 0.0,
+    "architectures": null
+  },
+  "coarse_acoustics_config": {
+    "block_size": 1024,
+    "input_vocab_size": 12096,
+    "output_vocab_size": 12048,
+    "n_layer": 2,
+    "n_head": 2,
+    "n_embd": 16,
+    "bias": false,
+    "model_type": "coarse_acoustics",
+    "dropout": 0.0
+  },
+  "fine_acoustics_config": {
+    "block_size": 1024,
+    "input_vocab_size": 1056,
+    "output_vocab_size": 64,
+    "n_layer": 2,
+    "n_head": 2,
+    "n_embd": 16,
+    "bias": false,
+    "model_type": "fine_acoustics",
+    "n_codes_total": 8,
+    "n_codes_given": 1,
+    "dropout": 0.0
+  },
+  "codec_path": "mlx-community/encodec-24khz-float32",
+  "sample_rate": 24000
+}

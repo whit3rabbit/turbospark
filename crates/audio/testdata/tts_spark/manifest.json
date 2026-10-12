@@ -1,0 +1,15 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_spark_fixtures.py",
+  "backbone_seed": 14,
+  "files": {
+    "generate/config.json": "9b361b2aaeac56b6f0e55f6c36fdb1dae9aeb88d737c9755dd3357563ee34628",
+    "generate/model.safetensors": "97cec1d853edd48834c78be2e14f4c6ee0206c10bd6d14024314bd1f59fca857",
+    "generate/traces.json": "61e0974860fb43de5d8fbbe468597e19d28f870c8ac95898fbfe93b0ed7d9017",
+    "generate_eos/config.json": "9b361b2aaeac56b6f0e55f6c36fdb1dae9aeb88d737c9755dd3357563ee34628",
+    "generate_eos/model.safetensors": "94f1eef545a13d226b1e298bbf3317c37d7865b275850b79eb1a2f72748634ac",
+    "math/traces.json": "aefd002d622d11dda3b757e45999c5ba54527f291c77c35e2cd1c7c7e9b1dcac",
+    "prompts.json": "a2a6266169d9ce857b8e0c13160dbeb50436feb88362e48b5066053d1b210dc7"
+  }
+}

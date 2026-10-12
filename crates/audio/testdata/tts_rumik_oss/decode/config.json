@@ -1,0 +1,33 @@
+{
+  "model_type": "rumik_oss",
+  "hidden_size": 32,
+  "head_dim": 8,
+  "num_hidden_layers": 4,
+  "intermediate_size": 64,
+  "num_attention_heads": 4,
+  "num_key_value_heads": 2,
+  "rope_theta": 50000.0,
+  "vocab_size": 560,
+  "layer_norm_eps": 1e-05,
+  "logit_scale": 0.0625,
+  "attention_bias": false,
+  "layer_norm_bias": false,
+  "sliding_window": 4,
+  "sliding_window_pattern": 4,
+  "num_quantizers": 8,
+  "codebook_size": 64,
+  "audio_start_token_id": 537,
+  "audio_end_token_id": 536,
+  "text_start_token_id": 538,
+  "first_unit_id": 24,
+  "last_unit_id": 535,
+  "frame_rate_hz": 12.5,
+  "speakers": [
+    "Ira",
+    "Aisha",
+    "Siya",
+    "Zoya"
+  ],
+  "sample_rate": 24000,
+  "mimi_repo": "kyutai/moshiko-pytorch-bf16"
+}

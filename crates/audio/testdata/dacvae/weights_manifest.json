@@ -1,0 +1,1303 @@
+{
+  "tiny": [
+    {
+      "name": "encoder.conv_in.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.conv_in.weight_v",
+      "shape": [
+        8,
+        7,
+        1
+      ]
+    },
+    {
+      "name": "encoder.conv_in.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res1.act1.alpha",
+      "shape": [
+        1,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res1.conv1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res1.conv1.weight_v",
+      "shape": [
+        8,
+        7,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res1.conv1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res1.act2.alpha",
+      "shape": [
+        1,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res1.conv2.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res1.conv2.weight_v",
+      "shape": [
+        8,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res1.conv2.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res2.act1.alpha",
+      "shape": [
+        1,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res2.conv1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res2.conv1.weight_v",
+      "shape": [
+        8,
+        7,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res2.conv1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res2.act2.alpha",
+      "shape": [
+        1,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res2.conv2.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res2.conv2.weight_v",
+      "shape": [
+        8,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res2.conv2.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res3.act1.alpha",
+      "shape": [
+        1,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res3.conv1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res3.conv1.weight_v",
+      "shape": [
+        8,
+        7,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res3.conv1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res3.act2.alpha",
+      "shape": [
+        1,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res3.conv2.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res3.conv2.weight_v",
+      "shape": [
+        8,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.res3.conv2.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.snake.alpha",
+      "shape": [
+        1,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.conv.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.conv.weight_v",
+      "shape": [
+        16,
+        4,
+        8
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res1.act1.alpha",
+      "shape": [
+        1,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res1.conv1.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res1.conv1.weight_v",
+      "shape": [
+        16,
+        7,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res1.conv1.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res1.act2.alpha",
+      "shape": [
+        1,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res1.conv2.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res1.conv2.weight_v",
+      "shape": [
+        16,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res1.conv2.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res2.act1.alpha",
+      "shape": [
+        1,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res2.conv1.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res2.conv1.weight_v",
+      "shape": [
+        16,
+        7,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res2.conv1.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res2.act2.alpha",
+      "shape": [
+        1,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res2.conv2.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res2.conv2.weight_v",
+      "shape": [
+        16,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res2.conv2.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res3.act1.alpha",
+      "shape": [
+        1,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res3.conv1.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res3.conv1.weight_v",
+      "shape": [
+        16,
+        7,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res3.conv1.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res3.act2.alpha",
+      "shape": [
+        1,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res3.conv2.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res3.conv2.weight_v",
+      "shape": [
+        16,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.res3.conv2.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.snake.alpha",
+      "shape": [
+        1,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.conv.weight_g",
+      "shape": [
+        32,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.conv.weight_v",
+      "shape": [
+        32,
+        8,
+        16
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.snake_out.alpha",
+      "shape": [
+        1,
+        1,
+        32
+      ]
+    },
+    {
+      "name": "encoder.conv_out.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.conv_out.weight_v",
+      "shape": [
+        16,
+        3,
+        32
+      ]
+    },
+    {
+      "name": "encoder.conv_out.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "quantizer_in_proj.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer_in_proj.weight_v",
+      "shape": [
+        16,
+        1,
+        16
+      ]
+    },
+    {
+      "name": "quantizer_in_proj.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "quantizer_out_proj.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer_out_proj.weight_v",
+      "shape": [
+        16,
+        1,
+        8
+      ]
+    },
+    {
+      "name": "quantizer_out_proj.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.conv_in.weight_g",
+      "shape": [
+        72,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.conv_in.weight_v",
+      "shape": [
+        72,
+        7,
+        16
+      ]
+    },
+    {
+      "name": "decoder.conv_in.bias",
+      "shape": [
+        72
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_0.alpha",
+      "shape": [
+        1,
+        1,
+        72
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_1.weight_g",
+      "shape": [
+        1,
+        1,
+        72
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_1.weight_v",
+      "shape": [
+        36,
+        8,
+        72
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_1.bias",
+      "shape": [
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_3.weight",
+      "shape": [
+        12,
+        16,
+        24
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_3.bias",
+      "shape": [
+        12
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_4.act1.alpha",
+      "shape": [
+        1,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_4.conv1.weight_g",
+      "shape": [
+        36,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_4.conv1.weight_v",
+      "shape": [
+        36,
+        7,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_4.conv1.bias",
+      "shape": [
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_4.act2.alpha",
+      "shape": [
+        1,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_4.conv2.weight_g",
+      "shape": [
+        36,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_4.conv2.weight_v",
+      "shape": [
+        36,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_4.conv2.bias",
+      "shape": [
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_5.act1.alpha",
+      "shape": [
+        1,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_5.conv1.weight_g",
+      "shape": [
+        36,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_5.conv1.weight_v",
+      "shape": [
+        36,
+        7,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_5.conv1.bias",
+      "shape": [
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_5.act2.alpha",
+      "shape": [
+        1,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_5.conv2.weight_g",
+      "shape": [
+        36,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_5.conv2.weight_v",
+      "shape": [
+        36,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_5.conv2.bias",
+      "shape": [
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_6.conv1.weight",
+      "shape": [
+        6,
+        3,
+        12
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_6.conv1.bias",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_6.conv2.weight",
+      "shape": [
+        12,
+        1,
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_6.conv2.bias",
+      "shape": [
+        12
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_7.conv1.weight",
+      "shape": [
+        6,
+        3,
+        12
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_7.conv1.bias",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_7.conv2.weight",
+      "shape": [
+        12,
+        1,
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_7.conv2.bias",
+      "shape": [
+        12
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_8.act1.alpha",
+      "shape": [
+        1,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_8.conv1.weight_g",
+      "shape": [
+        36,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_8.conv1.weight_v",
+      "shape": [
+        36,
+        7,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_8.conv1.bias",
+      "shape": [
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_8.act2.alpha",
+      "shape": [
+        1,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_8.conv2.weight_g",
+      "shape": [
+        36,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_8.conv2.weight_v",
+      "shape": [
+        36,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_8.conv2.bias",
+      "shape": [
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_11.weight",
+      "shape": [
+        24,
+        16,
+        12
+      ]
+    },
+    {
+      "name": "decoder.blocks.0.block_11.bias",
+      "shape": [
+        24
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_0.alpha",
+      "shape": [
+        1,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_1.weight_g",
+      "shape": [
+        1,
+        1,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_1.weight_v",
+      "shape": [
+        18,
+        4,
+        36
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_1.bias",
+      "shape": [
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_3.weight",
+      "shape": [
+        6,
+        10,
+        12
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_3.bias",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_4.act1.alpha",
+      "shape": [
+        1,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_4.conv1.weight_g",
+      "shape": [
+        18,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_4.conv1.weight_v",
+      "shape": [
+        18,
+        7,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_4.conv1.bias",
+      "shape": [
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_4.act2.alpha",
+      "shape": [
+        1,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_4.conv2.weight_g",
+      "shape": [
+        18,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_4.conv2.weight_v",
+      "shape": [
+        18,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_4.conv2.bias",
+      "shape": [
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_5.act1.alpha",
+      "shape": [
+        1,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_5.conv1.weight_g",
+      "shape": [
+        18,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_5.conv1.weight_v",
+      "shape": [
+        18,
+        7,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_5.conv1.bias",
+      "shape": [
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_5.act2.alpha",
+      "shape": [
+        1,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_5.conv2.weight_g",
+      "shape": [
+        18,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_5.conv2.weight_v",
+      "shape": [
+        18,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_5.conv2.bias",
+      "shape": [
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_6.conv1.weight",
+      "shape": [
+        3,
+        3,
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_6.conv1.bias",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_6.conv2.weight",
+      "shape": [
+        6,
+        1,
+        3
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_6.conv2.bias",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_7.conv1.weight",
+      "shape": [
+        3,
+        3,
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_7.conv1.bias",
+      "shape": [
+        3
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_7.conv2.weight",
+      "shape": [
+        6,
+        1,
+        3
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_7.conv2.bias",
+      "shape": [
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_8.act1.alpha",
+      "shape": [
+        1,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_8.conv1.weight_g",
+      "shape": [
+        18,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_8.conv1.weight_v",
+      "shape": [
+        18,
+        7,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_8.conv1.bias",
+      "shape": [
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_8.act2.alpha",
+      "shape": [
+        1,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_8.conv2.weight_g",
+      "shape": [
+        18,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_8.conv2.weight_v",
+      "shape": [
+        18,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_8.conv2.bias",
+      "shape": [
+        18
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_11.weight",
+      "shape": [
+        12,
+        10,
+        6
+      ]
+    },
+    {
+      "name": "decoder.blocks.1.block_11.bias",
+      "shape": [
+        12
+      ]
+    },
+    {
+      "name": "decoder.snake_out.alpha",
+      "shape": [
+        1,
+        1,
+        18
+      ]
+    },
+    {
+      "name": "decoder.conv_out.weight_g",
+      "shape": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.conv_out.weight_v",
+      "shape": [
+        1,
+        7,
+        18
+      ]
+    },
+    {
+      "name": "decoder.conv_out.bias",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.pre_3.weight",
+      "shape": [
+        32,
+        7,
+        1
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.pre_3.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.post_0.lstm.layers.0.Wx",
+      "shape": [
+        2048,
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.post_0.lstm.layers.0.Wh",
+      "shape": [
+        2048,
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.post_0.lstm.layers.0.bias",
+      "shape": [
+        2048
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.post_0.lstm.layers.1.Wx",
+      "shape": [
+        2048,
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.post_0.lstm.layers.1.Wh",
+      "shape": [
+        2048,
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.post_0.lstm.layers.1.bias",
+      "shape": [
+        2048
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.post_2.weight",
+      "shape": [
+        128,
+        7,
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.encoder_block.post_2.bias",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "decoder.wm_model.msg_processor.msg_processor.weight",
+      "shape": [
+        32,
+        128
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.pre_0.weight",
+      "shape": [
+        512,
+        7,
+        128
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.pre_0.bias",
+      "shape": [
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.pre_1.lstm.layers.0.Wx",
+      "shape": [
+        2048,
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.pre_1.lstm.layers.0.Wh",
+      "shape": [
+        2048,
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.pre_1.lstm.layers.0.bias",
+      "shape": [
+        2048
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.pre_1.lstm.layers.1.Wx",
+      "shape": [
+        2048,
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.pre_1.lstm.layers.1.Wh",
+      "shape": [
+        2048,
+        512
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.pre_1.lstm.layers.1.bias",
+      "shape": [
+        2048
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.post_1.weight",
+      "shape": [
+        1,
+        7,
+        32
+      ]
+    },
+    {
+      "name": "decoder.wm_model.decoder_block.post_1.bias",
+      "shape": [
+        1
+      ]
+    }
+  ]
+}

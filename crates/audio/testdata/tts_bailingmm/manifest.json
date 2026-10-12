@@ -1,0 +1,19 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "generator": "tools/gen_bailingmm_fixtures.py",
+  "files": {
+    "dense_generate/config.json": "sha256:9aef20299df0bae47f4c47d1d92b33b11b45bf75008c84cef8441c1153c82bad",
+    "dense_generate/model.safetensors": "sha256:0241264ae5becc631b88c914bcd7a66b8e6301b4ee9613e7255ed8d2451d6d38",
+    "dense_generate/traces.json": "sha256:4be61f81d138b9eb0850354399e670a48f8aae44e1426a406319d2104f723e5d",
+    "manifest.json": "sha256:1f7a6e4cace781c6c27fe2ed44bd48b62fdb0c746fd1910f5e9e7e80e012e07a",
+    "moe_generate/config.json": "sha256:e50666942791d518d6e55fcf188ad9448798df238833906cbcdb1bf41a2a3f26",
+    "moe_generate/model.safetensors": "sha256:e31a63ea541666f2758807a3a83e4830af1cd542feaa742412a46df1da96f7cd",
+    "moe_generate/traces.json": "sha256:0c93a6c9299d921964a6641d2cc71c13a68ad600055303182048d5d53e942c02",
+    "moe_length/config.json": "sha256:e50666942791d518d6e55fcf188ad9448798df238833906cbcdb1bf41a2a3f26",
+    "moe_length/model.safetensors": "sha256:5aadbd21a15504c18df15da823c1d6b36a5538e742487b04f001ced8940b6e46",
+    "moe_length/traces.json": "sha256:96e0b14896184ee49f835fae4a11ba141859374018af3205462047b5064b42ef",
+    "voice_clone/config.json": "sha256:e50666942791d518d6e55fcf188ad9448798df238833906cbcdb1bf41a2a3f26",
+    "voice_clone/model.safetensors": "sha256:e31a63ea541666f2758807a3a83e4830af1cd542feaa742412a46df1da96f7cd",
+    "voice_clone/traces.json": "sha256:8972852372b8afa0f70b6eea74bb530a94c93679e6623472337c934c3f1a8dd9"
+  }
+}

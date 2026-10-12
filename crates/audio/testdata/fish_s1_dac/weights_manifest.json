@@ -1,0 +1,2260 @@
+{
+  "tiny": [
+    {
+      "name": "decoder.model.0.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.model.0.conv.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "decoder.model.0.conv.conv.weight",
+      "shape": [
+        16,
+        32,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.0.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.0.weight_v",
+      "shape": [
+        16,
+        32,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.0.alpha",
+      "shape": [
+        1,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.1.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.1.conv.conv.weight",
+      "shape": [
+        16,
+        8,
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.1.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.1.weight_v",
+      "shape": [
+        16,
+        8,
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.0.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.1.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.1.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.1.weight_v",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.2.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.3.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.3.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.3.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.3.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.2.block.3.weight_v",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.0.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.1.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.1.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.1.weight_v",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.2.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.3.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.3.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.3.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.3.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.3.block.3.weight_v",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.0.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.1.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.1.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.1.weight_v",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.2.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.3.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.3.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.3.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.3.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.1.block.4.block.3.weight_v",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.0.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.1.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.1.conv.conv.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.1.conv.conv.weight",
+      "shape": [
+        8,
+        4,
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.1.weight_v",
+      "shape": [
+        8,
+        4,
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.0.alpha",
+      "shape": [
+        1,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.1.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.1.conv.conv.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.1.conv.conv.weight",
+      "shape": [
+        4,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.1.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.1.weight_v",
+      "shape": [
+        4,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.2.alpha",
+      "shape": [
+        1,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.3.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.3.conv.conv.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.3.conv.conv.weight",
+      "shape": [
+        4,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.3.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.2.block.3.weight_v",
+      "shape": [
+        4,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.0.alpha",
+      "shape": [
+        1,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.1.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.1.conv.conv.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.1.conv.conv.weight",
+      "shape": [
+        4,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.1.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.1.weight_v",
+      "shape": [
+        4,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.2.alpha",
+      "shape": [
+        1,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.3.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.3.conv.conv.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.3.conv.conv.weight",
+      "shape": [
+        4,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.3.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.3.block.3.weight_v",
+      "shape": [
+        4,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.0.alpha",
+      "shape": [
+        1,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.1.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.1.conv.conv.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.1.conv.conv.weight",
+      "shape": [
+        4,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.1.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.1.weight_v",
+      "shape": [
+        4,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.2.alpha",
+      "shape": [
+        1,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.3.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.3.conv.conv.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.3.conv.conv.weight",
+      "shape": [
+        4,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.3.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.2.block.4.block.3.weight_v",
+      "shape": [
+        4,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.3.alpha",
+      "shape": [
+        1,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.4.bias",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.4.conv.conv.bias",
+      "shape": [
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.4.conv.conv.weight",
+      "shape": [
+        1,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "decoder.model.4.weight_g",
+      "shape": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "decoder.model.4.weight_v",
+      "shape": [
+        1,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.0.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.0.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.0.conv.conv.weight",
+      "shape": [
+        8,
+        1,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.0.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.0.weight_v",
+      "shape": [
+        8,
+        1,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.0.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.1.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.1.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.1.weight_v",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.2.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.3.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.3.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.3.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.3.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.0.block.3.weight_v",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.0.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.1.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.1.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.1.weight_v",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.2.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.3.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.3.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.3.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.3.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.1.block.3.weight_v",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.0.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.1.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.1.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.1.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.1.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.1.weight_v",
+      "shape": [
+        8,
+        8,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.2.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.3.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.3.conv.conv.bias",
+      "shape": [
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.3.conv.conv.weight",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.3.weight_g",
+      "shape": [
+        8,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.2.block.3.weight_v",
+      "shape": [
+        8,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.3.alpha",
+      "shape": [
+        1,
+        8,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.4.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.4.conv.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.4.conv.conv.weight",
+      "shape": [
+        16,
+        8,
+        4
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.4.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.1.block.4.weight_v",
+      "shape": [
+        16,
+        8,
+        4
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.0.alpha",
+      "shape": [
+        1,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.1.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.1.conv.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.1.conv.conv.weight",
+      "shape": [
+        16,
+        16,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.1.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.1.weight_v",
+      "shape": [
+        16,
+        16,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.2.alpha",
+      "shape": [
+        1,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.3.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.3.conv.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.3.conv.conv.weight",
+      "shape": [
+        16,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.3.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.0.block.3.weight_v",
+      "shape": [
+        16,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.0.alpha",
+      "shape": [
+        1,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.1.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.1.conv.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.1.conv.conv.weight",
+      "shape": [
+        16,
+        16,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.1.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.1.weight_v",
+      "shape": [
+        16,
+        16,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.2.alpha",
+      "shape": [
+        1,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.3.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.3.conv.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.3.conv.conv.weight",
+      "shape": [
+        16,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.3.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.1.block.3.weight_v",
+      "shape": [
+        16,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.0.alpha",
+      "shape": [
+        1,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.1.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.1.conv.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.1.conv.conv.weight",
+      "shape": [
+        16,
+        16,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.1.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.1.weight_v",
+      "shape": [
+        16,
+        16,
+        7
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.2.alpha",
+      "shape": [
+        1,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.3.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.3.conv.conv.bias",
+      "shape": [
+        16
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.3.conv.conv.weight",
+      "shape": [
+        16,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.3.weight_g",
+      "shape": [
+        16,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.2.block.3.weight_v",
+      "shape": [
+        16,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.3.alpha",
+      "shape": [
+        1,
+        16,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.4.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.4.conv.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.4.conv.conv.weight",
+      "shape": [
+        32,
+        16,
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.4.weight_g",
+      "shape": [
+        32,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.4.weight_v",
+      "shape": [
+        32,
+        16,
+        8
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.0.attention.wo.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.0.attention.wqkv.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.0.attention_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.0.attention_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.0.feed_forward.w1.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.0.feed_forward.w2.weight",
+      "shape": [
+        32,
+        96
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.0.feed_forward.w3.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.0.ffn_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.0.ffn_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.1.attention.wo.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.1.attention.wqkv.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.1.attention_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.1.attention_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.1.feed_forward.w1.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.1.feed_forward.w2.weight",
+      "shape": [
+        32,
+        96
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.1.feed_forward.w3.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.1.ffn_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.layers.1.ffn_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.2.block.5.norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.3.alpha",
+      "shape": [
+        1,
+        32,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.4.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.4.conv.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "encoder.block.4.conv.conv.weight",
+      "shape": [
+        32,
+        32,
+        3
+      ]
+    },
+    {
+      "name": "encoder.block.4.weight_g",
+      "shape": [
+        32,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "encoder.block.4.weight_v",
+      "shape": [
+        32,
+        32,
+        3
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.0.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.0.conv.weight",
+      "shape": [
+        32,
+        32,
+        2
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.1.dwconv.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.1.dwconv.conv.weight",
+      "shape": [
+        32,
+        1,
+        7
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.1.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.1.norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.1.norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.1.pwconv1.bias",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.1.pwconv1.weight",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.1.pwconv2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.0.1.pwconv2.weight",
+      "shape": [
+        32,
+        128
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.0.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.0.conv.weight",
+      "shape": [
+        32,
+        32,
+        2
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.1.dwconv.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.1.dwconv.conv.weight",
+      "shape": [
+        32,
+        1,
+        7
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.1.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.1.norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.1.norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.1.pwconv1.bias",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.1.pwconv1.weight",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.1.pwconv2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.downsample.1.1.pwconv2.weight",
+      "shape": [
+        32,
+        128
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.0.attention.wo.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.0.attention.wqkv.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.0.attention_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.0.attention_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.0.feed_forward.w1.weight",
+      "shape": [
+        48,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.0.feed_forward.w2.weight",
+      "shape": [
+        32,
+        48
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.0.feed_forward.w3.weight",
+      "shape": [
+        48,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.0.ffn_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.0.ffn_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.1.attention.wo.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.1.attention.wqkv.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.1.attention_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.1.attention_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.1.feed_forward.w1.weight",
+      "shape": [
+        48,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.1.feed_forward.w2.weight",
+      "shape": [
+        32,
+        48
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.1.feed_forward.w3.weight",
+      "shape": [
+        48,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.1.ffn_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.layers.1.ffn_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.post_module.norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.0.attention.wo.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.0.attention.wqkv.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.0.attention_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.0.attention_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.0.feed_forward.w1.weight",
+      "shape": [
+        48,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.0.feed_forward.w2.weight",
+      "shape": [
+        32,
+        48
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.0.feed_forward.w3.weight",
+      "shape": [
+        48,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.0.ffn_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.0.ffn_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.1.attention.wo.weight",
+      "shape": [
+        32,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.1.attention.wqkv.weight",
+      "shape": [
+        96,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.1.attention_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.1.attention_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.1.feed_forward.w1.weight",
+      "shape": [
+        48,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.1.feed_forward.w2.weight",
+      "shape": [
+        32,
+        48
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.1.feed_forward.w3.weight",
+      "shape": [
+        48,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.1.ffn_layer_scale.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.layers.1.ffn_norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.pre_module.norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.0.codebook.weight",
+      "shape": [
+        12,
+        4
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.0.in_proj.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.0.in_proj.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.0.in_proj.weight_v",
+      "shape": [
+        4,
+        32,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.0.out_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.0.out_proj.weight_g",
+      "shape": [
+        32,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.0.out_proj.weight_v",
+      "shape": [
+        32,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.1.codebook.weight",
+      "shape": [
+        12,
+        4
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.1.in_proj.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.1.in_proj.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.1.in_proj.weight_v",
+      "shape": [
+        4,
+        32,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.1.out_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.1.out_proj.weight_g",
+      "shape": [
+        32,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.1.out_proj.weight_v",
+      "shape": [
+        32,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.2.codebook.weight",
+      "shape": [
+        12,
+        4
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.2.in_proj.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.2.in_proj.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.2.in_proj.weight_v",
+      "shape": [
+        4,
+        32,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.2.out_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.2.out_proj.weight_g",
+      "shape": [
+        32,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.quantizer.quantizers.2.out_proj.weight_v",
+      "shape": [
+        32,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.semantic_quantizer.quantizers.0.codebook.weight",
+      "shape": [
+        16,
+        4
+      ]
+    },
+    {
+      "name": "quantizer.semantic_quantizer.quantizers.0.in_proj.bias",
+      "shape": [
+        4
+      ]
+    },
+    {
+      "name": "quantizer.semantic_quantizer.quantizers.0.in_proj.weight_g",
+      "shape": [
+        4,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.semantic_quantizer.quantizers.0.in_proj.weight_v",
+      "shape": [
+        4,
+        32,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.semantic_quantizer.quantizers.0.out_proj.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.semantic_quantizer.quantizers.0.out_proj.weight_g",
+      "shape": [
+        32,
+        1,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.semantic_quantizer.quantizers.0.out_proj.weight_v",
+      "shape": [
+        32,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.0.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.0.conv.weight",
+      "shape": [
+        32,
+        32,
+        2
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.1.dwconv.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.1.dwconv.conv.weight",
+      "shape": [
+        32,
+        1,
+        7
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.1.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.1.norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.1.norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.1.pwconv1.bias",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.1.pwconv1.weight",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.1.pwconv2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.0.1.pwconv2.weight",
+      "shape": [
+        32,
+        128
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.0.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.0.conv.weight",
+      "shape": [
+        32,
+        32,
+        2
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.1.dwconv.conv.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.1.dwconv.conv.weight",
+      "shape": [
+        32,
+        1,
+        7
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.1.gamma",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.1.norm.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.1.norm.weight",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.1.pwconv1.bias",
+      "shape": [
+        128
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.1.pwconv1.weight",
+      "shape": [
+        128,
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.1.pwconv2.bias",
+      "shape": [
+        32
+      ]
+    },
+    {
+      "name": "quantizer.upsample.1.1.pwconv2.weight",
+      "shape": [
+        32,
+        128
+      ]
+    }
+  ]
+}

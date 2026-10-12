@@ -1,0 +1,18 @@
+{
+  "generator": "tools/gen_mimi_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "659cf8138ca260bf25f817a085a9860c1b414003884d1325e73f325fce7344de",
+    "tiny_weights.safetensors": "c8051451b2c9b3764d54dedaf1c4e285cab2da408b1a25417956c6f9fcc3dc87",
+    "traces.json": "483dd82dcdb9f723a140bb40f7951446032c98cf24c8c7548eb70aeb4f8fc1fa",
+    "a_wave.npy": "ced5eb3a25bbb4fc13d6883dcaf099ddcf36464edf4ab438058594a2bb9ca6dc",
+    "a_codes.npy": "f8f3e414cdceb73629de9afb96be655c9cbd324a0bc9f6c9ccd8824f44df2aed",
+    "a_audio.npy": "a5d9f1d7cd35f50c7f768f22e93c791a34a4d61be3c074e0ac1323bda47cca69",
+    "b_wave.npy": "bed7c37e72ac716fc1a23d19305412dbdc4c00641275db2a4842d61e5585388d",
+    "b_codes.npy": "70ddbe5438abba0a656bef4b23f9e0c411dd8f12f165b9376b8a28d81ab8d988",
+    "b_audio.npy": "1d444f5d815f525428ba48b264bebc7de17ede51594d78d7669367fd5775dccc",
+    "tf_in.npy": "278339ad88d850d16c26a1b1ecaa93ec1395ace53162127127da4157047f2f4c",
+    "tf_out.npy": "e525a951563296c66ff23440772e0046b78fe6f32b4f341d31cda46057b60321"
+  }
+}

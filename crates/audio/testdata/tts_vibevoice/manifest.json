@@ -1,0 +1,21 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_vibevoice_fixtures.py",
+  "generate_seed": 3,
+  "stop_seed": 31,
+  "voice_seed": 7,
+  "files": {
+    "generate/config.json": "e4d42852d4bf0506d15dd2b582dfc3009adb328420696762418fe9f3f6506ba7",
+    "generate/model.safetensors": "4534980dbc01a965173d2c10ebf8d349a42f6cd287242ccddbffd46c517537e2",
+    "generate/traces.json": "ee6a737e6ebcd4597e0e1950cca49ab73075395576b2e4ce112897a167f8d8cf",
+    "manifest.json": "5c90ff240615ab2564ef618b389b27b50e7919a4336eff6a76d53be54f310cea",
+    "stop/config.json": "e4d42852d4bf0506d15dd2b582dfc3009adb328420696762418fe9f3f6506ba7",
+    "stop/model.safetensors": "28e7d89ea1e9f0bec72a74e85458674e957a95b978dc5724a6c7968672e74f9a",
+    "stop/traces.json": "3dae25d69ee0cebc392bd3f009358b10dc7b53ab9f3b802de1bf3075096f6956",
+    "voice/config.json": "e4d42852d4bf0506d15dd2b582dfc3009adb328420696762418fe9f3f6506ba7",
+    "voice/model.safetensors": "01204ecfb668f75c55624031342c05979062cf419ae38dd7e10c05e2d1c59f67",
+    "voice/traces.json": "9676debac339709d65a20c1ad632840f5c4a9a982537bbcf3aa5da4698e0bd36",
+    "voice/voices/myvoice.safetensors": "c370038218785bf013f9b6ba6c2ebb916ef1c9afa644f5ebe19ff92b68d26ada"
+  }
+}

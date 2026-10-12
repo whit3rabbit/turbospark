@@ -1,0 +1,19 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_higgs_audio_v3_fixtures.py",
+  "backbone_seed": 9,
+  "amplify_eoc": 1.8,
+  "fade_in_ms": 30.0,
+  "fade_out_ms": 15.0,
+  "sample_rate": 24000,
+  "files": {
+    "codec/config.json": "1d1a152fa69cdf6ceee2fa048e89f5729b0c274aead7ee67b13ec961c0f09256",
+    "codec/model.safetensors": "88d5ae409ce8cc774a50ded37c7a13398b64576d7319c33ee39c4e365bf4ba58",
+    "delay/traces.json": "fbb118737f4f5fa18b83f56e42ed261210020a2775ea76e1fc7e47f70f357b23",
+    "generate/config.json": "7051fd395b75fa15facfe5cdfe8b517c2f9ce23d30857b6c8846fe38b4ad60ef",
+    "generate/model.safetensors": "414bc06c6c4f89de75bb76cdf8b218a318149c3e581bbfbfd44d269c662255b3",
+    "generate/traces.json": "ba52c1a9517c2ac188e6dd8843be56244b707fcb87ea0c5d5f10b05cfb5f3e96",
+    "sampling/traces.json": "63d403cf4d35316ba58530b9e17c2abb20b04c51145866e325026b83c633090c"
+  }
+}

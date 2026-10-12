@@ -1,0 +1,19 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_qwen3_fixtures.py",
+  "backbone_seed": 3,
+  "files": {
+    "decode/config.json": "606e9112d152269553c23d85a6d3e3c625412b72cdc9361aac11b4ff02217e91",
+    "decode/model.safetensors": "4b5c8dfb09853b1c76aaaa031f97c69b4bc0ee8d9af62e5f03a50fd490d98e9c",
+    "decode/traces.json": "322815f0a846583f8767593aa7384aadb48dacf2250a8fcdf5a91fa3916cbfac",
+    "generate/config.json": "51e44fbcd631f21c114dd77534d5aecf01c328bcc959e9c658f703a31098901b",
+    "generate/model.safetensors": "e7cf033f1bf3ab6a0a63a639e0b664b39347d6adee6bbb80965ee24aec63f2a4",
+    "generate/traces.json": "8733c0b9e6ea71f28476a75c9aed3bf43390042f17acaa107079011e4461a383",
+    "generate_eos/config.json": "b64de7353e62ca2634c983b82b734e2a8733f8304c30b6b40af8ef5ae2407d87",
+    "generate_eos/model.safetensors": "a42e644810affdd021894b61f8f8b2539ffde82979effe3687cf46fb68621202",
+    "generate_eos/traces.json": "ca5930f661aa89512fcdc5e49420f35b17f5051ee88e0cee662ac8e88592cc7d",
+    "manifest.json": "eb11801d444914e873d86bc91efb6fcd4252b910728d7b67b2f18ab87743736d",
+    "sampling/traces.json": "231337edd7b6298dde3bfb9fa7834586e9642c2020bbb204c5dd6e56432d47b1"
+  }
+}

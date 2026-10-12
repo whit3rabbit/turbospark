@@ -1,0 +1,63 @@
+{
+  "dit_dim": 32,
+  "dit_depth": 2,
+  "dit_heads": 4,
+  "dit_ff_mult": 4.0,
+  "dit_text_dim": 32,
+  "dit_dropout": 0.0,
+  "dit_bias": true,
+  "dit_cross_attn": true,
+  "dit_adaln_type": "global",
+  "dit_adaln_use_text_cond": true,
+  "dit_long_skip": true,
+  "dit_text_conv": true,
+  "dit_qk_norm": true,
+  "dit_cross_attn_norm": false,
+  "dit_eps": 1e-06,
+  "dit_use_latent_condition": true,
+  "repa_dit_layer": 1,
+  "latent_dim": 16,
+  "sigma": 0.0,
+  "sampling_rate": 8000,
+  "latent_hop": 8,
+  "max_wav_duration": 0.05,
+  "text_add_embed": true,
+  "text_norm_feat": true,
+  "vae_config": {
+    "in_channels": 1,
+    "channels": 16,
+    "c_mults": [
+      2,
+      4
+    ],
+    "strides": [
+      2,
+      4
+    ],
+    "latent_dim": 16,
+    "encoder_latent_dim": 32,
+    "use_snake": true,
+    "downsample_shortcut": "averaging",
+    "upsample_shortcut": "duplicating",
+    "out_shortcut": "averaging",
+    "in_shortcut": "duplicating",
+    "final_tanh": false,
+    "downsampling_ratio": 8,
+    "sample_rate": 8000,
+    "scale": 0.71
+  },
+  "text_encoder_config": {
+    "vocab_size": 96,
+    "d_model": 32,
+    "d_kv": 16,
+    "d_ff": 64,
+    "num_layers": 2,
+    "num_heads": 2,
+    "relative_attention_num_buckets": 32,
+    "relative_attention_max_distance": 128,
+    "dropout_rate": 0.0,
+    "layer_norm_epsilon": 1e-06,
+    "is_gated_act": true,
+    "dense_act_fn": "gelu_new"
+  }
+}

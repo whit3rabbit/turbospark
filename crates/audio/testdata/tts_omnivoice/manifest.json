@@ -1,0 +1,12 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "generator": "tools/gen_omnivoice_fixtures.py",
+  "files": {
+    "codec/config.json": "sha256:526a48818e8877d91cec90f63e7879a92dd035ca7902b9612936f3a38811b0db",
+    "codec/model.safetensors": "sha256:077676fdf6e31279d2e98c6ece30cb2a6cf24e71232f0bc625fb0cfd45537931",
+    "generate/config.json": "sha256:b00ef2f143e72de91e79fe420d862cdbb8775572e4f69684fbb6600ab7ad2cf8",
+    "generate/model.safetensors": "sha256:75dfbccded1b28c2a70699e12039f33972ef260605682a1335228a832103a9ac",
+    "manifest.json": "sha256:78d1d7431d4798f92c561909c438d8d5fe8281b21dae29cc1b7a33477a5a4f33",
+    "traces.json": "sha256:e43729c85a3b2001b11c6e7f644c1b6a86733d89d6b61ae55871e3597088b471"
+  }
+}

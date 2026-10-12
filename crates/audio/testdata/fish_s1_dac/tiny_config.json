@@ -1,0 +1,59 @@
+{
+  "sample_rate": 44100,
+  "encoder_dim": 8,
+  "encoder_rates": [
+    2,
+    4
+  ],
+  "latent_dim": 32,
+  "decoder_dim": 16,
+  "decoder_rates": [
+    4,
+    2
+  ],
+  "encoder_transformer_layers": [
+    0,
+    2
+  ],
+  "encoder_transformer": {
+    "window_size": 512,
+    "n_layer": 2,
+    "n_head": 4,
+    "dim": 32,
+    "intermediate_size": 96,
+    "head_dim": 8,
+    "rope_base": 10000.0,
+    "norm_eps": 1e-05
+  },
+  "quantizer": {
+    "input_dim": 32,
+    "n_codebooks": 3,
+    "codebook_size": 12,
+    "semantic_codebook_size": 16,
+    "codebook_dim": 4,
+    "downsample_factor": [
+      2,
+      2
+    ],
+    "pre": {
+      "window_size": 4,
+      "n_layer": 2,
+      "n_head": 4,
+      "dim": 32,
+      "intermediate_size": 48,
+      "head_dim": 8,
+      "rope_base": 10000.0,
+      "norm_eps": 1e-05
+    },
+    "post": {
+      "window_size": 4,
+      "n_layer": 2,
+      "n_head": 4,
+      "dim": 32,
+      "intermediate_size": 48,
+      "head_dim": 8,
+      "rope_base": 10000.0,
+      "norm_eps": 1e-05
+    }
+  }
+}

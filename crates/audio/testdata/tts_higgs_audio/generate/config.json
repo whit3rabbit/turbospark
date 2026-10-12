@@ -1,0 +1,32 @@
+{
+  "text_config": {
+    "hidden_size": 32,
+    "num_hidden_layers": 2,
+    "num_attention_heads": 4,
+    "num_key_value_heads": 2,
+    "intermediate_size": 64,
+    "vocab_size": 96,
+    "rope_theta": 10000.0,
+    "rms_norm_eps": 1e-05,
+    "tie_word_embeddings": true,
+    "rope_scaling": {
+      "factor": 32.0,
+      "high_freq_factor": 4.0,
+      "low_freq_factor": 1.0,
+      "original_max_position_embeddings": 8192,
+      "rope_type": "llama3"
+    }
+  },
+  "audio_num_codebooks": 3,
+  "audio_codebook_size": 16,
+  "audio_stream_bos_id": 16,
+  "audio_stream_eos_id": 17,
+  "audio_dual_ffn_layers": [
+    0,
+    1
+  ],
+  "use_audio_out_self_attention": false,
+  "audio_decoder_proj_num_layers": 0,
+  "use_delay_pattern": true,
+  "sample_rate": 24000
+}

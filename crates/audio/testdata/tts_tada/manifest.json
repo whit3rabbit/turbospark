@@ -1,0 +1,16 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_tada_fixtures.py",
+  "generate_seed": 11,
+  "nocfg_seed": 13,
+  "files": {
+    "generate/config.json": "cea87aa6c22081097fa5d3bf8ea0cb10d2c690f91335905762b115458ef3e671",
+    "generate/model.safetensors": "36f82f2bcb6d032943dcb3385e92c938beafab43a7b9ebd6c65f65899c8cc0ea",
+    "generate/traces.json": "ebdc01eda5d0ad64eb578ab5814a47c20058d9c245a6a442d274cc6121c6960c",
+    "manifest.json": "0b08825795090e20a855d18281a499449d25202b86799e82ca0d8dd03e73f335",
+    "nocfg/config.json": "cea87aa6c22081097fa5d3bf8ea0cb10d2c690f91335905762b115458ef3e671",
+    "nocfg/model.safetensors": "6b2f42a9d241b224f5a9657989fd7b142802bebc2d60214d796496ec7601059a",
+    "nocfg/traces.json": "100142fed6584f48637dbf8f47fd12ad9ae5dd6188314bce73d8967367af3223"
+  }
+}

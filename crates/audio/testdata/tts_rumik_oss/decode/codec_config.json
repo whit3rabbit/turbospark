@@ -1,0 +1,51 @@
+{
+  "channels": 1,
+  "sample_rate": 24000,
+  "frame_rate": 12.5,
+  "renormalize": true,
+  "seanet": {
+    "dimension": 16,
+    "channels": 1,
+    "causal": true,
+    "nfilters": 8,
+    "nresidual_layers": 1,
+    "ratios": [
+      8,
+      6,
+      5,
+      4
+    ],
+    "ksize": 7,
+    "residual_ksize": 3,
+    "last_ksize": 3,
+    "dilation_base": 2,
+    "pad_mode": "constant",
+    "true_skip": true,
+    "compress": 2
+  },
+  "transformer": {
+    "d_model": 16,
+    "num_heads": 4,
+    "num_layers": 8,
+    "causal": true,
+    "norm_first": true,
+    "bias_ff": false,
+    "bias_attn": false,
+    "layer_scale": 0.01,
+    "positional_embedding": "rope",
+    "use_conv_bias": true,
+    "gating": false,
+    "norm": "layer_norm",
+    "context": 250,
+    "max_period": 10000,
+    "max_seq_len": 8192,
+    "kv_repeat": 1,
+    "dim_feedforward": 32,
+    "conv_layout": true,
+    "cross_attention": false,
+    "conv_kernel_size": 3
+  },
+  "quantizer_nq": 8,
+  "quantizer_bins": 64,
+  "quantizer_dim": 8
+}

@@ -1,0 +1,30 @@
+{
+  "generator": "tools/gen_sam_audio_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "aligned.npy": "c2f20848c1550d6d6877bf758934e1b5c1c6df7ce4fd5a598775ea28ab0308ed",
+    "anchor_alignment.npy": "8c08c51708548a85814a86649250c9096e352d9c587e68b3ed579092dbcffcad",
+    "anchor_ids.npy": "58eaf5e091fe208bee4f069f50c110c2423d81730f44c1e9e908bc5de3127daa",
+    "audio_features.npy": "508bd1b8eddc1266254c51350b76e22c3e5e296e0c99ccffbffc317ff9555a91",
+    "config.json": "dd794f294de220399e05351a5105ad12c043946e3eb573d45eb1daa989e60af7",
+    "memory.npy": "7785e8efb3bb2c612ccf9327c2c61f1c6c4a94337cf1c49d9b89e75c59a51877",
+    "noise.npy": "935ee9aaf27484d231573df56118dd59a7bfd66597b597ea38cb1e03d25e8cb8",
+    "noisy_after_step.npy": "e299064e4afb06daec960c919bf7746112eca1dd7903334843ffd537e3eaaff3",
+    "ops_position_bias.npy": "906b621f101c654d29490b6c9c9df485431cf30e49eb64dec981aff57825fd39",
+    "ops_rmsnorm.npy": "8152f4494139036dc7c9f82b4972185d99ab0813c7e8379db4115ce51a9d8638",
+    "ops_rope.npy": "a7b3018a269a590a10d00044b6a431a8a280eafc23514c29454e38ea17586597",
+    "residual.npy": "641e9e984951be4d6908610e1a9f0f053e579172f24631da6404e2843bcbab9a",
+    "t0.npy": "616fc3735c59c8425c608778613bb5432109119098867cb6adaf3334f89cae7a",
+    "target.npy": "44899a507dab88657224d04d17b5f32aaf166c59031a1ed24fb778f8d9f4ce00",
+    "text_features.npy": "e866a44368352a6dce187a5afec15a2ea61688d0e75c2aea8afa1c033cc9bee0",
+    "tiny_codec.safetensors": "dead15714b5c23a9cbcd05a731bb10c5fd543d4c871a1950dfa5dcf20c312c92",
+    "tiny_weights.safetensors": "f2ed43e3cff83bb39667b45f6b6eb97d84009e30354ac39d90cc2ee086d0e2d8",
+    "token_mask.npy": "d73d6dcd223e30c1712605571c46b1c60a042328ad744a9a2d263c2c046d1b17",
+    "tokens.npy": "1bef8ae31f1dd5c326ab95590493f4229b7ee4353ae5b71d3ffe59e34a07655d",
+    "traces.json": "b2704fb1619f7f587c42e1d2ce4c0867b748b727a32c3ff20ee3b141f595b7b7",
+    "velocity.npy": "55fb87a8b39bb137efc3e547f4f2e9b54c290121b3f32725a36066cf846bb88c",
+    "velocity_with_anchors.npy": "982a30bf4338ee04fe4da84c37528733c243a47081143c203da347df3aed0b32",
+    "wave.npy": "6fa3beb1ba0d7aed13869fe8ac6f94c53fa60a32bd967d7751e6519fcdf44684"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "generator": "tools/gen_moss_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "8bfa5bc1b3cdeb0d6107b33cf6fc42820ffa8a8b8a0537e48becd2f164911a74",
+    "tiny_weights.safetensors": "3df7c74768e70ce25df190702aaf491ac816f2ca64753f496fc6f3cb0a202758",
+    "weights_manifest.json": "655d27596064fd1cc82c6c67c01004f765897ce96a6d9de5ec92394987bcb360",
+    "traces.json": "d17da09e52c47d5c4bc0860febaadbb6e2f26b9011a2e7a74de5c5936978771b",
+    "wave.npy": "2500a1552a69f146d295f6f22a2a53c32972c330e265d0f75221e72c2c94b564",
+    "codes.npy": "166f946f2214a3856803fe5a03b0aa8bf1b10d88664feeb1a80c46c2148ca65d",
+    "quantized.npy": "5ca01366a3f2806090d80f2474473a3359c99b72d404dae2239192e4477227bd",
+    "decoded.npy": "cb42ec164f3c6312967237038e66726a803e608ab983da77596081e8fb15f464"
+  }
+}

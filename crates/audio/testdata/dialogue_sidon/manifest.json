@@ -1,0 +1,22 @@
+{
+  "generator": "tools/gen_dialogue_sidon_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "conditioning.npy": "7753222c04e0060c88531ec5db51ceda756ce311e0b1b58c9923dbb1ee9a6992",
+    "config.json": "51a356794a30f1ff601dea01588107a46bf30259172c286b21ca9417c709cee7",
+    "encoder_out.npy": "3595a2d69f3869134eb4a16cb86778afa831944d65a18b842013377151048444",
+    "features.npy": "86ff9b2a1661cd3ca16dac27862f18b119ff175f64a94430ca075a30839b8af9",
+    "first.npy": "877c9b7f239183647543f730d7f3a76af7d2d20aa7cb4edc1abd6f87bc295e25",
+    "latents.npy": "9f4e8640240c459528211ba0a59d735a2bfd0643a002a393e5d3842a1415b933",
+    "mask.npy": "948bceb0783c715953c90e61ca5cd8089478e1b45cf814c9cb3929da8d0f99ca",
+    "noise.npy": "23200c639f121cd6e417b3f052f079f279121220142123dd16430fce7af9dac7",
+    "prediction.npy": "88390495fdfcfd29570b8ad83dc621005fdf844b3f2406c8ab9cc97683ed31a7",
+    "second.npy": "b477c5cfd5412b8fc0920fd83b075b80262265c5b747c132290e4dfbdd8ae1fa",
+    "speakers.npy": "9f22678c98e7457a65b10f28297a6487c85bcaf330006560cc25c048ad56850f",
+    "tiny_dac.safetensors": "08f4290685d0a31c5d3d9b59fd4e4e5648d5bf5b59f1325318c4e7c8f0b208e4",
+    "tiny_dac_config.json": "b88aaaf1176502826e10721a4c29ae89ea35df3aba4d4e9c04234324feaa738c",
+    "tiny_weights.safetensors": "0e83ea4028c71c77b138d798c04d09961e975f1a97878f4bac6f44c43a34cbbf",
+    "wave.npy": "0d8c42cbb7bd00c443947e6d9c87ca0c37d1ff9ffaff0ffc4259b4462ed0c2cb"
+  }
+}

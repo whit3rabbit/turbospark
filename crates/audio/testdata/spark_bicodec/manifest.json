@@ -1,0 +1,12 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_spark_bicodec_fixtures.py",
+  "seed": 11,
+  "upsample_rate": 4,
+  "files": {
+    "detokenize/config.yaml": "57432744ad57fff09d005c3e14a4803af60544c5e71b46c76657bf2304f47e22",
+    "detokenize/model.safetensors": "26c027791a3a95ee68bf8fc49977f6733cb0249659081db72d15d0739bce201e",
+    "detokenize/traces.json": "36c437432e00299ce4d31010596c196a6c8bece093bb27d1e6a93b6d540ac177"
+  }
+}

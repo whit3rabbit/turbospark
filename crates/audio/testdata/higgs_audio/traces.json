@@ -1,0 +1,19 @@
+{
+  "a_input_len": 1920,
+  "a_acoustic_shape": [
+    2,
+    6
+  ],
+  "b_input_len": 1440,
+  "b_acoustic_shape": [
+    1,
+    6
+  ],
+  "z_frames": 5,
+  "codes_shape": [
+    5,
+    3
+  ],
+  "rvq_min_margin": 0.0011732280254364014,
+  "decoded_len": 4800
+}

@@ -1,0 +1,91 @@
+{
+  "model_type": "confucius4",
+  "sample_rate": 22050,
+  "w2vbert": {
+    "hidden": 32,
+    "num_heads": 4,
+    "head_dim": 8,
+    "layers": 2,
+    "left": 2,
+    "right": 1
+  },
+  "t2s": {
+    "d_model": 32,
+    "n_heads": 4,
+    "n_layers": 2,
+    "semantic_vocab": 8194,
+    "max_positions": 128
+  },
+  "s2a": {
+    "hidden": 32,
+    "num_heads": 4,
+    "head_dim": 8,
+    "depth": 5,
+    "wavenet_layers": 4,
+    "freqs_positions": 256,
+    "codebook_size": 8194,
+    "codebook_dim": 8,
+    "speaker_dim": 16,
+    "encoder_dim": 32,
+    "latent_dim": 32,
+    "mels": 80
+  },
+  "prefix": {
+    "text_vocab": 16,
+    "text_embed_dim": 64,
+    "hidden": 32,
+    "cond_dim": 32,
+    "max_positions": 128
+  },
+  "campplus": {
+    "embedding_size": 16,
+    "m_channels": 8,
+    "fcm_channels": 32,
+    "init_channels": 16,
+    "growth_rate": 8,
+    "bn_size": 2,
+    "num_layers": [
+      12,
+      24,
+      16
+    ]
+  },
+  "bigvgan": {
+    "num_mels": 80,
+    "upsample_rates": [
+      4,
+      4
+    ],
+    "upsample_kernel_sizes": [
+      8,
+      8
+    ],
+    "upsample_initial_channel": 32,
+    "resblock_kernel_sizes": [
+      3,
+      7,
+      11
+    ],
+    "resblock_dilation_sizes": [
+      [
+        1,
+        1,
+        1
+      ],
+      [
+        1,
+        1,
+        1
+      ],
+      [
+        1,
+        1,
+        1
+      ]
+    ],
+    "activation": "snakebeta",
+    "snake_logscale": true,
+    "use_bias_at_final": false,
+    "use_tanh_at_final": false
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "weight_scales": {
+    "flow": 0.2,
+    "hift": 0.02,
+    "campplus": 0.2
+  },
+  "campplus_fbank_shape": [
+    58,
+    80
+  ],
+  "embedding_shape": [
+    192
+  ],
+  "embedding_abs_max": 839643.1875,
+  "prompt_mel_shape": [
+    30,
+    80
+  ],
+  "prompt_feat_shape": [
+    24,
+    80
+  ],
+  "up_rate": 2,
+  "target_mel_len": 24,
+  "flow_mel_shape": [
+    16,
+    80
+  ],
+  "flow_mel_abs_max": 6.965023040771484,
+  "f0_shape": [
+    16
+  ],
+  "f0_min": 66.49899291992188,
+  "sine_rand_ini_shape": [
+    1,
+    9
+  ],
+  "sine_noise_shape": [
+    1,
+    9,
+    7680
+  ],
+  "hift_wav_len": 7680,
+  "hift_wav_raw_abs_max": 10.083355903625488,
+  "hift_wav_clip_fraction": 0.26119791666666664,
+  "full_wav_len": 7680,
+  "full_vs_hift_max_abs_diff": 1.1920928955078125e-07
+}

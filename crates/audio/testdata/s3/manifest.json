@@ -1,0 +1,23 @@
+{
+  "generator": "tools/gen_s3_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_v1_config.json": "c7f6ca35cef31a25269f3f42b157d47f36d14c5e0214d18989986703d9e784f4",
+    "tiny_v1_weights.safetensors": "35a1a03a360a415a0c9db51d4eaa9665ea10d301710d038c64dd1b21bf09adc7",
+    "tiny_v1_weights_manifest.json": "5756d6eb45497c153667a80c730407a0b801bf35856c83c8448ba2f7de6a49cd",
+    "tiny_v2_config.json": "6fead08320f600e343e2533b83e8801f0ef97c08ad3e3de30722649b8fe60895",
+    "tiny_v2_weights.safetensors": "15f2d55c12884217a36234372e613dc158ef22af1da6ff01cb97bb515b6ca41d",
+    "traces.json": "6939aa67f92728a8f4f0b37f73932a46561be481439634713371664d0fbe7825",
+    "v1_a_mel.npy": "996bbb53f676f89bf2d835e8b695844a0da133548ee1a1c3ac12b1a8cd2221f5",
+    "v1_a_dequant.npy": "3d7c3f1b1098144b1347de4dd0f0aa428632ee720910d06d8ab127ab8ec58e3b",
+    "v1_b_mel.npy": "783a23f9e0d9dc475b436ec23b1843a9923447f43a667f1a4335587be08743cf",
+    "v1_b_dequant.npy": "f6a6c35025509172f6ae979bc520e67c09bcc619c1b824cd88ce5e7e447ed6a4",
+    "v2_a_mel.npy": "d4ff473e0eae081859863c14842e6892216a4dd12ea7c3fef5d028d6ab059722",
+    "v2_b_mel.npy": "46750948acceebd0401504d5cbd7822042959c7099445e9efd68d47700275f08",
+    "v2_long_mel.npy": "2a76cb0bbd8f4d2556c8677afc650de341df0bec75a2e56b345d911a87f6f298",
+    "mel_wave.npy": "060bc963cf6ba7be980643e26d1a41ab7da10f4916275fe3a9199dd7ce6bf373",
+    "mel_golden.npy": "f82d4406d7fff94a43309180b05d71bf5419171134026e76c0d763e309a347dc",
+    "v2_long_code.npy": "bd73e9a64abaf48fdfa5c0903985f5a69fbdb82a58535dec0f72bf2b21d9793d"
+  }
+}

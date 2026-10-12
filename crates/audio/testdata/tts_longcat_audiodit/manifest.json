@@ -1,0 +1,28 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_longcat_audiodit_fixtures.py",
+  "seeds": {
+    "model": 11,
+    "dit": 5,
+    "voice": 23,
+    "generate_seed": 1024
+  },
+  "files": {
+    "apg/config.json": "73f41f788be9bc7412a6ab028154d5fbbd932521a496a0525be5616a32089a9e",
+    "apg/model.safetensors": "7b6642ac8910c76509dc6b12e337030d0c00aacf248fb42ac0c8cfec68cd2a3e",
+    "apg/traces.json": "efa0ce92ce6d8e453f6b2a7bee6ff362ca2833e29f49b79bfea66d5d05927121",
+    "dit/config.json": "73f41f788be9bc7412a6ab028154d5fbbd932521a496a0525be5616a32089a9e",
+    "dit/model.safetensors": "7b6642ac8910c76509dc6b12e337030d0c00aacf248fb42ac0c8cfec68cd2a3e",
+    "dit/traces.json": "cc846d323daf0b0c77210721bec23eedcb1cb6d4b051fb8ed3ad037f23f613b6",
+    "generate/config.json": "73f41f788be9bc7412a6ab028154d5fbbd932521a496a0525be5616a32089a9e",
+    "generate/model.safetensors": "7b6642ac8910c76509dc6b12e337030d0c00aacf248fb42ac0c8cfec68cd2a3e",
+    "generate/traces.json": "73f69064608e6af8b5cc9bba0a486722fe2f56f62ff91269b639ad3be7006ff1",
+    "text/config.json": "73f41f788be9bc7412a6ab028154d5fbbd932521a496a0525be5616a32089a9e",
+    "text/model.safetensors": "7b6642ac8910c76509dc6b12e337030d0c00aacf248fb42ac0c8cfec68cd2a3e",
+    "text/traces.json": "bc456cd4459faf66e186eb81a197906878dc71e81e1e85602a5d16de46a26a41",
+    "voice/config.json": "73f41f788be9bc7412a6ab028154d5fbbd932521a496a0525be5616a32089a9e",
+    "voice/model.safetensors": "7b6642ac8910c76509dc6b12e337030d0c00aacf248fb42ac0c8cfec68cd2a3e",
+    "voice/traces.json": "db42bd4872bf6b17beb4309feb1db000a2279593bb142fdcc69f8e0d02448986"
+  }
+}

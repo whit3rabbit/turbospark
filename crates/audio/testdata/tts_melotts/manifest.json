@@ -1,0 +1,19 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_melotts_fixtures.py",
+  "model_seed": 11,
+  "e2e_seed": 4321,
+  "files": {
+    "bert/config.json": "f2d0fd0cf64608c7355027cd249cd645f2826a6876d80a18e5ccaea9f162513d",
+    "bert/model.safetensors": "88391e04fc519255bf99c96b41c74fc711a5e24418c0712d2f9bc85be93ccdd4",
+    "bert/traces.json": "0ada141543e3708c625b2bc9e024bbadefde6fff79f74ab06ea81a21b82a0bce",
+    "frontend/traces.json": "afd8a85e9acac3f96cb30b969e0e056c5a76f689179046f3cf9283649b558885",
+    "generate/config.json": "6cf207c79e3d43ff87bee9a9caa6c6a431934b302e58d29a298ea5760e18970f",
+    "generate/traces.json": "b60aa350d7b0addbd34dcb11154240d6e7752fb636fd653946e36ddea4b658f6",
+    "manifest.json": "88f87da3e5a7c36f2ac1ffd74f26cf3e09d08337f71db046e4a1c865f8f4a8da",
+    "stages/config.json": "6cf207c79e3d43ff87bee9a9caa6c6a431934b302e58d29a298ea5760e18970f",
+    "stages/model.safetensors": "5aa51284eaf25af0b9f4ff8bbaeb16ff0a908a2e698aa3103d5b5df1f383d42c",
+    "stages/traces.json": "d501f4029863d4689713b8612a333742c3357646390d5fe36d707d81a41fa853"
+  }
+}

@@ -1,0 +1,1 @@
+{"a_input_len": 1920, "a_latents_shape": [1, 8, 240], "a_audio_len": 1920, "b_input_len": 700, "b_latents_shape": [1, 8, 88], "b_audio_len": 704}

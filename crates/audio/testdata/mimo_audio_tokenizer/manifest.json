@@ -1,0 +1,16 @@
+{
+  "generator": "tools/gen_mimo_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "deb87f65b8885d019c3bac6164bb4418ed8266cc9752e00e1c1d5ac3ca0c7327",
+    "tiny_weights.safetensors": "9f9ee02490d291d0c04eb49f56d07456d39d1310381dec239797c7e5f8bff605",
+    "weights_manifest.json": "901c8a83b17c002d49ba94d3cf5d326302f0afa01473bad98d6395e9c93ffebf",
+    "traces.json": "7675e8346e686b7bfc55972b9283c6ada63d00e6eeb0e0c5115ebd96fc71ea6c",
+    "wave.npy": "34bf61e725e3ab0b5273c8d33b7b9a83c0232d55d95685b83f79754ce1e75f9e",
+    "mel_golden.npy": "f93389c62c07a3acc312cee8a5905e4da4231977678eae9b11370610d2baae96",
+    "hidden.npy": "12ba2cd6a747c1cd91e3d0368a296e4f40f9fde618589722fd6695088eacb329",
+    "codes.npy": "bb730857e88c519a76514599d65f9f4b2b2cf159563636c8914e3d7bab1e5d1e",
+    "decoded.npy": "c82b935ef806cc8f092e41355ed5608500b7cad110618782d534d6a1c13d43dc"
+  }
+}

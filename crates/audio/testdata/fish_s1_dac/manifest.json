@@ -1,0 +1,19 @@
+{
+  "generator": "tools/gen_fish_s1_dac_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "898cdca2739623afef31d2b54fa6c8bb40122ba0cf6e4bca94789a321ea5627c",
+    "tiny_weights.safetensors": "e026f7395eb7f6622070349126333d8b205bf6357c1b0850f0e422078d48748b",
+    "weights_manifest.json": "40848262854604d9fd0a83eae0d6a4fb8611889cc001bc0eee6ab3782302a33d",
+    "traces.json": "afcdad8c9a4785035514c2d1d7d23bc2897462610c15fcb0514dc27447730557",
+    "a_wave.npy": "26cceead07dd9778b3b1a0b59635c0b03afd845f005711a11833b35f01402fbd",
+    "a_codes.npy": "660de5b47d633e1912037b4795c86b5986bf63f2a8fea82eaee488c725bc31d5",
+    "a_decoded.npy": "92afa2a4008309cedf60ed5599a580665642ea9606d2ae41e655a4c93ad0c238",
+    "b_wave.npy": "9384333b0ca1dcffaf6e5804e5a805abbd42f3cb04a7a6889300a2db6be6c10b",
+    "b_codes.npy": "02f770ccecf3dfe9396430af8faf6e5b4e42f494cbfd6210802bbb4c8f08473b",
+    "b_decoded.npy": "6b5edf23320bf309c7e030d872d6f099c437fc5252dd240e7970731d4f392bcb",
+    "rand_codes.npy": "d175a25611c4d66db5020eda642714860c6565eb123b3ec222f707f4e2f08fec",
+    "rand_decoded.npy": "317543d84d05e71e0a7161b077bba90f82ce47bcf00dd4e0d815533ea06e6f9e"
+  }
+}

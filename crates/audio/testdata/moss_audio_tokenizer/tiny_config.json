@@ -1,0 +1,58 @@
+{
+  "sample_rate": 8000,
+  "downsample_rate": 8,
+  "number_channels": 2,
+  "enable_channel_interleave": true,
+  "causal_transformer_context_duration": 10.0,
+  "encoder_kwargs": [
+    {
+      "module_type": "PatchedPretransform",
+      "patch_size": 4
+    },
+    {
+      "module_type": "Transformer",
+      "input_dimension": 4,
+      "output_dimension": 32,
+      "d_model": 32,
+      "num_heads": 4,
+      "num_layers": 2,
+      "dim_feedforward": 64,
+      "causal": true,
+      "context_duration": 0.001,
+      "conv_layout": false,
+      "positional_embedding": "rope",
+      "max_period": 10000.0,
+      "layer_scale": 0.1
+    }
+  ],
+  "decoder_kwargs": [
+    {
+      "module_type": "Transformer",
+      "input_dimension": 32,
+      "output_dimension": 4,
+      "d_model": 32,
+      "num_heads": 4,
+      "num_layers": 2,
+      "dim_feedforward": 64,
+      "causal": true,
+      "context_duration": 0.001,
+      "conv_layout": false,
+      "positional_embedding": "rope",
+      "max_period": 10000.0,
+      "layer_scale": 0.1
+    },
+    {
+      "module_type": "PatchedPretransform",
+      "patch_size": 4
+    }
+  ],
+  "quantizer_type": "rlfq",
+  "quantizer_kwargs": {
+    "input_dim": 32,
+    "rvq_dim": 32,
+    "output_dim": 32,
+    "num_quantizers": 3,
+    "codebook_size": 16,
+    "codebook_dim": 4
+  }
+}

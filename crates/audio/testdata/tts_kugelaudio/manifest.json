@@ -1,0 +1,16 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_kugelaudio_fixtures.py",
+  "generate_seed": 3,
+  "stop_seed": 31,
+  "files": {
+    "generate/config.json": "cebcacb05afb7764a081c4ad1c384ad17753b350401a7a9f9ca97811dc0c23d8",
+    "generate/model.safetensors": "c22d34a65a4d71e970bc469b2cc47de6c428cefafd2b240463af563e06aa7875",
+    "generate/traces.json": "a24f38787712fbe8ecf82aadea8d71c155134761da53d432d265507228093cf7",
+    "manifest.json": "defd66caa8fecd27fe32d903e2027f260e41998f74c3e1fd8c89de72b105e29c",
+    "stop/config.json": "cebcacb05afb7764a081c4ad1c384ad17753b350401a7a9f9ca97811dc0c23d8",
+    "stop/model.safetensors": "fee537623d3b7eb30f02a17873798a1a5db1537a5ee1ea016b8be7f5f130bd3d",
+    "stop/traces.json": "3f228e9f8af82dd9daf0d2a32761689824b428d2b98f955c56b193234fed82b1"
+  }
+}

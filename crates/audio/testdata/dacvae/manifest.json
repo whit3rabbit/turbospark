@@ -1,0 +1,17 @@
+{
+  "generator": "tools/gen_dacvae_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "b42d6b8516c325b79cf2f453debf5c3147f888b809c5ea91a3c417a71e4a6da8",
+    "tiny_weights.safetensors": "908645660f52c527c9c467b88919dfe2c2272e4cc21c6286a067d6ecfa9a5476",
+    "weights_manifest.json": "6549991e0c278162681cfde0de380728bb4393cbbf9403381bff94a9aeb80bd4",
+    "traces.json": "0a74068f80bea2e46952801fc234c413249b252ca1792f22a54a7d631056c27c",
+    "a_wave.npy": "4a604c701a08e7d897be6508174ad4e76c3239bf2a0d03c6e6a96842bed2a12d",
+    "a_latents.npy": "77cd76bfeb22835a7b773cbd7f33437750855f459f05652e00be9d6aafbd538e",
+    "a_audio.npy": "0956fa62cbfbb9c775c773fab7d4fbdb63c98f45d5874ba4df6511bbc4087216",
+    "b_wave.npy": "653d27553b76e26e67674dc68be02ae1a818217efb11b26febbbc12945e7b109",
+    "b_latents.npy": "a5e2905ff39c516a826c7d0f9348ab0eae38b7b71617ea2cc97e76bb879aaeca",
+    "b_audio.npy": "edd509883585ae35c61d2867519620cf345c3780384b06accfc1a71c41565c75"
+  }
+}

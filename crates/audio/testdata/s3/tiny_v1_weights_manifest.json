@@ -1,0 +1,238 @@
+{
+  "tiny_v1": [
+    {
+      "name": "encoder.blocks.0.attn.key.weight",
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.attn.out.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.attn.out.weight",
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.attn.query.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.attn.query.weight",
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.attn.value.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.attn.value.weight",
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.attn_ln.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.attn_ln.weight",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.mlp.layers.0.bias",
+      "shape": [
+        256
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.mlp.layers.0.weight",
+      "shape": [
+        256,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.mlp.layers.2.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.mlp.layers.2.weight",
+      "shape": [
+        64,
+        256
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.mlp_ln.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.0.mlp_ln.weight",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.attn.key.weight",
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.attn.out.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.attn.out.weight",
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.attn.query.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.attn.query.weight",
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.attn.value.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.attn.value.weight",
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.attn_ln.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.attn_ln.weight",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.mlp.layers.0.bias",
+      "shape": [
+        256
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.mlp.layers.0.weight",
+      "shape": [
+        256,
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.mlp.layers.2.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.mlp.layers.2.weight",
+      "shape": [
+        64,
+        256
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.mlp_ln.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.blocks.1.mlp_ln.weight",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.conv1.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.conv1.weight",
+      "shape": [
+        64,
+        3,
+        16
+      ]
+    },
+    {
+      "name": "encoder.conv2.bias",
+      "shape": [
+        64
+      ]
+    },
+    {
+      "name": "encoder.conv2.weight",
+      "shape": [
+        64,
+        3,
+        64
+      ]
+    },
+    {
+      "name": "encoder.positional_embedding",
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "name": "quantizer.embed",
+      "shape": [
+        128,
+        64
+      ]
+    }
+  ]
+}

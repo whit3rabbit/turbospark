@@ -1,0 +1,17 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_outetts_fixtures.py",
+  "backbone_seed": 6,
+  "files": {
+    "dac/config.json": "3999d80732e61704cbadad704c38abee5de59421d4870a2b4f2f702ab8f43c50",
+    "dac/model.safetensors": "322ae8507362cd48e2eaa055ce716fe2626fac78c096b871e84017e8e4f9601c",
+    "dac/traces.json": "49eddb28044e84fc75cfbb3dba68b3a74db6c42de238609e678a8db801645bef",
+    "generate/config.json": "e8d7caeaece5b62aec4ee6db7ea4a1eabd524607b37349de5ba9902ba0e5f0ba",
+    "generate/model.safetensors": "6c462ae560072a945195214144363e21cc83ac930ffc2826de8e219367f42e2e",
+    "generate/traces.json": "fc74f8e8390d3c522096a0464787803bfeb45204ff14988c0062f9bdef8a5fe2",
+    "manifest.json": "07ab36d954437ad529246d324eb50ea4f0552219c0e31768b2d021d55fa6a7bd",
+    "prompt/traces.json": "6f9c2897cb5946cac2a20aabef7aae8ff773e53c7b174dcb527f0ea308dd7bfb",
+    "sampling/traces.json": "6849719a887f72257a579aa2847b46acd41e6d1c197fd0e7af110aed703adbbe"
+  }
+}

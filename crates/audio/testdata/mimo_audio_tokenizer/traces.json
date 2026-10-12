@@ -1,0 +1,17 @@
+{
+  "mel_shape": [
+    97,
+    8
+  ],
+  "hidden_shape": [
+    25,
+    32
+  ],
+  "codes_shape": [
+    3,
+    25
+  ],
+  "rvq_min_margin": 0.0006837844848632812,
+  "decoded_len": 1000,
+  "downsample_rate": 40
+}

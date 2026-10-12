@@ -1,0 +1,50 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_dia_fixtures.py",
+  "seeds": {
+    "dia": 3,
+    "dac": 41,
+    "case_rng": [
+      9,
+      23,
+      700
+    ]
+  },
+  "files": {
+    "budget/config.json": "8f3fb4fb2d65502b0c22c825beaf16b9abbfe32041add0d806453776d8c75111",
+    "budget/dac.safetensors": "3e40772a6167f04526e499a703c4c45637830af5e5d5e5107c4d6ee3d9faf7ec",
+    "budget/dac_config.json": "8f86bb3943b8fc70974d73b25c571d25b8a919cf1e6a06dea48a8ee52af3cdb7",
+    "budget/model.safetensors": "14d90add7a4022440b780c9bdede7135c0001e9bf9191b6fe2a6064a76bd8338",
+    "budget/traces.json": "fb5edb1527c7db5e334b1a2f6906f36cfe5f0ea36f841bdf8bc59902bbd1d805",
+    "delay/config.json": "8f3fb4fb2d65502b0c22c825beaf16b9abbfe32041add0d806453776d8c75111",
+    "delay/dac.safetensors": "3e40772a6167f04526e499a703c4c45637830af5e5d5e5107c4d6ee3d9faf7ec",
+    "delay/dac_config.json": "8f86bb3943b8fc70974d73b25c571d25b8a919cf1e6a06dea48a8ee52af3cdb7",
+    "delay/model.safetensors": "14d90add7a4022440b780c9bdede7135c0001e9bf9191b6fe2a6064a76bd8338",
+    "delay/traces.json": "dd3fba1e33d58b557f4b55a2cd54f5ea9fff210ee7ba1640520932065694b810",
+    "generate/config.json": "8f3fb4fb2d65502b0c22c825beaf16b9abbfe32041add0d806453776d8c75111",
+    "generate/dac.safetensors": "3e40772a6167f04526e499a703c4c45637830af5e5d5e5107c4d6ee3d9faf7ec",
+    "generate/dac_config.json": "8f86bb3943b8fc70974d73b25c571d25b8a919cf1e6a06dea48a8ee52af3cdb7",
+    "generate/model.safetensors": "14d90add7a4022440b780c9bdede7135c0001e9bf9191b6fe2a6064a76bd8338",
+    "generate/traces.json": "6c14dffc11873244628344a576a3d7f7c3cbc042c868cfd84c5728be23853ee1",
+    "midstop/config.json": "8f3fb4fb2d65502b0c22c825beaf16b9abbfe32041add0d806453776d8c75111",
+    "midstop/dac.safetensors": "3e40772a6167f04526e499a703c4c45637830af5e5d5e5107c4d6ee3d9faf7ec",
+    "midstop/dac_config.json": "8f86bb3943b8fc70974d73b25c571d25b8a919cf1e6a06dea48a8ee52af3cdb7",
+    "midstop/model.safetensors": "14d90add7a4022440b780c9bdede7135c0001e9bf9191b6fe2a6064a76bd8338",
+    "midstop/traces.json": "8448662215423ff8a3f5616fa7c7fcece33627732db2a5925e686146a214aef7",
+    "sampling/filtered_top_p.npy": "c753703982b87c96edb07b688712495cf6c9f1b64282cadfd920abb346bbc39b",
+    "sampling/filtered_top_p_top_k.npy": "78b8c7411257544a408e9970b495f0130b6812b5735eec9ae068fbfd2595b669",
+    "sampling/logits.npy": "15388fc94ff803d6aae88b2586e5b6d2e023d8ed4a6e3bf720239b1b0ca47333",
+    "sampling/traces.json": "4d0126310507cbbbfdc70ae5641a2ad7cea4b8aebce2f77e43f04ef0ccb1c432",
+    "text/config.json": "8f3fb4fb2d65502b0c22c825beaf16b9abbfe32041add0d806453776d8c75111",
+    "text/dac.safetensors": "3e40772a6167f04526e499a703c4c45637830af5e5d5e5107c4d6ee3d9faf7ec",
+    "text/dac_config.json": "8f86bb3943b8fc70974d73b25c571d25b8a919cf1e6a06dea48a8ee52af3cdb7",
+    "text/model.safetensors": "14d90add7a4022440b780c9bdede7135c0001e9bf9191b6fe2a6064a76bd8338",
+    "text/traces.json": "7d1fbbdd8dbc5c533a45f70f84c464735ecb3b007e889c5a6bdd8e3984ca5cfd",
+    "voice/config.json": "8f3fb4fb2d65502b0c22c825beaf16b9abbfe32041add0d806453776d8c75111",
+    "voice/dac.safetensors": "3e40772a6167f04526e499a703c4c45637830af5e5d5e5107c4d6ee3d9faf7ec",
+    "voice/dac_config.json": "8f86bb3943b8fc70974d73b25c571d25b8a919cf1e6a06dea48a8ee52af3cdb7",
+    "voice/model.safetensors": "14d90add7a4022440b780c9bdede7135c0001e9bf9191b6fe2a6064a76bd8338",
+    "voice/traces.json": "5b102647e3ee7f81bfa6786a00118e805efe960cd16e11a101be87e5a288df0f"
+  }
+}

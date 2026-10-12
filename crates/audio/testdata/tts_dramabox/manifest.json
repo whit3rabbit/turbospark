@@ -1,0 +1,16 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_dramabox_fixtures.py",
+  "generate_seed": 21,
+  "plain_seed": 23,
+  "files": {
+    "generate/config.json": "d61bc7442f18ff338ffdf47cf5440c0e6f498b112c63cf8ca63833cf914cbab2",
+    "generate/model.safetensors": "ee25d82a129492ba647ac882380affbb451e6509dc44a577f534a76f9583b6d7",
+    "generate/traces.json": "9d9a22586178932ea6961a32be6b9f5ef4f2f7a9c8e5c5c17f5e0b0c8b4aad09",
+    "manifest.json": "b20148243eebb5d9f75e6ee0f44ad0846a7df753bc9a4e88e04f6362d73d35f8",
+    "plain/config.json": "d61bc7442f18ff338ffdf47cf5440c0e6f498b112c63cf8ca63833cf914cbab2",
+    "plain/model.safetensors": "51de536ad8dc2d996cee5041603c77bca523b1d33f4a3fd709ef718fa5b73d6c",
+    "plain/traces.json": "f1b39d94e6a5d290434cdf20efe4dfa35ce5fe4a0cdc7c6dc0a3c4163d11da11"
+  }
+}

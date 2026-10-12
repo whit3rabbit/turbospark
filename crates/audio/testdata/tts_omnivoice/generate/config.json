@@ -1,0 +1,22 @@
+{
+  "model_type": "omnivoice",
+  "audio_vocab_size": 17,
+  "audio_mask_id": 16,
+  "num_audio_codebook": 8,
+  "sample_rate": 24000,
+  "llm_config": {
+    "model_type": "qwen3",
+    "hidden_size": 32,
+    "num_hidden_layers": 2,
+    "num_attention_heads": 4,
+    "num_key_value_heads": 2,
+    "intermediate_size": 64,
+    "vocab_size": 128,
+    "head_dim": 8,
+    "rms_norm_eps": 1e-06,
+    "rope_theta": 10000.0,
+    "max_position_embeddings": 512,
+    "tie_word_embeddings": true
+  },
+  "dtype": "float32"
+}

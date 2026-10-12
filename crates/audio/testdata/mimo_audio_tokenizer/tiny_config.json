@@ -1,0 +1,53 @@
+{
+  "model_type": "mimo_audio_tokenizer",
+  "d_model": 32,
+  "n_mels": 8,
+  "sampling_rate": 24000,
+  "nfft": 40,
+  "hop_length": 10,
+  "window_size": 40,
+  "fmin": 0,
+  "fmax": null,
+  "kernel_size": 3,
+  "stride_size": 2,
+  "avg_pooler": 2,
+  "encoder_layers": 3,
+  "encoder_skip_layer_id": 2,
+  "encoder_attention_heads": 4,
+  "encoder_ffn_dim": 64,
+  "encoder_causal": false,
+  "encoder_attn_window_size": [
+    -1,
+    -1
+  ],
+  "decoder_layers": 2,
+  "decoder_attention_heads": 4,
+  "decoder_ffn_dim": 64,
+  "decoder_kernel_size": 3,
+  "decoder_stride_size": 2,
+  "decoder_causal": true,
+  "decoder_attn_window_size": [
+    -1,
+    -1
+  ],
+  "vocoder_dim": 16,
+  "vocoder_intermediate_dim": 32,
+  "vocoder_num_layers": 2,
+  "vocoder_attention_heads": 2,
+  "vocoder_attn_window_size": [
+    2,
+    1
+  ],
+  "vocoder_padding": "same",
+  "num_quantizers": 3,
+  "codebook_size": [
+    8,
+    6,
+    5
+  ],
+  "rope_theta": 10000,
+  "rope_type": "default",
+  "ln_type": "LayerNorm",
+  "activation_function": "gelu",
+  "weights_format": "mlx"
+}

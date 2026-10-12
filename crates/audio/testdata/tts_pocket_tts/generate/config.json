@@ -1,0 +1,33 @@
+{
+  "model_type": "pocket_tts",
+  "flow_lm": {
+    "dtype": "float32",
+    "flow": {
+      "dim": 32,
+      "depth": 2
+    },
+    "transformer": {
+      "hidden_scale": 2,
+      "max_period": 10000,
+      "d_model": 32,
+      "num_heads": 4,
+      "num_layers": 2
+    },
+    "lookup_table": {
+      "dim": 16,
+      "n_bins": 24,
+      "tokenizer": "stub",
+      "tokenizer_path": "stub.model"
+    }
+  },
+  "mimi": {
+    "dtype": "float32",
+    "sample_rate": 24000,
+    "channels": 1,
+    "frame_rate": 12.5,
+    "quantizer": {
+      "dimension": 8,
+      "output_dimension": 8
+    }
+  }
+}

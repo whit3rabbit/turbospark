@@ -1,0 +1,32 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "generator": "tools/gen_echo_tts_fixtures.py",
+  "files": {
+    "blockwise_generate/codec/config.json": "sha256:33b47819a629af5d809d9fa6da8fcedaadfbdc4c60d72a3566f429d569d12c81",
+    "blockwise_generate/codec/model.safetensors": "sha256:cd28897c63d25d6f88a42ce13d83bd111a183169863ac52c6d0c0bf51cb7d745",
+    "blockwise_generate/config.json": "sha256:3156c406526e57e9c4442fcaca646c8982101f134064184a1b115445c81a27ea",
+    "blockwise_generate/model.safetensors": "sha256:1abfe5eb5421ca448f3bead3bf0380f9449bc13804c6e07201d16637b4394029",
+    "blockwise_generate/pca_state.safetensors": "sha256:fcec46fb0903ad16220a6baf68acc0a97d9738f4ae077723dbac16f8735bdc75",
+    "blockwise_generate/traces.json": "sha256:297da0a88ff8f06d57f32a44b10f7d4d060acb1ea1d89dcae0c88e86eba250a9",
+    "codec_zq/codec/config.json": "sha256:33b47819a629af5d809d9fa6da8fcedaadfbdc4c60d72a3566f429d569d12c81",
+    "codec_zq/codec/model.safetensors": "sha256:19c04b5222ca329e20549356d70bbe0ddb14fcb9eb59ec46ddbf13ff7239dbe4",
+    "codec_zq/config.json": "sha256:cf02f0ca08e8e3cb425a4e80103e404c1049c428ce5d82790ff029b4ef4b08a2",
+    "codec_zq/model.safetensors": "sha256:1abfe5eb5421ca448f3bead3bf0380f9449bc13804c6e07201d16637b4394029",
+    "codec_zq/pca_state.safetensors": "sha256:fcec46fb0903ad16220a6baf68acc0a97d9738f4ae077723dbac16f8735bdc75",
+    "codec_zq/traces.json": "sha256:ee8ddfcbf532ec741e6486e73f33acaab1beb7642e5da01cd8eda258e98d9ca9",
+    "greedy_generate/codec/config.json": "sha256:33b47819a629af5d809d9fa6da8fcedaadfbdc4c60d72a3566f429d569d12c81",
+    "greedy_generate/codec/model.safetensors": "sha256:9a99372156098de11f7a0ae99d8a610245a3cecdee8b75fd28f67c9246a78c1c",
+    "greedy_generate/config.json": "sha256:cf02f0ca08e8e3cb425a4e80103e404c1049c428ce5d82790ff029b4ef4b08a2",
+    "greedy_generate/model.safetensors": "sha256:642c08dc49e986561c6a2cd822ca2c722685808c35b0ff4ebf54ba141ffd1488",
+    "greedy_generate/pca_state.safetensors": "sha256:fcec46fb0903ad16220a6baf68acc0a97d9738f4ae077723dbac16f8735bdc75",
+    "greedy_generate/traces.json": "sha256:ee3ea86c4fb1842f61d2797745a82e7723c30a1d28f61d24b96a81878210336c",
+    "manifest.json": "sha256:ecc915a0bdc4fac4125b344d142a562f405068d13265be2bb9a04ed04ba730d3",
+    "text_cases.json": "sha256:c1c42d7a9b73829ac420d933f8abf4fcb5555503b73b3b6a7140338e09663eaf",
+    "voice_clone/codec/config.json": "sha256:33b47819a629af5d809d9fa6da8fcedaadfbdc4c60d72a3566f429d569d12c81",
+    "voice_clone/codec/model.safetensors": "sha256:272b83197f8b12be5d20c35dba63919441ee5edbc77ac460de71de446fd25c39",
+    "voice_clone/config.json": "sha256:cf02f0ca08e8e3cb425a4e80103e404c1049c428ce5d82790ff029b4ef4b08a2",
+    "voice_clone/model.safetensors": "sha256:5503d20c4d45db2a3f7298760df13222512ae6a2e37cf1188204d8624bce36f3",
+    "voice_clone/pca_state.safetensors": "sha256:fcec46fb0903ad16220a6baf68acc0a97d9738f4ae077723dbac16f8735bdc75",
+    "voice_clone/traces.json": "sha256:b7bc89201d7073a61f9931f03592ebbd830c8ba9381b11860bf24195a8a3a880"
+  }
+}

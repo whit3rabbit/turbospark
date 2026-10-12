@@ -1,0 +1,18 @@
+{
+  "sample_rate": 48000,
+  "win_len": 1920,
+  "win_inc": 384,
+  "fft_len": 1920,
+  "win_type": "hamming",
+  "num_mels": 60,
+  "preemphasis": 0.97,
+  "one_time_decode_length": 20,
+  "decode_window": 4,
+  "chunk_seconds": 4.0,
+  "chunk_overlap": 0.25,
+  "auto_chunk_threshold": 60.0,
+  "in_channels": 180,
+  "out_channels": 64,
+  "out_channels_final": 961,
+  "num_blocks": 2
+}

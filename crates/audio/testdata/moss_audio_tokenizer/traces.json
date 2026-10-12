@@ -1,0 +1,16 @@
+{
+  "codes_shape": [
+    20,
+    3
+  ],
+  "code_len": 20,
+  "hidden_shape": [
+    32,
+    20
+  ],
+  "lfq_min_margin": 0.0012679696083068848,
+  "decoded_shape": [
+    40,
+    2
+  ]
+}

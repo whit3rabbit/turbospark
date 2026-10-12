@@ -1,0 +1,19 @@
+{
+  "generator": "tools/gen_higgs_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "dfafc2a79b9d9fb4cedbb9f884f430cbc970a5e20d584d15689826aa1a3192b0",
+    "tiny_weights.safetensors": "daa5d286fc9a6cdb1ff60b143e2594848f4d02633635cb275b291f4f466d5a97",
+    "weights_manifest.json": "0bb514cce70575ef9566d29fbde80efbbc7ca46be5b472ecd255acb47e9676c3",
+    "traces.json": "28f8d7cf7ba29b49febb5fdb081d3b5053c3729c3f2ffbc7800b219a53aae216",
+    "a_wave.npy": "5a47a19322a787bdc1edae777a75d2efb00d5cd7eca081c3f421b6da1dcb2f8e",
+    "a_acoustic.npy": "b4d348caac50ceca5bdc2b4858ee7763f1e26ed581338a47b4f22f52b1932af2",
+    "b_wave.npy": "103d82d2c23d851f0b34e271c8428993d7a87055c30f7567de62012ce7986589",
+    "b_acoustic.npy": "821e6f464c393cf4def1808d28dc1c71759d4788832449383a99f4dc18af2934",
+    "z_rows.npy": "96583dc92f735528d95545e5c4f011a0296818dc3f3df295b7302e8785124590",
+    "codes.npy": "3c612763f0189b0ff4dbd21757b87a4272c9ba395b0137443bdca0f11e0d70e8",
+    "z_recon.npy": "07b406d93d7a802b50ab645eea124767a440dca7ddb8d600b9e62e8c78cb4f4e",
+    "decoded.npy": "15310a6a1d70074c2da64a9b4c72f4cb54a7cbb15c832c863b5b4b72e62c85d1"
+  }
+}

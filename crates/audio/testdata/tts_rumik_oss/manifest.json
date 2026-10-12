@@ -1,0 +1,23 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "generator": "tools/gen_rumik_oss_fixtures.py",
+  "files": {
+    "decode/codec.safetensors": "sha256:1034cd44af9b465876f22c1f85c5e5a67c3b2383f420188c1003e07f31492f23",
+    "decode/codec_config.json": "sha256:28bf0f78f52a4faab8bffe46955493451d29e8bd943ff610ab3bc90d61a469a5",
+    "decode/config.json": "sha256:f6ffac42d41fe9b56eaa221d4006898616a8fad8876ad9370467094cfb384475",
+    "decode/model.safetensors": "sha256:7e59edab7f0adc5f85e9d6b5c7007008d00e65e6234026d610d590730f22c626",
+    "decode/traces.json": "sha256:23737316ab404c611fad0263bb25f6834f80fea53bc0da756118feabcfd84cf9",
+    "generate_forced/codec.safetensors": "sha256:1225159e9b87d7bb1ec4fd2c4915be133b530c1c80b3ebbccc9c174ac1c53f02",
+    "generate_forced/codec_config.json": "sha256:f618f014463396bdafd1ebd46636b79310bbb03ddbcfb351c5e01fda2ae6e867",
+    "generate_forced/config.json": "sha256:e5ea9f29b6213566c103fee7039acc74e202203c47afb3dc9ec560e5dea82f82",
+    "generate_forced/model.safetensors": "sha256:0bcb7db7d925eaef9495546d8f6c6551fffd97b16d33c042dc80361a29fe9243",
+    "generate_forced/traces.json": "sha256:66cb07eab7067942e95e48c5f1df9c231e946c9863331c694c496abf83beb6bd",
+    "generate_length/codec.safetensors": "sha256:1225159e9b87d7bb1ec4fd2c4915be133b530c1c80b3ebbccc9c174ac1c53f02",
+    "generate_length/codec_config.json": "sha256:f618f014463396bdafd1ebd46636b79310bbb03ddbcfb351c5e01fda2ae6e867",
+    "generate_length/config.json": "sha256:e5ea9f29b6213566c103fee7039acc74e202203c47afb3dc9ec560e5dea82f82",
+    "generate_length/model.safetensors": "sha256:b07a3135015116ac9fe64e455b78c055e9661eaff54e6ccea24c06dbf356a7aa",
+    "generate_length/traces.json": "sha256:c1861dc7a729b4bdde169b94ac67e89b84d31d25983297d507432a1748c31808",
+    "manifest.json": "sha256:f106a3771812461abd82b5247ce9ed36b63e0a83ba1b3b65f9e3a8318ed85748",
+    "sampling/traces.json": "sha256:686ef3996a3b3b1f5a43932800906d60d464a1e907ab33c28423e7bd31dbe648"
+  }
+}

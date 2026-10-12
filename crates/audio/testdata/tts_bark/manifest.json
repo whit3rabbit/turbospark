@@ -1,0 +1,13 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_bark_fixtures.py",
+  "files": {
+    "codec/config.json": "3068313616981ce63633465ca93d8a467e3fe8991db38ddf1f569a0a4549c84d",
+    "codec/model.safetensors": "d854f78a2f57c143702c022d7a1498418f55c8b169bdddd2370398748ba60ecb",
+    "generate/config.json": "dbf0f93a26f2c2c6b99e02f6ddc62cf243ea0ce9114ec65324d1a9fa676c61a7",
+    "generate/model.safetensors": "8f1ce3d05e4baa192a86d98cecec0a7794bbe4a3ebfe44683946aeb7ab66ebda",
+    "generate/traces.json": "8f804b036d2706d64e368ba5e88a9e2d3f714053d21faf2ec32a4ce2d0ec6fd3",
+    "manifest.json": "dedbbac53c753283b4025b83bd610ae826879197ca3f612f86e7de37d54c83a5"
+  }
+}

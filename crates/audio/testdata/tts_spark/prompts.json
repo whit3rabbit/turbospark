@@ -1,0 +1,11 @@
+{
+  "clone": {
+    "string": "<|task_tts|><|start_content|>Ref voice.Hello there.<|end_content|><|start_global_token|><|bicodec_global_5|><|bicodec_global_9|><|end_global_token|><|start_semantic_token|><|bicodec_semantic_3|><|bicodec_semantic_1|><|bicodec_semantic_4|>"
+  },
+  "clone_no_text": {
+    "string": "<|task_tts|><|start_content|>Hello there.<|end_content|><|start_global_token|><|bicodec_global_7|><|end_global_token|>"
+  },
+  "control": {
+    "string": "<|task_controllable_tts|><|start_content|>Hello there.<|end_content|><|start_style_label|><|gender_1|><|pitch_label_2|><|speed_label_3|><|end_style_label|>"
+  }
+}

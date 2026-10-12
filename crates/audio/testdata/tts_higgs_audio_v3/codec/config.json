@@ -1,0 +1,19 @@
+{
+  "sample_rate": 24000,
+  "codebook_size": 10,
+  "codebook_dim": 4,
+  "downsample_factor": 320,
+  "dac_num_codebooks": 4,
+  "dac_encoder_ratios": [
+    8,
+    5,
+    4,
+    2,
+    3
+  ],
+  "dac_encoder_hidden": 4,
+  "dac_decoder_hidden": 32,
+  "semantic_sample_rate": 16000,
+  "quantizer_latent_dim": 8,
+  "decoder_input_dim": 6
+}

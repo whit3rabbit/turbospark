@@ -1,0 +1,32 @@
+{
+  "generator": "tools/gen_stepaudio2_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "notes": [
+    "snake alphas reseeded positive ~1.0",
+    "f0 classifier bias reseeded to the voiced range",
+    "sine-generator randomness recorded and replayed"
+  ],
+  "files": {
+    "tiny_weights.safetensors": "9f2bbbcd0f72596d6269b52476bc36adf2b12be45025499ca509c50b5968eb06",
+    "traces.json": "9109885e9fc626c2ef9d6caf4b0a3e282d593e783e93f7dbd1f8e75ab4c41649",
+    "tiny_config.json": "3bc4b5771fb5072755c746be18c4ef75438f2f1d0a2784ba3fbc4f31481b29c3",
+    "weights_manifest.json": "d71a486fab5edda3b8a8b81370e3df391819802d2179bb21481e4f374c734dc7",
+    "audio_16k.npy": "3541d732a61f402fdc934d6d197a661d58ed0706604cdf30b79f57c1a964ff2e",
+    "audio_24k.npy": "9a8594d15cbdc4257d7faeeb83ac7b163ec9a423eeb3c6f7f69c31dfcfc91e5a",
+    "prompt_tokens.npy": "89cc4f0b583e3a5f0449bcf6dbe35c0dcb8375ab2095ff6b36e3303850b4d0a7",
+    "gen_tokens.npy": "2dbffabf760edb66eb9ae6d660bca36cf711e868bd16c5130395b7ca5589cda7",
+    "campplus_fbank.npy": "f0ee14c8b83b143240b6884c31b09339cc4d63b1e646bb28102cf5b30eea5964",
+    "embedding.npy": "2ff1a39b835db38eb69f4f16d68433640549439fbc16ab36cb7ef53aa35e1017",
+    "prompt_mel.npy": "2d9d693cda841d26c0ca282fc271cb9c29a06e64e6faed086a53994b7fb8dd65",
+    "prompt_feat.npy": "475a6dff6ad0b5448aff5ed2a85c4cc9784e430cfec7a5c94aff84ffecde8962",
+    "flow_mel.npy": "91030b21a6dac360a21d8a05533a0737b58aa0038fc5aa28776dbe990cf92dac",
+    "f0.npy": "ba39b236f42ab15e98424e64f7d447ec6708a1fd220ac882b402ff4dc8f754df",
+    "sine_rand_ini.npy": "d56649e8b6a9a8b88e453fec6b982309328219b650a693866145387bb49e12ec",
+    "sine_noise.npy": "7293b9fc707f64c47b13dd2df81545302060764de739e6da2652bbd315162cda",
+    "hift_wav_raw.npy": "2b9c888b575367283969916ccbd6033fa403142373b5c5559f758271ccbc04da",
+    "hift_wav.npy": "0fa62e7cb41103c28d244500b85a6eefa0ba1d438b7edd1d8129e4a899ae7706",
+    "full_wav_raw.npy": "da935aca0cf209ad030c5f6554515f4edf8a6aec5c641469403d7638d339b0e5",
+    "full_wav.npy": "83317a6160c21cb98021513f848b3b2c3dfa741c3ac12ac391cca97204d18fb1"
+  }
+}

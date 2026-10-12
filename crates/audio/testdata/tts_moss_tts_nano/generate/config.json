@@ -1,0 +1,39 @@
+{
+  "model_type": "moss_tts_nano",
+  "n_vq": 4,
+  "audio_vocab_size": 16,
+  "audio_codebook_sizes": [
+    16,
+    16,
+    16,
+    16
+  ],
+  "audio_pad_token_id": 16,
+  "pad_token_id": 3,
+  "im_start_token_id": 4,
+  "im_end_token_id": 5,
+  "audio_start_token_id": 6,
+  "audio_end_token_id": 7,
+  "audio_user_slot_token_id": 8,
+  "audio_assistant_slot_token_id": 9,
+  "audio_tokenizer_type": "moss-audio-tokenizer-nano",
+  "audio_tokenizer_sample_rate": 8000,
+  "attn_implementation": "sdpa",
+  "local_transformer_layers": 1,
+  "gpt2_config": {
+    "model_type": "gpt2",
+    "vocab_size": 96,
+    "n_positions": 512,
+    "n_ctx": 512,
+    "n_embd": 32,
+    "n_layer": 2,
+    "n_head": 4,
+    "n_inner": 64,
+    "activation_function": "gelu_new",
+    "layer_norm_epsilon": 1e-05,
+    "scale_attn_weights": true,
+    "scale_attn_by_inverse_layer_idx": false,
+    "position_embedding_type": "rope",
+    "rope_base": 10000.0
+  }
+}

@@ -63,4 +63,5 @@ ig2-work/
 docs/experiments
 docs/verification
 testdata/
-!crates/audio/testdata/*.json
+!crates/audio/testdata/
+crates/audio/testdata/stepaudio2/tiny_weights.safetensors

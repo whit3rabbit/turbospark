@@ -1,0 +1,21 @@
+{
+  "generator": "tools/gen_nemotron_voicechat_fixtures.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "tiny_config.json": "8a40159f5d36f1711b7008f1d952a0863eee421b18ec0d0e5faebf2deea4e2af",
+    "tiny_weights.safetensors": "dc089df0422af29fc4fd195b1104b18cc391f76ff7ac138610d44cb450f03aac",
+    "weights_manifest.json": "43c71ff0ed2e69d51409a3c476ebfe8a66c78ccfecb7d47e795c0773af119b04",
+    "traces.json": "2643f1d0be33f02bc462bf5cccd8b2de3b5c1fd012adbc4f62420709af561e9b",
+    "a_wave.npy": "a9ab10601f84a6643084424202dc2aa3a4b0f66873a9fb26da4da2dd206e5fd0",
+    "a_latents.npy": "02e4cf9c1f32470fe3ab99813580f7426a25f3fa3c5e78562f788880ef07501e",
+    "a_codes.npy": "bb712ec50fc50f9edc664524db71170b3005490f7ad319e6d5ec8d0a2ed73447",
+    "a_decoded.npy": "49ef871383f00adeab152e4536f6eabb0f2777a8663be2be6d3392a75844cbfe",
+    "b_wave.npy": "027f6f953e30f74686f636318130e9bce15a27cedd860324a4e6b78581383b04",
+    "b_latents.npy": "a36c208a32a02927988dd7c9d5965a3a54316f4c7f6dcf2fdefcb0d3dbb87f0a",
+    "b_codes.npy": "3a4a7f6a340814171b3faaed301ce5122edf0e9f25764bb685e311f384e2c35c",
+    "b_decoded.npy": "deb07b1f95d93ed926751f92fb29f20358a168f12d881afea970d29e2265f705",
+    "rand_codes.npy": "fa1c1b962e4d2fed28481a66707419a3f0991d421eaa6af4a4a4fed8e6016a00",
+    "rand_decoded.npy": "42584ae49c0019cd2a408438e93454972a21eb9be21c17a08d7660a6685e6a02"
+  }
+}

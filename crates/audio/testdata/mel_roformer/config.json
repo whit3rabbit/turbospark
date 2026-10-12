@@ -1,0 +1,18 @@
+{
+  "dim": 32,
+  "depth": 2,
+  "heads": 2,
+  "dim_head": 16,
+  "num_bands": 24,
+  "num_stems": 1,
+  "ff_mult": 4,
+  "mlp_expansion_factor": 4,
+  "mask_estimator_depth": 2,
+  "n_fft": 512,
+  "hop_length": 128,
+  "win_length": 512,
+  "sample_rate": 44100,
+  "chunk_size": 352800,
+  "num_overlap": 2,
+  "checkpoint_family": "tiny_fixture"
+}
