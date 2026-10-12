@@ -26,6 +26,25 @@ fn ranked_at(
     recommend_catalog(&entries, machine, context, slots)
 }
 
+/// Qwen3.8's recommended install carries the MTP head. Both rows are
+/// verified on this chip and the head's speculative decode floor sits above
+/// the trunk's, so wherever both fit the head must rank first.
+#[test]
+fn the_mtp_install_outranks_the_headless_qwen38_where_both_fit() {
+    let out = ranked(&m4_max(), 4096);
+    let position = |alias: &str| {
+        out.iter()
+            .position(|r| matches!(&r.origin, Origin::Catalog(a) if a == alias))
+            .unwrap_or_else(|| panic!("{alias} is not ranked"))
+    };
+    let (mtp, headless) = (position("qwen38-27b-mtp"), position("qwen38-27b"));
+    assert_eq!(out[mtp].evidence, Evidence::Verified);
+    assert!(
+        mtp < headless,
+        "qwen38-27b-mtp ranks {mtp}, behind qwen38-27b at {headless}"
+    );
+}
+
 /// The development machine at the protocol window: the rows with frozen
 /// evidence come first, and `gemma4` -- the install every frozen Gemma
 /// row is measured against -- is one of them.

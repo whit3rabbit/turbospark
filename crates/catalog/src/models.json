@@ -643,13 +643,27 @@
       },
       "download_bytes": 16054541349,
       "install_bytes": 15440000000,
-      "status": "runs",
+      "status": "verified",
       "gates": [
+        "qwen38_quality_gate",
+        "qwen38_memory_oracle",
+        "mtp_generation_gate",
         "mtp_head_probe",
         "mtp_accept_length_probe"
       ],
-      "measured": [],
-      "notes": "Same trunk as qwen38-27b (mlx-community/Qwen3.8-27B-4bit, byte-identical), plus its multi-token-prediction head streamed from the official Qwen/Qwen3.8-27B repo's last shard and quantized to INT4 group 64 here at repack time -- that conversion drops the head, so it can only be read off the original checkpoint (docs/MTP.md, docs/MTP_SPECULATIVE.md step 1). Speculation is off unless asked for (--speculative auto|N, --speculative-drafter mtp); with it off this install is provably inert against qwen38-27b, same perplexity and both frozen digests. Measured block-2 accept length 1.84/round, 1.44x end to end on the clock (docs/MTP.md); no dedicated memory-oracle or quality-gate row of its own, since qwen38_memory_oracle and qwen38_quality_gate already pin the shared trunk."
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 872,
+          "decode_tok_s_min": 21.854,
+          "decode_tok_s_max": 28.673,
+          "measured_on": "2026-10-11",
+          "source": "this port, turbospark-bench --shaping greedy --speculative auto (MTP block 2), three protocol cases, AC, other sessions on the host; the same install without speculation read 14.7-17.9 tok/s at 660 MiB in the same capture"
+        }
+      ],
+      "notes": "The recommended Qwen3.8 install. Same trunk as qwen38-27b (mlx-community/Qwen3.8-27B-4bit, byte-identical), plus its multi-token-prediction head streamed from the official Qwen/Qwen3.8-27B repo's last shard and quantized to INT4 group 64 here at repack time -- that conversion drops the head, so it can only be read off the original checkpoint (docs/MTP.md, docs/MTP_SPECULATIVE.md step 1). The CLI and server speculate with the head by default (--speculative auto). Greedy protocol 2026-10-11: 21.9-28.7 tok/s against 14.7-17.9 without speculation, and the prompt prefills through the chunked driver with the head primed per micro-batch (2,940 tokens in 35.9 s). It costs ~210 MiB more peak than the trunk alone (872 against 660 MiB at 4K context): the head's KV, the verify scratch and the pooled gated-DeltaNet snapshot. With speculation off it is inert against qwen38-27b. qwen38_quality_gate and qwen38_memory_oracle pin the shared trunk and both ran green against this install on 2026-10-11; mtp_generation_gate holds speculation lossless. See docs/SPEEDUP_PLAYBOOK.md."
     },
     {
       "alias": "qwen38-27b-vision",
