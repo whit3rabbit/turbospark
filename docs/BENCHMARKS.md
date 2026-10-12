@@ -1745,6 +1745,42 @@ and flagged it "UNVERIFIED until an install exists". Confirmed:
 `long-synthesis` tokenizes to 2,940 and generates 637 more, so all three
 cases stop `endOfTurn` with 3,577 of 4,096 used.
 
+**Quality row re-frozen 2026-10-11** for the GQA-shared decode attention
+partial (`attention_decode_gqa_partial`, this family's default since then).
+Perplexity 4.9432 -> 4.9444, greedy `c3df0095` -> `c8db31c5`, sampled
+`f272437c` unchanged; two fresh processes agreed. The table above keeps the
+2026-08-14 values, and they still reproduce exactly under
+`TURBOSPARK_ATTN_DECODE_KERNEL=barrier`. The near-tie and the old digest are
+recorded in `crates/bench/tests/qwen38_quality_gate.rs`.
+
+**The `qwen38-27b-mtp` install, measured 2026-10-11.** Same trunk bytes
+plus the INT4 MTP head (`docs/MTP.md`). It shares the trunk's frozen rows:
+`qwen38_quality_gate` and `qwen38_memory_oracle` both ran green against this
+install on 2026-10-11 with speculation off, and `mtp_generation_gate` holds
+speculative greedy output identical to the non-speculative loop at blocks 2
+and 4. The throughput below is NOT a frozen row: greedy shaping (the bench
+refuses `--speculative` without it), AC, with other sessions on the host.
+
+| case | prompt | spec prefill s | spec tok/s | off tok/s |
+| --- | ---: | ---: | ---: | ---: |
+| short-explanation | 62 | 0.56 | 28.673 | 14.738 |
+| medium-review | 426 | 4.06 | 23.410 | 16.769 |
+| long-synthesis | 2,940 | 35.91 | 21.854 | 17.878 |
+| peak `phys_footprint` | | | 872.1 MiB | 660.1 MiB |
+
+`spec` is `--speculative auto` (MTP, block 2) and `off` is the same install
+without it. The ~212 MiB of extra peak is the head's KV, the verify scratch
+and the pooled gated-DeltaNet snapshot. The `off` arm prefilled
+sequentially (the bench default without `--prefill-chunk`, 154.77 s on
+long-synthesis), while the speculative driver primes the head through the
+chunked prefill driver. So do not read a prefill speedup off this table:
+the trunk-only chunked arm is the comparison (`docs/BATCHED_PREFILL.md`).
+The same split is the likely reason short-explanation stopped at 561 tokens
+against 505. The chunked arm uses Steel at 32 rows or more, which is not
+bit-exact, so the two arms decode from slightly different states. Neither
+the token count nor the text compares speculation against no speculation.
+`mtp_generation_gate` is the lossless evidence.
+
 ### The eighth checkpoint, and the ternary operating point: `prism-ml/Ternary-Bonsai-27B-mlx-2bit`
 
 Not a parity claim. Swift has no `qwen3_5` support at all, so every number

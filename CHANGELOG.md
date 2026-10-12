@@ -80,6 +80,23 @@ when this file gets updated relative to the version bump and the tag.
   forward pass per prompt token. 2,727 tokens: 24.6 s, down from 181.7 s,
   output identical. `TURBOSPARK_MTP_CHUNKED_PREFILL=0` restores the token
   walk. DFlash2 still prefills one token at a time.
+- `crates/runtime`: on the batched prefill arm the MTP head is primed one
+  micro-batch per command buffer through the trunk's M-row encoders instead
+  of one prompt row per command buffer. A 2,727-token prompt prefills
+  1.0-3.3 s faster in interleaved pairs, and the head now adds about 0.6 s
+  over the headless prefill. Output and accepted tokens per round are
+  unchanged. `TURBOSPARK_MTP_BATCHED_PRIME=0` restores per-row priming.
+- `crates/gpu`, `crates/runtime`: dense qwen chunked prefill runs each
+  micro-batch's attention through a multi-row GQA partial in one dispatch
+  instead of the one-row kernel per row: 1.8-4.2x on the kernel at 64 rows,
+  and an 18K-token Qwen3.8 prompt prefills in 156 s against 176 s, with
+  output identical. Prefill only, held to the prefill KL bound (1.89e-5
+  nats mean); decode and speculative verify keep the one-row kernel.
+  `TURBOSPARK_PREFILL_ROWS_ATTN=0` restores it.
+- `crates/catalog`: Qwen3.8-27B-MTP is promoted to verified status with
+  measured Apple M4 Max performance (21.9-28.7 tok/s decode, 1.44x end to
+  end), passing `qwen38_quality_gate`, `qwen38_memory_oracle`, and
+  `mtp_generation_gate`.
 - `crates/ffi`: with nothing attached, the embedded HTTP server now answers
   503 for a named model unless `allowRequestModelLoad` is set (previously
   the loader answered 404 with suggestions). Hosts attaching models

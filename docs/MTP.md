@@ -488,9 +488,12 @@ through the headful `produce` (the 248K-row lm_head included), then
 prompt in the chunked driver's 128-token spans instead
 (`SpeculativeProducer::prefill_chunk_priming_drafter`). The trunk runs the
 batched prefill arm (Steel at a 64-row micro-batch, `docs/BATCHED_PREFILL.md`),
-and after each micro-batch the head is primed row by row from the trunk
-hidden states that micro-batch left in `scratch.x`, with the next token taken
-across micro-batch and chunk boundaries. The last prompt position stays
+and after each micro-batch the head is primed from the trunk hidden states
+that micro-batch left in `scratch.x`, with the next token taken across
+micro-batch and chunk boundaries. On the batched arm the whole micro-batch
+primes in one command buffer through the same M-row encoders
+(`mtp_prime_rows_batched`); the per-token arm, a `TURBOSPARK_MTP_DUMP` run
+and `TURBOSPARK_MTP_BATCHED_PRIME=0` prime one row per command buffer. The last prompt position stays
 unprimed, as before, and its hidden state is copied to row 0 for the first
 draft step. `TURBOSPARK_MTP_CHUNKED_PREFILL=0` restores the token walk.
 DFlash2 still prefills token by token: its context write needs aux captures
@@ -511,6 +514,24 @@ block 2, greedy:
 
 Generated text was md5-identical between the two and to the non-speculative
 runs, and `mtp_generation_gate` stays lossless at blocks 2 and 4.
+
+Priming one micro-batch per command buffer instead of one row (later the
+same day), interleaved against `TURBOSPARK_MTP_BATCHED_PRIME=0` on
+`qwen38-27b-mtp-textonly`, block 2, greedy, three rounds on a loaded host:
+
+| prompt | per micro-batch | per row |
+| ---: | ---: | ---: |
+| 1,094 tokens | 8.80-10.00 s | 10.16-11.12 s |
+| 2,727 tokens | 23.67-25.46 s | 24.63-27.79 s |
+
+The headless prefill (`--speculative off`) read 22.98-23.89 s on the same
+host and binary, so the head now adds about 0.6 s to a 2,727-token prompt,
+where per-row priming added about 3 s (1.0-3.3 s more than per micro-batch,
+paired). Output md5 and accepted tokens per
+round (1.40 and 1.45) were identical across arms, and `mtp_generation_gate`
+stays lossless at blocks 2 and 4. The fixture case covers both priming modes
+on the scalar arm; plain q/k norms on the head, a dropped row-0 copy, or
+every row's hidden state read from row 0 each fail it.
 
 ## Sources
 

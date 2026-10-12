@@ -1,11 +1,12 @@
 # Speedup playbook: what made Qwen3.8 faster, and where else it applies
 
 October 2026. Started from a review of open-jet's CUDA engine for the same
-model (`docs/MLX_KERNELS.md`, "open-jet megakernel review"). Six changes
+model (`docs/MLX_KERNELS.md`, "open-jet megakernel review"). Eight changes
 landed for `QwenGdnDense` (Qwen3.8-27B and the other `qwen35` dense
-installs). This page records what each one bought, why it worked, how it was
-qualified, and how to carry it to other kernels, families, and drafters. The
-two open follow-ups are at the end with enough detail to start from.
+installs), the last two from this page's own follow-up list. This page
+records what each one bought, why it worked, how it was qualified, and how
+to carry it to other kernels, families, and drafters. The open follow-ups
+are at the end with enough detail to start from.
 
 All numbers are from an M4 Max with other sessions on the host, interleaved
 fresh-process pairs. They are not frozen `docs/BENCHMARKS.md` rows.
@@ -20,11 +21,26 @@ fresh-process pairs. They are not frozen `docs/BENCHMARKS.md` rows.
 | Batched prefill arm by default | `crates/runtime/src/families/qwen/prefill.rs` | 2.4-3.0x prefill over the per-token arm |
 | Steel INT4 GEMM in batched prefill | `crates/gpu/src/dequant_int4_steel.rs` | another 2.2x: 2,727 tokens in 21 s against 139 s at the old default |
 | Chunked prefill with the MTP head open | `crates/runtime/src/speculative.rs`, `families/qwen/prefill.rs` | MTP-install prefill 7.4x (2,727 tokens: 24.6 s against 181.7 s) |
+| MTP head primed per micro-batch | `families/qwen/mtp.rs` (`mtp_prime_rows_batched`) | 2,727-token MTP prefill 1.0-3.3 s faster in interleaved pairs (23.7-25.5 s against 24.6-27.8 s per row); the head now adds ~0.6 s over headless |
+| Multi-row GQA prefill attention | `crates/gpu/src/shaders/attention.metal` (`attention_decode_gqa_rows_partial`) | prefill 1.12-1.13x at 18K tokens (156 s against 176 s), 1.02-1.06x at 2.7-5.8K; kernel 1.8-4.2x over the per-row loop |
 
 Together, block-2 MTP decode moved from 29.65 to 32.58 tok/s on a short
 prompt, and a 2.7K-token prompt plus ~100 generated tokens went from ~144 s
 to ~26 s. The memory oracle peak did not move (661 MiB). Perplexity went
 4.9432 to 4.9444 from the attention change and nothing else moved quality.
+After the last two, the head adds about 0.6 s to a 2,727-token prompt, and
+an 18K-token prompt prefills in 156 s, against 859 s on the per-token arm
+the GQA kernel was first measured on.
+
+**Which install to use.** `qwen38-27b-mtp` is the recommended Qwen3.8
+install, and the catalog ranks it above `qwen38-27b` wherever both fit
+(`the_mtp_install_outranks_the_headless_qwen38_where_both_fit`). The CLI and
+server speculate with its head by default (`--speculative auto`, block 2).
+On the greedy protocol it decodes at 21.9-28.7 tok/s against 14.7-17.9
+without speculation, for ~212 MiB more peak (872 against 660 MiB at 4K).
+Sampled runs speculate too, through exact rejection sampling, but their
+speedup is unmeasured, so do not quote the greedy band for them.
+Measurement and caveats: `docs/BENCHMARKS.md`, the Qwen3.8 section.
 
 ## How they were found
 
@@ -49,9 +65,19 @@ to ~26 s. The memory oracle peak did not move (661 MiB). Perplexity went
    not compute, something structural".
 4. **Keep the old path one env var away.** Every change has a switch
    (`TURBOSPARK_ATTN_DECODE_KERNEL=barrier`, `TURBOSPARK_BATCHED_GEMV=0`,
-   `TURBOSPARK_PREFILL_STEEL=0`, `TURBOSPARK_MTP_CHUNKED_PREFILL=0`). It makes
-   the real-model A/B a one-line diff, it is the kill switch, and it keeps the
-   old frozen rows reproducible.
+   `TURBOSPARK_PREFILL_STEEL=0`, `TURBOSPARK_MTP_CHUNKED_PREFILL=0`,
+   `TURBOSPARK_MTP_BATCHED_PRIME=0`, `TURBOSPARK_PREFILL_ROWS_ATTN=0`). It
+   makes the real-model A/B a one-line diff, it is the kill switch, and it
+   keeps the old frozen rows reproducible.
+5. **Count dispatches, not just bytes.** The multi-row attention kernel was
+   built to read each K/V tile once per group of rows. The sweep said
+   otherwise: more rows per threadgroup lost, and one row per threadgroup
+   still beat the per-row loop 1.4-3.8x. The loop paid two serial dispatches
+   per row, each 32 threadgroups, too few to fill the GPU. What won was one
+   dispatch for the micro-batch with one Q head per simdgroup, which cut
+   registers and raised occupancy. Sweep the layout (heads per simdgroup,
+   rows per threadgroup, chunks) before reading a speedup as the mechanism
+   you designed for.
 
 ## How they were qualified
 
@@ -60,13 +86,20 @@ to ~26 s. The memory oracle peak did not move (661 MiB). Perplexity went
   mutation-checked: each new test was broken on purpose (wrong head mapping,
   dropped rescale, swapped nibbles, missing bias, under-dispatched grid,
   and missing row copy) and had to fail.
-- **Byte identity where the arithmetic allows it.** Three changes are
-  bit-exact: the MTP head skip, the GPU snapshot, and chunked priming on the
-  per-token and scalar batched arms. Their tests say `==`.
+- **Byte identity where the arithmetic allows it.** Four changes are
+  bit-exact: the MTP head skip, the GPU snapshot, chunked priming on the
+  per-token and scalar batched arms, and per-micro-batch priming on the
+  scalar arm (the INT4 fixture cannot see the batched GEMM's real-install
+  drift). Their tests say `==`.
 - **A distribution bound where it does not.** Steel rounds weights to FP16
   and reorders the reduction. On the real install it is held to a KL bound
   against the per-token arm (`crates/bench/tests/qwen38_prefill_arm_probe.rs`,
   2.0e-5 nats mean). On fixtures it stays within 1% of the largest logit.
+  The multi-row prefill attention shares chunk boundaries across the batch,
+  so it is held to the same probe, which now runs Steel with and without it:
+  1.89e-5 against 2.03e-5 nats mean, top-1 6/6 both. Its fixture-level
+  parity is in `crates/gpu/tests/attention_decode_gqa_rows_parity.rs`
+  (FP64 reference and per-row loop, sentinel rows past the batch).
 - **Quality gates on both arms.** Run the gate with the old path first. It
   must reproduce the frozen row exactly, which proves the install and host.
   Then run the new path and diff the generated text at the first divergence.
@@ -94,6 +127,17 @@ to ~26 s. The memory oracle peak did not move (661 MiB). Perplexity went
 - **The gates hash text and print none of it.** To see a divergence, add a
   temporary env-gated dump to `quality_common::generation_digest` and revert
   it with a byte-compare afterwards.
+- **A baseline from earlier in the day is not a baseline.** The priming plan
+  expected 3.6 s back from a 21.0 s headless number taken hours before. On
+  the same host and binary, interleaved, the headless prefill read 23.0-23.9
+  s: per-micro-batch priming costs ~0.6 s over it, and per-row priming about
+  3 s (1.0-3.3 s more than per micro-batch, paired). Run the reference arm
+  in the same interleaved script.
+- **Check that the probe reaches the code you changed.**
+  `mtp_accept_length_probe` primes the head with `mtp_prime_step`, one token
+  at a time, so it cannot see chunked priming. On the real path,
+  `TURBOSPARK_SPEC_STATS=1` on the CLI reports accepted tokens per round:
+  1.40 and 1.45 at 1,094 and 2,727 tokens, identical between priming modes.
 
 ## Applying it elsewhere
 
@@ -118,6 +162,16 @@ shared). To enable a family:
 The TurboQuant path (`attention_tq.metal`) and the indexed path
 (`attention_indexed.metal`) have the same per-Q-head, barrier-per-position
 shape and would take the same rewrite.
+
+A batched prefill arm that loops `encode_attention_decode` per row over
+linear FP16 K/V can call `gpu::encode_attention_decode_gqa_rows` once per
+micro-batch instead, with a `GqaRowsScratch` (3.1 MiB at Qwen3.8's shape
+and 64 rows) on its prefill scratch. It serves the shapes the one-row GQA
+kernel serves. It is not bit-exact, so hold the family to a KL probe and
+keep decode and verify on the loop. Leave a one-row micro-batch on the loop
+too (0.89-1.07x there). Do not start from dense Llama's
+`attention_decode_batch_partial` at a GQA shape: it measured 4-12x slower
+than the per-row GQA loop at Qwen3.8's.
 
 ### Batched, Steel prefill, other families
 
@@ -145,9 +199,12 @@ probe like `qwen38_prefill_arm_probe` before making it the default.
   state only through the surely-accepted token, and replay accepted drafts
   from their saved `(k, v, g, beta)` inputs at the start of the next verify.
   It needs a commit-row output from the multi-row delta kernel.
-- **Prime from the prefill you already ran.** Chunked priming works for any
-  drafter whose input is the trunk's per-position hidden state. DFlash2 needs
-  its per-layer aux captures encoded in the chunked driver first.
+- **Prime from the prefill you already ran, in batches.** Chunked priming
+  works for any drafter whose input is the trunk's per-position hidden
+  state. Priming one row per command buffer cost about 3 s on 2.7K tokens;
+  running the drafter's own block through the trunk's M-row encoders under
+  its prefix costs ~0.6 s. DFlash2 needs its per-layer aux captures encoded
+  in the chunked driver first.
 - **Draft with less than the full head.** open-jet drafts against 32K
   frequency-ranked rows plus the sequence's own tokens. That would cut the
   two remaining head reads per round to about 15% of their cost. Taking the
@@ -156,78 +213,43 @@ probe like `qwen38_prefill_arm_probe` before making it the default.
 
 ## Next work
 
-### 1. Prime the MTP head per micro-batch, not per row
+### 1. Give speculative verify the multi-row attention
 
-Today `prime_mtp_rows` (`families/qwen/prefill.rs`) calls
-`mtp_prime_step_row` once per prompt position, and each call encodes and
-waits on its own command buffer of about twenty single-row dispatches. On a
-2,727-token prompt that is 2,727 round trips, and MTP-install prefill reads
-24.6 s against 21.0 s for the same prompt without the head, so priming costs
-about 3.6 s (~1.3 ms per token).
+A block-2 verify runs three rows through `encode_full_attention_block_batched`
+and still loops the one-row kernel, because it must match sequential decode
+bit for bit. At 3 rows the shared-chunk kernel's production launch measured
+1.42-2.38x the loop from 512 to 32K positions (6.7 against 9.8 ms per round
+over the 16 layers at 16K).
 
-The MTP block is one full-attention layer plus the dense FFN at trunk
-shapes, which is exactly what `batched_layers.rs` already runs for M rows
-(`encode_full_attention_block_batched`, `encode_dense_ffn_batched`). The plan:
+**A bit-exact batcher is not the way in. This was measured.** A variant that
+keeps each row's own chunk length and the one-row kernel's arithmetic,
+generated mechanically from `attention_decode_gqa_partial` with only a row
+index added and the one-row combine reused over (row, head) pairs, matched
+the loop bit for bit, including across the 16K chunk-count step and a
+wrapped ring. It ran only 1.06-1.22x at 3 rows and 1.0x at 32K: the dispatch
+count alone is worth little, and the layout is what pays. About 2% of a
+round, below what the host can confirm, so it was not kept.
 
-1. Let those encoders take a tensor prefix (`TRUNK_PREFIX` today, `MTP_PREFIX`
-   for the head) and a KV target (the head has its own `MtpState::kv`).
-2. Give `MtpState` an M-row `concat` buffer (`MAX_PREFILL_ROWS * 2 * hidden`).
-   Build the input stage for M rows: the trunk final norm of `scratch.x` row
-   t into `pre_fc_norm_hidden`, the embedding of token t+1 into
-   `pre_fc_norm_embedding`, then one `encode_gemm_rows` for `fc`.
-3. Run the block over the rows, writing M adjacent MTP KV slots, and advance
-   the MTP cursor by the number of rows primed. No head and no logits.
-4. Keep the last-row rule: a row with no known next token is not primed and
-   its trunk hidden state is copied to row 0.
+So the route is the one the bit-exactness trap already named. Make decode
+and verify share one arithmetic. Pick chunk boundaries that do not depend on
+`seq_len` or on which rows share a dispatch, and run the rows kernel's
+layout for decode as well (one row is a batch of one). That changes decode
+numerics once, so re-freeze `qwen38`, `ternary27b` and `bonsai2` by the
+protocol above. Price the decode side first: at one row the rows kernel
+measured 0.89-1.07x the one-row kernel, a small loss for a headless install
+that never verifies.
 
-Gates: `real_forward_qwen35_mtp_chunked.rs` must stay `==` on the per-token
-and scalar batched arms (extend it to the batched head), `mtp_generation_gate`
-lossless, and `mtp_accept_length_probe` not lower than today, since drafts
-primed through Steel would round differently. Target: priming under 0.5 s
-for 2.7K tokens.
+Gates: bit equality between a one-row decode step and the same row inside a
+verify; `mtp_generation_gate` lossless at blocks 2 and 4; the three quality
+gates; decode timing at 4K, 16K and 32K with and without speculation.
 
-### 2. Share K/V reads across the rows of a verify or prefill micro-batch
+### 2. Matrix-unit attention for long prompts
 
-`batched_layers.rs` (the attention loop in `encode_full_attention_block_batched`)
-calls `gpu::encode_attention_decode` once per row. Each call reads the whole
-K/V range again, so a block-2 verify reads it three times and a 64-row Steel
-prefill micro-batch reads it 64 times. At 16K context one row of attention is
-about 4.4 ms per token over the 16 attention layers, so a 3-row verify pays
-~13 ms where ~4.4 ms would do, and long-prompt prefill becomes
-attention-bound as the prompt grows.
-
-Two routes, in order:
-
-1. **Measure what already exists.** `gpu::encode_attention_decode_batch` was
-   built for dense Llama prefill. It stages the union of four rows' K/V once
-   per tile, and it accepts the linear FP16 K/V this family uses.
-   Time it against the per-row GQA loop at Qwen3.8's shape and at M = 3, 16,
-   and 64 with `crates/gpu/tests/attention_chunk_bench.rs`, after
-   parametrizing its head shape. It does not share across Q heads, so it may
-   lose at long context.
-2. **Extend the GQA kernel to R query rows.** One threadgroup per (KV head,
-   chunk) already serves every Q head of the group. Stage a tile of K/V
-   positions in threadgroup memory. Let simdgroups own (row, head) pairs,
-   each applying its row's causal end, and merge per (row, head) as today.
-   Register pressure rules out holding R rows of Q and O per lane, which is
-   why the staging is needed.
-
-**The bit-exactness trap.** Speculative verify must reproduce sequential
-decode exactly, or `mtp_generation_gate` stops being lossless. The one-row
-kernel's chunk boundaries depend on each row's own range
-(`chunk_len = ceil(range / NC)`). Two rows of one verify therefore split
-their common positions differently. A kernel that shares K/V tiles across
-rows cannot reproduce both one-row results.
-
-Make the chunk geometry position-aligned first, with chunk boundaries that do
-not depend on `seq_len`. That changes decode numerics once and needs the
-re-freeze protocol above. After it, a multi-row kernel can share K/V and
-still be exact against decode. Prefill is held to a KL bound rather than to
-identity, so it can take the multi-row kernel before verify does.
-
-Gates:
-
-- A parity test. The multi-row kernel equals the per-row kernel bit for bit
-  for verify, and stays within the prefill bound for prefill.
-- `mtp_generation_gate` and the quality gate.
-- Long-context timing at 4K, 16K, and 32K.
+After the rows kernel, prefill attention runs at about 1 TFLOPS (1.74 ms
+per token over the 16 layers at 16K positions, 64 rows) on scalar FMAs and
+`simd_sum`. From the probe's per-token costs, that is roughly a tenth of an
+18K-token prefill and a growing share past it. A flash-attention tile on
+simdgroup matrices (64 rows x 6 heads is 384 queries per KV head) is the
+next step there. Hold it to the same parity test and KL probe, and time it
+at 16K and 32K. Below ~8K tokens the INT4 GEMMs dominate prefill and this
+buys little.
