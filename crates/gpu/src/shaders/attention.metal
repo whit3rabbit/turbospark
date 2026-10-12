@@ -425,6 +425,199 @@ void attention_decode_gqa_partial(
     }
 }
 
+// ============================================================================
+// GQA-shared multi-row partial pass (attention_decode_gqa_rows_partial).
+//
+// A prefill micro-batch's query rows sit at consecutive positions: row r
+// attends over [kv_start, first_end + r), so the rows share all but their
+// last few positions. Calling attention_decode_gqa_partial once per row costs
+// two serial dispatches per row, each too small to fill the GPU, and reads
+// the shared range from device memory once per row. Here one threadgroup
+// serves RG = NSG / (G / HPS) consecutive rows of one KV head over one
+// chunk. Each simdgroup owns HPS of one row's G Q heads and holds their Q
+// and O in registers (HPS = G is a one-row simdgroup's layout), and each
+// tile of T K/V positions is staged in threadgroup memory once for all of
+// them. Fewer heads per simdgroup trade K/V reuse for registers, and at
+// Qwen3.8's shape one head per simdgroup and two rows per threadgroup won
+// (gqa_rows_launch in attention_decode.rs).
+//
+// Grid = ceil(live_rows / RG) * num_kv_heads * NC threadgroups of NSG * 32
+// threads. Chunk boundaries come from the LAST row's range and are shared by
+// every row; each row masks positions at or past its own end. Output is one
+// (m, d, o) partial per (row, Q head, chunk), row-major, neutral (-inf, 0, 0)
+// where a row sees no position of the chunk, merged by
+// attention_decode_batch_combine. Summation order differs from the one-row
+// kernel, so results are close, not identical: prefill only, where the arm
+// is held to a KL bound rather than to identity.
+// ============================================================================
+
+// Positions staged per tile, 1..=kRowsMaxTile.
+constant uint FC_ATTN_ROWS_TILE [[function_constant(75)]];
+// Q heads per simdgroup, a divisor of the group.
+constant uint FC_ATTN_ROWS_HEADS [[function_constant(76)]];
+
+constant constexpr uint kRowsMaxTile = 16;
+// One head per simdgroup leaves room for more rows per threadgroup than the
+// one-row kernel's 16 simdgroups; 32 is Metal's 1024-thread ceiling.
+constant constexpr uint kRowsMaxSimdgroups = 32;
+
+[[kernel, max_total_threads_per_threadgroup(kRowsMaxSimdgroups * 32)]]
+void attention_decode_gqa_rows_partial(
+    device const half*  Q            [[buffer(0)]],   // [live_rows, num_q_heads, head_dim]
+    device const half*  K            [[buffer(1)]],   // [position, num_kv_heads, head_dim]
+    device const half*  V            [[buffer(2)]],
+    device       float* m_out        [[buffer(3)]],   // [live_rows * num_q_heads * NC]
+    device       float* d_out        [[buffer(4)]],
+    device       float* o_out        [[buffer(5)]],   // [live_rows * num_q_heads * NC * head_dim]
+    constant     uint&  num_kv_heads [[buffer(6)]],
+    constant     uint&  first_end    [[buffer(7)]],   // row 0 attends over [kv_start, first_end)
+    constant     uint&  kv_start     [[buffer(8)]],
+    constant     uint&  chunk_len    [[buffer(9)]],
+    constant     uint&  live_rows    [[buffer(10)]],
+    uint tg_id           [[threadgroup_position_in_grid]],
+    uint lid             [[thread_position_in_threadgroup]],
+    uint simd_lane_id    [[thread_index_in_simdgroup]],
+    uint simd_group_id   [[simdgroup_index_in_threadgroup]]
+) {
+    threadgroup half k_tile[kRowsMaxTile * kGqaMaxPerLane * 32];
+    threadgroup half v_tile[kRowsMaxTile * kGqaMaxPerLane * 32];
+
+    const uint HD  = FC_ATTN_GQA_HEAD_DIM;
+    const uint PER = HD / 32;
+    const uint G   = FC_ATTN_GQA_GROUP;
+    const uint NSG = FC_ATTN_GQA_SIMDGROUPS;
+    const uint U   = FC_ATTN_GQA_UNROLL;
+    const uint T   = FC_ATTN_ROWS_TILE;
+    const uint HPS = FC_ATTN_ROWS_HEADS;
+    const uint SPR = G / HPS;             // simdgroups per row
+    const uint RG  = NSG / SPR;           // rows per threadgroup
+    const uint NC  = FC_ATTN_NUM_CHUNKS;
+    const uint NKV = num_kv_heads;
+    const uint NQ  = NKV * G;
+    const float scale = FC_ATTN_SCALE;
+
+    const uint chunk    = tg_id % NC;
+    const uint kv_head  = (tg_id / NC) % NKV;
+    const uint row_base = (tg_id / (NC * NKV)) * RG;
+    const uint row      = row_base + simd_group_id / SPR;
+    const uint head0    = kv_head * G + (simd_group_id % SPR) * HPS;
+    const bool row_live = row < live_rows;
+    // The grid holds ceil(live_rows / RG) row groups, so row_base is live.
+    const uint last_row = min(row_base + RG, live_rows) - 1;
+    const uint row_end  = first_end + row;
+    const uint p_start  = kv_start + chunk * chunk_len;
+    // The group's last row reaches furthest, so it bounds what is staged.
+    const uint p_end    = min(p_start + chunk_len, first_end + last_row);
+    const uint e0       = simd_lane_id * PER;
+
+    float q[kGqaMaxGroup][kGqaMaxPerLane];
+    float o[kGqaMaxGroup][kGqaMaxPerLane];
+    float m[kGqaMaxGroup];
+    float d[kGqaMaxGroup];
+    for (uint g = 0; g < kGqaMaxGroup; ++g) {
+        if (g >= HPS) { break; }
+        // A dead row's simdgroup still stages tiles and meets every barrier;
+        // it reads row_base's Q so no load leaves the buffer.
+        device const half4* q4 = (device const half4*)(
+            Q + ((row_live ? row : row_base) * NQ + head0 + g) * HD + e0);
+        for (uint j = 0; j < kGqaMaxPerLane / 4; ++j) {
+            if (j * 4 >= PER) { break; }
+            const float4 qv = float4(q4[j]);
+            q[g][4 * j + 0] = qv.x; q[g][4 * j + 1] = qv.y;
+            q[g][4 * j + 2] = qv.z; q[g][4 * j + 3] = qv.w;
+        }
+        for (uint i = 0; i < kGqaMaxPerLane; ++i) { o[g][i] = 0.0f; }
+        m[g] = -INFINITY;
+        d[g] = 0.0f;
+    }
+
+    for (uint t0 = p_start; t0 < p_end; t0 += T) {
+        const uint n = min(T, p_end - t0);
+        // Stage n positions of this KV head, one half4 per thread per step.
+        // HD is a multiple of 4, so a half4 never straddles two positions.
+        for (uint i = lid * 4; i < n * HD; i += NSG * 32 * 4) {
+            const uint t = i / HD;
+            const uint src = (attn_ring_slot(t0 + t) * NKV + kv_head) * HD + (i - t * HD);
+            *(threadgroup half4*)(k_tile + i) = *(device const half4*)(K + src);
+            *(threadgroup half4*)(v_tile + i) = *(device const half4*)(V + src);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        // Tile positions [0, n_row) are inside this row's causal range.
+        const uint n_row = row_live ? min(n, row_end > t0 ? row_end - t0 : 0u) : 0u;
+        for (uint tb = 0; tb < n_row; tb += U) {
+            float k[kGqaMaxUnroll][kGqaMaxPerLane];
+            float v[kGqaMaxUnroll][kGqaMaxPerLane];
+            bool live[kGqaMaxUnroll];
+            for (uint u = 0; u < kGqaMaxUnroll; ++u) {
+                if (u >= U) { break; }
+                const uint t = tb + u;
+                live[u] = t < n_row;
+                const uint off = (live[u] ? t : tb) * HD + e0;
+                threadgroup const half4* k4 = (threadgroup const half4*)(k_tile + off);
+                threadgroup const half4* v4 = (threadgroup const half4*)(v_tile + off);
+                for (uint j = 0; j < kGqaMaxPerLane / 4; ++j) {
+                    if (j * 4 >= PER) { break; }
+                    const float4 kv = float4(k4[j]);
+                    const float4 vv = float4(v4[j]);
+                    k[u][4 * j + 0] = kv.x; k[u][4 * j + 1] = kv.y;
+                    k[u][4 * j + 2] = kv.z; k[u][4 * j + 3] = kv.w;
+                    v[u][4 * j + 0] = vv.x; v[u][4 * j + 1] = vv.y;
+                    v[u][4 * j + 2] = vv.z; v[u][4 * j + 3] = vv.w;
+                }
+            }
+            for (uint g = 0; g < kGqaMaxGroup; ++g) {
+                if (g >= HPS) { break; }
+                float s[kGqaMaxUnroll];
+                float m_new = m[g];
+                for (uint u = 0; u < kGqaMaxUnroll; ++u) {
+                    if (u >= U) { break; }
+                    float partial = 0.0f;
+                    for (uint i = 0; i < kGqaMaxPerLane; ++i) {
+                        if (i >= PER) { break; }
+                        partial = fma(q[g][i], k[u][i], partial);
+                    }
+                    s[u] = live[u] ? simd_sum(partial) * scale : -INFINITY;
+                    m_new = max(m_new, s[u]);
+                }
+                const float alpha = attn_softmax_exp(m[g] - m_new);
+                float e[kGqaMaxUnroll];
+                float e_sum = 0.0f;
+                for (uint u = 0; u < kGqaMaxUnroll; ++u) {
+                    if (u >= U) { break; }
+                    e[u] = live[u] ? attn_softmax_exp(s[u] - m_new) : 0.0f;
+                    e_sum += e[u];
+                }
+                d[g] = d[g] * alpha + e_sum;
+                for (uint i = 0; i < kGqaMaxPerLane; ++i) {
+                    if (i >= PER) { break; }
+                    float acc = o[g][i] * alpha;
+                    for (uint u = 0; u < kGqaMaxUnroll; ++u) {
+                        if (u >= U) { break; }
+                        acc = fma(e[u], v[u][i], acc);
+                    }
+                    o[g][i] = acc;
+                }
+                m[g] = m_new;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // After the last barrier, so a dead row's early exit cannot strand one.
+    if (!row_live) { return; }
+    for (uint g = 0; g < kGqaMaxGroup; ++g) {
+        if (g >= HPS) { break; }
+        const uint base = (row * NQ + head0 + g) * NC + chunk;
+        if (simd_lane_id == 0) { m_out[base] = m[g]; d_out[base] = d[g]; }
+        device float* o_row = o_out + base * HD + e0;
+        for (uint i = 0; i < kGqaMaxPerLane; ++i) {
+            if (i >= PER) { break; }
+            o_row[i] = o[g][i];
+        }
+    }
+}
+
 // Batch-only split-KV partial pass. The grid is [ceil(live_rows / 4) * NQ * NC],
 // with one four-query tile/head/chunk per threadgroup. Each row keeps an
 // independent online-softmax state and reads its own interval from buffer 9;

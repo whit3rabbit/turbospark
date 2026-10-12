@@ -33,6 +33,12 @@ threadgroup shape, or normalization convention on the device.
   the barrier kernel's `AttentionScratch` size (more chunks measured slower).
   A family opts in on its scratch (`with_decode_kernel`), and
   `TURBOSPARK_ATTN_DECODE_KERNEL=barrier|gqa` overrides it process-wide.
+- The multi-row GQA partial (`attention_decode_gqa_rows_partial`) bakes
+  group, simdgroups, head_dim, unroll, tile and heads per simdgroup into
+  function constants, all in its cache key. Its chunk boundaries are shared
+  by every row and its summation order differs from the one-row kernel, so
+  it is not bit-exact against it: it serves the chunked-prefill scratch only
+  (`BatchedScratch::rows_attention`), never decode or speculative verify.
 - `shaders/dequant_int4_steel.metal` is generated from pinned MLX sources by
   `scripts/vendor_mlx_steel_qmm.py`. Change the script and regenerate, never
   the shader. Steel is not bit-exact against the scalar INT4 kernels, so it

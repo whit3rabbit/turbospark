@@ -1208,6 +1208,295 @@ pub fn encode_attention_decode_gqa(
     Ok(())
 }
 
+/// Partial state for [`encode_attention_decode_gqa_rows`]: one (m, d, o)
+/// partial per (row, Q head, chunk) at one head shape, laid out densely for
+/// the rows and chunks of each dispatch. Sized for `max_rows * max_chunks`
+/// (row, chunk) pairs, so a dispatch with fewer rows may use more chunks.
+pub struct GqaRowsScratch {
+    m: metal::Buffer,
+    d: metal::Buffer,
+    o: metal::Buffer,
+    max_rows: u32,
+    num_q_heads: u32,
+    head_dim: u32,
+    max_chunks: u32,
+}
+
+impl GqaRowsScratch {
+    pub fn new(
+        context: &MetalContext,
+        max_rows: u32,
+        num_q_heads: u32,
+        head_dim: u32,
+        max_chunks: u32,
+    ) -> Self {
+        let slots = max_rows as u64 * num_q_heads as u64 * max_chunks as u64;
+        Self {
+            m: context.new_output_buffer(slots.max(1) * 4),
+            d: context.new_output_buffer(slots.max(1) * 4),
+            o: context.new_output_buffer(slots.max(1) * head_dim as u64 * 4),
+            max_rows,
+            num_q_heads,
+            head_dim,
+            max_chunks,
+        }
+    }
+}
+
+/// Chunks per row a production [`GqaRowsScratch`] is sized for: the launch
+/// below runs 2 at a full micro-batch and more only for a short tail, which
+/// fits in the same (row, chunk) slots.
+pub const GQA_ROWS_SCRATCH_CHUNKS: u32 = 2;
+
+/// The multi-row partial's production launch: (rows per threadgroup, heads
+/// per simdgroup, chunks, unroll, tile positions).
+///
+/// Swept at Qwen3.8's shape (head_dim 256, 24 Q over 4 KV heads) on an M4
+/// Max, 16 distinct layer K/V buffers per sample, interleaved
+/// (`tests/qwen38_attention_decode_probe.rs`). One Q head per simdgroup and
+/// two rows per threadgroup won at 64 and 16 rows from 512 to 32K
+/// positions: 2.4x the per-row loop at 2K and 1.8-2.0x at 16-32K. Holding a
+/// row's whole group per simdgroup (the one-row kernel's layout) or more
+/// rows per threadgroup lost, so the gain is occupancy and one dispatch for
+/// the batch rather than K/V reuse. Two chunks beat 4 to 16 at 64 rows; one
+/// chunk lost at 16 rows (32 threadgroups), so a short tail takes more
+/// chunks, toward 64 threadgroups, within the scratch.
+fn gqa_rows_launch(
+    live_rows: u32,
+    num_kv_heads: u32,
+    scratch: &GqaRowsScratch,
+) -> (u32, u32, u32, u32, u32) {
+    const ROWS: u32 = 2;
+    let groups = live_rows.div_ceil(ROWS) * num_kv_heads;
+    let want = 64u32
+        .div_ceil(groups)
+        .clamp(GQA_ROWS_SCRATCH_CHUNKS, MAX_CHUNKS);
+    let fit = scratch.max_rows * scratch.max_chunks / live_rows;
+    (ROWS, 1, want.min(fit).max(1), 3, 12)
+}
+
+/// Decode attention for `live_rows` query rows at consecutive positions:
+/// row `r` of `q` (`[live_rows, num_q_heads, head_dim]`) attends over
+/// `[kv_start, first_query_position + r]`, and its output lands in row `r`
+/// of `out`. One partial dispatch serves the whole batch
+/// (`attention_decode_gqa_rows_partial`) where calling
+/// [`encode_attention_decode`] per row pays two dispatches per row, and the
+/// batch combine merges the chunks. Not bit-identical to that loop, because
+/// the chunk boundaries and summation order differ, so callers that must
+/// reproduce sequential decode exactly keep the loop. At one row it measured
+/// 0.89-1.07x the loop, so callers keep the loop there too.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_attention_decode_gqa_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    scratch: &GqaRowsScratch,
+    out: (&metal::Buffer, u64),
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    first_query_position: u32,
+    live_rows: u32,
+    kv_start: u32,
+    ring_capacity: u32,
+    scale: f32,
+) -> Result<(), GpuError> {
+    assert!(live_rows >= 1 && live_rows <= scratch.max_rows);
+    let (rows_per_group, heads_per_simdgroup, num_chunks, unroll, tile) =
+        gqa_rows_launch(live_rows, num_kv_heads, scratch);
+    encode_attention_decode_gqa_rows_with(
+        context,
+        pass,
+        q,
+        k_buffer,
+        v_buffer,
+        scratch,
+        out,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        first_query_position,
+        live_rows,
+        kv_start,
+        ring_capacity,
+        scale,
+        rows_per_group,
+        heads_per_simdgroup,
+        num_chunks,
+        unroll,
+        tile,
+    )
+}
+
+/// [`encode_attention_decode_gqa_rows`] with an explicit launch, for the
+/// probe's sweep. A threadgroup holds `rows_per_group` rows and
+/// `rows_per_group * group / heads_per_simdgroup` simdgroups (at most 16).
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn encode_attention_decode_gqa_rows_with(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    scratch: &GqaRowsScratch,
+    out: (&metal::Buffer, u64),
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    first_query_position: u32,
+    live_rows: u32,
+    kv_start: u32,
+    ring_capacity: u32,
+    scale: f32,
+    rows_per_group: u32,
+    heads_per_simdgroup: u32,
+    num_chunks: u32,
+    unroll: u32,
+    tile: u32,
+) -> Result<(), GpuError> {
+    assert!(attention_decode_gqa_supported(
+        head_dim,
+        num_q_heads,
+        num_kv_heads
+    ));
+    let group = num_q_heads / num_kv_heads;
+    assert!(heads_per_simdgroup >= 1 && group % heads_per_simdgroup == 0);
+    let simdgroups = rows_per_group * (group / heads_per_simdgroup);
+    assert!(rows_per_group >= 1 && simdgroups <= 32);
+    assert!((1..=4).contains(&unroll));
+    assert!((1..=16).contains(&tile));
+    assert!(live_rows >= 1 && live_rows <= scratch.max_rows);
+    assert!(
+        num_chunks >= 1
+            && live_rows as u64 * num_chunks as u64
+                <= scratch.max_rows as u64 * scratch.max_chunks as u64,
+        "rows scratch holds fewer (row, chunk) partials than the dispatch"
+    );
+    assert!(
+        scratch.num_q_heads == num_q_heads && scratch.head_dim == head_dim,
+        "rows scratch was sized for another head shape"
+    );
+    assert!(kv_start <= first_query_position);
+    // The last row's exclusive end, and the union every chunk splits.
+    let last_end = first_query_position + live_rows;
+    assert!(
+        ring_capacity == 0 || last_end - kv_start <= ring_capacity,
+        "attention window larger than ring capacity: rows would alias"
+    );
+    let stored_tokens = if ring_capacity > 0 {
+        ring_capacity
+    } else {
+        last_end
+    };
+    let kv_bytes = stored_tokens as u64 * num_kv_heads as u64 * head_dim as u64 * 2;
+    assert!(k_buffer.length() >= kv_bytes, "K buffer too small");
+    assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
+    let q_bytes = live_rows as u64 * num_q_heads as u64 * head_dim as u64 * 2;
+    assert!(q.0.length() >= q.1 + q_bytes, "Q buffer too small");
+    assert!(out.0.length() >= out.1 + q_bytes, "output buffer too small");
+
+    let chunk_len = (last_end - kv_start).div_ceil(num_chunks);
+    let first_end = first_query_position + 1;
+
+    // Group, rows per threadgroup, head_dim, unroll and tile are baked in on
+    // top of the shared (scale, ring, chunks, sinks) set, and every one is in
+    // the cache key (`crates/gpu` Gotcha 1).
+    let constants = attention_function_constants(scale, ring_capacity, num_chunks, false);
+    for (value, index) in [
+        (group, 71),
+        (simdgroups, 72),
+        (head_dim, 73),
+        (unroll, 74),
+        (tile, 75),
+        (heads_per_simdgroup, 76),
+    ] {
+        constants.set_constant_value_at_index(
+            (&value as *const u32).cast(),
+            MTLDataType::UInt,
+            index,
+        );
+    }
+    let base_key = attention_constants_key(scale, ring_capacity, num_chunks, false);
+    let mut partial_key = base_key.to_vec();
+    for value in [
+        group,
+        simdgroups,
+        head_dim,
+        unroll,
+        tile,
+        heads_per_simdgroup,
+    ] {
+        partial_key.extend_from_slice(&value.to_le_bytes());
+    }
+    let partial_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_gqa_rows_partial",
+        &constants,
+        &partial_key,
+    )?;
+    // The compiler may cap a pipeline below the kernel's declared 1024
+    // threads when it needs more registers; dispatching past the cap is
+    // undefined, so refuse instead.
+    let limit = partial_pipeline.max_total_threads_per_threadgroup();
+    if u64::from(simdgroups * 32) > limit {
+        return Err(GpuError::PipelineCreate(format!(
+            "attention_decode_gqa_rows_partial needs {} threads per threadgroup and the \
+             compiled pipeline allows {limit}",
+            simdgroups * 32
+        )));
+    }
+    let row_groups = live_rows.div_ceil(rows_per_group);
+    pass.encode_threadgroups(
+        &partial_pipeline,
+        &[
+            (q.0, 0, q.1),
+            (k_buffer, 1, 0),
+            (v_buffer, 2, 0),
+            (&scratch.m, 3, 0),
+            (&scratch.d, 4, 0),
+            (&scratch.o, 5, 0),
+        ],
+        &[
+            (u32_bytes(&num_kv_heads), 6),
+            (u32_bytes(&first_end), 7),
+            (u32_bytes(&kv_start), 8),
+            (u32_bytes(&chunk_len), 9),
+            (u32_bytes(&live_rows), 10),
+        ],
+        (row_groups * num_kv_heads * num_chunks) as u64,
+        (simdgroups * 32) as u64,
+    );
+
+    let combine_constants = attention_function_constants(scale, ring_capacity, num_chunks, false);
+    let combine_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_batch_combine",
+        &combine_constants,
+        &base_key,
+    )?;
+    pass.encode_threadgroups(
+        &combine_pipeline,
+        &[
+            (&scratch.m, 0, 0),
+            (&scratch.d, 1, 0),
+            (&scratch.o, 2, 0),
+            (out.0, 3, out.1),
+        ],
+        &[
+            (u32_bytes(&head_dim), 4),
+            (u32_bytes(&num_q_heads), 5),
+            (u32_bytes(&num_chunks), 6),
+            (u32_bytes(&live_rows), 7),
+        ],
+        (live_rows * num_q_heads) as u64,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
 /// Same two-pass decode attention, but K and V are read straight out of
 /// caller-owned persistent buffers (`KvCacheManager`'s per-layer K/V, in
 /// linear `[seq_len, num_kv_heads, head_dim]` layout starting at offset 0)

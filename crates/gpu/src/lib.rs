@@ -161,9 +161,10 @@ pub use warmup::{KernelWarmup, KernelWarmupPlan, KernelWarmupStats};
 #[cfg(target_os = "macos")]
 pub use attention_decode::{
     attention_decode, attention_decode_gqa_supported, encode_attention_decode,
-    encode_attention_decode_batch, encode_attention_decode_gqa, AttentionScratch,
-    BatchAttentionInputContract, BatchAttentionKvFormat, BatchAttentionKvLayout,
-    BatchAttentionScratch, DecodeAttentionKernel, MAX_DECODE_ATTENTION_HEAD_DIM, MAX_GQA_GROUP,
+    encode_attention_decode_batch, encode_attention_decode_gqa, encode_attention_decode_gqa_rows,
+    encode_attention_decode_gqa_rows_with, AttentionScratch, BatchAttentionInputContract,
+    BatchAttentionKvFormat, BatchAttentionKvLayout, BatchAttentionScratch, DecodeAttentionKernel,
+    GqaRowsScratch, GQA_ROWS_SCRATCH_CHUNKS, MAX_DECODE_ATTENTION_HEAD_DIM, MAX_GQA_GROUP,
 };
 #[cfg(target_os = "macos")]
 pub use attention_indexed::{
