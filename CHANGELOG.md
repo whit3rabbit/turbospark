@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-12
+
 ### Security
 - `crates/ffi`: request-triggered model loading in the embedded HTTP server
   is now opt-in. By default a request that names a model nobody attached is
@@ -566,6 +568,12 @@ when this file gets updated relative to the version bump and the tag.
 - `crates/catalog`: installers announce the byte transfer with a
   `[phase] transfer` progress line, which the app maps to the running state.
   Later repack lines still read as packing because there is no end marker yet.
+- `.github/workflows/publish-crates.yml`: `turbospark-audio` is published with
+  the other crates, in dependency order ahead of `turbospark-repack`. The job
+  runs on `macos-15`, because `turbospark-server` does not compile against
+  `turbospark-runtime`'s macOS-gated API on Linux. The `turbospark-audio` and
+  `turbospark-gpu` packages exclude their test-only fixtures to stay under the
+  crates.io size limit.
 
 ### Fixed
 - `crates/catalog`: an audio catalog install downloaded every file and then

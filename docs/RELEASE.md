@@ -27,7 +27,7 @@ on purpose:
 
 - **Release Frequency**: The macOS app iterates quickly with UI improvements,
   dialog refinements, localization updates, and bugfixes. Bumping and publishing
-  16 Rust crates to crates.io for a Swift-only change creates excessive version
+  17 Rust crates to crates.io for a Swift-only change creates excessive version
   churn on the registry.
 - **Permanent Registry State**: Crates cannot be deleted from crates.io once
   published (they can only be yanked). Publishing on demand preserves clean,
@@ -88,7 +88,9 @@ Publish order matters: `cargo publish` refuses a crate until every internal
 path dependency it declares (`path = "../x", version = "..."`) is already
 live on the registry at that exact version.
 
-The topological dependency order across the 16 publishable crates is:
+The topological dependency order across the 17 publishable crates is below.
+Dev-dependencies are ordered too, because a dev-dep declared with a
+`version` stays in the published manifest:
 
 1. `turbospark-core`: no internal deps
 2. `turbospark-window-fit`: no internal deps
@@ -98,14 +100,22 @@ The topological dependency order across the 16 publishable crates is:
 6. `turbospark-model-io`: needs core
 7. `turbospark-selection`: needs core
 8. `turbospark-tokenizer`: needs core
-9. `turbospark-repack`: needs core, compute, model-io
-10. `turbospark-catalog`: needs core, model-io, repack, tokenizer
-11. `turbospark-streaming`: needs core, model-io
-12. `turbospark-gpu`: needs core; macOS target-deps on model-io
-13. `turbospark-image`: needs core, compute, model-io, tokenizer; macOS target-deps on gpu
-14. `turbospark-runtime`: needs core, selection, tokenizer; macOS target-deps on gpu, model-io, compute, streaming, vision-io
-15. `turbospark-cli`: needs invocation, runtime, selection, tokenizer, repack, model-io, window-fit, vision-io, image
-16. `turbospark-server`: needs core, runtime, selection, tokenizer, vision-io; macOS target-deps on repack
+9. `turbospark-audio`: needs core, model-io, tokenizer
+10. `turbospark-repack`: needs core, compute, model-io
+11. `turbospark-catalog`: needs audio, core, model-io, repack, tokenizer
+12. `turbospark-streaming`: needs core, model-io
+13. `turbospark-gpu`: needs core, compute; macOS target-deps on model-io; macOS dev-deps on audio, repack
+14. `turbospark-image`: needs core, compute, model-io, tokenizer; macOS target-deps on gpu
+15. `turbospark-runtime`: needs core, selection, tokenizer; macOS target-deps on audio, gpu, model-io, compute, streaming, vision-io
+16. `turbospark-cli`: needs audio, catalog, core, image, invocation, runtime, selection, tokenizer, repack, model-io, window-fit, vision-io
+17. `turbospark-server`: needs audio, core, runtime, selection, tokenizer, vision-io; macOS target-deps on catalog, repack
+
+The job runs on `macos-15` because `cargo publish` verifies each crate by
+building it for the host, and `turbospark-server` does not compile on Linux.
+`turbospark-audio` and `turbospark-gpu` exclude their test-only fixtures in
+`Cargo.toml` (`exclude = [...]`); without that both exceed the crates.io
+10 MB `.crate` limit. A new `include_str!` of a fixture outside
+`#[cfg(test)]` would break the published crate, which the dry run catches.
 
 `turbospark-bench` (`publish = false`) is an internal dev harness and is never
 published. `turbospark-ffi` (`publish = false`) is the C ABI static library
@@ -445,7 +455,7 @@ everything (the changelog move, the version bump) before tagging.
 - **Tag already pushed, `check-version` failed**: delete the tag
   (`git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`), fix the
   problem, re-tag. Nothing downstream ran, so this is fully reversible.
-- **Crate publish partially failed** (say, crate 6 of 16 failed for a
+- **Crate publish partially failed** (say, crate 6 of 17 failed for a
   transient registry reason): fix the cause, then re-run the
   `publish-crates.yml` workflow dispatch. The per-crate loop treats every
   already-published crate as a no-op and continues, so a re-run correctly

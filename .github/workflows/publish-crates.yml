@@ -23,6 +23,7 @@ on:
           - turbospark-model-io
           - turbospark-selection
           - turbospark-tokenizer
+          - turbospark-audio
           - turbospark-repack
           - turbospark-catalog
           - turbospark-streaming
@@ -35,7 +36,10 @@ on:
 jobs:
   publish:
     name: Publish to crates.io
-    runs-on: ubuntu-latest
+    # macOS, not Linux: `cargo publish` verifies each crate by building it
+    # for the host, and turbospark-server does not compile on Linux against
+    # turbospark-runtime's macOS-gated API (the 2026-09-20 run failed there).
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,6 +67,7 @@ jobs:
             turbospark-model-io
             turbospark-selection
             turbospark-tokenizer
+            turbospark-audio
             turbospark-repack
             turbospark-catalog
             turbospark-streaming
