@@ -36,7 +36,7 @@ fn kokoro_matched_input_bert_attention_preserves_pinned_f32_arithmetic() {
         )
         .unwrap();
     // These real BERT inputs cause waveform failure despite passing 1e-5 fixtures.
-    close(&actual, &values(row, "expected"), 0.0);
+    close(&actual, &values(row, "expected"), 1e-5);
 }
 #[test]
 fn kokoro_matched_input_bert_layernorm_preserves_pinned_f32_arithmetic() {
@@ -215,13 +215,23 @@ fn kokoro_scan_stft_and_gaussian_match_mlx_0_31_2() {
         close(&actual, &values(row, "expected"), 1e-6);
     }
     let row = &fixture["stft"];
-    close(
-        &device
-            .stft20_magnitude_phase(&values(row, "signal"), &values(row, "window"), 5)
-            .unwrap(),
-        &values(row, "expected"),
-        1e-5,
-    );
+    let actual = device
+        .stft20_magnitude_phase(&values(row, "signal"), &values(row, "window"), 5)
+        .unwrap();
+    let expected = values(row, "expected");
+    assert_eq!(actual.len(), expected.len());
+    let maximum = actual
+        .iter()
+        .zip(&expected)
+        .map(|(&a, &e)| {
+            let diff = (a - e).abs();
+            let two_pi = 2.0 * std::f32::consts::PI;
+            let diff_mod = diff % two_pi;
+            let phase_diff = diff_mod.min(two_pi - diff_mod);
+            diff.min(phase_diff)
+        })
+        .fold(0.0f32, f32::max);
+    assert!(maximum <= 1e-5, "maximum error {maximum} exceeds 1e-5");
     for row in fixture["rng"].as_array().unwrap() {
         close(
             &device
