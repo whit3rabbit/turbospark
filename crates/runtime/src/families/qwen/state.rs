@@ -355,26 +355,33 @@ impl RealQwenState {
     /// batched INT4 GEMM caps a dispatch at its per-thread accumulator
     /// array, and the driver's micro-batch is capped at the same constant,
     /// so a full micro-batch is exactly one dispatch with no sub-batching.
+    /// `steel` sizes the scratch for the Steel micro-batch
+    /// (`QWEN_STEEL_PREFILL_BATCH` rows) and lets its GEMMs take the Steel
+    /// kernel; otherwise it is the 16-row scalar arm's. Fixed at first
+    /// allocation: the choice is the runner's, read once at open.
     pub(crate) fn ensure_batched_prefill(
         &mut self,
         context: &mut gpu::MetalContext,
         arch: &ArchConfig,
+        steel: bool,
     ) -> Result<(), RealForwardError> {
         if self.batched_prefill.is_some() {
             return Ok(());
         }
-        self.batched_prefill = Some(
-            BatchedScratch::new(
-                context,
-                arch,
-                self.shape,
-                crate::real_forward_types::MAX_PREFILL_BATCH,
-                // No tape: a prefill chunk is never rolled back, so the
-                // buffers would be dead weight on every chunked prompt.
-                false,
-            )
-            .map_err(RealForwardError::Gpu)?,
-        );
+        let rows = if steel {
+            crate::real_forward_types::QWEN_STEEL_PREFILL_BATCH
+        } else {
+            crate::real_forward_types::MAX_PREFILL_BATCH
+        };
+        let mut scratch = BatchedScratch::new(
+            context, arch, self.shape, rows,
+            // No tape: a prefill chunk is never rolled back, so the
+            // buffers would be dead weight on every chunked prompt.
+            false,
+        )
+        .map_err(RealForwardError::Gpu)?;
+        scratch.steel_gemm = steel;
+        self.batched_prefill = Some(scratch);
         Ok(())
     }
 

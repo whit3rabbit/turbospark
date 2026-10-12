@@ -116,7 +116,11 @@ These identify the experiment sources, not the complete dirty workspace.
 ## Runtime promotion boundary
 
 The result supports a targeted large-projection prefill experiment. No
-runtime dispatch or default was changed. The installed Qwen 3.6 MoE path
+runtime dispatch or default was changed by the probe itself. **Update
+2026-10-11:** the kernel is now vendored from MLX's own `quantized.h` (MIT,
+`scripts/vendor_mlx_steel_qmm.py`) and is the dense qwen chunked-prefill
+default at a 64-row micro-batch, after the gates below ran on the real
+`qwen38-27b` trunk (`docs/BATCHED_PREFILL.md`, last section). The installed Qwen 3.6 MoE path
 currently refuses chunked prefill, so the QKV-sized matrix result does not
 establish an acceleration for that installed model. No Gemma 4 or dense
 INT4 Qwen checkpoint was available for a matching full-model run here.

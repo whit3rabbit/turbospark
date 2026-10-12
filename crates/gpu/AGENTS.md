@@ -33,6 +33,10 @@ threadgroup shape, or normalization convention on the device.
   the barrier kernel's `AttentionScratch` size (more chunks measured slower).
   A family opts in on its scratch (`with_decode_kernel`), and
   `TURBOSPARK_ATTN_DECODE_KERNEL=barrier|gqa` overrides it process-wide.
+- `shaders/dequant_int4_steel.metal` is generated from pinned MLX sources by
+  `scripts/vendor_mlx_steel_qmm.py`. Change the script and regenerate, never
+  the shader. Steel is not bit-exact against the scalar INT4 kernels, so it
+  stays prefill-only (`BatchedScratch::steel_gemm`), never decode or verify.
 - GDN snapshots are GPU blits into pooled private buffers. `snapshot` does
   not wait, so no host write to the live state may land before a later
   command buffer on the same queue has completed.

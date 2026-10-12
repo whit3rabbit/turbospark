@@ -56,6 +56,12 @@ pub(crate) struct BatchedScratch {
     /// because a prefill is never rolled back and the bytes would be dead
     /// weight on every chunked prompt.
     pub(crate) verify_tape: Option<BatchedVerifyTape>,
+    /// Whether the INT4 GEMMs encoded against this scratch may run the
+    /// vendored Steel kernel (`real_forward_dispatch::encode_gemm_rows`).
+    /// Set only on the chunked-prefill driver's instance: Steel is not
+    /// bit-exact against the scalar GEMV, and the drafters' verify pass must
+    /// reproduce sequential decode exactly, so their scratch keeps `false`.
+    pub(crate) steel_gemm: bool,
 }
 
 /// The tape buffers. One `qkv_raw` row set and one `a`/`b` row set per
@@ -187,9 +193,15 @@ impl BatchedScratch {
             ffn_up: halfs(inter),
             ffn_act: halfs(inter),
             h2: halfs(hidden),
-            logits: halfs(vocab),
+            // Only the verify pass reads M rows of logits (`batched.rs`). The
+            // chunked-prefill instance (no tape) runs its head as a single-row
+            // GEMV into `DecodeScratch::logits`, so one row is enough there,
+            // and at the Steel micro-batch the full plane would be ~32 MiB of
+            // a 248K vocabulary nobody reads.
+            logits: context.new_output_buffer(vocab * if record_tape { b } else { 1 } * 2),
             routed,
             verify_tape,
+            steel_gemm: false,
         })
     }
 }

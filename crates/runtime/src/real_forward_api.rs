@@ -185,10 +185,21 @@ impl RealForwardRunner {
 
     /// Sibling of [`Self::set_shared_cb_overlap`] for
     /// `TURBOSPARK_BATCHED_GEMV` (the chunked-prefill driver's batched
-    /// resident GEMVs).
+    /// resident GEMVs). An explicit choice either way: `true` forces the
+    /// batched arm, `false` the per-token one, and both end the qwen dense
+    /// driver's automatic pick.
     #[doc(hidden)]
     pub fn set_batched_gemv_prefill(&mut self, on: bool) {
         self.batched_gemv_prefill = on;
+        self.batched_gemv_prefill_auto = false;
+    }
+
+    /// `TURBOSPARK_PREFILL_STEEL` for tests: whether the qwen dense batched
+    /// prefill arm uses the Steel INT4 GEMM. Takes effect when that arm's
+    /// scratch is first allocated.
+    #[doc(hidden)]
+    pub fn set_prefill_steel(&mut self, on: bool) {
+        self.prefill_steel = on;
     }
 
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the

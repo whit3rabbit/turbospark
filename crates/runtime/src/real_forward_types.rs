@@ -129,6 +129,22 @@ pub struct PhaseCounters {
 /// family rather than only for the ones with a chunk driver.
 pub(crate) const MAX_PREFILL_BATCH: usize = 16;
 
+/// The qwen dense driver's micro-batch when its batched arm runs the vendored
+/// Steel INT4 GEMM (`gpu::encode_dequant_int4_gemm_steel`). The matrix
+/// kernel reads each weight once per micro-batch, and at Qwen3.8's
+/// projection shapes it measured 2.5-2.9x the 16-row scalar kernel at 32
+/// rows, 2.7-3.0x at 64 and 2.9-3.1x at 128
+/// (`crates/gpu/tests/qwen38_int4_prefill_gemm_probe.rs`), so 64 takes nearly
+/// all of the gain at a quarter of 128's scratch.
+pub(crate) const QWEN_STEEL_PREFILL_BATCH: usize = 64;
+
+/// Rows of the shared `x` scratch: the widest micro-batch any driver runs.
+pub(crate) const MAX_PREFILL_ROWS: usize = if QWEN_STEEL_PREFILL_BATCH > MAX_PREFILL_BATCH {
+    QWEN_STEEL_PREFILL_BATCH
+} else {
+    MAX_PREFILL_BATCH
+};
+
 /// Depth of the routed-expert command-buffer pipeline INSIDE a chunk, and
 /// therefore how many copies exist of the routed resources the HOST writes.
 ///
@@ -237,7 +253,7 @@ impl DecodeScratch {
         // is sized off that width alone even on a mixed-attention model.
         let full_kv_dim = (arch.num_full_kv_heads * arch.full_head_dim) as u64;
         Self {
-            x: halfs(hidden * MAX_PREFILL_BATCH as u64),
+            x: halfs(hidden * MAX_PREFILL_ROWS as u64),
             normed: halfs(hidden),
             q: halfs(qk_dim),
             attn_out: halfs(qk_dim),

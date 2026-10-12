@@ -4,7 +4,7 @@ use super::batched::BatchedScratch;
 use crate::families::qwen::{
     layer_tensor, prefixed_layer_tensor, RealQwenState, RMS_EPS, TRUNK_PREFIX,
 };
-use crate::real_forward_dispatch::encode_gemm_any;
+use crate::real_forward_dispatch::encode_gemm_rows;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 use crate::real_forward_utils::norm_view;
 
@@ -63,7 +63,7 @@ pub(crate) fn encode_full_attention_block_batched(
     let (k_buf, k_off) = kv.k_slot(layer, start_position);
     let (v_buf, v_off) = kv.v_slot(layer, start_position);
 
-    encode_gemm_any(
+    encode_gemm_rows(
         context,
         pass,
         weights,
@@ -74,12 +74,13 @@ pub(crate) fn encode_full_attention_block_batched(
         (&batched.normed, 0),
         (&batched.q_packed, 0),
         batch,
+        batched.steel_gemm,
     )?;
     for (suffix, out) in [
         ("k_proj.weight", (k_buf, k_off as u64)),
         ("v_proj.weight", (v_buf, v_off as u64)),
     ] {
-        encode_gemm_any(
+        encode_gemm_rows(
             context,
             pass,
             weights,
@@ -90,6 +91,7 @@ pub(crate) fn encode_full_attention_block_batched(
             (&batched.normed, 0),
             out,
             batch,
+            batched.steel_gemm,
         )?;
     }
 
@@ -171,7 +173,7 @@ pub(crate) fn encode_full_attention_block_batched(
         .map_err(gpu_err)?;
     }
 
-    encode_gemm_any(
+    encode_gemm_rows(
         context,
         pass,
         weights,
@@ -182,6 +184,7 @@ pub(crate) fn encode_full_attention_block_batched(
         (&batched.attn_out, 0),
         (&batched.o, 0),
         batch,
+        batched.steel_gemm,
     )
 }
 
@@ -229,7 +232,7 @@ pub(crate) fn encode_linear_block_batched(
         ("in_proj_a.weight", v_heads, &batched.gdn_a),
         ("in_proj_b.weight", v_heads, &batched.gdn_b),
     ] {
-        encode_gemm_any(
+        encode_gemm_rows(
             context,
             pass,
             weights,
@@ -240,6 +243,7 @@ pub(crate) fn encode_linear_block_batched(
             (&batched.normed, 0),
             (out, 0),
             batch,
+            batched.steel_gemm,
         )?;
     }
 
@@ -370,7 +374,7 @@ pub(crate) fn encode_linear_block_batched(
         batch as u32,
     )
     .map_err(gpu_err)?;
-    encode_gemm_any(
+    encode_gemm_rows(
         context,
         pass,
         weights,
@@ -381,6 +385,7 @@ pub(crate) fn encode_linear_block_batched(
         (&batched.gdn_out, 0),
         (&batched.o, 0),
         batch,
+        batched.steel_gemm,
     )
 }
 
@@ -516,7 +521,7 @@ pub(crate) fn encode_dense_ffn_batched(
         ("mlp.gate_proj.weight", &batched.ffn_gate),
         ("mlp.up_proj.weight", &batched.ffn_up),
     ] {
-        encode_gemm_any(
+        encode_gemm_rows(
             context,
             pass,
             weights,
@@ -527,6 +532,7 @@ pub(crate) fn encode_dense_ffn_batched(
             (&batched.moe_x, 0),
             (out, 0),
             batch,
+            batched.steel_gemm,
         )?;
     }
 
@@ -548,7 +554,7 @@ pub(crate) fn encode_dense_ffn_batched(
         .map_err(gpu_err)?;
     }
 
-    encode_gemm_any(
+    encode_gemm_rows(
         context,
         pass,
         weights,
@@ -559,6 +565,7 @@ pub(crate) fn encode_dense_ffn_batched(
         (&batched.ffn_act, 0),
         (&batched.h2, 0),
         batch,
+        batched.steel_gemm,
     )?;
 
     for m in 0..batch {

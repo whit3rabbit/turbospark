@@ -1803,3 +1803,51 @@ python3 scripts/prefill_benchmark_pairs.py \
   --pairs 3 \
   --output /tmp/batched-prefill-long-synthesis.json
 ```
+
+## The dense qwen batched arm becomes the default, on Steel (2026-10-11)
+
+Two changes landed together for `QwenGdnDense`. With `TURBOSPARK_BATCHED_GEMV`
+unset, the chunked driver now picks the batched arm wherever it qualifies
+(INT4, unfolded, text-only, no `--kv-bits`) and the per-token arm elsewhere.
+`=0` keeps the per-token arm, which stays the byte-identical reference, and
+`=1` forces the batched arm with its by-name refusals. The batched arm's INT4
+GEMMs also run on the vendored MLX Steel kernel at a 64-row micro-batch
+(`crates/gpu/src/dequant_int4_steel.rs`, `TURBOSPARK_PREFILL_STEEL=0` to go
+back to the 16-row scalar kernel). The drafters' verify scratch never takes
+Steel, so speculative verify stays exact against sequential decode.
+
+Measured on the real `qwen38-27b` trunk (M4 Max, AC, other sessions on the
+host, cold processes, greedy, 96 new tokens):
+
+| prompt | Steel (default) | scalar batched | per-token |
+| ---: | ---: | ---: | ---: |
+| 38 tokens, warm | 0.67 s | 0.91 s | 1.80 s |
+| 215 tokens, warm | 2.06 s | 3.94 s | 9.46 s |
+| 1,094 tokens | 8.52 s | 18.88 s | 47.88 s |
+| 2,727 tokens | 21.01 s | 46.58 s | 138.64 s |
+
+Greedy output was md5-identical across all three arms at 215, 1,094 and 2,727
+tokens. One sampled run (2,727 tokens, temperature 0.7) on the scalar batched
+arm took the other side of a near-tie at character 932 of ~1,035 ("format
+compatibility" against "family compatibility"), which is the shape floor this
+page already records. `crates/bench/tests/qwen38_prefill_arm_probe.rs` holds
+Steel to a distribution bound against the per-token arm: final-position KL
+2.0e-5 nats mean (5.5e-5 worst) over prompts of 64 to 3,000 tokens, top-1
+agreeing at every length and top-5 overlap 5/5.
+
+Steel's kernel term, isolated at Qwen3.8's projection shapes
+(`crates/gpu/tests/qwen38_int4_prefill_gemm_probe.rs`): the scalar kernel sits
+at ~3.5 TFLOPS at any width, and Steel's 32-row tile reaches 2.5-2.85x it at 32
+rows, 2.7-3.0x at 64 and 2.9-3.1x at 128 (~10-11 TFLOPS). At 16 rows Steel's
+tile is half empty and loses on the 1024-row K/V projections, so
+`encode_gemm_rows` takes Steel only from 32 rows up and the 48-row GDN `a`/`b`
+projections (not a whole tile) stay scalar.
+
+One measurement nearly sent this the wrong way. The first cold run of a
+38-token prompt read 15.0 s against 2.0 s for the per-token arm, and it looked
+like pipeline compilation, so a length threshold went in. A warm rerun put the
+batched arm ahead at 38 and 215 tokens. The slow runs were the model's pages
+being re-read after another session's 15 GB job pushed them out, and
+compilation is paid once per machine. The threshold was taken back out. Time
+short prompts with a warm page cache, and check `vm.swapusage` before trusting
+a cold number.

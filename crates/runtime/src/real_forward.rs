@@ -245,14 +245,16 @@ pub struct RealForwardRunner {
     /// per-token path, exactly as the routed seam above does for the other
     /// half of the layer.
     ///
-    /// Output is byte-identical either way, and that is a MEASURED claim
-    /// rather than a structural one: `dequant_int4_gemm_simd` and
+    /// The GEMM itself is bit-exact: `dequant_int4_gemm_simd` and
     /// `dequant_int4_gemv_simd` agree bit-for-bit on a fixture built to
     /// see reassociation, against a positive control
     /// (`dequant_int4_gemm_mma`) that differs on ~39% of outputs on the
-    /// same data (`crates/gpu/tests/dequant_int4_gemm_parity.rs`). So this
-    /// is a throughput axis only. INT4-affine only: any other dtype is
-    /// refused BY NAME when the seam is on, never silently looped.
+    /// same data (`crates/gpu/tests/dequant_int4_gemm_parity.rs`). The qwen
+    /// dense arm is NOT byte-identical end to end, because its multi-row
+    /// GDN and attention kernels sit at a 6e-8 to 1.5e-5 nat logit floor
+    /// (`families/qwen/prefill.rs`'s module doc). INT4-affine only: any
+    /// other dtype is refused BY NAME when the seam is on, never silently
+    /// looped.
     ///
     /// **WHICH DISPATCHES IT MOVES, EXACTLY, because "batched GEMVs" is
     /// wider than what it does.** The four attention projections always.
@@ -263,6 +265,19 @@ pub struct RealForwardRunner {
     /// decode change rather than a prefill one. The batched routed half
     /// already writes `batch_h1` per token and needs no such change.
     pub(crate) batched_gemv_prefill: bool,
+    /// `TURBOSPARK_BATCHED_GEMV` unset and no [`Self::set_batched_gemv_prefill`]
+    /// call: the qwen DENSE chunked driver then takes the batched arm by
+    /// itself wherever it qualifies and the per-token arm elsewhere
+    /// (`families/qwen/prefill.rs`). 1.9-3.0x prefill on Qwen3.8-27B with
+    /// identical generated text (`docs/BATCHED_PREFILL.md`). Every other
+    /// family ignores it and keeps the env-only seam above.
+    pub(crate) batched_gemv_prefill_auto: bool,
+    /// Whether the qwen dense batched prefill arm runs its INT4 GEMMs on the
+    /// vendored Steel kernel at a 64-row micro-batch
+    /// (`real_forward_types::QWEN_STEEL_PREFILL_BATCH`). On unless
+    /// `TURBOSPARK_PREFILL_STEEL=0`. Prefill only: decode and the drafters'
+    /// verify never see it.
+    pub(crate) prefill_steel: bool,
     /// Which layout each layer's routed expert blobs use, PER PHASE.
     pub(crate) routed_layouts: Vec<RoutedLayerLayout>,
     /// Per-layer expert-selection histogram, `None` unless

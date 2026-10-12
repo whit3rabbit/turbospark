@@ -283,37 +283,41 @@ fn the_batched_arm_refuses_a_micro_batch_that_wraps_the_kv_ring() {
     );
 }
 
-/// The DEFAULT arm must allocate no M-row scratch, and the batched arm must
+/// The per-token arm must allocate no M-row scratch, and the batched arm must
 /// allocate it exactly once.
 ///
 /// This is the memory claim in `families/qwen/prefill.rs`'s header stated as
 /// a test rather than as an argument. `BatchedScratch` is ~10 MiB on the real
 /// install (mostly its `batch * vocab` logits plane, which this driver never
-/// reads -- the head stays a single-row GEMV), so allocating it at open would
-/// move `qwen38_memory_oracle`'s frozen row for a seam almost nobody sets.
-/// A counter is what catches that; a footprint ceiling with 87 MiB of
-/// headroom would not.
+/// reads -- the head stays a single-row GEMV), so it is allocated on the
+/// first chunk that takes the batched arm and never at open:
+/// `qwen38_memory_oracle` decodes without the chunked driver, so its frozen
+/// row does not see it. A counter is what catches a second copy; a
+/// footprint ceiling with 87 MiB of headroom would not.
 #[test]
 fn the_m_row_scratch_is_allocated_only_when_the_seam_is_on_and_only_once() {
     let mut runner = open_int4_runner("batched-gemv-alloc");
     let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
 
-    // Warm every lazy allocation the DEFAULT path has, so the baseline below
-    // is a steady state rather than a first run.
+    // The per-token arm, chosen explicitly: unset is now the automatic pick,
+    // which takes the batched arm on this INT4 install.
+    runner.set_batched_gemv_prefill(false);
+    // Warm every lazy allocation the per-token path has, so the baseline
+    // below is a steady state rather than a first run.
     runner.reset();
     runner
         .prefill_chunk(&PROMPT, 0, &mut logits)
-        .expect("the default arm prefills");
+        .expect("the per-token arm prefills");
     let default_arm = runner.gpu_buffer_allocations();
 
     runner.reset();
     runner
         .prefill_chunk(&PROMPT, 0, &mut logits)
-        .expect("the default arm prefills again");
+        .expect("the per-token arm prefills again");
     assert_eq!(
         runner.gpu_buffer_allocations(),
         default_arm,
-        "the default arm allocated a buffer on a second identical chunk"
+        "the per-token arm allocated a buffer on a second identical chunk"
     );
 
     runner.set_batched_gemv_prefill(true);
@@ -325,7 +329,7 @@ fn the_m_row_scratch_is_allocated_only_when_the_seam_is_on_and_only_once() {
     assert!(
         after_first > default_arm,
         "the batched arm allocated nothing, so either the scratch was already built on the \
-         default path (which would move the frozen oracle row) or the arm never ran"
+         per-token path or the arm never ran"
     );
 
     runner.reset();
@@ -444,5 +448,102 @@ fn a_moe_qwen_install_is_still_refused_by_name() {
     assert!(
         err.to_string().contains("qwenGdnDense") || err.to_string().contains("dense qwen"),
         "the refusal must name what IS served; got {err}"
+    );
+}
+
+/// Two full 16-row micro-batches and a 5-row tail, so the batched arm runs
+/// both a full-width and a ragged GEMM.
+fn long_prompt() -> Vec<i32> {
+    (0..37).map(|i| ((i * 7 + 3) % VOCAB) as i32).collect()
+}
+
+/// With `TURBOSPARK_BATCHED_GEMV` unset and no setter call, the driver picks
+/// the batched arm by itself on a qualifying (INT4, unfolded, text-only)
+/// install and still reproduces the sequential logits, across full
+/// micro-batches and a ragged tail. The allocation count is how the test
+/// knows which arm ran: only the batched arm builds its M-row scratch, so a
+/// fresh auto runner must end with more buffers than a fresh runner held to
+/// the per-token arm. The 1-bit
+/// fixture's byte-identity cases above are the other half: auto falls back
+/// to the per-token arm there, silently, where forcing the batched arm is
+/// refused.
+#[test]
+fn an_unset_seam_takes_the_batched_arm_where_it_qualifies() {
+    if std::env::var_os("TURBOSPARK_BATCHED_GEMV").is_some() {
+        eprintln!("TURBOSPARK_BATCHED_GEMV is set, which replaces the automatic pick; skipping");
+        return;
+    }
+    let prompt = long_prompt();
+    let mut per_token = open_int4_runner("auto-arm-per-token");
+    per_token.set_batched_gemv_prefill(false);
+    let expected = sequential_prefill(&mut per_token, &prompt);
+    let _ = chunked_prefill(&mut per_token, &prompt, prompt.len());
+    let per_token_buffers = per_token.gpu_buffer_allocations();
+
+    let mut auto = open_int4_runner("auto-arm");
+    // The scalar batched arm, which is exact, so the comparison below can be
+    // bit for bit; the Steel arm has its own case below.
+    auto.set_prefill_steel(false);
+    let _ = sequential_prefill(&mut auto, &prompt);
+    let actual = chunked_prefill(&mut auto, &prompt, prompt.len());
+    assert!(
+        auto.gpu_buffer_allocations() > per_token_buffers,
+        "the automatic pick built no M-row scratch, so it took the per-token arm on a \
+         qualifying install"
+    );
+    assert_eq!(
+        actual, expected,
+        "the automatically chosen batched arm must reproduce the sequential logits on the fixture"
+    );
+}
+
+/// The default batched arm runs its INT4 GEMMs on the vendored Steel kernel
+/// at a 64-row micro-batch, which rounds each weight to an FP16 operand and
+/// reduces in the matrix units' order. So it must NOT reproduce the
+/// sequential logits bit for bit (that is the proof the Steel path ran on
+/// this fixture), it must pick the same next token, and it must stay within
+/// the bound below of them.
+#[test]
+fn the_steel_prefill_arm_stays_close_to_the_sequential_logits() {
+    for var in ["TURBOSPARK_BATCHED_GEMV", "TURBOSPARK_PREFILL_STEEL"] {
+        if std::env::var_os(var).is_some() {
+            eprintln!("{var} is set, which replaces the default arm; skipping");
+            return;
+        }
+    }
+    let prompt = long_prompt();
+    let mut per_token = open_int4_runner("steel-ref");
+    per_token.set_batched_gemv_prefill(false);
+    let expected = sequential_prefill(&mut per_token, &prompt);
+
+    let mut steel = open_int4_runner("steel-arm");
+    let actual = chunked_prefill(&mut steel, &prompt, prompt.len());
+    assert_ne!(
+        actual, expected,
+        "bit-identical logits: the Steel GEMM did not run"
+    );
+    let argmax = |v: &[f32]| {
+        v.iter()
+            .enumerate()
+            .fold(
+                (0, f32::NEG_INFINITY),
+                |b, (i, &x)| if x > b.1 { (i, x) } else { b },
+            )
+            .0
+    };
+    assert_eq!(
+        argmax(&actual),
+        argmax(&expected),
+        "the Steel arm changed the next token"
+    );
+    let scale = expected.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let worst = actual
+        .iter()
+        .zip(&expected)
+        .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+    eprintln!("steel prefill: worst |logit diff| {worst} against max |logit| {scale}");
+    assert!(
+        worst <= 0.01 * scale,
+        "worst logit diff {worst} against max {scale}"
     );
 }

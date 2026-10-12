@@ -5,25 +5,39 @@
 //! `families/museglimmer/prefill.rs` -- loop the EXISTING per-token kernels
 //! inside a micro-batch, batching command buffers rather than GEMVs.
 //!
-//! **THE DEFAULT ARM IS A DIFFERENT DESIGN THAN `families/qwen/batched.rs`.**
+//! **WHICH ARM RUNS (2026-10-11).** With `TURBOSPARK_BATCHED_GEMV` unset the
+//! driver takes the batched arm below wherever it qualifies (INT4, unfolded,
+//! text-only, no `--kv-bits`) and the per-token arm elsewhere, silently. The
+//! batched arm runs its INT4 GEMMs on the vendored Steel kernel at a 64-row
+//! micro-batch unless `TURBOSPARK_PREFILL_STEEL=0` (then the scalar kernel at
+//! 16 rows). Measured on Qwen3.8-27B: 2.7K tokens prefill in 21 s against
+//! 47 s scalar-batched and 139 s per-token, greedy output identical across
+//! all three, and Steel's final-position KL against the per-token arm
+//! 2.0e-5 nats mean with top-1 agreeing at every length
+//! (`crates/bench/tests/qwen38_prefill_arm_probe.rs`).
+//! `TURBOSPARK_BATCHED_GEMV=0` keeps the per-token arm, the byte-identical
+//! reference; `=1` forces the batched arm and refuses by name where it
+//! cannot serve.
+//!
+//! **THE PER-TOKEN ARM IS A DIFFERENT DESIGN THAN `families/qwen/batched.rs`.**
 //! That file implements `docs/BATCHED_PREFILL.md` steps 2-6 (GEMVs become
 //! GEMMs) for the MTP/DFlash2 verify pass, sized for tiny block depths and
-//! allocated only when a drafter is open. The default arm needs neither: it
+//! allocated only when a drafter is open. The per-token arm needs neither: it
 //! calls `attn::encode_linear_block` / `attn::encode_full_attention_block`
 //! and `dense::encode_qwen_layer_dense` exactly as the sequential flow
 //! (`produce.rs`) does, once per token, inside one command buffer per
 //! micro-batch instead of one per token. **No new kernel, no new buffer.**
 //!
-//! **`TURBOSPARK_BATCHED_GEMV` IS THE SECOND ARM, AND IT IS THAT FILE'S
-//! MACHINERY REUSED RATHER THAN A SECOND COPY OF IT** (step 6, wired
-//! 2026-08-29). `batched_layers.rs`'s three encoders already take the
-//! parameters this driver has, already read and write `scratch.x` at the
-//! `t * hidden * 2` row convention this driver uses, and already carry the
-//! GDN recurrence's multi-row kernels -- so the arm is a branch in the layer
-//! loop plus a lazily-allocated `BatchedScratch`, with NO new dispatch code
-//! and no new kernel. The one constant that makes it fit exactly is that
-//! `MAX_PREFILL_BATCH` IS `gpu::MAX_BATCH_ROWS` (both 16), so a full
-//! micro-batch is one GEMM dispatch and never needs sub-batching.
+//! **THE BATCHED ARM IS THAT FILE'S MACHINERY REUSED RATHER THAN A SECOND
+//! COPY OF IT** (step 6, wired 2026-08-29). `batched_layers.rs`'s three
+//! encoders already take the parameters this driver has, already read and
+//! write `scratch.x` at the `t * hidden * 2` row convention this driver uses,
+//! and already carry the GDN recurrence's multi-row kernels -- so the arm is a
+//! branch in the layer loop plus a lazily-allocated `BatchedScratch`. Its
+//! GEMMs go through `encode_gemm_rows`, which takes Steel only when this
+//! driver's scratch says so (`BatchedScratch::steel_gemm`); the drafters'
+//! verify scratch never does, so speculative verify keeps the scalar kernel
+//! and stays exact against sequential decode.
 //!
 //! **THE TWO ARMS ARE NOT BYTE-IDENTICAL ON A REAL INSTALL, AND THAT IS A
 //! FLOOR RATHER THAN A DEFECT.** `produce_batched` and `produce` differ by
@@ -33,14 +47,14 @@
 //! commit `e8deb6c`) -- every engine's batched and cached passes disagree by
 //! about this much. So the batched arm's gate is the QUALITY gate, not the
 //! md5 identity every other chunked driver was verified with; what must stay
-//! byte-identical is the DEFAULT arm, which is what the caller who sets no
-//! env var gets. The synthetic fixture cannot see the floor at all (it reads
+//! byte-identical is the PER-TOKEN arm, the reference the batched arm is
+//! measured against. The synthetic fixture cannot see the floor at all (it reads
 //! 0 differing logits at every span,
 //! `tests/real_forward_qwen35_batched_onset.rs`), so a fixture-level
 //! byte-identity case pins the WIRING -- rows, offsets, ordering -- and must
 //! not be read as evidence about the arithmetic.
 //!
-//! Three properties make the default arm safe.
+//! Three properties make the per-token arm safe.
 //!
 //! `attn.rs`'s two block encoders read `scratch.normed` / write `scratch.o`
 //! at offset 0 and never touch `scratch.x` directly, so they need no change
@@ -137,83 +151,51 @@ impl RealForwardRunner {
                     .to_string(),
             ));
         }
-        if self.batched_gemv_prefill {
-            // A folded install's input transforms are wired into the
-            // per-token encoders only: the batched arm's M-row GEMMs would
-            // consume untransformed rows. Refused by name, the same doctrine
-            // as the dtype refusal below -- never silently looped, never
-            // silently untransformed.
-            if self
-                .real_qwen
-                .as_ref()
-                .is_some_and(|q| q.hadamard.is_some())
-            {
-                return Err(RealForwardError::Unsupported(
-                    "TURBOSPARK_BATCHED_GEMV is not wired for a hadamard-folded install: the \
-                     M-row inputs would need the activation transforms the per-token encoders \
-                     carry. Unset it to chunk this prompt"
-                        .to_string(),
-                ));
+        // WHICH ARM. `TURBOSPARK_BATCHED_GEMV=1` (or `set_batched_gemv_prefill
+        // (true)`) forces the batched arm and refuses BY NAME where it cannot
+        // serve. UNSET is auto: the batched arm wherever it qualifies, the
+        // per-token arm otherwise, silently, because the caller asked for no
+        // particular arm. `=0` keeps the per-token arm, the byte-identical
+        // reference against sequential prefill.
+        let batched = if self.batched_gemv_prefill {
+            if let Some(reason) = self.qwen_dense_batched_prefill_refusal()? {
+                return Err(RealForwardError::Unsupported(reason));
             }
-            // Refused by name rather than looped when INT4-affine weights are
-            // absent, so an install with INT8 weights on the dense HALF of
-            // THIS SAME ARCHITECTURE (which have no batched kernel at all)
-            // learns it before any KV row is written. One probe cannot see a
-            // mixed-width install; that is what the backstop is for.
-            let probe = layer_tensor(0, "mlp.gate_proj.weight");
-            let dtype = crate::real_forward_utils::entry(&self.index, &probe)?.dtype;
-            if dtype != 4 {
-                return Err(RealForwardError::Unsupported(format!(
-                    "TURBOSPARK_BATCHED_GEMV needs INT4-affine (dtype 4) weights and {probe} is \
-                     dtype {dtype}: the M-row GEMM has no kernel at this width, and looping the \
-                     per-token GEMVs anyway would measure the unbatched engine under the \
-                     batched arm's label"
-                )));
-            }
-            // THE ANGLE, NOT THE EMBEDDING. The blit below this block is
-            // arm-agnostic and would land correctly here, but
-            // `encode_full_attention_block_batched` calls
-            // `gpu::encode_rope_neox_subdim` at the raw position and has no
-            // `RopePosition` parameter to take, so every image position would
-            // be rotated by its INDEX rather than by its `(t, h, w)` triple --
-            // fluent, finite, and a different picture. Refused by name rather
-            // than silently producing that.
-            //
-            // The fix is not local: that encoder is shared with the
-            // MTP/DFlash2 verify pass (`verify_layers.rs`), which is vision-
-            // blind in BOTH halves (it embeds placeholders from the table too).
-            // Threading a `RopePosition` slice through it and filling it with
-            // `Sequential` at the verify call site would make that site look
-            // like it had made a considered choice. Close the verify gap
-            // first, then both callers get the parameter together.
-            if self.prompt_vision.is_some() {
-                return Err(RealForwardError::Unsupported(
-                    "TURBOSPARK_BATCHED_GEMV cannot serve an image prompt: the batched \
-                     attention block rotates at the raw position and takes no mRoPE triple, \
-                     so every image position would get the wrong angle. Unset it to chunk \
-                     this prompt, or prefill sequentially"
-                        .to_string(),
-                ));
-            }
+            true
+        } else {
+            self.batched_gemv_prefill_auto && self.qwen_dense_batched_prefill_refusal()?.is_none()
+        };
+        if batched {
             // The ONE place this arm's M-row scratch is allocated, and it is
-            // here rather than at open so a run that never sets the seam
+            // here rather than at open so a run that never takes this arm
             // never pays for it. Idempotent, and ahead of the loop so every
             // `batched_prefill()` below it is infallible.
             let arch = self.arch.clone();
+            let steel = self.prefill_steel;
             let context = &mut self.context;
             self.real_qwen
                 .as_mut()
                 .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?
-                .ensure_batched_prefill(context, &arch)?;
+                .ensure_batched_prefill(context, &arch, steel)?;
         }
+        // The batched arm's micro-batch is whatever its scratch was sized
+        // for (64 rows with Steel, 16 without); the per-token arm's is 16.
+        let width = if batched {
+            self.real_qwen
+                .as_ref()
+                .map_or(MAX_PREFILL_BATCH, |q| q.batched_prefill().batch)
+        } else {
+            MAX_PREFILL_BATCH
+        };
         let mut offset = 0usize;
         while offset < tokens.len() {
-            let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);
+            let take = (tokens.len() - offset).min(width);
             let last = offset + take == tokens.len();
             self.prefill_micro_batch_qwen_dense(
                 &tokens[offset..offset + take],
                 start_position + offset,
                 last,
+                batched,
                 logits,
             )?;
             offset += take;
@@ -221,16 +203,84 @@ impl RealForwardRunner {
         Ok(())
     }
 
+    /// Why the batched arm cannot serve this install and prompt, or `None`
+    /// when it can. The forced arm turns a reason into an error; auto takes
+    /// the per-token arm instead.
+    fn qwen_dense_batched_prefill_refusal(&self) -> Result<Option<String>, RealForwardError> {
+        // A folded install's input transforms are wired into the per-token
+        // encoders only: the batched arm's M-row GEMMs would consume
+        // untransformed rows.
+        if self
+            .real_qwen
+            .as_ref()
+            .is_some_and(|q| q.hadamard.is_some())
+        {
+            return Ok(Some(
+                "TURBOSPARK_BATCHED_GEMV is not wired for a hadamard-folded install: the \
+                 M-row inputs would need the activation transforms the per-token encoders \
+                 carry. Unset it to chunk this prompt"
+                    .to_string(),
+            ));
+        }
+        // INT4-affine weights only, so an install with INT8 weights on the
+        // dense HALF of THIS SAME ARCHITECTURE (which have no batched kernel
+        // at all) learns it before any KV row is written. One probe cannot
+        // see a mixed-width install; that is what the backstop is for.
+        let probe = layer_tensor(0, "mlp.gate_proj.weight");
+        let dtype = crate::real_forward_utils::entry(&self.index, &probe)?.dtype;
+        if dtype != 4 {
+            return Ok(Some(format!(
+                "TURBOSPARK_BATCHED_GEMV needs INT4-affine (dtype 4) weights and {probe} is \
+                 dtype {dtype}: the M-row GEMM has no kernel at this width, and looping the \
+                 per-token GEMVs anyway would measure the unbatched engine under the \
+                 batched arm's label"
+            )));
+        }
+        // THE ANGLE, NOT THE EMBEDDING. `encode_full_attention_block_batched`
+        // calls `gpu::encode_rope_neox_subdim` at the raw position and has no
+        // `RopePosition` parameter, so every image position would be rotated
+        // by its INDEX rather than by its `(t, h, w)` triple -- fluent,
+        // finite, and a different picture. That encoder is shared with the
+        // MTP/DFlash2 verify pass, which is vision-blind in both halves;
+        // close that gap first, then both callers get the parameter together.
+        if self.prompt_vision.is_some() {
+            return Ok(Some(
+                "TURBOSPARK_BATCHED_GEMV cannot serve an image prompt: the batched \
+                 attention block rotates at the raw position and takes no mRoPE triple, \
+                 so every image position would get the wrong angle. Unset it to chunk \
+                 this prompt, or prefill sequentially"
+                    .to_string(),
+            ));
+        }
+        // `--kv-bits` is not wired to the M-row K/V projections, which write
+        // the cache directly (`batched_layers.rs` refuses it too, deeper).
+        let arch = &self.arch;
+        if (0..arch.num_layers as usize)
+            .any(|layer| !arch.layer_is_linear(layer) && self.kv.layer_quant(layer).is_some())
+        {
+            return Ok(Some(
+                "--kv-bits is not yet supported with TURBOSPARK_BATCHED_GEMV".to_string(),
+            ));
+        }
+        Ok(None)
+    }
+
     fn prefill_micro_batch_qwen_dense(
         &mut self,
         tokens: &[i32],
         start_position: usize,
         want_head: bool,
+        batched: bool,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
         let started = Instant::now();
-        let result =
-            self.prefill_micro_batch_qwen_dense_inner(tokens, start_position, want_head, logits);
+        let result = self.prefill_micro_batch_qwen_dense_inner(
+            tokens,
+            start_position,
+            want_head,
+            batched,
+            logits,
+        );
         // One forward pass per TOKEN, matching every other phase divisor in
         // this port (`crates/runtime/CLAUDE.md` Gotcha 6).
         self.phases.calls += tokens.len() as u64;
@@ -243,6 +293,7 @@ impl RealForwardRunner {
         tokens: &[i32],
         start_position: usize,
         want_head: bool,
+        batched: bool,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
@@ -270,7 +321,7 @@ impl RealForwardRunner {
             )));
         }
 
-        let batched_gemv = self.batched_gemv_prefill;
+        let mut batched_gemv = batched;
         // A BACKSTOP THAT BELONGS TO THE BATCHED ARM ALONE, and only that arm
         // can trip it. `encode_full_attention_block_batched`'s k/v projections
         // write M ADJACENT KV slots in one dispatch, so M consecutive
@@ -294,6 +345,15 @@ impl RealForwardRunner {
                 }
                 let capacity = self.kv.capacity(layer);
                 if start_position % capacity + m > capacity {
+                    // Auto mode takes the per-token arm for this one
+                    // micro-batch; only a caller who forced the batched arm
+                    // is told it cannot serve. Defensive: a linear cache
+                    // wraps here only for a prompt past `max_context`, which
+                    // admission refuses and the per-token KV write asserts.
+                    if !self.batched_gemv_prefill {
+                        batched_gemv = false;
+                        break;
+                    }
                     return Err(RealForwardError::Unsupported(format!(
                         "TURBOSPARK_BATCHED_GEMV: a micro-batch of {m} rows at position \
                          {start_position} wraps layer {layer}'s KV capacity {capacity}; the \

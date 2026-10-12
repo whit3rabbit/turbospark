@@ -63,6 +63,8 @@ mod dequant_2bit_gemv;
 mod dequant_int4_batch;
 #[cfg(target_os = "macos")]
 mod dequant_int4_gemv;
+#[cfg(target_os = "macos")]
+mod dequant_int4_steel;
 mod dequant_int8_batch;
 #[cfg(target_os = "macos")]
 mod dequant_int8_gemv;
@@ -204,6 +206,8 @@ pub use dequant_int4_batch::{
     encode_dequant_int4_gemm_resident_blocked, GemmPipelineLimits, GEMM_THREADS_PER_GROUP,
     MAX_BATCH_ROWS, MAX_GEMM_ROW_BLOCK, MMA_MAX_BATCH_ROWS,
 };
+#[cfg(target_os = "macos")]
+pub use dequant_int4_steel::{encode_dequant_int4_gemm_steel, steel_supports, SteelTile};
 #[cfg(target_os = "macos")]
 pub use dequant_int4_gemv::{
     dequant_int4_gemv, dequant_int4_gemv_resident, encode_dequant_int4_gemv_resident,

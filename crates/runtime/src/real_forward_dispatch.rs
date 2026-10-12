@@ -721,6 +721,63 @@ pub(crate) fn encode_gemm_any(
     }
 }
 
+/// The fewest rows the Steel INT4 GEMM is used for. Its 32-row tile wastes
+/// half its work at 16 rows, where it measured only 1.2-1.4x the scalar
+/// kernel on Qwen3.8's large projections and 0.61x on the 1024-row K/V ones;
+/// from 32 rows it wins on every projection
+/// (`crates/gpu/tests/qwen38_int4_prefill_gemm_probe.rs`).
+const STEEL_MIN_ROWS: usize = 32;
+
+/// [`encode_gemm_any`] for any positive `batch`, row-major `x` (`cols` halfs
+/// per row) and `y` (`rows` halfs per row). With `steel` set, an INT4 tensor
+/// the vendored kernel can serve runs as ONE Steel dispatch from
+/// [`STEEL_MIN_ROWS`] rows up; everything else runs the scalar kernel in
+/// slices of `gpu::MAX_BATCH_ROWS` rows. Only a caller that has accepted
+/// Steel's rounding passes `steel` (the chunked-prefill scratch,
+/// `BatchedScratch::steel_gemm`); without it the result is the scalar
+/// kernel's, bit for bit, whatever `batch` is.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_gemm_rows(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    name: &str,
+    rows: usize,
+    cols: usize,
+    x: (&gpu::MetalBuffer, u64),
+    y: (&gpu::MetalBuffer, u64),
+    batch: usize,
+    steel: bool,
+) -> Result<(), RealForwardError> {
+    if steel && batch >= STEEL_MIN_ROWS && entry(index, name)?.dtype == 4 {
+        let w = resident_matrix(weights, index, name, rows, cols)?;
+        let tile = gpu::SteelTile::M32K32N32;
+        if gpu::steel_supports(&w, tile) {
+            return gpu::encode_dequant_int4_gemm_steel(context, pass, &w, x, y, batch, tile)
+                .map_err(RealForwardError::Gpu);
+        }
+    }
+    let mut done = 0usize;
+    while done < batch {
+        let take = (batch - done).min(gpu::MAX_BATCH_ROWS);
+        encode_gemm_any(
+            context,
+            pass,
+            weights,
+            index,
+            name,
+            rows,
+            cols,
+            (x.0, x.1 + (done * cols * 2) as u64),
+            (y.0, y.1 + (done * rows * 2) as u64),
+            take,
+        )?;
+        done += take;
+    }
+    Ok(())
+}
+
 /// The `router_topk_select_k8` kernel's semantics on the host: top-`k` by
 /// score with ties preferring the lower expert index, softmax over the
 /// selected scores only, each weight multiplied by that expert's
