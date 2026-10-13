@@ -1,79 +1,66 @@
 ---
-description: "Use TurboSpark Rust crates to inspect models and integrate generation."
+description: "Find the TurboSpark Rust crate that fits your task, then read its guide."
 icon: terminal
 ---
 
 # Rust library
 
-TurboSpark is a set of Rust crates. The model catalog and file tools can be used separately from inference. Real Metal inference requires macOS on Apple Silicon.
+TurboSpark is a set of Rust crates. Pick the crate for the job you have, not the one that sounds most like inference. The catalog, model-file, tokenizer, and sampling crates work without a GPU. Running a real model needs macOS on Apple Silicon.
 
-## Useful crates
+## Start with the job
 
-| Crate | Use it for | Reference |
+| If you need to... | Start with |
+| --- | --- |
+| Find, probe, or install a model | [turbospark-catalog](rust/catalog/README.md) |
+| Read or validate an installed model | [turbospark-model-io](rust/model-io/README.md) |
+| Build a `.gturbo` install from a checkpoint | [turbospark-repack](rust/repack/README.md) |
+| Render chat prompts and decode output | [turbospark-tokenizer](rust/tokenizer/README.md) |
+| Pick the next token from logits | [turbospark-selection](rust/selection/README.md) |
+| Run a generation loop | [turbospark-runtime](rust/runtime/README.md) |
+| Embed the HTTP routes in an Axum service | [turbospark-server](rust/server/README.md) |
+| Keep chat history inside a token budget | [turbospark-window-fit](rust/window-fit/README.md) |
+| Generate images | [turbospark-image](rust/image/README.md) |
+| Run speech, music, or audio DSP | [turbospark-audio](rust/audio/README.md) |
+| Preprocess images for a vision tower | [turbospark-vision-io](rust/vision-io/README.md) |
+| Read shared types and errors | [turbospark-core](rust/core/README.md) |
+
+## All crates
+
+| Crate | What it gives you | Guide |
 | --- | --- | --- |
-| `turbospark-catalog` | List aliases, recommend models, probe checkpoints, and install models. | [docs.rs](https://docs.rs/turbospark-catalog/latest/turbospark_catalog/) |
-| `turbospark-model-io` | Read and validate TurboSpark installs, architecture config, and resident indexes. | [docs.rs](https://docs.rs/turbospark-model-io/latest/turbospark_model_io/) |
-| `turbospark-tokenizer` | Load tokenizer files, render/tokenize prompts, and decode output. | [docs.rs](https://docs.rs/turbospark-tokenizer/latest/turbospark_tokenizer/) |
-| `turbospark-selection` | Sampling and token-selection primitives. | [docs.rs](https://docs.rs/turbospark-selection/latest/turbospark_selection/) |
-| `turbospark-runtime` | Prefill, decode, and the real model runner. | [docs.rs](https://docs.rs/turbospark-runtime/latest/turbospark_runtime/) |
-| `turbospark-server` | Embed the Axum-compatible local HTTP routes. | [source](https://github.com/whit3rabbit/turbospark/tree/main/crates/server) |
+| `turbospark-catalog` | Model catalog, Hugging Face probe, hardware-aware recommendations, installs. | [Guide](rust/catalog/README.md) |
+| `turbospark-model-io` | Install layout, `manifest.json`, architecture config, resident weight buffers. | [Guide](rust/model-io/README.md) |
+| `turbospark-repack` | Checkpoint intake (safetensors, GGUF, Hugging Face) and `.gturbo` writing. | [Guide](rust/repack/README.md) |
+| `turbospark-tokenizer` | Tokenizer wrapper, chat dialects and templates, streaming detokenizer, tool-call parsers. | [Guide](rust/tokenizer/README.md) |
+| `turbospark-selection` | Token selection under temperature, top-k, top-p, min-p, and penalties. | [Guide](rust/selection/README.md) |
+| `turbospark-runtime` | Prefill and decode loops, the `LogitProducer` trait, the macOS forward runner. | [Guide](rust/runtime/README.md) |
+| `turbospark-server` | Axum router for the local HTTP API, with options for auth and observers. | [Guide](rust/server/README.md) |
+| `turbospark-window-fit` | Trims conversation history to a token budget and keeps pinned turns. | [Guide](rust/window-fit/README.md) |
+| `turbospark-image` | Z-Image-Turbo generation pipeline with Metal and CPU reference backends. | [Guide](rust/image/README.md) |
+| `turbospark-audio` | DSP primitives plus speech, music, and VAD models organized by role. | [Guide](rust/audio/README.md) |
+| `turbospark-vision-io` | Image bytes to patch rows and position tables for the `qwen3_5` vision tower. | [Guide](rust/vision-io/README.md) |
+| `turbospark-core` | Shared types, `TokenId`, errors, configuration, and chunking helpers. | [Guide](rust/core/README.md) |
+| `turbospark-invocation` | Pure CLI argument parsing with no I/O. | [Guide](rust/invocation/README.md) |
+| `turbospark-streaming` | Expert weight streaming for MoE models. Advanced. | [Guide](rust/streaming/README.md) |
+| `turbospark-compute` | CPU reference kernels used to check the Metal kernels. | [Guide](rust/compute/README.md) |
+| `turbospark-gpu` | Metal device context, pass encoders, and KV cache. Low level. | [Guide](rust/gpu/README.md) |
+| `turbospark-cli` | Command-line binaries: `turbospark`, `turbospark-check`, `turbospark-model`, and more. | [Guide](rust/cli/README.md) |
+| `turbospark-ffi` | C ABI for native hosts such as the Swift app. Opaque handles, streaming callbacks. | [Guide](rust/ffi/README.md) |
+| `turbospark-bench` | Throughput benchmark harness and startup probe for contributors. Not a public API. | [Guide](rust/bench/README.md) |
 
-The lower-level `turbospark-core`, `turbospark-compute`, `turbospark-streaming`, `turbospark-invocation`, `turbospark-window-fit`, `turbospark-repack`, `turbospark-vision-io`, and `turbospark-image` crates support specialized integrations. Browse the [workspace](https://github.com/whit3rabbit/turbospark/tree/main/crates) when you need those boundaries.
+The Swift app consumes `turbospark-ffi` through the [Swift bindings](swift.md). Read the [Swift page](swift.md) if you build a Swift app; read the [FFI guide](rust/ffi/README.md) if you write the C side.
 
-## Read the catalog
+## Add a crate to your project
 
-Add the catalog crate:
+The workspace crates are not all on crates.io yet. Until a version you need is published, depend on a checkout by path:
 
-```sh
-cargo add turbospark-catalog
+```toml
+[dependencies]
+turbospark-catalog = { path = "../turbospark/crates/catalog" }
 ```
 
-List the embedded aliases:
+Each crate guide repeats the dependency lines it needs. In Rust code, the hyphens become underscores, so `turbospark-catalog` is `turbospark_catalog`.
 
-```rust
-use turbospark_catalog::Catalog;
+## Where the runtime fits
 
-fn main() -> Result<(), String> {
-    let catalog = Catalog::embedded()?;
-    for entry in catalog.entries() {
-        println!("{}: {}", entry.alias, entry.name);
-    }
-    Ok(())
-}
-```
-
-Use `Catalog::load(&home)` to merge a local `models.json` override. `probe` checks a checkpoint's metadata and headers without downloading its weights. `recommend_catalog` ranks catalog entries for a machine and context; `install` performs the selected install plan. See the [catalog API](https://docs.rs/turbospark-catalog/latest/turbospark_catalog/) for the full argument and result types.
-
-## Call the generation loop
-
-`run_raw_completion` is for an integration that already has a `LogitProducer`, a matching `MfTokenizer`, tokenized prompt IDs, a `GenerationConfig`, the context limit, and vocabulary size:
-
-```sh
-cargo add turbospark-runtime turbospark-tokenizer
-```
-
-```rust
-use turbospark_runtime::{run_raw_completion, RawDecodeProgress};
-
-let result = run_raw_completion(
-    &mut producer,
-    &tokenizer,
-    &prompt_ids,
-    &config,
-    max_context,
-    vocab_size,
-    |event| {
-        if let RawDecodeProgress::Token { delta, .. } = event {
-            print!("{delta}");
-        }
-    },
-)?;
-```
-
-The returned `RawDecodeResult` includes token counts, stop reason, timing, and KV state. `TokenId` is signed 32-bit. Get IDs from the tokenizer for the same install; do not hard-code IDs from a fixture or another model.
-
-This is not a `generate(prompt) -> String` wrapper. `RealForwardRunner` provides the model-backed producer on macOS, while custom producers can implement `LogitProducer`. Check the [runtime reference](https://docs.rs/turbospark-runtime/latest/turbospark_runtime/) for runner setup and the [tokenizer reference](https://docs.rs/turbospark-tokenizer/latest/turbospark_tokenizer/) for tokenizer APIs.
-
-## Embed the HTTP server
-
-The `turbospark-server` crate exposes `build_router`, `build_router_with_options`, and `ServerState`. Use these when embedding the HTTP routes in an existing Axum service. For a separate process, use `turbospark-server` from the [CLI guide](https://app.gitbook.com/s/7snUJsZfxrqIt5S95nxb/cli-and-api). The default listener is loopback; the server does not provide TLS.
+`turbospark-runtime` is a low-level generation loop. It takes token IDs, a tokenizer for the same install, a generation config, and a `LogitProducer`. It does not offer a `generate(prompt) -> String` helper. If you want a finished application surface, use the [Swift session](swift.md) or the [HTTP API](http.md). Start with the [runtime guide](rust/runtime/README.md) when you need the loop itself.
