@@ -16,9 +16,9 @@ name = "turbospark_audio"
 path = "src/lib.rs"
 
 [dependencies]
-turbospark-core = { path = "../core", version = "0.3.0" }
-turbospark-model-io = { path = "../model-io", version = "0.3.0" }
-turbospark-tokenizer = { path = "../tokenizer", version = "0.3.0" }
+turbospark-core = { path = "../core", version = "0.3.1" }
+turbospark-model-io = { path = "../model-io", version = "0.3.1" }
+turbospark-tokenizer = { path = "../tokenizer", version = "0.3.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokenizers = { version = "0.20", default-features = false, features = ["onig"] }

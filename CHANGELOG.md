@@ -13,6 +13,11 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-13
+
+This release replaces v0.3.0, whose app crashed on launch on every Mac but the
+build machine. Upgrade with `brew upgrade --cask whit3rabbit/tap/turbospark`.
+
 ### Fixed
 - `swift/TurboSparkApp`: the app crashed on launch on every Mac that was not
   the build machine ("could not load resource bundle"), in v0.2.0 and v0.3.0.
