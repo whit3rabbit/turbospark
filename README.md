@@ -319,7 +319,7 @@ Input audio is WAV only, and each model runs one request at a time. Served behav
 
 The API workspace's TypeSafe tab runs small local decision models that return typed answers instead of free text. Ask a yes/no question (Noul), pick from a set of options (Choice), or grade against named levels (Score). Each answer comes back typed, with probabilities.
 
-TypeSafe runs on [OpenKind](https://github.com/whit3rabbit/openkind), a separate Rust decision engine. The app bundles its `openkindd` daemon and starts it on `127.0.0.1` with its own API key in the Keychain. Requests go to OpenKind's `/v1/systemone` endpoint, not to the TurboSpark listener.
+TypeSafe runs on [OpenKind](https://github.com/whit3rabbit/openkind), a separate Rust decision engine. The app bundles its `openkindd` daemon and starts it on `127.0.0.1` with its own API key. The key is generated fresh at each launch and kept in memory. Turn on **Remember this key in the Keychain** in the TypeSafe tab to keep it across launches. Requests go to OpenKind's `/v1/systemone` endpoint, not to the TurboSpark listener.
 
 The tab includes:
 

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import XCTest
 @testable import TurboSparkApp
 
@@ -62,5 +63,43 @@ final class TypeSafeKeychainTests: XCTestCase {
                     || model.typeSafeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
 
         XCTAssertFalse(isDisabledWhenValid, "Start button must be enabled when port and API key are valid")
+    }
+
+    // MARK: - Keychain storage is opt-in
+
+    func testKeychainStorageIsOffUntilTheUserTurnsItOn() {
+        let suite = "TypeSafeKeychainTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertFalse(TypeSafeKeychain.isKeychainEnabled(defaults),
+                       "A fresh install must not store the TypeSafe key in the Keychain")
+        TypeSafeKeychain.setKeychainEnabled(true, defaults: defaults)
+        XCTAssertTrue(TypeSafeKeychain.isKeychainEnabled(defaults))
+        TypeSafeKeychain.setKeychainEnabled(false, defaults: defaults)
+        XCTAssertFalse(TypeSafeKeychain.isKeychainEnabled(defaults))
+    }
+
+    func testInitialKeyWithoutOptInIsAFreshSessionKey() {
+        // Does not touch the Keychain: a stored key would be identical on
+        // both calls, and a failed read would come back empty.
+        let first = TypeSafeKeychain.initialKey(useKeychain: false)
+        let second = TypeSafeKeychain.initialKey(useKeychain: false)
+
+        XCTAssertFalse(first.key.isEmpty, "The daemon must still start authenticated")
+        XCTAssertFalse(first.loadFailed, "Nothing was read, so nothing can have failed to load")
+        XCTAssertNotEqual(first.key, second.key, "Without the opt-in every launch gets its own key")
+    }
+
+    func testKeychainFailureNamesTheSystemReasonAndCode() {
+        let text = TypeSafeKeychain.describe(status: errSecNoDefaultKeychain)
+        XCTAssertTrue(text.contains("(\(errSecNoDefaultKeychain))"), text)
+        XCTAssertGreaterThan(text.count, "(\(errSecNoDefaultKeychain))".count + 8,
+                             "The system's own wording should come before the code")
+
+        let message = AppModel.keychainFailureMessage(
+            "Could not save the TypeSafe API key to Keychain.", status: errSecNoDefaultKeychain)
+        XCTAssertTrue(message.hasPrefix("Could not save the TypeSafe API key to Keychain."), message)
+        XCTAssertTrue(message.hasSuffix(text), message)
     }
 }

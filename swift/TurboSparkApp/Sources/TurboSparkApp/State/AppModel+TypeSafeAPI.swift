@@ -1,5 +1,6 @@
 import Foundation
 import OpenKind
+import Security
 
 extension AppModel {
     var typeSafeBaseURL: URL? {
@@ -21,26 +22,38 @@ extension AppModel {
             typeSafeError = AppStrings.localized("TypeSafe API key is required to start the daemon.")
             return
         }
-        // Same rule as the server key: an unreadable Keychain must not turn
-        // an empty field into a delete of the stored key.
+        // Without the opt-in the Keychain is not consulted at all: the key in
+        // the field is this session's key and nothing outlives it. With it,
+        // the same rule as the server key applies: an unreadable Keychain must
+        // not turn an empty field into a delete of the stored key.
         var effectiveKey = typed
-        switch KeychainSecretSync.action(
-            current: TypeSafeKeychain.readKey(), input: typed, loadFailed: typeSafeKeyLoadFailed)
-        {
-        case .none: break
-        case let .save(value):
-            guard TypeSafeKeychain.saveKey(value) else {
-                typeSafeError = AppStrings.localized("Could not save the TypeSafe API key to Keychain.")
+        if typeSafeKeyInKeychain {
+            let current = TypeSafeKeychain.readKey()
+            switch KeychainSecretSync.action(
+                current: current, input: typed, loadFailed: typeSafeKeyLoadFailed)
+            {
+            case .none: break
+            case let .save(value):
+                let status = TypeSafeKeychain.saveKeyStatus(value)
+                guard status == errSecSuccess else {
+                    typeSafeError = Self.keychainFailureMessage(
+                        "Could not save the TypeSafe API key to Keychain.", status: status)
+                    return
+                }
+                typeSafeKeyLoadFailed = false
+            case .delete:
+                typeSafeError = AppStrings.localized("TypeSafe API key is required to start the daemon.")
+                return
+            case let .adopt(value):
+                typeSafeAPIKeyInput = value
+                typeSafeKeyLoadFailed = false
+                effectiveKey = value
+            }
+            if effectiveKey.isEmpty, case let .error(status) = current {
+                typeSafeError = Self.keychainFailureMessage(
+                    "TypeSafe API key is required to start the daemon.", status: status)
                 return
             }
-            typeSafeKeyLoadFailed = false
-        case .delete:
-            typeSafeError = AppStrings.localized("TypeSafe API key is required to start the daemon.")
-            return
-        case let .adopt(value):
-            typeSafeAPIKeyInput = value
-            typeSafeKeyLoadFailed = false
-            effectiveKey = value
         }
         let key = effectiveKey
         guard !key.isEmpty else {
@@ -70,6 +83,40 @@ extension AppModel {
             typeSafeError = Self.typeSafeStartFailureMessage(error, port: url.port)
             typeSafeHealth = "Stopped"
         }
+    }
+
+    /// Turns Keychain storage of the TypeSafe key on or off. Turning it on
+    /// saves the key in the field now, which is the one moment macOS may ask
+    /// for access, and it stays off if that fails. Turning it off deletes the
+    /// item, so nothing is left behind that a later build would be asked to
+    /// vouch for. The key in the field is kept either way.
+    func setTypeSafeKeyInKeychain(_ enabled: Bool) {
+        guard enabled != typeSafeKeyInKeychain else { return }
+        if enabled {
+            let typed = typeSafeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = typed.isEmpty ? TypeSafeKeychain.generateKey() : typed
+            let status = TypeSafeKeychain.saveKeyStatus(value)
+            guard status == errSecSuccess else {
+                typeSafeError = Self.keychainFailureMessage(
+                    "Could not save the TypeSafe API key to Keychain.", status: status)
+                return
+            }
+            typeSafeAPIKeyInput = value
+            typeSafeKeyLoadFailed = false
+        } else {
+            TypeSafeKeychain.deleteKey()
+            typeSafeKeyLoadFailed = false
+        }
+        TypeSafeKeychain.setKeychainEnabled(enabled)
+        typeSafeKeyInKeychain = enabled
+        typeSafeError = nil
+    }
+
+    /// A localized failure line followed by the system's own reason, which is
+    /// what says "A default keychain could not be found" instead of leaving
+    /// the person to guess why saving failed.
+    static func keychainFailureMessage(_ key: String, status: OSStatus) -> String {
+        AppStrings.localized(String.LocalizationValue(key)) + " " + TypeSafeKeychain.describe(status: status)
     }
 
     /// `OpenKind.ServerError` bridges to "The operation couldn't be completed.

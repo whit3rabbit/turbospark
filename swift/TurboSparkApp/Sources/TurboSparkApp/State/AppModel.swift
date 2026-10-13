@@ -178,10 +178,15 @@ public final class AppModel: ObservableObject {
     @Published public var typeSafeServer: OpenKindServer?
     @Published public var typeSafeBusy = false
     @Published public var typeSafePort = "18080"
-    /// One launch-time read/provisioning feeds both the field and the failure
-    /// flag below, generating a fresh random key on first run so the daemon
-    /// always starts authenticated by default.
-    private static let initialTypeSafeKeyRead = TypeSafeKeychain.loadOrCreateKey()
+    /// One launch-time provisioning feeds both the field and the failure flag
+    /// below, so the daemon always starts authenticated by default. The key is
+    /// a fresh in-memory one unless the user opted in to Keychain storage,
+    /// in which case the Keychain is read here and only then.
+    private static let initialTypeSafeKeyRead = TypeSafeKeychain.initialKey(
+        useKeychain: TypeSafeKeychain.isKeychainEnabled())
+    /// Whether the TypeSafe key is remembered in the Keychain. Off until the
+    /// user turns it on (`setTypeSafeKeyInKeychain`).
+    @Published public var typeSafeKeyInKeychain = TypeSafeKeychain.isKeychainEnabled()
     @Published public var typeSafeAPIKeyInput = AppModel.initialTypeSafeKeyRead.key
     /// True when the launch-time Keychain read failed (locked or denied): the
     /// empty field then means "unknown", so Start must not delete the item.

@@ -86,11 +86,27 @@ struct TypeSafeAPIPaneView: View {
                         trimmedKey.isEmpty ? nil : trimmedKey
                     }
                 }
+                // Opt-in: nothing is written to the Keychain, and macOS is not
+                // asked for access, until this is on.
+                Toggle(isOn: Binding(
+                    get: { model.typeSafeKeyInKeychain },
+                    set: { model.setTypeSafeKeyInKeychain($0) })
+                ) {
+                    Text("Remember this key in the Keychain", bundle: .module)
+                }
+                .toggleStyle(.checkbox)
+                .disabled(isRunning)
                 // Two servers, two keys: saying where this one lives stops a
                 // person pasting the TurboSpark key here, or this one there.
-                Text("Stored in the Keychain separately from the TurboSpark server key.", bundle: .module)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
+                if model.typeSafeKeyInKeychain {
+                    Text("Stored in the Keychain separately from the TurboSpark server key.", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                } else {
+                    Text("A new key is generated each time the app starts and is not saved.", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                }
             }
 
             APIStatusLine(label: Text("Health", bundle: .module), value: APIStatusText.text(model.typeSafeHealth))

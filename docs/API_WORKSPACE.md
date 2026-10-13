@@ -64,7 +64,10 @@ per selected loaded model. Its mean, p50, p95, minimum, and maximum are
 client wall-clock times, including local HTTP and Swift client overhead.
 Stopping finishes the current request and skips remaining requests. These
 figures are exploratory, not model or release benchmarks. This service has
-its own URL and key. See [Swift API workspace](../swift/docs/SWIFT_API_WORKSPACE.md)
+its own URL and key. The key is generated per launch and held in memory. It is
+written to the Keychain (service `TurboSpark.typesafe`) only after the user turns on
+**Remember this key in the Keychain**, so a fresh install never prompts for
+Keychain access. See [Swift API workspace](../swift/docs/SWIFT_API_WORKSPACE.md)
 for the UI and binding seams.
 
 Development builds use the sibling OpenKind Swift package. Set
