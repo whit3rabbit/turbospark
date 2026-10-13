@@ -13,6 +13,48 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Fixed
+- `swift/TurboSparkApp`: the app crashed on launch on every Mac that was not
+  the build machine ("could not load resource bundle"), in v0.2.0 and v0.3.0.
+  The CI toolchain (Xcode 16.4) generates a SwiftPM resource accessor that
+  only looks at the `.app` root and a build-machine path, while the bundle
+  must sit in `Contents/Resources` (`codesign` rejects anything else at the
+  root, symlinks included). The resources now live in their own
+  `TurboSparkAppResources` target whose hand-written `AppResources.bundle`
+  looks in `Bundle.main.resourceURL` first. `Bundle.module` in the app
+  forwards to it, so no call site changed. The resource bundle is now named
+  `TurboSparkApp_TurboSparkAppResources.bundle`.
+- The app icon showed a gray box on macOS 26. A light drop-shadow rim from the
+  source art survived in the icon, and macOS 26 answers an icon like that by
+  shrinking it into a system plate. `scripts/generate_app_icons.py` now cuts
+  the artwork to a clean 824px squircle.
+- README: the Homebrew install section now says how to get past the first-launch
+  block, and no longer recommends `brew install --no-quarantine`, which
+  Homebrew has removed.
+
+### Changed
+- CI: the release build moves from `macos-15` / Xcode 16.4 to `macos-26` /
+  Xcode 26.6, selected by path and asserted. `package-macos` builds with both
+  Xcode 26.6 and 16.4.
+- CI: new `scripts/verify-app-bundle.sh` launches the built app for ten seconds
+  and checks every Mach-O's deployment target against the plist's
+  `LSMinimumSystemVersion`. It runs in both `ci.yml` and `release.yml` before
+  the DMG is built, so a bundle that cannot start no longer ships.
+- The generated Homebrew casks use `depends_on macos: :sonoma` (the former
+  `">= :sonoma"` form is deprecated in Homebrew).
+
+### Security
+- `Cargo.lock`: `rustls` 0.23.43 to 0.23.45 and `rustls-webpki` 0.103.13 to
+  0.103.15. The rustls bump fixes a TLS 1.3 flaw where handshake messages
+  were accepted across encryption level boundaries (Dependabot alert 1). The
+  only consumer is the `reqwest` client in `crates/catalog`, so the exposure
+  is outbound model and catalog downloads.
+- `scripts/z_image_reference_requirements.txt`: `urllib3` 2.7.0 to 2.8.0.
+  Fixes HTTPS proxy TLS settings being ignored or overridden, unbounded
+  buffering of a chunked-encoding size line, and an infinite loop on
+  chunked deflate streams (Dependabot alerts 2, 3, and 4). The pin is used
+  only by the Z-Image reference script, not by the shipped app.
+
 ## [0.3.0] - 2026-10-12
 
 ### Security
