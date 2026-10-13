@@ -67,7 +67,11 @@ Follow these steps in order when releasing a new version of the app and CLI:
    matching the changelog heading. Then bump every internal path dependency's
    `version = "..."` field in every crate's `Cargo.toml` to the same `X.Y.Z`;
    `check-version` asserts this too (`grep -n 'path = "\.\./' crates/*/Cargo.toml`).
-   Run `cargo build --workspace` to ensure all workspace references agree.
+   Also set `info.version` to `X.Y.Z` in `docs/openapi/turbospark.openapi.yaml`
+   and `docs/openapi/openapi.yaml` (the two files must stay identical).
+   `check-version` asserts both. Run `cargo update --workspace` to sync
+   `Cargo.lock` without upgrading any dependency, then
+   `cargo build --workspace` to ensure all workspace references agree.
 3. **Commit and merge to `main`**, e.g. `chore(release): vX.Y.Z`.
 4. **Tag it**: `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag is what
    triggers `release.yml` (`on.push.tags: ['v[0-9]*']`); nothing runs on
@@ -75,6 +79,16 @@ Follow these steps in order when releasing a new version of the app and CLI:
 5. **Watch the Actions run.** In order:
    - `check-version`: verifies the tag matches `Cargo.toml` and `CHANGELOG.md`.
    - `build-macos`: compiles the app, CLI binaries, DMG, and updates `appcast.xml`.
+     It runs on `macos-26` with Xcode 26.6 selected by path (and the version
+     asserted, so a renamed image fails closed). Before the DMG is built,
+     `scripts/verify-app-bundle.sh` launches the bundle for ten seconds and
+     checks every Mach-O's deployment target against `LSMinimumSystemVersion`.
+     v0.2.0 and v0.3.0 packaged cleanly and crashed on launch, so a green
+     build alone is not evidence the app starts. `ci.yml`'s `package-macos`
+     job runs the same verifier on every push to `main`, on Xcode 26.6 and
+     on Xcode 16.4, the oldest toolchain supported. Changing the release
+     Xcode is a one-line edit of `XCODE_VERSION`. Confirm the version exists
+     in the runner image's readme first.
    - `release`: creates the GitHub Release with DMG, zip, and release notes.
    - `update-homebrew-cask`: updates both casks in `whit3rabbit/homebrew-tap`.
 
@@ -192,7 +206,7 @@ Three facts about that layout that are decisions rather than defaults:
   Info.plist existed before it. `CFBundleIdentifier` is
   `com.whit3rabbit.turbospark` and `LSMinimumSystemVersion` is `14.0`,
   which MUST match `platforms: [.macOS(.v14)]` in
-  `TurboSparkApp/Package.swift` and `depends_on macos: ">= :sonoma"` in
+  `TurboSparkApp/Package.swift` and `depends_on macos: :sonoma` in
   both casks. Three files, one number.
 - **The identifier moves the user's preferences domain.** A bare
   `swift run` build writes `~/Library/Preferences/TurboSparkApp.plist`; the

@@ -13,7 +13,7 @@ import Foundation
 ///    exactly the bug this is here to fix, reintroduced on the path most
 ///    likely to be used while working on it.
 /// 2. In the shipped `.app` these files live inside SwiftPM's generated
-///    resource bundle under `Contents/Resources/TurboSparkApp_TurboSparkApp.bundle`,
+///    resource bundle under `Contents/Resources/TurboSparkApp_TurboSparkAppResources.bundle`,
 ///    not directly under `Contents/Resources`, which is the only place that
 ///    key looks.
 ///

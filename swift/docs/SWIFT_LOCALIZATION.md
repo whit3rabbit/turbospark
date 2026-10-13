@@ -18,7 +18,7 @@ runs `xcstringstool` (the same private tool Xcode calls) ahead of the build:
     swift/TurboSparkApp/Localization/Localizable.xcstrings   (source of truth)
         |  scripts/compile-strings.sh  (make compile-strings; wipe + recompile)
         v
-    Sources/TurboSparkApp/Resources/<lang>.lproj/            (compiled output)
+    Sources/TurboSparkAppResources/Resources/<lang>.lproj/            (compiled output)
         |  Package.swift  .process("Resources")
         v
     Bundle.module at runtime

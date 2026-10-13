@@ -81,23 +81,41 @@ jobs:
   # which is minutes, and a PR's Rust legs already cover everything the
   # bundle's contents come from.
   package-macos:
-    name: Package app bundle and DMG
+    name: Package app bundle and DMG (Xcode ${{ matrix.xcode }})
     if: github.event_name == 'push'
-    # **`macos-15`, NOT `macos-14`, AND NOT `macos-latest`.** The `-14` image
-    # is Xcode 15 / the macOS 14 SDK, and this is the only job in the
-    # repository that compiles Swift at all -- so the app half sat broken on
-    # main while every local build was green (`swift/CLAUDE.md` Gotcha 45:
-    # a `#available`-guarded macOS 15 symbol still has to RESOLVE, only
-    # `body` is main-actor-isolated there, and the type checker's budget is
-    # smaller). Building on a newer SDK does not lower the app's floor: the
-    # DEPLOYMENT target is `.macOS(.v14)` in Package.swift and 14.0 in the
-    # Info.plist, which release.yml's own `check-version` job asserts agree.
-    # Pinned rather than `latest` because this builds a RELEASE artifact and
-    # the SDK it was built against should change in a commit, not on a
-    # GitHub image rollout.
-    runs-on: macos-15
+    # TWO TOOLCHAINS, because the toolchain is what broke v0.2.0 and v0.3.0:
+    # SwiftPM's generated resource accessor differs between Xcode 16.4 and
+    # newer, and the old one crashed the shipped app on launch. `release`
+    # builds with the first leg; the second keeps the oldest toolchain we
+    # claim to support honest, and is the leg that proves `AppResources.swift`
+    # works where the generated accessor does not. Each leg RUNS the bundle
+    # (`verify-app-bundle.sh`); neither is allowed to merely package.
+    #
+    # Runners and Xcodes are pinned by name, never `latest`: this builds a
+    # RELEASE-shaped artifact and the SDK should change in a commit, not on a
+    # GitHub image rollout. `macos-14` stays out (Xcode 15; the app does not
+    # compile on that SDK -- `swift/CLAUDE.md` Gotcha 45). Building on a newer
+    # SDK does not lower the floor: the deployment target is `.macOS(.v14)`
+    # in Package.swift and 14.0 in the Info.plist, and verify-app-bundle.sh
+    # checks every Mach-O in the bundle against the plist.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-26, xcode: "26.6" }
+          - { runner: macos-15, xcode: "16.4" }
     steps:
       - uses: actions/checkout@v7
+
+      - name: Select Xcode ${{ matrix.xcode }}
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer"
+          xcodebuild -version
+          # Fail closed: the path can exist and still be the wrong build.
+          xcodebuild -version | head -n1 | grep -qx "Xcode ${{ matrix.xcode }}" \
+            || { echo "::error::selected Xcode is not ${{ matrix.xcode }}"; exit 1; }
+          swift --version
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -113,6 +131,11 @@ jobs:
           OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '325701be0582c8986ce84c54f88caa21630020c0' }}
           OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.1.0' }}
         run: ./scripts/make-app-bundle.sh
+
+      # Launches the app and checks the deployment floor. Packaging success
+      # alone shipped two crashing releases.
+      - name: Verify app bundle launches
+        run: ./scripts/verify-app-bundle.sh
 
       # make-dmg.sh mounts what it built and asserts the contents; a green
       # run here means the image is complete and its signature verifies, not

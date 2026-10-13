@@ -552,7 +552,7 @@ final class AppearanceSettingsTests: XCTestCase {
         let fonts = testsDir
             .deletingLastPathComponent()      // Tests/
             .deletingLastPathComponent()      // TurboSparkApp/
-            .appendingPathComponent("Sources/TurboSparkApp/Resources/Fonts")
+            .appendingPathComponent("Sources/TurboSparkAppResources/Resources/Fonts")
         let names = (try? FileManager.default.contentsOfDirectory(atPath: fonts.path)) ?? []
         return names.filter { $0.hasSuffix(".ttf") }
     }
@@ -561,7 +561,7 @@ final class AppearanceSettingsTests: XCTestCase {
         let onDisk = sourceFontFiles
         try XCTSkipIf(
             onDisk.isEmpty,
-            "No .ttf files in Sources/TurboSparkApp/Resources/Fonts. The three bundled "
+            "No .ttf files in Sources/TurboSparkAppResources/Resources/Fonts. The three bundled "
                 + "families are offered by the pickers only once their files are in the tree.")
 
         // The lookup must find every file that is really there. This is what

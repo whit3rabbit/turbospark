@@ -44,6 +44,17 @@ jobs:
             echo "::error::CHANGELOG.md has no '## [${VER}]' entry -- move the Unreleased section there before tagging"
             exit 1
           fi
+          # The server's OpenAPI spec advertises the release version and is
+          # bumped by hand, so it is the doc most likely to lag. The unified
+          # spec and its `openapi.yaml` alias must agree (a contract test
+          # asserts they are identical). audio.openapi.yaml versions itself.
+          for spec in docs/openapi/turbospark.openapi.yaml docs/openapi/openapi.yaml; do
+            SPEC_VER=$(sed -nE '/^info:/,/^[a-z]/ s/^  version: *"?([0-9][^" ]*)"?.*/\1/p' "${spec}" | head -n1)
+            if [ "${SPEC_VER}" != "${VER}" ]; then
+              echo "::error::${spec} info.version is '${SPEC_VER}', expected ${VER}"
+              exit 1
+            fi
+          done
           echo "VER=${VER}" >> "$GITHUB_OUTPUT"
           echo "OK: ${TAG} matches v${VER}, CHANGELOG.md has an entry for it"
 
@@ -71,23 +82,37 @@ jobs:
   build-macos:
     name: macOS arm64 (CLI zip + app DMG)
     needs: [check-version]
-    # **`macos-15`, NOT `macos-14`, AND NOT `macos-latest`.** The `-14` image
-    # is Xcode 15 / the macOS 14 SDK, and this is the only job in the
-    # repository that compiles Swift at all -- so the app half sat broken on
-    # main while every local build was green (`swift/CLAUDE.md` Gotcha 45:
-    # a `#available`-guarded macOS 15 symbol still has to RESOLVE, only
-    # `body` is main-actor-isolated there, and the type checker's budget is
-    # smaller). Building on a newer SDK does not lower the app's floor: the
-    # DEPLOYMENT target is `.macOS(.v14)` in Package.swift and 14.0 in the
-    # Info.plist, which release.yml's own `check-version` job asserts agree.
-    # Pinned rather than `latest` because this builds a RELEASE artifact and
-    # the SDK it was built against should change in a commit, not on a
-    # GitHub image rollout.
-    runs-on: macos-15
+    # **`macos-26` with Xcode 26.6 selected by hand, NOT `macos-latest`, and
+    # NOT the image default.** The release toolchain is a pinned decision: a
+    # GitHub image rollout must not change the SDK a RELEASE artifact was
+    # built against, so the Xcode is chosen by path below and its version is
+    # asserted, so a rename on the image fails the job instead of quietly
+    # building with the default. The previous pin (`macos-15`, Xcode 16.4)
+    # emitted a SwiftPM resource accessor that crashed the app on launch;
+    # `AppResources.swift` no longer depends on the accessor, and ci.yml's
+    # `package-macos` job keeps building with 16.4 as well, so the oldest
+    # toolchain is still exercised. Building on a newer SDK does not lower
+    # the app's floor: the DEPLOYMENT target is `.macOS(.v14)` in
+    # Package.swift and 14.0 in the Info.plist, which `check-version`
+    # asserts agree and `verify-app-bundle.sh` asserts against every
+    # Mach-O in the finished bundle. (`macos-14` is out: Xcode 15, and the
+    # app does not compile on its SDK -- `swift/CLAUDE.md` Gotcha 45.)
+    runs-on: macos-26
+    env:
+      XCODE_VERSION: "26.6"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app/Contents/Developer"
+          xcodebuild -version
+          # Fail closed: the path above can exist and still be the wrong build.
+          xcodebuild -version | head -n1 | grep -qx "Xcode ${XCODE_VERSION}" \
+            || { echo "::error::selected Xcode is not ${XCODE_VERSION}"; exit 1; }
+          swift --version
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
@@ -129,6 +154,12 @@ jobs:
           cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" \
             turbospark-check turbospark-model turbospark-server
           cd .. && rm -rf stage
+
+      # Runs the app, not just `ls` it. v0.2.0 and v0.3.0 packaged cleanly and
+      # crashed on launch; this is the gate that would have stopped them. It
+      # runs BEFORE the DMG so a broken bundle never becomes a release asset.
+      - name: Verify app bundle launches and honors the deployment floor
+        run: ./scripts/verify-app-bundle.sh
 
       - name: Build DMG
         env:
@@ -294,7 +325,7 @@ jobs:
             auto_updates true
 
             depends_on arch: :arm64
-            depends_on macos: ">= :sonoma"
+            depends_on macos: :sonoma
 
             conflicts_with cask: "whit3rabbit/tap/turbospark-cli"
 
@@ -332,7 +363,7 @@ jobs:
             homepage "https://github.com/whit3rabbit/turbospark"
 
             depends_on arch: :arm64
-            depends_on macos: ">= :sonoma"
+            depends_on macos: :sonoma
 
             conflicts_with cask: "whit3rabbit/tap/turbospark"
 

@@ -14,7 +14,7 @@
 # private tool Xcode's build phase calls; running it here reproduces exactly
 # what Xcode would have produced.
 #
-# The output lands directly inside `Sources/TurboSparkApp/Resources/`, which
+# The output lands directly inside `Sources/TurboSparkAppResources/Resources/`, which
 # `Package.swift`'s `.process("Resources")` rule already bundles -- SwiftPM
 # DOES understand plain `<language>.lproj/Localizable.strings` directories,
 # unlike the `.xcstrings` source format one level up. That is why the source
@@ -25,7 +25,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source_catalog="$root/swift/TurboSparkApp/Localization/Localizable.xcstrings"
-resources_dir="$root/swift/TurboSparkApp/Sources/TurboSparkApp/Resources"
+resources_dir="$root/swift/TurboSparkApp/Sources/TurboSparkAppResources/Resources"
 
 [ -f "$source_catalog" ] || { echo "expected $source_catalog to exist" >&2; exit 1; }
 

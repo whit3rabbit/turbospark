@@ -40,7 +40,7 @@ compile_flags.txt
 
 # Compiled from swift/TurboSparkApp/Localization/Localizable.xcstrings by
 # scripts/compile-strings.sh; that catalog is the source of truth.
-/swift/TurboSparkApp/Sources/TurboSparkApp/Resources/*.lproj
+/swift/TurboSparkApp/Sources/TurboSparkAppResources/Resources/*.lproj
 
 # Release staging: TurboSpark.app and the DMG, built by scripts/make-app-bundle.sh
 # and scripts/make-dmg.sh (`make dmg`). Fully derived, and large.

@@ -66,7 +66,7 @@ divergence is pinned by
 ## Bundled fonts
 
 Three font families ship inside the macOS app's resource bundle, under
-`swift/TurboSparkApp/Sources/TurboSparkApp/Resources/Fonts/`. All three are
+`swift/TurboSparkApp/Sources/TurboSparkAppResources/Resources/Fonts/`. All three are
 licensed under the SIL Open Font License, Version 1.1, whose terms permit
 bundling them in a larger work; each family's full license text sits beside
 the faces it covers, which is what the OFL requires.
@@ -91,7 +91,7 @@ was taken from `LICENSE` at the head of that repository instead.
 
 ## Ghost mode icon
 
-`swift/TurboSparkApp/Sources/TurboSparkApp/Resources/Icons/ghost.svg` is
+`swift/TurboSparkApp/Sources/TurboSparkAppResources/Resources/Icons/ghost.svg` is
 the unmodified `ghost` icon from Lucide
 (<https://github.com/lucide-icons/lucide>, commit `1bcad8fccbcfc9633dcab54b48264855e1cc1f45`,
 path `icons/ghost.svg`), ISC licensed. The full license text sits beside

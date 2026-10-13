@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#image-generation">Image Generation</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
+  <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#image-generation">Image Generation</a> | <a href="#humanize">Humanize</a> | <a href="#audio">Audio</a> | <a href="#decision-models">Decision Models</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
 </p>
 
 ** This is a early work in progress. Expect bugs and breaking changes **
@@ -27,6 +27,14 @@ TurboSpark is a native macOS app and Rust workspace for running local language m
 I built it as a hobby/side project as an alternative to LM Studio but there are other projects like Unsloth Desktop which are a lot more refined.
 
 The app provides desktop chat and agent tools. The Rust crates provide the Metal inference engine, model installer, command-line tools, HTTP server, and Swift/C bindings.
+
+Beyond chat, everything below runs on your Mac with no cloud service:
+
+- **[Humanize](#humanize).** Rewrite a draft with a local 12B model, then check the result against your own rules and an automatic audit.
+- **[Audio](#audio).** Speech to text, text to speech, zero-shot voice cloning, and music generation, in the app and over HTTP.
+- **[Decision models](#decision-models).** Typed yes/no, choice, and score answers from small local models through the bundled OpenKind daemon.
+- **[Image generation](#image-generation).** Z-Image Turbo and Qwen-Image 2.1 Turbo through Swift and MLX.
+- **Local API.** OpenAI- and Anthropic-compatible chat endpoints, plus image and audio routes, from the app or `turbospark-server`.
 
 ## Install
 
@@ -43,13 +51,21 @@ brew install --cask whit3rabbit/tap/turbospark
 This installs `TurboSpark.app` in `/Applications` and puts these commands on your `PATH`:
 
 ```text
+turbospark          front end: run, humanize, image, serve, and model commands
 turbospark-check    generate text
 turbospark-model    find and install models
 turbospark-server   run the local API server
-turbospark-image    generate images
-turbospark-music    generate music
-turbospark-clone    clone voices
 ```
+
+The release app is ad-hoc signed and not notarized, and Homebrew no longer has a `--no-quarantine` option, so macOS blocks the first launch ("Apple could not verify..."). Clear the quarantine attribute once after installing:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/TurboSpark.app
+```
+
+Or open **System Settings > Privacy & Security**, scroll to the message about TurboSpark, and click **Open Anyway**. Control-click then **Open** no longer works on current macOS.
+
+The media tools `turbospark-image`, `turbospark-music`, and `turbospark-clone` are not in the casks. Install them with the [Rust CLI](#rust-cli).
 
 For CLI tools only:
 
@@ -67,6 +83,8 @@ Install the published CLI and server crates with Rust stable:
 cargo install turbospark-cli turbospark-server
 ```
 
+`turbospark-cli` builds all six CLI commands, including `turbospark-image`, `turbospark-music`, and `turbospark-clone`.
+
 To build the whole workspace from source, install Xcode Command Line Tools and run:
 
 ```sh
@@ -83,17 +101,13 @@ Every [GitHub Release](https://github.com/whit3rabbit/turbospark/releases) inclu
 
 1. Download the DMG from the release assets.
 2. Open it and drag `TurboSpark.app` to `/Applications`.
-3. If macOS blocks the first launch, Control-click the app and choose **Open**. If that option is not enough, clear the quarantine attribute:
+3. If macOS blocks the first launch, clear the quarantine attribute (or use **Open Anyway** in System Settings > Privacy & Security):
 
    ```sh
    xattr -dr com.apple.quarantine /Applications/TurboSpark.app
    ```
 
-The release app is ad-hoc signed and not notarized, so the quarantine step may be required for a manual download. Homebrew can remove the quarantine during installation:
-
-```sh
-brew install --cask --no-quarantine whit3rabbit/tap/turbospark
-```
+The release app is ad-hoc signed and not notarized, so this step is expected for a manual download.
 
 The app bundle contains the CLI binaries. The Homebrew app cask also links them onto `PATH`.
 
@@ -128,14 +142,14 @@ TurboSpark supports 15 declared model families (DeepSeek-V4-Flash is still scaff
 
 MoE checkpoints can stream routed experts from SSD through a bounded cache,
 so install size and process footprint are different quantities. The Swift
-IQ2_XS source payload is 68.15 GB; its measured process peak is about 1.60
+IQ2_XS source payload is 68.15 GB. Its measured process peak is about 1.60
 GiB at 2K context and 16 slots on an M4 Max.
 
 The catalog in [`crates/catalog/src/models.json`](crates/catalog/src/models.json) is the source of truth. Use `turbospark-model list` for current aliases and evidence status, and `turbospark-model recommend` to rank these for your machine.
 
 ### MoE checkpoints (experts stream from disk)
 
-The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-cache slots, at the listed context. It is not the total working set or a minimum system-RAM requirement; mapped model weights are not fully represented by this counter. A dash means no frozen process-footprint row is published for that install yet. `turbospark-model info <alias>` carries its evidence status.
+The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-cache slots, at the listed context. It is not the total working set or a minimum system-RAM requirement. Mapped model weights are not fully represented by this counter. A dash means no frozen process-footprint row is published for that install yet. `turbospark-model info <alias>` carries its evidence status.
 
 | Model | Quant | Format | Disk | Measured process peak |
 | --- | --- | --- | ---: | ---: |
@@ -149,12 +163,11 @@ The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-c
 | Gemma 4 26B-A4B | INT4 (group 64) | MLX | ~13 GB | ~2.1 GB @ 4k ctx |
 | Gemma 4 26B-A4B | UD-Q3_K_M (IQ3 experts) | GGUF | ~13 GB | ~1.9 GB @ 4k ctx |
 | Gemma 4 26B-A4B | Q8_0 | GGUF | ~27 GB | - |
-| Humanizer 12B (dense Gemma 4, `humanizer-12b`) | INT8 (group 64) | MLX | ~12.7 GB | ~0.9 GB @ 8k ctx |
 | gpt-oss 20B | MXFP4 | GGUF | ~12 GB | ~5.4 GB @ 8k ctx |
 | DeepSeek-V2-Lite 16B (MLA) | Q8_0 | GGUF | ~17 GB | ~4.1 GB @ 8k ctx |
 | Mixtral 8x7B | Q4_K_M | GGUF | ~29 GB | - |
 
-Mixtral has no frozen process-footprint row; its estimated slot-cache
+Mixtral has no frozen process-footprint row. Its estimated slot-cache
 capacity is about 55 GiB at 16 slots, so it does not fit ordinary machines.
 Expert granularity drives slot-cache sizing, not model file size: Qwen3-30B-A3B
 splits its experts smallest here but has 48 layers of them, while gpt-oss's 32
@@ -169,14 +182,15 @@ Dense models do not stream, so budget roughly the on-disk size plus KV and scrat
 
 | Model | Quant | Format | Disk | Notes |
 | --- | --- | --- | ---: | --- |
-| Qwen3.8 27B | INT4 (group 64) | MLX | ~15 GB | MTP and DFlash2 speculative decode; optional vision tower (~16 GB combined, or a ~1 GB tower sidecar) |
+| Qwen3.8 27B | INT4 (group 64) | MLX | ~15 GB | MTP and DFlash2 speculative decode, plus an optional vision tower (~16 GB combined, or a ~1 GB tower sidecar) |
 | Bonsai 27B | 1-bit affine (group 128) | MLX | ~4 GB | the Qwen3.8 27B line at 1 bit |
 | Ternary-Bonsai 27B | 2-bit affine (group 128) | MLX | ~8 GB | |
 | Ternary-Bonsai 2 27B | 2-bit affine, Hadamard-folded | MLX | ~8 GB | newest of the line |
 | Ornith-1.5 9B | Q8_0 | GGUF | ~10 GB | |
 | Qwen2.5 7B Instruct | INT4 / Q3_K_M / Q4_K_M | MLX + GGUF | ~4-5 GB | |
-| Qwen3-VL 4B Instruct | INT4 (group 64) | MLX | ~2.3 GB | text trunk; image input via the combined deepstack install (~2.9 GB) |
+| Qwen3-VL 4B Instruct | INT4 (group 64) | MLX | ~2.3 GB | text trunk, with image input via the combined deepstack install (~2.9 GB) |
 | Muse Glimmer 30B | INT4 (group 64) | MLX | ~16 GB | |
+| Humanizer 12B (dense Gemma 4, `humanizer-12b`) | INT8 (group 64) | MLX | ~12.7 GB | raw-completion rewriter behind [Humanize](#humanize), no chat template |
 | Spark-X2.5 4B | Q4_K_M | GGUF | ~2.6 GB | |
 | Mistral 7B Instruct v0.3 | Q4_K_M | GGUF | ~4.4 GB | |
 | TinyLlama 1.1B Chat | Q6_K | GGUF | ~0.9 GB | |
@@ -187,7 +201,7 @@ New checkpoints are not automatically supported just because their architecture 
 
 ## Memory and benchmark results
 
-These rows are measured `phys_footprint` process peaks on one Apple M4 Max with 36 GB unified memory. They use the listed context window; MoE rows use 16 expert-cache slots. Process footprint is not the model's on-disk size or a minimum system-RAM requirement. Results vary by chip, context, cache size, and workload.
+These rows are measured `phys_footprint` process peaks on one Apple M4 Max with 36 GB unified memory. They use the listed context window. MoE rows use 16 expert-cache slots. Process footprint is not the model's on-disk size or a minimum system-RAM requirement. Results vary by chip, context, cache size, and workload.
 
 | Model | Context | Peak footprint | Decode | Install on disk |
 | --- | ---: | ---: | ---: | ---: |
@@ -196,8 +210,11 @@ These rows are measured `phys_footprint` process peaks on one Apple M4 Max with 
 | Qwen3-30B-A3B, GGUF Q4_K_M | 4,096 | 2,748 MiB | 16.0-27.3 tok/s | about 18.6 GB |
 | Swift-1.5 Qwen3.8-Flash-Next, GGUF IQ2_XS | 2,048 | 1,634 MiB | 12.23-12.77 tok/s | about 69 GB reserved |
 | Qwen 3.8 27B, MLX INT4, dense | 4,096 | 661 MiB | 16.8-19.0 tok/s | about 15.2 GB |
+| Qwen 3.8 27B + MTP head, MLX INT4, dense (greedy, MTP speculation) | 4,096 | 872 MiB | 21.9-28.7 tok/s | about 15.4 GB |
 | gpt-oss 20B, GGUF MXFP4 | 8,192 | 5,422 MiB | 23.4-31.3 tok/s | about 12.2 GB |
 | Humanizer 12B, MLX INT8, dense (raw completion) | 8,192 | 774-924 MiB | 6.5-13.4 tok/s | about 12.7 GB |
+
+The MTP row uses greedy decoding with MTP speculation (block 2), measured with other sessions running on the host. In the same capture, the same install read 14.7-17.9 tok/s without speculation.
 
 The low-memory result is primarily an MoE result. Dense models run, but they do not get the same routed-expert streaming benefit. For the complete measured rows, quality gates, cross-engine comparisons, and methodology, see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) and [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 
@@ -218,13 +235,47 @@ Models on an external drive or in another folder show up if you add the folder u
 
 The `turbospark-image` command uses the native Metal runtime, which supports only Z-Image Turbo and is far slower than the app: the recorded run took about an hour for one 1024 x 1024 image. Use the app for now.
 
-## Voice cloning and audio
+## Humanize
 
-TurboSpark provides zero-shot voice cloning, music generation, and text-to-speech through the desktop app and dedicated CLI tools.
+Humanize rewrites a draft so it reads less like machine-generated text. It runs `humanizer-12b`, a dense Gemma 4 12B checkpoint (MLX INT8, about 12.7 GB on disk), with an 8,192-token window. Paste a draft, run it, and read the rewrite beside the original with new and dropped wording marked.
+
+The model was trained on one fixed instruction, so the engine refuses prompt edits. Your rules run outside the model, on the finished rewrite:
+
+- **Protected terms** must appear in the rewrite exactly as written.
+- **Words to avoid** are highlighted wherever they appear.
+- **Replacements** apply `old -> new` pairs to the result.
+- **A fixed seed** gives the same rewrite for the same draft.
+
+Every rewrite also gets an audit. It flags numbers the rewrite dropped or invented, a switch between Latin and CJK script, and a rewrite that copies too much of the draft word for word. The audit only warns. It never edits the text. The model's publisher reports that fact slips still happen, so proofread the result before you use it.
+
+Long drafts are split into parts and rewritten one part at a time. The CLI runs the same rewrite and audit. The rules above are app-only.
+
+```sh
+turbospark-model pull humanizer-12b
+turbospark humanize humanizer-12b draft.txt --seed 3
+```
+
+## Audio
+
+TurboSpark transcribes speech, speaks text, clones voices, and generates music on your Mac. The app's Audio workspace covers all four, and `turbospark-server` serves most of them over HTTP.
+
+The Audio workspace records the microphone, system audio, or both, and shows a live draft transcript while you record. Recordings, transcripts, and generated takes are stored in your encrypted profile.
+
+### Installable audio models
+
+| Task | Catalog models | Runs in |
+| --- | --- | --- |
+| Speech to text | Whisper (tiny, base, and small, including MLX 8-bit and 4-bit builds), Qwen3-ASR 0.6B | app, `turbospark-server` |
+| Text to speech | Kokoro 82M | app, `turbospark-server` |
+| Text to speech, voice design, and voice cloning | Qwen3-TTS 0.6B and 1.7B (CustomVoice, VoiceDesign, and Base) | app only, through Swift MLX |
+| Voice cloning | MegaTTS3 | app, `turbospark-clone`, `turbospark-server` |
+| Music | MiniMax Music 3, 4-bit | app, `turbospark-music`, `turbospark-server` |
+
+The app's audio model manager installs these. `crates/audio` also carries ports of more TTS, speech-to-text, speech-to-speech, and codec families that are not in the install catalog yet, including Bark, Dia, MeloTTS, Canary, and Granite Speech. [`crates/audio/MODELS.md`](crates/audio/MODELS.md) records what each one has been verified to do.
 
 ### Voice cloning with MegaTTS3
 
-The `turbospark-clone` command and the app's Audio Studio clone the voice from a short reference recording (WAV format, mono or multichannel, at any sample rate; the first 28 seconds are used) and speak English text:
+The `turbospark-clone` command and the app's Audio Studio clone a voice from a short reference recording and speak English text. The reference is a WAV file at any sample rate, mono or multichannel, and only its first 28 seconds are used.
 
 ```sh
 turbospark-clone speak \
@@ -237,27 +288,62 @@ turbospark-clone speak \
 ```
 
 - **Quality presets**: `--quality fast` (8 steps), `--quality balanced` (16 steps, default), or `--quality best` (32 steps). You can also pass `--steps` directly (1 to 100).
-- **Metal acceleration**: On macOS, the diffusion transformer and WavVAE decoder run on Metal by default, roughly 5x faster than the CPU reference path. Pass `--cpu` to force the portable CPU path.
+- **Metal acceleration**: On macOS, the diffusion transformer and WavVAE decoder run on Metal by default. That measured about 5x faster than the CPU reference path on a short request, and it holds 1.4 to 2.9 GiB more memory. Pass `--cpu` to force the portable CPU path.
 - **Consent required**: Voice cloning requires explicit caller consent (`--consent` in CLI, or user acknowledgment in the app) because the community WavVAE encoder's provenance and license are unverified.
 
-### Music generation and TTS
+### Music generation
 
-- **Music generation**: `turbospark-music` generates MiniMax Music 3 tracks from installed profiles or converted weights, accelerated via Metal on macOS.
-- **TTS model families**: Portable implementations for Kokoro 82M, MegaTTS3, Bark, Confucius4, Dia, EchoTTS, OmniVoice, Longcat AudioDiT, MeloTTS, and others in `crates/audio`.
+`turbospark-music` generates MiniMax Music 3 tracks from installed profiles or converted weights, accelerated via Metal on macOS. The app's Music tab adds a prompt generator. It builds a description from genre, mood, tempo, instruments, and vocals, and includes a lyrics guide for section tags.
+
+### Audio over HTTP
+
+`turbospark-server` takes one or more audio models at startup:
+
+```sh
+turbospark-server \
+  --stt-model whisper-base-en \
+  --tts-model ~/models/kokoro-82m \
+  --music-model minimax-music3-4bit \
+  --api-key "$KEY"
+```
+
+It serves these routes:
+
+- `POST /v1/audio/transcriptions`, plus a realtime WebSocket
+- `POST /v1/audio/speech`
+- `POST /v1/audio/generate` for music, with async jobs at `GET /v1/audio/jobs/ID`
+
+Input audio is WAV only, and each model runs one request at a time. Served behavior of real models is smoke-tested, not benchmarked. See [`docs/AUDIO_API.md`](docs/AUDIO_API.md) for every route and limit.
+
+## Decision models
+
+The API workspace's TypeSafe tab runs small local decision models that return typed answers instead of free text. Ask a yes/no question (Noul), pick from a set of options (Choice), or grade against named levels (Score). Each answer comes back typed, with probabilities.
+
+TypeSafe runs on [OpenKind](https://github.com/whit3rabbit/openkind), a separate Rust decision engine. The app bundles its `openkindd` daemon and starts it on `127.0.0.1` with its own API key in the Keychain. Requests go to OpenKind's `/v1/systemone` endpoint, not to the TurboSpark listener.
+
+The tab includes:
+
+- a form editor and a raw JSON editor, with six example requests
+- load and unload controls for models the daemon manages
+- a benchmark view that sends 1 to 200 sequential requests per loaded model
+
+The benchmark times are client wall-clock numbers that include local HTTP and Swift client overhead. Treat them as exploratory, not as model benchmarks. For which model to run, OpenKind suggests Laya Typed Decisions (`laya:typed-decisions`) on Apple Silicon. See [OpenKind's model guide](https://github.com/whit3rabbit/openkind#choose-a-local-model).
 
 ## Supported features
 
 | Feature | Support |
 | --- | --- |
-| Desktop app | Native SwiftUI multi-chat, Audio Studio (voice cloning and TTS), Image generation, Humanize, model management, and accessibility support |
-| Agent runtime | Native shell, file, web, git, MCP, and indexed code-search tools with permission gates |
+| Desktop app | Native SwiftUI multi-chat, Audio Studio (recording, transcription, TTS, voice cloning, and music), Image generation, Humanize, an API workspace, model management, encrypted profiles, and accessibility support |
+| Agent runtime | Native shell, file, web, git, MCP, browser automation, sandboxed JavaScript REPL, and indexed code-search tools with permission gates |
 | MoE streaming | Routed expert weights stream from SSD through a bounded Metal slot cache |
 | CLI generation | Interactive chat, raw prompts, JSON message files, reasoning output, cancellation, and model recommendations |
-| Local API | OpenAI-compatible and Anthropic-compatible endpoints from `turbospark-server` or the app |
+| Local API | OpenAI-compatible and Anthropic-compatible chat endpoints, plus image generation and audio routes, from `turbospark-server` or the app |
 | Model intake | Catalog installs, Hugging Face header probes, GGUF intake, MLX quantized checkpoints, and `.gturbo` packing |
 | Vision | Supported vision checkpoints, with the Qwen GDN and Qwen3-VL towers implemented |
 | Image generation | Z-Image Turbo and Qwen-Image 2.1 Turbo in the app, about 1 to 2 minutes per 1024 x 1024 image on an M4 Max. See [Image generation](#image-generation) |
-| Voice cloning and audio | MegaTTS3 zero-shot voice cloning (Metal on macOS), MiniMax Music 3, Whisper STT runner, Kokoro, and extensive TTS family ports. See [Voice cloning and audio](#voice-cloning-and-audio) |
+| Humanize | Local rewrites with `humanizer-12b`, user rules applied outside the model, and an audit of dropped or invented numbers. See [Humanize](#humanize) |
+| Audio | Whisper and Qwen3-ASR speech to text, Kokoro and Qwen3-TTS speech, MegaTTS3 voice cloning (Metal on macOS), and MiniMax Music 3. See [Audio](#audio) |
+| Decision models | Typed Noul, Choice, and Score answers through the bundled OpenKind daemon. See [Decision models](#decision-models) |
 | Performance controls | Context and load guards, expert-cache sizing, chunked prefill, KV-cache quantization, and eligible speculative decoding |
 | Steering | Directional residual steering for supported model flows, without modifying model weights |
 
@@ -266,6 +352,8 @@ turbospark-clone speak \
 - [Model catalog and installation](docs/MODELS.md)
 - [CLI and server reference](docs/CLI.md)
 - [Audio and speech processing](docs/AUDIO.md) and [Voice cloning and TTS](docs/audio/tts.md)
+- [Audio HTTP API](docs/AUDIO_API.md), [speech to text](docs/SPEECH_TO_TEXT.md), and [Qwen3-TTS in the app](docs/QWEN3_TTS.md)
+- [API workspace and TypeSafe](docs/API_WORKSPACE.md)
 - [macOS UI design guide](DESIGN.md)
 - [Benchmark rows and quality evidence](docs/BENCHMARKS.md)
 - [Release assets, Homebrew casks, and packaging](docs/RELEASE.md)
@@ -273,6 +361,7 @@ turbospark-clone speak \
 - [Vision and image generation](docs/VISION.md) and [image generation details](docs/IMAGE_GENERATION.md)
 - [Desktop feature parity and architecture matrix](docs/DESKTOP_FEATURE_PARITY.md)
 - [Testing and evidence gates](docs/TESTING.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

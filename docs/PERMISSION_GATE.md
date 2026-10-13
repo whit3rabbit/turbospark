@@ -28,7 +28,7 @@ only add friction, Agent mode's may grant.
 | `cowWhySo/prompt-injection-watch-dataset` | the injection corpus, three pooled sources |
 | `cowWhySo/permission-command-dataset` | the summary card for the command corpus |
 
-`swift/TurboSparkApp/Sources/TurboSparkApp/Resources/permission-gate.bin` is the
+`swift/TurboSparkApp/Sources/TurboSparkAppResources/Resources/permission-gate.bin` is the
 copy the app ships. It is 192 KiB and it is generated, not hand-edited. Regenerate
 it with the packing step in "Retraining" below.
 

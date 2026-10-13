@@ -80,11 +80,38 @@ def extract_and_generate_icons(source_path: str, output_dirs: list[str]):
     crop_box = (512 - 220, 284 - 220, 512 + 220, 284 + 220)
     cropped_icon = img_rgba.crop(crop_box)
 
+    # The source art carries a light drop-shadow/border rim around the navy squircle. The
+    # flood fill above cannot remove it (it is not the background color), and a light opaque
+    # rim makes macOS 26 wrap the icon in its gray legacy-icon plate. Crop to the navy
+    # squircle itself and re-cut the outline with a clean mask.
+    crop_arr = np.array(cropped_icon).astype(int)
+    navy = (crop_arr[..., 3] > 200) & (crop_arr[..., :3].max(axis=2) < 130)
+    ys, xs = np.where(navy)
+    # 2px inset keeps the anti-aliased rim blend out of the final edge
+    inset = 2
+    squircle_box = (xs.min() + inset, ys.min() + inset, xs.max() + 1 - inset, ys.max() + 1 - inset)
+    squircle_rgba = cropped_icon.crop(squircle_box)
+    # Navy under the art so no transparent pixel survives inside the mask
+    border_navy = tuple(int(v) for v in np.median(crop_arr[navy][:, :3], axis=0))
+
     # Standard macOS 1024x1024 master canvas
     # Apple macOS Human Interface Guidelines specify ~824x824 squircle inside 1024x1024 canvas
+    icon_size = 824
+    margin = (1024 - icon_size) // 2
+    icon_scaled = squircle_rgba.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+    icon_body = Image.new("RGBA", (icon_size, icon_size), border_navy + (255,))
+    icon_body.alpha_composite(icon_scaled)
+
+    # Superellipse (n=5) approximates Apple's continuous-corner squircle; 4x supersampled
+    ss, n = 4, 5.0
+    yy, xx = np.mgrid[0:icon_size * ss, 0:icon_size * ss]
+    u = (xx + 0.5) / (icon_size * ss) * 2 - 1
+    v = (yy + 0.5) / (icon_size * ss) * 2 - 1
+    mask = Image.fromarray(((np.abs(u) ** n + np.abs(v) ** n <= 1) * 255).astype(np.uint8))
+    icon_body.putalpha(mask.resize((icon_size, icon_size), Image.Resampling.LANCZOS))
+
     master_1024 = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-    icon_scaled = cropped_icon.resize((840, 840), Image.Resampling.LANCZOS)
-    master_1024.paste(icon_scaled, (92, 92), icon_scaled)
+    master_1024.alpha_composite(icon_body, (margin, margin))
 
     # Standard macOS iconset specification for iconutil
     iconset_specs = [
@@ -133,7 +160,7 @@ def extract_and_generate_icons(source_path: str, output_dirs: list[str]):
         print(f"    [!] Warning: iconutil failed: {e}", file=sys.stderr)
 
     # Swift Resources: only AppIcon.png and AppIcon.icns to prevent SwiftPM name collisions
-    swift_res_dir = os.path.join(repo_root, "swift", "TurboSparkApp", "Sources", "TurboSparkApp", "Resources")
+    swift_res_dir = os.path.join(repo_root, "swift", "TurboSparkApp", "Sources", "TurboSparkAppResources", "Resources")
     os.makedirs(swift_res_dir, exist_ok=True)
     print(f"==> Exporting app bundle assets to: {swift_res_dir}")
     master_1024.save(os.path.join(swift_res_dir, "AppIcon.png"), "PNG")
@@ -151,6 +178,6 @@ if __name__ == "__main__":
 
     out_dirs = [
         os.path.join(repo_root, "assets", "icons"),
-        os.path.join(repo_root, "swift", "TurboSparkApp", "Sources", "TurboSparkApp", "Resources"),
+        os.path.join(repo_root, "swift", "TurboSparkApp", "Sources", "TurboSparkAppResources", "Resources"),
     ]
     extract_and_generate_icons(src, out_dirs)

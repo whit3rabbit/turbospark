@@ -29,9 +29,20 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.6")
     ],
     targets: [
+        // The app's resources live in their own target so the lookup can be
+        // hand-written (see AppResources.swift). The executable target must
+        // declare none, or SwiftPM generates a `Bundle.module` that collides
+        // with the forwarding one in Theme/ResourceBundle.swift.
+        .target(
+            name: "TurboSparkAppResources",
+            resources: [
+                .process("Resources")
+            ]
+        ),
         .executableTarget(
             name: "TurboSparkApp",
             dependencies: [
+                "TurboSparkAppResources",
                 .product(name: "TurboSpark", package: "TurboSpark"),
                 .product(name: "OpenKind", package: openKindRevision == nil ? "openkind" : openKindIdentity),
                 .product(name: "ZImage", package: "zimage"),
@@ -44,9 +55,6 @@ let package = Package(
             ],
             exclude: [
                 "Tools/Codemode/README.md"
-            ],
-            resources: [
-                .process("Resources")
             ],
             cSettings: [
                 .define("SQLITE_HAS_CODEC")
