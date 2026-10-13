@@ -13,6 +13,24 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-13
+
+This release stops the app asking for Keychain access by default. Upgrade with
+`brew upgrade --cask whit3rabbit/tap/turbospark`.
+
+### Changed
+- `swift/TurboSparkApp`: the TypeSafe API key is no longer written to the
+  Keychain by default. It used to be generated and stored on first launch,
+  which asked for Keychain access again after every update (an ad-hoc signed
+  app has no stable identity for the old item to trust) and left the TypeSafe
+  pane unable to start when no default keychain was available. The key is now
+  generated fresh per launch and kept in memory, and the Keychain is not
+  touched. **Remember this key in the Keychain** in the TypeSafe tab turns
+  storage on. Turning it off deletes the item. A Keychain failure now shows the
+  system's own reason and code. An item an earlier build created is left alone
+  and unused: remove it with
+  `security delete-generic-password -s TurboSpark.typesafe`.
+
 ## [0.3.1] - 2026-10-13
 
 This release replaces v0.3.0, whose app crashed on launch on every Mac but the
