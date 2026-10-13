@@ -15,7 +15,7 @@ When long multi-turn conversations exceed the model's context window or a caller
 
 ## Safety
 
-- `#![forbid(unsafe_code)]` is enforced in `lib.rs`.
+- The crate contains no `unsafe` code, but `lib.rs` does not set `#![forbid(unsafe_code)]`, so the compiler does not enforce this.
 - Zero I/O, zero external dependencies, and completely deterministic execution.
 
 ## Key Modules

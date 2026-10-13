@@ -645,3 +645,26 @@ Carried over from the Swift protocol, worth repeating:
   condition. Observed in one sitting: 1.00x, 1.00x, then two caching runs,
   then 0.00x, 0.00x. Run the bypassed arms consecutively after a purge and
   the warm arms afterwards, and carry Gotcha 22's cross-capture caveat.
+
+  **A second way to get the pair, tested 2026-10-12: `sudo purge` before
+  EVERY bypassed arm, and one discarded caching pass before every warm arm.**
+  The purge is what restores the condition the warm arm destroyed, so the
+  pair can then alternate. On Gemma 4 26B-A4B INT4 (16/32/64 slots, 3
+  alternating pairs each, AC power, host load 3.0 to 5.5) all nine bypassed
+  arms read 1.00x physical, which is the check that the condition held; the
+  warm arms read 0.0 to 18.5 MiB/token. Confirm the 1.00x per run, never from
+  the sequence. The discarded pass matters because the preceding purge leaves
+  the next warm arm cold (the first warm 16-slot pass read 18 MiB physical
+  and ran 40.9 against 45.6 tok/s on the other two). Results and the caveats
+  on them are in `docs/EXPERT_ROUTING.md`; this is a reading, not a frozen
+  row, and it is not in `docs/BENCHMARKS.md`.
+
+  ```sh
+  # per repetition, per slot count N (16 32 64), on AC power, host quiet
+  turbospark-check --model gemma4 --messages-file p.json --max-new 200 \
+    --expert-cache-slots N --expert-residency streamed --temperature 0   # discarded refill
+  TURBOSPARK_PHASES=1 TURBOSPARK_EXPERT_DISK_IO=1 turbospark-check ...   # warm, same flags
+  sudo purge
+  TURBOSPARK_PHASES=1 TURBOSPARK_EXPERT_DISK_IO=1 TURBOSPARK_EXPERT_NOCACHE=1 \
+    turbospark-check ...                                                   # cold, same flags
+  ```

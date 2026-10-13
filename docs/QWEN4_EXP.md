@@ -795,7 +795,7 @@ point to a faulty sort.
 The catalog alias is `qwen4exp-swift-iq2-xs`, pinned to
 `ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF` revision
 `b22d729eae29b5796f76fb70f91aef549b9fc52c`. Its GGUF sidecars are pinned to
-`ukisai/Swift-Qwen3.8-Flash-Next` revision
+`ukisai/Swift1.5-Qwen3.8-Flash-Next` revision
 `0bd4fe22431372cdad1979267d3ab45aa7e6150a`. The actual network install
 test passed manifest loading and SHA-256 checks for all installed model
 files. This run set `TURBOSPARK_QWEN4EXP_DISABLE_SOURCE_CACHE=1`, so it kept

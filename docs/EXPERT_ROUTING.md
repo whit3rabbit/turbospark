@@ -286,11 +286,60 @@ device. That 1.00x is also the answer to a question this page never asked --
 `F_RDADVISE` is not over-reading, since the disk-bound arm pulls exactly the
 strides the cache asked for and no more.
 
-**Re-running the PILOT sweep under that condition is OWED and has not been
-done.** The cost model above is a warm-cache measurement throughout, and both
-of its terms are expected to move: the miss rate rises, and each miss stops
-being a ~23.8 GiB/s memcpy. Until that sweep exists, the standing decision is
-scoped to the warm case and says nothing about the cold one.
+**The PILOT lookahead sweep under that condition is still OWED.** The cost
+model above is a warm-cache measurement throughout, and both of its terms are
+expected to move: the miss rate rises, and each miss stops being a ~23.8 GiB/s
+memcpy. Until that sweep exists, the standing decision is scoped to the warm
+case and says nothing about the cold one.
+
+**What the cold arm costs, and what does not fix it (2026-10-12, a reading,
+not a frozen row).** Gemma 4 26B-A4B INT4, streamed residency, one prompt,
+200 greedy tokens, AC power, 3 interleaved warm/cold pairs per slot count
+(host load 3.0 to 5.5, no other benchmark running). Cold is `sudo purge` plus
+`TURBOSPARK_EXPERT_NOCACHE=1`; every cold run read 1.00x physical. Warm is
+one discarded pass, then the measured pass.
+
+| slots | hit rate | requested MiB/token | cold tok/s (range) | cold pread ms/token | warm tok/s |
+|---|---|---|---|---|---|
+| 16 | 64.3% | 274.2 | 10.64 (10.60-10.83) | 50.9 | 45.6 |
+| 32 | 81.0% | 146.3 | 16.04 (15.98-16.58) | 29.0 | 50.8 |
+| 64 | 93.5% | 50.1 | 39.23 (39.02-39.79) | 10.1 | 52.3 |
+
+- The cold arm is disk-bound and reads about 5.3 GiB/s effective at 16 slots.
+  Cold decode is 4.3x slower than warm at 16 slots and 1.3x slower at 64.
+- The lever is the miss count, not the bytes per miss. 16 to 64 slots cut
+  requested bytes 5.5x and lifted cold decode 3.7x, while warm decode moved
+  15%. 64 slots cost 6.0 GiB of pinned cache against 1.5 GiB at 16.
+  `ExpertCacheSlots::Auto` already climbs with headroom (48 slots on a 36 GB
+  machine with this install), so a machine like this one sits between the 32
+  and 64 rows by default. The 16-slot row is what a 16 GB machine gets, since
+  Auto never resolves below 16.
+- Shrinking the blobs does not compete. Lossless zstd -3 on three 256 MiB
+  samples of an INT4 g64 `model_weights.bin` saved about 10% (241 of 268 MB).
+  Even with free decode that removes about 5 ms of the 94 ms cold token at 16
+  slots, and about 1 ms of 25.5 ms at 64. Decode would have to sustain more
+  than the disk's 5.3 GiB/s to break even, which was not measured. A 3x byte
+  reduction is not available losslessly, and `gemma4-iq3` is 12.8 GB against
+  13.0 GB for INT4, so a lower-bit catalog row does not shrink this family's
+  experts either. This closes the AirLLM "block-wise compression, 3x faster
+  loading" idea for this engine: AirLLM's gain comes from re-reading the whole
+  model per token, which this engine never does.
+- A cold-only anomaly stays unexplained: `gpu busy: cb1` was 13.0 ms/token
+  cold against 5.1 warm at 16 slots, 10.9 at 32, and 6.0 at 64 (warm 5.1
+  throughout). It tracks miss bytes and persisted with the host at load 3, so
+  it is not the earlier concurrent benchmark. The mechanism is not identified,
+  so the cold pread figure above may include time that is not purely the SSD.
+- Reproduce: `docs/BENCHMARKING.md`, Measurement hygiene (purge before every
+  cold arm, discarded refill pass before every warm arm, confirm 1.00x per
+  cold run). The install was `turbospark pull gemma4`. The 18 measured runs
+  and their load logs lived in a session scratch directory and are not
+  committed; the table above is the record.
+- Scope: one prompt, one 200-token generation, one machine and one model.
+  Hit rates are prompt-dependent (an earlier doc figure was about 84% at 16
+  slots on a different run), and the first warm 16-slot pass still read 18 MiB
+  physical (40.9 tok/s against 45.6 on the other two). Not run: a quality
+  comparison, a 16 GB machine, or the mapped residency arm under the same cold
+  condition.
 
 Note also what does NOT reopen it. `garnermccloud/sglang-ssd-stream` reports
 164.7 tok/s streaming a 47.68 GiB lookup table from NVMe and hiding the reads

@@ -83,8 +83,11 @@ staging files changed.
   turned on. The app is ad-hoc signed, so every new build is a different
   identity from the one that created an item, and macOS asks again on each
   update. Storage is opt-in per credential (the TypeSafe key:
-  `TypeSafeKeychain.isKeychainEnabled`). Show the system's reason on failure
-  (`TypeSafeKeychain.describe`), not a bare "could not save".
+  `TypeSafeKeychain.isKeychainEnabled`, the server key:
+  `ServerKeychain.resolveOptIn`, which keeps an item an earlier version
+  stored rather than dropping the key). Probe for an item with an
+  attributes-only query, never by reading the secret. Show the system's reason
+  on failure (`TypeSafeKeychain.describe`), not a bare "could not save".
 - The API destination has three modes. Text and Image share the TurboSpark
   Rust listener, address, and key. TypeSafe manages a separate loopback
   `openkindd` process, URL, and API key through the OpenKind Swift package.
@@ -128,3 +131,18 @@ after, not interleaved with, `make swift-test`) and
 
 Use the real-install and app-bundle gates from the linked verification pages
 for runtime or release changes.
+
+## Open issues
+
+- **Auto-started server has no API key on a new install.** The server key is
+  session-only unless the user opts in to Keychain storage
+  (`ServerKeychain.resolveOptIn`), so `serverAPIKeyInput` is empty at launch.
+  With "start server on launch" on (`serverAutoStartOnLaunch`,
+  `AppModel+Persistence.swift`, the `server == nil` auto-start branch), the
+  server then starts with `apiKey: nil` and any local process can drive the
+  loaded models over loopback. The Server pane warns about it, but an
+  auto-start never shows that pane. Someone who already had a stored key is
+  unaffected, because the first launch adopts the existing item. Options:
+  generate a per-session key at auto-start (as TypeSafe does) and put it in
+  the field so Copy works, or refuse to auto-start without a key. This needs a
+  decision before either is built.

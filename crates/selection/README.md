@@ -15,7 +15,7 @@ selection = { package = "turbospark-selection", path = "../selection" }
 
 ## Safety
 
-- `#![forbid(unsafe_code)]` is enforced in `lib.rs`.
+- The crate contains no `unsafe` code, but `lib.rs` does not set `#![forbid(unsafe_code)]`, so the compiler does not enforce this.
 - Pure CPU computation with zero device-specific assembly or external side effects.
 
 ## Key Modules
