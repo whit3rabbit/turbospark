@@ -65,10 +65,30 @@ staging files changed.
   `runsChatGenerationCommand` enables chat generation only in Chat. Full-bleed
   workspaces (`.images`, `.audio`, `.humanize`) declare `ownsGenerationShortcuts`
   to bind those chords to their own run/stop controls.
+- Resources live in the `TurboSparkAppResources` target
+  (`Sources/TurboSparkAppResources/Resources`), and the `TurboSparkApp` target
+  declares none. `Bundle.module` in the app is a hand-written forwarder
+  (`Theme/ResourceBundle.swift`) to `AppResources.bundle`, which checks
+  `Bundle.main.resourceURL` first. Do not add `resources:` to `TurboSparkApp`:
+  SwiftPM then generates its own `Bundle.module`, which collides, and on Xcode
+  16.4's native build system it looks only at the `.app` root and a
+  build-machine path, which crashed v0.2.0 and v0.3.0 on launch. The bundle
+  cannot move to the root instead: `codesign` rejects anything there but
+  `Contents/`, symlinks included.
+- A bundle that packages is not a bundle that starts. Run
+  `scripts/verify-app-bundle.sh` (it launches the built app and checks every
+  Mach-O's deployment target) after any change to bundle layout, resources,
+  `Package.swift`, or the Xcode pin. CI runs it before the DMG is built.
+- Never write or read the Keychain at launch for a feature the user has not
+  turned on. The app is ad-hoc signed, so every new build is a different
+  identity from the one that created an item, and macOS asks again on each
+  update. Storage is opt-in per credential (the TypeSafe key:
+  `TypeSafeKeychain.isKeychainEnabled`). Show the system's reason on failure
+  (`TypeSafeKeychain.describe`), not a bare "could not save".
 - The API destination has three modes. Text and Image share the TurboSpark
   Rust listener, address, and key. TypeSafe manages a separate loopback
-  `openkindd` process, URL, and Keychain key through the OpenKind Swift
-  package. Keep its native playground on the typed `SystemRequest` client;
+  `openkindd` process, URL, and API key through the OpenKind Swift package.
+  The key is in memory per launch unless the user opts in to Keychain storage. Keep its native playground on the typed `SystemRequest` client;
   form and raw JSON must produce the same request contract.
 - The Image API and Images screen share one resident MLX image session and
   serialize generation through `ImageJobCoordinator`. Stop and detach must

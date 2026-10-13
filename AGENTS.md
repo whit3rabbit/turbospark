@@ -97,6 +97,13 @@ The root references are:
 - Split-KV decode attention in Metal: the GQA partial kernel bakes group,
   simdgroups, head_dim, and unroll into function constants that MUST be
   included in its pipeline cache key to prevent silent wrong-pipeline reuse.
+- Release builds pin the runner and Xcode by name (`XCODE_VERSION` in
+  `release.yml`, asserted after selection), never `latest`. `ci.yml`'s
+  `package-macos` also builds with the oldest supported Xcode, because the
+  toolchain changes SwiftPM's generated resource lookup. Read
+  `swift/AGENTS.md` before touching resources or `Package.swift` targets.
+- Credentials are not stored by default. Keychain use is opt-in per credential
+  and never happens at launch for an unused feature. See `swift/AGENTS.md`.
 - App UI, localization, and store durability: follow [DESIGN.md](DESIGN.md).
   Every UI string must use bundled `Text` or `AppStrings.localized` to pass the
   ten localization parity gates. `AppJSONStore` must quarantine corrupt files
@@ -125,8 +132,12 @@ For app or release artifacts:
 ```sh
 make swift-app
 make app-bundle
+scripts/verify-app-bundle.sh
 make dmg
 ```
+
+`verify-app-bundle.sh` runs the built app. Packaging success alone shipped two
+releases that crashed on launch.
 
 Before cutting an app release or tag, always review `docs/RELEASE.md` for the
 release flow, changelog update requirements (`CHANGELOG.md`), and the decoupled
