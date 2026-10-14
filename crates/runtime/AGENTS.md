@@ -9,6 +9,9 @@ policy.
 - [Load guard](../../docs/LOAD_GUARD.md)
 - [Family checklist](../../docs/NEW_MODEL.md)
 - [Speech to text](../../docs/SPEECH_TO_TEXT.md)
+- [Core ML models](../../docs/COREML.md), and
+  [EmbeddingGemma 2 word CTC](../../docs/EMBEDDINGGEMMA2_WORD_CTC.md) for
+  `coreml::embeddinggemma2_ctc`
 - [Whisper runner](../../docs/WHISPER.md)
 - [Audio models](../audio/MODELS.md)
 - [Audio music generation](../../docs/audio/music.md)
@@ -35,6 +38,11 @@ policy.
   admission must size for Metal device allocations.
 - Real-model validation needs greedy, sampled, and memory-oracle coverage. A
   compile or synthetic fixture is not a runtime parity claim.
+- Core ML pipelines check each program's input and output names, dtypes, and
+  shapes at open and refuse a mismatch. `coreml::embeddinggemma2_ctc` also
+  refuses before macOS 15. Its `Transcriber` appends 0.5 s of silence because
+  word spikes trail the word. Changing `TAIL_PADDING_SAMPLES` changes
+  transcripts, so re-run the ignored reference-clip test.
 
 ## Checks
 

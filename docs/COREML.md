@@ -60,6 +60,23 @@ is `<bos>`, 273 page embeddings per page, then the prompt ids. Prefill runs in
 35-gram ban over the last 1024 tokens filters candidates. The bucket limit is
 8 pages.
 
+## Experiment: eg2demo word CTC
+
+Branch `experiment/embeddinggemma2-ctc` also runs the three compiled programs
+of Haku's Embedding Gemma Transcribe (eg2demo v5): the audio encoder, the
+reader, and the block scorer. `coreml::embeddinggemma2_ctc` implements the
+portable `audio::stt::embeddinggemma2` backend traits over them. Everything
+else (frontend, windows, rerank, CTC) is portable Rust. The programs are
+`.mlmodelc` directories, so nothing is compiled into `.compiled/`.
+
+- The assets are not a Hugging Face export and are not cleared for
+  redistribution. Download the v5 manifest yourself (curl, sha256 per file)
+  and pass the directory as `TURBOSPARK_EG2_ASSET_DIR`.
+- At open, each program's inputs and outputs are checked against the v5
+  shapes, and a mismatch is refused.
+- How it works, what was verified, and what was measured:
+  [EMBEDDINGGEMMA2_WORD_CTC.md](EMBEDDINGGEMMA2_WORD_CTC.md).
+
 ## Placement and first loads
 
 | Model | Default compute units | Override |
@@ -67,6 +84,7 @@ is `<bos>`, 273 page embeddings per page, then the prompt ids. Prefill runs in
 | Parakeet | preprocessor CPU, encoder GPU, decoder and joint CPU | `TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS` |
 | EmbeddingGemma 2 | text Neural Engine, audio and vision GPU | `TURBOSPARK_EMBEDDINGGEMMA2_COREML_UNITS` (text) |
 | Unlimited OCR | page encoder GPU (fixed), decoder GPU | none; Neural Engine refused |
+| eg2demo word CTC (experiment) | encoder, reader, scorer `all` | `TURBOSPARK_EG2_CTC_{ENCODER,READER,SCORER}_UNITS` |
 
 Override values are `cpu`, `cpu_gpu`, `cpu_ane` and `all`.
 
@@ -110,6 +128,8 @@ cargo test --release -p turbospark-runtime --test coreml_parakeet -- --ignored -
 cargo test --release -p turbospark-runtime --test coreml_embeddinggemma2 -- --ignored --nocapture
 cargo test --release -p turbospark-runtime --test coreml_ocr -- --ignored --nocapture
 cargo test --release -p turbospark-ffi --test embedding_request --test ocr_surface -- --include-ignored
+TURBOSPARK_EG2_ASSET_DIR=~/models/eg2demo \
+  cargo test --release -p turbospark-runtime --lib embeddinggemma2_ctc -- --include-ignored
 ```
 
 Default model directories are under `~/models/coreml/`. The

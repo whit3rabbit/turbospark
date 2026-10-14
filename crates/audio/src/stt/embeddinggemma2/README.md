@@ -7,14 +7,19 @@ for the encoder, reader, and scorer lives in `turbospark-runtime`
 four short English clips only (one checked-in, three macOS `say`). No WER, throughput, latency,
 or memory claim beyond those clips is made here.
 
+The full writeup, covering how the reference works, what was verified in its
+programs and binary, and what this port measured, is
+[docs/EMBEDDINGGEMMA2_WORD_CTC.md](../../../../../docs/EMBEDDINGGEMMA2_WORD_CTC.md).
+
 ## Overview
 
 Haku's "Embedding Gemma Transcribe" (`ai.haku.eg2demo`) recognizes speech
 without an autoregressive decoder:
 
 1. Gemma4 log-mel frontend: 20 s windows, `[2000, 128]`.
-2. `eg2_audio_l11`: the EmbeddingGemma 2 audio tower truncated after layer
-   11, `[500, 1024]` (40 ms frames).
+2. `eg2_audio_l11`: the EmbeddingGemma 2 audio tower, all 12 conformer
+   blocks. `l11` is the zero-indexed last block's normalized output,
+   `[500, 1024]` (40 ms frames).
 3. `reader_P6`: a trained reader (86.45 M parameters per its sidecar) that
    outputs a unit vector `vec [500, 768]` in the EmbeddingGemma 2 text
    embedding space and a `blank [500, 1]` logit.
@@ -79,12 +84,17 @@ Checked in this branch against the pinned files:
 | The 768 to 128 projection has orthonormal columns | `P^T P` off-diagonal max 4.4e-5, diagonal 1 +- 6e-5. This is consistent with a PCA basis but does not prove how it was built. |
 | Scorer padding is not zero | Columns 229457..229459 are three copies of one vector (norm 0.436). Reranking skips ids past the table, so a padding column can only cost a shortlist slot. |
 | Word table layout | `word_unit_f16.bin` is exactly `229457 * 768 * 2` bytes, headerless; sampled rows have unit norm within 2e-3. |
-| Vocabulary contents | 229457 entries, 229304 distinct strings (153 strings appear twice under different ids), last entry `<rep>`. Layout: a 320-entry head block (ids 0..319, plain and apostrophe-prefixed common and programming words), an alphabetically sorted main list (ids 320..229426), 30 appended custom words (`haku`, `coreml`, `mlx`, `parakeet`, ...), then `<rep>`. |
+| Vocabulary contents | 229457 entries, 229304 distinct strings (153 strings appear twice under different ids), last entry `<rep>`. Layout: a 320-entry head block (ids 0..319, plain and apostrophe-prefixed common and programming words), an alphabetically sorted main list (ids 320..229425, ending at `zzzz`), 30 appended custom words (ids 229426..229455: `haku`, `coreml`, `mlx`, `parakeet`, ...), then `<rep>` (id 229456). |
 | The word table is the stock text model, no prompt | Every word embedded with `google/embeddinggemma-2` @ `914f7f89142e33e77833254d9c9b90c3cef7303b` in float32, no task prefix, mean pooling, L2 norm (`scripts/probe_embeddinggemma2_word_table.py`): median cosine to its row 0.99999, 99% of rows >= 0.99996, 229014 of 229456 rows >= 0.999. On a 64-word sample every task prefix scores worse (best: `task: search result \| query: `, mean 0.90). The 30 appended custom words match at >= 0.99997, so Haku added words by embedding the raw string. |
 | Some rows were changed | 442 rows are below 0.999: 142 in the head block (cosine 0.88 to 0.97, the first id of most duplicate pairs, whose second id is the stock row) and 300 frequent function words in the main list (`and`, `the`, `can`, ...; 0.980 to 0.995). `<rep>` is not an embedding of its string (cosine 0.02). These rows look trained, but how is not known. |
 | Calibration | `reader_P6.json` (`reader_G795_L11_big.json` upstream): scale 39.85666275024414, bias -0.4626207649707794, `arm.layers = ["L11"]`, d 768, 12 layers, 12 heads, lr 3e-4. It names no loss. |
 | Encoder and reader interfaces | `metadata.json`: encoder `input_features [1,2000,128]` f32 and `feature_mask [1,2000]` to `l11 [1,500,1024]` f16; reader `l11 [1,500,1024]` and `mask [1,500]` to `vec [1,500,768]` and `blank [1,500,1]` f16. The reader op histogram (1 reduceSum, pow, sqrt, realDiv) is consistent with an in-graph L2 normalization of `vec`. |
 | The scorer's top-k returns sorted descending uint16 block ids | `model.mil`: `topk(k=16, ascending=false, sort=true, output_indices_dtype="uint16")`, cast to int32. |
+| The encoder holds all 12 blocks | `model.mil` names `layers_0` to `layers_11` (q/k/v, light conv with depthwise kernel 5, two feed-forward modules each) and ends at `layers_11_norm_out`. "L11" is the zero-indexed last block, not a cut before it. About 290.7 M weights. |
+| The reader is a 12-layer transformer | `model.mil`: input LayerNorm (1024), linear to 768, `x + DepthwiseConv1d(x)` (kernel 15) for position, 12 pre-LN layers (fused QKV, 12 heads of 64, scale 0.125, FFN 3072, exact GELU), key-padding mask of -10000, final LayerNorm, word head with in-graph L2 norm, linear blank head. Weight shapes sum to 86,448,897, the sidecar's 86.45 M. No in-layer convolution, so not a Conformer. |
+| The decision rule is in the app binary | `EG2Transcribe` (app 1.6, sha256 `7bcdc008...`), `EG2Transcriber.back` at 0x1000757d0: `fmul`, `fadd`, `fcmp` with the blank logit, `csinv ... hi`. |
+| The projection is not Matryoshka truncation | Its first 128 input rows hold 32.2 of its 128 units of energy. Truncation would hold all 128. |
+| The app has a GPU path | `Front(folder:units:readerUnits:...)` takes compute units from callers, one `EG2Transcriber` site passes `cpuAndGPU`, and `transcribeShared(_:gpu:...)` takes a GPU front. Run-time choices were not traced. |
 
 Checked on macOS 26.6.2, Apple M4 Max, with the Core ML backend and every
 program on `ComputeUnits::All` (`eg2_ctc_transcribe`, release build):
@@ -102,9 +112,12 @@ program on `ComputeUnits::All` (`eg2_ctc_transcribe`, release build):
 
 Corrections to the earlier analysis this evidence forces:
 
-- The audio encoder is not frozen. The app NOTICE says EmbeddingGemma 2's
-  audio encoder was fine-tuned. A controlled "frozen encoder" comparison
-  cannot reuse `eg2_audio_l11` as its frozen baseline.
+- The audio encoder may not be frozen. The app NOTICE says EmbeddingGemma
+  2's audio encoder was fine-tuned, while the project site says it "stays
+  exactly as it is". Until the program weights are compared with the stock
+  tower, a controlled "frozen encoder" comparison cannot reuse
+  `eg2_audio_l11` as its frozen baseline.
+- The encoder is not truncated before its last layer (see Evidence).
 - The vocabulary is not a plain word list: `<rep>` and the 153 duplicate
   strings change how collapse and rendering must work (below).
 - A 20 s window yields 1999 valid mel frames under the reference contract,
@@ -124,7 +137,7 @@ Reported elsewhere and not reproduced here:
 | What `<rep>` means | Rendered as a repeat of the preceding word and dropped at the start. The repeats clip supports this reading (see Evidence); the reference binary was not inspected for it. Because it repeats whatever precedes it, a lost word before `<rep>` repeats the wrong one. |
 | Collapse by id or by string | By id (the reference stores indices). The duplicates are deliberate (an adjusted head row and a stock main row for the same word), so adjacent frames that alternate between the two ids would render the word twice. No alternation and no head-block id appeared on the four clips; keep by id until real recordings show otherwise. |
 | Adding words | Embed the raw lowercase string with the stock text model (no prompt, unit norm, FP16), as Haku did for its 30 custom words. The compiled scorer has a fixed `[128, 229460]` shape, so new words need a separate CPU shortlist path or a rebuilt scorer program. Core ML text conversions (FluidInference, OpenInfinity int8, FilBona int8) could do this on device after their fp16/int8 drift is measured against these rows, and without their default task prefixes. |
-| First and last window edges | The first window keeps from frame 0 and the last keeps through its last valid frame; interior windows keep `[25, 475)`. `Transcriber` appends `TAIL_PADDING_SAMPLES` (0.5 s) of zeros to non-empty input first, so a final spike that trails the audio is kept (`tail_padding` field; 0 disables). The reference runtime's edge handling is unknown. |
+| First and last window edges | The first window keeps from frame 0 and the last keeps through its last valid frame. Interior windows keep `[25, 475)`. `Transcriber` appends `TAIL_PADDING_SAMPLES` (0.5 s) of zeros to non-empty input first, so a final spike that trails the audio is kept (the `tail_padding` field, 0 disables it). The edge rule matches the app binary (`transcribeShared` and `Stream.advance(final:)`: keep start is 0 for the first window, keep end is the frame count for the last). The reference's trailing-audio handling is unknown. |
 | Encoder mask subsampling | `ceil(valid_mel / 4)` valid encoder frames (the Gemma audio every-4th-frame convention). The transcripts above are consistent with it; the compiled encoder was not inspected for it. |
 | Rerank similarity | Plain dot product with the unit rows; equals the cosine up to FP16 rounding because `vec` is normalized in-graph. |
 | Shortlist precision | The CPU scorer runs in f32; Core ML runs FP16, so near-tied blocks may order differently. On the measured clips both kept every emitted word's block and made identical decisions; `eg2_ctc_transcribe --recall` repeats the measurement on any WAV. |

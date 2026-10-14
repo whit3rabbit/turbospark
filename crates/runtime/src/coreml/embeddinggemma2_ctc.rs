@@ -51,8 +51,10 @@ pub struct Eg2CtcOptions {
 }
 
 impl Default for Eg2CtcOptions {
-    /// `All` everywhere: the `MLModelConfiguration` default, which is what
-    /// a stock app that never sets `computeUnits` runs with.
+    /// `All` everywhere, the `MLModelConfiguration` default. The reference
+    /// app passes compute units in from its callers (encoder and reader
+    /// separately, plus a GPU front), and which values it picks at run time
+    /// was not traced.
     fn default() -> Self {
         Self {
             encoder_units: ComputeUnits::All,

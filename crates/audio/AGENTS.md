@@ -23,7 +23,7 @@ Unified portable audio crate: DSP primitives (waveform, WAV I/O, resampling, FFT
 
 All models and model families reside under their respective role directories:
 - `src/music/<family>/`: Music generation (e.g. `minimax_music3`)
-- `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
+- `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `embeddinggemma2` (experiment), `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
 - `src/tts/<family>/`: Text-to-speech (e.g. `bailingmm`, `bark`, `breeze_tts`, `confucius4`, `dia`, `echo_tts`, `fish_qwen3_omni`, `higgs_audio`, `higgs_audio_v3`, `indextts`, `kitten_tts`, `kokoro`, `kugelaudio`, `llama`, `longcat_audiodit`, `megatts3`, `melotts`, `moss_tts`, `moss_tts_nano`, `omnivoice`, `outetts`, `pocket_tts`, `qwen3`, `rumik_oss`, `sesame`, `soprano`, `spark`, `zonos2`)
 - `src/vad/<family>/`: Voice activity detection and diarization (e.g. `silero_vad`, `sortformer`, `nemotron_diarization`)
 - `src/sts/<family>/`: Speech-to-speech and enhancement (e.g. `deepfilternet`)
@@ -57,6 +57,13 @@ Every model family directory contains its implementation code, configuration, we
   checkpoints small enough to install locally.
 - Record regeneration commands, digests, and evidence locations per family.
   Keep regeneration separate from tests. Tests must not download assets.
+- `stt/embeddinggemma2` is not an mlx-audio family. It is pinned to Haku's
+  eg2demo v5 assets instead, and its encoder, reader, and scorer are Core ML
+  programs run by `turbospark-runtime` (`coreml::embeddinggemma2_ctc`). This
+  crate keeps only the portable half behind `AcousticBackend` and
+  `BlockShortlister`. Read [the writeup](../../docs/EMBEDDINGGEMMA2_WORD_CTC.md)
+  before changing it. The assets are not cleared for redistribution: never
+  commit them, and point tests at them with `TURBOSPARK_EG2_ASSET_DIR`.
 - Record implementation, fixture parity, checkpoint parity, task quality,
   runtime, catalog, FFI, and Swift gates separately. Preserve historical
   reports and their limitations in the task list and public inventory.
