@@ -38,6 +38,7 @@
     * [Speech models](rust/audio/speech.md)
     * [Music and codecs](rust/audio/music-and-codecs.md)
   * [Vision preprocessing](rust/vision-io/README.md)
+  * [Embeddings](rust/embeddings/README.md)
   * [Shared types](rust/core/README.md)
     * [Chunking and prefill](rust/core/chunking.md)
   * [Argument parsing](rust/invocation/README.md)

@@ -22,6 +22,7 @@ TurboSpark is a set of Rust crates. Pick the crate for the job you have, not the
 | Generate images | [turbospark-image](rust/image/README.md) |
 | Run speech, music, or audio DSP | [turbospark-audio](rust/audio/README.md) |
 | Preprocess images for a vision tower | [turbospark-vision-io](rust/vision-io/README.md) |
+| Embed text, images, or audio for search | [turbospark-embeddings](rust/embeddings/README.md) |
 | Read shared types and errors | [turbospark-core](rust/core/README.md) |
 
 ## All crates
@@ -39,6 +40,7 @@ TurboSpark is a set of Rust crates. Pick the crate for the job you have, not the
 | `turbospark-image` | Z-Image-Turbo generation pipeline with Metal and CPU reference backends. | [Guide](rust/image/README.md) |
 | `turbospark-audio` | DSP primitives plus speech, music, and VAD models organized by role. | [Guide](rust/audio/README.md) |
 | `turbospark-vision-io` | Image bytes to patch rows and position tables for the `qwen3_5` vision tower. | [Guide](rust/vision-io/README.md) |
+| `turbospark-embeddings` | EmbeddingGemma, SigLIP2 NaFlex, and CLAP embeddings, pooling, and similarity scoring on the CPU. | [Guide](rust/embeddings/README.md) |
 | `turbospark-core` | Shared types, `TokenId`, errors, configuration, and chunking helpers. | [Guide](rust/core/README.md) |
 | `turbospark-invocation` | Pure CLI argument parsing with no I/O. | [Guide](rust/invocation/README.md) |
 | `turbospark-streaming` | Expert weight streaming for MoE models. Advanced. | [Guide](rust/streaming/README.md) |

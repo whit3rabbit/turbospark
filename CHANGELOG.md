@@ -13,6 +13,28 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- `crates/embeddings` (`turbospark-embeddings`): portable CPU embedding
+  models ported from the mlxrs `embeddings` module and checked against
+  `transformers` 4.57.1 and `sentence-transformers` 5.1.2. EmbeddingGemma
+  (`google/embeddinggemma-300m` plus its mlx-community F16 and affine
+  4/8-bit conversions), SigLIP2 NaFlex image and text, and CLAP
+  HTSAT-unfused audio and text. Snowflake arctic-embed text encoders:
+  xs, s, m, m-v1.5, l, and l-v2.0 (BERT and XLM-RoBERTa) with the
+  mlx-community l-v2.0 bf16 and 8/6/4-bit conversions, m-v2.0 (GTE), and
+  m-long (Nomic BERT). Every checkpoint is pinned to a commit in
+  `crates/embeddings/MODELS.md`. Also shared sentence-transformers
+  pooling, Matryoshka truncation, cosine and ColVision MaxSim scoring.
+
+### Changed
+- `swift/TurboSparkApp`: the Server pane's API key follows the same rule as
+  the TypeSafe key. It is no longer saved to the Keychain, or read back at
+  launch and on every settings save, unless **Remember this key in the
+  Keychain** is on. A new install keeps a typed key for the session only. A
+  key an earlier version already stored is kept: the first launch finds the
+  item without reading the secret and turns the option on, so nobody's server
+  quietly starts without authentication. Turning it off deletes the item.
+
 ## [0.3.2] - 2026-10-13
 
 This release stops the app asking for Keychain access by default. Upgrade with
