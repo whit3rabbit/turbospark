@@ -613,11 +613,9 @@ pub struct GenerateResult {
     pub stop_reason: String,
     /// Every tool call the model invoked this turn, in emission order, as
     /// `{"id", "name", "arguments"}` objects. Empty unless a call was
-    /// parsed, which needs the tool to have been offered by name -- no
-    /// `GenerateOptions` field offers tools yet, so this is always empty
-    /// today and exists so the shape does not need a second pass when the
-    /// binding grows a way to offer them. The same rows arrive on the
-    /// stream as `TS_EVENT_TOOL` events.
+    /// parsed, which needs the tool to have been offered by name in
+    /// `GenerateOptions.tools`. The same rows arrive on the stream as
+    /// `TS_EVENT_TOOL` events.
     pub tool_calls: Vec<serde_json::Value>,
     /// Decode tokens per second, or null when no decoding happened (a run
     /// cancelled during prefill). Null rather than zero so a caller cannot

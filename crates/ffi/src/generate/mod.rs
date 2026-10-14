@@ -197,9 +197,10 @@ pub(crate) fn run_turn(
     options: &GenerateOptions,
     mut emit: impl FnMut(i32, &str, u32, u32),
 ) -> Result<GenerateResult, String> {
-    // Armed BEFORE the lock is taken, so a Stop pressed between turns cannot
-    // cancel the next one before it has produced a token.
-    let cancel = session.arm();
+    // The caller armed the flag at its entry, before it queued on the
+    // heavy-work gate. Clearing it again here would drop a Stop pressed
+    // while this turn waited.
+    let cancel = session.cancel_flag();
     let mut engine = session
         .engine
         .lock()

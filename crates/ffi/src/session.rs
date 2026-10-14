@@ -117,11 +117,17 @@ impl SessionCore {
         self.cancel.store(true, Ordering::Release);
     }
 
-    /// Clears the flag. Called at the start of every generation, so a Stop
-    /// pressed after the last turn ended cannot cancel the next one before
-    /// it has produced a token.
-    pub(crate) fn arm(&self) -> Arc<AtomicBool> {
+    /// Clears the flag. Called once at the entry of every generation, BEFORE
+    /// any wait (the process-wide heavy-work gate, the engine lock), so a
+    /// Stop pressed after the last turn ended cannot cancel the next one,
+    /// while a Stop pressed WHILE this call is queued still sticks.
+    pub(crate) fn arm(&self) {
         self.cancel.store(false, Ordering::Release);
+    }
+
+    /// The flag the decode loop polls, without clearing it. Re-arming here
+    /// would discard a Stop that arrived during the queue wait.
+    pub(crate) fn cancel_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.cancel)
     }
 

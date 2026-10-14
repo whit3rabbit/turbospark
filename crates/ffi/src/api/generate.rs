@@ -44,6 +44,10 @@ pub unsafe extern "C" fn ts_generate(
         let messages: Vec<wire::WireMessage> = serde_json::from_str(raw)
             .map_err(|e| (abi::TS_ERR_JSON, format!("messagesJson: {e}")))?;
         let options = parse_json_or_default::<wire::GenerateOptions>(options_json, "options")?;
+        // Armed BEFORE the gate: a Stop pressed between turns is discarded
+        // here, and a Stop pressed while this call queues behind another
+        // heavyweight job survives until the decode loop sees it.
+        session.arm();
         let _heavy_work = HeavyWorkGuard::acquire();
 
         let result = generate::generate(session, &messages, &options, |kind, text, a, b| {
@@ -103,6 +107,8 @@ pub unsafe extern "C" fn ts_humanize(
         let draft =
             strings::required(draft, "draft").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let options = parse_json_or_default::<generate::HumanizeOptions>(options_json, "options")?;
+        // Armed before the gate, for the reason `ts_generate` states.
+        session.arm();
         let _heavy_work = HeavyWorkGuard::acquire();
 
         let result = generate::humanize(session, draft, &options, |kind, text, a, b| {

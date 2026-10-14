@@ -587,6 +587,54 @@ fn a_cancel_between_turns_does_not_cancel_the_next_one() {
     assert_eq!(result["newTokens"], 5);
 }
 
+/// A Stop pressed while `ts_generate` is queued behind another heavyweight
+/// job must survive until the decode loop sees it. The flag is armed before
+/// the queue wait, not after it.
+#[test]
+fn a_cancel_while_queued_behind_the_heavy_gate_still_cancels() {
+    let session = Arc::new(endless_session(fixture(), "h", 64));
+    let gate = runtime::heavy::HeavyWorkGuard::acquire();
+
+    let generating = {
+        let session = Arc::clone(&session);
+        std::thread::spawn(move || {
+            let messages = c(r#"[{"role":"user","content":"hi"}]"#);
+            // Small, like the between-turns test: the scripted session has
+            // only a few dozen steps, and an uncancelled run must finish
+            // with "maxTokens" rather than run the script dry.
+            let options = c(r#"{"maxNewTokens":5,"temperature":0.0,"topK":0,"topP":1.0}"#);
+            let mut out: *mut c_char = ptr::null_mut();
+            let code = unsafe {
+                ts_generate(
+                    Arc::as_ptr(&session),
+                    messages.as_ptr(),
+                    options.as_ptr(),
+                    None,
+                    ptr::null_mut(),
+                    &mut out,
+                )
+            };
+            (code, unsafe { take(out) })
+        })
+    };
+
+    // Press Stop repeatedly while the gate is held. The first presses may
+    // land before the spawned call has armed (and are then discarded, which
+    // is the between-turns contract); any press after it is the one under
+    // test. Stopping the loop before the gate is released keeps the
+    // between-turns rule from masking a regression.
+    for _ in 0..40 {
+        unsafe { ts_session_cancel(Arc::as_ptr(&session)) };
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(gate);
+
+    let (code, json) = generating.join().unwrap();
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    let result: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(result["stopReason"], "cancelled");
+}
+
 // ----------------------------------------------------------- panic guard
 
 #[test]
