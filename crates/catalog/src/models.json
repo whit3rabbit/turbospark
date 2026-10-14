@@ -356,6 +356,47 @@
       "notes": "A retrain of Qwen 3.6's architecture: its config derives qwen_gdn_moe_35b_a3b() field for field from BOTH the HF config and llama.cpp's GGUF metadata independently, so no ArchConfig, kernel or flow work was needed. 1.63-1.67x faster than the same model's Q8_0 GGUF install at half the expert stride. The publisher's own MLX conversion DROPS the mtp.* head, so this install clears speculation_blocker's dtype arm and still cannot draft. No cross-engine KL."
     },
     {
+      "alias": "minicpm-v47-35b-mxfp4",
+      "name": "MiniCPM-V 4.7 35B-A3B text trunk (MLX mxfp4, group 32)",
+      "family": "qwen36",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4",
+        "revision": "810419dd09762d63aad6da5b6a418c4af8946e60",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 22509241916,
+      "install_bytes": 22100000000,
+      "status": "verified",
+      "gates": [
+        "minicpm_v47_quality_gate",
+        "minicpm_v47_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 1491,
+          "decode_tok_s_min": 24.044,
+          "decode_tok_s_max": 25.637,
+          "measured_on": "2026-10-13",
+          "source": "this port, two memory-oracle readings, AC; peaks 1491 and 1481 MiB; tok/s from the second, quieter reading (the first ran beside another session's test load at 19.4-26.0)"
+        }
+      ],
+      "notes": "A MiniCPM-V wrapper (root model_type minicpmv4_7) over an exact Qwen 3.6 35B-A3B trunk with a 248,144 vocab; installs TEXT-ONLY, since its vision_tower is MiniCPM's SigLIP and not the Qwen tower (arch_registry::has_foreign_vision_tower). MLX mxfp4: routed experts re-blocked losslessly to GGUF MXFP4 and run on the gpt-oss MXFP4 pair with the plain SiLU activation; resident mxfp4 matrices dequantized exactly to BF16 (no resident MXFP4 GEMV). Embed, head and GDN projections are BF16 at source, so decode reads ~3x the INT4 qwen36 install's resident bytes per token (24-26 tok/s against 33-38); none of it reaches phys_footprint. No MTP head, no cross-engine KL."
+    },
+    {
       "alias": "ornith35b-gguf",
       "name": "Ornith-1.5 35B-A3B (GGUF Q8_0)",
       "family": "qwen36",

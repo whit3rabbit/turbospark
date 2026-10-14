@@ -220,6 +220,7 @@ run-to-run variation.
 | Gemma 4 26B-A4B, MLX INT4 | 13 GB | 4,096 | 2,108 - 2,182 MiB | 2,250 | 34.6 - 40.7 | yes, 128 experts |
 | Gemma 4 26B-A4B, IQ3 GGUF | 12 GB | 4,096 | ~1,850 MiB | -- | 22.9 - 25.4 | yes |
 | Qwen 3.6 35B-A3B, MLX INT4 | 18 GB | 4,096 | 1,587 - 1,610 MiB | 1,700 | 32.6 - 38.0 | yes, 256 experts |
+| MiniCPM-V 4.7 35B-A3B text trunk, MLX mxfp4 | 21 GB | 4,096 | 1,481 - 1,491 MiB | 1,650 | 24.0 - 25.6 | yes, 256 experts |
 | Qwen3-30B-A3B, Q4_K_M | 17 GB | 4,096 | 2,741 - 2,753 MiB | 2,900 | 16.0 - 28.1 | yes, 128 experts |
 | gpt-oss-20b, MXFP4 | 11 GB | 8,192 | 5,417 - 5,421 MiB | 5,700 | 22.9 - 30.4 | yes, 32 experts |
 | **Qwen3.8-27B, MLX INT4** | 14 GB | 4,096 | **660.0 - 660.3 MiB** | 750 | 18.6 - 21.1 | **no, dense** |
@@ -713,12 +714,19 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 | --- | ---: | --- | --- | --- |
 | Gemma 4 26B-A4B | 37.3105 | `4f5cba92` | `cde6012a` | `a50ed69d` |
 | Qwen 3.6 35B-A3B | 6.2536 | `c5b52f77` | `525cadbc` | `c5b52f77` |
+| MiniCPM-V 4.7 35B-A3B (mxfp4) | 7.5693 | `cfa82442` | `68850b09` | `cfa82442` |
 
 Digests are the leading 8 hex characters of the SHA-256 of the generated
 text; the full values live in each gate's `BASELINES` row. Measured
 2026-08-07 on the machine in the provenance table above, on AC, at 16
 expert-cache slots. Two runs per install in separate processes agreed on
-every digit and every hex character.
+every digit and every hex character. The MiniCPM-V 4.7 row was measured
+2026-10-13 the same way, with three processes agreeing. Its peak sits below
+Qwen 3.6's despite a resident file three times larger (BF16 embed, head and
+GDN projections), because mapped resident weights are not charged to
+`phys_footprint` (Gotcha 40). The extra bytes show up as decode bandwidth
+instead. Its perplexity is a different fine-tune at a different
+quantization, so it does not rank against Qwen 3.6's.
 
 Four things to know before reading those numbers:
 

@@ -14,6 +14,17 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- MLX `mode: "mxfp4"` safetensors intake, first carrier
+  `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` (catalog alias
+  `minicpm-v47-35b-mxfp4`, text-only, `verified`). Routed experts are
+  re-blocked losslessly into GGUF MXFP4 and run on the MXFP4 MoE pair, whose
+  phase-1 activation is now chosen by family (plain SiLU here, `swiglu_oai`
+  for `gpt-oss`). Other mxfp4 matrices are dequantized exactly to BF16. Adds
+  a BF16 embedding lookup kernel, per-tensor group sizes for an mxfp4
+  checkpoint's affine gates, a raw-BF16 manifest slot, and
+  `has_foreign_vision_tower` for VLM wrappers whose tower is not this port's.
+  Frozen gates: perplexity 7.5693, 1,491 MiB peak at 4,096 context and 16
+  slots, 24-26 tok/s on M4 Max.
 - `crates/embeddings` (`turbospark-embeddings`): portable CPU embedding
   models ported from the mlxrs `embeddings` module and checked against
   `transformers` 4.57.1 and `sentence-transformers` 5.1.2. EmbeddingGemma
@@ -34,9 +45,6 @@ when this file gets updated relative to the version bump and the tag.
   zero-star flow DiT, causal-conv AudioVAE) and VoxCPM2 (fusion-concat
   conditioning, two-token mu DiT, reference/continuation prompts, and
   SR-conditioned 48 kHz AudioVAE) TTS family ports with catalog assets.
-- `crates/repack`, `crates/runtime`, `crates/gpu`: MLX MXFP4 quantization
-  and MiniCPM-V 4.7 / Qwen MXFP4 support, with resident BF16 embedding lookup,
-  family-derived SwiGLU activation routing, and synthetic verification gates.
 
 ### Changed
 - `swift/TurboSparkApp`: the Server pane's API key follows the same rule as

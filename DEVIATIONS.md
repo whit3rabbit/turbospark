@@ -2295,3 +2295,47 @@ differed, with the ceiling:
   fluent nonsense rather than an error. The output budget uses the draft's
   real token count; the CLI's whitespace-word count (which floors a CJK
   draft at 256 tokens) was aligned to the same rule in the same change.
+
+## MiniCPM-V 4.7 35B-A3B (MLX mxfp4), landed text-only (2026-10-13)
+
+`mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` (@ `810419dd`) is a MiniCPM-V
+wrapper over an exact Qwen 3.6 35B-A3B trunk, so it needed no family, no
+`ArchConfig` and no decode flow. What it needed was MLX's `mode: "mxfp4"`
+quantization and a way to drop a vision tower that is not this port's. What
+landed: the MLX mxfp4 codec (`gemma4_checkpoint/mlx_mxfp4.rs`, checked against
+an independent OCP decoder, ggml's own decoder and MLX's `quantized_matmul`),
+per-tensor group sizes for an mxfp4 checkpoint's affine INT8 gates, a raw-BF16
+manifest slot, a BF16 embedding lookup kernel (`embed_lookup_bf16`,
+port-local, parity + mutation), the MXFP4 phase-1 activation chosen by family
+instead of hardcoded to `gpt-oss`, and both frozen gates (perplexity 7.5693;
+1,491 MiB peak at 4,096 context and 16 slots). What deliberately differs, with
+the ceiling:
+
+- **Resident mxfp4 matrices are dequantized to BF16 at repack.** That covers
+  full-attention q/k/v/o and the shared expert. There is no resident MXFP4
+  GEMV, and the conversion is exact (E2M1 times a power of two has at most two
+  significant bits), so the cost is bytes rather than numerics: about 0.6 GB
+  more resident, and roughly 18% more bytes read per decoded token on top of
+  the BF16 embed, head and GDN projections the checkpoint already ships. A
+  resident MXFP4 GEMV wrapping `moe_gguf.metal`'s `dequant_mxfp4_row_simd`
+  is the named follow-up. Price it against the measured 24-26 tok/s before
+  writing it, because the BF16 head and GDN projections it would not touch are
+  the larger share.
+- **Routed experts are re-blocked into GGUF MXFP4 rather than read in MLX's
+  layout.** The values are identical and only the nibble order moves, so the
+  `gpt-oss` pair runs them unchanged with `Mxfp4Swiglu::Plain`. A native
+  MLX-layout pair would save the repack shuffle and nothing at decode.
+- **The MiniCPM SigLIP tower and both mergers are dropped.**
+  `arch_registry::has_foreign_vision_tower` names the wrapper, because the
+  `vision_tower.` prefix otherwise means the Qwen tower for this family. Image
+  input on this install is a tower bring-up of its own (27-layer SigLIP at
+  patch 14, `insert_layer_id` 6, canvas mRoPE).
+- **Prefill is sequential.** Every QwenGdnMoe install already prefills this
+  way (the MoE half has no chunked driver), and BF16 has no batched GEMM: the
+  2,940-token oracle case prefills in about 111 s. A chunked MoE driver is the
+  family's gap, not this checkpoint's.
+- **Nothing external has checked the numerics.** The gates are sentinels
+  against their own past. The coherent 400-token greedy and sampled smokes,
+  the EndOfTurn short answer, and the codec's agreement with MLX's own
+  `quantized_matmul` are the evidence. A capture-and-compare against mlx-vlm's
+  `minicpmv4_7` class is the owed cross-engine gate.
