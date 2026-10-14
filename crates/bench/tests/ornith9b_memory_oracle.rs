@@ -36,18 +36,18 @@ const BASELINES: &[oracle_common::ChipBaseline] = &[
     // `full_attention_interval: 4`, so only 8 of them hold KV:
     //   KV    8 full layers x 4 kv heads x 256 head_dim x 2 x 2 B
     //         = 32 KiB/token x 4,096                         = 128.0 MiB
-    //   GDN   24 linear layers x 32 v heads x 128 x 128 x 4 B = 144.0 MiB
+    //   GDN   24 linear layers x 32 v heads x 128 x 128 x 4 B =  48.0 MiB
     //         (delta-rule S; fixed, does NOT grow with context)
     //   conv  24 x 8,192 x 4 taps x 4 B                       =   3.0 MiB
     //   ----------------------------------------------------------------
-    //   sum                                                     275.0 MiB
-    // against 436.5 measured, leaving ~160 MiB of process baseline and host
+    //   sum                                                     179.0 MiB
+    // against 436.5 measured, leaving ~258 MiB of process baseline and host
     // scratch -- unremarkable at a 248,320-wide vocab.
     //
-    // NOTE the GDN term is LARGER than the KV term here, which inverts the
-    // usual reading and is a property of the layer mask: three quarters of
-    // this model's layers are recurrent, and a recurrent layer's state does
-    // not grow with the window while a KV layer's is nothing but the window.
+    // NOTE the KV term still outweighs the GDN term although three quarters
+    // of this model's layers are recurrent: at 4,096 one KV layer holds
+    // 16 MiB and one recurrent layer 2 MiB. The recurrent state does not
+    // grow with the window, so the gap widens with context.
     //
     // Ceiling 520 is the measured peak + ~19%. The three cases' peaks span
     // 1.6 MiB (434.9 / 435.2 / 436.5), so there is almost nothing for the
