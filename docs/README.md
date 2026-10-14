@@ -55,6 +55,7 @@ reproduction commands when you need to verify a claim.
 - [`DEEPSEEK2_PHASE0.md`](DEEPSEEK2_PHASE0.md)
 - [`BONSAI2.md`](BONSAI2.md)
 - [`IMAGE_GENERATION_PHASE0.md`](IMAGE_GENERATION_PHASE0.md)
+- [`MINICPM.md`](MINICPM.md)
 - [`MINIMAX_M2_PHASE0.md`](MINIMAX_M2_PHASE0.md)
 - [`QWEN3VL_PHASE0.md`](QWEN3VL_PHASE0.md)
 - [`QWEN4_EXP.md`](QWEN4_EXP.md)
