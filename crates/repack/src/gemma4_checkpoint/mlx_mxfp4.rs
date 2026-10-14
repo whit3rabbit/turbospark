@@ -26,7 +26,10 @@
 //!
 //! **Exponent byte 255 is refused by both.** MLX decodes it as NaN and ggml
 //! as a finite `2^127`, so passing it through would turn a poisoned weight
-//! into a large one silently.
+//! into a large one silently. **So is any element that overflows f32**
+//! (`|E2M1| >= 4` at exponent 253, `>= 2` at 254), which every decoder,
+//! MLX's included, turns into infinity. That refusal is what keeps the BF16
+//! exactness claim above true at the top of the exponent range.
 
 use super::config::Gemma4Error;
 
@@ -82,6 +85,24 @@ fn check_planes(
             "mxfp4 exponent byte {at} is 0xFF, which MLX reads as NaN and ggml as 2^127; \
              refusing rather than turning a poisoned weight into a finite one"
         ));
+    }
+    // Below 0xFF only the top two exponents can overflow f32: |E2M1| >= 4 at
+    // 253 and >= 2 at 254 reach 2^128. MLX and both consumers here would all
+    // decode those to infinity, so refuse them the same way.
+    for (g, &exponent) in scales.iter().enumerate().filter(|(_, &e)| e >= 253) {
+        let scale = 2.0f32.powi(i32::from(exponent) - 127);
+        for (i, &byte) in weight[g * 16..g * 16 + 16].iter().enumerate() {
+            for (half, code) in [byte & 0x0F, byte >> 4].into_iter().enumerate() {
+                if (e2m1(code) * scale).is_infinite() {
+                    return fail(format!(
+                        "mxfp4 group {g} element {} (code {code:#x}, exponent {exponent}) \
+                         overflows f32 to infinity; refusing rather than passing an \
+                         infinite weight",
+                        i * 2 + half
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }

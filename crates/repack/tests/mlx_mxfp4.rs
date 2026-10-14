@@ -50,7 +50,10 @@ fn bf16_to_f32(bytes: &[u8]) -> Vec<f32> {
 
 #[test]
 fn every_code_at_every_legal_exponent_decodes_identically_both_ways() {
-    for exponent in 0u8..=254 {
+    // 253 and 254 overflow f32 for some codes and are refused for those
+    // (`the_top_two_exponents_refuse_only_codes_that_overflow`), so the
+    // every-code sweep stops at 252.
+    for exponent in 0u8..=252 {
         for shift in 0u8..16 {
             // Every code appears, and elements `j` and `j + 16` never share
             // one, so swapping GGUF's two nibble halves is visible.
@@ -118,6 +121,39 @@ fn exponent_0xff_and_bad_shapes_are_refused() {
     assert!(mlx_mxfp4_reblock_to_gguf("t", &weight[..8], &[127], 1, 16).is_err());
     // A scale plane of the wrong length.
     assert!(mlx_mxfp4_reblock_to_gguf("t", &weight, &[127, 127], 1, 32).is_err());
+}
+
+#[test]
+fn the_top_two_exponents_refuse_only_codes_that_overflow() {
+    // Magnitude index 0..=7 is {0, .5, 1, 1.5, 2, 3, 4, 6}. At 253 the
+    // scale is 2^126, so 4 and 6 reach 2^128. At 254 it is 2^127, so
+    // everything from 2 up does.
+    for (exponent, first_overflowing) in [(253u8, 6u8), (254, 4)] {
+        for magnitude in 0u8..8 {
+            for sign in [0u8, 8] {
+                let code = magnitude | sign;
+                // The probe sits at element 17, a high nibble in MLX's
+                // layout, so a check that read only low nibbles would miss it.
+                let mut codes = [0u8; 32];
+                codes[17] = code;
+                let weight = pack_mlx(&codes);
+                let gguf = mlx_mxfp4_reblock_to_gguf("t", &weight, &[exponent], 1, 32);
+                let bf16 = mlx_mxfp4_dequant_to_bf16("t", &weight, &[exponent], 1, 32);
+                if magnitude >= first_overflowing {
+                    let err = gguf.unwrap_err();
+                    assert!(err.to_string().contains("infinity"), "{err}");
+                    assert!(err.to_string().contains("element 17"), "{err}");
+                    assert!(bf16.is_err(), "code {code:#x} at {exponent}");
+                } else {
+                    let expected = ocp(code, exponent);
+                    assert!(expected.is_finite());
+                    let via_gguf = compute::dequantize_mxfp4(&gguf.unwrap(), 32);
+                    assert_eq!(via_gguf[17], expected, "code {code:#x} at {exponent}");
+                    assert_eq!(bf16_to_f32(&bf16.unwrap())[17], expected);
+                }
+            }
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]

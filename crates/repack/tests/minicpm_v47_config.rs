@@ -84,11 +84,16 @@ fn an_unknown_mode_is_refused() {
 fn affine_checkpoints_still_refuse_a_second_group_size() {
     // The widening is mxfp4-only: the same override under an affine default
     // is a group size the affine kernels cannot pair with the default.
+    // A supported affine default (2-bit at 128) carrying the exact gate
+    // override MiniCPM's mxfp4 checkpoint declares. Asserting the message
+    // matters: without the guard this still fails, later, as an unsupported
+    // (8, 128) shape.
     let json = quant_block(serde_json::json!({
-        "bits": 4, "group_size": 32,
+        "bits": 2, "group_size": 128,
         "language_model.model.layers.0.mlp.gate": {"bits": 8, "group_size": 64}
     }));
-    assert!(parse_gemma4_quantization(&json).is_err());
+    let err = parse_gemma4_quantization(&json).expect_err("refused");
+    assert!(err.to_string().contains("differs from the global"), "{err}");
     let json = quant_block(serde_json::json!({
         "bits": 4, "group_size": 64,
         "language_model.model.layers.0.mlp.gate": {"bits": 8, "group_size": 32}

@@ -317,7 +317,10 @@ fn plan_mxfp4_expert_layer(
             cols,
         )?;
         let per = rows * super::mlx_mxfp4::gguf_mxfp4_row_bytes(cols);
-        // The phase-2 row helper reads its weights with `uint` loads.
+        // Not required by today's kernels: `dequant_mxfp4_row_simd` reads
+        // the weights as `uint8_t`, and only gpt-oss's bias planes are read
+        // as `float`. Kept as a cheap guard so a wider weight load added
+        // later cannot read a misaligned down plane without notice.
         if role == "down" && blob_used % 4 != 0 {
             return Err(Gemma4Error::ShapeMismatch {
                 tensor: name.to_string(),

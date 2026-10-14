@@ -65,9 +65,14 @@ const THREADS_PER_GROUP: u64 = 256;
 
 /// The silu function constant this module's pipelines specialize on, fixed
 /// rather than taken as a parameter. `FC_MOE_ACT_SILU` reaches these kernels
-/// only through `moe_activate_mxfp4`'s PLAIN arm (`alpha <= 0`); the family
-/// that owns this pair runs `Mxfp4Activation::GPT_OSS`, where the flag is
-/// dead. What the value DOES decide is which pipeline specialization
+/// only through `moe_activate_mxfp4`'s PLAIN arm (`alpha <= 0`). The one
+/// family whose chunked prefill reaches this pair today is `gpt-oss`, which
+/// runs `Mxfp4Activation::GPT_OSS`, where the flag is dead. MXFP4 is no
+/// longer gpt-oss only: MiniCPM-V 4.7's experts decode on PLAIN, so a qwen
+/// MoE chunked prefill that adopts this pair would make the flag live, and
+/// it must then match the decode path's `use_silu` (qwen derives it from
+/// `hidden_activation`, which is `silu` for Qwen 3.6). What the value DOES
+/// decide is which pipeline specialization
 /// compiles: the argument encoder and every dispatch must agree on
 /// `constants_key`, and a caller free to pass either value could silently
 /// compile a second copy of the eight-file concatenation mid-prefill
