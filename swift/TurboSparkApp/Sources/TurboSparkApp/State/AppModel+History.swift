@@ -226,7 +226,8 @@ extension AppModel {
             sections.filter { kinds.contains($0.section) }.map(\.content).joined(separator: "\n\n")
         }
         let systemPiece = joined([
-            .userPrompt, .soul, .personality, .agentPrompt, .workspace, .environment, .projectRules
+            .userPrompt, .soul, .personality, .agentPrompt, .workspace, .environment, .projectRules,
+            .contextEvidence,
         ])
         if !systemPiece.isEmpty {
             pieces.append(ContextUsagePiece(kind: .system, label: "System prompt", content: systemPiece))

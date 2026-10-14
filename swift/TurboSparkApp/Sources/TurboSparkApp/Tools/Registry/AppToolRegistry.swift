@@ -188,6 +188,7 @@ public enum AppToolRegistry {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
                     Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
+                    Task { await ContextEngineManager.shared.filesChanged([targetURL], root: rootURL) }
                 }
 
             case _ where editFileAliases.contains(lowerName):
@@ -226,6 +227,7 @@ public enum AppToolRegistry {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
                     Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
+                    Task { await ContextEngineManager.shared.filesChanged([targetURL], root: rootURL) }
                 }
 
             case "apply_patch", "applypatch":
@@ -234,6 +236,11 @@ public enum AppToolRegistry {
                 }
                 let result = try await ApplyPatchExecutor.apply(patchText: patchText, rootURL: rootURL)
                 output = result.summary
+                // Deleted targets too: the context store drops a known path
+                // that no longer exists. A no-op unless this is the active
+                // project with its context engine on.
+                let patchedURLs = result.applied.map { URL(fileURLWithPath: $0.target) }
+                Task { await ContextEngineManager.shared.filesChanged(patchedURLs, root: rootURL) }
                 for op in result.applied where op.type != "delete" {
                     let fileURL = URL(fileURLWithPath: op.target)
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
@@ -349,6 +356,18 @@ public enum AppToolRegistry {
             case "killshell", "kill_shell":
                 output = try ShellCommandRunner.killBackground(
                     arguments: call.arguments, chatID: chatID)
+
+            case _ where ContextEngineToolDefinitions.names.contains(lowerName):
+                let result = try await executeContextTool(
+                    name: lowerName, arguments: call.arguments, project: project, chatID: chatID)
+                if result.isError {
+                    // Reported like every other refused call, so the model
+                    // reads "Error: ..." and can correct its arguments.
+                    throw NSError(domain: "TurboSparkTool", code: 47, userInfo: [
+                        NSLocalizedDescriptionKey: result.output,
+                    ])
+                }
+                output = result.output
 
             case "recall_tool_output":
                 guard let observationID = call.arguments["observation_id"],

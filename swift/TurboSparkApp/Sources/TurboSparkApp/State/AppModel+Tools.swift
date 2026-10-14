@@ -219,6 +219,9 @@ extension AppModel {
         case environment
         case projectRules
         case memory
+        /// The context engine's evidence policy, on project turns with the
+        /// engine on (`AppModel+ContextEvidence`).
+        case contextEvidence
         case tools
         case mcpServers
     }
@@ -286,6 +289,12 @@ extension AppModel {
         // also the memory gate, exactly as it is for project skills.
         if MemoryStore.shared.isModelEnabled, let root = project.rootDirectoryURL, !root.path.isEmpty {
             sections.append((.memory, MemoryPromptBuilder.section(store: MemoryStore.shared, projectRoot: root, approvedOnly: true)))
+        }
+
+        // Constant for the project, so the system prompt stays the same on
+        // every turn whether or not that turn found evidence.
+        if contextEngineActive(for: project) {
+            sections.append((.contextEvidence, Self.contextEvidencePolicy))
         }
 
         let activeMcpServers = AppToolCatalogMcp.visibleServers(global: globalMcpServers, project: project)

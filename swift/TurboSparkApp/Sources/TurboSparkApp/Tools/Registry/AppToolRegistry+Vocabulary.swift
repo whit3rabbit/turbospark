@@ -162,6 +162,7 @@ extension AppToolRegistry {
         "apply_patch", "applypatch",
         "recall_tool_output",
         "search_code", "grep", "search", "grep_search",
+        "context_search", "context_read", "context_outline",
         "run_command", "bash", "shell", "exec", "terminal",
         "bashoutput", "bash_output", "killshell", "kill_shell",
         "websearch", "web_search", "search_web",
@@ -225,6 +226,7 @@ extension AppToolRegistry {
         "apply_patch", "applypatch",
         "multiedit", "multi_edit",
         "search_code", "grep", "search", "grep_search",
+        "context_search", "context_read", "context_outline",
         "run_command", "bash", "shell", "exec", "terminal",
         "notebookedit", "notebook_edit",
         "snip", "extract_snippet",
@@ -248,6 +250,11 @@ extension AppToolRegistry {
         // in `supportedToolNames`, so a disabled codemode disappears from
         // every advertised list the way memoryTools does.
         if lower == CodemodeToolDefinitions.toolName { return CodemodeSettings.isEnabled }
+        // The context tools likewise: only for the project whose context
+        // engine is active, so other turns never see them.
+        if ContextEngineToolDefinitions.names.contains(lower) {
+            return contextToolsAvailable(projectURL: projectURL)
+        }
         if supportedToolNames.contains(lower) { return true }
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL)
         return custom.contains(where: { $0.name.lowercased() == lower })

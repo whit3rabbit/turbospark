@@ -140,6 +140,10 @@ the app deliberately does not run a permanent filesystem polling loop.
   - Offers **"Remove Index"** to purge the `.syntext` cache directory from disk
     and reset memory handles.
 
+The same archive carries syntext's context engine, which the app uses for
+retrieved evidence, conversation recall and the `context_*` tools; see
+[SWIFT_CONTEXT_ENGINE.md](SWIFT_CONTEXT_ENGINE.md).
+
 ## 5. One Rust Library
 
 A process can link only one Rust static library: each one carries its own

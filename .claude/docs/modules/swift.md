@@ -961,6 +961,7 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/SWIFT_CONTEXT_RING.md` | the composer's context-usage indicator; the system prompt as one builder, three consumers |
 | `swift/docs/SYSTEM_PROMPT.md` | system prompt architecture: section ordering, dynamic capabilities, system reminders, token budgets |
 | `swift/docs/SYNTEXT.md` | Syntext indexed code search, project indexing, grep_search, live file buffer, and how syntext is compiled into the one Rust archive (vendoring, bumping) |
+| `swift/docs/SWIFT_CONTEXT_ENGINE.md` | Context engine: project evidence, conversation recall into plaintext stores, `context_*` tools, the evidence budget and placement |
 | `swift/docs/SWIFT_SINGLETON_AUDIT.md` | singleton audit: lifecycle, concurrency safety, shared vs profile instances |
 | `swift/docs/SWIFT_CHAT_SEARCH.md` | the Cmd+K search dialog: what is searched, ghost exclusion, matching semantics |
 | `swift/docs/SWIFT_MODEL_HUB.md` | install, the model hub's badges and filters, `activeLoadGuard`, selecting/opening/unloading, server multi-model attach |

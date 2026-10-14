@@ -276,11 +276,22 @@ extension AppModel {
                                 "Dropped \(fitted.removedTurnCount) older turns to fit the context window."),
                         style: .warning)
                 }
+                // Retrieved evidence fills the room the fit left, in the
+                // question it was retrieved for (`AppModel+ContextEvidence`).
+                // The bounded SKILL.state prompt is left as it is.
+                let baseMessages = usesSkillState
+                    ? fitted.retained
+                    : await self.messagesWithContextEvidence(
+                        fitted.retained, measuredTokens: fitted.measuredTokens,
+                        chatID: turnChatID, step: step, project: turnProject,
+                        promptBudget: Int(promptBudget), session: session,
+                        reasoning: turnReasoning, tools: nativeToolSpecs)
+                try Task.checkCancellation()
                 // Calls the engine parsed, across every segment of the turn
                 // (a continuation after the output limit is a new request).
                 var nativeToolCalls: [GenerationToolCall] = []
                 let completed = try await AppStreamRecovery.generateUntilComplete(
-                    baseMessages: fitted.retained,
+                    baseMessages: baseMessages,
                     options: options,
                     enabled: continuationEnabled,
                     prepareContinuationMessages: { messages, reservedOutputTokens in
@@ -512,6 +523,8 @@ extension AppModel {
     func finishTurnTail(myEpoch: Int, turnChatID: UUID, session: TurboSparkSession?) {
         guard self.generationEpoch == myEpoch else { return }
         self.generating = false
+        // Recall carries the transcript as it now stands, this turn included.
+        self.recordContextTurn(chatID: turnChatID)
         self.phase = .idle
         self.isCancellationPending = false
         self.runTask = nil

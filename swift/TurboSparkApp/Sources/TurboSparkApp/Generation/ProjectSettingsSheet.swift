@@ -30,6 +30,7 @@ struct ProjectSettingsSheet: View {
     @State private var showingPlugins = false
     @State private var showingAdvancedSettings = false
     @State private var syntextIndexEnabled: Bool = false
+    @State private var contextEngineEnabled: Bool = false
     @State private var isIndexing: Bool = false
     @State private var hasSyntextIndex: Bool = false
     @State private var indexStatsMessage: String? = nil
@@ -46,6 +47,13 @@ struct ProjectSettingsSheet: View {
                         VStack(alignment: .leading, spacing: 20) {
                             agentSection
                             syntextIndexingSection
+                            ProjectContextEngineSection(
+                                model: model,
+                                project: editingProject.flatMap { editing in
+                                    model.projects.first { $0.id == editing.id }
+                                },
+                                rootDirectoryPath: rootDirectoryPath,
+                                enabled: $contextEngineEnabled)
                             ProjectPermissionsSectionView(
                                 permissionMode: $permissionMode,
                                 fileReadPermission: $fileReadPermission,
@@ -438,6 +446,7 @@ struct ProjectSettingsSheet: View {
             skillStateEnabled = editing.skillStateEnabled
             guardrailsOption = AppProjectGuardrailsOption.from(optionalBool: editing.forgeGuardrailsEnabled)
             syntextIndexEnabled = editing.syntextIndexEnabled
+            contextEngineEnabled = editing.contextEngineEnabled
             refreshIndexStats()
         } else {
             name = ""
@@ -463,6 +472,7 @@ struct ProjectSettingsSheet: View {
             browserPermission = defaultPerms.browser
             browserOriginAllowlist = defaultPerms.browserOriginAllowlist
             syntextIndexEnabled = false
+            contextEngineEnabled = false
         }
     }
 
@@ -600,6 +610,7 @@ struct ProjectSettingsSheet: View {
             updated.skillStateEnabled = skillStateEnabled
             updated.forgeGuardrailsEnabled = guardrailsPref
             updated.syntextIndexEnabled = syntextIndexEnabled
+            updated.contextEngineEnabled = contextEngineEnabled
             // `editing` is the snapshot from sheet-open. The nested MCP
             // sheet edited the LIVE project (servers, allow/deny rules),
             // so carrying the snapshot's stale copies over `updateProject`
@@ -623,7 +634,8 @@ struct ProjectSettingsSheet: View {
                 maxAutonomousSteps: Int(maxAutonomousSteps),
                 skillStateEnabled: skillStateEnabled,
                 forgeGuardrailsEnabled: guardrailsPref,
-                syntextIndexEnabled: syntextIndexEnabled
+                syntextIndexEnabled: syntextIndexEnabled,
+                contextEngineEnabled: contextEngineEnabled
             )
         }
         onDismiss()

@@ -141,6 +141,12 @@ public enum AppToolCatalog {
             list.append(contentsOf: BrowserToolDefinitions.tools(availableFor: browserAvailability))
         }
 
+        // Every profile that reads files gets them; the final filter keeps
+        // them only for the active context-engine project.
+        if !list.contains(where: { ContextEngineToolDefinitions.names.contains($0.function.name) }) {
+            list.append(contentsOf: ContextEngineToolDefinitions.all)
+        }
+
         let custom = CustomToolManager.shared.resolveEffectiveTools(for: projectURL).map { $0.openAITool }
         list.append(contentsOf: custom)
         let missingToolSearchTools = toolSearchTools.filter { searchTool in
@@ -192,6 +198,7 @@ public enum AppToolCatalog {
             fileTools, terminalTools, taskAgentTools, webTools, projectArtifactTools,
             mcpTools, planningInteractiveTools, memoryTools, automationTools,
             toolSearchTools, codemodeTools, BrowserToolDefinitions.all,
+            ContextEngineToolDefinitions.all,
         ]
         lists.removeAll { $0.isEmpty }
         return Set(lists.joined().map { $0.function.name.lowercased() })
@@ -227,7 +234,7 @@ public enum AppToolCatalog {
             return .mcp
         case "tool_search", "tool_describe":
             return .fileRead
-        case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file", "recall_tool_output":
+        case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file", "recall_tool_output", "context_search", "context_read", "context_outline":
             return .fileRead
         default:
             return nil

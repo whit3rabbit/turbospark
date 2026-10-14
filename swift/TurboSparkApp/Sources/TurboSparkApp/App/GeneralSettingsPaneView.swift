@@ -41,6 +41,8 @@ struct GeneralSettingsPaneView: View {
 
             codeSearchSection
 
+            ContextEngineSettingsSection(model: model)
+
             integrationsSection
 
             softwareUpdatesSection

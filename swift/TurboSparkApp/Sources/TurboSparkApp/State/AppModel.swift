@@ -342,6 +342,19 @@ public final class AppModel: ObservableObject {
     @Published public var syntextIndexingEnabled: Bool = true {
         didSet { AppToolRegistry.syntextIndexingEnabled = syntextIndexingEnabled }
     }
+    /// Whether the context engine runs (`MacAppSettings.contextEngineEnabled`).
+    @Published public var contextEngineEnabled: Bool = true
+    /// Whether finished chat turns are recorded for recall
+    /// (`MacAppSettings.conversationRecallEnabled`).
+    @Published public var conversationRecallEnabled: Bool = true
+    /// Each project store's sync state, mirrored from
+    /// `ContextEngineManager` for the project settings sheet.
+    @Published public var contextEngineSyncStates: [UUID: ContextEngineSyncState] = [:]
+    /// The evidence each chat's current user turn carries, by the id of the
+    /// user row it was retrieved for. Agent steps and continuations of the
+    /// same turn re-attach it unchanged, so their prompt prefix is reused
+    /// (`AppModel+ContextEvidence`).
+    var contextTurnEvidence: [UUID: (anchor: UUID, evidence: ContextEvidence)] = [:]
     /// Trailing message rows that stay verbatim after a compaction.
     @Published public var compactionKeepRecentTurns: Int = 2
     /// Whether a compaction summarizer is running right now, auto or manual.
@@ -1195,6 +1208,11 @@ public final class AppModel: ObservableObject {
         // install that finished mid-reply left the next queued row waiting
         // for a trigger that never came again.
         startNextModelDownloadIfPossible()
+        // Small segments from this turn's recall and file writes merge here,
+        // at idle, when due.
+        Task.detached(priority: .background) {
+            await ContextEngineManager.shared.compactWhenDue()
+        }
         if syntextIndexingEnabled,
            selectedProject?.syntextIndexEnabled == true,
            let rootURL = selectedProject?.rootDirectoryURL {

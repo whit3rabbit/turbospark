@@ -71,7 +71,8 @@ extension AppModel {
         maxAutonomousSteps: Int = 5,
         skillStateEnabled: Bool = false,
         forgeGuardrailsEnabled: Bool? = nil,
-        syntextIndexEnabled: Bool = false
+        syntextIndexEnabled: Bool = false,
+        contextEngineEnabled: Bool = false
     ) -> AppProject {
         // **THE SAME GUARD `selectProject` CARRIES** (state#55). Creating a
         // project SELECTS it, rebinds `worktree` and rebinds `AppHookStore`,
@@ -90,12 +91,14 @@ extension AppModel {
             maxAutonomousSteps: maxAutonomousSteps,
             forgeGuardrailsEnabled: forgeGuardrailsEnabled,
             skillStateEnabled: skillStateEnabled,
-            syntextIndexEnabled: syntextIndexEnabled
+            syntextIndexEnabled: syntextIndexEnabled,
+            contextEngineEnabled: contextEngineEnabled
         )
 
         projects.insert(project, at: 0)
         selectedProjectID = project.id
         refreshSyntextActivation(for: project)
+        refreshContextEngineActivation(for: project)
         // Stale-write hashes are per workspace; see `selectProject`. Creating
         // a project is a workspace switch like any other, and this was the
         // one such site that did not reset them.
@@ -159,6 +162,7 @@ extension AppModel {
         Task { await FileSnapshotStore.shared.reset() }
         if let id, let proj = projects.first(where: { $0.id == id }) {
             refreshSyntextActivation(for: proj)
+            refreshContextEngineActivation(for: proj)
             if let path = proj.rootDirectoryPath, !path.isEmpty {
                 if let existing = worktree {
                     existing.updateRoot(path: path)
@@ -171,6 +175,7 @@ extension AppModel {
         } else {
             worktree = nil
             refreshSyntextActivation(for: nil)
+            refreshContextEngineActivation(for: nil)
         }
         persistProjects()
         reloadSkills()
@@ -246,6 +251,7 @@ extension AppModel {
         }
         if selectedProjectID == updated.id {
             refreshSyntextActivation(for: updated)
+            refreshContextEngineActivation(for: updated)
         }
     }
 
@@ -273,6 +279,10 @@ extension AppModel {
                 try? await SyntextIndexManager.shared.deleteIndex(for: rootURL)
             }
         }
+        // Its context store goes too: the index of its files and the turns
+        // its chats recorded. Those chats lose the project below, so their
+        // later turns record into the chats store instead.
+        removeContextEngineIndex(for: id)
         if wasSelected {
             selectedProjectID = nil
         }

@@ -443,6 +443,11 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     public var updatedAt: Date
     /// Whether Syntext indexing is enabled for this project.
     public var syntextIndexEnabled: Bool
+    /// Whether the context engine indexes this project's files and adds
+    /// retrieved evidence and the `context_*` tools to its turns
+    /// (`swift/docs/SWIFT_CONTEXT_ENGINE.md`). Off by default, like
+    /// `syntextIndexEnabled`: the first sync reads the whole tree.
+    public var contextEngineEnabled: Bool
 
     public init(
         id: UUID = UUID(),
@@ -462,7 +467,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         approveAllProjectMcpServers: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        syntextIndexEnabled: Bool = false
+        syntextIndexEnabled: Bool = false,
+        contextEngineEnabled: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -482,6 +488,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.syntextIndexEnabled = syntextIndexEnabled
+        self.contextEngineEnabled = contextEngineEnabled
     }
 
     enum CodingKeys: String, CodingKey {
@@ -490,6 +497,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         case skillStateEnabled, enabledPlugins, enabledSkills, enabledMcpServers, marketplaces, localPluginPaths, createdAt, updatedAt
         case approvedMcpJsonServers, rejectedMcpJsonServers, approveAllProjectMcpServers
         case syntextIndexEnabled
+        case contextEngineEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -523,6 +531,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
         self.syntextIndexEnabled = try container.decodeIfPresent(Bool.self, forKey: .syntextIndexEnabled) ?? false
+        self.contextEngineEnabled = container.decodeLenient(
+            Bool.self, forKey: .contextEngineEnabled, fallback: false)
     }
 
     /// Resolved URL to the root directory if configured.

@@ -431,6 +431,14 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var agentModeHints: AgentModeHints
     /// Whether Syntext code search and project indexing is enabled globally.
     public var syntextIndexingEnabled: Bool
+    /// Whether the context engine runs at all: per-project file evidence and
+    /// tools (each project still opts in) and conversation recall.
+    public var contextEngineEnabled: Bool
+    /// Whether finished chat turns are recorded into the context engine's
+    /// store so older turns come back as evidence once they leave the window.
+    /// That store is plaintext on disk, unlike the SQLCipher profile vault;
+    /// ghost chats are never recorded (`swift/docs/SWIFT_CONTEXT_ENGINE.md`).
+    public var conversationRecallEnabled: Bool
     /// Global browser preferences. Project permissions and origin grants are stored separately.
     public var browser: BrowserSettings
 
@@ -514,6 +522,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         memoryAutoCaptureEnabled: Bool = false,
         agentModeHints: AgentModeHints = AgentModeHints(),
         syntextIndexingEnabled: Bool = true,
+        contextEngineEnabled: Bool = true,
+        conversationRecallEnabled: Bool = true,
         browser: BrowserSettings = BrowserSettings()
     ) {
         self.contextTokens = contextTokens
@@ -629,6 +639,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.memoryAutoCaptureEnabled = memoryAutoCaptureEnabled
         self.agentModeHints = agentModeHints
         self.syntextIndexingEnabled = syntextIndexingEnabled
+        self.contextEngineEnabled = contextEngineEnabled
+        self.conversationRecallEnabled = conversationRecallEnabled
         self.browser = browser
     }
 
@@ -830,6 +842,10 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             AgentModeHints.self, forKey: .agentModeHints, fallback: AgentModeHints())
         self.syntextIndexingEnabled = c.decodeLenient(
             Bool.self, forKey: .syntextIndexingEnabled, fallback: true)
+        self.contextEngineEnabled = c.decodeLenient(
+            Bool.self, forKey: .contextEngineEnabled, fallback: true)
+        self.conversationRecallEnabled = c.decodeLenient(
+            Bool.self, forKey: .conversationRecallEnabled, fallback: true)
         self.browser = c.decodeLenient(
             BrowserSettings.self, forKey: .browser, fallback: BrowserSettings())
     }

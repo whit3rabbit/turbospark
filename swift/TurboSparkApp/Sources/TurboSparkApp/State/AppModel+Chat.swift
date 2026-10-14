@@ -313,7 +313,9 @@ extension AppModel {
         } else {
             ToolObservationStore.shared.delete(chatID: id)
             try? MemoryLedgerStore.shared.invalidateEvidence(chatID: id, messages: [])
+            forgetContextChat(chatID: id, projectID: chats[index].projectID)
         }
+        contextTurnEvidence[id] = nil
         invalidatePendingTitleGeneration(for: id)
         // A deleted chat's queued drafts are discarded WITH it: the user's
         // deletion is the older intent, and a prompt parked for a chat with

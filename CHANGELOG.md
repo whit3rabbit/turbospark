@@ -13,6 +13,20 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- `swift/TurboSparkApp`: a context engine (syntext's `syntext-context`) for
+  chats and projects. A project that turns it on (project settings, Context
+  Engine) is indexed into a local store; each turn then gets the most relevant
+  passages of its files, packed into the room the window fit left and placed
+  in front of the question, and project agents get `context_search`,
+  `context_read` and `context_outline`. Finished chat turns are recorded, so
+  turns that compaction or the window fit dropped come back as cited evidence
+  when a later question needs them. **Recorded turns are stored unencrypted on
+  disk, outside the SQLCipher profile**; ghost chats are never recorded,
+  deleting a chat deletes its turns, and turning recall off (Settings >
+  General) deletes everything recorded. See
+  `swift/docs/SWIFT_CONTEXT_ENGINE.md`.
+
 ### Changed
 - syntext is compiled into `libturbospark_ffi.a` instead of being linked as
   its own `SyntextFFI.xcframework` beside it. `crates/ffi` depends on

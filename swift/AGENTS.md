@@ -18,6 +18,8 @@ Short seams. Verify each one before release.
 - [Swift skills](docs/SWIFT_SKILLS.md)
 - [Swift storage](docs/storage.md)
 - [Swift memory architecture](docs/SWIFT_MEMORY.md)
+- [Context engine](docs/SWIFT_CONTEXT_ENGINE.md): retrieved evidence,
+  conversation recall (plaintext on disk; never ghost chats), context tools
 - [Swift localization](docs/SWIFT_LOCALIZATION.md)
 - [Swift keyboard and accessibility](docs/KEYBOARD_SHORTCUTS.md)
 - [Swift API workspace](docs/SWIFT_API_WORKSPACE.md)

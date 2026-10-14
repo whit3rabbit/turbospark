@@ -108,6 +108,8 @@ extension AppModel {
         self.memoryAutoCaptureEnabled = settings.memoryAutoCaptureEnabled
         self.syntextIndexingEnabled = settings.syntextIndexingEnabled
         AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
+        self.contextEngineEnabled = settings.contextEngineEnabled
+        self.conversationRecallEnabled = settings.conversationRecallEnabled
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
         self.microcompactEnabled = settings.microcompactEnabled
@@ -278,6 +280,8 @@ extension AppModel {
             memoryAutoCaptureEnabled: memoryAutoCaptureEnabled,
             agentModeHints: agentModeHints,
             syntextIndexingEnabled: syntextIndexingEnabled,
+            contextEngineEnabled: contextEngineEnabled,
+            conversationRecallEnabled: conversationRecallEnabled,
             browser: browserSettings
         )
         // The API key follows its own storage: Keychain, written only when
