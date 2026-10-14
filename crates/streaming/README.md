@@ -1,6 +1,6 @@
 # turbospark-streaming
 
-Routed-expert weight streaming engine (`PreadExpertStreamer`) for loading MoE expert weights on demand via `pread`, coupled with a per-layer slot cache (`ExpertCache`), a parked worker thread pool for parallel chunk reading (`read_pool.rs`), kernel readahead advice (`rdadvice.rs`), memory-mapped in-place expert reading (`mapped_experts.rs`), and Linux `io_uring` readahead scaffolding (`linux_uring.rs`).
+Routed-expert weight streaming engine (`PreadExpertStreamer`) for loading MoE expert weights on demand via `pread`, coupled with a per-layer slot cache (`ExpertCache`), a parked worker thread pool for parallel chunk reading (`read_pool.rs`), kernel readahead advice (`rdadvice.rs`), memory-mapped in-place expert reading (`mapped_experts.rs`), and a Linux `io_uring` + `O_DIRECT` read source (`linux_uring.rs`; the ring is proven by a Linux-only test, and nothing selects it yet).
 
 Downstream workspace crates import this package via the `streaming` alias:
 
@@ -19,7 +19,7 @@ In Mixture-of-Experts (MoE) models, total parameter counts frequently exceed ava
   - `rdadvice.rs`: Calling macOS `fcntl` with `F_RDADVISE` for kernel readahead hints.
   - `disk_io.rs`: Calling `proc_pid_rusage` and setting `F_NOCACHE` via `fcntl` for hardware I/O profiling.
   - `read_pool.rs`: Sharing raw pointer destinations across parked worker threads during coordinated parallel chunk reads.
-  - `linux_uring.rs`: Direct Linux `io_uring_setup` and `mmap` syscalls without libc.
+  - `linux_uring.rs`: Raw `io_uring_setup`/`io_uring_enter` through `libc::syscall` (no liburing binding) and the ring `mmap`s, with the UAPI constants pinned by a Linux-only test.
 
 ## Key Modules
 
@@ -31,7 +31,7 @@ In Mixture-of-Experts (MoE) models, total parameter counts frequently exceed ava
 - `aligned_slot.rs`: Page-aligned buffer allocations required for unbuffered direct disk I/O.
 - `disk_io.rs`: Physical hardware read accounting (`ExpertIoStats`) and the `F_NOCACHE` profiling seam.
 - `stream_layout.rs`: Expert blob offset, stride, and byte layout calculation helpers.
-- `linux_uring.rs`: Linux `io_uring` submission/completion queue implementation and Linux cgroup memory probe scaffolding.
+- `linux_uring.rs`: Linux `io_uring` submission/completion queue implementation (the cgroup memory probe lives in `crates/model-io/src/cgroup.rs`).
 
 ## Development & Test Commands
 

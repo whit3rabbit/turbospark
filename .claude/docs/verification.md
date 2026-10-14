@@ -277,6 +277,13 @@ cargo check --target x86_64-unknown-linux-gnu \
   -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io \
   -p turbospark-image -p turbospark-coreml
 
+# On a LINUX host, also run the streaming tests. A check compiles
+# `linux_uring.rs`; only a test executes its syscalls, and the first Linux
+# run found four wrong io_uring flags that a green check had always passed
+# (Gotcha 8). The ring test prints SKIPPED where a sandbox blocks io_uring;
+# that run proves nothing about the ring.
+cargo test -p turbospark-streaming
+
 # Run the CLI (validates the invocation; on macOS also attempts real
 # generation against --model in all three modes: --prompt (raw text),
 # --messages-file (JSON conversation, chat template applied), and --chat

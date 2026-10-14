@@ -153,8 +153,8 @@ System architecture extensions, platform ports, and developer tooling.
   - `crates/runtime/src/families/dsv4/` [NEW]
 
 #### 4. Linux Backend & Vulkan Compute (Portable Architecture)
-- **Status**: `io_uring` + `O_DIRECT` read source landed in `crates/streaming/src/linux_uring.rs` (auto = pread until proven on Linux), `posix_fadvise(WILLNEED)` wired, and `crates/model-io/src/cgroup.rs` cgroup-v2 memory limit probe added.
-- **Still Open**: Linux hardware session to run the uring path and flip default; runtime cfg arm consuming the cgroup probe; Vulkan compute backend (`ComputeStrategy` dispatch trait design and shader pipeline).
+- **Status**: `io_uring` + `O_DIRECT` read source landed in `crates/streaming/src/linux_uring.rs` (auto = pread), `posix_fadvise(WILLNEED)` wired, and `crates/model-io/src/cgroup.rs` cgroup-v2 memory limit probe added. The first Linux run (2026-10-14, kernel 6.18, ext4) found the ring could not complete a read: four flag constants were off by bit position and the CQ cursor was unmasked. Fixed; the ring now has a buffered and `O_DIRECT` parity test, mutation-checked against all five defects.
+- **Still Open**: wire the streamer to the ring, prove it bit for bit against `pread` on a real install, and measure it before any default flip; a Linux CI leg that runs `cargo test -p turbospark-streaming` (today it only checks); runtime cfg arm consuming the cgroup probe; Vulkan compute backend (`ComputeStrategy` dispatch trait design and shader pipeline).
 
 #### 5. Server Multi-Runner Concurrency Real-Model Evaluation
 - **Status**: Multi-runner pool landed as `--pool-size N` on `turbospark-server` with `PoolRegistry`. Repeatable `--model` landed for multiple generation installs.

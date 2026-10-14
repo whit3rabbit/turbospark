@@ -15,6 +15,11 @@ Token callbacks, completion splitting, cancellation, and protocol adapters.
   decoder needs it to close a span, call its finish path explicitly.
 - Keep cancellation, end-of-turn, stop reason, and callback ordering stable.
 - Test raw streaming and structured/tool streaming separately.
+- `linux_uring.rs` is gated only by its Linux tests, not by a cross-target
+  check: its io_uring flags are hand-copied UAPI, and a wrong bit is another
+  valid flag. Run the crate's tests on Linux after touching it.
+- Price an `ExpertCache` policy change with
+  `scripts/expert_policy_replay.py` before building it.
 
 ## Checks
 

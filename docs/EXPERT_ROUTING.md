@@ -103,6 +103,12 @@ is two capture batches and one script invocation, so any future claim of
 domain-concentrated routing (a different family, a domain far narrower
 than "coding") should arrive with its own histogram.
 
+The same captures price cache POLICY: `scripts/expert_policy_replay.py`
+replays them back to back through the engine's LFU, LRU, decayed LFU, a
+cross-layer pool and Belady's offline optimum. What it is for, and the
+long-lived-runner question none of the numbers on this page could see, are
+in `docs/MOE_PRIOR_ART.md`.
+
 What remains open, and is a different mechanism entirely, is
 abliteration's actual trick applied at repack time: a directional weight
 edit for behavior steering. That is ROADMAP Later/Optional ("Directional
