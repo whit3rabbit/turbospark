@@ -442,6 +442,48 @@ pub struct OcrResult {
     pub stats: OcrStats,
 }
 
+impl OcrResult {
+    /// The text without layout markup; pages are separated by a blank
+    /// line.
+    pub fn plain_text(&self) -> String {
+        plain_text(&self.text)
+    }
+}
+
+/// Strips the model's layout markup: `<|det|>...<|/det|>` boxes are
+/// dropped, `<PAGE>` starts a new page, and any other `<|...|>` control
+/// token is removed. Lines are trimmed and empty ones dropped.
+pub fn plain_text(raw: &str) -> String {
+    let mut out = String::new();
+    let mut rest = raw;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("<|det|>") {
+            rest = after.find("<|/det|>").map_or("", |end| &after[end + "<|/det|>".len()..]);
+        } else if let Some(after) = rest.strip_prefix("<PAGE>") {
+            out.push_str("\n\u{c}\n");
+            rest = after;
+        } else if rest.starts_with("<|") {
+            rest = rest.find("|>").map_or("", |end| &rest[end + 2..]);
+        } else {
+            let ch = rest.chars().next().expect("non-empty");
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
+    }
+    let pages: Vec<String> = out
+        .split('\u{c}')
+        .map(|page| {
+            page.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|p| !p.is_empty())
+        .collect();
+    pages.join("\n\n")
+}
+
 /// Progress of one read.
 #[derive(Debug, Clone, PartialEq)]
 pub enum OcrEvent {
@@ -937,6 +979,15 @@ mod tests {
         let centre = 512 * PAGE_SIZE + 512;
         assert!((p.pixels[centre] - 1.0).abs() < 1e-6, "white content maps to 1");
         assert!(OcrPage::from_rgb(&rgb, 5, 2).is_err());
+    }
+
+    #[test]
+    fn plain_text_strips_markup_and_splits_pages() {
+        let raw = "<PAGE><|det|>title [1, 2, 3, 4]<|/det|>Title\n<|det|>text [5]<|/det|>Body line.\n\
+                   <PAGE><|det|>text [6]<|/det|>Second <|ref|>page|<|/ref|>.";
+        assert_eq!(plain_text(raw), "Title\nBody line.\n\nSecond page|.");
+        assert_eq!(plain_text("no markup"), "no markup");
+        assert_eq!(plain_text("<|det|>unterminated"), "");
     }
 
     #[test]
