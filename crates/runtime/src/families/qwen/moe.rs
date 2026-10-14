@@ -6,14 +6,30 @@ use half::f16;
 use model_io::ResidentIndex;
 
 use crate::families::qwen::{layer_tensor, RealQwenState};
+pub(crate) use crate::moe_prefill_pipeline::RoutedSlot;
 use crate::real_forward_dispatch::{
     encode_gemv_any, encode_moe_phase1_any, encode_moe_phase2_any, router_topk_gemma4,
 };
 use crate::real_forward_init::MappedResidency;
 use crate::real_forward_layout::RoutedLayerLayout;
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
-use crate::real_forward_utils::f16_slice_to_le_bytes;
+use crate::real_forward_utils::{entry, f16_slice_to_le_bytes};
 
+/// One token's routed MoE half, plus its shared expert and the post-FFN
+/// residual add.
+///
+/// `slot` is the sequential path's `RoutedSlot::sequential()` on decode
+/// (token 0, bank 0, nothing protected), which is what keeps decode's bytes
+/// unchanged. The chunked prefill driver passes the token's row inside the
+/// micro-batch, which selects the `moe_x`, `router_logits_f32` and
+/// `scratch.x` rows, and the bank for the two resources the HOST writes per
+/// token (`routing_w` and the routed argument buffer), matching
+/// `families/qwen4/moe.rs`.
+///
+/// Returns the shared-expert overlap pass (when that seam is on), which the
+/// caller must keep until its final wait, and the cache slots this pass
+/// bound, which the chunked driver hands to the next token as
+/// `RoutedSlot::protect` while this command buffer is in flight.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_qwen_layer_moe(
     context: &mut gpu::MetalContext,
@@ -26,6 +42,7 @@ pub(crate) fn encode_qwen_layer_moe(
     slot_buffers: &[Vec<gpu::MetalBuffer>],
     mapped: &MappedResidency,
     routed_blobs: Option<&gpu::RoutedBlobsBuffer>,
+    routed_blobs_banks: &[gpu::RoutedBlobsBuffer],
     moe_offsets: &[gpu::MoeExpertOffsets],
     routed_layouts: &[RoutedLayerLayout],
     router_hist: &mut Option<crate::router_hist::RouterHistogram>,
@@ -37,10 +54,17 @@ pub(crate) fn encode_qwen_layer_moe(
     num_experts: usize,
     top_k: usize,
     use_silu: bool,
-) -> Result<Option<gpu::CommittedPass>, RealForwardError> {
+    slot: &RoutedSlot,
+) -> Result<(Option<gpu::CommittedPass>, Vec<usize>), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
+    let rw_off = (slot.bank * gpu::MAX_STREAMED_EXPERTS * 2) as u64;
+    let x_row = (slot.token * hidden * 2) as u64;
     let t_router = Instant::now();
-    let router_logits = gpu::read_f32_buffer(&qwen.router_logits_f32, num_experts);
+    let router_logits = gpu::read_f32_buffer_at(
+        &qwen.router_logits_f32,
+        slot.token * num_experts,
+        num_experts,
+    );
     let (selected, route_weights) =
         router_topk_gemma4(&router_logits, top_k, &qwen.per_expert_ones);
     if let Some(hist) = router_hist.as_mut() {
@@ -66,6 +90,7 @@ pub(crate) fn encode_qwen_layer_moe(
             index,
             scratch,
             qwen,
+            x_row,
             layer,
             hidden,
             inter,
@@ -106,7 +131,9 @@ pub(crate) fn encode_qwen_layer_moe(
             ))
         })?;
         let t_plan = Instant::now();
-        let plan = streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
+        // `slot.protect` is empty on the sequential decode path, so this is
+        // the same plan decode always made there.
+        let plan = streamer.plan_experts_cached(&selected, &slot.protect);
         let (requests, hits) = (plan.experts.len() as u64, plan.hits as u64);
         phases.expert_requests += requests;
         phases.expert_hits += hits;
@@ -133,7 +160,11 @@ pub(crate) fn encode_qwen_layer_moe(
     for (slot, &(_, weight)) in ordered.iter().enumerate() {
         routing16[slot] = f16::from_f32(weight);
     }
-    gpu::write_buffer_bytes(&scratch.routing_w, 0, &f16_slice_to_le_bytes(&routing16));
+    gpu::write_buffer_bytes(
+        &scratch.routing_w,
+        rw_off as usize,
+        &f16_slice_to_le_bytes(&routing16),
+    );
 
     // The two arms differ only in WHERE a blob lives, never in the order the
     // slots are dispatched: that stays the router's own ranking in both,
@@ -166,7 +197,14 @@ pub(crate) fn encode_qwen_layer_moe(
             .map(|&(slot, _)| (&layer_slots[slot], 0u64))
             .collect()
     };
-    let routed = routed_blobs.ok_or_else(|| {
+    // Selected by bank, matching `families/qwen4/moe.rs`: a pipelined bank
+    // rebinds its OWN argument-buffer object rather than the one a still
+    // in-flight command buffer's dispatches may be reading.
+    let routed = match slot.bank {
+        0 => routed_blobs,
+        n => routed_blobs_banks.get(n - 1),
+    }
+    .ok_or_else(|| {
         RealForwardError::Unsupported("install has no routed-blob buffer".to_string())
     })?;
     let offsets = &moe_offsets[layer];
@@ -182,7 +220,7 @@ pub(crate) fn encode_qwen_layer_moe(
 
     if shared_submission.is_none() {
         encode_shared_expert(
-            context, pass, weights, index, scratch, qwen, layer, hidden, inter, use_silu,
+            context, pass, weights, index, scratch, qwen, x_row, layer, hidden, inter, use_silu,
         )?;
     }
 
@@ -192,7 +230,7 @@ pub(crate) fn encode_qwen_layer_moe(
         pass,
         routed,
         offsets,
-        (&qwen.moe_x, 0),
+        (&qwen.moe_x, x_row),
         (&scratch.moe_acts, 0),
         hidden as u32,
         moe_inter,
@@ -207,7 +245,7 @@ pub(crate) fn encode_qwen_layer_moe(
         routed,
         offsets,
         (&scratch.moe_acts, 0),
-        (&scratch.routing_w, 0),
+        (&scratch.routing_w, rw_off),
         (&qwen.h1, 0),
         (&qwen.h2, 0),
         hidden as u32,
@@ -216,10 +254,70 @@ pub(crate) fn encode_qwen_layer_moe(
         use_silu,
     )
     .map_err(gpu_err)?;
-    gpu::encode_residual_add(context, pass, (&scratch.x, 0), (&qwen.h2, 0), hidden as u32)
-        .map_err(gpu_err)?;
+    gpu::encode_residual_add(
+        context,
+        pass,
+        (&scratch.x, x_row),
+        (&qwen.h2, 0),
+        hidden as u32,
+    )
+    .map_err(gpu_err)?;
 
-    Ok(shared_submission)
+    Ok((
+        shared_submission,
+        ordered.iter().map(|&(slot, _)| slot).collect(),
+    ))
+}
+
+/// The INT8 router GEMV for one token: `moe_x`'s row `x_row` in, f32
+/// logits out at `router_logits_f32`'s row `logits_row`. Shared by the
+/// sequential flow (row 0, row 0) and the MoE chunked driver (row t, row t),
+/// so the two call sites cannot drift apart.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_qwen_router(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    qwen: &RealQwenState,
+    layer: usize,
+    hidden: usize,
+    num_experts: usize,
+    x_row: u64,
+    logits_row: u64,
+) -> Result<(), RealForwardError> {
+    let base = index.header.index_size;
+    let router_name = layer_tensor(layer, "mlp.gate.weight");
+    let router = entry(index, &router_name)?;
+    if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
+        return Err(RealForwardError::Unsupported(format!(
+            "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got dtype {} \
+             with {} packed bytes",
+            router.dtype, router.size_bytes
+        )));
+    }
+    gpu::encode_router_gemv_gemma4(
+        context,
+        pass,
+        (
+            weights.buffer(),
+            weights.gpu_offset(router.file_offset - base),
+        ),
+        (
+            weights.buffer(),
+            weights.gpu_offset(router.scale_offset - base),
+        ),
+        (
+            weights.buffer(),
+            weights.gpu_offset(router.bias_offset - base),
+        ),
+        (&qwen.moe_x, x_row),
+        (&qwen.router_ones, 0),
+        (&qwen.router_logits_f32, logits_row),
+        num_experts as u32,
+        hidden as u32,
+    )
+    .map_err(RealForwardError::Gpu)
 }
 
 /// Keep identical shared arithmetic in the inline and overlapping arms.
@@ -231,6 +329,7 @@ fn encode_shared_expert(
     index: &ResidentIndex,
     scratch: &DecodeScratch,
     qwen: &RealQwenState,
+    x_row: u64,
     layer: usize,
     hidden: usize,
     inter: usize,
@@ -245,7 +344,7 @@ fn encode_shared_expert(
         &layer_tensor(layer, "mlp.shared_expert.gate_proj.weight"),
         inter,
         hidden,
-        (&qwen.moe_x, 0),
+        (&qwen.moe_x, x_row),
         (&scratch.ffn_gate, 0),
     )?;
     encode_gemv_any(
@@ -256,7 +355,7 @@ fn encode_shared_expert(
         &layer_tensor(layer, "mlp.shared_expert.up_proj.weight"),
         inter,
         hidden,
-        (&qwen.moe_x, 0),
+        (&qwen.moe_x, x_row),
         (&scratch.ffn_up, 0),
     )?;
     let act = if use_silu {
@@ -292,7 +391,7 @@ fn encode_shared_expert(
         &layer_tensor(layer, "mlp.shared_expert_gate.weight"),
         1,
         hidden,
-        (&qwen.moe_x, 0),
+        (&qwen.moe_x, x_row),
         (&qwen.shared_gate_logit, 0),
     )?;
     gpu::encode_sigmoid_scalar_mul(

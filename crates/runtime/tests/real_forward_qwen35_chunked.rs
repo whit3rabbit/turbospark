@@ -423,13 +423,15 @@ fn an_open_drafter_is_refused_by_name() {
     );
 }
 
-/// The MoE half (`qwenGdnMoe`) stays refused by name, proving the dense-only
-/// scope holds even though `RealQwenState` serves both families from one
-/// flow. Mirrors `real_forward_llama_dense_chunked.rs`'s equivalent case for
-/// its own MoE sibling.
+/// The MoE half (`qwenGdnMoe`) has its own driver since 2026-10-14
+/// (`families/qwen/moe_prefill.rs`, tested in `real_forward_qwen_moe_chunked.rs`).
+/// What this case pins is the DISPATCH: a MoE install must reach that driver
+/// and never this file's dense one. A forced `TURBOSPARK_BATCHED_GEMV` tells
+/// them apart, because the dense driver's batched arm would accept these
+/// INT4 weights while the MoE driver refuses the seam by name.
 #[test]
-fn a_moe_qwen_install_is_still_refused_by_name() {
-    let dir = temp_dir("moe-refused");
+fn a_moe_qwen_install_is_dispatched_to_the_moe_driver() {
+    let dir = temp_dir("moe-dispatch");
     let arch =
         build_synthetic_qwen_gdn_moe_install(&dir, VOCAB, LAYERS, MOE_EXPERTS, "tiny-qwen36")
             .expect("MoE qwen install builds");
@@ -437,17 +439,17 @@ fn a_moe_qwen_install_is_still_refused_by_name() {
     let _ = std::fs::remove_dir_all(&dir);
 
     assert!(
-        !runner.supports_chunked_prefill(),
-        "a MoE qwen install must not report chunked-prefill support"
+        runner.supports_chunked_prefill(),
+        "a MoE qwen install now reports chunked-prefill support"
     );
-
+    runner.set_batched_gemv_prefill(true);
     let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
     let err = runner
         .prefill_chunk(&PROMPT, 0, &mut logits)
-        .expect_err("a MoE qwen install must be refused by the chunked driver");
+        .expect_err("the MoE driver refuses the batched resident-GEMV seam");
     assert!(
-        err.to_string().contains("qwenGdnDense") || err.to_string().contains("dense qwen"),
-        "the refusal must name what IS served; got {err}"
+        err.to_string().contains("qwen MoE chunked driver"),
+        "a MoE install must reach the MoE driver, not the dense one; got {err}"
     );
 }
 
