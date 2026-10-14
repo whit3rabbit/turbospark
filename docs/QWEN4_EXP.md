@@ -796,7 +796,11 @@ The catalog alias is `qwen4exp-swift-iq2-xs`, pinned to
 `ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF` revision
 `b22d729eae29b5796f76fb70f91aef549b9fc52c`. Its GGUF sidecars are pinned to
 `ukisai/Swift1.5-Qwen3.8-Flash-Next` revision
-`0bd4fe22431372cdad1979267d3ab45aa7e6150a`. The actual network install
+`0bd4fe22431372cdad1979267d3ab45aa7e6150a`. (On 2026-10-13 that repository
+was renamed upstream to `ukisai/Swift1.5-Qwen3.8-Flash-Next`; the catalog
+now names the new id at the same revision. The hub's
+`repository_id_matches_request` check refused the old name because the API
+answers with the new one.) The actual network install
 test passed manifest loading and SHA-256 checks for all installed model
 files. This run set `TURBOSPARK_QWEN4EXP_DISABLE_SOURCE_CACHE=1`, so it kept
 one model copy on disk. It omitted Rust's `--exact` filter, which also

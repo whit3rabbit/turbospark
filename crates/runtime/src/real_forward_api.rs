@@ -107,6 +107,18 @@ impl RealForwardRunner {
         self.expert_cache_slots
     }
 
+    /// The routed slot cache's eviction policy, or `None` when no layer
+    /// streams (a dense install, or mapped residency). Printed beside
+    /// [`Self::expert_cache_slots`] so a run names the cache arm it measured
+    /// (`TURBOSPARK_EXPERT_CACHE_DECAY`).
+    pub fn expert_cache_policy(&self) -> Option<streaming::ExpertCachePolicy> {
+        self.streamers
+            .iter()
+            .flatten()
+            .next()
+            .map(|s| s.cache_policy())
+    }
+
     /// Which residency mode this runner actually opened with (ROADMAP P1 item 3).
     /// Worth printing next to any throughput or footprint number the same
     /// way [`Self::expert_cache_slots`] is, because a mapped row and a

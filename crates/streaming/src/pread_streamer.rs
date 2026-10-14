@@ -96,6 +96,11 @@ impl PreadExpertStreamer {
         })
     }
 
+    /// The slot cache's eviction policy, for startup reporting.
+    pub fn cache_policy(&self) -> ExpertCachePolicy {
+        self.cache.cache_policy()
+    }
+
     /// Cumulative miss-read byte accounting for this streamer. Zero
     /// `samples` means the physical-I/O probe was off or unavailable, so
     /// `bytes_physical` says nothing at all rather than saying "no disk

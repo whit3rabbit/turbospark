@@ -129,3 +129,62 @@ fn coalesced_adjacent_advice_ranges_drops_zero_length_ranges() {
     let merged = coalesced_adjacent_advice_ranges(&ranges);
     assert_eq!(merged, vec![(5, 10)]);
 }
+
+/// Replays a hot set that drifts: expert 1 is hammered, then the workload
+/// moves to experts 2 and 3. Returns (hits during the second phase, final
+/// residency).
+fn drifting_hot_set(policy: ExpertCachePolicy) -> (usize, Vec<Option<usize>>) {
+    let mut cache = ExpertCache::new(2, policy, 16);
+    for _ in 0..8 {
+        let plan = cache.plan(&[1], &HashSet::new());
+        cache.commit_plan(&plan);
+    }
+    let mut hits = 0;
+    for step in 0..12 {
+        let expert = if step % 2 == 0 { 2 } else { 3 };
+        let plan = cache.plan(&[expert], &HashSet::new());
+        cache.commit_plan(&plan);
+        hits += plan.hits;
+    }
+    (hits, cache.resident_experts_snapshot())
+}
+
+#[test]
+fn cumulative_lfu_pins_a_stale_hot_expert() {
+    // The failure the decaying policy exists for: expert 1's old count
+    // outranks the new working set, so 2 and 3 evict each other forever.
+    let (hits, resident) = drifting_hot_set(ExpertCachePolicy::Lfu);
+    assert_eq!(hits, 0);
+    assert!(resident.contains(&Some(1)), "resident = {resident:?}");
+}
+
+#[test]
+fn decaying_lfu_lets_a_stale_hot_expert_go() {
+    let (hits, resident) = drifting_hot_set(ExpertCachePolicy::LfuDecay { interval: 2 });
+    assert!(!resident.contains(&Some(1)), "resident = {resident:?}");
+    assert!(resident.contains(&Some(2)) && resident.contains(&Some(3)));
+    // Every step after the first eviction of expert 1 is a hit.
+    assert_eq!(hits, 10);
+}
+
+#[test]
+fn decay_with_a_long_interval_behaves_like_cumulative_lfu() {
+    // An interval longer than the trace never halves, so the policy must
+    // reduce exactly to plain LFU rather than differ in some other way.
+    assert_eq!(
+        drifting_hot_set(ExpertCachePolicy::LfuDecay { interval: 1_000 }),
+        drifting_hot_set(ExpertCachePolicy::Lfu)
+    );
+}
+
+#[test]
+fn decay_interval_parsing_refuses_non_positive_and_garbage() {
+    assert_eq!(
+        ExpertCachePolicy::lfu_decay_from_str("32"),
+        Ok(ExpertCachePolicy::LfuDecay { interval: 32 })
+    );
+    assert!(ExpertCachePolicy::lfu_decay_from_str("0").is_err());
+    assert!(ExpertCachePolicy::lfu_decay_from_str("-4").is_err());
+    assert!(ExpertCachePolicy::lfu_decay_from_str("fast").is_err());
+    assert!(ExpertCachePolicy::lfu_decay_from_str("").is_err());
+}
