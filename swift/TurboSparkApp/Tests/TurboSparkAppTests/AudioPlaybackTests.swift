@@ -33,6 +33,25 @@ final class AudioPlaybackTests: XCTestCase {
         XCTAssertNil(controller.error)
     }
 
+    /// A new generation selects its own take without going through `select`.
+    /// The player still held the previous take, so Play replayed the old script.
+    @MainActor func testChangingSelectionDropsPlayerOfThePreviousTake() throws {
+        let (controller, root, wav) = try fixture()
+        defer { controller.shutdown(); try? FileManager.default.removeItem(at: root) }
+        let first = UUID(), second = UUID()
+        controller.selectedID = first
+        let player = try AVAudioPlayer(contentsOf: wav)
+        controller.player = player
+        controller.selectedID = first
+        XCTAssertTrue(controller.player === player, "Re-selecting the same take must not interrupt it")
+        controller.selectedID = second
+        XCTAssertNil(controller.player)
+        XCTAssertNil(controller.playbackURL)
+        controller.playPause()
+        XCTAssertFalse(player.isPlaying, "Play must not resume the previous take")
+        XCTAssertFalse(controller.isPlaying)
+    }
+
     @MainActor func testRenderCompletionAfterRecordingSetupCannotActivatePlayer() throws {
         let (controller, root, wav) = try fixture()
         defer { controller.shutdown(); try? FileManager.default.removeItem(at: root) }

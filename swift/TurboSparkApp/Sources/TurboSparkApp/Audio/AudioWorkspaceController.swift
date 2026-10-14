@@ -14,7 +14,10 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var page: AudioWorkspacePage = .library { didSet { persistPreferences() } }
     @Published var recipe = AudioRecipe() { didSet { persistPreferences() } }
     @Published var items: [AudioLibraryItem] = []
-    @Published var selectedID: UUID?
+    // Several paths select a take by assigning here (a new generation, an
+    // import, a recording), not through `select`. A player left over from the
+    // previous selection would otherwise be resumed by Play and replay the old take.
+    @Published var selectedID: UUID? { didSet { if selectedID != oldValue { stopPlayback() } } }
     @Published var profiles: [AudioProfile] = []
     @Published var isRefreshingModels = false
     @Published var modelCatalogError: String?
