@@ -623,7 +623,9 @@ fn argmax(values: &[f32]) -> usize {
     best
 }
 
-fn is_special_piece(piece: &str) -> bool {
+/// True for control pieces the decoder may emit but a transcript never
+/// shows. Public so the Core ML Parakeet host filters the same set.
+pub fn is_special_piece(piece: &str) -> bool {
     (piece.starts_with("<|") && piece.ends_with("|>")) || piece == "<unk>" || piece == "<pad>"
 }
 
