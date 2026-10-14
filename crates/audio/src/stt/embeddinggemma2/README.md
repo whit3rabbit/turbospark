@@ -74,7 +74,9 @@ Checked in this branch against the pinned files:
 | The 768 to 128 projection has orthonormal columns | `P^T P` off-diagonal max 4.4e-5, diagonal 1 +- 6e-5. This is consistent with a PCA basis but does not prove how it was built. |
 | Scorer padding is not zero | Columns 229457..229459 are three copies of one vector (norm 0.436). Reranking skips ids past the table, so a padding column can only cost a shortlist slot. |
 | Word table layout | `word_unit_f16.bin` is exactly `229457 * 768 * 2` bytes, headerless; sampled rows have unit norm within 2e-3. |
-| Vocabulary contents | 229457 entries, 229304 distinct strings (153 strings appear twice under different ids), last entry `<rep>`. |
+| Vocabulary contents | 229457 entries, 229304 distinct strings (153 strings appear twice under different ids), last entry `<rep>`. Layout: a 320-entry head block (ids 0..319, plain and apostrophe-prefixed common and programming words), an alphabetically sorted main list (ids 320..229426), 30 appended custom words (`haku`, `coreml`, `mlx`, `parakeet`, ...), then `<rep>`. |
+| The word table is the stock text model, no prompt | Every word embedded with `google/embeddinggemma-2` @ `914f7f89142e33e77833254d9c9b90c3cef7303b` in float32, no task prefix, mean pooling, L2 norm (`scripts/probe_embeddinggemma2_word_table.py`): median cosine to its row 0.99999, 99% of rows >= 0.99996, 229014 of 229456 rows >= 0.999. On a 64-word sample every task prefix scores worse (best: `task: search result \| query: `, mean 0.90). The 30 appended custom words match at >= 0.99997, so Haku added words by embedding the raw string. |
+| Some rows were changed | 442 rows are below 0.999: 142 in the head block (cosine 0.88 to 0.97, the first id of most duplicate pairs, whose second id is the stock row) and 300 frequent function words in the main list (`and`, `the`, `can`, ...; 0.980 to 0.995). `<rep>` is not an embedding of its string (cosine 0.02). These rows look trained, but how is not known. |
 | Calibration | `reader_P6.json` (`reader_G795_L11_big.json` upstream): scale 39.85666275024414, bias -0.4626207649707794, `arm.layers = ["L11"]`, d 768, 12 layers, 12 heads, lr 3e-4. It names no loss. |
 | Encoder and reader interfaces | `metadata.json`: encoder `input_features [1,2000,128]` f32 and `feature_mask [1,2000]` to `l11 [1,500,1024]` f16; reader `l11 [1,500,1024]` and `mask [1,500]` to `vec [1,500,768]` and `blank [1,500,1]` f16. The reader op histogram (1 reduceSum, pow, sqrt, realDiv) is consistent with an in-graph L2 normalization of `vec`. |
 | The scorer's top-k returns sorted descending uint16 block ids | `model.mil`: `topk(k=16, ascending=false, sort=true, output_indices_dtype="uint16")`, cast to int32. |
@@ -102,7 +104,8 @@ Reported elsewhere and not reproduced here:
 | Question | Current choice |
 |---|---|
 | What `<rep>` means | Rendered as a repeat of the preceding word and dropped at the start. Unverified: it is the obvious reading of a word-level CTC repeat marker, but the reference binary was not inspected for it. |
-| Collapse by id or by string | By id (the reference stores indices). Two adjacent frames on duplicate strings therefore render the word twice. |
+| Collapse by id or by string | By id (the reference stores indices). The duplicates are deliberate (an adjusted head row and a stock main row for the same word), so adjacent frames that alternate between the two ids render the word twice. Collapsing by string avoids that but would also merge a true repeat with no blank between; decide with real-audio paths. |
+| Adding words | Embed the raw lowercase string with the stock text model (no prompt, unit norm, FP16), as Haku did for its 30 custom words. The compiled scorer has a fixed `[128, 229460]` shape, so new words need a separate CPU shortlist path or a rebuilt scorer program. Core ML text conversions (FluidInference, OpenInfinity int8, FilBona int8) could do this on device after their fp16/int8 drift is measured against these rows, and without their default task prefixes. |
 | First and last window edges | The first window keeps from frame 0 and the last keeps through its last valid frame; interior windows keep `[25, 475)`. The reference runtime's edge handling is unknown. |
 | Encoder mask subsampling | `ceil(valid_mel / 4)` valid encoder frames (the Gemma audio every-4th-frame convention), unverified for the compiled encoder. |
 | Rerank similarity | Plain dot product with the unit rows; equals the cosine up to FP16 rounding because `vec` is normalized in-graph. |
@@ -133,6 +136,7 @@ Gates:
 | Window stitching and CTC logic | Synthetic tests, including mutation checks |
 | Encoder/reader backend | Not implemented |
 | End-to-end transcript on real audio | Not run |
+| Word-table provenance | Passed: full-table comparison with the stock text model (Linux, CPU, float32) |
 | Shortlist recall, WER, latency, memory, ANE/GPU placement | Not run |
 | Runtime, catalog, CLI, FFI, Swift | Not started |
 
