@@ -474,11 +474,18 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // `vision_projection.`). `perception_emb_norm` is deliberately NOT here
     // -- the reference makes it a no-scale RMSNorm, which has no weight, so
     // it appears in no checkpoint.
+    //
+    // `vit_merger.` and `merger.` are `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`'s
+    // (16 and 6 tensors), whose own `vision_tower.` is claimed by the arm
+    // above for its Qwen trunk and dropped later because that wrapper's
+    // tower is never activated (`arch_registry::has_foreign_vision_tower`).
     if name.starts_with("vision_tower.")
         || name.starts_with("embed_vision.")
         || name.starts_with("audio_tower.")
         || name.starts_with("vision_adapter.")
         || name.starts_with("vision_projection.")
+        || name.starts_with("vit_merger.")
+        || name.starts_with("merger.")
     {
         return Gemma4Bucket::ExcludedMultimodal;
     }

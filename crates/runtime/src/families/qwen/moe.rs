@@ -187,7 +187,7 @@ pub(crate) fn encode_qwen_layer_moe(
     }
 
     encode_moe_phase1_any(
-        routed_layouts[layer].phase1,
+        routed_layouts[layer],
         context,
         pass,
         routed,

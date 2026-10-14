@@ -359,6 +359,7 @@ fn the_writer_refuses_a_mislabelled_arch() {
         default_bits: 1,
         group_size: 128,
         bits_overrides: Default::default(),
+        ..Default::default()
     };
 
     // `Gemma4RepackOutput` is not `Debug`, so match rather than

@@ -49,13 +49,15 @@ mod synthetic_tensors;
 mod trained_context;
 
 pub use arch_registry::{
-    config_json_family, describe_gguf_architecture, gguf_arch_support, hf_family_for_model_type,
-    planned_gguf_architectures, refuse_foreign_config, ArchSupport, PlannedArch,
+    config_json_family, describe_gguf_architecture, gguf_arch_support, has_foreign_vision_tower,
+    hf_family_for_model_type, planned_gguf_architectures, refuse_foreign_config, ArchSupport,
+    PlannedArch,
 };
 pub use gemma4_checkpoint::{
     canonicalize_qwen2_header, canonicalize_vision_header, classify_for_family, classify_gemma4,
-    convert_raw_to_fp16, gemma4_manifest_quant, graft_qwen_gdn_dense_mtp_head,
-    is_supported_affine_shape, manifest_quant, manifest_quant_for, narrow_raw_to_bf16,
+    convert_raw_to_fp16, gemma4_manifest_quant, gguf_mxfp4_row_bytes,
+    graft_qwen_gdn_dense_mtp_head, is_supported_affine_shape, manifest_quant, manifest_quant_for,
+    mlx_mxfp4_dequant_to_bf16, mlx_mxfp4_reblock_to_gguf, narrow_raw_to_bf16,
     orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config,
     parse_gemma4_quantization, parse_prism_hadamard, pass_through_packed,
     pass_through_packed_qwen2, read_vision_entries, vision_arch_for_manifest, vision_should_ingest,
@@ -66,7 +68,7 @@ pub use gemma4_checkpoint::{
     write_qwen_gdn_dense_install_streamed_with_hadamard, write_qwen_gdn_moe_install,
     write_qwen_gdn_moe_install_streamed, write_vision_sidecar, ConvertedFp16, Gemma4Bucket,
     Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan,
-    NgramTableSpec, NgramTableWriter, PrismHadamard, VisionRead, AFFINE_1BIT_GROUP_SIZE,
+    NgramTableSpec, NgramTableWriter, PrismHadamard, QuantMode, VisionRead, AFFINE_1BIT_GROUP_SIZE,
     AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX, GTURBO_PAGE_BYTES, MTP_PREFIX,
     VISION_BLOCK_ROLES, VISION_DEEPSTACK_MERGER_PREFIX, VISION_DEEPSTACK_MERGER_SUFFIXES,
     VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
@@ -151,9 +153,10 @@ pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_dense_install_with_vision,
     build_synthetic_qwen_gdn_dense_install_with_vision_streamed,
     build_synthetic_qwen_gdn_moe_install, build_synthetic_qwen_gdn_moe_install_with_mtp,
-    build_synthetic_vision_sidecar, tiny_qwen4_exp_arch, tiny_qwen4_exp_decode_arch,
-    tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch, tiny_vision_config, HC_COUNT, HEAD_DIM,
-    NUM_EXPERTS, QWEN4_DECODE_HIDDEN, QWEN4_DECODE_NGRAM_EOS_TOKEN_ID, QWEN4_DECODE_NUM_HEADS,
+    build_synthetic_qwen_gdn_moe_mxfp4_install, build_synthetic_vision_sidecar,
+    tiny_qwen4_exp_arch, tiny_qwen4_exp_decode_arch, tiny_qwen_gdn_dense_arch,
+    tiny_qwen_gdn_moe_arch, tiny_vision_config, HC_COUNT, HEAD_DIM, NUM_EXPERTS,
+    QWEN4_DECODE_HIDDEN, QWEN4_DECODE_NGRAM_EOS_TOKEN_ID, QWEN4_DECODE_NUM_HEADS,
     QWEN4_DECODE_NUM_KV_HEADS, QWEN4_DECODE_NUM_LAYERS, QWEN4_DECODE_PLE_LAYER, TOP_K,
 };
 pub use synthetic_real::{

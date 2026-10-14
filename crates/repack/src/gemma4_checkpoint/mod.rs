@@ -17,6 +17,7 @@ mod dflash;
 mod expert_blobs;
 mod hadamard;
 mod manifest_quant;
+mod mlx_mxfp4;
 mod mtp;
 mod narrow;
 mod ngram;
@@ -31,11 +32,15 @@ pub use classify::{
 };
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
-    Gemma4Quant, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
+    Gemma4Quant, QuantMode, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
 };
 pub use expert_blobs::{expert_stride_from_headers, plan_one_expert_layer};
 pub use hadamard::{parse_prism_hadamard, PrismHadamard};
 pub use manifest_quant::{gemma4_manifest_quant, manifest_quant, manifest_quant_for};
+pub use mlx_mxfp4::{
+    dequant_to_bf16 as mlx_mxfp4_dequant_to_bf16, gguf_mxfp4_row_bytes,
+    reblock_to_gguf_mxfp4 as mlx_mxfp4_reblock_to_gguf,
+};
 pub use narrow::{
     convert_raw_to_fp16, narrow_raw_to_bf16, pass_through_packed, pass_through_packed_qwen2,
     ConvertedFp16, NarrowedRaw,

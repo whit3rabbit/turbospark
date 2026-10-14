@@ -2,7 +2,7 @@
 
 use model_io::ModelFamily;
 
-use super::config::Gemma4Quant;
+use super::config::{Gemma4Quant, QuantMode};
 
 /// The `manifest.json -> quant` object for a Gemma 4 install, derived
 /// from the checkpoint's own per-tensor bits (slot bits are read from the
@@ -169,6 +169,9 @@ pub fn manifest_quant_for(
             format!("{l0}.experts.switch_glu.gate_proj"),
         ),
     };
+    if quant.mode == QuantMode::Mxfp4 {
+        return mxfp4_manifest_quant(quant, has_experts, [&attention, &router, &shared, &routed]);
+    }
     // The three MoE slots mirror ATTENTION when there are no experts: see
     // this function's doc, and `crates/repack` Gotcha 8 for what refusing
     // them instead cost the GGUF side.
@@ -203,5 +206,68 @@ pub fn manifest_quant_for(
         "router": router_slot,
         "sharedExpert": moe_slot(&shared),
         "routedExpert": moe_slot(&routed),
+    })
+}
+
+/// The quant object for an MLX mxfp4 checkpoint, stated as what the writer
+/// PUTS ON DISK rather than what the source declared, since the two differ:
+///
+/// - a resident tensor that is mxfp4 at source is dequantized to BF16
+///   (`orchestrate.rs`'s `read_mxfp4_as_bf16`), and one that was never
+///   quantized stays BF16, so either way its slot is raw BF16. The probe
+///   cannot tell those two apart and does not need to;
+/// - routed experts are re-blocked to GGUF MXFP4 (`expert_blobs.rs`);
+/// - a per-tensor override is affine at its own bits and group size, with
+///   BF16 companions (`pass_through_packed` refuses anything else).
+fn mxfp4_manifest_quant(
+    quant: &Gemma4Quant,
+    has_experts: bool,
+    [attention, router, shared, routed]: [&str; 4],
+) -> serde_json::Value {
+    let raw_bf16 = serde_json::json!({
+        "weightBits": 16,
+        "scheme": "raw",
+        "scaleType": "none",
+        "biasType": "none",
+        "groupSize": 0,
+    });
+    let resident = |probe: &str| {
+        if quant.is_mxfp4(probe) {
+            raw_bf16.clone()
+        } else {
+            serde_json::json!({
+                "weightBits": quant.bits_for(probe),
+                "scheme": "affine",
+                "scaleType": "bf16",
+                "biasType": "bf16",
+                "groupSize": quant.group_for(probe),
+            })
+        }
+    };
+    let attention_slot = resident(attention);
+    let (router, shared, routed) = if has_experts {
+        let routed = if quant.is_mxfp4(routed) {
+            serde_json::json!({
+                "weightBits": 0,
+                "scheme": "gguf",
+                "ggmlType": "mxfp4",
+                "scaleType": "inline",
+                "biasType": "inline",
+                "groupSize": 0,
+            })
+        } else {
+            resident(routed)
+        };
+        (resident(router), resident(shared), routed)
+    } else {
+        let mirror = attention_slot.clone();
+        (mirror.clone(), mirror.clone(), mirror)
+    };
+    serde_json::json!({
+        "embedding": resident("language_model.model.embed_tokens"),
+        "attention": attention_slot,
+        "router": router,
+        "sharedExpert": shared,
+        "routedExpert": routed,
     })
 }

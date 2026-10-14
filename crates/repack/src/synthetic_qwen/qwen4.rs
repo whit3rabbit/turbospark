@@ -245,6 +245,7 @@ fn quant(bits: u32) -> Gemma4Quant {
         default_bits: bits,
         group_size: group_for(bits) as u32,
         bits_overrides: HashMap::new(),
+        ..Default::default()
     }
 }
 

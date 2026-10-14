@@ -217,7 +217,7 @@ impl RealForwardRunner {
         let main_phase1_k = order.len();
         if main_phase1_k > 0 {
             encode_moe_phase1_any(
-                layer_layout.phase1,
+                layer_layout,
                 &mut self.context,
                 pass,
                 routed,

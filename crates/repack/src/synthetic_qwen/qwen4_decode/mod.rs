@@ -86,6 +86,7 @@ fn build_synthetic_qwen4_exp_decode_install_inner(
         default_bits: 4,
         group_size: 64,
         bits_overrides,
+        ..Default::default()
     };
     let _ = Gemma4Shards::single(&header, &source);
     write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;

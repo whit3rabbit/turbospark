@@ -338,6 +338,7 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
         default_bits: bits,
         group_size: group_for(bits) as u32,
         bits_overrides: std::collections::HashMap::new(),
+        ..Default::default()
     };
     if streamed {
         let shards = crate::gemma4_checkpoint::Gemma4Shards::single(&header, &source);

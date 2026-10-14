@@ -34,6 +34,9 @@ when this file gets updated relative to the version bump and the tag.
   zero-star flow DiT, causal-conv AudioVAE) and VoxCPM2 (fusion-concat
   conditioning, two-token mu DiT, reference/continuation prompts, and
   SR-conditioned 48 kHz AudioVAE) TTS family ports with catalog assets.
+- `crates/repack`, `crates/runtime`, `crates/gpu`: MLX MXFP4 quantization
+  and MiniCPM-V 4.7 / Qwen MXFP4 support, with resident BF16 embedding lookup,
+  family-derived SwiGLU activation routing, and synthetic verification gates.
 
 ### Changed
 - `swift/TurboSparkApp`: the Server pane's API key follows the same rule as

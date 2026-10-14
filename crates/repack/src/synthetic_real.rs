@@ -229,6 +229,7 @@ pub fn build_synthetic_gemma4_real_install_at_shared_bits(
         default_bits: 4,
         group_size: 64,
         bits_overrides: overrides,
+        ..Default::default()
     };
     write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
     Ok(arch)
@@ -371,6 +372,7 @@ pub fn build_synthetic_gemma4_dense_real_install(
         default_bits: 8,
         group_size: 64,
         bits_overrides: std::collections::HashMap::new(),
+        ..Default::default()
     };
     write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
     Ok(arch)

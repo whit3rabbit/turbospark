@@ -111,8 +111,8 @@ fn validate_iq4_xs_embedding(
 }
 
 /// Dispatches the embedding lookup matching the table's dtype tag: 4 =
-/// INT4-affine, 15 = 1-bit affine, plus the GGUF block types a real file puts
-/// an embedding table in.
+/// INT4-affine, 15 = 1-bit affine, 1 = raw BF16, plus the GGUF block types a
+/// real file puts an embedding table in.
 ///
 /// Shared by both real flows rather than written at each one, because it is a
 /// property of the tensor and not of the family: Qwen's Q4_K_M keeps
@@ -212,6 +212,21 @@ pub(crate) fn encode_embed_any(
         }
         DTYPE_GGUF_IQ1_M => {
             gpu::encode_embed_lookup_iq1_m(context, pass, table, out, token, hidden, embed_scale)
+                .map_err(RealForwardError::Gpu)
+        }
+        // An UNQUANTIZED BF16 table. First carrier: the MLX mxfp4 MiniCPM-V
+        // 4.7 checkpoint, which leaves `embed_tokens` BF16. The size is the
+        // whole shape check, since there are no companion planes.
+        DTYPE_RAW_BF16 => {
+            let expected = shape.0 as u64 * u64::from(hidden) * 2;
+            if e.size_bytes != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "embedding table {name}: BF16 size {} does not match {} x {hidden} \
+                     ({expected})",
+                    e.size_bytes, shape.0
+                )));
+            }
+            gpu::encode_embed_lookup_bf16(context, pass, table, out, token, hidden, embed_scale)
                 .map_err(RealForwardError::Gpu)
         }
         // The 1-bit table (ROADMAP's 1-bit entry). It exists because the real

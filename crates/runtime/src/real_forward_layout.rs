@@ -315,6 +315,35 @@ pub(crate) struct RoutedLayerLayout {
     pub(crate) phase1: RoutedBlobLayout,
     /// Read by phase 2, from the `down` run.
     pub(crate) phase2: RoutedBlobLayout,
+    /// The gated activation the MXFP4 phase-1 kernel applies. Read only when
+    /// `phase1` is [`RoutedBlobLayout::GgufMxfp4`]; every other pair takes its
+    /// activation from `use_silu` alone.
+    pub(crate) mxfp4_activation: Mxfp4Swiglu,
+}
+
+/// Which gated activation an MXFP4 phase 1 runs, which is a FAMILY property
+/// rather than a block-type one (`gpu::Mxfp4Activation`'s doc).
+///
+/// Chosen from `ArchConfig.family` and never from the blob: the same 17-byte
+/// blocks carry `gpt-oss`'s experts and the MLX mxfp4 Qwen trunk's
+/// (MiniCPM-V 4.7), and the two activate differently. Running `gpt-oss`'s
+/// clamped `swiglu_oai` on a Qwen layer decodes finite, fluent, wrong text.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Mxfp4Swiglu {
+    /// `activation(gate) * up`, what every non-`gpt-oss` pair runs.
+    Plain,
+    /// llama.cpp's `swiglu_oai`: alpha 1.702, clamp 7, `(up + 1)`.
+    GptOss,
+}
+
+impl Mxfp4Swiglu {
+    pub(crate) fn for_family(family: model_io::ModelFamily) -> Self {
+        if family == model_io::ModelFamily::GptOss {
+            Mxfp4Swiglu::GptOss
+        } else {
+            Mxfp4Swiglu::Plain
+        }
+    }
 }
 
 /// Resolves each layer's phase-1 and phase-2 layout from `layout.json`'s
@@ -349,7 +378,9 @@ fn require_ascending_layers(
 
 pub(crate) fn routed_layouts_from_layout(
     layout: &model_io::PackedExpertsLayout,
+    family: model_io::ModelFamily,
 ) -> Result<Vec<RoutedLayerLayout>, RealForwardError> {
+    let mxfp4_activation = Mxfp4Swiglu::for_family(family);
     require_ascending_layers(layout)?;
     layout
         .layers
@@ -366,6 +397,7 @@ pub(crate) fn routed_layouts_from_layout(
                 return Ok(RoutedLayerLayout {
                     phase1: RoutedBlobLayout::Affine,
                     phase2: RoutedBlobLayout::Affine,
+                    mxfp4_activation,
                 });
             }
             let of = |role: &str| -> Result<RoutedBlobLayout, RealForwardError> {
@@ -385,6 +417,7 @@ pub(crate) fn routed_layouts_from_layout(
             Ok(RoutedLayerLayout {
                 phase1: gate,
                 phase2: of("down")?,
+                mxfp4_activation,
             })
         })
         .collect()
@@ -616,12 +649,14 @@ mod tests {
             ("iq1_m", RoutedBlobLayout::GgufIq1M),
         ] {
             let layout = routed_dtype_layout(gate_up, "q2_0");
-            let routed = routed_layouts_from_layout(&layout).expect("routed types resolve");
+            let routed = routed_layouts_from_layout(&layout, model_io::ModelFamily::Qwen4Exp)
+                .expect("routed types resolve");
             assert_eq!(routed[0].phase1, expected, "gate/up dtype {gate_up}");
             assert_eq!(routed[0].phase2, RoutedBlobLayout::GgufQ2_0);
         }
         let q2_0 = routed_dtype_layout("q2_0", "q2_0");
-        let routed = routed_layouts_from_layout(&q2_0).expect("Q2_0 routes both phases");
+        let routed = routed_layouts_from_layout(&q2_0, model_io::ModelFamily::Qwen4Exp)
+            .expect("Q2_0 routes both phases");
         assert_eq!(routed[0].phase1, RoutedBlobLayout::GgufQ2_0);
         assert_eq!(routed[0].phase2, RoutedBlobLayout::GgufQ2_0);
     }
@@ -661,7 +696,8 @@ mod tests {
     #[test]
     fn out_of_order_layers_are_refused() {
         let layout = make_test_layout(&[1, 0], 0);
-        let err = routed_layouts_from_layout(&layout).expect_err("out of order layers");
+        let err = routed_layouts_from_layout(&layout, model_io::ModelFamily::Qwen4Exp)
+            .expect_err("out of order layers");
         match err {
             RealForwardError::Unsupported(msg) => {
                 assert!(
@@ -750,11 +786,30 @@ mod tests {
         assert_eq!(offsets[0].down_b, 0);
     }
 
+    /// The activation follows the FAMILY over identical MXFP4 blobs: `gpt-oss`
+    /// keeps `swiglu_oai`, and the MLX mxfp4 Qwen trunk (MiniCPM-V 4.7) gets
+    /// the plain gated form. Getting this backwards is fluent wrong text, so
+    /// both directions are pinned.
+    #[test]
+    fn mxfp4_activation_is_chosen_by_family_not_by_blob() {
+        let layout = routed_dtype_layout("mxfp4", "mxfp4");
+        for (family, expected) in [
+            (model_io::ModelFamily::GptOss, Mxfp4Swiglu::GptOss),
+            (model_io::ModelFamily::QwenGdnMoe, Mxfp4Swiglu::Plain),
+        ] {
+            let routed = routed_layouts_from_layout(&layout, family).expect("mxfp4 resolves");
+            assert_eq!(routed[0].phase1, RoutedBlobLayout::GgufMxfp4);
+            assert_eq!(routed[0].phase2, RoutedBlobLayout::GgufMxfp4);
+            assert_eq!(routed[0].mxfp4_activation, expected, "{family:?}");
+        }
+    }
+
     #[test]
     fn q2_0_phase2_layout_requires_top_10() {
         let q2_0_layout = vec![RoutedLayerLayout {
             phase1: RoutedBlobLayout::GgufQ2_0,
             phase2: RoutedBlobLayout::GgufQ2_0,
+            mxfp4_activation: Mxfp4Swiglu::Plain,
         }];
         assert!(validate_routed_layouts_for_top_k(&q2_0_layout, 10).is_ok());
 
@@ -774,12 +829,14 @@ mod tests {
         let affine_layout = vec![RoutedLayerLayout {
             phase1: RoutedBlobLayout::Affine,
             phase2: RoutedBlobLayout::Affine,
+            mxfp4_activation: Mxfp4Swiglu::Plain,
         }];
         assert!(validate_routed_layouts_for_top_k(&affine_layout, 2).is_ok());
 
         let q8_0_layout = vec![RoutedLayerLayout {
             phase1: RoutedBlobLayout::GgufQ8_0,
             phase2: RoutedBlobLayout::GgufQ8_0,
+            mxfp4_activation: Mxfp4Swiglu::Plain,
         }];
         assert!(validate_routed_layouts_for_top_k(&q8_0_layout, 2).is_ok());
     }

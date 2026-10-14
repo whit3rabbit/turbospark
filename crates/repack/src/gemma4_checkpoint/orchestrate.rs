@@ -12,7 +12,7 @@ use super::shards::{shape4, Gemma4Shards};
 use super::vision::VisionRead;
 use crate::gturbo_writer::LayerBlobs;
 use crate::ranged_download::RangeSource;
-use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
+use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec, DTYPE_BF16};
 use crate::safetensors_header::SafetensorsHeader;
 
 /// Everything the writer needs for a full Gemma 4 `.gturbo` install:
@@ -350,7 +350,12 @@ pub fn read_resident_entries_from_shards(
     let mut lossy_narrowing = Vec::new();
     for &name in resident_bases {
         let t = shards.info(name)?;
-        if t.dtype == "U32" && name.ends_with(".weight") {
+        let base = name.strip_suffix(".weight").unwrap_or(name);
+        if t.dtype == "U32" && name.ends_with(".weight") && quant.is_mxfp4(base) {
+            // No resident MXFP4 GEMV exists, so the matrix is written as the
+            // BF16 it decodes to, which is exact (`mlx_mxfp4`'s header).
+            entries.push(read_mxfp4_as_bf16(shards, name, base, &t.shape)?);
+        } else if t.dtype == "U32" && name.ends_with(".weight") {
             let (entry, companion_loss) = if arch.family == ModelFamily::Qwen2Dense {
                 super::narrow::pass_through_packed_qwen2_with_loss(shards, name, quant)?
             } else {
@@ -413,4 +418,80 @@ pub fn read_resident_entries_from_shards(
         entries,
         lossy_narrowing,
     })
+}
+
+/// Reads one MLX mxfp4 `(weight, scales)` pair and returns it as a raw BF16
+/// matrix entry of its logical `rows x cols` shape.
+fn read_mxfp4_as_bf16(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    base: &str,
+    packed_shape: &[u64],
+) -> Result<ResidentEntrySpec, Gemma4Error> {
+    let (rows, cols) = mxfp4_logical_shape(shards, name, base, packed_shape)?;
+    let bytes = super::mlx_mxfp4::dequant_to_bf16(
+        name,
+        &shards.read(name)?,
+        &shards.read(&format!("{base}.scales"))?,
+        rows,
+        cols,
+    )?;
+    Ok(ResidentEntrySpec::Raw(RawTensorSpec {
+        name: name.to_string(),
+        dtype: DTYPE_BF16,
+        bytes,
+        shape: shape4(&[rows as u64, cols as u64]),
+    }))
+}
+
+/// The `(rows, cols)` an MLX mxfp4 weight of packed shape `[rows, cols / 8]`
+/// stands for, after checking its companions are what mxfp4 writes: a U8
+/// `.scales` of `[rows, cols / 32]` and no `.biases`. A `.biases` plane would
+/// mean an affine tensor the quantization block mislabelled, and decoding it
+/// as mxfp4 would be silent garbage, so it is refused.
+pub(crate) fn mxfp4_logical_shape(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    base: &str,
+    packed_shape: &[u64],
+) -> Result<(usize, usize), Gemma4Error> {
+    let mismatch = |detail: String| Gemma4Error::ShapeMismatch {
+        tensor: name.to_string(),
+        detail,
+    };
+    let [rows, words] = packed_shape else {
+        return Err(mismatch(format!(
+            "expected a rank-2 mxfp4 weight, got {packed_shape:?}"
+        )));
+    };
+    let (rows, cols) = (*rows as usize, *words as usize * 8);
+    let scales_name = format!("{base}.scales");
+    if !shards.contains(&scales_name) {
+        return Err(Gemma4Error::MissingCompanion(name.to_string()));
+    }
+    let scales = shards.info(&scales_name)?;
+    if scales.dtype != "U8" {
+        return Err(Gemma4Error::UnsupportedDtype {
+            tensor: scales_name,
+            dtype: format!(
+                "{} scales on an mxfp4 tensor (expected U8 E8M0)",
+                scales.dtype
+            ),
+        });
+    }
+    let expected = [rows as u64, (cols / super::mlx_mxfp4::MXFP4_GROUP) as u64];
+    if scales.shape != expected {
+        return Err(mismatch(format!(
+            "mxfp4 scales shape {:?}, expected {expected:?}",
+            scales.shape
+        )));
+    }
+    if shards.contains(&format!("{base}.biases")) {
+        return Err(mismatch(
+            "carries a .biases plane, so it is affine, not the mxfp4 the \
+             quantization block declares"
+                .to_string(),
+        ));
+    }
+    Ok((rows, cols))
 }
