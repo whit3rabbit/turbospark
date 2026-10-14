@@ -30,9 +30,9 @@ when this file gets updated relative to the version bump and the tag.
 ### Changed
 - syntext is compiled into `libturbospark_ffi.a` instead of being linked as
   its own `SyntextFFI.xcframework` beside it. `crates/ffi` depends on
-  `syntext-context` with its C ABI, pinned by commit to the released
-  syntext 2.6.0 plus `ConversationMemory::forget` (whit3rabbit/syntext#11,
-  not yet merged; repin to its merge commit once it lands). The `Syntext` and `SyntextContext` Swift modules are vendored
+  `syntext-context` with its C ABI, pinned to the syntext 2.7.0 release
+  tag, the first with `ConversationMemory::forget`. The `Syntext` and
+  `SyntextContext` Swift modules are vendored
   under `swift/TurboSpark/Vendor/syntext` from that same revision
   (`scripts/vendor-syntext.sh`), and `scripts/swift-lib.sh` refuses a
   mismatch. The app links one Rust archive again, so the

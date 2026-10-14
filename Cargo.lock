@@ -1987,8 +1987,8 @@ dependencies = [
 
 [[package]]
 name = "syntext"
-version = "2.6.0"
-source = "git+https://github.com/whit3rabbit/syntext?rev=a597947e27874e3f3582612da6c3648896a0f8d3#a597947e27874e3f3582612da6c3648896a0f8d3"
+version = "2.7.0"
+source = "git+https://github.com/whit3rabbit/syntext?tag=v2.7.0#352651a9f3834f3a679ed7b8b63e5823a87d7a1e"
 dependencies = [
  "arc-swap",
  "blake3",
@@ -2012,7 +2012,7 @@ dependencies = [
 [[package]]
 name = "syntext-context"
 version = "0.1.0"
-source = "git+https://github.com/whit3rabbit/syntext?rev=a597947e27874e3f3582612da6c3648896a0f8d3#a597947e27874e3f3582612da6c3648896a0f8d3"
+source = "git+https://github.com/whit3rabbit/syntext?tag=v2.7.0#352651a9f3834f3a679ed7b8b63e5823a87d7a1e"
 dependencies = [
  "arc-swap",
  "log",

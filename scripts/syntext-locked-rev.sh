@@ -5,9 +5,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# `source = "git+https://github.com/whit3rabbit/syntext?rev=<rev>#<commit>"`
+# `source = "git+https://github.com/whit3rabbit/syntext?tag=<tag>#<commit>"`
 # on the line after the package's name and version. The full commit after
-# `#` is what cargo checked out, whatever form the `rev` key took.
+# `#` is what cargo checked out, whether a `tag` or a `rev` pinned it.
 rev="$(awk '
   $0 == "name = \"syntext-context\"" { found = 1; next }
   found && /^source = / {

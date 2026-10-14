@@ -155,8 +155,8 @@ placeholder `CSyntext.o` for Swift Build. Both workarounds are gone.
 
 syntext is now compiled into `libturbospark_ffi.a`:
 
-- `crates/ffi/Cargo.toml` depends on `syntext-context` (git, pinned `rev`,
-  `features = ["ffi"]`), which brings syntext with its own `ffi` feature.
+- `crates/ffi/Cargo.toml` depends on `syntext-context` (git, pinned to a
+  release `tag`, `features = ["ffi"]`), which brings syntext with its own `ffi` feature.
   `crates/ffi/src/lib.rs` has `extern crate syntext_context;`; without that
   reference the crate is not linked and no `syntext_*` or
   `syntext_context_*` symbol reaches the archive. The dependency sits behind
@@ -177,7 +177,7 @@ syntext is now compiled into `libturbospark_ffi.a`:
 The headers describe the ABI of one revision. Bump all three together:
 
 ```bash
-# 1. Point crates/ffi/Cargo.toml's `rev` at the new syntext commit, then:
+# 1. Point crates/ffi/Cargo.toml's `tag` at the new syntext release, then:
 cargo update -p syntext-context
 # 2. Copy that revision's headers, wrappers and tests:
 scripts/vendor-syntext.sh
@@ -191,14 +191,14 @@ files by hand; change syntext and re-vendor. Never add syntext's Swift
 package or xcframework to either `Package.swift`.
 
 To try an unmerged syntext change, push it to a syntext branch, pin that
-commit and re-vendor; repin to the merge commit on syntext's `main` before
-this repository merges, since a squash merge can orphan the branch commit.
-A path or `[patch]` override has no revision for the check to compare, so
-`swift-lib.sh` stops on it by design.
+commit with `rev` and re-vendor; repin to a release tag (or the merge commit
+on syntext's `main`) before this repository merges, since a squash merge can
+orphan the branch commit. A path or `[patch]` override has no revision for
+the check to compare, so `swift-lib.sh` stops on it by design.
 
-That is the state today: the pin is the released syntext 2.6.0 plus
-`ConversationMemory::forget` (whit3rabbit/syntext#11), which the app's chat
-deletion and recall reconcile need. Repin once that PR merges.
+The pin today is syntext 2.7.0, the first release with
+`ConversationMemory::forget`, which the app's chat deletion and recall
+reconcile need.
 
 ## 7. Verification
 
