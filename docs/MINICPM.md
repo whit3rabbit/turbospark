@@ -57,6 +57,9 @@ are exact.
   discarded. The cost is bytes, not numerics.
 - **Exponent byte 255 is refused.** MLX reads it as NaN and ggml as a finite
   2^127, so copying it through would turn a poisoned weight into a large one.
+- **Elements that overflow f32 are refused.** At exponent 253 a magnitude of
+  4 or 6, and at 254 anything from 2 up, reaches 2^128, which every decoder
+  (MLX's included) turns into infinity.
 
 The nibble order is the trap. Reading one layout as the other gives a
 correctly scaled permutation of the weights, which correlates well with the
@@ -105,8 +108,10 @@ right answer and is wrong. The rule is recorded in
 - **Real install.** Greedy and sampled 400-token smokes were coherent, and a
   short question stopped at end of turn.
 - **Review.** An independent review of `b6128dd2` and `e628ae6d` found no
-  high or medium severity issues. Its low-severity notes are listed under
-  open work below.
+  high or medium severity issues. Its three low-severity notes (the
+  overflow refusal above, a test assertion that passed for the wrong
+  reason, and three stale comments) were fixed in `48d881cd`, with
+  mutation checks.
 
 ## Measured results
 
@@ -219,32 +224,28 @@ In priority order.
    chunked MoE driver plus a batched BF16 GEMM, since the M-row GEMM serves
    INT4 affine only. gpt-oss already has a batched MXFP4 expert path to reuse.
    It would speed up `qwen36` and `ornith35b` too.
-2. **Explain the `turbospark-check` gap.** With `TURBOSPARK_PHASES=1` it
-   reads 17-20 tok/s against `turbospark-bench`'s 24.3 at the same slot
-   count. Run both binaries on one prompt, with and without phase timing,
-   before quoting a `turbospark-check` rate.
+2. **Explain the `turbospark-check` gap.** It reads 17-20 tok/s against
+   `turbospark-bench`'s 24.3 at the same slot count. Phase timing is ruled
+   out: the runtime never reads `TURBOSPARK_PHASES` (its counters always
+   run, and the variable only gates the CLI's printout). The power profile
+   is ruled out too: both default to `performance`, and Low Power Mode was
+   off. What is left is the workload (a 13-token greedy prompt against the
+   bench's 62-token sampled protocol prompt, so routing differs), other
+   sessions' load during the `turbospark-check` runs, and the CLI's
+   per-token streaming output. Test on a quiet host: interleave the two
+   binaries, then `turbospark-check --quiet`, before quoting a
+   `turbospark-check` rate.
 3. **A resident MXFP4 GEMV,** wrapping `dequant_mxfp4_row_simd`. It is
    lossless and specific to this checkpoint, but it recovers only the
    widened attention and shared-expert bytes, about 10% of decode at best.
 4. **Cross-engine check against mlx-vlm's `minicpmv4_7` class.** Nothing
    outside this port has checked its numerics. The gates are sentinels
-   against their own past. See
+   against their own past. It needs the raw 22.5 GB MLX checkpoint (the
+   install was pulled with the download cache off, so it is not on disk)
+   and `mlx-vlm`. See
    [`.claude/docs/cross-engine-kl.md`](../.claude/docs/cross-engine-kl.md).
 5. **Vision.** The MiniCPM SigLIP tower (27 layers, patch 14,
    `insert_layer_id` 6, canvas mRoPE) is a bring-up of its own.
-6. **Low-severity review notes.**
-   - The codec refuses only exponent 255. Exponents 253 and 254 can decode
-     to infinity, as they do in MLX, so the header's "every value is on the
-     BF16 grid" claim fails at the top of the range. No trained checkpoint
-     is expected to hold those values.
-   - The first assertion in
-     `affine_checkpoints_still_refuse_a_second_group_size` passes for the
-     wrong reason (its affine default is already unsupported). The second
-     case does the real work.
-   - Three comments still describe MXFP4 as gpt-oss only:
-     `crates/gpu/src/moe_gguf/mxfp4.rs`,
-     `crates/gpu/src/moe_prefill_batch_gguf.rs`, and
-     `crates/repack/src/gemma4_checkpoint/expert_blobs.rs`.
 
 The playbook for speed work on this family is
 [`SPEEDUP_PLAYBOOK.md`](SPEEDUP_PLAYBOOK.md). Profile before touching a
