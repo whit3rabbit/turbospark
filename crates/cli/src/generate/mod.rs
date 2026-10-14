@@ -37,7 +37,18 @@ pub(crate) use format::{
 pub(crate) use runtime::SpeculationPlan;
 pub(crate) use session::{open_session, Session};
 
-pub fn try_generate(request: &InvocationRequest) {
+/// Whether the generation the caller asked for ran to the end. `main` turns
+/// `Failed` into a nonzero exit status, so a script driving `turbospark-check`
+/// can tell a refused or failed run from a finished one. A turn that fails
+/// INSIDE the interactive `--chat` loop is reported to the user and the loop
+/// continues, so it does not make the process fail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Completed,
+    Failed,
+}
+
+pub fn try_generate(request: &InvocationRequest) -> Outcome {
     match &request.mode {
         Mode::Prompt(text) => run_prompt(request, text),
         Mode::MessagesFile(path) => run_messages_file(request, path),
@@ -51,7 +62,7 @@ pub fn try_generate(request: &InvocationRequest) {
 /// sampling flags do not reach this mode -- the recipe is the checkpoint's
 /// contract, and its publisher documents the CLI-shaped defaults as
 /// wrong for it), stream the rewrite to stdout, and audit it to stderr.
-fn run_humanize(request: &InvocationRequest, path: &str) {
+fn run_humanize(request: &InvocationRequest, path: &str) -> Outcome {
     use foundation::humanizer::{
         audit_rewrite, build_humanize_prompt, default_max_new, HUMANIZER_CONTEXT,
         HUMANIZER_REPETITION_PENALTY, HUMANIZER_TEMPERATURE, HUMANIZER_TOP_K, HUMANIZER_TOP_P,
@@ -63,7 +74,7 @@ fn run_humanize(request: &InvocationRequest, path: &str) {
             Ok(_) => buf,
             Err(e) => {
                 eprintln!("note: not attempting real generation: cannot read stdin: {e}");
-                return;
+                return Outcome::Failed;
             }
         }
     } else {
@@ -71,13 +82,13 @@ fn run_humanize(request: &InvocationRequest, path: &str) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("note: not attempting real generation: cannot read {path}: {e}");
-                return;
+                return Outcome::Failed;
             }
         }
     };
     if draft.trim().is_empty() {
         eprintln!("note: not attempting real generation: the draft is empty");
-        return;
+        return Outcome::Failed;
     }
 
     // THE CONTEXT IS CAPPED AT THE MODEL'S OWN CEILING. Left on `auto` the
@@ -97,7 +108,7 @@ fn run_humanize(request: &InvocationRequest, path: &str) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
-            return;
+            return Outcome::Failed;
         }
     };
     // THE RECIPE IS FORCED. `top_k 0` with `top_p 0.95` at temperature 1.0
@@ -116,7 +127,7 @@ fn run_humanize(request: &InvocationRequest, path: &str) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
-            return;
+            return Outcome::Failed;
         }
     };
 
@@ -140,7 +151,7 @@ fn run_humanize(request: &InvocationRequest, path: &str) {
         Ok(n) => n.min(budget),
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
-            return;
+            return Outcome::Failed;
         }
     };
 
@@ -154,7 +165,7 @@ fn run_humanize(request: &InvocationRequest, path: &str) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("generation failed: {e}");
-            return;
+            return Outcome::Failed;
         }
     };
     print_footer(&result, request.quiet);
@@ -166,14 +177,15 @@ fn run_humanize(request: &InvocationRequest, path: &str) {
         eprintln!("note: {warning}");
     }
     print_phases(&session);
+    Outcome::Completed
 }
 
-fn run_prompt(request: &InvocationRequest, prompt: &str) {
+fn run_prompt(request: &InvocationRequest, prompt: &str) -> Outcome {
     let mut session = match open_session(request) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
-            return;
+            return Outcome::Failed;
         }
     };
 
@@ -194,7 +206,7 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
              encodes verbatim; use --messages-file (its content parts take image entries) or \
              --chat"
         );
-        return;
+        return Outcome::Failed;
     }
     let prompt_ids = session.tokenizer.encode(prompt, true);
     // Clamp rather than let `check_admission` refuse the whole run: a long
@@ -204,7 +216,7 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
-            return;
+            return Outcome::Failed;
         }
     };
 
@@ -212,21 +224,28 @@ fn run_prompt(request: &InvocationRequest, prompt: &str) {
     // Shared with the other two modes rather than reimplemented: this is
     // where the withheld `Tail` is printed (dropping it truncates the reply)
     // and where Harmony's channels are split.
-    match stream_turn(&mut session, request, &prompt_ids, max_new) {
-        Ok((_, result)) => print_footer(&result, request.quiet),
-        Err(e) => eprintln!("generation failed: {e}"),
-    }
+    let outcome = match stream_turn(&mut session, request, &prompt_ids, max_new) {
+        Ok((_, result)) => {
+            print_footer(&result, request.quiet);
+            Outcome::Completed
+        }
+        Err(e) => {
+            eprintln!("generation failed: {e}");
+            Outcome::Failed
+        }
+    };
     print_phases(&session);
+    outcome
 }
 
-fn run_messages_file(request: &InvocationRequest, path: &str) {
+fn run_messages_file(request: &InvocationRequest, path: &str) -> Outcome {
     // Decode the conversation before loading the model: a typo in the JSON
     // should not cost a multi-gigabyte install open first.
     let (messages, file_images) = match parse_messages_file(path) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
-            return;
+            return Outcome::Failed;
         }
     };
     // TWO SOURCES, and they may not both be used. A file's parts already say
@@ -240,7 +259,7 @@ fn run_messages_file(request: &InvocationRequest, path: &str) {
              so --image would be ambiguous about which marker run each path pairs with; use one \
              or the other"
         );
-        return;
+        return Outcome::Failed;
     }
     // A file that already carries parts cannot be BATCHED: it places its own
     // markers inside the conversation, so "one page per turn" has no meaning
@@ -251,7 +270,7 @@ fn run_messages_file(request: &InvocationRequest, path: &str) {
              --image, and {path} places its images itself; drop --image-batch, or move the paths \
              to --image"
         );
-        return;
+        return Outcome::Failed;
     }
     // The messages are built PER TURN below, because under `--image-batch`
     // each turn carries one marker rather than all of them. A file's messages
@@ -266,7 +285,7 @@ fn run_messages_file(request: &InvocationRequest, path: &str) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
-            return;
+            return Outcome::Failed;
         }
     };
 
@@ -280,7 +299,7 @@ fn run_messages_file(request: &InvocationRequest, path: &str) {
             eprintln!(
                 "note: not attempting real generation: --image-batch needs at least one --image"
             );
-            return;
+            return Outcome::Failed;
         }
         images.iter().map(|p| vec![p.clone()]).collect()
     } else {
@@ -315,16 +334,17 @@ fn run_messages_file(request: &InvocationRequest, path: &str) {
                 Ok(m) => m,
                 Err(e) => {
                     eprintln!("note: not attempting real generation: {e}");
-                    return;
+                    return Outcome::Failed;
                 }
             }
         };
         if let Err(e) = run_one_turn(&mut session, request, &turn_messages, turn_images) {
             eprintln!("note: {e}");
-            return;
+            return Outcome::Failed;
         }
     }
     print_phases(&session);
+    Outcome::Completed
 }
 
 /// Render, attach any images, and stream one turn.
@@ -364,10 +384,9 @@ fn run_one_turn(
 
     let max_new = clamp_max_new(session, request, prompt_ids.len())?;
     println!("generating (real forward pass, chat template applied):");
-    match stream_turn(session, request, &prompt_ids, max_new) {
-        Ok((_, result)) => print_footer(&result, request.quiet),
-        Err(e) => eprintln!("generation failed: {e}"),
-    }
+    let (_, result) = stream_turn(session, request, &prompt_ids, max_new)
+        .map_err(|e| format!("generation failed: {e}"))?;
+    print_footer(&result, request.quiet);
     Ok(())
 }
 

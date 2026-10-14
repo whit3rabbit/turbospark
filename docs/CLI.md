@@ -338,6 +338,18 @@ every vector; more knob values than vectors is a parse error.
 | `--help` | print usage and exit |
 | `--version` | print the version and exit |
 
+### Exit status
+
+| Status | Meaning |
+| --- | --- |
+| `0` | the command line was valid and, on macOS, the requested generation ran to the end; also `--help`, `--version`, and any valid command line on a non-macOS host (generation is skipped there) |
+| `1` | the command line was valid but the generation was refused or failed: a missing model or tokenizer, an unsupported install, a bad `--messages-file`, a refused flag combination, or a failed decode |
+| `2` | the command line did not parse |
+
+A turn that fails inside an interactive `--chat` session is reported and the
+session continues, so it does not change the status. A failure to open the
+model, or to read stdin, does.
+
 ### Examples
 
 ```sh
@@ -391,10 +403,13 @@ nothing else in this JSON could name a file:
 ]}]
 ```
 
-Four things this refuses rather than guessing at:
+Five things this refuses rather than guessing at:
 
 - **`--prompt` with `--image`.** That mode encodes verbatim with no template,
   so there is no marker run for the image to land in. Use `--messages-file`.
+- **`--chat` with `--image`.** The REPL builds text-only turns, so the path
+  would never reach the model. Refused before any model is opened. Use
+  `--messages-file`.
 - **`--image` alongside a file that already carries image parts.** The file
   says where each image goes and the flag does not, so the pairing between a
   path and a marker run would be ambiguous.

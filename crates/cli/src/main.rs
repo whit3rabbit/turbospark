@@ -22,8 +22,9 @@
 //! points at a `.gturbo` install `RealForwardRunner` supports with a
 //! tokenizer bundled in the same directory; see `generate.rs`. Any
 //! unsupported model shape, or a missing tokenizer, prints a clear note
-//! and falls back to the resolved-request printout only; on non-macOS this
-//! generation attempt is skipped entirely.
+//! after the resolved-request printout and exits with status 1 (2 stays
+//! reserved for an invalid command line); on non-macOS this generation
+//! attempt is skipped entirely and the exit status is 0.
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -46,13 +47,21 @@ fn main() -> ExitCode {
     if let Some(diagnostic) = &routing.diagnostic {
         eprintln!("{diagnostic}");
     }
+    // Exit status 2 is `invocation`'s (an invalid command line). 1 is this
+    // binary's own: the command line parsed, but the generation it asked for
+    // was refused or failed, so a script is not told it succeeded.
+    #[allow(unused_mut)]
+    let mut generation_failed = false;
     if let ParseOutcome::Success(request) = &outcome {
         print_resolved_request(request);
         #[cfg(target_os = "macos")]
-        generate::try_generate(request);
+        {
+            generation_failed = generate::try_generate(request) == generate::Outcome::Failed;
+        }
     }
 
     match exit_status(&outcome) {
+        ExitStatus::Success if generation_failed => ExitCode::from(1),
         ExitStatus::Success => ExitCode::from(ExitStatus::Success.code() as u8),
         ExitStatus::InvalidInvocation => ExitCode::from(ExitStatus::InvalidInvocation.code() as u8),
     }
@@ -91,7 +100,8 @@ fn print_resolved_request(request: &InvocationRequest) {
     let _ = writeln!(
         out,
         "note: on macOS, real generation is attempted next against the .gturbo install \
-         at --model (see DEVIATIONS.md for scope); on other platforms this only \
-         validates and prints the resolved request above."
+         at --model (see DEVIATIONS.md for scope), and a refused or failed run exits \
+         with status 1; on other platforms this only validates and prints the \
+         resolved request above."
     );
 }

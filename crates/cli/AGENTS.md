@@ -23,6 +23,11 @@ User-facing model, generation, image, music, voice cloning, and server command e
 - `--model` accepts a path or catalog alias. Preserve directory-first
   resolution and the startup diagnostics that explain the resolved model.
 - Keep `--help` and `--version` usable without a model.
+- Exit status: 0 success, 1 a valid command line whose generation was refused
+  or failed (`generate::Outcome::Failed`), 2 an invalid command line (owned
+  by `turbospark-invocation`). Any new early return in a `run_*` path must
+  return `Failed`, not fall through as success.
+- `--chat` is text-only: `--image` is refused there, not ignored.
 - If adding a flag, update parsing, help, invocation, runtime plumbing, and
   tests together. The detailed checklist is in the archived guide.
 - Real smoke requires both greedy and sampled generation. Greedy alone does not

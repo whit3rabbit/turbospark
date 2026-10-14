@@ -111,7 +111,7 @@ impl PowerProfile {
 /// Declared here rather than reused from the tokenizer crate for the reason
 /// [`PowerProfile`] is: this crate is pure and depends only on `foundation`.
 /// `crates/cli`'s `map_reasoning_effort` pins the two spellings against each
-/// other, which is the third such mapping (see this crate's Gotcha 2).
+/// other, which is the third such mapping.
 ///
 /// **THE SET IS A UNION AND NO CHECKPOINT ACCEPTS ALL OF IT.** Qwen 3.8 takes
 /// `xhigh`/`medium`/`low` and rejects `high`; Harmony and Muse Glimmer take
@@ -288,7 +288,7 @@ pub enum Speculation {
 }
 
 /// The blocks a caller may name, re-exported from `foundation` so this
-/// parser and `turbospark-server`'s own read ONE range (AGENTS.md Gotcha 2).
+/// parser and `turbospark-server`'s own read ONE range.
 pub use foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS;
 pub use foundation::SteeringMode;
 

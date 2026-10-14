@@ -243,9 +243,10 @@ fn messages_file_mode_rejects_an_unknown_role() {
         .output()
         .expect("binary should run");
 
-    // Fire-and-forget discipline: a bad conversation is a note, not a crash
-    // and not a different exit status.
-    assert_eq!(output.status.code(), Some(0));
+    // A bad conversation is a note, not a crash: the process exits with the
+    // generation-failed status (1), not the invalid-invocation status (2)
+    // and not success.
+    assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("unsupported role \"wizard\""),
