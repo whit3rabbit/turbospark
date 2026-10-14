@@ -122,9 +122,17 @@ extension AppModel {
         self.serverHost = settings.serverHost
         self.serverFavorites = settings.serverFavorites
         self.serverPinnedPort = settings.serverPinnedPort
-        let serverKeyRead = ServerKeychain.readKey()
-        self.serverAPIKeyInput = serverKeyRead.value ?? ""
-        self.serverKeyLoadFailed = serverKeyRead.isError
+        // The Keychain is read only for someone who opted in (or already had
+        // a key stored), so a launch that does not need it never touches it.
+        self.serverKeyInKeychain = ServerKeychain.resolveOptIn()
+        if serverKeyInKeychain {
+            let serverKeyRead = ServerKeychain.readKey()
+            self.serverAPIKeyInput = serverKeyRead.value ?? ""
+            self.serverKeyLoadFailed = serverKeyRead.isError
+        } else {
+            self.serverAPIKeyInput = ""
+            self.serverKeyLoadFailed = false
+        }
         self.serverEmbeddingModelInput = settings.serverEmbeddingModel
         self.hfEndpointInput = settings.hfEndpoint
         if !settings.hfEndpoint.isEmpty {
@@ -285,18 +293,22 @@ extension AppModel {
         // touch the item.
         // A failed read (locked or denied Keychain) must not look like "no
         // key": that used to delete the stored key once access came back.
-        switch KeychainSecretSync.action(
-            current: ServerKeychain.readKey(), input: serverAPIKeyInput,
-            loadFailed: serverKeyLoadFailed)
-        {
-        case .none: break
-        case let .save(key):
-            if ServerKeychain.saveKey(key) { serverKeyLoadFailed = false }
-        case .delete:
-            ServerKeychain.saveKey("")
-        case let .adopt(key):
-            serverAPIKeyInput = key
-            serverKeyLoadFailed = false
+        // Without the opt-in the key is session-only and the Keychain is not
+        // read here either: this runs on every debounced settings save.
+        if serverKeyInKeychain {
+            switch KeychainSecretSync.action(
+                current: ServerKeychain.readKey(), input: serverAPIKeyInput,
+                loadFailed: serverKeyLoadFailed)
+            {
+            case .none: break
+            case let .save(key):
+                if ServerKeychain.saveKey(key) { serverKeyLoadFailed = false }
+            case .delete:
+                ServerKeychain.saveKey("")
+            case let .adopt(key):
+                serverAPIKeyInput = key
+                serverKeyLoadFailed = false
+            }
         }
         MacAppSettingsFileStore.save(settings)
     }

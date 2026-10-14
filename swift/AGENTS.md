@@ -134,7 +134,8 @@ for runtime or release changes.
 
 ## Open issues
 
-- **Auto-started server has no API key on a new install.** The server key is
+- **Auto-started server has no API key on a new install**
+  ([#150](https://github.com/whit3rabbit/turbospark/issues/150)). The server key is
   session-only unless the user opts in to Keychain storage
   (`ServerKeychain.resolveOptIn`), so `serverAPIKeyInput` is empty at launch.
   With "start server on launch" on (`serverAutoStartOnLaunch`,
@@ -146,3 +147,12 @@ for runtime or release changes.
   generate a per-session key at auto-start (as TypeSafe does) and put it in
   the field so Copy works, or refuse to auto-start without a key. This needs a
   decision before either is built.
+- **A fresh build directory fails to link on Xcode 27.0 (beta, build 27A266a).**
+  `swift build` into a new `--scratch-path` stops with "Build input file cannot
+  be found: .../CSyntext.o". `CSyntext` is a header-only C target in the
+  external `syntext` package and the new build system expects an object for it.
+  A 336-byte placeholder `CSyntext.o` left in the shared `.build/out/Products/*`
+  hides it, which is why it only shows up on a clean build. CI uses released
+  Xcodes and is not affected. Workaround for a scratch build: copy that file
+  into `<scratch>/out/Products/Debug/`. Revisit when Xcode 27 ships or syntext
+  adds a source file to the target.

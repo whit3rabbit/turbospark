@@ -287,3 +287,22 @@ optimizes; the folder model's own costs are visible in its naming drift
 (`gr` for Greek, mixed `pt_PT`/`zh-CN` styles). What was worth taking is
 here: the validation suite, the contributor flow in this page, and the
 rule that a language or key cannot silently half-ship.
+
+## Editing the catalog by script
+
+A new string needs all 21 languages, so it is often added by script. The
+catalog is written with escaped non-ASCII and no trailing space, and only
+this dump reproduces the file byte for byte (anything else rewrites about 3 MB
+and buries the real change):
+
+```python
+json.dumps(catalog, indent=2, ensure_ascii=True, separators=(",", ": ")) + "\n"
+```
+
+Check that a load and dump of the untouched file equals the file before
+editing it, add each key with `"extractionState": "manual"` and a translated
+`stringUnit` for every language, and confirm `git diff` shows additions only.
+When a string is split in two, derive each half from the existing translations
+(split on the sentence end) instead of retranslating, and read all 21 splits
+before writing them. Then run `make compile-strings` and the parity tests.
+

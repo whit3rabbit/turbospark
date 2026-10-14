@@ -30,7 +30,7 @@ struct ServerAdvancedSettingsView: View {
 
             field(
                 Text("API key", bundle: .module),
-                help: Text("Required on every route except /health, as x-api-key or a Bearer token. Stored in the Keychain, not settings.json.", bundle: .module)
+                help: Text("Required on every route except /health, as x-api-key or a Bearer token.", bundle: .module)
             ) {
                 HStack(spacing: 6) {
                     SecureField(text: $model.serverAPIKeyInput) { Text("API key", bundle: .module) }
@@ -56,6 +56,29 @@ struct ServerAdvancedSettingsView: View {
                         AppModel.serverAPIKey(from: model.serverAPIKeyInput)
                     }
                     .disabled(AppModel.serverAPIKey(from: model.serverAPIKeyInput) == nil)
+                }
+            }
+
+            // Opt-in: the Keychain is not read or written, and macOS is not
+            // asked for access, until this is on. A key stored by an earlier
+            // version keeps it on (`ServerKeychain.resolveOptIn`).
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle(isOn: Binding(
+                    get: { model.serverKeyInKeychain },
+                    set: { model.setServerKeyInKeychain($0) })
+                ) {
+                    Text("Remember this key in the Keychain", bundle: .module)
+                }
+                .toggleStyle(.checkbox)
+                .disabled(isRunning)
+                if model.serverKeyInKeychain {
+                    Text("Stored in the Keychain, not settings.json.", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                } else {
+                    Text("The key is used until the app quits and is not saved.", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
                 }
             }
 
