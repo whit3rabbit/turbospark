@@ -875,7 +875,7 @@
         "file": "Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf"
       },
       "sidecars": {
-        "repo": "ukisai/Swift-Qwen3.8-Flash-Next",
+        "repo": "ukisai/Swift1.5-Qwen3.8-Flash-Next",
         "revision": "0bd4fe22431372cdad1979267d3ab45aa7e6150a",
         "files": [
           "tokenizer.json",
