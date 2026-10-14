@@ -337,3 +337,102 @@ weak, and both are findings about the Rust rather than about the script:
 
 Both details are worth keeping in `expert_cache.rs` for readability, but
 neither can change an answer, so neither is worth defending in a test.
+
+## Cache policy: cumulative LFU forgets nothing
+
+Prompted 2026-10-13 by `skeggsguy/Flash-next-ssd`, a llama.cpp fork that
+streams Qwen3.8-Flash-Next's experts from SSD. Its slot cache evicts by
+hotness with every counter halved each 1024 tokens, and its replay simulator
+put pure LRU at +11% misses for that model. This engine's `ExpertCache` LFU
+never decays, which no measurement here had priced, because every capture on
+this page is ONE request replayed through a FRESH cache. A server or app
+runner keeps its streamers for its whole life, so a later request inherits
+every count an earlier one left.
+
+### Instrument
+
+`scripts/pilot_ceiling.py --policies lfu,lru,lfu-decay:N` replays one or more
+`TURBOSPARK_ROUTER_TRACE` captures through ONE cache per layer, in order, so
+several captures read as one session. `lfu-decay:N` halves every count after
+each `N` committed plans at that layer, which is the shape
+`ExpertCachePolicy::LfuDecay` implements. The port was checked against a
+synthetic drifting hot set (cumulative LFU 74.8% hits, LRU 99.8%, decay 98.1%)
+and still reproduces this page's single-capture numbers (68.0% / 85.0% at
+16 / 32 slots for a 400-token capture, against 66.3% / 84.6% recorded for
+the 200-token one).
+
+Capture: real Gemma 4 install (`~/.turbospark/models/text/gemma4.gturbo`),
+greedy, 400 new tokens each, eight prompts (four coding, four general, the
+same topics as the hot-set measurement above), interleaved coding and general.
+3,467 passes on 30 routed layers. The session sweep skips the first capture's
+435 passes so it measures inherited state.
+
+### Measurement
+
+Session, eight requests through one cache:
+
+| slots | cumulative LFU | LRU | decay 16 | decay 32 | decay 128 | decay 1024 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 55.3% | 61.6% | **64.5%** | 63.9% | 60.3% | 56.0% |
+| 32 | 71.4% | 80.4% | **81.6%** | 81.3% | 77.4% | 72.4% |
+| 64 | 90.9% | 95.1% | | **95.2%** | 93.8% | 91.5% |
+
+At 32 slots that is 220 MiB of expert reads per pass under cumulative LFU
+against 144 MiB at decay 32, a 35% cut, from a policy change alone.
+
+Single requests, decode only, fresh cache (the case this page already
+measured, and the reason LFU was chosen over LRU):
+
+| prompt | slots | LFU | LRU | decay 16 | decay 32 |
+|---|---:|---:|---:|---:|---:|
+| c1 (Rust CSV) | 32 | 85.1% | 84.4% | 85.6% | 86.0% |
+| g1 (wetlands) | 32 | 83.4% | 82.2% | 83.7% | 84.2% |
+| c3 (B-trees) | 32 | 80.5% | 78.7% | 80.9% | 81.4% |
+| g4 (marathon) | 32 | 80.6% | 78.9% | 80.4% | 80.8% |
+
+At 16 slots the same ordering holds within 1.5 points.
+
+### Reading
+
+- **Cumulative LFU is the worst policy measured once a runner serves more
+  than one request**, below plain LRU by 6 to 9 points. An expert that was
+  hot for the last topic keeps its count and outranks the current topic's
+  experts, which then evict each other.
+- **Decay at 16 to 32 plans is at least as good as both alternatives in
+  both regimes.** Inside one request it keeps LFU's edge over LRU; across
+  requests it beats LRU slightly. Flash-Next's 1024-token interval does not
+  transfer: on Gemma 4 it is barely better than no decay.
+- This is a hit-rate result. Converting it to tok/s needs the expert-io
+  share of the step (`docs/DECODE_BUDGET.md`: about a sixth of decode at 32
+  slots, warm), and on a disk-bound install every miss avoided is an SSD
+  read, which is where it should matter most.
+
+### Real-install check (2026-10-13, Apple M4 Max, AC)
+
+`TURBOSPARK_EXPERT_CACHE_DECAY=32`, one request (c3), 16 slots, 200 tokens:
+
+| arm | greedy md5 | sampled md5 (`--temperature 0.7 --seed 1`) | greedy hits |
+|---|---|---|---:|
+| pre-change binary | `7cf23377586f9ecb23e83d3fd579e984` | `c65e3683df4cabd571cad42b3a751dc8` | 34,554 (61.5%) |
+| post-change, seam unset | `7cf23377586f9ecb23e83d3fd579e984` | `c65e3683df4cabd571cad42b3a751dc8` | 34,554 (61.5%) |
+| post-change, decay 32 | `7cf23377586f9ecb23e83d3fd579e984` | `c65e3683df4cabd571cad42b3a751dc8` | 35,149 (62.6%) |
+
+Byte-identical across all three arms in both modes, as expected structurally:
+the policy moves which slot holds an expert, never which experts run or in
+what order. The default arm's hit count equals the pre-change binary's
+exactly, so the unset seam did not move. The decay arm's +1.1 points matches
+the simulator's +1.0 for that prompt, which is the proof it engaged. No
+throughput is quoted: the host was running a build during the first arm, and
+a one-request +1 point is below run-to-run spread anyway.
+
+### Standing decision
+
+`TURBOSPARK_EXPERT_CACHE_DECAY` is a seam, default off. Flipping the default
+to decay 32 is supported by the hit-rate evidence on Gemma 4 and owes:
+
+1. A multi-request replay on a real runner (server or `--chat`), measuring
+   hits and tok/s with interleaved arms, since that is where the gain is.
+2. One more family with a different expert count, ideally the 512-expert
+   `qwen4exp` on an SSD-bound install, before assuming the interval carries
+   over. The interval counts plans per layer, so it does not scale with
+   layer count, but it may with experts per layer.

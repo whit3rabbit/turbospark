@@ -431,6 +431,10 @@ pub(crate) fn open_expert_streamers(
         .min(experts_per_layer);
     let working_set = bytes_per_slot * expert_cache_slots as u64;
     let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
+    // Read once per open, like the other streamer seams: every layer's
+    // cache must run the same policy or a run measures a mixture.
+    let cache_policy =
+        streaming::ExpertCachePolicy::from_env().map_err(RealForwardError::Unsupported)?;
     let experts_layout = if layout.num_layers > 0 {
         // Dense lead layers carry no expert blob: they get None holes, and
         // the flow (which indexes by CHECKPOINT layer) never consults them.
@@ -455,7 +459,7 @@ pub(crate) fn open_expert_streamers(
             let streamer = streaming::PreadExpertStreamer::open(
                 stream_layout,
                 expert_cache_slots,
-                streaming::ExpertCachePolicy::DEFAULT,
+                cache_policy,
             )
             .map_err(|e| {
                 RealForwardError::Unsupported(format!(

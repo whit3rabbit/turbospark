@@ -300,12 +300,16 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
             runner.resolved_expert_residency().as_str()
         );
         eprintln!(
-            "expert cache: {} slots per layer{}",
+            "expert cache: {} slots per layer{}{}",
             runner.expert_cache_slots(),
             match request.expert_cache_slots {
                 invocation::ExpertCacheSlots::Auto => " (auto)",
                 invocation::ExpertCacheSlots::Fixed(_) => "",
-            }
+            },
+            runner
+                .expert_cache_policy()
+                .map(|p| format!(", policy {}", p.describe()))
+                .unwrap_or_default()
         );
     }
 
