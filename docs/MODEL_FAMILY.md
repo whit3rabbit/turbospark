@@ -100,7 +100,22 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
   parser silently produces an `ArchConfig` labelled with the family it
   hardcodes. A config claiming nothing recognized is accepted.
   - `"gemma4"` / `"gemma4_text"` -> `ModelFamily::Gemma4`
-  - `"qwen3_5_moe"` / `"qwen3_5_moe_text"` -> `ModelFamily::QwenGdnMoe`
+  - `"qwen3_5_moe"` / `"qwen3_5_moe_text"` -> `ModelFamily::QwenGdnMoe`.
+    `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` resolves here through the
+    `text_config` fallthrough: its root `model_type` is `minicpmv4_7`, a
+    VLM wrapper over an exact Qwen 3.6 35B-A3B trunk (vocab 248,144 rather
+    than 248,320). Two things are new about it, and neither one is a family:
+    - **The quantization.** MLX `mode: "mxfp4"` (E2M1 codes, one E8M0
+      exponent per 32, no biases) on the routed experts, the shared expert
+      and full attention, with affine INT8 g64 gates and BF16
+      embed/head/GDN projections. Repack re-blocks the experts losslessly
+      into GGUF MXFP4 blocks, which run on the `gpt-oss` pair with the plain
+      activation chosen by family. It dequantizes the other mxfp4 matrices
+      to BF16 exactly, because there is no resident MXFP4 GEMV.
+    - **The tower.** `arch_registry::has_foreign_vision_tower` marks
+      `minicpmv4_7` so that its `vision_tower.`, `vit_merger.` and `merger.`
+      tensors are dropped. The MiniCPM SigLIP is not the Qwen tower the
+      prefix normally names.
   - `"qwen3_5"` / `"qwen3_5_text"` -> `ModelFamily::QwenGdnDense` (the dense
     sibling). **The lookup is exact equality and not a prefix match, and
     these two rows are why**: `qwen3_5` and `qwen3_5_moe` are one suffix
@@ -322,7 +337,7 @@ means image support.
 | Rust family | Vision compatibility | Current evidence and boundary |
 | --- | --- | --- |
 | `QwenGdnDense` (`qwen35`, upstream `qwen3_5`) | **Real-gated** | Complete image path through CLI, server, FFI, and Swift-facing APIs. Combined and standalone sidecar installs are real-model tested. |
-| `QwenGdnMoe` (`qwen35moe`, upstream `qwen3_5_moe`) | **Verified (2026-09-19)** | The first MoE vision artifact (`mlx-community/Qwen3.6-35B-A3B-4bit`, whose bytes carry the depth-27 tower with `out_hidden_size` 2048) streams combined, reads a test page through the CLI and the server, and passes the four-stage mlx-vlm tower parity (cosine 0.99999+); a standalone MoE tower sidecar verifies via `pull-vision`. Chunked prefill with a vision map still refuses by name; a frozen vision memory oracle is not yet scheduled. |
+| `QwenGdnMoe` (`qwen35moe`, upstream `qwen3_5_moe`) | **Verified (2026-09-19)**; text-only under the `minicpmv4_7` wrapper | The first MoE vision artifact (`mlx-community/Qwen3.6-35B-A3B-4bit`, whose bytes carry the depth-27 tower with `out_hidden_size` 2048) streams combined, reads a test page through the CLI and the server, and passes the four-stage mlx-vlm tower parity (cosine 0.99999+); a standalone MoE tower sidecar verifies via `pull-vision`. Chunked prefill with a vision map still refuses by name; a frozen vision memory oracle is not yet scheduled. |
 | `Gemma4` | **Text-only** | Its vision tensors are excluded at repack. SigLIP-class support remains a roadmap item. |
 | `MuseGlimmer` | **Text-only** | Vision tower, adapter, and projection tensors are excluded at repack. |
 | `Qwen4Exp` | **Text-only** | VLM configuration is recognized, but only the text tower is ingested and executed. |

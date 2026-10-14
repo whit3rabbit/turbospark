@@ -59,3 +59,14 @@ cargo fmt --check
 ```
 
 Run the real Metal gates from the linked verification and model-gate pages.
+
+## Open issues
+
+- `context::device::cache_tests::pipeline_cache_concurrent_writers_publish_complete_entries`
+  failed once on the `verify (macos-latest)` CI job (commit `5d64049a`) and
+  passed on the next runs of unrelated commits, so it looks timing-dependent.
+  It was not reproduced locally. If it fails again, capture the assertion
+  output before rerunning, because a rerun hides the evidence. A pipeline cache
+  that publishes a partial entry under concurrent writers would be a real
+  correctness bug, so do not just mark it ignored.
+

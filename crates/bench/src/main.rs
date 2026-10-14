@@ -37,7 +37,8 @@
 //! and the peak `phys_footprint` in MiB -- the exact counter and cadence
 //! the published Swift baselines were measured with -- plus the
 //! Swift-format `[stop=...]` footer on stderr for `grep -h '^\[stop='`
-//! parity with `docs/COMMUNITY_BENCHMARKS.md`.
+//! parity with the Swift reference repo's `docs/COMMUNITY_BENCHMARKS.md`
+//! (not vendored here; this repo's own procedure is `docs/BENCHMARKING.md`).
 //!
 //! THE CONTEXT WINDOW AND THE GENERATION BUDGET ARE PER-FAMILY, resolved
 //! from the opened install's own manifest by

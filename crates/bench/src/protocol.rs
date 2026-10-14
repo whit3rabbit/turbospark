@@ -1,6 +1,7 @@
 //! The frozen community benchmark protocol (real-generation-v1), vendored
-//! from the Swift repo's `docs/COMMUNITY_BENCHMARKS.md` and
-//! `docs/benchmark-prompts/real-generation-v1/*.json` so Rust and Swift
+//! from the Swift reference repo's `docs/COMMUNITY_BENCHMARKS.md` and
+//! `docs/benchmark-prompts/real-generation-v1/*.json` (neither file lives in
+//! this repo; see `docs/BENCHMARKING.md` for the procedure) so Rust and Swift
 //! measure the same workload: same prompts, same seeds, same sampling
 //! settings, same `[stop=...]` footer for `grep -h '^\[stop='`.
 //!

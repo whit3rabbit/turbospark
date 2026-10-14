@@ -92,6 +92,73 @@ Follow these steps in order when releasing a new version of the app and CLI:
    - `release`: creates the GitHub Release with DMG, zip, and release notes.
    - `update-homebrew-cask`: updates both casks in `whit3rabbit/homebrew-tap`.
 
+## Pre-publish checklist
+
+Run this before step 3 and again after the tag. Each item exists because a
+release shipped without it: v0.2.0 and v0.3.0 packaged cleanly and crashed on
+launch, and nothing in CI started the app.
+
+**Before you commit**
+
+- [ ] `git status` and `git diff` on every shared file (`CHANGELOG.md`,
+  `README.md`, `docs/`). Another session may have hunks in them, or may have
+  committed the whole file with your hunks inside (it happened to the
+  changelog). Stage by explicit path, never `git add -A` or `-a`.
+- [ ] Version sources agree: workspace `version`, every internal path pin,
+  both OpenAPI `info.version`, the `CHANGELOG.md` heading, and `Cargo.lock`
+  (`cargo update --workspace`, which moves only workspace crates).
+- [ ] Verify the COMMIT, not your tree. Export it
+  (`git archive HEAD | tar -x -C <scratch>`) and run `cargo metadata
+  --locked` and the `check-version` greps there. Uncommitted edits make a
+  tree that passes while the commit does not.
+
+**Before you push**
+
+- [ ] Tests for what you changed, in a scratch build directory
+  (`swift test --scratch-path <dir> --filter ...`) so you do not fight another
+  session for `.build`. A string change also needs the localization parity
+  suites. Mutation-check any new guard: break it and see the test fail.
+- [ ] Build and START the app: `scripts/make-app-bundle.sh` then
+  `scripts/verify-app-bundle.sh`. Your Xcode may be newer than CI's (a beta
+  has been seen), so a local pass is not evidence for the pinned toolchain.
+  The `package-macos` matrix is.
+
+**Before you tag**
+
+- [ ] Push `main` first, without a tag. Wait for every `ci.yml` job: both
+  `package-macos` legs and both `verify` jobs.
+- [ ] Tag the exact commit CI verified: `HEAD`, `origin/main`, and the CI run's
+  SHA must be the same. Do not tag a later local commit.
+- [ ] A red job is not automatically yours, but read its log before rerunning.
+  `pipeline_cache_concurrent_writers_publish_complete_entries` has failed once
+  and passed on later runs (see `crates/gpu/AGENTS.md`). Record the assertion
+  output, because a rerun hides it.
+
+**After it publishes**
+
+- [ ] The release run is green end to end: `check-version`, `build-macos`
+  (its verify step), `release`, and `update-homebrew-cask`.
+- [ ] The cask `sha256` equals the DMG digest from `gh release view`.
+- [ ] `brew update`, then install or upgrade from the tap by the full cask
+  name (`brew upgrade --cask whit3rabbit/tap/turbospark`). The cask sets
+  `auto_updates true`, which Homebrew treats specially. If brew still lists
+  the old version after you deleted the app, `brew uninstall --cask` first.
+- [ ] Run the README's first-launch step (`xattr -dr com.apple.quarantine`)
+  BEFORE the first launch, then `scripts/verify-app-bundle.sh
+  /Applications/TurboSpark.app`. Do not launch an older build to compare:
+  builds before v0.3.2 create the TypeSafe Keychain item at start when it is
+  missing, which spoils any Keychain check that follows.
+- [ ] Check what the app left behind: `security find-generic-password -s
+  TurboSpark.typesafe` and `-s TurboSpark.server` should find nothing on a
+  machine that never opted in.
+
+**If a published release is broken**
+
+Do not move the tag or replace assets. Fix forward with a new patch version
+whose changelog entry says it replaces the bad one and how to upgrade, then
+confirm the new version from the tap on a clean install. Old Releases stay
+published, so say so in the entry.
+
 ## Publishing Crates to crates.io
 
 Rust crates are published on demand via `.github/workflows/publish-crates.yml`.

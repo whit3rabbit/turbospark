@@ -82,9 +82,10 @@ Who sets the flag:
 - **Server:** per request, `Arc<AtomicBool>`, set by `CancelOnDrop` (client
   disconnect) or an explicit cancellation route; built into a `CancelFlag`
   ONCE on the blocking thread (`CancelFlag` is not `Send`).
-- **FFI:** `session.arm()` before the engine lock is taken, so a Stop
-  pressed between turns cannot cancel the next one; `ts_session_cancel` is
-  wait-free from any thread.
+- **FFI:** `session.arm()` at the entry of `ts_generate` and `ts_humanize`,
+  before the heavy-work gate and the engine lock, so a Stop pressed between
+  turns cannot cancel the next one while a Stop pressed during the queue wait
+  still does; `ts_session_cancel` is wait-free from any thread.
 - **CLI:** none. `turbospark-check` uses the non-cancellable variants;
   Ctrl-C terminates the process. Recorded as a follow-up, not a gap in the
   design.
