@@ -195,6 +195,9 @@ from compilation or a CPU-only result.
   Snowflake arctic-embed, SigLIP2 NaFlex, CLAP) with pinned HF and MLX
   checkpoints, sentence-transformers pooling, and similarity scoring; see
   `crates/embeddings/MODELS.md`.
+- `crates/coreml`: the Apple Core ML runner (macOS stub elsewhere). Model
+  pipelines on it live in `crates/runtime/src/coreml/`; see
+  [Core ML models](docs/COREML.md).
 - `crates/ffi`: the C ABI consumed by Swift.
 - `crates/cli`, `crates/catalog`, `crates/server`: user-facing install,
   command, and service surfaces.

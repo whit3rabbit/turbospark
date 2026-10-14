@@ -128,6 +128,6 @@ later port starts from a pinned pair rather than a search.
 
 | MLX repository | Revision | Upstream | Why not ported |
 |---|---|---|---|
-| mlx-community/embeddinggemma-2-{bf16,8bit,6bit,5bit,4bit,mxfp8,mxfp4,nvfp4} | bf16 `1a4ffddb7905d3f63486748deabe091a01fb6201`, 8bit `7505ef2f8ddef45efef6d060865f27989b3c9cec`, 4bit `8ab839e127cb8cb305edd71fb7a02c82f2d49ab3` | google/embeddinggemma-2 @ `914f7f89142e33e77833254d9c9b90c3cef7303b` | `EmbeddingGemma2Model` is a Gemma4 multimodal encoder (text, vision, and `gemma4_audio` towers), not the Gemma3 text encoder. mxfp/nvfp formats are not affine. |
+| mlx-community/embeddinggemma-2-{bf16,8bit,6bit,5bit,4bit,mxfp8,mxfp4,nvfp4} | bf16 `1a4ffddb7905d3f63486748deabe091a01fb6201`, 8bit `7505ef2f8ddef45efef6d060865f27989b3c9cec`, 4bit `8ab839e127cb8cb305edd71fb7a02c82f2d49ab3` | google/embeddinggemma-2 @ `914f7f89142e33e77833254d9c9b90c3cef7303b` | `EmbeddingGemma2Model` is a Gemma4 multimodal encoder (text, vision, and `gemma4_audio` towers), not the Gemma3 text encoder. mxfp/nvfp formats are not affine. The FluidInference Core ML export runs instead, outside this crate (`docs/COREML.md`). |
 | mlx-community/siglip2-base-patch16-224-8bit | `5249fc157310584fe99dae6964707278eb6df50f` | google/siglip2-base-patch16-224 | Fixed-resolution SigLIP2 uses the `siglip` (v1) architecture with a fixed position grid, not NaFlex. |
 | mlx-community/siglip2-so400m-patch16-384 | `47bb082a6eeb9789923d547a845ca2c55ae39245` | google/siglip2-so400m-patch16-384 | Same as above, so400m width. |

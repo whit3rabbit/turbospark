@@ -173,3 +173,75 @@ public struct EmbeddingResult: Decodable, Sendable, Equatable {
     public let images: [[Float]]
     public let audio: [[AudioWindowEmbedding]]
 }
+
+/// One pinned embedding model the app can download (`ts_embedding_catalog_json`).
+public struct EmbeddingProfile: Decodable, Sendable, Equatable, Identifiable {
+    public var id: String { alias }
+    public let alias: String
+    public let displayName: String
+    public let family: String
+    public let backend: String
+    public let repository: String
+    public let revision: String
+    public let license: String
+    /// Inputs embedded into one space: `text`, `image`, `audio`.
+    public let modalities: [String]
+    public let dimensions: Int
+    public let matryoshkaDims: [Int]
+    public let downloadBytes: UInt64
+    /// Set once a verified install exists. The alias itself also works as
+    /// an embedding model path.
+    public let installedPath: String?
+    public let canRun: Bool
+    public let unavailableReason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case alias, family, backend, repository, revision, license, modalities, dimensions
+        case displayName = "display_name"
+        case matryoshkaDims = "matryoshka_dims"
+        case downloadBytes = "download_bytes"
+        case installedPath = "installed_path"
+        case canRun = "can_run"
+        case unavailableReason = "unavailable_reason"
+    }
+}
+
+/// Pinned embedding models: listing and verified install.
+public enum EmbeddingCatalog {
+    public static func profiles() throws -> [EmbeddingProfile] {
+        let json = try takeString { ts_embedding_catalog_json($0) }
+        return try JSONDecoder().decode([EmbeddingProfile].self, from: Data(json.utf8))
+    }
+
+    /// Blocking download and install; call off the main actor. Cancel with
+    /// `TurboSparkCatalog.cancelInstall()`. Returns the install path.
+    public static func install(
+        alias: String,
+        progress: @escaping @Sendable (AudioDownloadProgress) -> Void = { _ in }
+    ) throws -> String {
+        let box = EmbeddingDownloadBox(progress)
+        let context = Unmanaged.passUnretained(box).toOpaque()
+        defer { withExtendedLifetime(box) {} }
+        let json = try takeString { out in
+            alias.withCString { a in
+                ts_embedding_install(a, { userdata, _, path, length, completed, total in
+                    guard let userdata else { return }
+                    let box = Unmanaged<EmbeddingDownloadBox>.fromOpaque(userdata).takeUnretainedValue()
+                    let name = path.map {
+                        String(decoding: UnsafeBufferPointer(
+                            start: UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self), count: length),
+                            as: UTF8.self)
+                    }
+                    box.callback(AudioDownloadProgress(path: name, completedBytes: completed, totalBytes: total))
+                }, context, out)
+            }
+        }
+        struct Installed: Decodable { let path: String }
+        return try JSONDecoder().decode(Installed.self, from: Data(json.utf8)).path
+    }
+}
+
+private final class EmbeddingDownloadBox {
+    let callback: @Sendable (AudioDownloadProgress) -> Void
+    init(_ callback: @escaping @Sendable (AudioDownloadProgress) -> Void) { self.callback = callback }
+}

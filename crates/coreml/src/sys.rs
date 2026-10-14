@@ -1,8 +1,13 @@
 //! The macOS Core ML boundary. Every `unsafe` block in this crate lives in
 //! this file. The rules it follows (see `AGENTS.md`):
 //!
-//! - Every Objective-C call that can raise runs inside `objc2::exception::catch`,
-//!   so an NSException becomes `CoreMlError::Exception` instead of aborting.
+//! - NSExceptions are NOT caught. Catching needs objc2's `exception`
+//!   feature, whose Objective-C helper adds `__objc_personality_v0` to the
+//!   link. The macOS app already links three personality routines (two Rust
+//!   static libraries plus C++), compact unwind encodes at most three, and a
+//!   fourth fails the app link. So every call is made safe up front instead:
+//!   inputs are checked against the model description, and OS-gated APIs
+//!   behind `supports`. An exception that still escapes aborts.
 //! - Every API newer than macOS 13 is gated by `supports` first. objc2 looks
 //!   selectors up at runtime; an unchecked call on an older OS raises.
 //! - Every prediction runs in its own autorelease pool. Without one, the
@@ -14,18 +19,18 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::sync::{mpsc, Mutex};
 
 use block2::RcBlock;
 use objc2::rc::{autoreleasepool, Retained};
-use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::runtime::{AnyClass, AnyObject, NSObjectProtocol, ProtocolObject};
 use objc2::{available, AllocAnyThread};
 use objc2_core_ml::{
-    MLComputeUnits, MLDictionaryFeatureProvider, MLFeatureDescription, MLFeatureProvider,
-    MLFeatureType, MLFeatureValue, MLModel, MLModelConfiguration, MLMultiArray,
+    MLComputeDeviceProtocol, MLComputePlan, MLComputeUnits, MLDictionaryFeatureProvider,
+    MLFeatureDescription, MLFeatureProvider, MLFeatureType, MLFeatureValue, MLModel,
+    MLModelConfiguration, MLModelStructure, MLModelStructureProgramBlock, MLMultiArray,
     MLMultiArrayDataType, MLMultiArrayShapeConstraint, MLMultiArrayShapeConstraintType, MLState,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSError, NSNumber, NSProcessInfo, NSString, NSURL};
@@ -35,16 +40,15 @@ use crate::error::{CoreMlError, Result};
 use crate::tensor::{
     element_count, gather_strided, scatter_strided, strided_extent, DType, Tensor,
 };
-use crate::{check_inputs, Capability, ComputeUnits, FeatureKind, FeatureSpec, LoadOptions};
+use crate::{
+    check_inputs, Capability, ComputeDevice, ComputePlan, ComputeUnits, FeatureKind, FeatureSpec,
+    LoadOptions, OpPlacement,
+};
 
-/// Runs `f`, converting an Objective-C exception into an error.
-fn guarded<R>(what: &str, f: impl FnOnce() -> R) -> Result<R> {
-    objc2::exception::catch(AssertUnwindSafe(f)).map_err(|e| {
-        let detail = e
-            .map(|e| format!("{e:?}"))
-            .unwrap_or_else(|| "nil exception".into());
-        CoreMlError::Exception(format!("{what}: {detail}"))
-    })
+/// Marks an Objective-C call site. It cannot catch an NSException (see the
+/// module docs); it names the call so a future catch has one place to go.
+fn guarded<R>(_what: &str, f: impl FnOnce() -> R) -> Result<R> {
+    Ok(f())
 }
 
 fn ns_error(e: &NSError) -> String {
@@ -54,7 +58,7 @@ fn ns_error(e: &NSError) -> String {
 pub fn supports(cap: Capability) -> bool {
     match cap {
         Capability::MultiFunction | Capability::State => available!(macos = 15.0),
-        Capability::AsyncCompile => available!(macos = 14.4),
+        Capability::AsyncCompile | Capability::ComputePlan => available!(macos = 14.4),
     }
 }
 
@@ -103,6 +107,20 @@ fn ml_units(u: ComputeUnits) -> MLComputeUnits {
         ComputeUnits::CpuAndNeuralEngine => MLComputeUnits::CPUAndNeuralEngine,
         ComputeUnits::All => MLComputeUnits::All,
     }
+}
+
+/// A fresh configuration for `opts`. Callers check
+/// `Capability::MultiFunction` before passing a function name.
+fn configuration(opts: &LoadOptions) -> Retained<MLModelConfiguration> {
+    // SAFETY: a fresh configuration object; setFunctionName: is only
+    // reached after the caller's macOS 15 check.
+    let config = unsafe { MLModelConfiguration::new() };
+    unsafe { config.setComputeUnits(ml_units(opts.compute_units)) };
+    if let Some(f) = &opts.function {
+        let f = NSString::from_str(f);
+        unsafe { config.setFunctionName(Some(&f)) };
+    }
+    config
 }
 
 fn numbers(a: &NSArray<NSNumber>) -> Vec<isize> {
@@ -431,14 +449,7 @@ impl CoreMlModel {
         let url = NSURL::from_directory_path(path)
             .ok_or_else(|| CoreMlError::Load(format!("bad path {}", path.display())))?;
         autoreleasepool(|_| {
-            // SAFETY: a fresh configuration object; setFunctionName: is only
-            // called after the macOS 15 check above.
-            let config = unsafe { MLModelConfiguration::new() };
-            unsafe { config.setComputeUnits(ml_units(opts.compute_units)) };
-            if let Some(f) = &opts.function {
-                let f = NSString::from_str(f);
-                unsafe { config.setFunctionName(Some(&f)) };
-            }
+            let config = configuration(opts);
             // SAFETY: modelWithContentsOfURL:configuration:error: with a
             // valid file URL and configuration.
             let model = guarded("MLModel load", || unsafe {
@@ -877,4 +888,152 @@ fn compile_to_temp(url: &NSURL) -> Result<PathBuf> {
         u.to_file_path()
             .ok_or_else(|| CoreMlError::Compile("compiled URL is not a file path".into()))
     }
+}
+
+/// Reads Core ML's compute plan for a compiled `.mlmodelc`: the device each
+/// ML program operation is planned on under `opts`, and Core ML's cost
+/// estimate for it. It loads the model on its own, separately from any
+/// `CoreMlModel`, and may trigger the same device compile a load does.
+pub fn compute_plan(path: &Path, opts: &LoadOptions) -> Result<ComputePlan> {
+    if path.extension().and_then(|e| e.to_str()) != Some("mlmodelc") || !path.is_dir() {
+        return Err(CoreMlError::Load(format!(
+            "{} is not a compiled .mlmodelc directory",
+            path.display()
+        )));
+    }
+    if !supports(Capability::ComputePlan) {
+        return Err(Capability::ComputePlan.too_old());
+    }
+    if opts.function.is_some() && !supports(Capability::MultiFunction) {
+        return Err(Capability::MultiFunction.too_old());
+    }
+    let url = NSURL::from_directory_path(path)
+        .ok_or_else(|| CoreMlError::Load(format!("bad path {}", path.display())))?;
+    let (tx, rx) = mpsc::channel::<Result<ComputePlan>>();
+    let tx = Mutex::new(Some(tx));
+    autoreleasepool(|_| {
+        let config = configuration(opts);
+        // The plan is walked inside the handler, on whatever queue Core ML
+        // calls it from, so no Objective-C object crosses a thread: only
+        // the plain-Rust result is sent back.
+        let block = RcBlock::new(move |plan: *mut MLComputePlan, err: *mut NSError| {
+            // SAFETY: Core ML passes either a valid plan or a valid error,
+            // both live for the duration of the handler.
+            let res = unsafe {
+                match (plan.as_ref(), err.as_ref()) {
+                    (Some(p), _) => autoreleasepool(|_| walk_plan(p)),
+                    (None, Some(e)) => Err(CoreMlError::Load(ns_error(e))),
+                    (None, None) => Err(CoreMlError::Load("no compute plan and no error".into())),
+                }
+            };
+            if let Some(tx) = tx.lock().ok().and_then(|mut g| g.take()) {
+                let _ = tx.send(res);
+            }
+        });
+        // SAFETY: gated on macOS 14.4 above (15 for a function name); the
+        // handler is retained by Core ML until it runs.
+        guarded("MLComputePlan load", || unsafe {
+            MLComputePlan::loadContentsOfURL_configuration_completionHandler(&url, &config, &block)
+        })
+    })?;
+    rx.recv()
+        .map_err(|_| CoreMlError::Load("compute plan handler was dropped".into()))?
+}
+
+fn walk_plan(plan: &MLComputePlan) -> Result<ComputePlan> {
+    let mut out = ComputePlan::default();
+    // SAFETY: property read on a live plan.
+    let structure = unsafe { plan.modelStructure() };
+    walk_structure(plan, &structure, "", &mut out)?;
+    Ok(out)
+}
+
+fn walk_structure(
+    plan: &MLComputePlan,
+    s: &MLModelStructure,
+    prefix: &str,
+    out: &mut ComputePlan,
+) -> Result<()> {
+    // SAFETY: property reads on a live structure, on the handler's thread
+    // only (Core ML marks them not thread-safe).
+    if let Some(program) = unsafe { s.program() } {
+        let (names, functions) = unsafe { program.functions() }.to_vecs();
+        for (name, f) in names.iter().zip(functions.iter()) {
+            // SAFETY: as above.
+            let block = unsafe { f.block() };
+            walk_block(plan, &block, &format!("{prefix}{name}"), out);
+        }
+        return Ok(());
+    }
+    // SAFETY: as above.
+    if let Some(pipeline) = unsafe { s.pipeline() } {
+        let names = unsafe { pipeline.subModelNames() };
+        let subs = unsafe { pipeline.subModels() };
+        for (name, sub) in names.iter().zip(subs.iter()) {
+            walk_structure(plan, &sub, &format!("{prefix}{name}/"), out)?;
+        }
+        return Ok(());
+    }
+    Err(CoreMlError::Load(
+        "compute plans are read for ML programs and pipelines only, not neural networks".into(),
+    ))
+}
+
+fn walk_block(
+    plan: &MLComputePlan,
+    block: &MLModelStructureProgramBlock,
+    function: &str,
+    out: &mut ComputePlan,
+) {
+    // SAFETY: property reads on live structure objects, and plan lookups
+    // for operations taken from this plan's own structure.
+    for op in unsafe { block.operations() }.iter() {
+        let operator = unsafe { op.operatorName() }.to_string();
+        let output = unsafe { op.outputs() }
+            .iter()
+            .next()
+            .map(|o| unsafe { o.name() }.to_string());
+        let usage = unsafe { plan.computeDeviceUsageForMLProgramOperation(&op) };
+        let (preferred, supported) = match usage {
+            Some(u) => {
+                let preferred = unsafe { u.preferredComputeDevice() };
+                let supported = unsafe { u.supportedComputeDevices() };
+                (
+                    Some(device(&preferred)),
+                    supported.iter().map(|d| device(&d)).collect(),
+                )
+            }
+            None => (None, Vec::new()),
+        };
+        let cost =
+            unsafe { plan.estimatedCostOfMLProgramOperation(&op) }.map(|c| unsafe { c.weight() });
+        out.ops.push(OpPlacement {
+            function: function.to_string(),
+            operator,
+            output,
+            preferred,
+            supported,
+            cost,
+        });
+        // Control-flow operations (cond, while_loop) carry nested blocks.
+        for inner in unsafe { op.blocks() }.iter() {
+            walk_block(plan, &inner, function, out);
+        }
+    }
+}
+
+/// Classifies a compute device by class. The classes are looked up by name
+/// so the GPU one does not need objc2-metal.
+fn device(d: &ProtocolObject<dyn MLComputeDeviceProtocol>) -> ComputeDevice {
+    for (name, dev) in [
+        (c"MLNeuralEngineComputeDevice", ComputeDevice::NeuralEngine),
+        (c"MLGPUComputeDevice", ComputeDevice::Gpu),
+        (c"MLCPUComputeDevice", ComputeDevice::Cpu),
+    ] {
+        if AnyClass::get(name).is_some_and(|c| d.isKindOfClass(c)) {
+            return dev;
+        }
+    }
+    let obj: &AnyObject = d.as_ref();
+    ComputeDevice::Other(obj.class().name().to_string_lossy().into_owned())
 }

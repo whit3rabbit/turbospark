@@ -128,8 +128,8 @@ jobs:
 
       - name: Build TurboSpark.app
         env:
-          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '325701be0582c8986ce84c54f88caa21630020c0' }}
-          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.1.0' }}
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '2dba87572c028aeaf34b27220a3bbd3d8d8dbc76' }}
+          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.3.0' }}
         run: ./scripts/make-app-bundle.sh
 
       # Launches the app and checks the deployment floor. Packaging success
@@ -142,6 +142,6 @@ jobs:
       # merely that hdiutil exited 0.
       - name: Build and verify DMG
         env:
-          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '325701be0582c8986ce84c54f88caa21630020c0' }}
-          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.1.0' }}
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '2dba87572c028aeaf34b27220a3bbd3d8d8dbc76' }}
+          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.3.0' }}
         run: ./scripts/make-dmg.sh

@@ -111,6 +111,9 @@ struct ServerAdvancedSettingsView: View {
                         model.persistSettingsDebounced()
                     }
             }
+            // `onChange` above persists the alias Use writes into the field.
+            RecommendedEmbeddingModelRow(
+                model: model, selection: $model.serverEmbeddingModelInput, disabled: isRunning)
 
             field(
                 Text("HF mirror endpoint", bundle: .module),

@@ -1444,6 +1444,65 @@ int32_t ts_embedding_encode_request_json(const char *model_path,
                                          char **out);
 
 /*
+ * Pinned embedding profiles (crates/catalog/src/embedding_models.json).
+ * Writes a JSON array to *out (free with ts_string_free); each row has
+ * alias, display_name, family, backend, repository, revision, license,
+ * modalities, dimensions, matryoshka_dims, download_bytes, installed_path
+ * (null until a verified install exists), can_run and unavailable_reason.
+ * An installed alias works anywhere an embedding model path is accepted.
+ */
+int32_t ts_embedding_catalog_json(char **out);
+
+/*
+ * Downloads, verifies (size and SHA-256 per file) and installs one pinned
+ * embedding profile into models/embeddings/<alias> of the default store.
+ * Progress arrives as TS_INSTALL_BYTES; ts_install_cancel stops it with
+ * TS_ERR_CANCELLED. Refuses an existing install. Writes
+ * {"alias", "path"} to *out.
+ */
+int32_t ts_embedding_install(const char *alias, TsInstallCallback callback,
+                             void *userdata, char **out);
+
+/*
+ * Document OCR on Core ML (Unlimited OCR, macOS 15+).
+ *
+ * A session holds the model and a list of pending pages. Add pages, then
+ * read them as one document; every read clears the pending list. One page
+ * uses the single-page prompt, several the multi-page prompt (the bundle's
+ * limit is 8 pages). Off macOS 15 every call returns TS_ERR_UNSUPPORTED.
+ */
+typedef struct TsOcrSession TsOcrSession;
+
+/* Opens a directory holding UnlimitedOcrPageEncoder.mlpackage,
+ * UnlimitedOcrDecoder.mlpackage, embeddings.f16, tokenizer.json and
+ * config.json. The first open compiles the decoder for this machine. */
+int32_t ts_ocr_open(const char *model_path, TsOcrSession **out);
+
+/* Closes a session. Not while a read is in flight. NULL is a no-op. */
+void ts_ocr_close(TsOcrSession *s);
+
+/* Asks an in-flight read to stop. Safe from any thread; never blocks. The
+ * read returns TS_ERR_CANCELLED. A Stop between reads is cleared by the
+ * next read. */
+void ts_ocr_cancel(const TsOcrSession *s);
+
+/* Adds one page of interleaved RGB8 pixels; row_bytes >= width * 3. */
+int32_t ts_ocr_add_page_rgb(const TsOcrSession *s, const uint8_t *rgb,
+                            size_t width, size_t height, size_t row_bytes);
+
+/* Adds one page from a PNG or JPEG file. */
+int32_t ts_ocr_add_page_file(const TsOcrSession *s, const char *path);
+
+/* Reads the pending pages. options_json may be NULL or
+ * {"max_new_tokens": N}. Writes to *out (free with ts_string_free):
+ *   {"text": "plain text, pages separated by a blank line",
+ *    "raw_text": "model output with <PAGE> and <|det|> layout markup",
+ *    "pages": 2, "prompt_tokens": 551, "output_tokens": 208,
+ *    "stopped_at_eos": true} */
+int32_t ts_ocr_read_json(const TsOcrSession *s, const char *options_json,
+                         char **out);
+
+/*
  * Computes the cosine similarity between two float vectors of length `len`.
  * Both vectors are L2-normalized first, so arbitrary nonzero inputs give a
  * true cosine in [-1, 1]; a zero vector yields 0.0.

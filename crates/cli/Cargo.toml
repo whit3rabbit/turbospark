@@ -36,6 +36,10 @@ path = "src/bin/music.rs"
 name = "turbospark-clone"
 path = "src/bin/clone.rs"
 
+[[bin]]
+name = "turbospark-ocr"
+path = "src/bin/ocr.rs"
+
 [dependencies]
 libc = "0.2"
 invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.3.2" }

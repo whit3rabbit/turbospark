@@ -33,9 +33,6 @@ pub enum CoreMlError {
         index: usize,
     },
     Prediction(String),
-    /// The Objective-C runtime raised an exception instead of returning an
-    /// NSError. Caught so it cannot abort the process.
-    Exception(String),
     Io(String),
 }
 
@@ -67,7 +64,6 @@ impl fmt::Display for CoreMlError {
                 "feature {name}: element {index} is not finite after f16 conversion"
             ),
             Self::Prediction(m) => write!(f, "Core ML prediction failed: {m}"),
-            Self::Exception(m) => write!(f, "Core ML raised an exception: {m}"),
             Self::Io(m) => write!(f, "{m}"),
         }
     }

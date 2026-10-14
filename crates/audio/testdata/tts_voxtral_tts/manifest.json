@@ -1,0 +1,18 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "generator": "tools/gen_voxtral_tts_fixtures.py",
+  "files": {
+    "codec/config.json": "sha256:ce8e3025ab648a003535870f597adca6a5880b18bfbb0f07354535a90de407b5",
+    "codec/model.safetensors": "sha256:f8c67d60355cabdd9ec84a9d7e52f4c5c01d04cc9d4d344a47a7bd100e10edc4",
+    "codec/traces.json": "sha256:4931d66250b42f25ffbdc505b7802f98ca21a4bbe7ad398ac1ce4c195e186faf",
+    "generate/config.json": "sha256:ce8e3025ab648a003535870f597adca6a5880b18bfbb0f07354535a90de407b5",
+    "generate/model.safetensors": "sha256:94a1d0fa7655f8008ceca4f04d19856af202047145e7761fee2e4d4a72e78fd7",
+    "generate/traces.json": "sha256:8188c2ab25b50db7670812b32022faeb5a0df13509e13928ec74cc8c35f1c0b3",
+    "generate/voice_embedding/casual_male.safetensors": "sha256:d63a8226d9a55117ee2cf16bb11b25f17f4bcebe1ec03ff38b6c590f22c337c6",
+    "length/config.json": "sha256:ce8e3025ab648a003535870f597adca6a5880b18bfbb0f07354535a90de407b5",
+    "length/model.safetensors": "sha256:7557bd64543ba0356b500a362da79d45b994959a2d995c10028edb9dad2bcf54",
+    "length/traces.json": "sha256:4c952b47b40b1e04446f557f0a1b85a04e2bfb3abe1fcccc51e0679d7a53cd36",
+    "length/voice_embedding/casual_male.safetensors": "sha256:d63a8226d9a55117ee2cf16bb11b25f17f4bcebe1ec03ff38b6c590f22c337c6",
+    "manifest.json": "sha256:26107fc574fee0d6d2cd514fa98fce3d52eae5664681d7f3dcb04dc60a0b21cf"
+  }
+}

@@ -7,8 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use turbospark_coreml::{
-    compile_if_needed, supports, Capability, ComputeUnits, CoreMlError, CoreMlModel, DType,
-    FeatureKind, LoadOptions, Tensor,
+    compile_if_needed, compute_plan, supports, Capability, ComputeDevice, ComputeUnits,
+    CoreMlError, CoreMlModel, DType, FeatureKind, LoadOptions, Tensor,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -245,4 +245,49 @@ fn model_is_shareable_across_threads() {
     for h in handles {
         h.join().unwrap();
     }
+}
+
+#[test]
+fn compute_plan_places_every_op_of_the_loaded_function() {
+    let s = Scratch::new("plan");
+    let compiled = compile_if_needed(&fixture("add_f32.mlpackage"), &s.0).unwrap();
+    if !supports(Capability::ComputePlan) {
+        assert!(matches!(
+            compute_plan(&compiled, &cpu()),
+            Err(CoreMlError::OsTooOld { .. })
+        ));
+        return;
+    }
+    let plan = compute_plan(&compiled, &cpu()).unwrap();
+    let ops: Vec<(&str, &str)> = plan
+        .ops
+        .iter()
+        .map(|o| (o.operator.as_str(), o.output.as_deref().unwrap_or("")))
+        .collect();
+    assert_eq!(ops, [("ios16.add", "sum"), ("ios16.sub", "diff")]);
+    for op in &plan.ops {
+        assert_eq!(op.function, "main");
+        assert_eq!(op.preferred, Some(ComputeDevice::Cpu));
+        assert_eq!(op.supported, [ComputeDevice::Cpu]);
+    }
+    let total: f64 = plan.ops.iter().filter_map(|o| o.cost).sum();
+    assert!((total - 1.0).abs() < 1e-6, "cost weights sum to {total}");
+
+    // The plan covers only the function the configuration binds; the
+    // package's other functions get no placement.
+    if supports(Capability::MultiFunction) {
+        let multi = compile_if_needed(&fixture("multifunction.mlpackage"), &s.0).unwrap();
+        let plan = compute_plan(&multi, &cpu().with_function("triple")).unwrap();
+        let placed = |f: &str| {
+            plan.ops
+                .iter()
+                .any(|o| o.function == f && o.preferred.is_some())
+        };
+        assert!(placed("triple"));
+        assert!(!placed("double"));
+    }
+    assert!(matches!(
+        compute_plan(&fixture("add_f32.mlpackage"), &cpu()),
+        Err(CoreMlError::Load(_))
+    ));
 }

@@ -31,6 +31,7 @@ mod hub_transfer;
 mod hub_validation;
 mod image;
 mod install;
+pub mod embedding;
 pub mod music;
 mod probe;
 mod quant;
@@ -74,6 +75,7 @@ pub use install::{
     ByteProgressCallback, CancelFlag, InstallPlan, Installed, VariantInstallPlan,
     INSTALL_CANCELLED, VISION_SIDECAR_FILES,
 };
+pub use embedding::{EmbeddingCatalog, EmbeddingProfile};
 pub use music::{
     embedded_music_entries, embedded_music_entry, install_music, MusicCatalogEntry,
     MusicQuantization,

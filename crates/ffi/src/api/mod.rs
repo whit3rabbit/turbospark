@@ -6,6 +6,7 @@ mod embedding;
 mod generate;
 mod image;
 mod models;
+mod ocr;
 mod server;
 mod session;
 #[cfg(target_os = "macos")]
@@ -21,6 +22,7 @@ pub use embedding::*;
 pub use generate::*;
 pub use image::*;
 pub use models::*;
+pub use ocr::*;
 pub use server::*;
 pub use session::*;
 pub use stt::*;

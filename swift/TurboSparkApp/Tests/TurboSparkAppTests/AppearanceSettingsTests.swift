@@ -599,8 +599,14 @@ final class AppearanceSettingsTests: XCTestCase {
         let code = AppFontCatalog.availableCodeFamilies(installed: installed)
 
         XCTAssertTrue(ui.contains("Inter"))
+        XCTAssertTrue(ui.contains("Geist"))
         XCTAssertTrue(code.contains("JetBrains Mono"))
         XCTAssertTrue(code.contains("Fira Code"))
+        XCTAssertTrue(code.contains("Iosevka"))
+        XCTAssertTrue(code.contains("Geist Mono"))
+        XCTAssertTrue(code.contains("Cascadia Code"))
+        XCTAssertTrue(code.contains("Hack"))
+        XCTAssertTrue(code.contains("Source Code Pro"))
     }
 
     func testColorContrastForeground() {

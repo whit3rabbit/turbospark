@@ -31,10 +31,10 @@ pub use error::{CoreMlError, Result};
 pub use tensor::{element_count, DType, Tensor, TensorData};
 
 #[cfg(target_os = "macos")]
-pub use sys::{compile_if_needed, os_version, supports, CoreMlModel, CoreMlState};
+pub use sys::{compile_if_needed, compute_plan, os_version, supports, CoreMlModel, CoreMlState};
 
 #[cfg(not(target_os = "macos"))]
-pub use stub::{compile_if_needed, os_version, supports, CoreMlModel, CoreMlState};
+pub use stub::{compile_if_needed, compute_plan, os_version, supports, CoreMlModel, CoreMlState};
 
 /// Which processors Core ML may schedule on. Mirrors `MLComputeUnits`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -81,13 +81,15 @@ pub enum Capability {
     /// `compileModelAtURL:completionHandler:` (14.4). The synchronous
     /// variant is the fallback before that.
     AsyncCompile,
+    /// `MLComputePlan` (14.4), for [`compute_plan`].
+    ComputePlan,
 }
 
 impl Capability {
     pub fn required_macos(self) -> &'static str {
         match self {
             Self::MultiFunction | Self::State => "15.0",
-            Self::AsyncCompile => "14.4",
+            Self::AsyncCompile | Self::ComputePlan => "14.4",
         }
     }
 
@@ -96,6 +98,7 @@ impl Capability {
             Self::MultiFunction => "multifunction Core ML models",
             Self::State => "stateful Core ML models",
             Self::AsyncCompile => "asynchronous Core ML compilation",
+            Self::ComputePlan => "Core ML compute plans",
         }
     }
 
@@ -155,6 +158,91 @@ pub struct FeatureSpec {
     pub name: String,
     pub kind: FeatureKind,
     pub optional: bool,
+}
+
+/// A processor in an `MLComputePlan`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ComputeDevice {
+    Cpu,
+    Gpu,
+    NeuralEngine,
+    /// A device class this crate does not recognize, by class name.
+    Other(String),
+}
+
+impl ComputeDevice {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Gpu => "gpu",
+            Self::NeuralEngine => "ane",
+            Self::Other(name) => name,
+        }
+    }
+}
+
+/// Where Core ML plans to run one ML program operation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpPlacement {
+    /// The program function the operation belongs to. Nested pipeline
+    /// models are prefixed with their sub-model name (`sub/main`).
+    pub function: String,
+    pub operator: String,
+    /// The operation's first output name, to tell operations apart.
+    pub output: Option<String>,
+    /// `None` when the plan assigns no device (constants are folded into
+    /// their consumers and get none).
+    pub preferred: Option<ComputeDevice>,
+    pub supported: Vec<ComputeDevice>,
+    /// Core ML's estimated share of the model's total cost, 0 to 1. `None`
+    /// when the plan has no estimate for the operation.
+    pub cost: Option<f64>,
+}
+
+/// One row of [`ComputePlan::summary`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeviceShare {
+    pub function: String,
+    /// `None` collects the operations without a preferred device.
+    pub device: Option<ComputeDevice>,
+    pub ops: usize,
+    /// Sum of the estimated cost weights of those operations.
+    pub cost: f64,
+}
+
+/// An `MLComputePlan` flattened to per-operation placements. It is what Core
+/// ML intends for the configured compute units, read before any prediction,
+/// so it answers "which processor does this model run on" without timing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ComputePlan {
+    pub ops: Vec<OpPlacement>,
+}
+
+impl ComputePlan {
+    /// Operation count and summed cost per function and preferred device,
+    /// sorted by function, then device.
+    pub fn summary(&self) -> Vec<DeviceShare> {
+        let mut rows: Vec<DeviceShare> = Vec::new();
+        for op in &self.ops {
+            let row = rows
+                .iter_mut()
+                .find(|r| r.function == op.function && r.device == op.preferred);
+            match row {
+                Some(r) => {
+                    r.ops += 1;
+                    r.cost += op.cost.unwrap_or(0.0);
+                }
+                None => rows.push(DeviceShare {
+                    function: op.function.clone(),
+                    device: op.preferred.clone(),
+                    ops: 1,
+                    cost: op.cost.unwrap_or(0.0),
+                }),
+            }
+        }
+        rows.sort_by(|a, b| (&a.function, &a.device).cmp(&(&b.function, &b.device)));
+        rows
+    }
 }
 
 /// Checks one input tensor against its declared feature. Pure, so the
@@ -275,6 +363,48 @@ mod tests {
         let specs = vec![spec("x", DType::F16, None)];
         let x = Tensor::f16_from_f32("x", vec![3, 7], &[0.0; 21]).unwrap();
         assert!(check_inputs(&specs, &[("x", &x)]).is_ok());
+    }
+
+    #[test]
+    fn plan_summary_groups_by_function_and_device() {
+        let op = |function: &str, device: Option<ComputeDevice>, cost: Option<f64>| OpPlacement {
+            function: function.into(),
+            operator: "op".into(),
+            output: None,
+            preferred: device,
+            supported: Vec::new(),
+            cost,
+        };
+        let plan = ComputePlan {
+            ops: vec![
+                op("main", Some(ComputeDevice::NeuralEngine), Some(0.25)),
+                op("main", Some(ComputeDevice::Cpu), Some(0.5)),
+                op("main", None, None),
+                op("main", Some(ComputeDevice::NeuralEngine), Some(0.125)),
+                op("aux", Some(ComputeDevice::Cpu), None),
+            ],
+        };
+        let summary = plan.summary();
+        let rows: Vec<(&str, Option<&str>, usize, f64)> = summary
+            .iter()
+            .map(|r| {
+                (
+                    r.function.as_str(),
+                    r.device.as_ref().map(|d| d.as_str()),
+                    r.ops,
+                    r.cost,
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("aux", Some("cpu"), 1, 0.0),
+                ("main", None, 1, 0.0),
+                ("main", Some("cpu"), 1, 0.5),
+                ("main", Some("ane"), 2, 0.375),
+            ]
+        );
     }
 
     #[test]

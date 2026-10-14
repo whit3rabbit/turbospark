@@ -45,17 +45,48 @@ when this file gets updated relative to the version bump and the tag.
   m-long (Nomic BERT). Every checkpoint is pinned to a commit in
   `crates/embeddings/MODELS.md`. Also shared sentence-transformers
   pooling, Matryoshka truncation, cosine and ColVision MaxSim scoring.
-- `crates/coreml` (`turbospark-coreml`): Apple Core ML runtime bridge via
-  `objc2-core-ml` with model runners in `crates/runtime` for Parakeet TDT speech
-  recognition and EmbeddingGemma 2 multimodal (text, image, audio) embeddings
-  with Matryoshka dimension truncation. Includes C FFI entry points, server
-  embedding model attach, and Swift SDK bindings.
+- `crates/coreml` (`turbospark-coreml`): Apple Core ML runner via
+  `objc2-core-ml` (compile cache, stateful and multifunction models, macOS 15
+  APIs gated at runtime), with pipelines in `crates/runtime` for three
+  FluidInference exports (macOS 15+). See `docs/COREML.md`.
+  - Parakeet Redux speech-to-text (`parakeet-redux-coreml`): native audio
+    sessions, `--stt-model`, FFI STT sessions, and the
+    `parakeet-redux-coreml` audio catalog profile. Token-identical to the CPU
+    Redux decoder on the gate clips.
+  - EmbeddingGemma 2 text, image and audio embeddings
+    (`embeddinggemma-2-coreml`) with task prompts and Matryoshka sizes:
+    `/v1/embeddings`, `ts_embedding_encode_json`, the new
+    `ts_embedding_encode_request_json`, and Swift
+    `TurboSparkEmbedding.encode(request:)`.
+  - Unlimited OCR (the Core ML parts of `unlimited-ocr-mlx-coreml`):
+    `turbospark ocr`, the `ts_ocr_*` C API, and Swift `TurboSparkOcr`.
+  - Pinned EmbeddingGemma 2 install: `embedding_models.json` lists every
+    file by size and SHA-256, `ts_embedding_catalog_json` and
+    `ts_embedding_install` download and verify it into
+    `models/embeddings/<alias>`, and the alias resolves anywhere an
+    embedding model path is accepted. The app offers it (Download, then
+    Use) under the Memory and Server embedding fields.
+  - Benchmark probes and drivers for the Core ML pipelines and for
+    EmbeddingGemma 300m on MLX vs Core ML vs the CPU port
+    (`crates/runtime/scripts/benchmark_coreml.py`,
+    `benchmark_embeddinggemma3.py`); readings in `docs/COREML.md`.
+  - `turbospark_coreml::compute_plan` and the `coreml_plan` example: the
+    device Core ML plans for each op (`MLComputePlan`, macOS 14.4+), to
+    check whether an export really reaches the Neural Engine.
 - `crates/audio`: VoxCPM (MiniCPM backbone, LongRoPE factor tables, CFG
   zero-star flow DiT, causal-conv AudioVAE) and VoxCPM2 (fusion-concat
   conditioning, two-token mu DiT, reference/continuation prompts, and
   SR-conditioned 48 kHz AudioVAE) TTS family ports with catalog assets.
+- `swift/TurboSparkApp`: bundled open-source fonts for code and UI rendering
+  with license notices and Settings catalog entries: Iosevka, Geist, Geist Mono,
+  Cascadia Code, Hack, and Source Code Pro.
 
 ### Changed
+- OpenKind (the TypeSafe daemon and Swift package) moves from 0.1.0 to
+  0.3.0 (`v0.3.0`, `2dba87572c028aeaf34b27220a3bbd3d8d8dbc76`) in
+  `make-app-bundle.sh`, `ci.yml`, `release.yml` and `docs/RELEASE.md`.
+  `make-app-bundle.sh` now points mlx-sys's bindgen at the Xcode SDK, which
+  the daemon build needs under Xcode 27.
 - `swift/TurboSparkApp`: the Server pane's API key follows the same rule as
   the TypeSafe key. It is no longer saved to the Keychain, or read back at
   launch and on every settings save, unless **Remember this key in the
@@ -63,6 +94,12 @@ when this file gets updated relative to the version bump and the tag.
   key an earlier version already stored is kept: the first launch finds the
   item without reading the secret and turns the option on, so nobody's server
   quietly starts without authentication. Turning it off deletes the item.
+
+### Fixed
+- `crates/audio` nemo alignment: `merge_longest_contiguous` and
+  `merge_longest_common_subsequence` dropped every token of the second chunk
+  past the overlap window. They now keep the rest of the chunk, as upstream
+  mlx-audio does.
 
 ## [0.3.2] - 2026-10-13
 

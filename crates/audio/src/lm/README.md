@@ -21,8 +21,9 @@ portable single-batch f32 with no runtime or Metal dependency.
 | `cohere2.rs` | `lm/models/cohere2.py` | sliding-window layers (traditional rope, rotating ring, window mask) alternating with global layers (no rope, dense cache), parallel attn+MLP on one shared norm, `logit_scale` head |
 | `bailing_moe.rs` | `lm/models/bailing_moe.py` | fused `query_key_value`, optional q/k RMSNorm, dense-first layers then softmax/sigmoid-routed SwitchGLU experts with shared expert and `expert_bias`, `routed_scaling_factor`, norm/tied head options |
 | `switch_layers.rs` | `lm/models/switch_layers.py` | `SwitchGLU` over `[expert, out, in]` stacks; `SwitchMLP` and the quantized switch linears wait for a family |
+| `falcon_h1.rs` | `lm/models/falcon_h1.py` | stage 2, for arktts: every layer carries Mamba2 + GQA attention + MLP on shared pre-norms (`h + mamba(ln(h)) + attn(ln(h))`, then the FF block), the reference `Model.sanitize` port (shape-gated muP multiplier fold + conv layout, so raw torch-layout and pre-converted saves load through one path), tied head scaled by `lm_head_multiplier / embedding_multiplier`, and `forward_stack`/`load_without_embed_table` as the arktts composite-embedding seam |
+| `ssm.rs` | `lm/models/ssm.py` | the Mamba2 selective scan as one recurrence (`dt = clip(softplus(dt + dt_bias))`, `S = exp(A dt) S + dt x B`, `y = <S, C> + D x`); the reference's Metal initial/update kernels and the chunked `ssm_attn` form all reduce to it; masked/length-truncated variants stay unported (single-batch falcon builds neither) |
 
-Not yet ported (stage 2, spec task 81): `falcon_h1` + `ssm` for arktts.
 Not yet ported (stage 1 remainder, spec task 80): the sampler/logits
 processor subset of `sample_utils.py` (top_p/min_p/XTC filtering, repetition
 penalty, logits processors) and the batched cache variants
@@ -37,7 +38,7 @@ cached decode-step logits, a cacheless pass, and the post-norm hidden state
 into `testdata/lm/<case>/` (config.json + model.safetensors + traces.json,
 digests in manifest.json). The Rust tests reload each case through the same
 `Weights::open` path a real checkpoint takes and compare against a 2e-4
-absolute gate; all fourteen cases pass.
+absolute gate; all sixteen cases pass.
 
 Per-backbone coverage:
 
@@ -63,19 +64,33 @@ Per-backbone coverage:
   top-2, shared expert, q/k norms, untied head, nonzero `expert_bias`,
   `norm_topk_prob`, and `routed_scaling_factor = 2.0` (the reference
   multiplies it unconditionally).
+- `falcon_h1_default`, `falcon_h1_untied` (stage 2): two hybrid layers
+  with the published non-unity muP multipliers, so the sanitize fold is
+  load bearing: the saved checkpoint is the RAW one (torch
+  `[out, 1, kernel]` conv layout, multipliers unfolded) and the Python
+  traces are computed through the reference `Model.sanitize`, which the
+  Rust loader must reproduce. The Mamba conv and selective-scan states
+  are pinned after the prefill and after every decode step (`mamba_states`
+  in the traces). One tied and one untied head case.
 
 Measured parity on the frozen fixtures: every diff (prefill, chunk,
-decode, cacheless, hidden) is at or below 4.2e-6, 47x inside the 2e-4
-gate; the cohere2 streaming case sits near 1e-7.
+decode, cacheless, hidden, falcon conv/ssm states) is at or below 4.2e-6,
+47x inside the 2e-4 gate; the cohere2 streaming case sits near 1e-7 and
+the falcon cases measure 1.43e-6 worst (prefill, decode, cacheless,
+hidden, and the step-pinned Mamba states).
 
 Mutation checks run against these fixtures: disabling the sliding-window
 mask moves cohere2 prefill by 9.7e-2, dropping the tanh gelu moves gpt2 by
 3.4, and dropping the router scaling multiply moves bailing_moe by 1.7, so
-the fixtures pin all three. Router slot ORDER is not pinned by the decoder
-(top-2 sums are exact under permutation); it is pinned by dedicated
-`MoeGate` unit tests, and the ring buffer order is pinned by the
-`RotatingKvCache` unit tests (attention output is invariant to permuting
-whole (k, v) pairs, so decoder fixtures alone cannot catch order bugs).
+the fixtures pin all three. For falcon_h1, skipping the sanitize fold (or
+double-folding a converted save) moves the prefill logits by
+O(embedding_multiplier) - roughly 1.3 on this fixture - and perturbing the
+selective-scan decay moves the pinned states well past the gate. Router
+slot ORDER is not pinned by the decoder (top-2 sums are exact under
+permutation); it is pinned by dedicated `MoeGate` unit tests, and the ring
+buffer order is pinned by the `RotatingKvCache` unit tests (attention
+output is invariant to permuting whole (k, v) pairs, so decoder fixtures
+alone cannot catch order bugs).
 
 Regeneration (deterministic, no network). The checkout's `mlx_audio/lm`
 differs from the venv's installed mlx-audio release in exactly these files,

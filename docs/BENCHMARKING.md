@@ -78,6 +78,36 @@ the script does not establish recognition quality or a default-on decision.
 `TURBOSPARK_QWEN3_ASR_PROFILE=1` reports per-phase timings on both paths; run
 that diagnostic separately from the interleaved benchmark.
 
+## Core ML pipelines
+
+Parakeet, EmbeddingGemma 2 and Unlimited OCR on Core ML, by compute-unit
+placement (Parakeet also against the CPU Redux port):
+
+```sh
+cargo build --release -p turbospark-runtime --example coreml_backend_probe
+python3 crates/runtime/scripts/benchmark_coreml.py parakeet \
+  --coreml <parakeet-redux-coreml> --cpu <moondream/parakeet-redux> --wav <clip.wav> --runs 3
+python3 crates/runtime/scripts/benchmark_coreml.py embed --model <embeddinggemma-2-coreml> --runs 3
+python3 crates/runtime/scripts/benchmark_coreml.py ocr --model <unlimited-ocr-coreml> --pages <page.png> --runs 3
+```
+
+EmbeddingGemma 300m (Gemma 3) across MLX, Core ML and the CPU port in
+`crates/embeddings`, on identical token ids:
+
+```sh
+cargo build --release -p turbospark-runtime --example embeddinggemma3_probe
+uv run --python 3.12 --with mlx-embeddings==0.1.0 --with mlx-lm==0.32.0 \
+  python crates/runtime/scripts/benchmark_embeddinggemma3.py \
+  --mlx-dir <mlx-community/embeddinggemma-300m-bf16> --coreml-dir <core-ml-export> --runs 3
+```
+
+Both scripts use fresh processes, a discarded warmup and rotating arm order.
+Each sample records its load and power source, and the report says whether
+the host stayed quiet. A first Neural Engine open can compile for minutes
+(417 s for the Parakeet encoder), so read `open_ms` per sample rather than
+as a median. Results and caveats are in `docs/COREML.md`; the raw reports
+from 2026-10-14 are `docs/verification/coreml-bench-2026-10-14-*.json`.
+
 ## MiniMax Music 3 (Metal)
 
 Build the runtime example and run the audio crate's driver against a

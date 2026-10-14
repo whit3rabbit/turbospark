@@ -333,6 +333,9 @@ public final class AppModel: ObservableObject {
     }
     /// Profile-local encoder used for semantic memory recall.
     @Published public var memoryEmbeddingModel: String = ""
+    /// Pinned embedding models the app can download (`EmbeddingCatalog`).
+    /// Refreshed when an embedding field appears and after an install.
+    @Published public var embeddingProfiles: [EmbeddingProfile] = []
     @Published public var memoryAutoCaptureEnabled = false
     var memorySchedulerTimer: Timer?
     var memoryCaptureTask: Task<Void, Never>?

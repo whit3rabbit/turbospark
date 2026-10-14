@@ -268,7 +268,7 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `higgs_audio` | README | 34 | Default task-qualified family | [Family port](src/tts/higgs_audio/README.md) over the [codec port](src/codec/higgs_audio/README.md) |
 | `higgs_audio_v3` | README | 45 | Alias `higgs_multimodal_qwen3` | [Family port](src/tts/higgs_audio_v3/README.md) over the [codec port](src/codec/higgs_audio/README.md) |
 | `indextts` | Source | 72 | Default task-qualified family | [Family port](src/tts/indextts/README.md) over the [gpt2 backbone](src/lm/README.md) |
-| `irodori_tts` | Source | 73 | Default task-qualified family | None |
+| `irodori_tts` | Source | 73 | Default task-qualified family | [Family port](src/tts/irodori_tts/README.md): the RF DiT (gated joint attention, half-of-heads RoPE, low-rank AdaLN), scratch + ModernBERT text encoders, speaker encoder, token-sum duration predictor, independent/joint CFG + MeanFlow samplers, over the shared [DACVAE codec port](src/codec/dacvae/README.md); single batch, caller-owned NFKC/tokenization; real-checkpoint gate open |
 | `kitten_tts` | README | 25 | Alias `kitten` | [Family port](src/tts/kitten_tts/README.md); the espeak G2P intake is caller-owned |
 | `kokoro` | README | 24 | Default task-qualified family | [Flat port](src/tts/kokoro/mod.rs) |
 | `kugelaudio` | README | 40 | Default task-qualified family | [Family port](src/tts/kugelaudio/README.md) over the shared [lm qwen2 backbone](src/lm/README.md) and the vibevoice decoder/diffusion-head/scheduler modules |
@@ -293,7 +293,7 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `vibevoice` | Source | 76 | Alias `vibevoice_streaming` | [Family port](src/tts/vibevoice/README.md) over the shared [lm qwen2 backbone](src/lm/README.md) (split lower/upper halves) with the deterministic DPM-Solver++, voice-cache conditioning, and the VAE acoustic decoder; non-streaming single batch, caller-owned tokenization |
 | `voxcpm` | Source | 77 | Alias `voxcpm1.5` | [Family port](src/tts/voxcpm/README.md) over the family-local MiniCPM backbone with the LongRoPE factor tables, the CLS patch encoder, the CFG zero-star flow DiT, and the causal-conv AudioVAE; single batch, caller-owned tokenization |
 | `voxcpm2` | README | 37 | Default task-qualified family | [Family port](src/tts/voxcpm2/README.md) over the shared [voxcpm modules](src/tts/voxcpm/README.md) (fusion-concat conditioning, two-token mu DiT, reference/continuation prompts with warmup and decode trim, SR-conditioned 48 kHz AudioVAE with the scipy Fourier resample); `use_noise_block` checkpoints refused |
-| `voxtral_tts` | README | 43 | Default task-qualified family | None (port not started; see the PARTIAL note in the spec tasks) |
+| `voxtral_tts` | README | 43 | Default task-qualified family | [Family port](src/tts/voxtral_tts/README.md) over the shared [lm engine](src/lm/README.md) (Mistral geometry, traditional rope) with the flow-matching acoustic head and the ALiBi codec decoder; single batch, caller-owned tekken prompt ids; real-checkpoint gate open |
 | `zonos2` | Source | 78 | Default task-qualified family; waveform decode through the shared [Descript DAC codec port](src/codec/descript/README.md) | [Family port](src/tts/zonos2/README.md) |
 
 ## STT

@@ -44,3 +44,6 @@ turbospark-repack = { path = "../repack", version = "0.3.2" }
 # resident-index dtype backstop behind it. Already a dependency of
 # model-io/repack/server, so this adds nothing to the dependency graph.
 serde_json = "1"
+# Example-only: `embeddinggemma3_probe` runs the portable CPU EmbeddingGemma
+# port beside the Core ML runner for the backend benchmark.
+turbospark-embeddings = { path = "../embeddings", version = "0.3.2" }

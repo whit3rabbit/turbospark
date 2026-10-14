@@ -5,10 +5,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::{CoreMlError, Result};
-use crate::{Capability, FeatureSpec, LoadOptions, Tensor};
+use crate::{Capability, ComputePlan, FeatureSpec, LoadOptions, Tensor};
 
 pub fn supports(_cap: Capability) -> bool {
     false
+}
+
+pub fn compute_plan(_path: &Path, _opts: &LoadOptions) -> Result<ComputePlan> {
+    Err(CoreMlError::UnsupportedPlatform)
 }
 
 pub fn os_version() -> (u32, u32, u32) {

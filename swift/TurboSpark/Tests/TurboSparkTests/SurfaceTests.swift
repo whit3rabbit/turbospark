@@ -1320,6 +1320,17 @@ final class SurfaceTests: XCTestCase {
         } catch {}
     }
 
+    /// The OCR entry points exist and refuse a missing model; the result
+    /// decodes the snake_case keys Rust writes.
+    func testOcrRefusesMissingModelAndDecodesResult() throws {
+        XCTAssertThrowsError(try TurboSparkOcr(modelPath: "/nonexistent/ocr"))
+        let json = #"{"text":"a","raw_text":"<PAGE>a","pages":1,"prompt_tokens":3,"output_tokens":2,"stopped_at_eos":true}"#
+        let r = try JSONDecoder().decode(OcrReadResult.self, from: Data(json.utf8))
+        XCTAssertEqual(r.rawText, "<PAGE>a")
+        XCTAssertEqual(r.promptTokens, 3)
+        XCTAssertTrue(r.stoppedAtEos)
+    }
+
     func testServerAttachEmbeddingModelRefusesMissingPath() throws {
         let server = try TurboSparkServer.start(options: ServerOptions(port: 0))
         defer { server.stop() }

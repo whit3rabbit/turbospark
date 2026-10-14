@@ -13,7 +13,7 @@ use crate::strings;
 /// Core ML EmbeddingGemma 2 export (recognized by its file layout).
 #[cfg(target_os = "macos")]
 enum EmbeddingBackend {
-    Encoder(runtime::EncoderRunner),
+    Encoder(Box<runtime::EncoderRunner>),
     Gemma2(Box<runtime::coreml::EmbeddingGemma2CoreMl>),
 }
 
@@ -27,7 +27,7 @@ impl EmbeddingBackend {
             return runtime::coreml::EmbeddingGemma2CoreMl::open(dir, &opts)
                 .map(|m| Self::Gemma2(Box::new(m)));
         }
-        runtime::EncoderRunner::open(dir).map(Self::Encoder)
+        runtime::EncoderRunner::open(dir).map(|r| Self::Encoder(Box::new(r)))
     }
 
     /// The files whose size and mtime decide whether the cached model is
@@ -159,9 +159,9 @@ fn with_backend<T>(
             guard
         }
     };
-    let needs_open = cache.as_ref().map_or(true, |entry| {
-        entry.dir != dir || entry.file_stamps != file_stamps
-    });
+    let needs_open = cache
+        .as_ref()
+        .is_none_or(|entry| entry.dir != dir || entry.file_stamps != file_stamps);
     if needs_open {
         *cache = None;
         let backend = EmbeddingBackend::open(&dir).map_err(|e| {
@@ -294,6 +294,108 @@ pub unsafe extern "C" fn ts_embedding_encode_request_json(
                 "embedding model inference is supported on macOS only".to_string(),
             ))
         }
+    })
+}
+
+/// Writes the pinned embedding profiles as a JSON array to `*out`:
+/// `[{"alias", "display_name", "family", "backend", "repository",
+///   "revision", "license", "modalities", "dimensions", "matryoshka_dims",
+///   "download_bytes", "installed_path", "can_run", "unavailable_reason"}]`.
+/// `installed_path` is null until a verified install exists.
+#[no_mangle]
+pub unsafe extern "C" fn ts_embedding_catalog_json(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((abi::TS_ERR_INVALID_ARGUMENT, "out must not be null".into()));
+        }
+        let cat = catalog::EmbeddingCatalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?;
+        let store = catalog::Store::default_store().ok();
+        let rows: Vec<serde_json::Value> = cat
+            .profiles()
+            .iter()
+            .map(|p| {
+                let (can_run, reason) = p.availability();
+                serde_json::json!({
+                    "alias": p.alias,
+                    "display_name": p.display_name,
+                    "family": p.family,
+                    "backend": p.backend,
+                    "repository": p.repository,
+                    "revision": p.revision,
+                    "license": p.license,
+                    "modalities": p.modalities,
+                    "dimensions": p.dimensions,
+                    "matryoshka_dims": p.matryoshka_dims,
+                    "download_bytes": p.download_bytes(),
+                    "installed_path": store
+                        .as_ref()
+                        .and_then(|s| cat.installed_path(s, &p.alias)),
+                    "can_run": can_run,
+                    "unavailable_reason": reason,
+                })
+            })
+            .collect();
+        let json = serde_json::to_string(&rows).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Downloads, verifies and installs one pinned embedding profile into the
+/// default store. Progress arrives through `callback` as
+/// `TS_INSTALL_BYTES`; `ts_install_cancel` stops it. Writes
+/// `{"alias", "path"}` to `*out`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_embedding_install(
+    alias: *const c_char,
+    callback: crate::TsInstallCallback,
+    userdata: *mut std::ffi::c_void,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((abi::TS_ERR_INVALID_ARGUMENT, "out must not be null".into()));
+        }
+        *out = std::ptr::null_mut();
+        let alias =
+            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let active = crate::models::ActiveInstall::register();
+        let cat = catalog::EmbeddingCatalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?;
+        let store =
+            catalog::Store::default_store().map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let path = cat
+            .install(
+                &catalog::Client::new(),
+                &catalog::Catalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?,
+                &store,
+                alias,
+                &mut |progress| {
+                    if let Some(cb) = callback {
+                        let stage = progress
+                            .current_path
+                            .as_deref()
+                            .unwrap_or("embedding download")
+                            .to_string();
+                        cb(
+                            userdata,
+                            crate::TS_INSTALL_BYTES,
+                            stage.as_ptr().cast(),
+                            stage.len(),
+                            progress.completed_bytes,
+                            progress.total_bytes,
+                        );
+                    }
+                },
+                active.cancel_flag(),
+            )
+            .map_err(|e| {
+                if active.cancel_flag().is_cancelled() {
+                    (abi::TS_ERR_CANCELLED, e)
+                } else {
+                    (abi::TS_ERR_OPEN, e)
+                }
+            })?;
+        let json = serde_json::json!({"alias": alias, "path": path}).to_string();
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
 

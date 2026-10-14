@@ -46,6 +46,7 @@ from mlx_audio.lm.models.qwen3 import Model as Qwen3Model, ModelArgs as Qwen3Arg
 from mlx_audio.lm.models.base import create_attention_mask
 from mlx_audio.lm.models.gpt2 import Model as Gpt2Model, ModelArgs as Gpt2Args
 from mlx_audio.lm.models.cohere2 import Model as Cohere2Model, ModelArgs as Cohere2Args
+from mlx_audio.lm.models.falcon_h1 import Model as FalconH1Model, ModelArgs as FalconH1Args
 from mlx_audio.lm.models.bailing_moe import (
     Model as BailingMoeModel,
     ModelArgs as BailingMoeArgs,
@@ -222,6 +223,180 @@ def run_embeddings_case(name, model, num_layers, args):
         "cacheless_prefill_logits": cacheless.tolist(),
         "hidden_state": np.array(cacheless_hidden[0]).astype(np.float32).tolist(),
         "weights": weights,
+        "config": asdict(args),
+    }
+
+
+def tiny_falcon_args(**overrides):
+    """Tiny falcon_h1: every layer carries Mamba2 + attention + MLP. The
+    muP multipliers keep the published falcon defaults (non-unity), which
+    pins the reference sanitize fold end to end; the mamba geometry is
+    shrunk to d_ssm 16 = 4 heads of 4 with 2 groups over d_state 8."""
+    fields = dict(
+        model_type="falcon_h1",
+        attention_bias=False,
+        attention_in_multiplier=1.0,
+        attention_out_multiplier=0.9375,
+        embedding_multiplier=5.656854249492381,
+        head_dim=8,
+        hidden_size=32,
+        initializer_range=0.02,
+        intermediate_size=64,
+        key_multiplier=0.390625,
+        lm_head_multiplier=0.0390625,
+        mamba_chunk_size=8,
+        mamba_conv_bias=True,
+        mamba_d_conv=4,
+        mamba_d_head=4,
+        mamba_d_ssm=16,
+        mamba_d_state=8,
+        mamba_expand=2,
+        mamba_n_groups=2,
+        mamba_n_heads=4,
+        mamba_norm_before_gate=False,
+        mamba_proj_bias=False,
+        mamba_rms_norm=False,
+        mamba_use_mlp=True,
+        max_position_embeddings=64,
+        mlp_bias=False,
+        mlp_expansion_factor=8,
+        mlp_multipliers=[0.8838834764831844, 0.5859375],
+        num_attention_heads=4,
+        num_hidden_layers=2,
+        num_key_value_heads=2,
+        projectors_bias=False,
+        rms_norm_eps=1e-5,
+        rope_traditional=False,
+        rope_scaling=None,
+        rope_theta=10000.0,
+        ssm_in_multiplier=1.25,
+        ssm_multipliers=[
+            0.3535533905932738,
+            0.25,
+            0.3535533905932738,
+            0.5,
+            0.3535533905932738,
+        ],
+        ssm_out_multiplier=0.23570226039551587,
+        vocab_size=96,
+        tie_word_embeddings=True,
+    )
+    fields.update(overrides)
+    return FalconH1Args(**fields)
+
+
+def falcon_raw_checkpoint(model):
+    """The seeded parameters in the raw reference-checkpoint layout the
+    Rust sanitize port must handle: the depthwise conv weight transposed
+    into the torch `[out, 1, kernel]` layout, with every muP multiplier
+    still unfolded. Every array is a FRESH buffer (`x * 1.0`): the
+    reference `Model.sanitize` folds with `param *= ...`, and mx.array
+    augmented assignment mutates the shared buffer in place, which would
+    otherwise fold the model's live parameters and the saved checkpoint
+    along with the sanitized copy."""
+    raw = {}
+    for name, value in tree_flatten(model.parameters()):
+        if "conv1d.weight" in name:
+            raw[name] = value.transpose(0, 2, 1)
+        else:
+            raw[name] = value * 1.0
+    return raw
+
+
+def falcon_load_sanitized(args, raw):
+    """Runs the reference Model.sanitize over the raw checkpoint dict
+    (folding the muP multipliers and transposing the conv back) and
+    returns the sanitized flat weights a converted save would carry.
+    sanitize folds with `param *= ...`, and mx.array augmented assignment
+    mutates the shared buffer in place, so it runs on throwaway copies and
+    the caller's raw dict survives unfolded."""
+    probe = FalconH1Model(args)
+    work = {name: value * 1.0 for name, value in raw.items()}
+    return dict(tree_flatten(probe.sanitize(work)))
+
+
+def capture_falcon_states(cache):
+    """The Mamba per-layer `[conv, ssm]` states, pinned step by step."""
+    layers = []
+    for layer_cache in cache:
+        arrays = layer_cache[0]
+        conv = arrays[0]
+        ssm = arrays[1]
+        layers.append(
+            {
+                "conv": None if conv is None else np.array(conv).astype(np.float32).tolist(),
+                "ssm": None if ssm is None else np.array(ssm).astype(np.float32).tolist(),
+            }
+        )
+    return layers
+
+
+def run_falcon_case(name, args, tie_head):
+    """Falcon_h1 prefill + 3 cached decode steps with the Mamba conv/ssm
+    state captured after every call, plus the cacheless pass and hidden
+    state. The saved checkpoint is the RAW one; the Python side computes
+    traces through the reference sanitize fold, exactly what the Rust
+    loader must reproduce.
+
+    Runs pinned to the CPU device: the Metal selective-scan kernels bind
+    their lazy state output to reusable buffers, and a state read after a
+    later kernel launch can come back aliased/corrupted (observed as
+    plausible-looking garbage in the captured step states). On CPU the
+    reference always takes the pure `ssm_attn` path, whose state is an
+    ordinary array; the Rust recurrence is the shared math of both paths."""
+    previous_device = mx.default_device()
+    mx.set_default_device(mx.cpu)
+    try:
+        return run_falcon_case_on_current_device(name, args, tie_head)
+    finally:
+        mx.set_default_device(previous_device)
+
+
+def run_falcon_case_on_current_device(name, args, tie_head):
+    mx.random.seed(7)
+    model = seeded_parameters(FalconH1Model(args))
+    raw = falcon_raw_checkpoint(model)
+    if tie_head:
+        raw.pop("lm_head.weight", None)
+    model.update(tree_unflatten(dict(tree_flatten(falcon_load_sanitized(args, raw)))))
+
+    tokens = mx.array(TOKENS)[None]
+    cache = model.make_cache()
+    logits = model(tokens, cache=cache)
+    prefill = np.array(logits[0]).astype(np.float32)
+    states = {"prefill": capture_falcon_states(cache)}
+
+    steps = []
+    step_states = []
+    for token in DECODE_TOKENS:
+        step_logits = model(mx.array([token])[None], cache=cache)
+        steps.append(np.array(step_logits[0, -1]).astype(np.float32))
+        step_states.append(capture_falcon_states(cache))
+    states["steps"] = step_states
+
+    # The reference `FalconH1Model.__call__` builds its cacheless fallback
+    # as `[(None, None) * len(self.layers)]`, a ONE-element list whose
+    # tuple just grows, so `zip(self.layers, cache)` silently runs only
+    # the first layer. The intended cacheless semantics (every layer
+    # cacheless) come out by passing an explicit per-layer none-cache,
+    # which is what the Rust forward(input, None) implements.
+    cacheless_none_cache = [(None, None)] * len(model.model.layers)
+    cacheless_hidden = model.model(mx.array(TOKENS)[None], cache=cacheless_none_cache)
+    cacheless = model(mx.array(TOKENS)[None], cache=cacheless_none_cache)
+
+    return {
+        "name": name,
+        "tie_head": tie_head,
+        "tokens": TOKENS,
+        "decode_tokens": DECODE_TOKENS,
+        "prefill_logits": prefill.tolist(),
+        "decode_logits": [step.tolist() for step in steps],
+        "chunk_tokens": None,
+        "chunk_logits": None,
+        "cacheless_prefill_logits": np.array(cacheless[0]).astype(np.float32).tolist(),
+        "hidden_state": np.array(cacheless_hidden[0]).astype(np.float32).tolist(),
+        "mamba_states": states,
+        "weights": raw,
         "config": asdict(args),
     }
 
@@ -547,6 +722,21 @@ def main():
     )
     model = seeded_parameters(BailingMoeModel(bailing_args))
     cases.append(run_case("bailing_moe_default", model, tie_head=False, num_layers=3, args=bailing_args))
+
+    # falcon_h1: two hybrid layers (each carries Mamba2 + attention +
+    # MLP), non-unity muP multipliers exercised through the reference
+    # sanitize fold, the raw torch-layout conv in the saved checkpoint,
+    # and the Mamba conv/ssm state pinned after prefill and every decode
+    # step. One tied and one untied head case.
+    falcon_args = tiny_falcon_args()
+    cases.append(run_falcon_case("falcon_h1_default", falcon_args, tie_head=True))
+    cases.append(
+        run_falcon_case(
+            "falcon_h1_untied",
+            tiny_falcon_args(tie_word_embeddings=False),
+            tie_head=False,
+        )
+    )
 
     for case in cases:
         save_case(case)

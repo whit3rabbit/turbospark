@@ -735,6 +735,17 @@ impl UnlimitedOcrCoreMl {
         &self,
         pages: &[OcrPage],
         prompt: &str,
+        progress: impl FnMut(OcrEvent) -> bool,
+    ) -> Result<OcrResult, String> {
+        self.read_limited(pages, prompt, self.opts.max_new_tokens, progress)
+    }
+
+    /// [`Self::read`] with a per-call cap on generated tokens.
+    pub fn read_limited(
+        &self,
+        pages: &[OcrPage],
+        prompt: &str,
+        max_new_tokens: Option<usize>,
         mut progress: impl FnMut(OcrEvent) -> bool,
     ) -> Result<OcrResult, String> {
         let c = &self.config;
@@ -815,7 +826,7 @@ impl UnlimitedOcrCoreMl {
         // Decode greedily over the candidates the n-gram ban allows.
         let started = std::time::Instant::now();
         let mut budget = c.max_length.saturating_sub(n);
-        if let Some(m) = self.opts.max_new_tokens {
+        if let Some(m) = max_new_tokens {
             budget = budget.min(m);
         }
         let mut mask = DecodeMask::new(n, capacity, c.ring);

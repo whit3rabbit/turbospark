@@ -100,6 +100,9 @@ staging files changed.
 - The app bundle and mounted DMG must contain an executable `openkindd`.
   Pin the OpenKind Swift package and daemon to the same published revision
   for release; a sibling package path is for development only.
+  The daemon build (`openkind-server --features mlx`) needs `SDKROOT` and
+  `BINDGEN_EXTRA_CLANG_ARGS="-isysroot $SDKROOT"` under Xcode 27, or
+  mlx-sys's bindgen fails on `stdlib.h`. `make-app-bundle.sh` sets both.
 - Keep user data and model storage scoped through the documented profile and
   storage abstractions. Do not invent another `~/.turbospark` path.
 - Accessibility and keyboard changes must follow the existing shortcuts and

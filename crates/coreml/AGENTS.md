@@ -13,8 +13,12 @@ They live in `crates/runtime/src/coreml/`, because they need the tokenizer
 
 - All unsafe code is in `src/sys.rs`. `lib.rs` is `#![deny(unsafe_code)]`.
   Every unsafe block names its invariant in a `SAFETY:` comment.
-- Any Objective-C call that can raise goes through `guarded`
-  (`objc2::exception::catch`). An uncaught NSException aborts the process.
+- NSExceptions are not caught, and must not be. objc2's `exception`
+  feature links an Objective-C `@try` helper whose `__objc_personality_v0`
+  is a fourth personality routine in the app link (two Rust static libraries
+  plus C++ already), and `ld` fails with "Too many personality routines for
+  compact unwind". Make every call safe up front instead: check inputs
+  against the model description and gate newer APIs behind `supports`.
 - Any API newer than macOS 13 (the Swift package's floor) is gated by
   `supports(Capability::...)` first. objc2 resolves selectors at runtime, so
   `setFunctionName:` or `newState` on macOS 14 raises instead of failing to
@@ -46,3 +50,11 @@ They live in `crates/runtime/src/coreml/`, because they need the tokenizer
   per-package digests.
 - The crate is in the cross-target check list in
   `.claude/docs/verification.md`. Keep the non-macOS stub compiling.
+
+## Diagnostics
+
+- `compute_plan` reads `MLComputePlan` (macOS 14.4, gated): the device Core
+  ML plans for each ML program op. It walks the plan inside Core ML's
+  completion handler and sends back plain Rust, so no Objective-C object
+  crosses threads. `examples/coreml_plan.rs` prints it. Use it, not timing,
+  to tell whether an export reaches the Neural Engine.

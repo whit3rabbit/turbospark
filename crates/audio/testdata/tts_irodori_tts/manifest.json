@@ -1,0 +1,29 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "generator": "tools/gen_irodori_tts_fixtures.py",
+  "files": {
+    "codec/config.json": "sha256:7523812abefd867f065d1e64802bf6dc4722480f9970e59401f71586657e602d",
+    "codec/dacvae/config.json": "sha256:07cb9ba0af3f88b62804d80e527826dcbc1e2079a1a4946c834874d84239df5f",
+    "codec/dacvae/model.safetensors": "sha256:208e9316f61e01c96c1300d04a4990a739358974a5289323eca436a78e71d713",
+    "codec/model.safetensors": "sha256:13936170574d47918e6eba234672c2857b2d26ebd893a7909343682dd4c8f008",
+    "codec/traces.json": "sha256:21629a6e5601f0b1cc90c6a15a1a3986edd7e55e880516d3e32d352f175cf417",
+    "duration/config.json": "sha256:c2b284196c49d95cf526a8a085b2b729643ae32e6a7977153f77c449ca6af5fb",
+    "duration/model.safetensors": "sha256:550f5e74760848f77593958a6f7383c4b93042cf3594ad5ef1fec8bc3ace746b",
+    "duration/traces.json": "sha256:5619283a2640efa3b266e88b65beef70a3f327f8387724c7c3eab14301fda6cb",
+    "generate_joint/config.json": "sha256:ad652e2acb355f5d40b33af050690f41554f5389d6d92b0eb7ce06b403b03e3b",
+    "generate_joint/dacvae/config.json": "sha256:07cb9ba0af3f88b62804d80e527826dcbc1e2079a1a4946c834874d84239df5f",
+    "generate_joint/dacvae/model.safetensors": "sha256:208e9316f61e01c96c1300d04a4990a739358974a5289323eca436a78e71d713",
+    "generate_joint/model.safetensors": "sha256:13936170574d47918e6eba234672c2857b2d26ebd893a7909343682dd4c8f008",
+    "generate_joint/traces.json": "sha256:bd80b3664ccd35dbea200f5244a4fb28a5362682e830d64c5a266cb7f7eafd95",
+    "generate_rf/config.json": "sha256:8d8163994469000299dcfa501440120081812a5083104a0bd9a4949da7b9f577",
+    "generate_rf/dacvae/config.json": "sha256:07cb9ba0af3f88b62804d80e527826dcbc1e2079a1a4946c834874d84239df5f",
+    "generate_rf/dacvae/model.safetensors": "sha256:208e9316f61e01c96c1300d04a4990a739358974a5289323eca436a78e71d713",
+    "generate_rf/model.safetensors": "sha256:6d6530a12a951a32e195003c0f635336a9fe7eca6d29efb54af2b4adeac913dc",
+    "generate_rf/traces.json": "sha256:2b20855896842e43a336b51c04a27be9ced842b05fc9dfedf23e7986a3d2cbfe",
+    "meanflow/config.json": "sha256:aa5452d4542dc51ed06074b87163447cea5027fd539886e9e52c9497a016466d",
+    "meanflow/dacvae/config.json": "sha256:07cb9ba0af3f88b62804d80e527826dcbc1e2079a1a4946c834874d84239df5f",
+    "meanflow/dacvae/model.safetensors": "sha256:208e9316f61e01c96c1300d04a4990a739358974a5289323eca436a78e71d713",
+    "meanflow/model.safetensors": "sha256:6cd37ed165f52531b611fac4365c354d3595451fb4a35a3064d7d1845e24496b",
+    "meanflow/traces.json": "sha256:4f7c2d49a52d937bed5f4de816b1af0b8051002d5d72894c0be8c885af7d0a68"
+  }
+}
