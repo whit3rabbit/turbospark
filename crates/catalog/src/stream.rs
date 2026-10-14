@@ -489,6 +489,14 @@ fn enable_bytes_detected_vision(
     ) {
         return Ok(());
     }
+    // A wrapper whose `vision_tower.` is not this family's tower (MiniCPM-V
+    // over a Qwen trunk) installs text-only: the prefix matches, the tower
+    // does not, and `parse_vision_config` would refuse the whole install.
+    let config: serde_json::Value =
+        serde_json::from_str(config_text).map_err(|e| format!("parsing config.json: {e}"))?;
+    if repack::has_foreign_vision_tower(&config) {
+        return Ok(());
+    }
     let carries_tower = headers.iter().any(|h| {
         h.tensors
             .keys()

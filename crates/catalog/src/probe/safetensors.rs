@@ -64,6 +64,7 @@ pub fn evaluate_config(
         arch: None,
         types: Vec::new(),
         affine: None,
+        mxfp4: false,
         expert_stride: None,
         trained_context: repack::trained_context_meta::from_config_json(config_text),
         sidecars_present: Vec::new(),
@@ -148,16 +149,22 @@ pub fn evaluate_config(
     }
     match repack::parse_gemma4_quantization(config_text) {
         Ok(quant) => {
-            report.affine = Some((quant.default_bits, quant.group_size));
+            // An mxfp4 checkpoint has one legal default shape, which the
+            // parser enforced; only its affine overrides are affine, each at
+            // its own group size, and the parser enforced those too.
+            let mxfp4 = quant.mode == repack::QuantMode::Mxfp4;
+            report.mxfp4 = mxfp4;
+            if !mxfp4 {
+                report.affine = Some((quant.default_bits, quant.group_size));
+            }
             let mut bad: Vec<(u32, u32)> = Vec::new();
-            if !repack::is_supported_affine_shape(quant.default_bits, quant.group_size) {
+            if !mxfp4 && !repack::is_supported_affine_shape(quant.default_bits, quant.group_size) {
                 bad.push((quant.default_bits, quant.group_size));
             }
-            for bits in quant.bits_overrides.values().copied() {
-                if !repack::is_supported_affine_shape(bits, quant.group_size)
-                    && !bad.contains(&(bits, quant.group_size))
-                {
-                    bad.push((bits, quant.group_size));
+            for (name, bits) in &quant.bits_overrides {
+                let shape = (*bits, quant.group_for(name));
+                if !repack::is_supported_affine_shape(shape.0, shape.1) && !bad.contains(&shape) {
+                    bad.push(shape);
                 }
             }
             if !bad.is_empty() {

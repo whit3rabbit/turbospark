@@ -58,6 +58,9 @@ pub struct ProbeReport {
     pub types: Vec<TypeShare>,
     /// MLX affine only: the effective default width and group size.
     pub affine: Option<(u32, u32)>,
+    /// MLX `mode: "mxfp4"` (4-bit E2M1, group 32). Its affine per-tensor
+    /// overrides are already checked by `parse_gemma4_quantization`.
+    pub mxfp4: bool,
     /// One routed expert's bytes, for an MoE. `None` for a dense model.
     pub expert_stride: Option<u64>,
     /// The window the checkpoint was TRAINED at, from the same header this
