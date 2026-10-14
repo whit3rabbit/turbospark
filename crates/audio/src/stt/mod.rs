@@ -5,6 +5,7 @@
 
 pub mod canary;
 pub mod cohere_asr;
+pub mod embeddinggemma2;
 pub mod fireredasr2;
 pub mod fun_asr_nano;
 pub mod glmasr;

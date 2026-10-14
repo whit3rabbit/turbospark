@@ -47,6 +47,7 @@ public gates.
 | `stt/granite_speech` | Upstream MLX reference only | Pinned three-shard 1B checkpoint loaded after adding optional `jinja2` to the local reference environment; returned the expected phrase on one generated 16 kHz clip | Rust port, stage fixtures, translation modes, broader quality and product integration remain open |
 | `stt/parakeet` | [Family port](src/stt/parakeet/mod.rs) | Pinned MLX and Rust v2, v3, and Redux checkpoints returned the same smoke transcript; v2 stage fixtures from the float32 reference (mel 8.2e-5, encoder 7.5e-6, all 21 decode steps and 19 emitted tokens identical) and matching transcripts on two generated clips | runtime/catalog, FFI, Swift, performance and memory; v3/Redux second-clip re-runs and broader quality remain open |
 | `stt/nemotron_asr` | [Family port](src/stt/nemotron_asr/README.md) | Pinned mlx-audio 0.5.7 and Rust runs returned the exact same transcript on one generated 16 kHz clip; first-block attention and final encoder stage were compared | Offline inference only; cache-aware streaming, checked-in stage fixtures, broader quality, runtime/catalog, FFI, Swift, performance and memory remain open |
+| `stt/embeddinggemma2` | [Experiment](src/stt/embeddinggemma2/README.md) | Gemma4 frontend fixture parity; shipped frontend tables, word table, scorer layout, and calibration checked against the pinned eg2demo v5 files | No encoder/reader backend, so no real-audio transcript; quality, latency, memory, device placement, punctuation, runtime/catalog, FFI, and Swift gates remain open |
 | `stt/granite_speech5_ctc` | [Port in progress](src/stt/granite_speech5_ctc/README.md) | Earlier pinned MLX and Rust checkpoints matched; frontend fixture and synthetic batched midpoint/final-logit parity pass | Batched path needs checkpoint rerun; broader quality, runtime/catalog, FFI, Swift, performance and memory gates remain open |
 | `stt/qwen3_asr` | [Port in progress](src/stt/qwen3_asr/mod.rs) | Earlier pinned Rust checkpoint matched the pinned MLX transcript; frontend and selected audio-tower outputs match their fixtures; a synthetic incremental-cache test matches full-prefix decoding | The prior debug run used full-prefix recomputation. The new cache needs pinned-checkpoint rerun, broader quality, runtime/catalog, FFI, Swift, performance and memory gates |
 | `stt/qwen3_forced_aligner` | [Port in progress](src/stt/qwen3_forced_aligner/README.md) | Pinned Rust checkpoint matched all nine MLX word spans within 1 ms on the checked-in WAV | English and Chinese segmentation only; Japanese/Korean segmentation, broader quality, workspace, runtime/catalog, FFI, Swift, performance and memory gates remain open |
@@ -94,6 +95,9 @@ crates/audio/
         README.md
         mod.rs
       parakeet/           # NeMo Parakeet TDT
+        README.md
+        mod.rs
+      embeddinggemma2/    # EmbeddingGemma 2 word-embedding CTC (experiment)
         README.md
         mod.rs
       granite_speech5_ctc/ # IBM Granite Speech 5.0 TurboCTC
@@ -307,6 +311,7 @@ Forced alignment and audio understanding retain their own capabilities.
 |---|---|---|---|---|
 | `canary` | [Family port](src/stt/canary/README.md) | 11 | Pinned `Mediform/canary-1b-v2-mlx-q8` @ `0b6b32ee10f30c89e3ead7249bb636445e3019ee`; Rust checkpoint transcript byte-identical (15 tokens), mel 9.4e-6, encoder/prefill relative parity gates passed | [Family port](src/stt/canary/mod.rs) |
 | `cohere_asr` | [Refusal documented](src/stt/cohere_asr/README.md) | 54 | Official `CohereLabs/cohere-transcribe-03-2026` @ `b1eacc2686a3d08ceaae5f24a88b1d519620bc09` is gated (403); public MLX mirror `a0acb7f93cd32d82c4fbf801b6d8fb39d20c509f` decodes incoherently through the reference itself; the module detects the distribution and refuses | [Detection and refusal](src/stt/cohere_asr/mod.rs) |
+| `embeddinggemma2` | [Experiment](src/stt/embeddinggemma2/README.md) | - | Not an mlx-audio family; pinned to Haku's eg2demo v5 manifest and the transformers `Gemma4AudioFeatureExtractor` @ `28034545c35acac05793695bd5c878f66e6b544e`; portable frontend, vocabulary search, and word CTC only | [Experiment](src/stt/embeddinggemma2/mod.rs) |
 | `fireredasr2` | [Family port](src/stt/fireredasr2/README.md) | 55 | Pinned `mlx-community/FireRedASR2-AED-mlx` @ `f3212eacfa49b851130b97c63653c8e06ee09bdb`; full Rust decode matches the MLX transcript and selected encoder stages | One English clip; broader quality, memory/performance, runtime/catalog, FFI, and Swift gates remain open |
 | `fun_asr_nano` | Family port | 56 | Pinned `mlx-community/Fun-ASR-Nano-2512` @ `a7bc96fceaafce39ed6748e0c0fa9a9508b67f86`; MLX and Rust matched the transcript and selected LFR, encoder, and adaptor values within `0.01` on one English clip | [Family port](src/stt/fun_asr_nano/README.md) |
 | `glmasr` | Family port | 57 | Alias `glm`; pinned `mlx-community/GLM-ASR-Nano-2512-4bit` @ `35553fa5bebfcc3ece3ce7d47b98827cb0ac9eef`; one-clip MLX/Rust transcript and stage parity passed | [Family port](src/stt/glmasr/README.md) |
