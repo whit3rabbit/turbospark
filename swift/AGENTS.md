@@ -121,10 +121,17 @@ make swift-lib
 make swift-test
 ```
 
-`make swift-test` covers only `swift/TurboSpark`. Run `make swift-test-app`
-(TurboSparkApp; relinks the staged archive with localized symbols, so run it
-after, not interleaved with, `make swift-test`) and
-`make swift-test-qwenimage` (Vendor/QwenImage) for app or vendor changes.
+`make swift-test` covers only `swift/TurboSpark`, including the vendored
+`Syntext` and `SyntextContext` suites. Run `make swift-test-app`
+(TurboSparkApp) and `make swift-test-qwenimage` (Vendor/QwenImage) for app or
+vendor changes.
+
+syntext and its context engine are compiled into `libturbospark_ffi.a`; their
+headers and Swift wrappers are vendored under `TurboSpark/Vendor/syntext` from
+the revision `Cargo.lock` pins. Never add syntext's own Swift package or
+xcframework: a second Rust archive duplicates the Rust runtime and the
+`syntext_*` symbols. Bump with `scripts/vendor-syntext.sh` (see
+`docs/SYNTEXT.md`).
 
 Use the real-install and app-bundle gates from the linked verification pages
 for runtime or release changes.

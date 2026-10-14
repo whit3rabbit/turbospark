@@ -25,7 +25,6 @@ let package = Package(
         .package(path: "Vendor/Qwen3TTS"),
         .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", from: "4.10.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
-        .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.5.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.6")
     ],
     targets: [
@@ -50,7 +49,10 @@ let package = Package(
                 .product(name: "Qwen3TTS", package: "qwen3tts"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
-                .product(name: "Syntext", package: "syntext"),
+                // Vendored in the binding package and linked from its
+                // archive; never add syntext's own package (swift/AGENTS.md).
+                .product(name: "Syntext", package: "TurboSpark"),
+                .product(name: "SyntextContext", package: "TurboSpark"),
                 .product(name: "Sparkle", package: "Sparkle")
             ],
             exclude: [
@@ -114,7 +116,8 @@ let package = Package(
                 "DOMSnapshotFixtures",
                 .product(name: "TurboSpark", package: "TurboSpark"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
-                .product(name: "Syntext", package: "syntext")
+                .product(name: "Syntext", package: "TurboSpark"),
+                .product(name: "SyntextContext", package: "TurboSpark")
             ],
             exclude: [
                 "Fixtures/DOMSnapshotService"

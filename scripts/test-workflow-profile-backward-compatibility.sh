@@ -32,6 +32,8 @@ fail() {
 command -v git >/dev/null || fail "git is required"
 command -v swift >/dev/null || fail "Swift is required"
 command -v clang >/dev/null || fail "clang is required for SwiftPM's Syntext linker placeholder"
+command -v cargo >/dev/null || fail "cargo is required to build the historical app's FFI archive"
+command -v nmedit >/dev/null || fail "nmedit is required for the historical app's FFI archive"
 git -C "$repo_root" cat-file -e "${historical_revision}^{commit}" \
     || fail "historical baseline ${historical_revision} is not available locally"
 git -C "$repo_root" cat-file -e "${historical_revision}:swift/TurboSparkApp/Package.swift" \
@@ -65,9 +67,19 @@ mkdir -p "$historical_root"
 git -C "$repo_root" archive "$historical_revision" swift/TurboSparkApp swift/TurboSpark \
     | tar -x -C "$historical_root"
 
+# The historical app still links syntext's own SyntextFFI.xcframework, and
+# the staged archive now carries the same `syntext_*` C symbols (crates/ffi
+# links syntext-context). So the historical copy gets an archive built
+# without them, and its second Rust runtime symbol made local exactly as the
+# app's build did before the merge.
 historical_ffi="$historical_root/swift/TurboSpark/Sources/CTurboSpark"
 mkdir -p "$historical_ffi"
-cp "$ffi_archive" "$historical_ffi/libturbospark_ffi.a"
+MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release -p turbospark-ffi --no-default-features \
+    --target aarch64-apple-darwin --manifest-path "$repo_root/Cargo.toml" \
+    || fail "could not build the syntext-free FFI archive for the historical app"
+cp "$repo_root/target/aarch64-apple-darwin/release/libturbospark_ffi.a" "$historical_ffi/libturbospark_ffi.a"
+printf '_rust_eh_personality\n' > "$temp_root/hide_symbols"
+nmedit -R "$temp_root/hide_symbols" "$historical_ffi/libturbospark_ffi.a"
 cp "$ffi_header" "$historical_ffi/turbospark.h"
 
 historical_app="$historical_root/swift/TurboSparkApp"
@@ -79,6 +91,9 @@ cp "$repo_root/scripts/workflow-profile-compatibility/WorkflowHistoricalProfileR
 mkdir -p "$current_scratch" "$historical_scratch"
 export WORKFLOW_COMPATIBILITY_ROOT="$temp_root"
 
+# Only the historical package needs this: its header-only `CSyntext` target
+# from the syntext package has no object file, which Swift Build links
+# anyway. The current app's vendored `CSyntext` is a system-library target.
 prepare_syntext_linker_placeholder() {
     local scratch_path="$1"
     mkdir -p "$scratch_path/out/Products/Debug"
@@ -87,7 +102,6 @@ prepare_syntext_linker_placeholder() {
 }
 
 printf 'Creating deterministic workflow-bearing profile with the current app code.\n'
-prepare_syntext_linker_placeholder "$current_scratch"
 swift test \
     --disable-automatic-resolution \
     --package-path "$repo_root/swift/TurboSparkApp" \
@@ -105,7 +119,6 @@ swift test \
     --filter WorkflowHistoricalProfileReaderTests/testHistoricalInitializerReadsAndWritesCoreRecords
 
 printf 'Comparing workflow-owned schema and stored SQLite values, then reopening with current code.\n'
-prepare_syntext_linker_placeholder "$current_scratch"
 swift test \
     --disable-automatic-resolution \
     --package-path "$repo_root/swift/TurboSparkApp" \

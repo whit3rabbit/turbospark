@@ -145,15 +145,6 @@
       }
     },
     {
-      "identity" : "syntext",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/whit3rabbit/syntext",
-      "state" : {
-        "revision" : "68e83c18e4af13610bcc84569a7582cd7d6a7181",
-        "version" : "2.5.0"
-      }
-    },
-    {
       "identity" : "yyjson",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ibireme/yyjson.git",

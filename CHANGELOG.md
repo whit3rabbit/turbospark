@@ -13,6 +13,18 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Changed
+- syntext is compiled into `libturbospark_ffi.a` instead of being linked as
+  its own `SyntextFFI.xcframework` beside it. `crates/ffi` depends on
+  `syntext-context` (syntext 2.6.0 plus `forget`, pinned by commit) with its
+  C ABI. The `Syntext` and `SyntextContext` Swift modules are vendored
+  under `swift/TurboSpark/Vendor/syntext` from that same revision
+  (`scripts/vendor-syntext.sh`), and `scripts/swift-lib.sh` refuses a
+  mismatch. The app links one Rust archive again, so the
+  `_rust_eh_personality` localization (`TURBOSPARK_LOCALIZE_RUST_SYMBOLS`)
+  and the `CSyntext.o` placeholder are gone; `make swift-lib-app` remains as
+  an alias of `make swift-lib`. `crates/ffi` now needs Rust 1.89.
+
 ## [0.3.2] - 2026-10-13
 
 This release stops the app asking for Keychain access by default. Upgrade with

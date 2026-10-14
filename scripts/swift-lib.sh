@@ -24,6 +24,17 @@ dest="$root/swift/TurboSpark/Sources/CTurboSpark"
 # built against a much newer SDK.
 export MACOSX_DEPLOYMENT_TARGET=13.0
 
+# The archive carries syntext's and syntext-context's C ABIs as well, and
+# the vendored headers describe exactly one revision of them. A mismatch
+# would compile and then call a function with the wrong signature, so it
+# stops here instead (swift/docs/SYNTEXT.md: bumping syntext).
+locked="$("$root/scripts/syntext-locked-rev.sh")"
+vendored="$(cat "$root/swift/TurboSpark/Vendor/syntext/REVISION" 2>/dev/null || true)"
+if [ "$locked" != "$vendored" ]; then
+  echo "Cargo.lock links syntext $locked but swift/TurboSpark/Vendor/syntext is ${vendored:-missing}; run scripts/vendor-syntext.sh" >&2
+  exit 1
+fi
+
 cargo build --release -p turbospark-ffi --target aarch64-apple-darwin --manifest-path "$root/Cargo.toml"
 
 lib="$root/target/aarch64-apple-darwin/release/libturbospark_ffi.a"
@@ -32,21 +43,6 @@ lib="$root/target/aarch64-apple-darwin/release/libturbospark_ffi.a"
 mkdir -p "$dest"
 cp "$lib" "$dest/libturbospark_ffi.a"
 cp "$root/crates/ffi/include/turbospark.h" "$dest/turbospark.h"
-
-# The binding package links only this archive, so its global Rust runtime
-# symbol must remain visible. The app links Syntext's second Rust archive and
-# opts into localization through TURBOSPARK_LOCALIZE_RUST_SYMBOLS.
-if [ "${TURBOSPARK_LOCALIZE_RUST_SYMBOLS:-0}" = 1 ]; then
-  printf "_rust_eh_personality\n" > "$dest/.hide_symbols"
-  nmedit -R "$dest/.hide_symbols" "$dest/libturbospark_ffi.a"
-  rm -f "$dest/.hide_symbols"
-
-  for build_out in "$root/swift/TurboSparkApp/.build/out/Products/Debug" "$root/swift/TurboSparkApp/.build/out/Products/Release"; do
-    if [ -d "$build_out" ] && [ ! -f "$build_out/CSyntext.o" ]; then
-      clang -c -x c /dev/null -o "$build_out/CSyntext.o" 2>/dev/null || true
-    fi
-  done
-fi
 
 # **SwiftPM DOES NOT TREAT THE ARCHIVE AS A BUILD INPUT, so without this the
 # test target links the PREVIOUS staticlib and reports on code that is no
@@ -64,6 +60,7 @@ fi
 # Touching the sources is the cheapest correct fix. Deleting `.build` would
 # also work and costs a full rebuild of the package every time.
 find "$root/swift/TurboSpark/Sources/TurboSpark" \
+     "$root/swift/TurboSpark/Vendor/syntext" \
      "$root/swift/TurboSpark/Tests" \
      "$root/swift/TurboSparkApp/Sources" \
      -name '*.swift' -exec touch {} +

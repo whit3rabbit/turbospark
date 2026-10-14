@@ -39,7 +39,8 @@ The root references are:
 ## Workspace contract
 
 - macOS is the primary development platform. Rust uses edition 2021, MSRV
-  1.82, and a committed `Cargo.lock`.
+  1.82 (1.89 for `crates/ffi`, which links syntext), and a committed
+  `Cargo.lock`.
 - `crates/gpu` and the real runtime path require macOS and a Metal-capable
   device. `crates/vision-io` is intentionally part of the portable
   cross-target check.

@@ -27,6 +27,13 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
+// Links syntext's and the context engine's C ABIs (`syntext_*`,
+// `syntext_context_*`) into this staticlib for the Swift `Syntext` and
+// `SyntextContext` modules. Nothing in Rust calls them, and without a
+// reference the crate would not be linked at all.
+#[cfg(feature = "syntext")]
+extern crate syntext_context;
+
 /// C ABI error codes and exception-safe wrapper boundary.
 pub mod abi;
 /// C ABI entry points organized by domain.

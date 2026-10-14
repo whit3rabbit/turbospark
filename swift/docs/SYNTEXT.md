@@ -1,7 +1,8 @@
 # Syntext: Indexed Code Search and Project Indexing
 
 Syntext is a high-performance indexed code search engine and project indexer
-built in Rust with Swift bindings (v2.5.0). In TurboSparkApp, it provides
+built in Rust with Swift bindings, compiled into `libturbospark_ffi.a` at the
+revision `Cargo.lock` pins (section 5). In TurboSparkApp, it provides
 sub-millisecond regex and literal code search (`grep_search`) across project
 workspaces, returning ripgrep-formatted output with line numbers and context lines.
 
@@ -110,8 +111,9 @@ When agent tools modify workspace files (`write_file`, `edit_file`, `apply_patch
 ```swift
 Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
 ```
-When generation turns complete and the agent goes idle, `AppModel.generating.didSet`
-commits any pending notifications for the active opted-in project.
+When generation turns complete and the agent goes idle, `AppModel.onGenerationFinished()`
+(called from `generating.didSet`) commits any pending notifications for the
+active opted-in project.
 
 Git repositories use `searchFreshAsync` before an indexed search. Syntext performs
 one bounded `git status` detection (the default cap is 200 files / 150 ms), applies
@@ -138,61 +140,57 @@ the app deliberately does not run a permanent filesystem polling loop.
   - Offers **"Remove Index"** to purge the `.syntext` cache directory from disk
     and reset memory handles.
 
-## 5. Dual-Staticlib Symbol Isolation
+## 5. One Rust Library
 
-`TurboSparkApp` links two Rust static libraries:
-1. `libturbospark_ffi.a` (from `crates/ffi`)
-2. `libsyntext.a` / `SyntextFFI.xcframework` (from `Syntext`)
+A process can link only one Rust static library: each one carries its own
+copy of the Rust standard library, so two of them collide at link time
+(`duplicate symbol '_rust_eh_personality'`). Until syntext-context, the app
+linked syntext's own `SyntextFFI.xcframework` beside `libturbospark_ffi.a`
+and hid the collision with `nmedit -R _rust_eh_personality` plus a
+placeholder `CSyntext.o` for Swift Build. Both workarounds are gone.
 
-Both static libraries are compiled by `rustc` with standard library support, and both
-export `_rust_eh_personality`. On macOS, linking multiple static libraries exporting
-the same global symbol causes Apple's linker (`ld64`) to fail with:
-```
-duplicate symbol '_rust_eh_personality' in libsyntext.a and libturbospark_ffi.a
-```
+syntext is now compiled into `libturbospark_ffi.a`:
 
-### The Fix
-When staging the archive for `TurboSparkApp`, the app build sets
-`TURBOSPARK_LOCALIZE_RUST_SYMBOLS=1`; `scripts/swift-lib.sh` then runs:
+- `crates/ffi/Cargo.toml` depends on `syntext-context` (git, pinned `rev`,
+  `features = ["ffi"]`), which brings syntext with its own `ffi` feature.
+  `crates/ffi/src/lib.rs` has `extern crate syntext_context;`; without that
+  reference the crate is not linked and no `syntext_*` or
+  `syntext_context_*` symbol reaches the archive. The dependency sits behind
+  the default `syntext` feature, which only the workflow-profile
+  compatibility harness turns off (its historical app still links syntext's
+  xcframework).
+- `crates/ffi` needs Rust 1.89 (syntext's MSRV); the rest of the workspace
+  keeps 1.82.
+- The hand-written headers and the Swift wrappers live in
+  `swift/TurboSpark/Vendor/syntext`, copied verbatim from that revision:
+  `CSyntext` is a system-library target, `Syntext` and `SyntextContext` are
+  products of the binding package (they share `package`-access helpers, so
+  they must be in one package), and syntext's own XCTest suites run there
+  under `make swift-test` against the real archive.
+
+## 6. Bumping syntext
+
+The headers describe the ABI of one revision. Bump all three together:
+
 ```bash
-if [ "${TURBOSPARK_LOCALIZE_RUST_SYMBOLS:-0}" = 1 ]; then
-  printf "_rust_eh_personality\n" > "$dest/.hide_symbols"
-  nmedit -R "$dest/.hide_symbols" "$dest/libturbospark_ffi.a"
-  rm -f "$dest/.hide_symbols"
-fi
-```
-`nmedit -R` changes `_rust_eh_personality` in `libturbospark_ffi.a` into a static (local)
-symbol. The symbol remains fully functional for exception handling within `turbospark_ffi`
-while eliminating the duplicate symbol collision during executable linking.
-
-## 6. Package Dependency and CI Configuration
-
-In `swift/TurboSparkApp/Package.swift`:
-```swift
-dependencies: [
-    .package(path: "../TurboSpark"),
-    .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
-    .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.5.0")
-],
+# 1. Point crates/ffi/Cargo.toml's `rev` at the new syntext commit, then:
+cargo update -p syntext-context
+# 2. Copy that revision's headers, wrappers and tests:
+scripts/vendor-syntext.sh
+# 3. Rebuild, and prove the headers against the archive:
+make swift-lib && make swift-test && make swift-test-app
 ```
 
-### Why a Remote Release Dependency?
-- **CI Independence**: CI runners and contributors do not need a Rust toolchain to build
-  or test `Syntext`. SwiftPM downloads the official release zip (`syntext-swift-2.5.0.xcframework.zip`)
-  and verifies its SHA-256 checksum automatically.
-- **Build Speed**: Avoids compiling Syntext's Rust crates on every clean build.
+`scripts/swift-lib.sh` refuses to stage a library when `Cargo.lock`'s
+revision differs from `Vendor/syntext/REVISION`. Never edit the vendored
+files by hand; change syntext and re-vendor. Never add syntext's Swift
+package or xcframework to either `Package.swift`.
 
-### Local Development Override
-To iterate on `syntext` locally without changing `Package.swift`:
-```bash
-cd swift/TurboSparkApp
-swift package edit Syntext --path ../../../syntext
-```
-To revert back to the remote package:
-```bash
-cd swift/TurboSparkApp
-swift package unedit Syntext
-```
+To try an unmerged syntext change, push it to a syntext branch, pin that
+commit and re-vendor; repin to the merge commit on syntext's `main` before
+this repository merges, since a squash merge can orphan the branch commit.
+A path or `[patch]` override has no revision for the check to compare, so
+`swift-lib.sh` stops on it by design.
 
 ## 7. Verification
 

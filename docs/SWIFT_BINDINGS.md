@@ -1678,13 +1678,15 @@ phases:   23 calls at 25.4 ms, expert hit rate 0.74, peak 3743 MiB
 The peak is at 32 auto-resolved slots. At the pinned 16 that every published
 figure uses it is around 2,180 MiB.
 
-**Which archive is staged decides what links.** `make swift-lib` stages a plain
-archive for the package tests; `make swift-lib-app` (which `swift-test-app` and
-`swift-app-build` depend on) localizes `_rust_eh_personality` for the app, and
-a plain `swift test` in `swift/TurboSpark` against THAT archive fails to link
-with `Undefined symbols ... _rust_eh_personality`. Run `make swift-lib` again
-before package tests after an app build. A stale archive under a newer header
-is now reported by name rather than as a missing JSON key
+**One staged archive serves both packages.** `make swift-lib` stages the
+archive the binding package tests and the app link alike; `make swift-lib-app`
+is an alias kept for existing callers. (It used to localize
+`_rust_eh_personality` for an app that also linked syntext's own Rust archive;
+syntext is now compiled into this one, see `swift/docs/SYNTEXT.md`.) The
+archive also carries syntext's and syntext-context's C ABIs, whose vendored
+headers `scripts/swift-lib.sh` checks against `Cargo.lock` before building.
+A stale archive under a newer header is now reported by name rather than as a
+missing JSON key
 (`TurboSparkRuntime.verifyABI()`; see the top of this file), but the
 `RuntimeABITests` that pin it can only fail once the two have been staged
 from different builds.

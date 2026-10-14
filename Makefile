@@ -63,11 +63,11 @@ catalog-guard:
 swift-lib:
 	./scripts/swift-lib.sh
 
-# The app links Syntext's Rust archive as well as TurboSpark's. Keep symbol
-# localization out of `swift-lib`, because the binding package needs the
-# runtime definition to remain global for its own linker.
-swift-lib-app:
-	TURBOSPARK_LOCALIZE_RUST_SYMBOLS=1 ./scripts/swift-lib.sh
+# Kept as an alias. The app used to link syntext's Rust archive beside this
+# one and needed the Rust runtime symbol localized; syntext is now compiled
+# into libturbospark_ffi.a, so the app and the binding package link the same
+# staged archive.
+swift-lib-app: swift-lib
 
 # Compiles Localization/Localizable.xcstrings into the .lproj resources the
 # app actually reads. `swift build`/`swift run` never do this themselves --
@@ -104,10 +104,9 @@ swift-test-real: swift-lib
 
 # The app package and the vendored QwenImage package have their own test
 # suites that `swift-test` (binding package only) never runs. They are separate
-# targets, not prerequisites of swift-test: swift-lib and swift-lib-app write
-# the SAME staged archive with different symbol visibility, so chaining them
-# would relink one over the other, and the app suite is far slower to build.
-# Run them explicitly when touching app sources or Vendor/QwenImage.
+# targets, not prerequisites of swift-test, because the app suite is far
+# slower to build. Run them explicitly when touching app sources or
+# Vendor/QwenImage.
 swift-test-app: swift-lib-app compile-strings
 	cd swift/TurboSparkApp && swift test -Xbuild-tools-swiftc -suppress-warnings
 

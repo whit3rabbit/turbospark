@@ -2,7 +2,9 @@
 name = "turbospark-ffi"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# syntext-context (below) needs 1.89. This crate is `publish = false` and
+# is the only one that depends on it, so the workspace MSRV stays put.
+rust-version = "1.89"
 license.workspace = true
 repository.workspace = true
 publish = false
@@ -60,6 +62,23 @@ axum = { version = "0.7", features = ["json", "multipart", "ws"] }
 # than in the macOS block, and the crate that consumes it is gated instead.
 turbospark-vision-io = { path = "../vision-io", version = "0.3.2" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
+# The syntext code-search index and the syntext-context engine, compiled
+# INTO this staticlib with their C ABIs (`syntext_*`, `syntext_context_*`).
+# A process can link only one Rust staticlib: the app used to add syntext's
+# own xcframework beside this archive and hide the duplicate Rust runtime
+# with `nmedit`. The headers and Swift wrappers vendored under
+# `swift/TurboSpark/Vendor/syntext` MUST come from this exact revision:
+# `scripts/vendor-syntext.sh` copies them, `scripts/swift-lib.sh` refuses a
+# mismatch. Bump all three together (`swift/docs/SYNTEXT.md`).
+syntext-context = { git = "https://github.com/whit3rabbit/syntext", rev = "a90908cd9b3bdd1eac3633294159440c532925f7", features = ["ffi"], optional = true }
+
+[features]
+# On for every build the app links. Off only for an archive linked next to
+# syntext's OWN xcframework, which carries the same C symbols: the
+# workflow-profile compatibility harness builds a historical app revision
+# that still depends on that package.
+default = ["syntext"]
+syntext = ["dep:syntext-context"]
 
 # The session only exists where the engine does. Everything else in this
 # crate -- the error slot, the string helpers, the catalog and probe surface

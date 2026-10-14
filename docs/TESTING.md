@@ -555,16 +555,16 @@ attention) so it cannot rot silently; only the timings are advisory.
 
 ## Swift suites
 
-`make swift-test` runs only `swift/TurboSpark` (the binding package and the
-header check). The app and vendored image packages have separate targets that
-are not prerequisites of it, because `swift-lib` and `swift-lib-app` stage the
-same archive with different symbol visibility:
+`make swift-test` runs only `swift/TurboSpark` (the binding package, the
+header check, and the vendored `Syntext` and `SyntextContext` suites, which
+prove syntext's hand-written headers against the same archive). The app and
+vendored image packages have separate targets that are not prerequisites of
+it, because the app suite is far slower to build:
 
 - `make swift-test-app`: `swift/TurboSparkApp` tests (permission gates, vault
   crypto, stream recovery, tool registry).
 - `make swift-test-qwenimage`: `swift/TurboSparkApp/Vendor/QwenImage` tests.
 
-Run `swift-test-app` after, not interleaved with, `swift-test`.
 
 ## Benchmarks
 

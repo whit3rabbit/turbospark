@@ -102,7 +102,7 @@ fi
 
 if [ "$skip_build" -eq 0 ]; then
   echo "==> staging the FFI staticlib (crates/ffi -> SwiftPM)"
-  TURBOSPARK_LOCALIZE_RUST_SYMBOLS=1 "$root/scripts/swift-lib.sh"
+  "$root/scripts/swift-lib.sh"
 
   echo "==> compiling the string catalog (Localization/Localizable.xcstrings -> .lproj)"
   "$root/scripts/compile-strings.sh"
