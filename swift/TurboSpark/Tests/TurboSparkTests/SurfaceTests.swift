@@ -1304,6 +1304,22 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(TurboSparkEmbedding.cosineSimilarity([1.0], [1.0, 2.0]), 0.0)
     }
 
+    /// The request entry point exists, refuses a missing model with a thrown
+    /// error, and the request encodes the snake_case keys Rust reads.
+    func testEmbeddingRequestRefusesMissingModelAndEncodesWireKeys() async throws {
+        let request = EmbeddingRequest(
+            texts: ["a"], task: "search_query", dimensions: 256,
+            imagePaths: ["/x.png"], imageBudget: 70, audioPaths: ["/x.wav"])
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
+        XCTAssertEqual(json?["image_paths"] as? [String], ["/x.png"])
+        XCTAssertEqual(json?["image_budget"] as? Int, 70)
+        XCTAssertEqual(json?["audio_paths"] as? [String], ["/x.wav"])
+        do {
+            _ = try await TurboSparkEmbedding.encode(request: request, modelPath: "/nonexistent/model/path")
+            XCTFail("expected a thrown error")
+        } catch {}
+    }
+
     func testServerAttachEmbeddingModelRefusesMissingPath() throws {
         let server = try TurboSparkServer.start(options: ServerOptions(port: 0))
         defer { server.stop() }

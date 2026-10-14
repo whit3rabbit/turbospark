@@ -335,8 +335,10 @@ void ts_session_close(TsSession *s);
 /*
  * Asks the in-flight generation to stop. Safe from any thread; never blocks.
  *
- * The flag is cleared at the start of every generation, so a Stop pressed
- * between turns does not cancel the next one. A cancelled run is NOT an
+ * The flag is cleared when ts_generate() or ts_humanize() is entered, before
+ * the call queues behind any other heavyweight job. A Stop pressed between
+ * turns therefore does not cancel the next one, while a Stop pressed during
+ * that queue wait does. A cancelled run is NOT an
  * error: ts_generate returns TS_OK with stopReason "cancelled" and whatever
  * text had been produced, and the KV cache describes itself honestly, so the
  * conversation can continue from the partial turn.
@@ -1414,7 +1416,7 @@ int32_t ts_hf_endpoint_set(const char *endpoint);
 
 /*
  * Computes vector embeddings for a JSON array of strings using a local encoder
- * model (.safetensors directory or alias).
+ * model (.safetensors directory, Core ML EmbeddingGemma 2 export, or alias).
  *
  * texts_json is a JSON array of strings: ["text1", "text2"]
  * Writes a JSON array of float arrays to *out (free with ts_string_free):
@@ -1423,6 +1425,23 @@ int32_t ts_hf_endpoint_set(const char *endpoint);
 int32_t ts_embedding_encode_json(const char *model_path,
                                  const char *texts_json,
                                  char **out);
+
+/*
+ * Computes embeddings for one JSON request; every field is optional:
+ *   {"texts": ["..."], "task": "search_query", "dimensions": 256,
+ *    "image_paths": ["/a.png"], "image_budget": 280,
+ *    "audio_paths": ["/a.wav"]}
+ * Writes to *out (free with ts_string_free):
+ *   {"texts": [[...]], "images": [[...]],
+ *    "audio": [[{"start_seconds": 0, "duration_seconds": 10,
+ *                "embedding": [...]}]]}
+ * One audio entry per file, one item per 10 s window. task, images and
+ * audio need a model with those prompts and towers (EmbeddingGemma 2 on
+ * Core ML, macOS 15+); others return an error.
+ */
+int32_t ts_embedding_encode_request_json(const char *model_path,
+                                         const char *request_json,
+                                         char **out);
 
 /*
  * Computes the cosine similarity between two float vectors of length `len`.

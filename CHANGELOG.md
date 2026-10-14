@@ -25,6 +25,11 @@ when this file gets updated relative to the version bump and the tag.
   m-long (Nomic BERT). Every checkpoint is pinned to a commit in
   `crates/embeddings/MODELS.md`. Also shared sentence-transformers
   pooling, Matryoshka truncation, cosine and ColVision MaxSim scoring.
+- `crates/coreml` (`turbospark-coreml`): Apple Core ML runtime bridge via
+  `objc2-core-ml` with model runners in `crates/runtime` for Parakeet TDT speech
+  recognition and EmbeddingGemma 2 multimodal (text, image, audio) embeddings
+  with Matryoshka dimension truncation. Includes C FFI entry points, server
+  embedding model attach, and Swift SDK bindings.
 
 ### Changed
 - `swift/TurboSparkApp`: the Server pane's API key follows the same rule as

@@ -217,10 +217,15 @@ fn open_real_encoder_model(
             dir.display()
         );
     }
-    let model =
-        turbospark_server::RealEncoderModel::open(&dir)?.with_model_id(model_arg.to_string());
+    if runtime::coreml::detect_layout(&dir) == Some(runtime::coreml::CoreMlLayout::EmbeddingGemma2)
+    {
+        eprintln!(
+            "Core ML EmbeddingGemma 2: the first load compiles for the Neural Engine and can take minutes"
+        );
+    }
+    let model = turbospark_server::open_embedding_model(&dir, model_arg.to_string())?;
     eprintln!("embedding model open ({model_arg})");
-    Ok(Arc::new(model))
+    Ok(model)
 }
 
 #[cfg(target_os = "macos")]

@@ -1,0 +1,29 @@
+[package]
+name = "turbospark-coreml"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Apple Core ML runner: load compiled or packaged models, marshal tensors, run stateless and stateful predictions."
+
+[lib]
+name = "turbospark_coreml"
+path = "src/lib.rs"
+
+[dependencies]
+# f16 <-> f32 conversion for Float16 multi-arrays. MIT OR Apache-2.0.
+half = "2"
+# Compile-cache key. MIT OR Apache-2.0.
+sha2 = "0.10"
+
+# The Objective-C stack is macOS-only so the crate stays checkable for a
+# non-macOS target as a stub (AGENTS.md Gotcha 8). All MIT, from the objc2
+# project. objc2 looks classes up at runtime, which is why every macOS 15 API
+# is gated by a respondsToSelector check in `sys::availability`.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", features = ["exception"] }
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSError", "NSString", "NSURL", "NSValue", "NSRange", "NSProcessInfo", "NSObject", "NSEnumerator", "NSSet", "block2"] }
+objc2-core-ml = { version = "0.3.2", default-features = false, features = ["std", "block2", "MLModel", "MLModelConfiguration", "MLModelDescription", "MLFeatureDescription", "MLFeatureProvider", "MLDictionaryFeatureProvider", "MLFeatureValue", "MLFeatureType", "MLMultiArray", "MLMultiArrayConstraint", "MLMultiArrayShapeConstraint", "MLMultiArrayShapeConstraintType", "MLModel_MLState", "MLState", "MLStateConstraint", "MLModel_MLModelCompilation", "MLModelError"] }
