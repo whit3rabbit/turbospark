@@ -430,7 +430,8 @@ impl EmbeddingGemma2CoreMl {
         path: &Path,
         dimension: Option<usize>,
     ) -> Result<Vec<AudioWindowEmbedding>, String> {
-        let wave = audio::wav::read_wav_f32(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let wave =
+            audio::wav::read_wav_f32(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let mono = audio::conversion::to_mono_resampled(
             &wave,
             AUDIO_SAMPLE_RATE,

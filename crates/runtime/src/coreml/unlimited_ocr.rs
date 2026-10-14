@@ -85,7 +85,11 @@ impl OcrConfig {
             .and_then(|c| c.as_array())
             .ok_or("config.json capacities is missing")?
             .iter()
-            .map(|x| x.as_u64().map(|x| x as usize).ok_or("capacity is not an integer"))
+            .map(|x| {
+                x.as_u64()
+                    .map(|x| x as usize)
+                    .ok_or("capacity is not an integer")
+            })
             .collect::<Result<_, _>>()?;
         capacities.sort_unstable();
         let prompt_suffix_ids = v
@@ -98,7 +102,11 @@ impl OcrConfig {
                     .as_array()
                     .ok_or("prompt ids must be an array")?
                     .iter()
-                    .map(|x| x.as_u64().map(|x| x as u32).ok_or("prompt id is not an integer"))
+                    .map(|x| {
+                        x.as_u64()
+                            .map(|x| x as u32)
+                            .ok_or("prompt id is not an integer")
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok((k.clone(), ids))
             })
@@ -173,7 +181,11 @@ impl OcrConfig {
 
 /// `(cos, sin)` tables `[positions, head_dim]`, half-split layout: the
 /// angle for frequency i fills columns i and i + head_dim / 2.
-pub(crate) fn rope_tables(positions: std::ops::Range<usize>, head_dim: usize, theta: f64) -> (Vec<f32>, Vec<f32>) {
+pub(crate) fn rope_tables(
+    positions: std::ops::Range<usize>,
+    head_dim: usize,
+    theta: f64,
+) -> (Vec<f32>, Vec<f32>) {
     let half = head_dim / 2;
     let n = positions.len();
     let mut cos = vec![0.0f32; n * head_dim];
@@ -222,7 +234,11 @@ impl DecodeMask {
         let mut mask = vec![MASKED; slots + 1];
         mask[..prefix].fill(0.0);
         mask[slots] = 0.0;
-        Self { mask, capacity, ring }
+        Self {
+            mask,
+            capacity,
+            ring,
+        }
     }
 
     /// Updates the mask for step `t` and returns the slot to write.
@@ -238,7 +254,12 @@ impl DecodeMask {
 
 /// Merges the per-half top-k into one candidate list, best first. Ids in
 /// the second half are offset by `vocab_half`.
-pub(crate) fn merge_top_k(values: &[f32], ids: &[i32], k: usize, vocab_half: usize) -> Result<Vec<(f32, u32)>, String> {
+pub(crate) fn merge_top_k(
+    values: &[f32],
+    ids: &[i32],
+    k: usize,
+    vocab_half: usize,
+) -> Result<Vec<(f32, u32)>, String> {
     if values.len() != 2 * k || ids.len() != 2 * k {
         return Err(format!("top-k outputs are not [2, {k}]"));
     }
@@ -381,7 +402,10 @@ impl OcrPage {
     /// (PIL bicubic resize, mid-gray border) and normalizes to `[-1, 1]`.
     pub fn from_rgb(rgb: &[u8], width: usize, height: usize) -> Result<Self, String> {
         if width == 0 || height == 0 || rgb.len() != width * height * 3 {
-            return Err(format!("{width}x{height} RGB8 needs {} bytes", width * height * 3));
+            return Err(format!(
+                "{width}x{height} RGB8 needs {} bytes",
+                width * height * 3
+            ));
         }
         let (w, h, x0, y0) = pad_geometry(width, height);
         let resized = turbospark_vision_io::resize::resize_bicubic_pil(rgb, width, height, w, h);
@@ -458,7 +482,9 @@ pub fn plain_text(raw: &str) -> String {
     let mut rest = raw;
     while !rest.is_empty() {
         if let Some(after) = rest.strip_prefix("<|det|>") {
-            rest = after.find("<|/det|>").map_or("", |end| &after[end + "<|/det|>".len()..]);
+            rest = after
+                .find("<|/det|>")
+                .map_or("", |end| &after[end + "<|/det|>".len()..]);
         } else if let Some(after) = rest.strip_prefix("<PAGE>") {
             out.push_str("\n\u{c}\n");
             rest = after;
@@ -597,7 +623,8 @@ impl UnlimitedOcrCoreMl {
             return Err(format!("page encoder input pixels is not {want:?}"));
         }
         let decoder_package =
-            turbospark_coreml::compile_if_needed(&dir.join(&config.decoder), &cache).map_err(err)?;
+            turbospark_coreml::compile_if_needed(&dir.join(&config.decoder), &cache)
+                .map_err(err)?;
         Ok(Self {
             dir: dir.to_path_buf(),
             config,
@@ -646,11 +673,14 @@ impl UnlimitedOcrCoreMl {
         let pixels =
             Tensor::f32(vec![1, 3, PAGE_SIZE, PAGE_SIZE], page.pixels.clone()).map_err(err)?;
         let out = self.encoder.predict(&[("pixels", &pixels)]).map_err(err)?;
-        let t = out.get("page_embeds").ok_or("page encoder returned no page_embeds")?;
+        let t = out
+            .get("page_embeds")
+            .ok_or("page encoder returned no page_embeds")?;
         if t.shape() != [self.config.page_tokens, self.config.hidden] {
             return Err(format!("page_embeds shape {:?}", t.shape()));
         }
-        t.to_f32_vec().ok_or_else(|| "page_embeds is not float".into())
+        t.to_f32_vec()
+            .ok_or_else(|| "page_embeds is not float".into())
     }
 
     /// One decoder call. Returns the merged candidates, best first.
@@ -717,7 +747,9 @@ impl UnlimitedOcrCoreMl {
                 self.prompts().collect::<Vec<_>>().join(", ")
             )
         })?;
-        let n = c.prefix_length(pages.len(), prompt).expect("prompt checked");
+        let n = c
+            .prefix_length(pages.len(), prompt)
+            .expect("prompt checked");
         let capacity = c.capacity_for(n).ok_or_else(|| {
             format!(
                 "{} pages need {n} prefix slots; this bundle holds {} pages",
@@ -755,7 +787,8 @@ impl UnlimitedOcrCoreMl {
         for start in (0..n).step_by(c.chunk) {
             let rows = c.chunk.min(n - start);
             let mut x = vec![0.0f32; c.chunk * c.hidden];
-            x[..rows * c.hidden].copy_from_slice(&prefix[start * c.hidden..(start + rows) * c.hidden]);
+            x[..rows * c.hidden]
+                .copy_from_slice(&prefix[start * c.hidden..(start + rows) * c.hidden]);
             let write: Vec<i32> = (start..start + c.chunk).map(|i| i as i32).collect();
             top = self.step(
                 &bucket.prefill,
@@ -869,7 +902,10 @@ mod tests {
         assert_eq!(c.capacity_for(384), Some(384));
         assert_eq!(c.capacity_for(385), Some(640));
         // 8 pages: 1 + 2184 + 5 = 2190 -> 2304; 9 pages: 2463 -> none.
-        assert_eq!(c.capacity_for(c.prefix_length(8, "multi").unwrap()), Some(2304));
+        assert_eq!(
+            c.capacity_for(c.prefix_length(8, "multi").unwrap()),
+            Some(2304)
+        );
         assert_eq!(c.capacity_for(c.prefix_length(9, "multi").unwrap()), None);
         assert_eq!(c.max_pages(), 8);
         assert_eq!(c.prefix_length(1, "nope"), None);
@@ -977,13 +1013,17 @@ mod tests {
         assert_eq!(p.pixels.len(), 3 * PAGE_SIZE * PAGE_SIZE);
         assert_eq!(p.pixels[0], gray, "top-left is border");
         let centre = 512 * PAGE_SIZE + 512;
-        assert!((p.pixels[centre] - 1.0).abs() < 1e-6, "white content maps to 1");
+        assert!(
+            (p.pixels[centre] - 1.0).abs() < 1e-6,
+            "white content maps to 1"
+        );
         assert!(OcrPage::from_rgb(&rgb, 5, 2).is_err());
     }
 
     #[test]
     fn plain_text_strips_markup_and_splits_pages() {
-        let raw = "<PAGE><|det|>title [1, 2, 3, 4]<|/det|>Title\n<|det|>text [5]<|/det|>Body line.\n\
+        let raw =
+            "<PAGE><|det|>title [1, 2, 3, 4]<|/det|>Title\n<|det|>text [5]<|/det|>Body line.\n\
                    <PAGE><|det|>text [6]<|/det|>Second <|ref|>page|<|/ref|>.";
         assert_eq!(plain_text(raw), "Title\nBody line.\n\nSecond page|.");
         assert_eq!(plain_text("no markup"), "no markup");

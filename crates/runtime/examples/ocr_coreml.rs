@@ -30,7 +30,11 @@ fn main() -> Result<(), String> {
     };
     let started = std::time::Instant::now();
     let ocr = UnlimitedOcrCoreMl::open(Path::new(&model_dir), &opts)?;
-    eprintln!("opened in {:?} (max {} pages)", started.elapsed(), ocr.max_pages());
+    eprintln!(
+        "opened in {:?} (max {} pages)",
+        started.elapsed(),
+        ocr.max_pages()
+    );
     let pages = pages
         .iter()
         .map(|p| OcrPage::from_file(p))
