@@ -1,10 +1,11 @@
 # EmbeddingGemma 2 word CTC (experiment)
 
 Status: experiment on branch `experiment/embeddinggemma2-ctc`. The portable
-half of the pipeline is implemented and tested. No encoder or reader backend
-exists yet, so this module cannot transcribe real audio on its own. No
-quality, throughput, latency, memory, or device-placement claim is made
-here.
+half of the pipeline is implemented and tested here; a macOS Core ML backend
+for the encoder, reader, and scorer lives in `turbospark-runtime`
+(`coreml::embeddinggemma2_ctc`). Real-audio transcripts have been checked on
+four short English clips only (one checked-in, three macOS `say`). No WER, throughput, latency,
+or memory claim beyond those clips is made here.
 
 ## Overview
 
@@ -27,7 +28,9 @@ without an autoregressive decoder:
 
 This crate implements steps 1, 4, and 5 plus the window schedule and
 stitching, and defines the `AcousticBackend` boundary for steps 2 and 3.
-Step 6 is not ported.
+`crates/runtime/src/coreml/embeddinggemma2_ctc.rs` implements that boundary
+and a `BlockShortlister` over the three compiled programs (macOS 15 or
+newer). Step 6 is not ported.
 
 | Module | Contents |
 |---|---|
@@ -36,7 +39,9 @@ Step 6 is not ported.
 | `vocabulary.rs` | `reader_words.json`, `word_unit_f16.bin` (kept as FP16 bits) |
 | `scorer.rs` | CPU reference of the compiled block scorer, MIL blob parser, exact rerank, exhaustive search |
 | `ctc.rs` | Calibration, blank decision, collapse, `<rep>` expansion, timestamps |
-| `pipeline.rs` | `AcousticBackend` trait and the end-to-end `Transcriber` |
+| `pipeline.rs` | `AcousticBackend` trait, the end-to-end `Transcriber`, the 0.5 s tail padding |
+| `runtime: coreml/embeddinggemma2_ctc.rs` | Core ML encoder/reader backend and scorer, program-description checks, per-program compute units |
+| `runtime: examples/eg2_ctc_transcribe.rs` | WAV to transcript with timings; `--cpu-scorer`, `--recall` |
 
 ## Sources and pins
 
@@ -81,6 +86,20 @@ Checked in this branch against the pinned files:
 | Encoder and reader interfaces | `metadata.json`: encoder `input_features [1,2000,128]` f32 and `feature_mask [1,2000]` to `l11 [1,500,1024]` f16; reader `l11 [1,500,1024]` and `mask [1,500]` to `vec [1,500,768]` and `blank [1,500,1]` f16. The reader op histogram (1 reduceSum, pow, sqrt, realDiv) is consistent with an in-graph L2 normalization of `vec`. |
 | The scorer's top-k returns sorted descending uint16 block ids | `model.mil`: `topk(k=16, ascending=false, sort=true, output_indices_dtype="uint16")`, cast to int32. |
 
+Checked on macOS 26.6.2, Apple M4 Max, with the Core ML backend and every
+program on `ComputeUnits::All` (`eg2_ctc_transcribe`, release build):
+
+| Finding | Evidence |
+|---|---|
+| End-to-end transcripts | `testdata/qwen3_forced_aligner_reference.wav` (2.79 s): `the quick brown fox jumps over the lazy dog`, exact (ignored runtime test). Three macOS `say -v Samantha` clips rendered at 16 kHz f32: 6.0 s, 0 of 24 words wrong; 47.0 s over 3 windows, 2 of 133 (`and` read as `an`, `counts` as `count`), no word lost or doubled at a seam; 7.5 s of back-to-back repeats, 0 of 29. Total 2 of 195. One synthetic voice, clean audio: not a WER claim. |
+| Shortlist recall | Over 1527 kept frames of three clips (the 6 s and 47 s clips before tail padding was added, the repeats clip with it), the 64 shortlisted candidates held the exhaustive best word in 1442 frames (94.4%) and in 189 of 189 frames whose exhaustive winner beats blank. The Core ML (FP16) and CPU (f32) scorers made the same decision on every frame, and no decision differed from the exhaustive search. |
+| `<rep>` is the immediate-repeat marker | On the repeats clip the reader emitted id 229456 exactly where a word repeats with no other word between (`no <rep> <rep>`, `very <rep>`, `that <rep>`, the last two on adjacent frames with no blank), and the plain id for `walked and walked`. This supports rendering `<rep>` as the preceding word. |
+| Duplicate ids | Across the four transcripts no head-block id (0..319) was emitted; duplicated strings (`a`, `with`, `for`, ...) always came from their main-list id, and no adjacent pair alternated between two ids of one string. |
+| Word spikes trail the word | Every word is a one- or two-frame spike. Against the forced-aligner spans of the reference clip, spikes land 0.04 to 0.32 s after the word ends, so `start_seconds` is a spike time, not a word onset. |
+| The last word needs trailing audio | Without padding, the repeats clip lost its last word (`night`, spike at 7.52 s, audio ends at 7.498 s). Appending 0.25 s or 0.5 s of zeros recovered it on all three `say` clips with no other change; 1 s also flipped an earlier frame (`that that` read as `think think`). The encoder sees the whole window, so trailing context moves earlier outputs too. |
+| Planned placement (`MLComputePlan`, `coreml_plan --units all`) | Encoder: 994 ops on the Neural Engine (61% of estimated cost), 701 on the GPU (28%). Reader: 292 Neural Engine ops (87%), 4 GPU. Scorer: both matmuls on the Neural Engine (26%); reshape, reduce_max, topk, and cast on the GPU (73%). reshape, topk, and cast list no Neural Engine support; reduce_max does but prefers the GPU. A plan, not an execution trace. |
+| Speed, indicative only | One warm run each: 47.0 s in 0.38 to 0.46 s (RTFx 103 to 123), 6.0 s in 0.10 s. The first run after load includes Core ML specialization (cold: 0.7 s for 47 s). Opening the encoder and reader took 11.7 s the first time. Not a benchmark-protocol measurement. |
+
 Corrections to the earlier analysis this evidence forces:
 
 - The audio encoder is not frozen. The app NOTICE says EmbeddingGemma 2's
@@ -93,23 +112,22 @@ Corrections to the earlier analysis this evidence forces:
 
 Reported elsewhere and not reproduced here:
 
-- The `MLComputePlan` placement (matmuls ANE-preferred; reshape, reduce_max,
-  topk not ANE-supported) was observed on a user's Apple Silicon host. It is
-  anticipated placement, not an execution trace, and nothing in this branch
-  re-ran it.
 - 288x real time and about 5% WER are the developer's numbers.
+- The earlier report that reduce_max is not Neural Engine supported does not
+  hold on the host above (it is supported there, but the plan prefers the
+  GPU).
 
 ## Open questions and this port's choices
 
 | Question | Current choice |
 |---|---|
-| What `<rep>` means | Rendered as a repeat of the preceding word and dropped at the start. Unverified: it is the obvious reading of a word-level CTC repeat marker, but the reference binary was not inspected for it. |
-| Collapse by id or by string | By id (the reference stores indices). The duplicates are deliberate (an adjusted head row and a stock main row for the same word), so adjacent frames that alternate between the two ids render the word twice. Collapsing by string avoids that but would also merge a true repeat with no blank between; decide with real-audio paths. |
+| What `<rep>` means | Rendered as a repeat of the preceding word and dropped at the start. The repeats clip supports this reading (see Evidence); the reference binary was not inspected for it. Because it repeats whatever precedes it, a lost word before `<rep>` repeats the wrong one. |
+| Collapse by id or by string | By id (the reference stores indices). The duplicates are deliberate (an adjusted head row and a stock main row for the same word), so adjacent frames that alternate between the two ids would render the word twice. No alternation and no head-block id appeared on the four clips; keep by id until real recordings show otherwise. |
 | Adding words | Embed the raw lowercase string with the stock text model (no prompt, unit norm, FP16), as Haku did for its 30 custom words. The compiled scorer has a fixed `[128, 229460]` shape, so new words need a separate CPU shortlist path or a rebuilt scorer program. Core ML text conversions (FluidInference, OpenInfinity int8, FilBona int8) could do this on device after their fp16/int8 drift is measured against these rows, and without their default task prefixes. |
-| First and last window edges | The first window keeps from frame 0 and the last keeps through its last valid frame; interior windows keep `[25, 475)`. The reference runtime's edge handling is unknown. |
-| Encoder mask subsampling | `ceil(valid_mel / 4)` valid encoder frames (the Gemma audio every-4th-frame convention), unverified for the compiled encoder. |
+| First and last window edges | The first window keeps from frame 0 and the last keeps through its last valid frame; interior windows keep `[25, 475)`. `Transcriber` appends `TAIL_PADDING_SAMPLES` (0.5 s) of zeros to non-empty input first, so a final spike that trails the audio is kept (`tail_padding` field; 0 disables). The reference runtime's edge handling is unknown. |
+| Encoder mask subsampling | `ceil(valid_mel / 4)` valid encoder frames (the Gemma audio every-4th-frame convention). The transcripts above are consistent with it; the compiled encoder was not inspected for it. |
 | Rerank similarity | Plain dot product with the unit rows; equals the cosine up to FP16 rounding because `vec` is normalized in-graph. |
-| Shortlist precision | The CPU scorer runs in f32; Core ML runs FP16, so near-tied blocks may order differently. Measure shortlist recall against `exhaustive_best` before relying on either. |
+| Shortlist precision | The CPU scorer runs in f32; Core ML runs FP16, so near-tied blocks may order differently. On the measured clips both kept every emitted word's block and made identical decisions; `eg2_ctc_transcribe --recall` repeats the measurement on any WAV. |
 
 ## Verification
 
@@ -121,7 +139,22 @@ cargo clippy -p turbospark-audio --tests
 # Asset checks (manifest layout, downloaded separately, not by tests):
 TURBOSPARK_EG2_ASSET_DIR=/path/to/eg2demo \
   cargo test -p turbospark-audio --lib embeddinggemma2::asset_tests -- --ignored
+
+# Core ML backend (macOS 15+): unit tests, then the reference-clip
+# transcript with both scorers.
+cargo test -p turbospark-runtime --lib embeddinggemma2_ctc
+TURBOSPARK_EG2_ASSET_DIR=/path/to/eg2demo cargo test --release \
+  -p turbospark-runtime --lib embeddinggemma2_ctc -- --ignored
+
+# Any WAV; placement per program through
+# TURBOSPARK_EG2_CTC_{ENCODER,READER,SCORER}_UNITS (cpu, cpu_gpu, cpu_ane, all).
+cargo run --release -p turbospark-runtime --example eg2_ctc_transcribe -- \
+  /path/to/eg2demo clip.wav [--cpu-scorer] [--recall]
 ```
+
+The asset directory is the manifest layout: every file listed in
+`v5/manifest.json`, at its `path`, verified against its `sha256`. The host
+refuses Python's default urllib user agent (HTTP 403); `curl` works.
 
 Regenerate the frontend fixture with
 `crates/audio/scripts/generate_embeddinggemma2_features_fixture.py` (install
@@ -131,23 +164,25 @@ Gates:
 
 | Gate | Status |
 |---|---|
-| Frontend fixture parity | Passed (Linux, CPU) |
-| Shipped tables, word table, scorer layout, calibration | Passed against the pinned files (Linux, CPU) |
-| Window stitching and CTC logic | Synthetic tests, including mutation checks |
-| Encoder/reader backend | Not implemented |
-| End-to-end transcript on real audio | Not run |
+| Frontend fixture parity | Passed (Linux, CPU; macOS) |
+| Shipped tables, word table, scorer layout, calibration | Passed against the pinned files (Linux, CPU; macOS 26.6.2) |
+| Window stitching, tail padding, and CTC logic | Synthetic tests, including mutation checks |
+| Encoder/reader/scorer Core ML backend | Implemented in `turbospark-runtime`; program descriptions checked at open |
+| End-to-end transcript on real audio | Reference clip exact (ignored runtime test); three `say` clips, 2 of 195 words wrong overall (M4 Max) |
 | Word-table provenance | Passed: full-table comparison with the stock text model (Linux, CPU, float32) |
-| Shortlist recall, WER, latency, memory, ANE/GPU placement | Not run |
-| Runtime, catalog, CLI, FFI, Swift | Not started |
+| Shortlist recall | Measured on three clips: every emitted word's block kept, Core ML and CPU decisions identical |
+| Planned placement | `MLComputePlan` read on one host (above); no execution trace |
+| WER on real recordings, latency protocol, memory | Not run |
+| Catalog, CLI, server, FFI, Swift | Not started |
 
 ## Next steps
 
-1. A Core ML backend in `crates/runtime` (macOS only) implementing
-   `AcousticBackend` over `eg2_audio_l11` and `reader_P6`, plus a scorer
-   `BlockShortlister`, then a local WAV-to-transcript command with per-stage
-   timings.
-2. Shortlist recall: the share of frames whose `exhaustive_best` word is in
-   the 64 shortlisted candidates, for both the Core ML and CPU scorers.
+1. WER on real recordings (several speakers, noise, accents) against a
+   reference such as LibriSpeech test-clean, with the same clips run through
+   an existing recognizer for comparison.
+2. Latency and memory under the benchmark protocol, per program and per
+   compute-unit choice, including the first-load cost.
 3. Map the word table instead of reading it (352 MB resident as FP16 bits;
    the CPU scorer adds 117 MB of f32 columns).
 4. Port punctuation and casing only after the recognizer is measured.
+5. Confirm redistribution terms before any catalog or download integration.

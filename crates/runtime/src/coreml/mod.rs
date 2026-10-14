@@ -1,11 +1,13 @@
-//! Core ML model pipelines. Each submodule turns one FluidInference Core ML
-//! export into a TurboSpark capability; `turbospark-coreml` does the
-//! Objective-C work. See `docs/COREML.md`.
+//! Core ML model pipelines. Each submodule turns one Core ML export (the
+//! FluidInference ones, plus the eg2demo word-CTC experiment) into a
+//! TurboSpark capability; `turbospark-coreml` does the Objective-C work.
+//! See `docs/COREML.md`.
 
 use std::path::Path;
 
 pub mod embedding_gemma2;
 pub mod embedding_gemma2_media;
+pub mod embeddinggemma2_ctc;
 pub mod parakeet;
 pub mod unlimited_ocr;
 

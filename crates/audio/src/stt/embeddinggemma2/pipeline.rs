@@ -19,6 +19,13 @@ use super::windows::{
 /// Width of the layer-11 audio-tower features the reader consumes.
 pub const ENCODER_DIM: usize = 1_024;
 
+/// Silence appended after the input (0.5 s). The reader's word spikes land
+/// up to about 0.3 s after a word ends, so without trailing audio the last
+/// word's spike can fall past the final valid frame and be dropped. A port
+/// choice measured on synthetic clips (see the family README); the
+/// reference runtime's end handling is unknown.
+pub const TAIL_PADDING_SAMPLES: usize = 8_000;
+
 /// Reader outputs for one window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReaderOutput {
@@ -57,6 +64,9 @@ pub struct Transcriber<B, S> {
     pub words: WordList,
     pub table: WordTable,
     pub calibration: Calibration,
+    /// Zero samples appended to non-empty input before windowing,
+    /// [`TAIL_PADDING_SAMPLES`] by default.
+    pub tail_padding: usize,
 }
 
 impl<B: AcousticBackend, S: BlockShortlister> Transcriber<B, S> {
@@ -82,11 +92,21 @@ impl<B: AcousticBackend, S: BlockShortlister> Transcriber<B, S> {
             words,
             table,
             calibration,
+            tail_padding: TAIL_PADDING_SAMPLES,
         })
     }
 
-    /// Transcribes 16 kHz mono samples.
+    /// Transcribes 16 kHz mono samples. The stitched path covers the input
+    /// plus [`Self::tail_padding`], so a final word's span can end after
+    /// the audio does.
     pub fn transcribe(&mut self, samples: &[f32]) -> Result<Transcript> {
+        let padded;
+        let samples = if samples.is_empty() || self.tail_padding == 0 {
+            samples
+        } else {
+            padded = [samples, &vec![0.0; self.tail_padding]].concat();
+            &padded[..]
+        };
         let plans = plan_windows(samples.len(), |len| {
             // Matches the frontend mask: mel frame i is real while
             // i * HOP + FRAME < len + FRAME / 2.
@@ -268,6 +288,7 @@ mod tests {
             }
         }
         let mut model = transcriber(script);
+        model.tail_padding = 0;
         let audio = vec![0.0f32; 30 * 16_000];
         let transcript = model.transcribe(&audio).unwrap();
         assert_eq!(transcript.windows, 2);
@@ -279,6 +300,25 @@ mod tests {
         assert_eq!(transcript.frame_path.len(), 750);
         // The second window holds 12 s of real audio: 1199 valid mel frames.
         assert_eq!(model.backend.encoded_masks, vec![1999, 1199]);
+    }
+
+    #[test]
+    fn tail_padding_keeps_a_spike_just_past_the_audio() {
+        // 1 s of audio is 25 encoder frames; the word spikes at frame 30
+        // (1.2 s), inside the default 0.5 s tail (38 frames in all).
+        fn script(frame: usize) -> Option<u32> {
+            (frame == 30).then_some(4)
+        }
+        let audio = vec![0.0f32; 16_000];
+        let mut model = transcriber(script);
+        let transcript = model.transcribe(&audio).unwrap();
+        assert_eq!(transcript.text, "delta");
+        assert_eq!(transcript.frame_path.len(), 38);
+        model.tail_padding = 0;
+        model.backend.window = 0;
+        let unpadded = model.transcribe(&audio).unwrap();
+        assert_eq!(unpadded.text, "");
+        assert_eq!(unpadded.frame_path.len(), 25);
     }
 
     #[test]
