@@ -196,6 +196,10 @@ this repository merges, since a squash merge can orphan the branch commit.
 A path or `[patch]` override has no revision for the check to compare, so
 `swift-lib.sh` stops on it by design.
 
+That is the state today: the pin is the released syntext 2.6.0 plus
+`ConversationMemory::forget` (whit3rabbit/syntext#11), which the app's chat
+deletion and recall reconcile need. Repin once that PR merges.
+
 ## 7. Verification
 
 Unit tests are located in `swift/TurboSparkApp/Tests/TurboSparkAppTests/SyntextCodeSearchToolTests.swift`:

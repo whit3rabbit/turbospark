@@ -70,7 +70,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync",
 # `swift/TurboSpark/Vendor/syntext` MUST come from this exact revision:
 # `scripts/vendor-syntext.sh` copies them, `scripts/swift-lib.sh` refuses a
 # mismatch. Bump all three together (`swift/docs/SYNTEXT.md`).
-syntext-context = { git = "https://github.com/whit3rabbit/syntext", rev = "a90908cd9b3bdd1eac3633294159440c532925f7", features = ["ffi"], optional = true }
+# This revision is syntext 2.6.0 (released) plus `forget`, the branch of
+# whit3rabbit/syntext#11. Repin to that PR's merge commit once it lands:
+# a squash merge orphans the branch commit.
+syntext-context = { git = "https://github.com/whit3rabbit/syntext", rev = "a597947e27874e3f3582612da6c3648896a0f8d3", features = ["ffi"], optional = true }
 
 [features]
 # On for every build the app links. Off only for an archive linked next to

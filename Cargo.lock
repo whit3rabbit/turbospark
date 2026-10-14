@@ -1988,7 +1988,7 @@ dependencies = [
 [[package]]
 name = "syntext"
 version = "2.6.0"
-source = "git+https://github.com/whit3rabbit/syntext?rev=a90908cd9b3bdd1eac3633294159440c532925f7#a90908cd9b3bdd1eac3633294159440c532925f7"
+source = "git+https://github.com/whit3rabbit/syntext?rev=a597947e27874e3f3582612da6c3648896a0f8d3#a597947e27874e3f3582612da6c3648896a0f8d3"
 dependencies = [
  "arc-swap",
  "blake3",
@@ -2012,7 +2012,7 @@ dependencies = [
 [[package]]
 name = "syntext-context"
 version = "0.1.0"
-source = "git+https://github.com/whit3rabbit/syntext?rev=a90908cd9b3bdd1eac3633294159440c532925f7#a90908cd9b3bdd1eac3633294159440c532925f7"
+source = "git+https://github.com/whit3rabbit/syntext?rev=a597947e27874e3f3582612da6c3648896a0f8d3#a597947e27874e3f3582612da6c3648896a0f8d3"
 dependencies = [
  "arc-swap",
  "log",
@@ -2754,7 +2754,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

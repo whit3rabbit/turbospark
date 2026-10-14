@@ -59,7 +59,8 @@ is switched on. In particular:
 
 - **Ghost chats are never recorded** (`contextRecallLocation` returns nil).
 - **Deleting a chat** forgets its turns in the chats store and in its
-  project's store (`ConversationMemory::forget`, added to syntext for this).
+  project's store (`ConversationMemory::forget`, added to syntext for this
+  in whit3rabbit/syntext#11, on top of the 2.6.0 release).
   Journaled turns leave the disk at once, and a debounced forced compaction
   removes compacted ones.
 - **Deleting a project** deletes its store.
