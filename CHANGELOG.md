@@ -14,6 +14,15 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Chunked prefill for the qwen MoE flow (`qwenGdnMoe`: Qwen 3.6 35B-A3B,
+  Ornith 35B, MiniCPM-V 4.7), `crates/runtime/src/families/qwen/moe_prefill.rs`.
+  The attention and router half of up to 16 tokens runs before one wait per
+  layer, then the routed experts token by token. Output is byte-identical to
+  sequential prefill, checked on synthetic fixtures for both routed layouts
+  and on the real MiniCPM install. A 2,940-token prompt on MiniCPM prefills
+  1.21-1.31x faster (107-120 s against 141-145 s on M4 Max). On by default in
+  `turbospark-check` and `turbospark-server`. `TURBOSPARK_QWEN_MOE_CHUNKED=0`
+  turns it off.
 - MLX `mode: "mxfp4"` safetensors intake, first carrier
   `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` (catalog alias
   `minicpm-v47-35b-mxfp4`, text-only, `verified`). Routed experts are

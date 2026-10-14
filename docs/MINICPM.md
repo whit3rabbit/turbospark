@@ -3,8 +3,8 @@
 Status: installable and verified, text only. The catalog alias is
 `minicpm-v47-35b-mxfp4`. On a 36 GB M4 Max it decodes at 24-26 tok/s with a
 1,491 MiB process peak at 4,096 context and 16 expert-cache slots. Prefill
-is the weak spot: a 2,940-token prompt takes 111-138 s before the first
-token.
+is the weak spot. A 2,940-token prompt took 141-145 s sequentially and
+107-120 s on the chunked driver that landed on 14 October 2026.
 
 The checkpoint is a MiniCPM-V wrapper around an exact Qwen 3.6 35B-A3B
 trunk. So the work was not a new model family. It was a new quantization
@@ -150,8 +150,47 @@ does not rank against Qwen 3.6's 6.2536.
 | long-synthesis | 2,940 tokens | 137.8 s | 19.4 tok/s | 1,491 MiB |
 
 The memory oracle's own run of the long case prefilled in about 111 s.
-Either way, prefill runs at roughly decode speed, because the qwen MoE flow
-has no chunked prefill driver (see open work).
+Either way, sequential prefill runs at roughly decode speed: every prompt
+token is a full decode pass with a blocking router readback on each layer.
+
+### Chunked prefill
+
+The qwen MoE flow gained a chunked prefill driver on 14 October 2026
+(`crates/runtime/src/families/qwen/moe_prefill.rs`). It runs the attention
+and router half of a whole micro-batch (up to 16 tokens) before ONE wait
+per layer, then the routed experts token by token in router ranking order.
+Every dispatch is the one the sequential flow makes, so the output is
+byte-identical, not just close. `turbospark-check` and `turbospark-server`
+use it by default. `TURBOSPARK_QWEN_MOE_CHUNKED=0` turns it off.
+
+Byte identity on the real install, same binary, the switch's two arms, a
+161-token prompt at 16 slots:
+
+| Run | Sequential stdout md5 | Chunked stdout md5 | Prefill |
+| --- | --- | --- | --- |
+| greedy | `a4fc6840` | `a4fc6840` | 9.23 s to 5.68 s |
+| sampled, seed 7 | `ab398d73` | `ab398d73` | 8.05 s to 5.69 s |
+
+Prefill speed, `turbospark-bench --case long-synthesis --expert-cache-slots 16
+--prefill-chunk off|auto`, two interleaved pairs on AC with no other model
+running:
+
+| Pair | Sequential | Chunked | Speedup | Peak, sequential / chunked |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 141.17 s | 107.39 s | 1.31x | 1,420 / 1,522 MiB |
+| 2 | 145.15 s | 119.60 s | 1.21x | 1,423 / 1,445 MiB |
+
+- 1.21-1.31x is the same order as Gemma 4's 1.22x from the same kind of
+  driver. It removes per-token waits, not weight reads, so prefill still
+  reads every resident matrix once per token.
+- Both arms generated the same 609 tokens.
+- The chunked peak was 22 to 101 MiB higher. The two widened buffers are
+  kilobytes, so they are not the cause, and the band is too wide to call a
+  fixed cost. It stays under the 1,650 MiB ceiling. Not attributed.
+- Decode after a chunked prefill read 19.1-19.9 tok/s against 20.5-20.6 in
+  both pairs. One possible cause is that the expert cache ends prefill
+  holding different experts (the pipelined loop protects the previous
+  token's slots, which changes eviction). Not verified.
 
 ### Where a decoded token's time goes
 
@@ -218,12 +257,14 @@ promoted.
 
 In priority order.
 
-1. **Chunked prefill for the qwen MoE flow.** `supports_chunked_prefill`
-   (`crates/runtime/src/real_forward_api.rs`) answers `false` for
-   `QwenGdnMoe`, so every prompt token runs a full decode pass. This needs a
-   chunked MoE driver plus a batched BF16 GEMM, since the M-row GEMM serves
-   INT4 affine only. gpt-oss already has a batched MXFP4 expert path to reuse.
-   It would speed up `qwen36` and `ornith35b` too.
+1. **Batched prefill for the qwen MoE flow.** The per-token chunked driver
+   landed (above) and bought 1.21-1.31x. The larger step batches the weight
+   reads themselves. For `qwen36` and `ornith35b` (INT4 affine) the M-row
+   kernels already exist in the dense driver and the MTP verify pass. For
+   MiniCPM it needs a new `bf16_gemm_rows` kernel for the BF16 resident
+   matrices and a qwen copy of gpt-oss's batched MXFP4 routed pair. Neither
+   `qwen36` nor `ornith35b` is installed on the development machine, so
+   their real-install checks of this driver are still owed too.
 2. **Explain the `turbospark-check` gap.** It reads 17-20 tok/s against
    `turbospark-bench`'s 24.3 at the same slot count. Phase timing is ruled
    out: the runtime never reads `TURBOSPARK_PHASES` (its counters always
