@@ -610,6 +610,13 @@ impl RealForwardRunner {
             })
             .map_err(|e| e.to_string());
         }
+        if self.real_qwen.is_some() {
+            // The MoE half. The driver refuses by name what it cannot serve.
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_qwen_moe(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
+        }
         if self.real_qwen4.is_some() {
             return gpu::autorelease_pool(|| {
                 self.prefill_chunk_real_qwen4(tokens, start_position, logits)
@@ -625,7 +632,7 @@ impl RealForwardRunner {
         Err(format!(
             "chunked prefill is wired for the real Gemma 4 flow, both halves of the \
              llama flow (Mistral, Llama 2/3.x, Mixtral, qwen3moe), muse_glimmer, \
-             gpt-oss, the dense qwen flow (qwenGdnDense), and qwen4_exp only; this install is \
+             gpt-oss, both halves of the qwen flow, and qwen4_exp only; this install is \
              {:?}",
             self.arch.family
         ))

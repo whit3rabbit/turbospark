@@ -4,10 +4,10 @@
 //! mlx-lm at the pinned mlx-audio commit): the KV caches (including the
 //! rotating sliding-window ring), the rope constructions, and the llama,
 //! qwen2, and qwen3 dense backbones plus the stage-1 additions gpt2,
-//! cohere2, bailing_moe, and switch_layers. Later stages add the falcon_h1
-//! and ssm hybrid and the sampler subset. Everything here is portable
-//! single-batch f32: the reference generation loop these families drive is
-//! batch 1, and Metal offload is a later runtime optimization.
+//! cohere2, bailing_moe, and switch_layers, and the stage-2 falcon_h1
+//! hybrid with its Mamba2 selective scan (`ssm`). Everything here is
+//! portable single-batch f32: the reference generation loop these families
+//! drive is batch 1, and Metal offload is a later runtime optimization.
 //!
 //! Layouts follow the crate conventions: activations are row-major
 //! `[positions, width]`, linear weights stay in the HF `[out, in]` layout
@@ -19,11 +19,13 @@ pub mod bailing_moe;
 pub mod cache;
 pub mod cohere2;
 pub mod engine;
+pub mod falcon_h1;
 pub mod gpt2;
 pub mod llama;
 pub mod qwen2;
 pub mod qwen3;
 pub mod rope;
+pub mod ssm;
 pub mod switch_layers;
 
 #[cfg(test)]
@@ -33,6 +35,7 @@ pub use bailing_moe::BailingMoeModel;
 pub use cache::{make_prompt_cache, KvCache, LayerCaches, PromptCache, RotatingKvCache};
 pub use cohere2::Cohere2Model;
 pub use engine::{Backbone, DenseConfig, Input};
+pub use falcon_h1::{compute_mup_vector, FalconConfig, FalconH1Model, FalconLayerCache};
 pub use gpt2::Gpt2Model;
 pub use llama::LlamaModel;
 pub use qwen2::Qwen2Model;
@@ -58,7 +61,17 @@ pub struct Weights {
     scheme: Option<QuantScheme>,
     prefix: String,
     config: Value,
+    /// Opt-in tensor-name remap applied after the prefix on the prefixed
+    /// loads (`linear`, `embedding`, `tensor`). For checkpoints whose raw
+    /// layout names the backbone tensors differently from the engine reads
+    /// (the voxtral_tts consolidated Mistral layout: `layers.N.attention.wq`
+    /// against the engine's `layers.N.self_attn.q_proj`). Absolute-name
+    /// loads bypass the map on purpose: they exist for family tensors that
+    /// live outside the backbone.
+    name_map: Option<NameMap>,
 }
+
+type NameMap = std::sync::Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 /// Bias policy for a linear load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +111,7 @@ impl Weights {
             scheme,
             prefix,
             config,
+            name_map: None,
         })
     }
 
@@ -112,6 +126,7 @@ impl Weights {
             scheme: None,
             prefix: String::new(),
             config: Value::Null,
+            name_map: None,
         })
     }
 
@@ -119,6 +134,21 @@ impl Weights {
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = prefix.into();
         self
+    }
+
+    /// Sets the opt-in tensor-name remap applied after the prefix on the
+    /// prefixed loads (see the `name_map` field docs). Additive: families
+    /// whose checkpoints already use the engine's names never call this.
+    pub fn with_name_map(mut self, map: NameMap) -> Self {
+        self.name_map = Some(map);
+        self
+    }
+
+    fn map_name(&self, name: &str) -> String {
+        match &self.name_map {
+            Some(map) => map(name),
+            None => name.to_owned(),
+        }
     }
 
     pub fn config(&self) -> &Value {
@@ -162,7 +192,7 @@ impl Weights {
     }
 
     fn find(&self, name: &str) -> Option<usize> {
-        let base = format!("{}{}", self.prefix, name);
+        let base = format!("{}{}", self.prefix, self.map_name(name));
         self.files.iter().position(|f| {
             f.contains_tensor(&format!("{base}.weight"))
                 || f.contains_tensor(&format!("{base}.scales"))
@@ -222,7 +252,7 @@ impl Weights {
         rows: usize,
         cols: usize,
     ) -> Result<(Vec<f32>, Option<Vec<f32>>)> {
-        let base = format!("{prefix}{name}");
+        let base = format!("{prefix}{}", self.map_name(name));
         let index = self
             .files
             .iter()
@@ -265,9 +295,21 @@ impl Weights {
         Ok((weight, bias))
     }
 
+    /// Loads a plain tensor when present, `None` otherwise.
+    pub fn tensor_optional(&self, name: &str, shape: &[usize]) -> Result<Option<Vec<f32>>> {
+        let index = match self.find(name) {
+            Some(index) => index,
+            None => return Ok(None),
+        };
+        if !self.files[index].contains_tensor(&format!("{}{}.weight", self.prefix, name)) {
+            return Ok(None);
+        }
+        Ok(Some(self.tensor(name, shape)?))
+    }
+
     /// Loads a plain tensor with an exact shape.
     pub fn tensor(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
-        let base = format!("{}{}", self.prefix, name);
+        let base = format!("{}{}", self.prefix, self.map_name(name));
         let index = self.find(name).ok_or_else(|| SpeechError::Tensor {
             name: format!("{base}.weight"),
             why: "tensor is missing".into(),

@@ -28,26 +28,29 @@ pub unsafe extern "C" fn ts_session_open(
         let dir = strings::required(model_dir, "modelDir")
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let options = parse_json_or_default::<wire::OpenOptions>(options_json, "options")?;
-        let session = open_platform(dir, &options).map_err(|e| (abi::TS_ERR_OPEN, e))?;
+        let session = open_platform(dir, &options)?;
         *out = Box::into_raw(Box::new(session));
         Ok(())
     })
 }
 
 #[cfg(target_os = "macos")]
-fn open_platform(dir: &str, options: &wire::OpenOptions) -> Result<Session, String> {
-    crate::open::open(dir, options)
+fn open_platform(dir: &str, options: &wire::OpenOptions) -> Result<Session, (c_int, String)> {
+    crate::open::open(dir, options).map_err(|e| (abi::TS_ERR_OPEN, e))
 }
 
 #[cfg(not(target_os = "macos"))]
-fn open_platform(_dir: &str, _options: &wire::OpenOptions) -> Result<Session, String> {
+fn open_platform(_dir: &str, _options: &wire::OpenOptions) -> Result<Session, (c_int, String)> {
     // Refused BY NAME rather than by failing to build, so a caller on
-    // another platform gets a sentence instead of a link error.
-    Err(
+    // another platform gets a sentence instead of a link error. The code is
+    // UNSUPPORTED, not OPEN: no retry or different directory can help, which
+    // is what `turbospark.h` promises.
+    Err((
+        abi::TS_ERR_UNSUPPORTED,
         "the inference engine is macOS-only; this platform can browse the catalog \
          and install models but cannot open one"
             .to_string(),
-    )
+    ))
 }
 
 /// Closes a session and frees it. Null is a no-op.
@@ -69,8 +72,9 @@ pub unsafe extern "C" fn ts_session_close(ptr: *mut TsSession) {
 /// **Safe from any thread and never blocks**, which is the whole point: the
 /// flag it raises lives outside the session's mutex, so a Stop button on the
 /// main thread does not queue behind the generation it is trying to stop.
-/// Cleared at the start of every generation, so a Stop pressed between turns
-/// does not cancel the next one.
+/// Cleared when a generation call is entered, before it queues on the
+/// heavy-work gate, so a Stop pressed between turns does not cancel the next
+/// one but a Stop pressed while that call is queued still does.
 #[no_mangle]
 pub unsafe extern "C" fn ts_session_cancel(ptr: *const TsSession) {
     abi::guard_value((), || {

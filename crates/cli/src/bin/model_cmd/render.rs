@@ -130,6 +130,12 @@ pub fn report(report: &ProbeReport) {
     if let Some((bits, group)) = report.affine {
         println!("  quant       MLX affine, {bits}-bit at group {group}");
     }
+    if report.mxfp4 {
+        println!(
+            "  quant       MLX mxfp4 (E2M1, group 32): experts re-blocked to GGUF MXFP4, \
+             other mxfp4 matrices dequantized to BF16"
+        );
+    }
 
     if let Some(arch) = &report.arch {
         println!(

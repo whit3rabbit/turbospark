@@ -74,7 +74,7 @@ sparkle_public_ed_key="O+w+eDlUPQQa1Y+quYgz9BiJljUdS01KeafmpSzoZ3g="
 app="$out_dir/TurboSpark.app"
 contents="$app/Contents"
 openkind_revision="${OPENKIND_RELEASE_REVISION:-}"
-openkind_server_version="${OPENKIND_SERVER_VERSION:-0.1.0}"
+openkind_server_version="${OPENKIND_SERVER_VERSION:-0.3.0}"
 openkind_bin="${OPENKINDD_BINARY:-}"
 openkind_build_dir=""
 
@@ -91,6 +91,17 @@ if [ "$skip_build" -eq 0 ]; then
       echo "error: protoc is required to build openkind-server; install protobuf (e.g. brew install protobuf)" >&2
       exit 1
     fi
+  fi
+  # openkind-server's `mlx` feature builds mlx-sys, whose bindgen step runs
+  # libclang. Under Xcode 27 (seen 2026-10-14, Command Line Tools also
+  # installed) libclang found no SDK on its own and failed with "'stdlib.h'
+  # file not found". Point both at the active SDK unless the caller did.
+  if [ -z "${SDKROOT:-}" ]; then
+    SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+    export SDKROOT
+  fi
+  if [ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]; then
+    export BINDGEN_EXTRA_CLANG_ARGS="-isysroot $SDKROOT"
   fi
   openkind_build_dir="$(mktemp -d)"
   trap 'rm -rf "$openkind_build_dir"' EXIT

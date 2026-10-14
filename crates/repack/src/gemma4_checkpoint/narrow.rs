@@ -394,7 +394,7 @@ fn pass_through_packed_impl(
     }
     let base = name.strip_suffix(".weight").unwrap_or(name);
     let bits = quant.bits_for(base);
-    let group_size = quant.group_size;
+    let group_size = quant.group_for(base);
     if !is_supported_affine_shape(bits, group_size) {
         return Err(Gemma4Error::UnsupportedDtype {
             tensor: name.to_string(),

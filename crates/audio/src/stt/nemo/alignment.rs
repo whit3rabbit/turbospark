@@ -225,8 +225,11 @@ pub fn merge_longest_contiguous(
             }
         }
     }
+    // `overlap_b` is a prefix of `b`, so its indices are `b`'s. Upstream
+    // appends the whole rest of `b` (`b[lcs_indices_b[-1] + 1:]`); taking
+    // only the rest of the overlap would drop every token past it.
     let last_b = best[best.len() - 1].1;
-    merged.extend(overlap_b[last_b + 1..].iter().map(|t| (*t).clone()));
+    merged.extend_from_slice(&b[last_b + 1..]);
     Ok(merged)
 }
 
@@ -315,8 +318,11 @@ pub fn merge_longest_common_subsequence(
             }
         }
     }
+    // `overlap_b` is a prefix of `b`, so its indices are `b`'s. Upstream
+    // appends the whole rest of `b` (`b[lcs_indices_b[-1] + 1:]`); taking
+    // only the rest of the overlap would drop every token past it.
     let last_b = pairs[pairs.len() - 1].1;
-    merged.extend(overlap_b[last_b + 1..].iter().map(|t| (*t).clone()));
+    merged.extend_from_slice(&b[last_b + 1..]);
     Ok(merged)
 }
 
@@ -464,5 +470,35 @@ mod tests {
         let merged = merge_longest_common_subsequence(a, b, 0.5).unwrap();
         let texts: Vec<&str> = merged.iter().map(|t| t.text.as_str()).collect();
         assert_eq!(texts, vec![" the", " quick", " brown", " jumps"]);
+    }
+
+    /// The second chunk continues well past the overlap. Every token after
+    /// the matched run must survive the merge, in both merge strategies.
+    #[test]
+    fn tokens_past_the_overlap_are_kept() {
+        let a = vec![
+            token(1, " one", 10.0, 0.2),
+            token(2, " two", 12.6, 0.2),
+            token(3, " three", 13.0, 0.2),
+            token(4, " four", 13.4, 0.2),
+        ];
+        let b = vec![
+            token(2, " two", 12.6, 0.2),
+            token(3, " three", 13.0, 0.2),
+            token(4, " four", 13.4, 0.2),
+            token(5, " five", 14.0, 0.2),
+            token(6, " six", 20.0, 0.2),
+            token(7, " seven", 26.0, 0.2),
+        ];
+        let want = [1, 2, 3, 4, 5, 6, 7];
+        let ids = |m: Vec<AlignedToken>| m.iter().map(|t| t.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(merge_longest_contiguous(a.clone(), b.clone(), 2.0).unwrap()),
+            want
+        );
+        assert_eq!(
+            ids(merge_longest_common_subsequence(a, b, 2.0).unwrap()),
+            want
+        );
     }
 }

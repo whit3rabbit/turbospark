@@ -155,11 +155,15 @@ pub fn load_quantized(
 
 /// Dequantizes every row of `raw` into `out` (`out_dim * in_dim` values).
 ///
+/// Public so a caller can dequantize a slice of rows (an embedding-table
+/// gather) without materializing the whole table: pass that rows' bytes,
+/// scales, and biases, and row indexing restarts at 0.
+///
 /// Per group the scale and bias are read once and the bit stream is walked
 /// with a running offset, rather than recomputing `v / group_size` and the
 /// byte/shift split from `v` for every value. Each value still evaluates
 /// `q * scale + bias` in f32 from the same bits.
-fn dequantize_rows(
+pub fn dequantize_rows(
     out: &mut [f32],
     raw: &[u8],
     words_per_row: usize,

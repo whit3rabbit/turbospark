@@ -2,6 +2,7 @@
 //!
 //! Aligned with `mlx_audio/tts/models/`.
 
+pub mod arktts;
 pub mod bailingmm;
 pub mod bark;
 pub mod breeze_tts;
@@ -13,6 +14,7 @@ pub mod fish_qwen3_omni;
 pub mod higgs_audio;
 pub mod higgs_audio_v3;
 pub mod indextts;
+pub mod irodori_tts;
 pub mod kitten_tts;
 pub mod kokoro;
 pub mod kugelaudio;
@@ -33,6 +35,9 @@ pub mod soprano;
 pub mod spark;
 pub mod tada;
 pub mod vibevoice;
+pub mod voxcpm;
+pub mod voxcpm2;
+pub mod voxtral_tts;
 pub mod zonos2;
 
 pub use bailingmm::Model as BailingmmTts;
@@ -44,6 +49,7 @@ pub use echo_tts::Model as EchoTts;
 pub use higgs_audio::Model as HiggsAudioTts;
 pub use higgs_audio_v3::Model as HiggsAudioV3Tts;
 pub use indextts::Model as IndexTts;
+pub use irodori_tts::Model as IrodoriTts;
 pub use kitten_tts::Model as KittenTts;
 pub use kokoro::Kokoro;
 pub use kugelaudio::Model as KugelAudioTts;
@@ -59,4 +65,7 @@ pub use soprano::Model as SopranoTts;
 pub use spark::Model as SparkTts;
 pub use tada::Model as TadaTts;
 pub use vibevoice::Model as VibeVoiceTts;
+pub use voxcpm::Model as VoxCpmTts;
+pub use voxcpm2::Model as VoxCpm2Tts;
+pub use voxtral_tts::Model as VoxtralTts;
 pub use zonos2::Model as Zonos2Tts;

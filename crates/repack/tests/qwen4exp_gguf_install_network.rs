@@ -35,7 +35,7 @@ const REVISION: &str = "b22d729eae29b5796f76fb70f91aef549b9fc52c";
 const BASE_REVISION: &str = "0bd4fe22431372cdad1979267d3ab45aa7e6150a";
 const MODEL_ID: &str = "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF";
 const REPO_BASE: &str = "https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF";
-const BASE_MODEL: &str = "https://huggingface.co/ukisai/Swift-Qwen3.8-Flash-Next";
+const BASE_MODEL: &str = "https://huggingface.co/ukisai/Swift1.5-Qwen3.8-Flash-Next";
 const Q2_0_SHARDS: [(&str, u64); 2] = [
     (
         "Swift-Qwen3.8-Flash-Next-GSQ-RCO-Q2_0-00001-of-00002.gguf",

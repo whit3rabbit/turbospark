@@ -88,9 +88,21 @@ MOCK_IDS.update({f"w{i}": 12 + 2 * i for i in range(24)})
 class MockTokenizer:
     """Deterministic word-id tokenizer."""
 
+    @staticmethod
+    def _fallback(word: str) -> int:
+        """Stable id for words the table does not know. The reference
+        concatenates `ref_text + text` with no separator, which merges
+        the boundary words into one token; the fallback stays inside the
+        fixture vocab range so embeddings resolve."""
+        return 12 + 2 * (sum(ord(ch) for ch in word) % 24)
+
     def encode(self, text: str, add_special_tokens: bool = False) -> list:
         del add_special_tokens
-        return [MOCK_IDS[word] for word in text.split(" ")]
+        return [
+            MOCK_IDS.get(word, self._fallback(word))
+            for word in text.split(" ")
+            if word
+        ]
 
 
 LM_BASE = {
@@ -285,10 +297,11 @@ def reference_generate_body(
     audio_mask = None
     feat_embed = None
 
+    combined_ids = None
     if ref_audio is not None and ref_text is not None:
         combined_text = ref_text + text
-        input_ids = model.tokenizer.encode(combined_text)
-        input_ids = mx.array(input_ids)
+        combined_ids = model.tokenizer.encode(combined_text)
+        input_ids = mx.array(combined_ids)
         input_ids = mx.concatenate([input_ids, mx.array([AUDIO_START_TOKEN])])
         text_length = len(input_ids)
         audio_feat = encode_prompt_audio(model, ref_audio)
@@ -322,6 +335,7 @@ def reference_generate_body(
         input_ids = mx.array(input_ids)
         token_count = len(input_ids)
         start_token = mx.array([AUDIO_START_TOKEN])
+        combined_ids = [int(v) for v in input_ids.tolist()]
         input_ids = mx.concatenate([input_ids, start_token])
         combined_embed = model.base_lm.embed_tokens(input_ids[None, :]) * scale_emb
         prefix_feat_cond = mx.zeros((1, model.patch_size, model.feat_dim))
@@ -341,6 +355,10 @@ def reference_generate_body(
         "combined_embed": floats(combined_embed),
         "prefix_feat_cond": floats(prefix_feat_cond),
         "token_count": token_count,
+        # The caller-owned ids before the start token: the bare text in
+        # zero-shot mode, the concatenated ref_text + text in clone mode
+        # (the reference encodes them as one string).
+        "input_ids": combined_ids,
     }
 
     enc_outputs, lm_cache = model.base_lm(combined_embed)
@@ -444,7 +462,6 @@ def run_case(
 
     # ---- capture the AudioVAE decode stages of the final decode ----
     vae_decode_trace = []
-    original_dec_call = model.audio_vae.decoder.__call__
     block_records = []
     original_dec_block = audio_vae_mod.CausalDecoderBlock.__call__
 
@@ -452,6 +469,8 @@ def run_case(
         out = original_dec_block(self, x)
         block_records.append(floats(out))
         return out
+
+    original_dec_call = audio_vae_mod.CausalDecoder.__call__
 
     def recorded_decoder_call(self, x):
         block_records.clear()
@@ -463,7 +482,9 @@ def run_case(
 
     # ---- capture the first DiT estimator calls --------------------
     dit_calls = []
-    original_dit_call = model.feat_decoder.estimator.__call__
+    import mlx_audio.tts.models.voxcpm.dit as dit_mod
+
+    original_dit_call = dit_mod.VoxCPMLocDiT.__call__
 
     def recorded_dit_call(self, x, mu, t, cond, dt):
         out = original_dit_call(self, x, mu, t, cond, dt)
@@ -480,19 +501,22 @@ def run_case(
             )
         return out
 
-    model.feat_decoder.estimator.__call__ = recorded_dit_call
+    # Dunder methods resolve on the type, so the hooks patch the class
+    # (an instance-level __call__ assignment never fires).
+    dit_mod.VoxCPMLocDiT.__call__ = recorded_dit_call
 
     # ---- run 1: verbatim body replay with capture + draws ----------
     audio_vae_mod.CausalDecoderBlock.__call__ = recorded_dec_block
-    model.audio_vae.decoder.__call__ = recorded_decoder_call
+    audio_vae_mod.CausalDecoder.__call__ = recorded_decoder_call
     with DrawRecorder() as recorder:
         mx.random.seed(101)
         sink, all_feats, waveform, prompt, euler_tspans = reference_generate_body(
             model, text, max_tokens, ref_audio, ref_text, capture=True
         )
         noise_draws = recorder.flush()
-    model.audio_vae.decoder.__call__ = original_dec_call
+    audio_vae_mod.CausalDecoder.__call__ = original_dec_call
     audio_vae_mod.CausalDecoderBlock.__call__ = original_dec_block
+    dit_mod.VoxCPMLocDiT.__call__ = original_dit_call
 
     # ---- run 2: the true reference generate must agree exactly -----
     with DrawRecorder() as recorder:

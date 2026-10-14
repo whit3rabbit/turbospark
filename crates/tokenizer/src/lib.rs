@@ -1,6 +1,7 @@
 //! Tokenizer wrapper, chat-template rendering, streaming detokenizer, and
-//! tool-call parsing for the Gemma 4, ChatML (Qwen), and DeepSeek-V4 model
-//! dialects. Ported from `Sources/Mference/Tokenization` and
+//! tool-call parsing for the `ChatDialect` set: Gemma, ChatML (Qwen), DeepSeek
+//! (V4 and V2), Mistral, Harmony (gpt-oss), MuseGlimmer, Llama 3, Spark,
+//! MiniMax, GLM, and Kimi. Ported from `Sources/Mference/Tokenization` and
 //! `Runtime/Generation/StreamingStopMatcher.swift`.
 #![forbid(unsafe_code)]
 

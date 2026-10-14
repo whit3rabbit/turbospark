@@ -167,16 +167,26 @@ public enum AppFontCatalog {
     public static let systemFamilies: Set<String> = ["System default", "SF Pro", "SF Mono"]
 
     /// Families bundled with the app, registered at launch by `AppFontRegistrar`.
-    public static let bundledFamilies: Set<String> = ["Inter", "JetBrains Mono", "Fira Code"]
+    public static let bundledFamilies: Set<String> = [
+        "Inter",
+        "Geist",
+        "JetBrains Mono",
+        "Fira Code",
+        "Iosevka",
+        "Geist Mono",
+        "Cascadia Code",
+        "Hack",
+        "Source Code Pro"
+    ]
 
     /// Every UI family the pane may offer, in menu order.
     public static let offeredUIFamilies = [
-        "System default", "SF Pro", "Inter", "Helvetica Neue", "Avenir", "Georgia", "Palatino", "Charter"
+        "System default", "SF Pro", "Inter", "Geist", "Helvetica Neue", "Avenir", "Georgia", "Palatino", "Charter"
     ]
 
     /// Every code family the pane may offer, in menu order.
     public static let offeredCodeFamilies = [
-        "System default", "SF Mono", "Menlo", "JetBrains Mono", "Fira Code", "Courier New"
+        "System default", "SF Mono", "Menlo", "JetBrains Mono", "Fira Code", "Iosevka", "Geist Mono", "Cascadia Code", "Hack", "Source Code Pro", "Courier New"
     ]
 
     /// Narrows an offered list to the families that will actually render.

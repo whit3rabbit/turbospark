@@ -14,6 +14,50 @@ enum ServerKeychain {
     private static let service = "TurboSpark.server"
     private static let account = "server-api-key"
 
+    /// UserDefaults key for the opt-in. Keychain storage of the server key is
+    /// OFF for a new install: a key typed in the Server pane lives for the
+    /// session unless the user turns on "Remember this key in the Keychain".
+    /// Persisting and re-reading it on every settings save is what made the
+    /// Keychain prompt again after each update of an ad-hoc signed app.
+    static let optInDefaultsKey = "serverKeyInKeychain"
+
+    static func isKeychainEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: optInDefaultsKey)
+    }
+
+    static func setKeychainEnabled(_ enabled: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(enabled, forKey: optInDefaultsKey)
+    }
+
+    /// Whether to use the Keychain at launch. An explicit choice always wins.
+    /// With no choice recorded, an item that already exists means an earlier
+    /// version stored a key the person typed, which is consent they already
+    /// gave, so it is kept (and the choice recorded) rather than silently
+    /// dropping their key and starting the server without one. A launch with
+    /// no choice and no item records nothing and stays off.
+    static func resolveOptIn(
+        defaults: UserDefaults = .standard,
+        itemExists: () -> Bool = ServerKeychain.itemExists
+    ) -> Bool {
+        if defaults.object(forKey: optInDefaultsKey) != nil {
+            return isKeychainEnabled(defaults)
+        }
+        guard itemExists() else { return false }
+        setKeychainEnabled(true, defaults: defaults)
+        return true
+    }
+
+    /// Whether an item is stored, asked for attributes only. Without
+    /// `kSecReturnData` the secret is never touched, so this does not need
+    /// the item's access control and cannot raise an authorization prompt.
+    static func itemExists() -> Bool {
+        var query = baseQuery
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        return SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
+    }
+
     /// Reads the stored API key, distinguishing "none stored" from a read
     /// error (locked or denied Keychain) so callers never treat the latter as
     /// an empty key.
@@ -31,18 +75,27 @@ enum ServerKeychain {
     /// rather than storing emptiness.
     @discardableResult
     static func saveKey(_ key: String) -> Bool {
-        guard !key.isEmpty else { return deleteKey() }
+        saveKeyStatus(key) == errSecSuccess
+    }
+
+    /// `saveKey` with the status kept, so a failure can be shown with the
+    /// system's reason (`TypeSafeKeychain.describe`).
+    static func saveKeyStatus(_ key: String) -> OSStatus {
+        guard !key.isEmpty else {
+            let status = SecItemDelete(baseQuery as CFDictionary)
+            return status == errSecItemNotFound ? errSecSuccess : status
+        }
         let data = Data(key.utf8)
 
         let update: [String: Any] = [kSecValueData as String: data]
         let updateStatus = SecItemUpdate(baseQuery as CFDictionary, update as CFDictionary)
-        if updateStatus == errSecSuccess { return true }
-        guard updateStatus == errSecItemNotFound else { return false }
+        if updateStatus == errSecSuccess { return updateStatus }
+        guard updateStatus == errSecItemNotFound else { return updateStatus }
 
         var add: [String: Any] = baseQuery
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+        return SecItemAdd(add as CFDictionary, nil)
     }
 
     /// Removes the stored key; reports true when nothing is stored after.

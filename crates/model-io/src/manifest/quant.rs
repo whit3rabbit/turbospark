@@ -195,7 +195,19 @@ pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
             && slot.scale_type == "none"
             && slot.bias_type == "none"
             && slot.group_size == 0;
-        if !(affine || affine_1bit || affine_2bit || gguf || raw_router) {
+        // Unquantized BF16 matrices, which the resident `DTYPE_RAW_BF16`
+        // GEMV and embedding lookup serve. Written by the MLX mxfp4 walk,
+        // whose source keeps embed, head and the GDN projections BF16 and
+        // whose resident mxfp4 matrices are dequantized to BF16 at repack.
+        // Not on `router` (its kernel is INT8-only) nor `routedExpert` (no
+        // BF16 routed-expert pair exists).
+        let raw_bf16 = matches!(name, "embedding" | "attention" | "sharedExpert")
+            && slot.scheme == "raw"
+            && slot.weight_bits == 16
+            && slot.scale_type == "none"
+            && slot.bias_type == "none"
+            && slot.group_size == 0;
+        if !(affine || affine_1bit || affine_2bit || gguf || raw_router || raw_bf16) {
             let detail = match slot.scheme.to_lowercase().as_str() {
                 // An affine slot has four fields that can each be wrong and a
                 // bare "unsupported" names none of them. It matters most on

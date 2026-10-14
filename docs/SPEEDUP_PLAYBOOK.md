@@ -11,6 +11,13 @@ are at the end with enough detail to start from.
 All numbers are from an M4 Max with other sessions on the host, interleaved
 fresh-process pairs. They are not frozen `docs/BENCHMARKS.md` rows.
 
+The audio ports (Whisper, Music 3, Moonshine, Qwen3-ASR) were sped up
+separately and found a different bottleneck class: dispatch and sync count,
+memory layout, and GEMV thread use, not attention or prefill GEMMs. What
+carries over is in "What the audio ports add" below. Their own stories are in
+[WHISPER.md](WHISPER.md) and the Music 3 README
+(`crates/audio/src/music/minimax_music3/README.md`).
+
 ## What changed and what it bought
 
 | change | where | effect on Qwen3.8 |
@@ -139,6 +146,117 @@ Measurement and caveats: `docs/BENCHMARKS.md`, the Qwen3.8 section.
   `TURBOSPARK_SPEC_STATS=1` on the CLI reports accepted tokens per round:
   1.40 and 1.45 at 1,094 and 2,727 tokens, identical between priming modes.
 
+## What the audio ports add
+
+Whisper-tiny.en went from 1.65 s for the first Metal port to 160 ms warm
+for a 20 s clip (178-183 ms for whisper.cpp on the same clip), and Music 3's
+1 s, 2-step smoke from 118 s to 12 s. None of it came from a new attention
+kernel. Sources: [WHISPER.md](WHISPER.md) and commits `277ef473`,
+`09d25ea0`, `785e9f95`, `8f83f998`.
+
+Whisper's own history reads as three changes in the order they were found:
+a single command pass per token (the logits projection used to be a second
+pass), warp-per-row GEMV with packed QKV at m = 1, and a transposed
+cross-attention V cache plus a key-range split in the same kernel (that step
+2.9 to 1.6 ms). WHISPER.md does not separate the first two, so do not quote
+a per-change number for them.
+
+whisper.cpp was an oracle here, not a source. Nothing was ported from it. It
+served for text equality on the same clip (the acceptance bar for greedy
+decoding) and for its phase split, which calibrated what "fast" meant (about
+0.26 ms per warm decode token). Do the same with any engine we compare
+against: take its timings as the target and read its design for what it
+never does, as with open-jet above, but do not read its code for kernels.
+
+### Techniques that transfer
+
+- **Check which regime you are in with bytes over time.** Whisper's decode
+  step reads about 88 MB per token, of which the 80 MB logits projection is
+  one kernel at roughly 0.26 ms (about 300 GB/s, most of what this device
+  can stream). That leaves ~8 MB of work spread over ~2 ms, so the step is
+  dispatch-bound, and skipping the logits GEMV moved the pass only 2.5 to
+  2.2 ms. These are arithmetic on the numbers in WHISPER.md, not new
+  measurements. A 27B INT4 decode is the opposite regime (bandwidth), so the
+  rule is to compute GB/s per kernel first, then pick the lever. For small
+  models, dtype was not the lever: f32 weights matched whisper.cpp's fp16.
+- **Measure the per-dispatch floor.** Time N repetitions of one tiny kernel
+  in a single pass. Whisper's floor is ~5.4 us GPU / ~7 us wall at 100-200
+  dispatches per pass. Music 3's synchronous path pays 0.2-0.3 ms per
+  dispatch (about 830 per AR frame), a 30-50x higher floor, because each
+  dispatch commits and waits. Two workloads on different code, so the ratio
+  is indicative only, but it says where the cost is: move work into one pass
+  with direct-bound buffer chains before tuning any single kernel.
+- **Attribute by skipping.** Gate one kernel behind an env flag and
+  re-measure the pass. It sizes a kernel without the per-dispatch profiler's
+  inflation, which only ranks. Pair it with wall versus GPU-busy per pass:
+  wall near GPU-busy means the GPU timeline is the cost, wall far above it
+  means sync or CPU overhead.
+- **Contiguous inner loops beat clever indexing.** Whisper's cross-attention
+  was 77% of its decode step because V was stored `[key, dim]` and every read
+  strode `d_model`. One transpose to `[dim, key]` at cache build fixed it.
+  This only works for caches written once (cross-attention over encoder
+  output, or a static prefix). A self-attention KV cache is appended per
+  token, so a transpose there costs a strided write per step. Check the
+  write pattern before copying the idea.
+- **Count lanes doing work, not only dispatches.** The same kernel wasted
+  three quarters of its lanes in the value phase (head_dim 64 against a
+  256-thread group). Music 3's affine GEMV used 8 of 128 threads per output
+  and decoded one 4-bit element at a time. Packing 16 outputs per threadgroup
+  and decoding eight codes per 32-bit load cut a path that was 93% of the run
+  (microbench 8-19x per call, byte-identical output). A fast probe is
+  "active lanes per output" at the real shape.
+- **Store scales at the width they need.** Music 3 keeps affine scales and
+  offsets as 16 bits when they are exactly representable in bf16 and widens by
+  a shift in the kernel (-621 MB resident on the 4-bit profile, any non-bf16
+  scale stays f32). The exactness check is what makes it bit-preserving.
+- **No env reads in hot loops.** Commit `8f83f998` removed Kokoro and
+  Moonshine debug dumps that read env vars per iteration. Resolve a knob once
+  at construction. A quick look found the families/qwen reads at state
+  construction rather than per token, but nobody has checked every decode and
+  prefill loop for this.
+
+### Qualification patterns worth reusing
+
+- **A hash corpus for bit-preserving kernel changes.** `music3_linear_bench`
+  (`crates/gpu/examples/`) prints an FNV-1a hash of output bits over 847
+  linear and 20 convolution configurations (bit widths, groups, row counts,
+  dtypes, ragged tiles, split-K). Diff before and after. Any difference means
+  the arithmetic changed. This is cheaper and broader than a handful of
+  parity fixtures, and it fits the Steel and GEMV kernels here.
+- **Keep the old code verbatim in the test.** `8f83f998` compared every
+  changed audio computation against the previous implementation with
+  `to_bits()`, which let it share layers across about 30 private copies and
+  speed up FFT, mel, resample, conv, sdpa and linear without moving an output
+  bit.
+- **Whole-pipeline hashes.** Music 3 kept the SHA-256 of the WAV from before
+  the work and required every optimization to reproduce it. Keep the
+  pre-change artifact hash next to the claim.
+
+### Tried and not kept (audio)
+
+Recorded so they are not re-derived:
+
+- Pooling per-dispatch scratch buffers, and spin-waiting on command-buffer
+  completion instead of a condvar. The 64x64 linear floor moved 0.29 to 0.21
+  ms, but end-to-end timing did not separate from noise on a busy host.
+- A 64x32 tile for tall inputs, and remapping the weight-tile write to avoid
+  bank conflicts: no measurable change.
+- Skipping the zero-padded taps of a transposed convolution. It can flip the
+  sign of a zero accumulator, which is observable, so it is not
+  bit-preserving. The same trap applies to any "skip masked or padded rows"
+  idea on a path that must match another path bit for bit, speculative
+  verify included.
+- Restricting Music 3's LM head to its 16,385 audio rows: exact, but the head
+  is about 5% of the run, so it was left as a candidate.
+- Zero-padding Whisper's 400-point frames to 512 for a faster FFT: it moves
+  the bin frequencies the mel filterbank is defined on. A speedup that
+  changes what is computed is not a speedup.
+- Barriers between dispatches in one pass. A fix that bundled "add barriers"
+  with "bind buffers to distinct argument slots" credited the barrier. Remove
+  one change at a time before attributing a fix. Binding every buffer to
+  slot 0 also caused a 33-minute GPU stall, so require the slot index at each
+  call site.
+
 ## Applying it elsewhere
 
 ### GQA-shared decode attention, other families
@@ -253,3 +371,46 @@ simdgroup matrices (64 rows x 6 heads is 384 queries per KV head) is the
 next step there. Hold it to the same parity test and KL probe, and time it
 at 16K and 32K. Below ~8K tokens the INT4 GEMMs dominate prefill and this
 buys little.
+
+### 3. Matrix-unit GEMMs for the audio encoders
+
+Qwen3-ASR's Metal decoder prefills and decodes in about 0.28 s, but the clip
+takes a 5.4 s median end to end because the audio tower still runs on the CPU
+(`docs/SPEECH_TO_TEXT.md`). Whisper's encoder is 46 of 160 ms warm on an f32
+tiled GEMM near 250 GFLOPS, which WHISPER.md says a simdgroup-tiled kernel
+would beat several times over. Music 3's 8x8 MMA kernels already got 3x on
+DiT-sized linears and 3-4x on convolutions by staging a 32-wide K chunk once
+per threadgroup and keeping 2x2 accumulators per simdgroup (`277ef473`,
+`785e9f95`). That layout is the starting point, and the Steel loader work above
+is the other. Gates: the hash corpus for any kernel that must stay
+bit-identical, or the existing encoder parity test (6.4e-4 max on Whisper) for
+one that need not. Do the Qwen3-ASR tower first, since it is the larger share
+of a real request.
+
+Moonshine is a different case. Metal is already 17.91 against 175.99 ms on one
+clip, and what blocks default-on is the 315.9 MiB peak against 119.7 MiB on
+the CPU path. That is a memory problem, so apply the memory oracle protocol,
+not this page's speed levers.
+
+### 4. Audit the other decode families for passes and lanes
+
+This is a hypothesis list, not a finding. Whisper's biggest early wins were
+fewer command passes per token, GEMV at m = 1 with packed projections, and
+lane use in the attention value phase. For Gemma 4, dense Llama and qwen4,
+count commits per decoded token (`TURBOSPARK_PHASES=1` already splits `cb1`,
+routed and final), check for a second pass that only does the final norm and
+logits, and compute active lanes per output for their INT4 and INT8 GEMVs at
+the real shapes. The GQA kernel serves head_dim 128 and 256 only, so a family
+with head_dim 64 never got the lane fix. Measure before changing anything.
+Large GEMVs on a 27B model are bandwidth-bound by construction, so expect a
+gain only where a profile shows dispatch or sync time.
+
+### 5. Device-resident layers for Music 3's AR stage
+
+The documented floor is about 830 synchronous dispatches per AR frame at
+0.2-0.3 ms each, roughly 0.30 s per frame against the 0.04 s real time needs.
+The Whisper recipe is the model: one pass per step, directly bound buffer
+chains, no per-dispatch wait. It needs residual adds, dtype rounding and SiLU
+on the device with the host's arithmetic, then a depth-decoder KV cache, and
+every step must keep the byte-identical WAV check. Detail and the open gates
+are in the Music 3 README.

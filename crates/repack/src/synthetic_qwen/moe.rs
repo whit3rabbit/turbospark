@@ -336,6 +336,7 @@ fn build_synthetic_qwen_gdn_moe_install_inner(
         default_bits: 4,
         group_size: 64,
         bits_overrides: overrides,
+        ..Default::default()
     };
     write_qwen_gdn_moe_install(dir, &arch, model_id, &header, &source, &quant)?;
     Ok(arch)

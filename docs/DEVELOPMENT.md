@@ -270,6 +270,7 @@ make clean                       # all three
 | `cargo test` hung at 0% CPU after a build | Gatekeeper verifying test binaries; see above |
 | A compile error in a crate you did not touch | Probably not yours. Check mtimes before debugging it |
 | CI red on Swift, green locally | The packaging job's SDK, not your change. `swift/AGENTS.md` Gotcha 45 |
+| `make app-bundle` fails in `mlx-sys` with `'stdlib.h' file not found` | bindgen's libclang found no SDK (seen under Xcode 27). `scripts/make-app-bundle.sh` now sets `SDKROOT` and `BINDGEN_EXTRA_CLANG_ARGS` from `xcrun` when unset; for a hand-run `cargo install openkind-server`, export both yourself |
 
 ## Where to go next
 

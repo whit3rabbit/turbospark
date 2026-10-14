@@ -13,7 +13,7 @@ use super::{layer_tensor, RMS_EPS, TRUNK_PREFIX};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
 use crate::real_forward_types::RealForwardError;
-use crate::real_forward_utils::{entry, norm_view};
+use crate::real_forward_utils::norm_view;
 use crate::resid_capture::encode_resid_capture;
 use crate::steering::encode_steering;
 
@@ -60,7 +60,6 @@ impl RealForwardRunner {
         }
 
         let embed_name = "language_model.model.embed_tokens.weight";
-        let base = self.index.header.index_size;
 
         // Retain submitted shared passes through the final wait, including
         // early errors, without adding a host wait before routed submission.
@@ -176,6 +175,7 @@ impl RealForwardRunner {
             slot_buffers,
             mapped,
             routed_blobs,
+            routed_blobs_banks,
             moe_offsets,
             routed_layouts,
             router_hist,
@@ -195,6 +195,7 @@ impl RealForwardRunner {
             &self.slot_buffers,
             &self.mapped,
             &self.routed_blobs,
+            &self.routed_blobs_banks,
             &self.moe_offsets,
             &self.routed_layouts,
             &mut self.router_hist,
@@ -367,44 +368,27 @@ impl RealForwardRunner {
                 continue;
             }
 
-            let router_name = layer_tensor(layer, "mlp.gate.weight");
-            let router = entry(index, &router_name)?;
-            if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
-                return Err(RealForwardError::Unsupported(format!(
-                    "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got dtype {} \
-                     with {} packed bytes",
-                    router.dtype, router.size_bytes
-                )));
-            }
-            gpu::encode_router_gemv_gemma4(
+            moe::encode_qwen_router(
                 context,
                 &pass,
-                (
-                    weights.buffer(),
-                    weights.gpu_offset(router.file_offset - base),
-                ),
-                (
-                    weights.buffer(),
-                    weights.gpu_offset(router.scale_offset - base),
-                ),
-                (
-                    weights.buffer(),
-                    weights.gpu_offset(router.bias_offset - base),
-                ),
-                (&qwen.moe_x, 0),
-                (&qwen.router_ones, 0),
-                (&qwen.router_logits_f32, 0),
-                num_experts as u32,
-                hidden as u32,
-            )
-            .map_err(gpu_err)?;
+                weights,
+                index,
+                qwen,
+                layer,
+                hidden,
+                num_experts,
+                0,
+                0,
+            )?;
 
             let t_wait = Instant::now();
             phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;
             phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
 
             pass = context.begin_pass_labeled("routed cb");
-            if let Some(shared) = moe::encode_qwen_layer_moe(
+            // Token 0, bank 0, nothing protected: the sequential decode path,
+            // whose bytes this signature must not move.
+            let (shared, _bound_slots) = moe::encode_qwen_layer_moe(
                 context,
                 &pass,
                 weights,
@@ -415,6 +399,7 @@ impl RealForwardRunner {
                 slot_buffers,
                 mapped,
                 routed_blobs.as_ref(),
+                routed_blobs_banks,
                 moe_offsets,
                 routed_layouts,
                 router_hist,
@@ -426,7 +411,9 @@ impl RealForwardRunner {
                 num_experts,
                 top_k,
                 use_silu,
-            )? {
+                &moe::RoutedSlot::sequential(),
+            )?;
+            if let Some(shared) = shared {
                 shared_submissions.push(shared);
             }
             // The MoE half's post-FFN residual add happens INSIDE

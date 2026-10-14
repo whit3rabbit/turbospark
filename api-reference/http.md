@@ -27,10 +27,10 @@ turbospark serve \
 ```
 
 - Default address: `http://127.0.0.1:8080` (loopback).
-- `--bind tailnet`: Binds Tailscale IPv4 interface; requires `--api-key`.
-- Authentication: Opt-in via `--api-key KEY`. When enabled, every route except
+- `--bind tailnet`: Binds Tailscale IPv4 interface; requires an API key (`--api-key` or `$TURBOSPARK_API_KEY`).
+- Authentication: Opt-in via `--api-key KEY` or `$TURBOSPARK_API_KEY` in `--model` mode (macOS only). When enabled, every route except
   `GET /health` requires `x-api-key: KEY` or `Authorization: Bearer KEY`.
-  Missing or invalid keys return 401.
+  Missing or invalid keys return 401. The scripted `turbospark-server <tokenizer-dir>` mode takes no key and binds loopback.
 
 ## Endpoint Index
 
@@ -219,7 +219,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
 For voice cloning, `reference_audio` is a base64-encoded WAV of the voice to
 clone. MegaTTS3 requires it (1 to 30 seconds) together with `consent: true`,
 the caller's statement that it has the right to use the voice, and accepts
-`steps` (1 to 100, default 32), `seed`, `p_w` (intelligibility, default 1.4)
+`steps` (1 to 100, default 16; 8, 16 and 32 are Fast, Balanced and Best), `seed`, `p_w` (intelligibility, default 1.4)
 and `t_w` (similarity, default 3.0). `reference_text` and `instruction` apply
 to Qwen3-TTS only; MegaTTS3 refuses them. A model that cannot clone refuses
 `reference_audio`.

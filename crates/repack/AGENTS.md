@@ -22,6 +22,12 @@ Checkpoint intake and `.gturbo` writing.
   real-install checks are required before publishing a new path.
 - Update both writers when a multimodal or vision component is present. A
   headless install can compile and still be invalid for the advertised model.
+- MLX mxfp4 and GGUF MXFP4 hold the same values in a different nibble order.
+  MLX packs adjacent elements per byte; GGUF pairs element `j` with `j + 16`
+  and folds the exponent into a 17-byte block. `mlx_mxfp4.rs` re-blocks.
+  Reading one as the other gives a correctly scaled permutation that
+  correlates well and is wrong. Exponent byte 255 is NaN in MLX and finite
+  in ggml, so it is refused rather than copied.
 
 ## Checks
 

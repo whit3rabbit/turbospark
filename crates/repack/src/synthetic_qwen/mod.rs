@@ -4,6 +4,7 @@ mod dense;
 mod dense_arch;
 mod dense_tensors;
 mod moe;
+mod moe_mxfp4;
 mod qwen4;
 mod qwen4_decode;
 mod vision;
@@ -22,6 +23,7 @@ pub use moe::{
     build_synthetic_qwen_gdn_moe_install, build_synthetic_qwen_gdn_moe_install_with_mtp,
     tiny_qwen_gdn_moe_arch,
 };
+pub use moe_mxfp4::build_synthetic_qwen_gdn_moe_mxfp4_install;
 pub use qwen4::{
     build_synthetic_qwen4_exp_install, build_synthetic_qwen4_exp_install_streamed,
     tiny_qwen4_exp_arch,

@@ -181,6 +181,20 @@ next use -- and "streaming layers" degenerates to re-reading ~14 GB from
 SSD every token: sub-1 tok/s against the current ~19. There is no cache
 policy that fixes a working set equal to the model.
 
+**On-disk weight compression for load speed (AirLLM's `compression='4bit'`,
+"up to 3x"): closed, tested 2026-10-12.** AirLLM's gain exists because it
+re-reads every layer from disk for every token, so shrinking the file shrinks
+the per-token cost. This engine never does that: dense weights are mapped and
+wired, and only routed experts stream. Its weights are also already
+block-wise quantized (INT4/INT8 affine g64, GGUF K-quants, MXFP4), with
+dequant fused into the GEMV, so the thing AirLLM adds is the baseline here.
+The arXiv paper it cites (2212.09720) measures accuracy against total bits
+and makes no speed claim. Measured on the one place bytes do hit the disk (a
+cold MoE expert read, Gemma 4 26B-A4B INT4): lossless zstd saves about 10% of
+an INT4 install, and the miss count, not the blob size, moves cold decode
+(10.6 to 39.2 tok/s going from 16 to 64 slots). Numbers and caveats:
+`docs/EXPERT_ROUTING.md`, `.claude/docs/modules/streaming.md` Gotcha 12.
+
 **The weight mapping is wired while the model runs, and that settles the
 small-machine question.** Measured with `vm_stat` across process exit:
 system wired read 17.93 GB while decoding and 3.27 GB the moment the

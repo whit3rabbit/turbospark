@@ -77,6 +77,30 @@ public enum TurboSparkEmbedding {
         return results
     }
 
+    /// Computes embeddings for texts (with an optional task prompt and
+    /// Matryoshka size), image files and audio files in one call. Task,
+    /// images and audio need a model with those prompts and towers
+    /// (EmbeddingGemma 2 on Core ML, macOS 15+); other models throw.
+    public static func encode(request: EmbeddingRequest, modelPath: String) async throws -> EmbeddingResult {
+        try await Task.detached {
+            let data = try JSONEncoder().encode(request)
+            guard let requestJSON = String(data: data, encoding: .utf8) else {
+                throw TurboSparkError(code: .json, message: "failed to serialize embedding request")
+            }
+            let json = try takeString { out in
+                modelPath.withCString { mPtr in
+                    requestJSON.withCString { rPtr in
+                        ts_embedding_encode_request_json(mPtr, rPtr, out)
+                    }
+                }
+            }
+            guard let jsonData = json.data(using: .utf8) else {
+                throw TurboSparkError(code: .json, message: "invalid UTF-8 in embedding result JSON")
+            }
+            return try JSONDecoder().decode(EmbeddingResult.self, from: jsonData)
+        }.value
+    }
+
     /// Computes a single normalized embedding vector for an input text.
     public static func encode(text: String, modelPath: String) async throws -> [Float] {
         let batch = try await encode(texts: [text], modelPath: modelPath)
@@ -96,4 +120,128 @@ public enum TurboSparkEmbedding {
         let ranked = try await rank(query: query, documents: documents, modelPath: modelPath)
         return Array(ranked.prefix(max(0, k)))
     }
+}
+
+/// One `TurboSparkEmbedding.encode(request:modelPath:)` call. Every field is
+/// optional; an empty request returns empty lists.
+public struct EmbeddingRequest: Encodable, Sendable, Equatable {
+    public var texts: [String]
+    /// A trained task prompt such as `search_query` or `document`.
+    public var task: String?
+    /// A Matryoshka size the model supports (768, 512, 256 or 128 for
+    /// EmbeddingGemma 2).
+    public var dimensions: Int?
+    public var imagePaths: [String]
+    /// Soft tokens per image (70, 140 or 280 for EmbeddingGemma 2).
+    public var imageBudget: Int?
+    /// WAV files; each is embedded as consecutive 10 s windows.
+    public var audioPaths: [String]
+
+    public init(
+        texts: [String] = [], task: String? = nil, dimensions: Int? = nil,
+        imagePaths: [String] = [], imageBudget: Int? = nil, audioPaths: [String] = []
+    ) {
+        self.texts = texts; self.task = task; self.dimensions = dimensions
+        self.imagePaths = imagePaths; self.imageBudget = imageBudget; self.audioPaths = audioPaths
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case texts, task, dimensions
+        case imagePaths = "image_paths"
+        case imageBudget = "image_budget"
+        case audioPaths = "audio_paths"
+    }
+}
+
+/// One embedded window of an audio file.
+public struct AudioWindowEmbedding: Decodable, Sendable, Equatable {
+    public let startSeconds: Double
+    public let durationSeconds: Double
+    public let embedding: [Float]
+
+    enum CodingKeys: String, CodingKey {
+        case startSeconds = "start_seconds"
+        case durationSeconds = "duration_seconds"
+        case embedding
+    }
+}
+
+/// Embeddings in request order: one per text, one per image, and one
+/// window list per audio file.
+public struct EmbeddingResult: Decodable, Sendable, Equatable {
+    public let texts: [[Float]]
+    public let images: [[Float]]
+    public let audio: [[AudioWindowEmbedding]]
+}
+
+/// One pinned embedding model the app can download (`ts_embedding_catalog_json`).
+public struct EmbeddingProfile: Decodable, Sendable, Equatable, Identifiable {
+    public var id: String { alias }
+    public let alias: String
+    public let displayName: String
+    public let family: String
+    public let backend: String
+    public let repository: String
+    public let revision: String
+    public let license: String
+    /// Inputs embedded into one space: `text`, `image`, `audio`.
+    public let modalities: [String]
+    public let dimensions: Int
+    public let matryoshkaDims: [Int]
+    public let downloadBytes: UInt64
+    /// Set once a verified install exists. The alias itself also works as
+    /// an embedding model path.
+    public let installedPath: String?
+    public let canRun: Bool
+    public let unavailableReason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case alias, family, backend, repository, revision, license, modalities, dimensions
+        case displayName = "display_name"
+        case matryoshkaDims = "matryoshka_dims"
+        case downloadBytes = "download_bytes"
+        case installedPath = "installed_path"
+        case canRun = "can_run"
+        case unavailableReason = "unavailable_reason"
+    }
+}
+
+/// Pinned embedding models: listing and verified install.
+public enum EmbeddingCatalog {
+    public static func profiles() throws -> [EmbeddingProfile] {
+        let json = try takeString { ts_embedding_catalog_json($0) }
+        return try JSONDecoder().decode([EmbeddingProfile].self, from: Data(json.utf8))
+    }
+
+    /// Blocking download and install; call off the main actor. Cancel with
+    /// `TurboSparkCatalog.cancelInstall()`. Returns the install path.
+    public static func install(
+        alias: String,
+        progress: @escaping @Sendable (AudioDownloadProgress) -> Void = { _ in }
+    ) throws -> String {
+        let box = EmbeddingDownloadBox(progress)
+        let context = Unmanaged.passUnretained(box).toOpaque()
+        defer { withExtendedLifetime(box) {} }
+        let json = try takeString { out in
+            alias.withCString { a in
+                ts_embedding_install(a, { userdata, _, path, length, completed, total in
+                    guard let userdata else { return }
+                    let box = Unmanaged<EmbeddingDownloadBox>.fromOpaque(userdata).takeUnretainedValue()
+                    let name = path.map {
+                        String(decoding: UnsafeBufferPointer(
+                            start: UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self), count: length),
+                            as: UTF8.self)
+                    }
+                    box.callback(AudioDownloadProgress(path: name, completedBytes: completed, totalBytes: total))
+                }, context, out)
+            }
+        }
+        struct Installed: Decodable { let path: String }
+        return try JSONDecoder().decode(Installed.self, from: Data(json.utf8)).path
+    }
+}
+
+private final class EmbeddingDownloadBox {
+    let callback: @Sendable (AudioDownloadProgress) -> Void
+    init(_ callback: @escaping @Sendable (AudioDownloadProgress) -> Void) { self.callback = callback }
 }

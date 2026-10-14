@@ -1,19 +1,25 @@
 //! The Linux I/O seam (ROADMAP P3.5): an `io_uring` + `O_DIRECT` read
 //! source for the expert streamer, selected beside the `pread` default.
 //!
-//! # STATUS: COMPILE-GATED SCAFFOLDING, UNTESTED ON LINUX
+//! # STATUS: RING READS PROVEN ON ONE LINUX HOST, NOT WIRED, NOT MEASURED
 //!
-//! This module carries the repository's accepted platform gate for code no
-//! machine here can run (AGENTS.md Gotcha 8): it compiles under
-//! `cargo check --target x86_64-unknown-linux-gnu -p turbospark-streaming`
-//! and NOTHING ELSE says anything about it. The syscalls are raw `libc`
-//! calls against the io_uring(2) and open(2) manuals, written to match
-//! kernel 5.19+ semantics, and no Linux box has executed a single line of
-//! them. **`Mode::Auto` resolves to `Pread`**, and until a Linux session
-//! runs the parity arm this module's selectors and alignment math are the
-//! only parts under test. Do not flip the default, and do not benchmark
-//! `Mode::Uring`, until that arm exists and agrees with the `pread` path
-//! bit for bit.
+//! This module was written against the io_uring(2) and open(2) manuals on
+//! a machine that could not run it (AGENTS.md Gotcha 8), and the first
+//! Linux run (kernel 6.18, ext4) showed what that gate is worth: it
+//! compiled, and it could not complete a single read. Setup failed EINVAL,
+//! and with that fixed every read failed EBADF, from four flag constants
+//! off by bit position plus an unmasked CQ cursor (see `sys`). The parity
+//! arm now exists: `sys::tests::ring_reads_match_the_file_buffered_and_direct`
+//! reads the file's own bytes back through the ring on a buffered and an
+//! `O_DIRECT` descriptor, past the CQ wrap, and each of the five defects
+//! fails it when reintroduced. It runs under `cargo test -p
+//! turbospark-streaming` on Linux only; CI's Linux leg is `cargo check`.
+//!
+//! That proves the ring, not the seam. **`Mode::Auto` still resolves to
+//! `Pread`**, nothing selects `Mode::Uring`, and no streamer reads through
+//! the ring yet. Do not flip the default or quote a `Mode::Uring` number
+//! until the streamer is wired to it and agrees with the `pread` path bit
+//! for bit on a real install.
 //!
 //! # The design, and what it borrows
 //!
@@ -111,11 +117,19 @@ mod sys {
     const SYS_IO_URING_SETUP: libc::c_long = 425;
     const SYS_IO_URING_ENTER: libc::c_long = 426;
 
-    const IORING_SETUP_SINGLE_ISSUER: u32 = 1 << 4;
-    const IORING_SETUP_COOP_TASKRUN: u32 = 1 << 5;
+    // Bit positions are from `linux/io_uring.h`, checked against the
+    // installed UAPI header on the first Linux run (kernel 6.18). That run
+    // found four of these wrong by position, and each wrong bit was a
+    // DIFFERENT valid flag rather than an unknown one, so nothing refused
+    // them at compile time: 1 << 5 is ATTACH_WQ (setup fails EINVAL with
+    // no wq_fd), 1 << 0 on an SQE is FIXED_FILE (every read fails EBADF),
+    // and 1 << 1 on enter is SQ_WAKEUP (enter returns without waiting).
+    // `the_ring_flags_are_the_uapi_bits` pins each value.
+    const IORING_SETUP_COOP_TASKRUN: u32 = 1 << 8;
+    const IORING_SETUP_SINGLE_ISSUER: u32 = 1 << 12;
     const IORING_OP_READ: u8 = 22;
-    const IOSQE_ASYNC: u8 = 1 << 0;
-    const ENTER_GETEVENTS: u32 = 1 << 1;
+    const IOSQE_ASYNC: u8 = 1 << 4;
+    const ENTER_GETEVENTS: u32 = 1 << 0;
 
     const IORING_OFF_SQ_RING: i64 = 0;
     const IORING_OFF_CQ_RING: i64 = 0x8000000;
@@ -215,7 +229,13 @@ mod sys {
         cq_tail: *const AtomicU32,
         cqes: *const Cqe,
         sqes: *mut Sqe,
-        sq_entries: u32,
+        // The kernel's own index masks, read from the rings. The ring
+        // cursors are free-running u32 counters, so every index into the
+        // SQE array or the CQE array goes through one of these; the CQ is
+        // twice the SQ by default, so a mask borrowed from one ring is
+        // wrong for the other.
+        sq_mask: u32,
+        cq_mask: u32,
         ring_fd: libc::c_int,
         mapped: Vec<(usize, usize)>, // (ptr, len) to munmap on drop
     }
@@ -231,8 +251,10 @@ mod sys {
         /// `io_uring_setup(entries)` with the single-issuer flags, then maps
         /// the SQ/CQ rings and the SQE array.
         pub fn setup(entries: u32) -> std::io::Result<Ring> {
-            let mut p = IoUringParams::default();
-            p.flags = IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_COOP_TASKRUN;
+            let mut p = IoUringParams {
+                flags: IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_COOP_TASKRUN,
+                ..Default::default()
+            };
             let fd = unsafe {
                 libc::syscall(
                     SYS_IO_URING_SETUP,
@@ -289,6 +311,11 @@ mod sys {
                 (sqes as usize, page.max(sqes_len)),
             ];
 
+            // SAFETY: both masks sit inside the ring mappings just made,
+            // at the offsets the kernel reported for them.
+            let sq_mask = unsafe { *((base + sq.ring_mask as usize) as *const u32) };
+            let cq_mask = unsafe { *((cq_ring as usize + cq.ring_mask as usize) as *const u32) };
+
             Ok(Ring {
                 sq_head: (base + sq.head as usize) as *const AtomicU32,
                 sq_tail: (base + sq.tail as usize) as *mut AtomicU32,
@@ -297,7 +324,8 @@ mod sys {
                 cq_tail: (cq_ring as usize + cq.tail as usize) as *const AtomicU32,
                 cqes: (cq_ring as usize + cq.cqes as usize) as *const Cqe,
                 sqes: sqes as *mut Sqe,
-                sq_entries: p.sq_entries,
+                sq_mask,
+                cq_mask,
                 ring_fd: fd,
                 mapped,
             })
@@ -316,7 +344,7 @@ mod sys {
         ) -> std::io::Result<usize> {
             let fd = file.as_raw_fd();
             let tail = unsafe { (*self.sq_tail).load(Ordering::Acquire) };
-            let idx = tail % self.sq_entries;
+            let idx = tail & self.sq_mask;
             unsafe {
                 // Clear the whole slot, then fill the fields the READ op
                 // reads; the reserved tail stays zero.
@@ -347,10 +375,11 @@ mod sys {
             // One CQE is now visible; consume it.
             // SAFETY: the kernel has published at least one CQE (the ENTER
             // above asked for one event and returned success), and `head`
-            // is this consumer's own cursor into a ring sized to the SQE
-            // count.
+            // is this consumer's own free-running cursor, masked into the
+            // CQE array. Unmasked, it walked off the end of the array after
+            // `cq_entries` reads.
             let head = unsafe { (*self.cq_head).load(Ordering::Acquire) };
-            let cqe = unsafe { &*self.cqes.add(head as usize) };
+            let cqe = unsafe { &*self.cqes.add((head & self.cq_mask) as usize) };
             let res = cqe.res;
             unsafe { (*self.cq_head).store(head.wrapping_add(1), Ordering::Release) };
             if res < 0 {
@@ -371,6 +400,113 @@ mod sys {
             unsafe {
                 libc::close(self.ring_fd);
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::aligned_slot::AlignedSlot;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        /// Each flag is the UAPI bit, not a neighbour. A wrong position here
+        /// is another VALID flag, so the kernel accepts the call and does
+        /// the wrong thing; this is the only check that can say so without
+        /// a ring.
+        #[test]
+        fn the_ring_flags_are_the_uapi_bits() {
+            assert_eq!(IORING_SETUP_COOP_TASKRUN, 0x100);
+            assert_eq!(IORING_SETUP_SINGLE_ISSUER, 0x1000);
+            assert_eq!(IOSQE_ASYNC, 0x10);
+            assert_eq!(ENTER_GETEVENTS, 0x1);
+            assert_eq!(IORING_OP_READ, 22);
+        }
+
+        /// A sandbox that blocks io_uring returns ENOSYS or EPERM from
+        /// setup. That host can say nothing about the ring, so the parity
+        /// test reports it by name instead of failing the crate's suite.
+        fn ring_or_skip() -> Option<Ring> {
+            match Ring::setup(8) {
+                Ok(ring) => Some(ring),
+                Err(e) if matches!(e.raw_os_error(), Some(libc::ENOSYS | libc::EPERM)) => {
+                    eprintln!("SKIPPED: io_uring is unavailable on this host ({e})");
+                    None
+                }
+                Err(e) => panic!("io_uring_setup failed: {e}"),
+            }
+        }
+
+        fn scratch_file(tag: &str, len: usize) -> (std::path::PathBuf, Vec<u8>) {
+            let dir =
+                std::env::temp_dir().join(format!("turbospark-uring-{tag}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("blob.bin");
+            // A non-repeating-per-sector pattern, so a read landing at the
+            // wrong offset cannot match by accident.
+            let bytes: Vec<u8> = (0..len)
+                .map(|i| (i % 251) as u8 ^ (i >> 12) as u8)
+                .collect();
+            std::fs::File::create(&path)
+                .unwrap()
+                .write_all(&bytes)
+                .unwrap();
+            (path, bytes)
+        }
+
+        /// The parity arm the module header asks for: every ring read
+        /// returns the file's own bytes, on a buffered descriptor at
+        /// unaligned offsets and on an `O_DIRECT` one at sector-aligned
+        /// offsets, for more reads than the CQ has entries (the ring is
+        /// set up with 8, so the CQ holds 16 and the cursor must wrap).
+        #[test]
+        fn ring_reads_match_the_file_buffered_and_direct() {
+            let Some(mut ring) = ring_or_skip() else {
+                return;
+            };
+            let (path, bytes) = scratch_file("parity", 4 << 20);
+
+            let buffered = std::fs::File::open(&path).unwrap();
+            let mut buf = vec![0u8; 12_345];
+            for i in 0..48u64 {
+                let offset = i * 77_777 + 3;
+                let got = ring.read_at(&buffered, &mut buf, offset).unwrap();
+                assert_eq!(got, buf.len(), "short buffered read {i}");
+                let at = offset as usize;
+                assert!(
+                    buf[..] == bytes[at..at + buf.len()],
+                    "buffered read {i} at {offset} returned other bytes"
+                );
+            }
+
+            let direct = match std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECT)
+                .open(&path)
+            {
+                Ok(file) => file,
+                Err(e) if e.raw_os_error() == Some(libc::EINVAL) => {
+                    eprintln!("SKIPPED: O_DIRECT arm, the temp filesystem refuses it ({e})");
+                    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+                    return;
+                }
+                Err(e) => panic!("open O_DIRECT: {e}"),
+            };
+            let chunk = 64 * 1024;
+            assert!(super::super::dio_aligned(0, chunk));
+            let mut slot = AlignedSlot::allocate(chunk).unwrap();
+            for i in 0..48u64 {
+                let offset = (i * 5 % 61) * chunk as u64;
+                let dst = &mut slot.as_mut_slice()[..chunk];
+                let got = ring.read_at(&direct, dst, offset).unwrap();
+                assert_eq!(got, chunk, "short direct read {i}");
+                let at = offset as usize;
+                assert!(
+                    slot.as_slice()[..chunk] == bytes[at..at + chunk],
+                    "direct read {i} at {offset} returned other bytes"
+                );
+            }
+            std::fs::remove_dir_all(path.parent().unwrap()).ok();
         }
     }
 }

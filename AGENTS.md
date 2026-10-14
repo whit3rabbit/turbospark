@@ -164,6 +164,16 @@ from compilation or a CPU-only result.
 - For a contested file, re-check status immediately before staging. If a
   dependency on another uncommitted file makes a clean partial commit unsafe,
   report the dependency instead of staging unrelated work.
+- A shared file (`CHANGELOG.md`, `README.md`, `docs/`) can hold another
+  session's hunks, and another session's whole-file commit can already contain
+  yours. Read `git diff` of it before staging, and stage by path.
+- Local green is not release evidence. Your Xcode can be newer than the pinned
+  one (a beta has been seen), your `.build` can hold stale objects that hide a
+  clean-build failure, and your tree can differ from your commit. Follow the
+  pre-publish checklist in `docs/RELEASE.md` and let the CI matrix decide.
+- Do not launch the installed or an older build to compare behavior while
+  testing credential storage. It can recreate the very state under test
+  (builds before v0.3.2 create the TypeSafe Keychain item at start when it is missing and read it on every start).
 - Every new test must exercise the behavior it claims to cover. Mutation-check
   new guards when the behavior is subtle, and assert that a mutation applied
   before treating a survivor as evidence.
@@ -181,6 +191,13 @@ from compilation or a CPU-only result.
 - `crates/audio`: unified portable audio crate: DSP primitives (waveform,
   WAV, resampling, FFT, STFT, mel), neural tensor ops, and models organized
   by role (music, STT, TTS, VAD, STS, codec, LID); see `docs/AUDIO.md`.
+- `crates/embeddings`: portable embedding models (EmbeddingGemma,
+  Snowflake arctic-embed, SigLIP2 NaFlex, CLAP) with pinned HF and MLX
+  checkpoints, sentence-transformers pooling, and similarity scoring; see
+  `crates/embeddings/MODELS.md`.
+- `crates/coreml`: the Apple Core ML runner (macOS stub elsewhere). Model
+  pipelines on it live in `crates/runtime/src/coreml/`; see
+  [Core ML models](docs/COREML.md).
 - `crates/ffi`: the C ABI consumed by Swift.
 - `crates/cli`, `crates/catalog`, `crates/server`: user-facing install,
   command, and service surfaces.

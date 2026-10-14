@@ -25,9 +25,15 @@ is tested the same way. The server API key lives in the login Keychain
 (`ServerKeychain.swift`, service `TurboSpark.server`,
 `kSecAttrAccessibleAfterFirstUnlock`) rather than in `settings.json`; an
 empty string deletes the item, and a Keychain error degrades to "no key
-restored" rather than failing the load. `ServerKeychain` itself is
-UNTESTED, because a round-trip test would write into the host user's real
-keychain -- stated here so its absence reads as a decision. And
+restored" rather than failing the load. Storage is opt-in
+(`ServerKeychain.optInDefaultsKey`, "Remember this key in the Keychain"): a
+new install keeps the key in memory for the session, and a stored item that
+an earlier version created is adopted at first launch
+(`ServerKeychain.resolveOptIn`), so nobody's key is silently dropped. The
+opt-in and that migration are tested with an injected probe
+(`ServerKeychainOptInTests`). The Keychain round-trip itself is UNTESTED,
+because it would write into the host user's real keychain -- stated here so
+its absence reads as a decision. And
 `AppearanceManager` moved from `UserDefaults` (11 keys and 2 JSON blobs) to
 `appearance.json`, with a one-way migration that reads the legacy keys
 only when the file is absent and removes them only after the first

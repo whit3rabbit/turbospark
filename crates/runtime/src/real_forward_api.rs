@@ -51,7 +51,9 @@ impl RealForwardRunner {
     /// (`qwenGdnDense`) as long as no drafter is open --
     /// `prefill_chunk_real_qwen_dense`'s named refusal
     /// (`crates/runtime/CLAUDE.md`'s qwen chunked-prefill Gotcha).
-    /// The MoE half of qwen (`qwenGdnMoe`) still answers `false`. `qwen4_exp`
+    /// The MoE half of qwen (`qwenGdnMoe`) answers `true` since 2026-10-14
+    /// unless `qwen_moe_chunked_refusal` names a reason (hadamard, the shared
+    /// read-overlap seam, or an open drafter). `qwen4_exp`
     /// answers `true` unconditionally: unlike the dense qwen flow it has no
     /// drafter feature to refuse in the first place (`mod.rs`'s own scope
     /// doc), so there is no open-time condition to check.
@@ -79,6 +81,12 @@ impl RealForwardRunner {
             || (self.real_qwen.as_ref().is_some_and(|s| s.dense)
                 && self.real_mtp.is_none()
                 && self.real_dflash.is_none())
+            // The MoE half (`qwenGdnMoe`), through its own driver
+            // (`families/qwen/moe_prefill.rs`), on every install that driver
+            // does not refuse by name. One function answers both here and
+            // inside the driver, so they cannot disagree.
+            || (self.real_qwen.as_ref().is_some_and(|s| !s.dense)
+                && self.qwen_moe_chunked_refusal().is_none())
             || self.real_qwen4.is_some()
     }
 
@@ -105,6 +113,18 @@ impl RealForwardRunner {
     /// measures 44.2 tok/s at 16 slots against 51.2 at 32 on one install.
     pub fn expert_cache_slots(&self) -> usize {
         self.expert_cache_slots
+    }
+
+    /// The routed slot cache's eviction policy, or `None` when no layer
+    /// streams (a dense install, or mapped residency). Printed beside
+    /// [`Self::expert_cache_slots`] so a run names the cache arm it measured
+    /// (`TURBOSPARK_EXPERT_CACHE_DECAY`).
+    pub fn expert_cache_policy(&self) -> Option<streaming::ExpertCachePolicy> {
+        self.streamers
+            .iter()
+            .flatten()
+            .next()
+            .map(|s| s.cache_policy())
     }
 
     /// Which residency mode this runner actually opened with (ROADMAP P1 item 3).

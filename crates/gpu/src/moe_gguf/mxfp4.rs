@@ -57,9 +57,10 @@ pub struct Mxfp4Activation {
 }
 
 impl Mxfp4Activation {
-    /// The plain gated activation, no biases: what a hypothetical MXFP4
-    /// checkpoint that is not `gpt-oss` would use, and what the block-type
-    /// parity cases assert.
+    /// The plain gated activation, no biases: what every MXFP4 checkpoint
+    /// that is not `gpt-oss` runs (MiniCPM-V 4.7's routed experts, through
+    /// the runtime's `Mxfp4Swiglu::Plain`), and what the block-type parity
+    /// cases assert.
     pub const PLAIN: Mxfp4Activation = Mxfp4Activation {
         alpha: 0.0,
         limit: 0.0,

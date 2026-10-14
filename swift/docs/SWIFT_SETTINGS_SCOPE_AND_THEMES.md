@@ -56,7 +56,7 @@ setting. P = active profile, J = project archive, C = chat archive.
 | Guardrails | `guardrailsMode` P plus project preference | Tool-call guardrail routing | Subsequent turn/call; existing checkpoint capability behavior |
 | Fan persistence | `keepFansPinnedOnQuit`, P | Shutdown fan restoration | On quit; requires existing ThermalForge service |
 | Server start/stop, port | `serverPinnedPort`, P; server runtime | In-process server | Start action; invalid port rejected; changing model stops server |
-| Server API key, generate/copy | Keychain, shared | Server authentication | Explicit action; copy affects clipboard; no keychain mutation in tests |
+| Server API key, generate/copy | Session only; Keychain, shared, if opted in | Server authentication | Explicit action; copy affects clipboard; no keychain mutation in tests |
 | Server auto-start/background | `serverAutoStartOnLaunch`, `keepServerRunningInBackground`, P | Launch/termination service flow | Relaunch or window close; runtime server state shown separately |
 | Embedding model | `serverEmbeddingModelInput`, P | Embedding endpoint session | Server/model setup action; route is implemented |
 | Agents/subagents | Agent files and enable store | Agent discovery and dispatch | Subsequent invocation; unsupported model override control remains removed |

@@ -138,7 +138,7 @@ The default server listens on `127.0.0.1:8080` and provides `/v1/chat/completion
 
 ## Supported models
 
-TurboSpark supports 15 declared model families (DeepSeek-V4-Flash is still scaffolded-only). Recent additions include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
+TurboSpark supports 15 declared model families (DeepSeek-V4-Flash is still scaffolded-only). Recent additions include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, MiniCPM-V 4.7 35B-A3B (text only, MLX mxfp4), DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
 
 MoE checkpoints can stream routed experts from SSD through a bounded cache,
 so install size and process footprint are different quantities. The Swift
@@ -157,6 +157,7 @@ The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-c
 | Qwen 3.6 35B-A3B | Q4_K_M | GGUF | ~21 GB | - |
 | Ornith-1.5 35B-A3B | INT4 (group 64) | MLX | ~20 GB | - |
 | Ornith-1.5 35B-A3B | Q8_0 | GGUF | ~38 GB | - |
+| MiniCPM-V 4.7 35B-A3B, text only (`minicpm-v47-35b-mxfp4`) | mxfp4 (group 32) | MLX | ~22 GB | ~1.5 GB @ 4k ctx |
 | Qwen3.8-Flash-Next REAP-288 | INT4 | MLX | ~74 GB | ~2.5 GB @ 2k ctx |
 | Qwen3.8-Flash-Next Swift-1.5 (`qwen4exp-swift-iq2-xs`) | IQ2_XS | GGUF | ~69 GB reserve | ~1.60 GiB @ 2k ctx |
 | Qwen3-30B-A3B | Q4_K_M | GGUF | ~19 GB | ~2.7 GB @ 4k ctx |
@@ -207,6 +208,7 @@ These rows are measured `phys_footprint` process peaks on one Apple M4 Max with 
 | --- | ---: | ---: | ---: | ---: |
 | Gemma 4 26B-A4B, MLX INT4 | 4,096 | 2,175 MiB | 33.0-45.6 tok/s | about 13.0 GB |
 | Qwen 3.6 35B-A3B, MLX INT4 | 4,096 | 1,610 MiB | 32.6-38.0 tok/s | about 18.0 GB |
+| MiniCPM-V 4.7 35B-A3B text trunk, MLX mxfp4 | 4,096 | 1,491 MiB | 24.0-25.6 tok/s | about 22.0 GB |
 | Qwen3-30B-A3B, GGUF Q4_K_M | 4,096 | 2,748 MiB | 16.0-27.3 tok/s | about 18.6 GB |
 | Swift-1.5 Qwen3.8-Flash-Next, GGUF IQ2_XS | 2,048 | 1,634 MiB | 12.23-12.77 tok/s | about 69 GB reserved |
 | Qwen 3.8 27B, MLX INT4, dense | 4,096 | 661 MiB | 16.8-19.0 tok/s | about 15.2 GB |
@@ -215,6 +217,8 @@ These rows are measured `phys_footprint` process peaks on one Apple M4 Max with 
 | Humanizer 12B, MLX INT8, dense (raw completion) | 8,192 | 774-924 MiB | 6.5-13.4 tok/s | about 12.7 GB |
 
 The MTP row uses greedy decoding with MTP speculation (block 2), measured with other sessions running on the host. In the same capture, the same install read 14.7-17.9 tok/s without speculation.
+
+MiniCPM-V 4.7 runs the same trunk as Qwen 3.6 but ships its embedding, head, and GDN projections in BF16, so it reads more bytes per token and decodes slower. Its prefill is sequential: a 2,940-token prompt takes about 2 minutes before the first token. See [`docs/MINICPM.md`](docs/MINICPM.md).
 
 The low-memory result is primarily an MoE result. Dense models run, but they do not get the same routed-expert streaming benefit. For the complete measured rows, quality gates, cross-engine comparisons, and methodology, see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) and [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 
@@ -356,6 +360,7 @@ The benchmark times are client wall-clock numbers that include local HTTP and Sw
 - [API workspace and TypeSafe](docs/API_WORKSPACE.md)
 - [macOS UI design guide](DESIGN.md)
 - [Benchmark rows and quality evidence](docs/BENCHMARKS.md)
+- [MiniCPM-V 4.7 mxfp4 implementation and evidence](docs/MINICPM.md)
 - [Release assets, Homebrew casks, and packaging](docs/RELEASE.md)
 - [Swift bindings and app development](docs/SWIFT_BINDINGS.md)
 - [Vision and image generation](docs/VISION.md) and [image generation details](docs/IMAGE_GENERATION.md)

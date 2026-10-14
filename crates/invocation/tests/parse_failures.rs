@@ -249,7 +249,7 @@ fn an_unknown_steering_mode_is_refused() {
 
 /// NaN and infinity are refused at the parser. A non-finite alpha puts a NaN
 /// into the residual stream, and NaN reads as a PERFECT score on every rank
-/// or top-k instrument downstream (AGENTS.md Gotcha 59) -- the one wrong
+/// or top-k instrument downstream (`.claude/docs/engineering-gotchas.md` Gotcha 59) -- the one wrong
 /// value nothing reports as wrong.
 #[test]
 fn a_non_finite_steering_scale_is_refused() {

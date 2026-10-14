@@ -34,6 +34,10 @@ let package = Package(
                 .linkedFramework("Metal"),
                 .linkedFramework("Foundation"),
                 .linkedFramework("QuartzCore"),
+                // `turbospark-coreml` (objc2-core-ml). The framework exists on
+                // every supported macOS; classes newer than the deployment
+                // target are looked up at runtime and gated in Rust.
+                .linkedFramework("CoreML"),
             ]
         ),
 

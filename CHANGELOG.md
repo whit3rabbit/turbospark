@@ -13,6 +13,94 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- Chunked prefill for the qwen MoE flow (`qwenGdnMoe`: Qwen 3.6 35B-A3B,
+  Ornith 35B, MiniCPM-V 4.7), `crates/runtime/src/families/qwen/moe_prefill.rs`.
+  The attention and router half of up to 16 tokens runs before one wait per
+  layer, then the routed experts token by token. Output is byte-identical to
+  sequential prefill, checked on synthetic fixtures for both routed layouts
+  and on the real MiniCPM install. A 2,940-token prompt on MiniCPM prefills
+  1.21-1.31x faster (107-120 s against 141-145 s on M4 Max). On by default in
+  `turbospark-check` and `turbospark-server`. `TURBOSPARK_QWEN_MOE_CHUNKED=0`
+  turns it off.
+- MLX `mode: "mxfp4"` safetensors intake, first carrier
+  `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` (catalog alias
+  `minicpm-v47-35b-mxfp4`, text-only, `verified`). Routed experts are
+  re-blocked losslessly into GGUF MXFP4 and run on the MXFP4 MoE pair, whose
+  phase-1 activation is now chosen by family (plain SiLU here, `swiglu_oai`
+  for `gpt-oss`). Other mxfp4 matrices are dequantized exactly to BF16. Adds
+  a BF16 embedding lookup kernel, per-tensor group sizes for an mxfp4
+  checkpoint's affine gates, a raw-BF16 manifest slot, and
+  `has_foreign_vision_tower` for VLM wrappers whose tower is not this port's.
+  Frozen gates: perplexity 7.5693, 1,491 MiB peak at 4,096 context and 16
+  slots, 24-26 tok/s on M4 Max.
+- `crates/embeddings` (`turbospark-embeddings`): portable CPU embedding
+  models ported from the mlxrs `embeddings` module and checked against
+  `transformers` 4.57.1 and `sentence-transformers` 5.1.2. EmbeddingGemma
+  (`google/embeddinggemma-300m` plus its mlx-community F16 and affine
+  4/8-bit conversions), SigLIP2 NaFlex image and text, and CLAP
+  HTSAT-unfused audio and text. Snowflake arctic-embed text encoders:
+  xs, s, m, m-v1.5, l, and l-v2.0 (BERT and XLM-RoBERTa) with the
+  mlx-community l-v2.0 bf16 and 8/6/4-bit conversions, m-v2.0 (GTE), and
+  m-long (Nomic BERT). Every checkpoint is pinned to a commit in
+  `crates/embeddings/MODELS.md`. Also shared sentence-transformers
+  pooling, Matryoshka truncation, cosine and ColVision MaxSim scoring.
+- `crates/coreml` (`turbospark-coreml`): Apple Core ML runner via
+  `objc2-core-ml` (compile cache, stateful and multifunction models, macOS 15
+  APIs gated at runtime), with pipelines in `crates/runtime` for three
+  FluidInference exports (macOS 15+). See `docs/COREML.md`.
+  - Parakeet Redux speech-to-text (`parakeet-redux-coreml`): native audio
+    sessions, `--stt-model`, FFI STT sessions, and the
+    `parakeet-redux-coreml` audio catalog profile. Token-identical to the CPU
+    Redux decoder on the gate clips.
+  - EmbeddingGemma 2 text, image and audio embeddings
+    (`embeddinggemma-2-coreml`) with task prompts and Matryoshka sizes:
+    `/v1/embeddings`, `ts_embedding_encode_json`, the new
+    `ts_embedding_encode_request_json`, and Swift
+    `TurboSparkEmbedding.encode(request:)`.
+  - Unlimited OCR (the Core ML parts of `unlimited-ocr-mlx-coreml`):
+    `turbospark ocr`, the `ts_ocr_*` C API, and Swift `TurboSparkOcr`.
+  - Pinned EmbeddingGemma 2 install: `embedding_models.json` lists every
+    file by size and SHA-256, `ts_embedding_catalog_json` and
+    `ts_embedding_install` download and verify it into
+    `models/embeddings/<alias>`, and the alias resolves anywhere an
+    embedding model path is accepted. The app offers it (Download, then
+    Use) under the Memory and Server embedding fields.
+  - Benchmark probes and drivers for the Core ML pipelines and for
+    EmbeddingGemma 300m on MLX vs Core ML vs the CPU port
+    (`crates/runtime/scripts/benchmark_coreml.py`,
+    `benchmark_embeddinggemma3.py`); readings in `docs/COREML.md`.
+  - `turbospark_coreml::compute_plan` and the `coreml_plan` example: the
+    device Core ML plans for each op (`MLComputePlan`, macOS 14.4+), to
+    check whether an export really reaches the Neural Engine.
+- `crates/audio`: VoxCPM (MiniCPM backbone, LongRoPE factor tables, CFG
+  zero-star flow DiT, causal-conv AudioVAE) and VoxCPM2 (fusion-concat
+  conditioning, two-token mu DiT, reference/continuation prompts, and
+  SR-conditioned 48 kHz AudioVAE) TTS family ports with catalog assets.
+- `swift/TurboSparkApp`: bundled open-source fonts for code and UI rendering
+  with license notices and Settings catalog entries: Iosevka, Geist, Geist Mono,
+  Cascadia Code, Hack, and Source Code Pro.
+
+### Changed
+- OpenKind (the TypeSafe daemon and Swift package) moves from 0.1.0 to
+  0.3.0 (`v0.3.0`, `2dba87572c028aeaf34b27220a3bbd3d8d8dbc76`) in
+  `make-app-bundle.sh`, `ci.yml`, `release.yml` and `docs/RELEASE.md`.
+  `make-app-bundle.sh` now points mlx-sys's bindgen at the Xcode SDK, which
+  the daemon build needs under Xcode 27.
+- `swift/TurboSparkApp`: the Server pane's API key follows the same rule as
+  the TypeSafe key. It is no longer saved to the Keychain, or read back at
+  launch and on every settings save, unless **Remember this key in the
+  Keychain** is on. A new install keeps a typed key for the session only. A
+  key an earlier version already stored is kept: the first launch finds the
+  item without reading the secret and turns the option on, so nobody's server
+  quietly starts without authentication. Turning it off deletes the item.
+
+### Fixed
+- `crates/audio` nemo alignment: `merge_longest_contiguous` and
+  `merge_longest_common_subsequence` dropped every token of the second chunk
+  past the overlap window. They now keep the rest of the chunk, as upstream
+  mlx-audio does.
+
 ## [0.3.2] - 2026-10-13
 
 This release stops the app asking for Keychain access by default. Upgrade with

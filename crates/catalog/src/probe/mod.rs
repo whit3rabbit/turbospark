@@ -232,6 +232,7 @@ mod chat_template_resolution_tests {
             arch: None,
             types: Vec::new(),
             affine: None,
+            mxfp4: false,
             expert_stride: None,
             trained_context: None,
             sidecars_present: Vec::new(),

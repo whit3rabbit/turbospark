@@ -528,17 +528,15 @@ impl Server {
         #[cfg(target_os = "macos")]
         {
             let dir = catalog::resolve_model_arg(model_arg);
-            let model = turbospark_server::RealEncoderModel::open(&dir)
-                .map_err(|e| format!("failed to open embedding model from {}: {e}", dir.display()))?
-                .with_model_id(model_arg.to_string());
+            let model = turbospark_server::open_embedding_model(&dir, model_arg.to_string())
+                .map_err(|e| {
+                    format!("failed to open embedding model from {}: {e}", dir.display())
+                })?;
             // The registry does not track an encoder's byte cost; the
             // attach is host-explicit and bounded by the count cap.
             let id = self
                 .registry
-                .attach(
-                    Arc::new(model),
-                    crate::server_registry::ModelResidency::host(),
-                )
+                .attach(model, crate::server_registry::ModelResidency::host())
                 .map_err(|error| error.to_string())?;
             ServerObserver::record(
                 &*self.events,

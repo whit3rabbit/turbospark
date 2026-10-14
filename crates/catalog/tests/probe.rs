@@ -354,3 +354,42 @@ fn minimax_safetensors_remain_explicitly_refused() {
         "{reason}"
     );
 }
+
+/// `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`'s own `config.json` (the
+/// fixture `crates/repack` pins): a MiniCPM-V wrapper over a Qwen 3.6 trunk,
+/// MLX mxfp4 with affine INT8 gates at group 64. Before this mode was read,
+/// the group-64 overrides under a group-32 default refused it as "no usable
+/// quantization block".
+#[test]
+fn the_minicpm_v47_mxfp4_config_is_runnable_as_qwen36() {
+    let config = include_str!("../../repack/tests/fixtures/minicpm_v47_mxfp4_config.json");
+    let report = evaluate_config(config, &repo(), None).expect("the config parses");
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert_eq!(report.architecture.as_deref(), Some("minicpmv4_7"));
+    assert_eq!(report.family, Some(model_io::ModelFamily::QwenGdnMoe));
+    assert!(report.mxfp4);
+    assert_eq!(report.affine, None, "mxfp4 is not an affine default");
+    assert_eq!(report.arch.expect("arch").vocab_size, 248_144);
+}
+
+/// The override check is per tensor: a group-128 INT8 gate has no kernel
+/// even inside an mxfp4 checkpoint (the parser refuses it first).
+#[test]
+fn an_mxfp4_config_with_an_unsupported_override_is_refused() {
+    let config = include_str!("../../repack/tests/fixtures/minicpm_v47_mxfp4_config.json")
+        .replacen(
+            "\"language_model.model.layers.0.mlp.gate\": {\n            \"group_size\": 64,",
+            "\"language_model.model.layers.0.mlp.gate\": {\n            \"group_size\": 128,",
+            1,
+        );
+    assert!(
+        config.contains("\"group_size\": 128"),
+        "fixture edit applied"
+    );
+    let report = evaluate_config(&config, &repo(), None).expect("the config parses");
+    assert!(
+        matches!(report.verdict, Verdict::Refused(_)),
+        "{:?}",
+        report.verdict
+    );
+}

@@ -170,6 +170,9 @@ pub mod music3;
 pub use kokoro::KokoroRunner;
 pub use music3::{DispatchStat, Music3Runner};
 
+/// Core ML pipelines (Parakeet, EmbeddingGemma2, Unlimited OCR).
+#[cfg(target_os = "macos")]
+pub mod coreml;
 /// Process-wide exclusion shared by text, image and audio hosts.
 pub mod heavy;
 #[cfg(target_os = "macos")]

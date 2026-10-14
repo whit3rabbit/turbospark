@@ -17,6 +17,9 @@ tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version =
 # checkpoint validation the speech probe calls for the qwen3_asr family.
 # Portable, like the audio crate itself.
 audio = { package = "turbospark-audio", path = "../audio", version = "0.3.2" }
+# The running macOS version, so a Core ML profile reports `can_run` only
+# where its programs load (macOS 15+). Portable: a stub off macOS.
+turbospark-coreml = { path = "../coreml", version = "0.3.2" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

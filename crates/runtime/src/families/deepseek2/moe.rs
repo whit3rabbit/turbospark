@@ -252,7 +252,7 @@ pub(crate) fn encode_deepseek2_layer_moe(
     }
 
     encode_moe_phase1_any(
-        routed_layouts[blob_layer].phase1,
+        routed_layouts[blob_layer],
         context,
         pass,
         routed,

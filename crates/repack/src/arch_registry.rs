@@ -311,6 +311,31 @@ fn config_json_resolution(root: &serde_json::Value) -> Option<(&str, ModelFamily
         })
 }
 
+/// Root `model_type`s of VLM wrappers whose TEXT trunk is a family here but
+/// whose vision tower is not the one this port runs.
+///
+/// Recognition only, and kept apart from [`SUPPORTED_HF`] on purpose: the
+/// family still resolves through `text_config.model_type`, so a row there
+/// would be a second, redundant route to it. What this list buys is the one
+/// decision the family cannot make: a `qwen3_5_moe_text` trunk normally comes
+/// with the SigLIP tower `classify_for_family` buckets as `VisionTower`, and
+/// under these wrappers the `vision_tower.` prefix names a different tower.
+///
+/// - `minicpmv4_7`: read off `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`
+///   @ 810419dd09762d63aad6da5b6a418c4af8946e60 (`text_config.model_type`
+///   `qwen3_5_moe_text`; a 27-layer MiniCPM SigLIP under `vision_tower.`,
+///   plus `vit_merger.` and `merger.`).
+const FOREIGN_VISION_WRAPPERS: &[&str] = &["minicpmv4_7"];
+
+/// True when `config.json`'s root `model_type` is a wrapper in
+/// [`FOREIGN_VISION_WRAPPERS`], whose tower must be dropped rather than
+/// ingested as this port's own.
+pub fn has_foreign_vision_tower(root: &serde_json::Value) -> bool {
+    root.get("model_type")
+        .and_then(|v| v.as_str())
+        .is_some_and(|m| FOREIGN_VISION_WRAPPERS.contains(&m))
+}
+
 /// Guards a family-specific `config.json` parser against being handed
 /// another family's file.
 ///

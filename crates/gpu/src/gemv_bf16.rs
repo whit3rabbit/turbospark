@@ -11,7 +11,7 @@
 
 use metal::FunctionConstantValues;
 
-use crate::bytes::u32_bytes;
+use crate::bytes::{f32_bytes, u32_bytes};
 use crate::context::{GpuError, MetalContext, PassEncoder};
 
 pub static SOURCE: &str = include_str!("shaders/gemv_bf16.metal");
@@ -60,6 +60,38 @@ pub fn encode_bf16_gemv_resident(
         &[(u32_bytes(&m_u32), 3), (u32_bytes(&n_u32), 4)],
         w.rows as u64,
         THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// Looks up row `token_id` of a resident BF16 embedding table (`[V, d]`,
+/// starting at `table.1`) into FP16 `out`, scaled by `out_scale`.
+pub fn encode_embed_lookup_bf16(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    table: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    token_id: u32,
+    d: u32,
+    out_scale: f32,
+) -> Result<(), GpuError> {
+    assert!(d > 0);
+    let pipeline = context.pipeline(
+        SOURCE,
+        "embed_lookup_bf16",
+        &FunctionConstantValues::new(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(table.0, 0, table.1), (out.0, 1, out.1)],
+        &[
+            (u32_bytes(&token_id), 2),
+            (u32_bytes(&d), 3),
+            (f32_bytes(&out_scale), 4),
+        ],
+        (d as u64, 1, 1),
+        (64, 1, 1),
     );
     Ok(())
 }

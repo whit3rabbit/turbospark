@@ -438,6 +438,15 @@ impl AudioCatalog {
                 // f32 weights, the bf16 G2P widened, and a reserve covering the
                 // measured peak footprint of a 28 s reference.
                 AudioTask::TextToSpeech if family == "megatts3" => (weight_bytes.saturating_add(g2p_bytes).saturating_add(19<<29),"measured peak footprint on Metal 8.8 GiB (3 s reference) to 14.3 GiB (27.5 s reference, 13 s of speech), 1.4 to 2.9 GiB above the CPU path; estimate: weights, widened G2P and 9.5 GiB working reserve"),
+                AudioTask::SpeechToText if family == "parakeet_tdt" => {
+                    let compiled = row
+                        .assets
+                        .iter()
+                        .filter(|a| a.path.ends_with("/weights/weight.bin"))
+                        .try_fold(0u64, |n, a| n.checked_add(a.size))
+                        .ok_or("audio weight size overflow")?;
+                    (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(256<<20),"measured 488 MB peak footprint on one 2.8 s clip (GPU encoder, M4 Max); estimate: three times compiled weights, 30-minute PCM, and 256 MiB working reserve")
+                }
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
@@ -920,7 +929,7 @@ fn delete_managed_audio_path(
 
 /// Families whose generic catalog rows may run: a runtime adapter for them
 /// exists and was reviewed. Every other new row stays closed.
-const REVIEWED_ADAPTERS: &[&str] = &["megatts3"];
+const REVIEWED_ADAPTERS: &[&str] = &["megatts3", "parakeet_tdt"];
 
 fn check_acknowledged(profile: &AudioProfile, acknowledged: &[String]) -> Result<(), String> {
     let missing: Vec<&str> = profile
@@ -954,6 +963,25 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             cancellation: "diffusion_step".into(),
             can_run: true,
             unavailable_reason: None,
+        };
+    }
+    if family == "parakeet_tdt" {
+        // Core ML programs targeting iOS 18 / macOS 15. On an older OS the
+        // runtime refuses to open them, so the profile says so up front.
+        let os_ok = turbospark_coreml::os_version().0 >= 15;
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["transcribe".into()],
+            // Decoder-frame alignment on an 80 ms grid.
+            timing: Some("token".into()),
+            backend: "coreml".into(),
+            cancellation: "window".into(),
+            can_run: os_ok,
+            unavailable_reason: (!os_ok)
+                .then(|| "Parakeet on Core ML requires macOS 15 or newer".into()),
         };
     }
     let (operation,backend,cancellation,can_run,reason,timing) = match family {
@@ -1859,7 +1887,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 9);
+        assert_eq!(catalog.entries().count(), 10);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::SpeechToText,
@@ -1891,6 +1919,14 @@ mod tests {
                 "cowWhySo/MegaTTS3-TurboSpark",
                 "a55e74f50cbb88ca72658b4999a0ba85a567e466",
                 24000,
+                1,
+            ),
+            (
+                AudioTask::SpeechToText,
+                "parakeet-redux-coreml",
+                "FluidInference/parakeet-redux-coreml",
+                "8c5ef97a29cd120dc76b354b3f22b7fec3b486f9",
+                16000,
                 1,
             ),
         ] {
@@ -1929,6 +1965,17 @@ mod tests {
         {
             assert!(whisper.assets.iter().any(|a| a.path == file));
         }
+        // The Core ML profile runs through the reviewed native adapter, and
+        // its memory estimate counts compiled weights, not safetensors.
+        let parakeet = catalog.get("parakeet-redux-coreml").unwrap();
+        assert_eq!(parakeet.family, "parakeet_tdt");
+        assert_eq!(parakeet.capabilities.backend, "coreml");
+        assert_eq!(parakeet.readiness, AudioReadiness::ImplementedUnqualified);
+        assert!(parakeet.resident_memory_bytes > 3 * 200_000_000);
+        assert_eq!(
+            parakeet.capabilities.can_run,
+            turbospark_coreml::os_version().0 >= 15
+        );
         let music = catalog.get("minimax-music3-4bit").unwrap();
         for file in crate::embedded_music_entry("minimax-music3-4bit")
             .unwrap()

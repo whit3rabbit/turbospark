@@ -16,6 +16,7 @@ use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::qwen::{layer_tensor, BatchedScratch, HadamardPlan};
 use crate::real_forward::RealForwardError;
+use crate::real_forward_types::MAX_PREFILL_BATCH;
 use crate::real_forward_utils::entry;
 
 /// BF16 bit pattern for 1.0.
@@ -40,6 +41,11 @@ pub(crate) struct RealQwenState {
     /// Experimental scheduling is captured once per open, keeping env
     /// lookups out of the per-layer hot path and the shipping path unchanged.
     pub(crate) shared_read_overlap: bool,
+    /// `false` when `TURBOSPARK_QWEN_MOE_CHUNKED=0` was set at open: the
+    /// kill switch for the MoE chunked prefill driver
+    /// (`moe_prefill.rs`), which keeps the sequential path one env var away
+    /// (`docs/SPEEDUP_PLAYBOOK.md`). Read once here, never per token.
+    pub(crate) moe_chunked_prefill: bool,
     pub(crate) mapped_demand_preparation: Option<streaming::MappedPagePreparationMode>,
     /// BF16 `[hidden]` of ones. The INT8 router kernel multiplies `x[n]`
     /// by an effective scale per element; Qwen has no `router.scale` and
@@ -115,6 +121,8 @@ impl RealQwenState {
         let dense = arch.num_experts == 0;
         let shared_read_overlap =
             !dense && std::env::var("TURBOSPARK_QWEN_SHARED_READ_OVERLAP").as_deref() == Ok("1");
+        let moe_chunked_prefill =
+            !dense && std::env::var("TURBOSPARK_QWEN_MOE_CHUNKED").as_deref() != Ok("0");
         let mapped_demand_preparation =
             match std::env::var("TURBOSPARK_MAPPED_DEMAND_PREP").as_deref() {
                 Err(_) | Ok("off") => None,
@@ -318,12 +326,18 @@ impl RealQwenState {
             rotary_dim: rotary_dim as u32,
             dense,
             shared_read_overlap,
+            moe_chunked_prefill,
             mapped_demand_preparation,
             router_ones,
             per_expert_ones: vec![1.0; num_experts],
             // `new_output_buffer(0)` is not a thing worth finding out about at
             // the first dispatch, and a dense flow never binds this.
-            router_logits_f32: context.new_output_buffer((num_experts.max(1) * 4) as u64),
+            // `MAX_PREFILL_BATCH` rows: the MoE chunked driver reads every
+            // token's router logits back in one host round trip after the
+            // layer's single `cb1` commit, so a single row would hand every
+            // token the last token's routing. Decode uses row 0.
+            router_logits_f32: context
+                .new_output_buffer((num_experts.max(1) * MAX_PREFILL_BATCH * 4) as u64),
             q_packed: halfs(2 * q_dim),
             attn_gate: halfs(q_dim),
             gdn_qkv_raw: halfs(qkv_dim),
@@ -333,7 +347,11 @@ impl RealQwenState {
             gdn_b: halfs(v_heads),
             gdn_y: halfs(value_dim),
             gdn_out: halfs(value_dim),
-            moe_x: halfs(hidden),
+            // `MAX_PREFILL_BATCH` rows, for the same reason as
+            // `router_logits_f32`: the MoE chunked driver writes every token's
+            // post-attention norm in `cb1` and reads it one commit later in
+            // that token's routed pass. Decode and the dense driver use row 0.
+            moe_x: halfs(hidden * MAX_PREFILL_BATCH),
             h1: halfs(hidden),
             h2: halfs(hidden),
             shared_gate_logit: halfs(1),

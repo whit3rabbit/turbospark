@@ -288,7 +288,7 @@ pub use gdn::{
 #[cfg(target_os = "macos")]
 pub use gdn_state::{GdnSnapshot, GdnStateManager};
 #[cfg(target_os = "macos")]
-pub use gemv_bf16::{encode_bf16_gemv_resident, Bf16ResidentMatrix};
+pub use gemv_bf16::{encode_bf16_gemv_resident, encode_embed_lookup_bf16, Bf16ResidentMatrix};
 #[cfg(target_os = "macos")]
 pub use hadamard::{
     encode_hadamard_fwht, hadamard_shape_error, HADAMARD_HYBRID_THREADS, HADAMARD_MAX_BLOCK,

@@ -49,3 +49,23 @@ void bf16_gemv_rows(device const bfloat* W [[buffer(0)]],
         if (simd_lane_id == 0) { y[tg] = half(v); }
     }
 }
+
+// ============================================================================
+// embed_lookup_bf16 -- one row of a resident BF16 embedding table, to FP16.
+//
+// Port-local, no upstream: every embedding table before the MLX mxfp4
+// MiniCPM-V 4.7 checkpoint was quantized, and that conversion keeps
+// `embed_tokens` BF16. Same contract as `embed_lookup_q8_0` and its siblings
+// (one thread per element, `out_scale` applied in FP32, FP16 out). A BF16
+// value past FP16's range becomes infinity, which is half()'s conversion and
+// the same narrowing `bf16_gemv_rows` applies to its own output.
+// ============================================================================
+kernel void embed_lookup_bf16(device const bfloat* table [[buffer(0)]],   // [V, D]
+                              device half* out [[buffer(1)]],             // [D]
+                              constant uint& token_id [[buffer(2)]],
+                              constant uint& D [[buffer(3)]],
+                              constant float& out_scale [[buffer(4)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= D) return;
+    out[gid] = half(float(table[uint64_t(token_id) * D + gid]) * out_scale);
+}

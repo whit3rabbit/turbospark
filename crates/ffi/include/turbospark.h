@@ -335,8 +335,10 @@ void ts_session_close(TsSession *s);
 /*
  * Asks the in-flight generation to stop. Safe from any thread; never blocks.
  *
- * The flag is cleared at the start of every generation, so a Stop pressed
- * between turns does not cancel the next one. A cancelled run is NOT an
+ * The flag is cleared when ts_generate() or ts_humanize() is entered, before
+ * the call queues behind any other heavyweight job. A Stop pressed between
+ * turns therefore does not cancel the next one, while a Stop pressed during
+ * that queue wait does. A cancelled run is NOT an
  * error: ts_generate returns TS_OK with stopReason "cancelled" and whatever
  * text had been produced, and the KV cache describes itself honestly, so the
  * conversation can continue from the partial turn.
@@ -1414,7 +1416,7 @@ int32_t ts_hf_endpoint_set(const char *endpoint);
 
 /*
  * Computes vector embeddings for a JSON array of strings using a local encoder
- * model (.safetensors directory or alias).
+ * model (.safetensors directory, Core ML EmbeddingGemma 2 export, or alias).
  *
  * texts_json is a JSON array of strings: ["text1", "text2"]
  * Writes a JSON array of float arrays to *out (free with ts_string_free):
@@ -1423,6 +1425,82 @@ int32_t ts_hf_endpoint_set(const char *endpoint);
 int32_t ts_embedding_encode_json(const char *model_path,
                                  const char *texts_json,
                                  char **out);
+
+/*
+ * Computes embeddings for one JSON request; every field is optional:
+ *   {"texts": ["..."], "task": "search_query", "dimensions": 256,
+ *    "image_paths": ["/a.png"], "image_budget": 280,
+ *    "audio_paths": ["/a.wav"]}
+ * Writes to *out (free with ts_string_free):
+ *   {"texts": [[...]], "images": [[...]],
+ *    "audio": [[{"start_seconds": 0, "duration_seconds": 10,
+ *                "embedding": [...]}]]}
+ * One audio entry per file, one item per 10 s window. task, images and
+ * audio need a model with those prompts and towers (EmbeddingGemma 2 on
+ * Core ML, macOS 15+); others return an error.
+ */
+int32_t ts_embedding_encode_request_json(const char *model_path,
+                                         const char *request_json,
+                                         char **out);
+
+/*
+ * Pinned embedding profiles (crates/catalog/src/embedding_models.json).
+ * Writes a JSON array to *out (free with ts_string_free); each row has
+ * alias, display_name, family, backend, repository, revision, license,
+ * modalities, dimensions, matryoshka_dims, download_bytes, installed_path
+ * (null until a verified install exists), can_run and unavailable_reason.
+ * An installed alias works anywhere an embedding model path is accepted.
+ */
+int32_t ts_embedding_catalog_json(char **out);
+
+/*
+ * Downloads, verifies (size and SHA-256 per file) and installs one pinned
+ * embedding profile into models/embeddings/<alias> of the default store.
+ * Progress arrives as TS_INSTALL_BYTES; ts_install_cancel stops it with
+ * TS_ERR_CANCELLED. Refuses an existing install. Writes
+ * {"alias", "path"} to *out.
+ */
+int32_t ts_embedding_install(const char *alias, TsInstallCallback callback,
+                             void *userdata, char **out);
+
+/*
+ * Document OCR on Core ML (Unlimited OCR, macOS 15+).
+ *
+ * A session holds the model and a list of pending pages. Add pages, then
+ * read them as one document; every read clears the pending list. One page
+ * uses the single-page prompt, several the multi-page prompt (the bundle's
+ * limit is 8 pages). Off macOS 15 every call returns TS_ERR_UNSUPPORTED.
+ */
+typedef struct TsOcrSession TsOcrSession;
+
+/* Opens a directory holding UnlimitedOcrPageEncoder.mlpackage,
+ * UnlimitedOcrDecoder.mlpackage, embeddings.f16, tokenizer.json and
+ * config.json. The first open compiles the decoder for this machine. */
+int32_t ts_ocr_open(const char *model_path, TsOcrSession **out);
+
+/* Closes a session. Not while a read is in flight. NULL is a no-op. */
+void ts_ocr_close(TsOcrSession *s);
+
+/* Asks an in-flight read to stop. Safe from any thread; never blocks. The
+ * read returns TS_ERR_CANCELLED. A Stop between reads is cleared by the
+ * next read. */
+void ts_ocr_cancel(const TsOcrSession *s);
+
+/* Adds one page of interleaved RGB8 pixels; row_bytes >= width * 3. */
+int32_t ts_ocr_add_page_rgb(const TsOcrSession *s, const uint8_t *rgb,
+                            size_t width, size_t height, size_t row_bytes);
+
+/* Adds one page from a PNG or JPEG file. */
+int32_t ts_ocr_add_page_file(const TsOcrSession *s, const char *path);
+
+/* Reads the pending pages. options_json may be NULL or
+ * {"max_new_tokens": N}. Writes to *out (free with ts_string_free):
+ *   {"text": "plain text, pages separated by a blank line",
+ *    "raw_text": "model output with <PAGE> and <|det|> layout markup",
+ *    "pages": 2, "prompt_tokens": 551, "output_tokens": 208,
+ *    "stopped_at_eos": true} */
+int32_t ts_ocr_read_json(const TsOcrSession *s, const char *options_json,
+                         char **out);
 
 /*
  * Computes the cosine similarity between two float vectors of length `len`.

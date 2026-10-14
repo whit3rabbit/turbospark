@@ -52,14 +52,22 @@ class ExpertCache:
     ahead of occupied ones regardless of count.
     """
 
-    def __init__(self, slot_count, num_experts):
+    def __init__(self, slot_count, num_experts, policy="lfu", decay=0):
         self.slot_count = slot_count
         self.slot_expert = [None] * slot_count
         self.slot_last_use = [0] * slot_count
         self.use_count = [0] * num_experts
         self.use_clock = 0
+        self.policy = policy
+        # Halve every count after this many plans (0 = never, the engine's
+        # cumulative LFU). Flash-Next halves every 1024 tokens; one plan is
+        # one pass at one layer, so the per-layer interval is in passes.
+        self.decay = decay
+        self.plans_since_decay = 0
 
     def _eviction_key(self, slot):
+        if self.policy == "lru":
+            return (0, self.slot_last_use[slot])
         expert = self.slot_expert[slot]
         if expert is None:
             # (None, Some) => Less: empty slots are taken first.
@@ -108,6 +116,12 @@ class ExpertCache:
             slot = evictable[offset]
             self.slot_expert[slot] = expert
             self.slot_last_use[slot] = clock
+
+        if self.decay:
+            self.plans_since_decay += 1
+            if self.plans_since_decay >= self.decay:
+                self.use_count = [c >> 1 for c in self.use_count]
+                self.plans_since_decay = 0
 
         return hits, misses
 
@@ -290,21 +304,109 @@ def pilot_k_sweep(routed, predicted, num_experts, slots, npass, skip, top_k):
               f"{fetched / max(covered, 1):7.2f}    {total / misses_seen:.2f}x")
 
 
+def parse_policy(spec):
+    """`lfu`, `lru`, or `lfu-decay:N` (halve counts every N passes)."""
+    if spec in ("lfu", "lru"):
+        return spec, 0
+    if spec.startswith("lfu-decay:"):
+        interval = int(spec.split(":", 1)[1])
+        if interval <= 0:
+            sys.exit(f"--policies: decay interval must be positive in {spec!r}")
+        return "lfu", interval
+    sys.exit(f"--policies: unknown policy {spec!r} (lfu, lru, lfu-decay:N)")
+
+
+def session_layers(captures):
+    """Per-layer pass lists with every capture's passes appended in order.
+
+    Replays several requests through ONE cache, the way a long-lived server
+    runner keeps its streamer slots across turns. This is the access shape
+    that counter decay is for: a hot set that drifts between requests, which
+    a single 200-token capture cannot show.
+    """
+    top_k = captures[0]["top_k"]
+    num_experts = captures[0]["num_experts"]
+    layers = None
+    for capture in captures:
+        if capture["top_k"] != top_k or capture["num_experts"] != num_experts:
+            sys.exit("captures disagree on top_k or num_experts")
+        trace = capture.get("trace")
+        if not trace:
+            sys.exit("a capture has no `trace` block (TURBOSPARK_ROUTER_TRACE=1)")
+        rows = {layer: passes(row, top_k) for layer, row in enumerate(trace) if row}
+        if layers is None:
+            layers = {layer: [] for layer in rows}
+        if set(rows) != set(layers):
+            sys.exit("captures disagree on which layers route")
+        # Equalise pass counts per capture so layers stay in lock step.
+        n = min(len(r) for r in rows.values())
+        for layer, r in rows.items():
+            layers[layer].extend(r[:n])
+    return top_k, num_experts, layers
+
+
+def policy_sweep(captures, slot_counts, policies, skip, stride_bytes):
+    top_k, num_experts, layers = session_layers(captures)
+    npass = min(len(p) for p in layers.values())
+    if skip >= npass:
+        sys.exit(f"--skip {skip} leaves no passes of {npass}")
+    print(f"policy sweep: {len(captures)} capture(s) as one session, "
+          f"{npass} passes (measuring from {skip}), {len(layers)} layers, "
+          f"top_k {top_k}, experts {num_experts}")
+    print(f"  slots  policy            hit rate   misses/layer/pass"
+          + ("   MiB/pass" if stride_bytes else ""))
+    for slots in slot_counts:
+        for spec in policies:
+            policy, decay = parse_policy(spec)
+            caches = {l: ExpertCache(slots, num_experts, policy, decay) for l in layers}
+            req = miss = 0
+            for p in range(npass):
+                for layer, layer_passes in layers.items():
+                    _, misses = caches[layer].plan(layer_passes[p])
+                    if p >= skip:
+                        req += len(layer_passes[p])
+                        miss += len(misses)
+            per = miss / (len(layers) * (npass - skip))
+            line = (f"  {slots:>5}  {spec:<16}  {100.0 * (req - miss) / req:6.2f}%   "
+                    f"{per:8.3f}")
+            if stride_bytes:
+                line += f"            {per * len(layers) * stride_bytes / 2**20:8.1f}"
+            print(line)
+        print()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("capture", help="JSON written by TURBOSPARK_ROUTER_HIST")
+    ap.add_argument("capture", nargs="+",
+                    help="JSON written by TURBOSPARK_ROUTER_HIST; several are "
+                         "replayed as one session under --policies")
     ap.add_argument("--slots", default="16,32",
                     help="comma-separated slot counts to simulate (default 16,32)")
     ap.add_argument("--skip", type=int, default=0,
                     help="passes to exclude from the statistics while still "
                          "warming the cache; use it to read decode alone")
+    ap.add_argument("--policies",
+                    help="comma-separated eviction policies to compare instead "
+                         "of the prefetch analysis: lfu, lru, lfu-decay:N")
+    ap.add_argument("--stride-bytes", type=int, default=0,
+                    help="expert stride, to report misses as MiB per pass")
     args = ap.parse_args()
 
-    with open(args.capture, encoding="utf-8") as f:
-        capture = json.load(f)
+    captures = []
+    for path in args.capture:
+        with open(path, encoding="utf-8") as f:
+            captures.append(json.load(f))
+    slot_counts = [int(s) for s in args.slots.split(",")]
 
-    analyse(capture, [int(s) for s in args.slots.split(",")], args.skip)
+    if args.policies:
+        policy_sweep(captures, slot_counts, args.policies.split(","), args.skip,
+                     args.stride_bytes)
+        return
+    if len(captures) != 1:
+        sys.exit("the prefetch analysis reads one capture; pass --policies to "
+                 "replay several as a session")
+    analyse(captures[0], slot_counts, args.skip)
 
 
 if __name__ == "__main__":

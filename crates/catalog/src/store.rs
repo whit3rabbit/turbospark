@@ -433,6 +433,17 @@ impl Store {
         self.audio_models_dir().join(format!("{alias}.gturbo"))
     }
 
+    /// The namespace for pinned embedding installs (`crate::embedding`).
+    /// Not a [`ModelModality`]: embedding installs have no registry row.
+    pub fn embedding_models_dir(&self) -> PathBuf {
+        self.models_root().join("embeddings")
+    }
+
+    /// Where an embedding install of `alias` lands.
+    pub fn embedding_install_path(&self, alias: &str) -> PathBuf {
+        self.embedding_models_dir().join(alias)
+    }
+
     /// Where a vision-tower sidecar pull of `alias` lands by default. Towers
     /// are text-model accessories, so they stay in the text namespace.
     pub fn vision_install_path(&self, alias: &str) -> PathBuf {
@@ -666,6 +677,18 @@ impl Store {
         legacy.is_dir().then_some(legacy)
     }
 
+    /// Resolve a pinned embedding alias to its install directory. Only a
+    /// plain alias is considered, so a path never lands here.
+    pub fn resolve_embedding(&self, name: &str) -> Option<PathBuf> {
+        if name.is_empty() || name.contains('/') || name.starts_with('.') {
+            return None;
+        }
+        let dir = self.embedding_install_path(name);
+        dir.join(crate::embedding::RECEIPT_FILENAME)
+            .is_file()
+            .then_some(dir)
+    }
+
     /// Resolve an audio alias or explicit path.
     pub fn resolve_audio(&self, name: &str) -> Option<PathBuf> {
         let as_path = PathBuf::from(name);
@@ -689,6 +712,7 @@ pub fn resolve_model_arg(name: &str) -> PathBuf {
     match Store::default_store() {
         Ok(store) => store
             .resolve_text(name)
+            .or_else(|| store.resolve_embedding(name))
             .unwrap_or_else(|| PathBuf::from(name)),
         Err(_) => PathBuf::from(name),
     }

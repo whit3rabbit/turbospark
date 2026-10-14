@@ -115,6 +115,7 @@ fn report(
         arch,
         types: Vec::new(),
         affine: None,
+        mxfp4: false,
         expert_stride,
         trained_context: None,
         sidecars_present: Vec::new(),

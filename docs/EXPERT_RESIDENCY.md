@@ -194,6 +194,14 @@ process that opens a model, emits ten tokens and exits.
 Both of those are why this is a MODE and not a replacement, and why it must
 resolve DOWN to the streamer rather than up.
 
+**The streamed arm's cold cost is set by its slot count, measured 2026-10-12.**
+On the same Gemma 4 install with the page cache purged and `F_NOCACHE` set
+(1.00x physical), streamed decode was 10.6, 16.0 and 39.2 tok/s at 16, 32
+and 64 slots, against 45.6, 50.8 and 52.3 warm. That is the streamed side of
+the cold-or-memory-tight trade named above. The mapped arm was NOT measured
+under the cold condition, so this page still has no cold comparison between
+the two modes. See `docs/EXPERT_ROUTING.md` for the table and its caveats.
+
 ## This does not contradict upstream, it extends it
 
 `DEVIATIONS.md` records a Swift finding that bounded `pread` BEATS `mmap` for
@@ -368,6 +376,9 @@ why both paths ship rather than one replacing the other.
   unknown rather than known-small.
 - A measurement of what happens when the OS evicts a mapped expert mid-decode,
   which is the failure mode this design accepts and the streamer does not have.
+- The mapped arm under the purged cold condition, interleaved with the streamed
+  arm at 16, 32 and 64 slots (the streamed half exists in
+  `docs/EXPERT_ROUTING.md`; the mapped half does not).
 - A real `QwenGdnMoe` install on this machine to verify against (Ornith 35B
   was on disk when this feature was scoped; it no longer is -- see
   `CLAUDE.local.md`'s artifact inventory, which needs a re-check against

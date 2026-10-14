@@ -5,7 +5,7 @@ summary: "Routed-expert pread streamer and slot cache. On a warm install the pre
 tags: ["crate", "streaming"]
 source: "crates/streaming/CLAUDE.md"
 created: "2026-09-04"
-updated: "2026-09-04"
+updated: "2026-10-14"
 ---
 
 ## What does turbospark-streaming do?
@@ -55,4 +55,16 @@ sound only because `run_batch` blocks until every claim is dropped).
   registered buffers and async completion are already had (one
   `posix_memalign`'d `AlignedSlot` per slot, a swept thread-count pool).
   The measured read is a ~23.8 GiB/s page-cache memcpy, not latency-bound
-  I/O, so a ring optimizes a term that's already near zero.
+  I/O, so a ring optimizes a term that's already near zero. (The Linux-only
+  seam in `linux_uring.rs` is portability work, not that optimization.)
+- Don't treat a green cross-target `cargo check` as evidence that
+  `linux_uring.rs` works. It compiled clean for its whole life and could not
+  complete one read on its first Linux run: four io_uring flags were off by
+  bit position (each wrong bit is another valid flag) and the CQ cursor was
+  unmasked. Run `cargo test -p turbospark-streaming` on Linux after touching
+  it, and check the output does not say `SKIPPED`.
+- Don't change `ExpertCache`'s eviction policy on reasoning alone. Its
+  counts never age and the cache lives as long as the runner, which is
+  unmeasured on a long-lived server; price a change with
+  `scripts/expert_policy_replay.py` (oracle row first) over several
+  back-to-back captures before building it. See `docs/MOE_PRIOR_ART.md`.

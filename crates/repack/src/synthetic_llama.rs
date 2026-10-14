@@ -451,6 +451,7 @@ fn build_gqa_install(
         default_bits: 4,
         group_size: 64,
         bits_overrides: overrides,
+        ..Default::default()
     };
     write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
     Ok(arch)

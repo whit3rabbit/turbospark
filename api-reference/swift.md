@@ -43,7 +43,7 @@ func ask() async throws {
 }
 ```
 
-`GenerationEvent` also reports prefill progress, reasoning, and stop reason. It has a tool-call event case, but the current `GenerateOptions` API does not offer tools. `session.cancel()` requests a stop. The final `GenerationResult` includes the assistant text, token counts, timing, stop reason, and memory-pressure field.
+`GenerationEvent` also reports prefill progress, reasoning, and stop reason. It has a tool-call event case, and `GenerateOptions.tools` offers functions for a turn; parsed calls arrive as `.toolCall` events and in `GenerationResult.toolCalls`. `session.cancel()` requests a stop. The final `GenerationResult` includes the assistant text, token counts, timing, stop reason, and memory-pressure field.
 
 Set per-turn limits and sampling with `GenerateOptions`. Its defaults are 512 new tokens, temperature 0.2, top-K 64, top-P 0.95, and reasoning off. Reasoning levels vary by model template. `OpenOptions` controls context and expert-cache sizing, load guard, power profile, speculation, and KV-cache quantization when opening a session.
 

@@ -39,6 +39,19 @@ pub fn expert_stride_from_headers(
                 .get(role)
                 .ok_or_else(|| Gemma4Error::MissingTensor(format!("layer {layer} {role}_proj")))?;
             let base = name.strip_suffix(".weight").unwrap_or(name);
+            if quant.is_mxfp4(base) {
+                // Re-blocked to GGUF MXFP4 at write time: the 17-byte block
+                // carries its own exponent, so there are no companions.
+                let t = shards.info(name)?;
+                let [_, rows, words] = t.shape[..] else {
+                    return Err(Gemma4Error::ShapeMismatch {
+                        tensor: name.to_string(),
+                        detail: format!("expected rank-3 mxfp4 experts, got {:?}", t.shape),
+                    });
+                };
+                blob += rows * super::mlx_mxfp4::gguf_mxfp4_row_bytes(words as usize * 8) as u64;
+                continue;
+            }
             let bits = quant.bits_for(base);
             if bits != 4 {
                 return Err(Gemma4Error::UnsupportedDtype {
@@ -99,6 +112,26 @@ pub fn plan_one_expert_layer(
         })
         .collect();
     let mut blob_used = 0u64;
+
+    let base_of = |role: &str| -> Result<&str, Gemma4Error> {
+        let name = *bundle
+            .get(role)
+            .ok_or_else(|| Gemma4Error::MissingTensor(format!("layer {layer} {role}_proj")))?;
+        Ok(name.strip_suffix(".weight").unwrap_or(name))
+    };
+    let mxfp4 = ["gate", "up", "down"]
+        .iter()
+        .map(|r| base_of(r).map(|b| quant.is_mxfp4(b)))
+        .collect::<Result<Vec<_>, _>>()?;
+    if mxfp4.iter().all(|&m| m) {
+        return plan_mxfp4_expert_layer(shards, bundle, experts, layer, expert_count);
+    }
+    if mxfp4.iter().any(|&m| m) {
+        return Err(Gemma4Error::UnsupportedDtype {
+            tensor: format!("layer {layer} routed experts"),
+            dtype: "mxfp4 mixed with affine across gate/up/down".to_string(),
+        });
+    }
 
     for role in ["gate", "up", "down"] {
         let name = *bundle
@@ -215,6 +248,94 @@ pub fn plan_one_expert_layer(
             }
         }
         blob_used += (w_per + s_per + b_per) as u64;
+    }
+    Ok((LayerBlobs { layer, experts }, blob_used))
+}
+
+/// The MLX mxfp4 sibling of the affine walk above: three sub-tensors per
+/// expert, `gate`, `up`, `down`, each re-blocked to GGUF MXFP4 with dtype
+/// `"mxfp4"` and logical shape `[out, in]` -- what the GGUF writer records
+/// for `gpt-oss`, so `routed_layouts_from_layout` classifies the layer as
+/// `GgufMxfp4` (no `gate_scales`) and resolves no bias planes.
+fn plan_mxfp4_expert_layer(
+    shards: &Gemma4Shards<'_>,
+    bundle: &BTreeMap<&'static str, &str>,
+    mut experts: Vec<ExpertBlob>,
+    layer: usize,
+    expert_count: usize,
+) -> Result<(LayerBlobs, u64), Gemma4Error> {
+    let mut blob_used = 0u64;
+    for role in ["gate", "up", "down"] {
+        let name = *bundle
+            .get(role)
+            .ok_or_else(|| Gemma4Error::MissingTensor(format!("layer {layer} {role}_proj")))?;
+        let base = name.strip_suffix(".weight").unwrap_or(name);
+        let w = shards.info(name)?;
+        let [count, rows, words] = w.shape[..] else {
+            return Err(Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!("expected rank-3 mxfp4 experts, got {:?}", w.shape),
+            });
+        };
+        if w.dtype != "U32" || count as usize != expert_count {
+            return Err(Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!(
+                    "expected U32 rank-3 with leading {expert_count}, got {} {:?}",
+                    w.dtype, w.shape
+                ),
+            });
+        }
+        // What mxfp4 writes beside it: U8 exponents, one per 32, and no
+        // `.biases` (whose presence would mean a mislabelled affine tensor).
+        let scales_name = format!("{base}.scales");
+        let s = shards.info(&scales_name)?;
+        let cols = words * 8;
+        let expected = [count, rows, cols / super::mlx_mxfp4::MXFP4_GROUP as u64];
+        if s.dtype != "U8" || s.shape != expected {
+            return Err(Gemma4Error::ShapeMismatch {
+                tensor: scales_name,
+                detail: format!(
+                    "expected U8 {expected:?} mxfp4 expert scales, got {} {:?}",
+                    s.dtype, s.shape
+                ),
+            });
+        }
+        if shards.contains(&format!("{base}.biases")) {
+            return Err(Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: "mxfp4 experts carry a .biases plane, so they are affine".to_string(),
+            });
+        }
+        let (rows, cols) = (rows as usize, cols as usize);
+        let all_rows = rows * expert_count;
+        let gguf = super::mlx_mxfp4::reblock_to_gguf_mxfp4(
+            name,
+            &shards.read(name)?,
+            &shards.read(&format!("{base}.scales"))?,
+            all_rows,
+            cols,
+        )?;
+        let per = rows * super::mlx_mxfp4::gguf_mxfp4_row_bytes(cols);
+        // Not required by today's kernels: `dequant_mxfp4_row_simd` reads
+        // the weights as `uint8_t`, and only gpt-oss's bias planes are read
+        // as `float`. Kept as a cheap guard so a wider weight load added
+        // later cannot read a misaligned down plane without notice.
+        if role == "down" && blob_used % 4 != 0 {
+            return Err(Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!("down offset {blob_used} not 4-byte aligned"),
+            });
+        }
+        for (e, blob) in experts.iter_mut().enumerate() {
+            blob.sub_tensors.push(SubTensor {
+                role: role.to_string(),
+                bytes: gguf[e * per..(e + 1) * per].to_vec(),
+                dtype: "mxfp4".to_string(),
+                shape: vec![rows as u64, cols as u64],
+            });
+        }
+        blob_used += per as u64;
     }
     Ok((LayerBlobs { layer, experts }, blob_used))
 }

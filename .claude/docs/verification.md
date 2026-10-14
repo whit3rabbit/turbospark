@@ -262,7 +262,9 @@ cargo clippy --workspace --tests
 # no download, target already installed. `--workspace` does NOT work: onig_sys
 # (via tokenizer) and other cc-rs build deps need an x86_64-linux-gnu-gcc that
 # is not installed here, so runtime/repack/catalog/server/cli/bench cannot be
-# checked on this machine at all. These nine can, and are green. Run it when
+# checked on this machine at all. These eleven can, and are green.
+# `turbospark-coreml` builds as a stub off macOS by design. Its model hosts
+# live in runtime for exactly this reason. Run it when
 # touching a cfg, a dependency table, or anything unsafe. See Gotcha 8.
 # `turbospark-vision-io` is the one crate that is here by DESIGN rather than
 # by luck: the whole point of splitting vision preprocessing out is that the
@@ -273,7 +275,14 @@ cargo check --target x86_64-unknown-linux-gnu \
   -p turbospark-core -p turbospark-compute -p turbospark-model-io \
   -p turbospark-streaming -p turbospark-selection -p turbospark-invocation \
   -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io \
-  -p turbospark-image
+  -p turbospark-image -p turbospark-coreml
+
+# On a LINUX host, also run the streaming tests. A check compiles
+# `linux_uring.rs`; only a test executes its syscalls, and the first Linux
+# run found four wrong io_uring flags that a green check had always passed
+# (Gotcha 8). The ring test prints SKIPPED where a sandbox blocks io_uring;
+# that run proves nothing about the ring.
+cargo test -p turbospark-streaming
 
 # Run the CLI (validates the invocation; on macOS also attempts real
 # generation against --model in all three modes: --prompt (raw text),

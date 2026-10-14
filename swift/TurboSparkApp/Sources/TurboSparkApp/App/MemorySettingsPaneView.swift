@@ -289,6 +289,9 @@ struct MemorySettingsPaneView: View {
                 Text("Arctic embedding model path or alias", bundle: .module)
             }
             .onSubmit { model.persistSettingsDebounced() }
+            RecommendedEmbeddingModelRow(
+                model: model, selection: $model.memoryEmbeddingModel,
+                onSelect: { model.persistSettingsDebounced() })
             Text("Embeddings are optional. Approved claims remain searchable without a model.", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)

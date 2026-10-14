@@ -70,6 +70,7 @@ BENCHMARK:
 IMAGE:
     image generate [OPTIONS]       generate one 1024x1024 PNG from a prompt
     image pack [OPTIONS]           pack a Diffusers image export into an install
+    ocr --model DIR PAGE...        read page images to text (Core ML, macOS 15+)
 
 GLOBAL OPTIONS:
     --help, -h, help               print this help message
@@ -271,6 +272,7 @@ fn main() -> ExitCode {
         "run" => handle_run(rest),
         "humanize" => handle_humanize(rest),
         "image" => handle_image(rest),
+        "ocr" => execute_peer("turbospark-ocr", rest),
         "serve" => execute_peer("turbospark-server", rest),
         "start" => handle_start(rest),
         "stop" => handle_stop(),

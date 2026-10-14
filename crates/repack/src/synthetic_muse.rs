@@ -262,6 +262,7 @@ pub fn build_synthetic_muse_glimmer_install(
         default_bits: 4,
         group_size: 64,
         bits_overrides: std::collections::HashMap::new(),
+        ..Default::default()
     };
     write_muse_glimmer_install(dir, &arch, model_id, &header, &source, &quant)?;
     Ok(arch)

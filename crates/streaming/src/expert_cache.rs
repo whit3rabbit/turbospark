@@ -12,11 +12,53 @@ pub enum ExpertCachePolicy {
     Lru,
     /// Least Frequently Used eviction.
     Lfu,
+    /// LFU whose counts are all halved every `interval` plans, so a hot set
+    /// from an earlier request stops outranking the current one. Cumulative
+    /// LFU never forgets: replaying eight real Gemma 4 requests through one
+    /// cache, it scored WORSE than plain LRU (71.4% against 80.4% hits at 32
+    /// slots), while halving every 16-32 plans matched or beat both inside a
+    /// single request and across the session (`docs/EXPERT_ROUTING.md`).
+    LfuDecay {
+        /// Plans (one per layer per forward pass) between halvings. Positive.
+        interval: u32,
+    },
 }
 
 impl ExpertCachePolicy {
     /// Default cache policy (LFU).
     pub const DEFAULT: ExpertCachePolicy = ExpertCachePolicy::Lfu;
+
+    /// The A/B seam: `TURBOSPARK_EXPERT_CACHE_DECAY=<N>` selects
+    /// [`ExpertCachePolicy::LfuDecay`] with interval `N`; unset keeps
+    /// [`ExpertCachePolicy::DEFAULT`]. Anything that is not a positive
+    /// integer is an error rather than a silent fallback, since a seam that
+    /// quietly did nothing would be measured as the arm it claims not to be.
+    pub fn from_env() -> Result<Self, String> {
+        match std::env::var("TURBOSPARK_EXPERT_CACHE_DECAY") {
+            Err(std::env::VarError::NotPresent) => Ok(Self::DEFAULT),
+            Err(e) => Err(format!("TURBOSPARK_EXPERT_CACHE_DECAY: {e}")),
+            Ok(raw) => Self::lfu_decay_from_str(&raw),
+        }
+    }
+
+    /// Parses a decay interval; split out of [`Self::from_env`] for tests.
+    pub fn lfu_decay_from_str(raw: &str) -> Result<Self, String> {
+        match raw.trim().parse::<u32>() {
+            Ok(interval) if interval > 0 => Ok(Self::LfuDecay { interval }),
+            _ => Err(format!(
+                "TURBOSPARK_EXPERT_CACHE_DECAY must be a positive integer, got {raw:?}"
+            )),
+        }
+    }
+
+    /// Short human-readable form for startup lines.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Lru => "lru".to_string(),
+            Self::Lfu => "lfu".to_string(),
+            Self::LfuDecay { interval } => format!("lfu, halved every {interval} plans"),
+        }
+    }
 }
 
 /// Execution plan generated for a set of requested expert indices.
@@ -72,6 +114,7 @@ pub struct ExpertCache {
     expert_use_count: Vec<u64>,
     speculative_in_flight: Vec<bool>,
     use_clock: u64,
+    plans_since_decay: u32,
 }
 
 impl ExpertCache {
@@ -90,7 +133,13 @@ impl ExpertCache {
             expert_use_count: vec![0; experts_per_layer.max(1)],
             speculative_in_flight: vec![false; slot_count],
             use_clock: 0,
+            plans_since_decay: 0,
         }
+    }
+
+    /// The eviction policy this cache was built with.
+    pub fn cache_policy(&self) -> ExpertCachePolicy {
+        self.cache_policy
     }
 
     /// Returns total number of expert slots.
@@ -165,6 +214,19 @@ impl ExpertCache {
         for &expert in experts {
             if expert < self.expert_use_count.len() {
                 self.expert_use_count[expert] = self.expert_use_count[expert].saturating_add(1);
+            }
+        }
+        // Halve AFTER this plan's increments and after `evictable` was
+        // sorted, so this plan's victims are chosen exactly as cumulative
+        // LFU would choose them. Only a committed plan counts: a `None`
+        // return above leaves the interval untouched, like the counts.
+        if let ExpertCachePolicy::LfuDecay { interval } = self.cache_policy {
+            self.plans_since_decay += 1;
+            if self.plans_since_decay >= interval {
+                for count in &mut self.expert_use_count {
+                    *count >>= 1;
+                }
+                self.plans_since_decay = 0;
             }
         }
         for &slot in &assigned_slots {

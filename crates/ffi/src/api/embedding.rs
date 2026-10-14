@@ -9,11 +9,77 @@ use std::sync::{Mutex, OnceLock};
 use crate::abi::{self, guard_result};
 use crate::strings;
 
+/// The resident embedding model: a safetensors BERT-class encoder, or the
+/// Core ML EmbeddingGemma 2 export (recognized by its file layout).
+#[cfg(target_os = "macos")]
+enum EmbeddingBackend {
+    Encoder(Box<runtime::EncoderRunner>),
+    Gemma2(Box<runtime::coreml::EmbeddingGemma2CoreMl>),
+}
+
+#[cfg(target_os = "macos")]
+impl EmbeddingBackend {
+    fn open(dir: &Path) -> Result<Self, String> {
+        if runtime::coreml::detect_layout(dir)
+            == Some(runtime::coreml::CoreMlLayout::EmbeddingGemma2)
+        {
+            let opts = runtime::coreml::EmbeddingGemma2Options::from_env()?;
+            return runtime::coreml::EmbeddingGemma2CoreMl::open(dir, &opts)
+                .map(|m| Self::Gemma2(Box::new(m)));
+        }
+        runtime::EncoderRunner::open(dir).map(|r| Self::Encoder(Box::new(r)))
+    }
+
+    /// The files whose size and mtime decide whether the cached model is
+    /// stale, per layout.
+    fn stamp_files(dir: &Path) -> [PathBuf; 3] {
+        if runtime::coreml::detect_layout(dir)
+            == Some(runtime::coreml::CoreMlLayout::EmbeddingGemma2)
+        {
+            [
+                dir.join("config.json"),
+                dir.join("embeddings.bf16"),
+                dir.join("EmbeddingGemma2Text.mlpackage/Manifest.json"),
+            ]
+        } else {
+            ["config.json", "model.safetensors", "tokenizer.json"].map(|n| dir.join(n))
+        }
+    }
+
+    fn encode_texts(
+        &self,
+        texts: &[&str],
+        task: Option<&str>,
+        dimensions: Option<usize>,
+    ) -> Result<Vec<Vec<f32>>, String> {
+        match self {
+            Self::Gemma2(m) => m.embed_texts(texts, task, dimensions),
+            Self::Encoder(r) => {
+                if task.is_some() {
+                    return Err("this encoder model has no task prompts".into());
+                }
+                let mut out = r.encode_batch_text(texts)?;
+                if let Some(d) = dimensions {
+                    for v in &mut out {
+                        if d == 0 || d > v.len() {
+                            return Err(format!("dimensions {d} is outside 1..={}", v.len()));
+                        }
+                        v.truncate(d);
+                        let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-12);
+                        v.iter_mut().for_each(|x| *x /= norm);
+                    }
+                }
+                Ok(out)
+            }
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 struct CachedEncoder {
     dir: PathBuf,
     file_stamps: [(u64, Option<std::time::SystemTime>); 3],
-    runner: runtime::EncoderRunner,
+    backend: EmbeddingBackend,
 }
 
 #[cfg(target_os = "macos")]
@@ -55,49 +121,8 @@ pub unsafe extern "C" fn ts_embedding_encode_json(
             let texts: Vec<String> = serde_json::from_str(texts_json)
                 .map_err(|e| (abi::TS_ERR_JSON, format!("textsJson: {e}")))?;
 
-            let dir = catalog::resolve_model_arg(model_path);
-            let dir = dir.canonicalize().unwrap_or(dir);
-            let file_stamps = ["config.json", "model.safetensors", "tokenizer.json"]
-                .map(|name| file_stamp(&dir.join(name)));
-            let mutex = ENCODER_CACHE.get_or_init(|| Mutex::new(None));
-            let mut cache = match mutex.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => {
-                    let mut guard = poisoned.into_inner();
-                    *guard = None;
-                    guard
-                }
-            };
-            let needs_open = cache.as_ref().map_or(true, |entry| {
-                entry.dir != dir || entry.file_stamps != file_stamps
-            });
-            if needs_open {
-                *cache = None;
-                let runner = runtime::EncoderRunner::open(&dir).map_err(|e| {
-                    (
-                        abi::TS_ERR_OPEN,
-                        format!("failed to open encoder from {}: {e}", dir.display()),
-                    )
-                })?;
-                *cache = Some(CachedEncoder {
-                    dir: dir.clone(),
-                    file_stamps,
-                    runner,
-                });
-            }
             let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-            let embeddings = match cache.as_ref().unwrap().runner.encode_batch_text(&text_refs) {
-                Ok(embeddings) => embeddings,
-                Err(error) => {
-                    *cache = None;
-                    return Err((
-                        abi::TS_ERR_GENERATE,
-                        format!("embedding encoding failed: {error}"),
-                    ));
-                }
-            };
-            drop(cache);
-
+            let embeddings = with_backend(model_path, |b| b.encode_texts(&text_refs, None, None))?;
             let json = serde_json::to_string(&embeddings)
                 .map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
             strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
@@ -111,6 +136,266 @@ pub unsafe extern "C" fn ts_embedding_encode_json(
                 "embedding model inference is supported on macOS only".to_string(),
             ))
         }
+    })
+}
+
+/// Runs `f` on the cached backend for `model_path`, opening (or reopening,
+/// when its files changed) as needed. A failed call drops the cache so the
+/// next one reopens from disk.
+#[cfg(target_os = "macos")]
+fn with_backend<T>(
+    model_path: &str,
+    f: impl FnOnce(&EmbeddingBackend) -> Result<T, String>,
+) -> Result<T, (c_int, String)> {
+    let dir = catalog::resolve_model_arg(model_path);
+    let dir = dir.canonicalize().unwrap_or(dir);
+    let file_stamps = EmbeddingBackend::stamp_files(&dir).map(|p| file_stamp(&p));
+    let mutex = ENCODER_CACHE.get_or_init(|| Mutex::new(None));
+    let mut cache = match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = None;
+            guard
+        }
+    };
+    let needs_open = cache
+        .as_ref()
+        .is_none_or(|entry| entry.dir != dir || entry.file_stamps != file_stamps);
+    if needs_open {
+        *cache = None;
+        let backend = EmbeddingBackend::open(&dir).map_err(|e| {
+            (
+                abi::TS_ERR_OPEN,
+                format!("failed to open embedding model from {}: {e}", dir.display()),
+            )
+        })?;
+        *cache = Some(CachedEncoder {
+            dir: dir.clone(),
+            file_stamps,
+            backend,
+        });
+    }
+    match f(&cache.as_ref().expect("opened above").backend) {
+        Ok(v) => Ok(v),
+        Err(error) => {
+            *cache = None;
+            Err((
+                abi::TS_ERR_GENERATE,
+                format!("embedding encoding failed: {error}"),
+            ))
+        }
+    }
+}
+
+/// One embedding request: texts with an optional task prompt and
+/// Matryoshka size, plus image and audio files for models with those
+/// towers (EmbeddingGemma 2 on Core ML).
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmbeddingRequest {
+    #[serde(default)]
+    texts: Vec<String>,
+    #[serde(default)]
+    task: Option<String>,
+    #[serde(default)]
+    dimensions: Option<usize>,
+    #[serde(default)]
+    image_paths: Vec<String>,
+    #[serde(default)]
+    image_budget: Option<usize>,
+    #[serde(default)]
+    audio_paths: Vec<String>,
+}
+
+/// Computes embeddings for a JSON request. `request_json`:
+/// `{"texts": [...], "task": "search_query", "dimensions": 256,
+///   "image_paths": [...], "image_budget": 280, "audio_paths": [...]}`
+/// (every field optional). Writes `{"texts": [[...]], "images": [[...]],
+/// "audio": [[{"start_seconds", "duration_seconds", "embedding"}]]}` to
+/// `*out`. Task, images and audio need a model that supports them.
+#[no_mangle]
+pub unsafe extern "C" fn ts_embedding_encode_request_json(
+    model_path: *const c_char,
+    request_json: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "out must not be null".to_string(),
+            ));
+        }
+        let model_path = strings::required(model_path, "modelPath")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let request_json = strings::required(request_json, "requestJson")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+
+        #[cfg(target_os = "macos")]
+        {
+            let req: EmbeddingRequest = serde_json::from_str(request_json)
+                .map_err(|e| (abi::TS_ERR_JSON, format!("requestJson: {e}")))?;
+            let result = with_backend(model_path, |b| {
+                let refs: Vec<&str> = req.texts.iter().map(String::as_str).collect();
+                let texts = if refs.is_empty() {
+                    Vec::new()
+                } else {
+                    b.encode_texts(&refs, req.task.as_deref(), req.dimensions)?
+                };
+                let (images, audio) = match b {
+                    EmbeddingBackend::Gemma2(m) => {
+                        let images = req
+                            .image_paths
+                            .iter()
+                            .map(|p| {
+                                m.embed_image_file(Path::new(p), req.image_budget, req.dimensions)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let audio = req
+                            .audio_paths
+                            .iter()
+                            .map(|p| {
+                                m.embed_audio_file(Path::new(p), req.dimensions).map(|ws| {
+                                    ws.into_iter()
+                                        .map(|w| {
+                                            serde_json::json!({
+                                                "start_seconds": w.start_seconds,
+                                                "duration_seconds": w.duration_seconds,
+                                                "embedding": w.embedding,
+                                            })
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        (images, audio)
+                    }
+                    EmbeddingBackend::Encoder(_) => {
+                        if !req.image_paths.is_empty() || !req.audio_paths.is_empty() {
+                            return Err("this encoder model embeds text only".into());
+                        }
+                        (Vec::new(), Vec::new())
+                    }
+                };
+                Ok(serde_json::json!({"texts": texts, "images": images, "audio": audio}))
+            })?;
+            let json =
+                serde_json::to_string(&result).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+            strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (model_path, request_json, out);
+            Err((
+                abi::TS_ERR_UNSUPPORTED,
+                "embedding model inference is supported on macOS only".to_string(),
+            ))
+        }
+    })
+}
+
+/// Writes the pinned embedding profiles as a JSON array to `*out`:
+/// `[{"alias", "display_name", "family", "backend", "repository",
+///   "revision", "license", "modalities", "dimensions", "matryoshka_dims",
+///   "download_bytes", "installed_path", "can_run", "unavailable_reason"}]`.
+/// `installed_path` is null until a verified install exists.
+#[no_mangle]
+pub unsafe extern "C" fn ts_embedding_catalog_json(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((abi::TS_ERR_INVALID_ARGUMENT, "out must not be null".into()));
+        }
+        let cat = catalog::EmbeddingCatalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?;
+        let store = catalog::Store::default_store().ok();
+        let rows: Vec<serde_json::Value> = cat
+            .profiles()
+            .iter()
+            .map(|p| {
+                let (can_run, reason) = p.availability();
+                serde_json::json!({
+                    "alias": p.alias,
+                    "display_name": p.display_name,
+                    "family": p.family,
+                    "backend": p.backend,
+                    "repository": p.repository,
+                    "revision": p.revision,
+                    "license": p.license,
+                    "modalities": p.modalities,
+                    "dimensions": p.dimensions,
+                    "matryoshka_dims": p.matryoshka_dims,
+                    "download_bytes": p.download_bytes(),
+                    "installed_path": store
+                        .as_ref()
+                        .and_then(|s| cat.installed_path(s, &p.alias)),
+                    "can_run": can_run,
+                    "unavailable_reason": reason,
+                })
+            })
+            .collect();
+        let json = serde_json::to_string(&rows).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Downloads, verifies and installs one pinned embedding profile into the
+/// default store. Progress arrives through `callback` as
+/// `TS_INSTALL_BYTES`; `ts_install_cancel` stops it. Writes
+/// `{"alias", "path"}` to `*out`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_embedding_install(
+    alias: *const c_char,
+    callback: crate::TsInstallCallback,
+    userdata: *mut std::ffi::c_void,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((abi::TS_ERR_INVALID_ARGUMENT, "out must not be null".into()));
+        }
+        *out = std::ptr::null_mut();
+        let alias =
+            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let active = crate::models::ActiveInstall::register();
+        let cat = catalog::EmbeddingCatalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?;
+        let store =
+            catalog::Store::default_store().map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let path = cat
+            .install(
+                &catalog::Client::new(),
+                &catalog::Catalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?,
+                &store,
+                alias,
+                &mut |progress| {
+                    if let Some(cb) = callback {
+                        let stage = progress
+                            .current_path
+                            .as_deref()
+                            .unwrap_or("embedding download")
+                            .to_string();
+                        cb(
+                            userdata,
+                            crate::TS_INSTALL_BYTES,
+                            stage.as_ptr().cast(),
+                            stage.len(),
+                            progress.completed_bytes,
+                            progress.total_bytes,
+                        );
+                    }
+                },
+                active.cancel_flag(),
+            )
+            .map_err(|e| {
+                if active.cancel_flag().is_cancelled() {
+                    (abi::TS_ERR_CANCELLED, e)
+                } else {
+                    (abi::TS_ERR_OPEN, e)
+                }
+            })?;
+        let json = serde_json::json!({"alias": alias, "path": path}).to_string();
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
 

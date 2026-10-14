@@ -23,7 +23,8 @@ pub struct OptionDecl {
 
 /// The complete, ordered set of recognized option spellings. The count is
 /// asserted in `tests/usage_and_status.rs`, which is the fifth of the five
-/// places adding a flag touches (see the crate's `CLAUDE.md` Gotcha 1).
+/// places adding a flag touches (see the Five-Place Rule in this crate's
+/// `README.md`).
 pub const OPTIONS: &[OptionDecl] = &[
     OptionDecl {
         flag: "--model",

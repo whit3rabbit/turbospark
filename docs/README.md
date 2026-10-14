@@ -30,6 +30,7 @@ the evidence that supports the claim.
 - Memory and routing: [`LOAD_GUARD.md`](LOAD_GUARD.md),
   [`EXPERT_ROUTING.md`](EXPERT_ROUTING.md),
   [`EXPERT_RESIDENCY.md`](EXPERT_RESIDENCY.md),
+  [`MOE_PRIOR_ART.md`](MOE_PRIOR_ART.md),
   [`BATCHED_PREFILL.md`](BATCHED_PREFILL.md), and
   [`ACTIVATION_SPARSITY.md`](ACTIVATION_SPARSITY.md).
 - Metal, power, and quantization: [`KERNELS.md`](KERNELS.md),
@@ -55,6 +56,7 @@ reproduction commands when you need to verify a claim.
 - [`DEEPSEEK2_PHASE0.md`](DEEPSEEK2_PHASE0.md)
 - [`BONSAI2.md`](BONSAI2.md)
 - [`IMAGE_GENERATION_PHASE0.md`](IMAGE_GENERATION_PHASE0.md)
+- [`MINICPM.md`](MINICPM.md)
 - [`MINIMAX_M2_PHASE0.md`](MINIMAX_M2_PHASE0.md)
 - [`QWEN3VL_PHASE0.md`](QWEN3VL_PHASE0.md)
 - [`QWEN4_EXP.md`](QWEN4_EXP.md)

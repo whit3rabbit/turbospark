@@ -104,9 +104,14 @@ make swift-test-real MODEL=~/models/qwen38-27b-mtp.gturbo \
    (`cancelling_from_another_thread_stops_a_running_generation`) would time
    out rather than fail loudly.
 
-   `Session::arm` clears the flag at the start of every generation, so a
+   `Session::arm` clears the flag when `ts_generate` or `ts_humanize` is
+   entered, BEFORE the call queues on the process-wide heavy-work gate, so a
    Stop pressed between turns is discarded rather than cancelling the next
    one. `a_cancel_between_turns_does_not_cancel_the_next_one` pins that.
+   `run_turn` takes the flag with `Session::cancel_flag`, which does not
+   clear it: arming after the gate wait would discard a Stop pressed while
+   the call was queued behind another heavyweight job.
+   `a_cancel_while_queued_behind_the_heavy_gate_still_cancels` pins that.
 
 2. **THE HEADER IS HAND-WRITTEN AND ONLY THE SWIFT TEST TARGET CAN CHECK
    IT.** `tests/c_surface.rs` reaches the same function bodies through the

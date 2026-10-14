@@ -23,15 +23,27 @@ use tokenizer::{Message, MfTokenizer, ReasoningEffort, Role};
 
 use crate::generate::{
     clamp_max_new, map_reasoning_effort, open_session, print_footer, print_phases, render_prompt,
-    role_name, stream_turn, Session,
+    role_name, stream_turn, Outcome, Session,
 };
 
-pub fn run(request: &InvocationRequest) {
+pub fn run(request: &InvocationRequest) -> Outcome {
+    // **`--image` IS REFUSED HERE RATHER THAN IGNORED.** The REPL builds
+    // text-only user turns, so a path given on the command line would never
+    // reach the model, and the reply would read as if the picture had been
+    // seen. `--messages-file` places image parts inside the conversation and
+    // is the supported way to send one.
+    if !request.images.is_empty() {
+        eprintln!(
+            "note: not attempting real generation: --image is not supported with --chat, whose \
+             turns are text-only; use --messages-file (its content parts take image entries)"
+        );
+        return Outcome::Failed;
+    }
     let mut session = match open_session(request) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("note: not attempting real generation: {e}");
-            return;
+            return Outcome::Failed;
         }
     };
     session.runner.set_prefix_reuse(true);
@@ -52,13 +64,13 @@ pub fn run(request: &InvocationRequest) {
         // A `None` line is EOF (Ctrl-D): leave the loop and exit cleanly.
         let Some(line) = lines.next() else {
             eprintln!();
-            return;
+            return Outcome::Completed;
         };
         let line = match line {
             Ok(l) => l,
             Err(e) => {
                 eprintln!("\nnote: stdin: {e}");
-                return;
+                return Outcome::Failed;
             }
         };
         let input = line.trim();
@@ -67,7 +79,7 @@ pub fn run(request: &InvocationRequest) {
         }
         if input.starts_with('/') {
             match input {
-                "/quit" | "/exit" => return,
+                "/quit" | "/exit" => return Outcome::Completed,
                 "/clear" => {
                     history = opening.clone();
                     eprintln!("history cleared");

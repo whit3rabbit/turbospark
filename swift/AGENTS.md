@@ -83,8 +83,11 @@ staging files changed.
   turned on. The app is ad-hoc signed, so every new build is a different
   identity from the one that created an item, and macOS asks again on each
   update. Storage is opt-in per credential (the TypeSafe key:
-  `TypeSafeKeychain.isKeychainEnabled`). Show the system's reason on failure
-  (`TypeSafeKeychain.describe`), not a bare "could not save".
+  `TypeSafeKeychain.isKeychainEnabled`, the server key:
+  `ServerKeychain.resolveOptIn`, which keeps an item an earlier version
+  stored rather than dropping the key). Probe for an item with an
+  attributes-only query, never by reading the secret. Show the system's reason
+  on failure (`TypeSafeKeychain.describe`), not a bare "could not save".
 - The API destination has three modes. Text and Image share the TurboSpark
   Rust listener, address, and key. TypeSafe manages a separate loopback
   `openkindd` process, URL, and API key through the OpenKind Swift package.
@@ -97,6 +100,9 @@ staging files changed.
 - The app bundle and mounted DMG must contain an executable `openkindd`.
   Pin the OpenKind Swift package and daemon to the same published revision
   for release; a sibling package path is for development only.
+  The daemon build (`openkind-server --features mlx`) needs `SDKROOT` and
+  `BINDGEN_EXTRA_CLANG_ARGS="-isysroot $SDKROOT"` under Xcode 27, or
+  mlx-sys's bindgen fails on `stdlib.h`. `make-app-bundle.sh` sets both.
 - Keep user data and model storage scoped through the documented profile and
   storage abstractions. Do not invent another `~/.turbospark` path.
 - Accessibility and keyboard changes must follow the existing shortcuts and
@@ -128,3 +134,28 @@ after, not interleaved with, `make swift-test`) and
 
 Use the real-install and app-bundle gates from the linked verification pages
 for runtime or release changes.
+
+## Open issues
+
+- **Auto-started server has no API key on a new install**
+  ([#150](https://github.com/whit3rabbit/turbospark/issues/150)). The server key is
+  session-only unless the user opts in to Keychain storage
+  (`ServerKeychain.resolveOptIn`), so `serverAPIKeyInput` is empty at launch.
+  With "start server on launch" on (`serverAutoStartOnLaunch`,
+  `AppModel+Persistence.swift`, the `server == nil` auto-start branch), the
+  server then starts with `apiKey: nil` and any local process can drive the
+  loaded models over loopback. The Server pane warns about it, but an
+  auto-start never shows that pane. Someone who already had a stored key is
+  unaffected, because the first launch adopts the existing item. Options:
+  generate a per-session key at auto-start (as TypeSafe does) and put it in
+  the field so Copy works, or refuse to auto-start without a key. This needs a
+  decision before either is built.
+- **A fresh build directory fails to link on Xcode 27.0 (beta, build 27A266a).**
+  `swift build` into a new `--scratch-path` stops with "Build input file cannot
+  be found: .../CSyntext.o". `CSyntext` is a header-only C target in the
+  external `syntext` package and the new build system expects an object for it.
+  A 336-byte placeholder `CSyntext.o` left in the shared `.build/out/Products/*`
+  hides it, which is why it only shows up on a clean build. CI uses released
+  Xcodes and is not affected. Workaround for a scratch build: copy that file
+  into `<scratch>/out/Products/Debug/`. Revisit when Xcode 27 ships or syntext
+  adds a source file to the target.

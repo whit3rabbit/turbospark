@@ -15,13 +15,15 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use runtime::{Qwen3AsrRunner, WhisperRunner, WhisperTranscription};
+use runtime::coreml::{detect_layout, CoreMlLayout, ParakeetCoreMl, ParakeetCoreMlOptions};
+use runtime::{Qwen3AsrRunner, WhisperRunner, WhisperSegment, WhisperTranscription};
 
 /// The resident speech runner, dispatched on the installed speech family.
 #[derive(Clone)]
 pub(crate) enum SttRunner {
     Whisper(Arc<WhisperRunner>),
     Qwen3Asr(Arc<Qwen3AsrRunner>),
+    ParakeetCoreMl(Arc<ParakeetCoreMl>),
 }
 
 impl SttRunner {
@@ -31,6 +33,14 @@ impl SttRunner {
     /// config, tokenizer, and tensor shapes at open, so a mislabeled or
     /// foreign directory fails here rather than mid-transcription.
     fn open(model_dir: &Path) -> Result<Self, String> {
+        // Core ML exports carry no `model_type`; they are recognized by
+        // their file layout before config.json is read.
+        if detect_layout(model_dir) == Some(CoreMlLayout::ParakeetTdt) {
+            let opts = ParakeetCoreMlOptions::from_env()?;
+            return Ok(Self::ParakeetCoreMl(Arc::new(ParakeetCoreMl::open(
+                model_dir, &opts,
+            )?)));
+        }
         // Family dispatch must not allocate an unbounded config before the
         // selected runner gets a chance to apply its resource checks.
         let mut config = String::new();
@@ -62,6 +72,25 @@ impl SttRunner {
         match self {
             Self::Whisper(runner) => runner.transcribe(samples, language),
             Self::Qwen3Asr(runner) => runner.transcribe(samples, language),
+            // Parakeet v3 takes no language hint and reports none.
+            Self::ParakeetCoreMl(runner) => {
+                let aligned =
+                    runner.decode(samples, runner.sample_rate(), &|| false, |_, _| true)?;
+                Ok(WhisperTranscription {
+                    segments: aligned
+                        .sentences
+                        .iter()
+                        .enumerate()
+                        .map(|(index, s)| WhisperSegment {
+                            index,
+                            start_seconds: f64::from(s.start),
+                            end_seconds: f64::from(s.end),
+                            text: s.text.trim().to_string(),
+                        })
+                        .collect(),
+                    language: String::new(),
+                })
+            }
         }
     }
 }
@@ -104,6 +133,7 @@ impl SttModel {
         match &self.runner {
             SttRunner::Whisper(arc) => Arc::strong_count(arc) > 1,
             SttRunner::Qwen3Asr(arc) => Arc::strong_count(arc) > 1,
+            SttRunner::ParakeetCoreMl(arc) => Arc::strong_count(arc) > 1,
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::real_forward_layout::RoutedBlobLayout;
+use crate::real_forward_layout::{Mxfp4Swiglu, RoutedBlobLayout, RoutedLayerLayout};
 
 /// The routed-expert decode pair, dispatched for whichever blob layout this
 /// install carries: the vendored INT4-affine `moe.metal` kernels or one of
@@ -8,7 +8,7 @@ use crate::real_forward_layout::RoutedBlobLayout;
 /// cannot disagree between two of them and read one blob two ways.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_moe_phase1_any(
-    layout: RoutedBlobLayout,
+    layer_layout: RoutedLayerLayout,
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     routed: &gpu::RoutedBlobsBuffer,
@@ -20,7 +20,7 @@ pub(crate) fn encode_moe_phase1_any(
     top_k: u32,
     use_silu: bool,
 ) -> Result<(), gpu::GpuError> {
-    match layout {
+    match layer_layout.phase1 {
         RoutedBlobLayout::GgufQ8_0 => gpu::encode_moe_phase1_q8_0(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
@@ -45,14 +45,12 @@ pub(crate) fn encode_moe_phase1_any(
         RoutedBlobLayout::GgufIq1M => gpu::encode_moe_phase1_iq1_m(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
-        // MXFP4 IS `gpt-oss` AND NOTHING ELSE, so the activation constants
-        // come from that family here rather than being threaded through
-        // every caller of this forwarder. `has_bias` is DERIVED rather than
-        // assumed, though: a bias offset of 0 is what
-        // `moe_offsets_from_layout` writes when the blob has no bias plane,
-        // and 0 cannot be a real one because `gate_w` occupies it. If a
-        // second MXFP4 checkpoint ever appears with a different activation,
-        // this is the line that has to become a parameter.
+        // The activation is the FAMILY's (`Mxfp4Swiglu`), resolved at open:
+        // `gpt-oss` runs `swiglu_oai` and the MLX mxfp4 Qwen trunk the plain
+        // gated form, over identical blocks. `has_bias` is DERIVED rather
+        // than assumed: a bias offset of 0 is what `moe_offsets_from_layout`
+        // writes when the blob has no bias plane, and 0 cannot be a real one
+        // because `gate_w` occupies it.
         RoutedBlobLayout::GgufMxfp4 => gpu::encode_moe_phase1_mxfp4(
             context,
             pass,
@@ -66,7 +64,10 @@ pub(crate) fn encode_moe_phase1_any(
             use_silu,
             gpu::Mxfp4Activation {
                 has_bias: offsets.gate_b != 0,
-                ..gpu::Mxfp4Activation::GPT_OSS
+                ..match layer_layout.mxfp4_activation {
+                    Mxfp4Swiglu::GptOss => gpu::Mxfp4Activation::GPT_OSS,
+                    Mxfp4Swiglu::Plain => gpu::Mxfp4Activation::PLAIN,
+                }
             },
         ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase1(

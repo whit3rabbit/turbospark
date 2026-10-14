@@ -1,5 +1,6 @@
 # Cargo build output (large, fully derived from sources).
 /target
+/crates/embeddings/target/
 
 # macOS Finder metadata.
 .DS_Store

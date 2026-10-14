@@ -91,6 +91,8 @@ mod bounded_resolve {
 }
 mod cancel;
 mod completions;
+#[cfg(target_os = "macos")]
+mod coreml_embedding_model;
 mod embeddings;
 #[cfg(target_os = "macos")]
 mod encoder_model;
@@ -169,6 +171,9 @@ pub use audio::{
     AudioError, AudioModelInfo, AudioProvider, AudioTask, GenerateRequest, GeneratedAudio,
     SpeechRequest, SpeechStream, TranscribeRequest, TranscribedSegment, Transcription,
 };
+#[cfg(target_os = "macos")]
+/// EmbeddingGemma 2 on Core ML as an embedding backend.
+pub use coreml_embedding_model::{open_embedding_model, CoreMlEmbeddingModel};
 #[cfg(target_os = "macos")]
 /// Embedding model running encoder forward passes for embeddings.
 pub use encoder_model::RealEncoderModel;

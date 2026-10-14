@@ -197,7 +197,7 @@ impl RealForwardRunner {
         {
             Some(layout) => {
                 let offsets = moe_offsets_from_layout(layout)?;
-                let layouts = routed_layouts_from_layout(layout)?;
+                let layouts = routed_layouts_from_layout(layout, expecting.family)?;
                 if layouts.is_empty() {
                     return Err(RealForwardError::Unsupported(
                         "packed expert layout has no routed layers".to_string(),

@@ -210,6 +210,10 @@ public final class AppModel: ObservableObject {
     /// True when the launch-time Keychain read failed (locked or denied): the
     /// empty field then means "unknown", so persist must not delete the item.
     var serverKeyLoadFailed = false
+    /// Whether the server key is remembered in the Keychain. Off for a new
+    /// install, on for someone who already had a key stored
+    /// (`ServerKeychain.resolveOptIn`), changed by `setServerKeyInKeychain`.
+    @Published public var serverKeyInKeychain = false
     /// The port to ask for, or 0 to let the OS choose.
     ///
     /// 0 is the default because nothing needs a fixed one to work: the pane
@@ -329,6 +333,9 @@ public final class AppModel: ObservableObject {
     }
     /// Profile-local encoder used for semantic memory recall.
     @Published public var memoryEmbeddingModel: String = ""
+    /// Pinned embedding models the app can download (`EmbeddingCatalog`).
+    /// Refreshed when an embedding field appears and after an install.
+    @Published public var embeddingProfiles: [EmbeddingProfile] = []
     @Published public var memoryAutoCaptureEnabled = false
     var memorySchedulerTimer: Timer?
     var memoryCaptureTask: Task<Void, Never>?

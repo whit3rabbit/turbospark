@@ -26,11 +26,21 @@ pub enum SpeechFamily {
     /// placeholder embeddings. The audio tower stays on the portable CPU
     /// path; the packed 8-bit decoder has an opt-in Metal engine.
     Qwen3Asr,
+    /// Parakeet TDT as a Core ML export (FluidInference
+    /// `parakeet-redux-coreml`): four compiled programs (mel preprocessor,
+    /// FastConformer encoder, LSTM predictor, joint) plus a vocabulary.
+    /// No safetensors and no `model_type`; the layout identifies it. Runs
+    /// through `turbospark-runtime::coreml` on macOS 15+.
+    ParakeetTdt,
 }
 
 impl SpeechFamily {
     /// Exhaustive list of all speech families.
-    pub const ALL: [SpeechFamily; 2] = [SpeechFamily::Whisper, SpeechFamily::Qwen3Asr];
+    pub const ALL: [SpeechFamily; 3] = [
+        SpeechFamily::Whisper,
+        SpeechFamily::Qwen3Asr,
+        SpeechFamily::ParakeetTdt,
+    ];
 
     /// Returns the static wire string for the speech family.
     ///
@@ -42,6 +52,7 @@ impl SpeechFamily {
         match self {
             SpeechFamily::Whisper => "whisper",
             SpeechFamily::Qwen3Asr => "qwen3_asr",
+            SpeechFamily::ParakeetTdt => "parakeet_tdt",
         }
     }
 
@@ -50,6 +61,7 @@ impl SpeechFamily {
         match s {
             "whisper" => Some(SpeechFamily::Whisper),
             "qwen3_asr" => Some(SpeechFamily::Qwen3Asr),
+            "parakeet_tdt" => Some(SpeechFamily::ParakeetTdt),
             _ => None,
         }
     }
@@ -85,10 +97,12 @@ mod tests {
         let mut seen = 0;
         for family in SpeechFamily::ALL {
             match family {
-                SpeechFamily::Whisper | SpeechFamily::Qwen3Asr => seen += 1,
+                SpeechFamily::Whisper | SpeechFamily::Qwen3Asr | SpeechFamily::ParakeetTdt => {
+                    seen += 1
+                }
             }
         }
         assert_eq!(seen, SpeechFamily::ALL.len());
-        assert_eq!(SpeechFamily::ALL.len(), 2);
+        assert_eq!(SpeechFamily::ALL.len(), 3);
     }
 }

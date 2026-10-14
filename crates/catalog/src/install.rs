@@ -713,6 +713,7 @@ fn vision_tower_stub_report(plan: &InstallPlan) -> ProbeReport {
         arch: None,
         types: Vec::new(),
         affine: None,
+        mxfp4: false,
         expert_stride: None,
         trained_context: None,
         sidecars_present: plan.sidecar_files.clone(),

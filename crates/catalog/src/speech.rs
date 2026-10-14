@@ -39,6 +39,9 @@ pub enum SpeechFormat {
     /// the tokenizer shipped as the original `vocab.json` / `merges.txt` /
     /// `tokenizer_config.json` trio instead of `tokenizer.json`.
     Mlx8BitBf16,
+    /// Compiled Core ML programs (`*.mlmodelc` directories) plus their host
+    /// files. No safetensors; the runtime is `turbospark-coreml`.
+    CoreMl,
 }
 
 impl SpeechFormat {
@@ -48,6 +51,7 @@ impl SpeechFormat {
             "mlx-8bit" => Some(Self::Mlx8Bit),
             "mlx-4bit" => Some(Self::Mlx4Bit),
             "mlx-8bit-bf16" => Some(Self::Mlx8BitBf16),
+            "coreml" => Some(Self::CoreMl),
             _ => None,
         }
     }
@@ -58,6 +62,7 @@ impl SpeechFormat {
             Self::Mlx8Bit => "mlx-8bit",
             Self::Mlx4Bit => "mlx-4bit",
             Self::Mlx8BitBf16 => "mlx-8bit-bf16",
+            Self::CoreMl => "coreml",
         }
     }
 
@@ -67,6 +72,7 @@ impl SpeechFormat {
         match self {
             Self::HfSafetensors | Self::Mlx8Bit | Self::Mlx4Bit => SpeechFamily::Whisper,
             Self::Mlx8BitBf16 => SpeechFamily::Qwen3Asr,
+            Self::CoreMl => SpeechFamily::ParakeetTdt,
         }
     }
 }
@@ -136,6 +142,10 @@ pub enum SpeechProbeKind {
     Qwen3Asr {
         config: audio::stt::qwen3_asr::Qwen3Config,
     },
+    ParakeetTdt {
+        /// Text vocabulary size; blank is this id.
+        vocab_size: usize,
+    },
 }
 
 /// What the probe validated about a staged speech install.
@@ -158,12 +168,52 @@ const QWEN3_ASR_RUNTIME_FILES: [&str; 5] = [
     "tokenizer_config.json",
 ];
 
+/// The four compiled programs of the FluidInference Parakeet export. Kept
+/// in step with `runtime::coreml::parakeet::REQUIRED_DIRS`; catalog cannot
+/// depend on runtime.
+const PARAKEET_COREML_PROGRAMS: [&str; 4] = [
+    "Preprocessor.mlmodelc",
+    "Encoder.mlmodelc",
+    "Decoder.mlmodelc",
+    "JointDecisionv3.mlmodelc",
+];
+const PARAKEET_COREML_VOCAB: &str = "parakeet_vocab.json";
+/// The `contract` FluidInference writes into the export's `config.json`.
+const PARAKEET_COREML_CONTRACT: &str = "parakeet-tdt-0.6b-v3-coreml";
+/// The files each compiled program needs to load. `analytics/` and
+/// `metadata.json` are optional and ride the entry's `required_files`.
+const PARAKEET_COREML_RUNTIME_FILES: [&str; 13] = [
+    "parakeet_vocab.json",
+    "Preprocessor.mlmodelc/coremldata.bin",
+    "Preprocessor.mlmodelc/model.mil",
+    "Preprocessor.mlmodelc/weights/weight.bin",
+    "Encoder.mlmodelc/coremldata.bin",
+    "Encoder.mlmodelc/model.mil",
+    "Encoder.mlmodelc/weights/weight.bin",
+    "Decoder.mlmodelc/coremldata.bin",
+    "Decoder.mlmodelc/model.mil",
+    "Decoder.mlmodelc/weights/weight.bin",
+    "JointDecisionv3.mlmodelc/coremldata.bin",
+    "JointDecisionv3.mlmodelc/model.mil",
+    "JointDecisionv3.mlmodelc/weights/weight.bin",
+];
+
 /// The file set a family's runtime requires, before any per-entry extras.
 fn runtime_files(family: SpeechFamily) -> &'static [&'static str] {
     match family {
         SpeechFamily::Whisper => &WHISPER_RUNTIME_FILES,
         SpeechFamily::Qwen3Asr => &QWEN3_ASR_RUNTIME_FILES,
+        SpeechFamily::ParakeetTdt => &PARAKEET_COREML_RUNTIME_FILES,
     }
+}
+
+/// True for a file inside a compiled Core ML program directory, the only
+/// place a `.bin` is a legitimate part of a speech install.
+fn inside_compiled_program(file: &str) -> bool {
+    let mut parts = Path::new(file).components();
+    matches!(parts.next(), Some(std::path::Component::Normal(first))
+        if first.to_string_lossy().ends_with(".mlmodelc"))
+        && parts.next().is_some()
 }
 
 fn install_files(
@@ -192,6 +242,14 @@ fn install_files(
 /// does not declare `qwen3_asr` stays on the whisper path, whose parser
 /// refuses foreign model types with its own reason.
 fn sniff_speech_family(dir: &Path) -> SpeechFamily {
+    // The Core ML export has no `model_type`; its layout identifies it.
+    if PARAKEET_COREML_PROGRAMS
+        .iter()
+        .all(|d| dir.join(d).is_dir())
+        && dir.join(PARAKEET_COREML_VOCAB).is_file()
+    {
+        return SpeechFamily::ParakeetTdt;
+    }
     let parsed: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.join("config.json")).unwrap_or_default())
             .unwrap_or(serde_json::Value::Null);
@@ -232,7 +290,8 @@ pub fn probe_speech_dir(
                 ));
             }
         }
-        if file.ends_with(".gguf") || file.ends_with(".bin") {
+        let compiled_weight = family == SpeechFamily::ParakeetTdt && inside_compiled_program(file);
+        if file.ends_with(".gguf") || (file.ends_with(".bin") && !compiled_weight) {
             return Err(format!(
                 "{file} looks like a GGML/GGUF distribution; speech installs are safetensors only"
             ));
@@ -315,7 +374,73 @@ pub fn probe_speech_dir(
                 kind: SpeechProbeKind::Qwen3Asr { config },
             })
         }
+        SpeechFamily::ParakeetTdt => probe_parakeet_coreml(dir, required_files),
     }
+}
+
+/// Probes the Core ML Parakeet export. Program shapes are checked by the
+/// runtime when Core ML loads them; here the host files are validated:
+/// the vocabulary is contiguous ids, and a declared `contract` is the one
+/// the runtime implements.
+fn probe_parakeet_coreml(
+    dir: &Path,
+    required_files: &[String],
+) -> Result<SpeechProbeReport, String> {
+    let vocab: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(
+        &std::fs::read(dir.join(PARAKEET_COREML_VOCAB))
+            .map_err(|e| format!("read {PARAKEET_COREML_VOCAB}: {e}"))?,
+    )
+    .map_err(|e| format!("{PARAKEET_COREML_VOCAB} is not a JSON object: {e}"))?;
+    let mut seen = vec![false; vocab.len()];
+    for (id, piece) in &vocab {
+        let slot = id
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| seen.get_mut(i))
+            .ok_or_else(|| format!("{PARAKEET_COREML_VOCAB} ids are not contiguous from 0"))?;
+        if !piece.is_string() || std::mem::replace(slot, true) {
+            return Err(format!(
+                "{PARAKEET_COREML_VOCAB} has a bad entry for id {id}"
+            ));
+        }
+    }
+    if vocab.is_empty() {
+        return Err(format!("{PARAKEET_COREML_VOCAB} is empty"));
+    }
+    if let Ok(bytes) = std::fs::read(dir.join("config.json")) {
+        let config: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("config.json is not valid JSON: {e}"))?;
+        match config.get("contract").and_then(serde_json::Value::as_str) {
+            None | Some(PARAKEET_COREML_CONTRACT) => {}
+            Some(other) => {
+                return Err(format!(
+                    "Core ML Parakeet contract {other:?} is not supported (expected {PARAKEET_COREML_CONTRACT:?})"
+                ))
+            }
+        }
+    }
+    let mut weight_bytes = 0u64;
+    for file in install_files(SpeechFamily::ParakeetTdt, required_files)? {
+        if file.ends_with("weight.bin") {
+            weight_bytes += std::fs::metadata(dir.join(&file))
+                .map_err(|e| format!("stat {file}: {e}"))?
+                .len();
+        }
+    }
+    Ok(SpeechProbeReport {
+        speech_family: SpeechFamily::ParakeetTdt,
+        // The export's preprocessor emits a fixed 128-band mel; the runtime
+        // re-checks every program's shapes at load.
+        n_mels: 128,
+        // An estimate, three times the weight bytes. One run of
+        // redux-coreml (219 MB of weights, GPU encoder) peaked at a 488 MB
+        // footprint on an M4 Max; Core ML's GPU path keeps dequantized
+        // copies the file size does not show.
+        memory_ceiling_bytes: weight_bytes.saturating_mul(3),
+        kind: SpeechProbeKind::ParakeetTdt {
+            vocab_size: vocab.len(),
+        },
+    })
 }
 
 /// Hashes every required file and writes the typed speech receipt into the
@@ -512,6 +637,91 @@ mod tests {
         assert!(install_files(SpeechFamily::Whisper, &["".into()]).is_err());
         assert_eq!(install_files(SpeechFamily::Whisper, &[]).unwrap().len(), 3);
         assert_eq!(install_files(SpeechFamily::Qwen3Asr, &[]).unwrap().len(), 5);
+        assert_eq!(
+            install_files(SpeechFamily::ParakeetTdt, &[]).unwrap().len(),
+            13
+        );
+    }
+
+    /// A synthetic Core ML Parakeet layout: tiny stand-in files, since the
+    /// probe checks the host files and leaves program shapes to Core ML.
+    fn parakeet_layout(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ts-speech-coreml-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for file in PARAKEET_COREML_RUNTIME_FILES {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"x").unwrap();
+        }
+        std::fs::write(
+            dir.join(PARAKEET_COREML_VOCAB),
+            r#"{"0":"<unk>","1":"\u2581a","2":"b"}"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn coreml_parakeet_probe_accepts_layout_and_refuses_foreign_files() {
+        let dir = parakeet_layout("ok");
+        assert_eq!(sniff_speech_family(&dir), SpeechFamily::ParakeetTdt);
+        let report = probe_speech_dir(&dir, &[]).unwrap();
+        assert_eq!(report.speech_family, SpeechFamily::ParakeetTdt);
+        assert_eq!(report.kind, SpeechProbeKind::ParakeetTdt { vocab_size: 3 });
+        // Four one-byte weight files, three times over.
+        assert_eq!(report.memory_ceiling_bytes, 12);
+
+        // A `.bin` outside a compiled program is still refused.
+        std::fs::write(dir.join("pytorch_model.bin"), b"x").unwrap();
+        let err = probe_speech_dir(&dir, &["pytorch_model.bin".into()]).unwrap_err();
+        assert!(err.contains("GGML/GGUF"), "{err}");
+
+        // A different export contract is refused rather than guessed at.
+        std::fs::write(
+            dir.join("config.json"),
+            r#"{"contract":"parakeet-tdt-0.6b-v2-coreml"}"#,
+        )
+        .unwrap();
+        assert!(probe_speech_dir(&dir, &[])
+            .unwrap_err()
+            .contains("contract"));
+        std::fs::write(
+            dir.join("config.json"),
+            format!(r#"{{"contract":"{PARAKEET_COREML_CONTRACT}"}}"#),
+        )
+        .unwrap();
+        assert!(probe_speech_dir(&dir, &[]).is_ok());
+
+        // Gaps in the vocabulary ids are refused.
+        std::fs::write(dir.join(PARAKEET_COREML_VOCAB), r#"{"0":"a","2":"b"}"#).unwrap();
+        assert!(probe_speech_dir(&dir, &[]).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn coreml_parakeet_receipt_round_trips() {
+        let dir = parakeet_layout("receipt");
+        let receipt = install_speech_receipt(&dir, &[], None, None).unwrap();
+        assert_eq!(receipt.speech_family, "parakeet_tdt");
+        assert_eq!(receipt.files.len(), PARAKEET_COREML_RUNTIME_FILES.len());
+        verify_speech_install(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn compiled_program_paths_are_recognized() {
+        assert!(inside_compiled_program(
+            "Encoder.mlmodelc/weights/weight.bin"
+        ));
+        assert!(!inside_compiled_program("Encoder.mlmodelc"));
+        assert!(!inside_compiled_program("weights/weight.bin"));
+        assert!(!inside_compiled_program("model.bin"));
     }
 
     #[test]
@@ -527,9 +737,11 @@ mod tests {
             assert_eq!(entry.revision.len(), 40, "alias {}", entry.alias);
             assert!(entry.revision.bytes().all(|b| b.is_ascii_hexdigit()));
             assert!(entry.required_files.contains(&"config.json".to_string()));
-            assert!(entry
-                .required_files
-                .contains(&"model.safetensors".to_string()));
+            if entry.format != SpeechFormat::CoreMl {
+                assert!(entry
+                    .required_files
+                    .contains(&"model.safetensors".to_string()));
+            }
             match entry.format {
                 SpeechFormat::HfSafetensors => {
                     assert!(entry.model_id.starts_with("openai/whisper"));
@@ -546,6 +758,23 @@ mod tests {
                         .expect("mlx entries must pair a tokenizer source");
                     assert!(source.repo.starts_with("openai/whisper"));
                     assert_eq!(source.file, "tokenizer.json");
+                }
+                SpeechFormat::CoreMl => {
+                    // Compiled programs only: every file the runtime loads
+                    // must be pinned, and nothing is a pickle or GGUF.
+                    assert!(entry.model_id.starts_with("FluidInference/"));
+                    assert!(entry.tokenizer_source.is_none());
+                    for name in PARAKEET_COREML_RUNTIME_FILES {
+                        assert!(
+                            entry.required_files.contains(&name.to_string()),
+                            "alias {} missing {name}",
+                            entry.alias
+                        );
+                    }
+                    assert!(entry
+                        .required_files
+                        .iter()
+                        .all(|f| !f.ends_with(".bin") || inside_compiled_program(f)));
                 }
                 SpeechFormat::Mlx8BitBf16 => {
                     // Qwen3-ASR ships its own BPE assets; no pairing, and

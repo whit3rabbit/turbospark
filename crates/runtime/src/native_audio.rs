@@ -481,6 +481,7 @@ enum Engine {
     Whisper(Box<crate::WhisperRunner>),
     Qwen(Box<crate::Qwen3AsrRunner>),
     QwenMetal(std::cell::RefCell<Box<crate::qwen3_asr_metal::Qwen3AsrMetalEngine>>),
+    ParakeetCoreMl(Box<crate::coreml::ParakeetCoreMl>),
     Kokoro(Box<crate::KokoroRunner>),
     KokoroPortable(Box<audio::tts::kokoro::KokoroSynthesizer>),
     MegaTts3(std::cell::RefCell<Box<crate::megatts3::MegaTts3Runner>>),
@@ -500,6 +501,7 @@ impl Engine {
         match self {
             Self::Whisper(_) => "whisper",
             Self::Qwen(_) | Self::QwenMetal(_) => "qwen3_asr",
+            Self::ParakeetCoreMl(_) => crate::coreml::CoreMlLayout::ParakeetTdt.family(),
             Self::Kokoro(_) | Self::KokoroPortable(_) => "kokoro",
             Self::MegaTts3(_) => MEGATTS3_FAMILY,
             Self::Music(_) => "minimax_music3",
@@ -513,6 +515,15 @@ impl Engine {
     ) -> Result<Self, String> {
         match task {
             AudioTask::SpeechToText => {
+                // Core ML exports ship no `model_type`, so recognize them by
+                // layout before reading config.json.
+                if crate::coreml::detect_layout(path)
+                    == Some(crate::coreml::CoreMlLayout::ParakeetTdt)
+                {
+                    let opts = crate::coreml::ParakeetCoreMlOptions::from_env()?;
+                    return crate::coreml::ParakeetCoreMl::open(path, &opts)
+                        .map(|m| Self::ParakeetCoreMl(Box::new(m)));
+                }
                 let config: serde_json::Value = serde_json::from_slice(
                     &std::fs::read(path.join("config.json")).map_err(|e| e.to_string())?,
                 )
@@ -707,6 +718,54 @@ impl Engine {
                     }],
                     tags: None,
                     token_logprobs: Some(t.token_logprobs),
+                });
+            }
+            Self::ParakeetCoreMl(model) => {
+                let aligned = model.decode(
+                    samples,
+                    model.sample_rate(),
+                    &|| cancel.is_cancelled(),
+                    |index, total| {
+                        events
+                            .send(AudioEvent::Progress(AudioProgress {
+                                stage: "window".into(),
+                                completed: index,
+                                total: Some(total),
+                            }))
+                            .is_ok()
+                            && !cancel.is_cancelled()
+                    },
+                )?;
+                result.transcript = Some(AudioTranscript {
+                    text: aligned.text.clone(),
+                    // Parakeet v3 identifies no language; it is reported
+                    // as unknown rather than guessed.
+                    language: None,
+                    segments: aligned
+                        .sentences
+                        .iter()
+                        .map(|s| AudioSegment {
+                            start_seconds: Some(f64::from(s.start)),
+                            end_seconds: Some(f64::from(s.end)),
+                            text: s.text.trim().to_string(),
+                            // Decoder-frame alignment (80 ms grid), not a
+                            // window or clip extent.
+                            timing: "token".into(),
+                            speaker: None,
+                            words: Some(
+                                crate::coreml::parakeet::words(&s.tokens)
+                                    .into_iter()
+                                    .map(|(text, start, end)| AudioWord {
+                                        text,
+                                        start_seconds: f64::from(start),
+                                        end_seconds: f64::from(end),
+                                    })
+                                    .collect(),
+                            ),
+                        })
+                        .collect(),
+                    tags: None,
+                    token_logprobs: None,
                 });
             }
             Self::Kokoro(model) => {

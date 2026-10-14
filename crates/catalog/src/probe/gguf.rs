@@ -55,6 +55,7 @@ pub fn evaluate_gguf(
         arch: None,
         types: Vec::new(),
         affine: None,
+        mxfp4: false,
         expert_stride: None,
         // Read through the SAME parser the install writes its manifest with,
         // so a probe and the install it produces cannot disagree about the

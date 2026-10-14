@@ -103,6 +103,12 @@ is two capture batches and one script invocation, so any future claim of
 domain-concentrated routing (a different family, a domain far narrower
 than "coding") should arrive with its own histogram.
 
+The same captures price cache POLICY: `scripts/expert_policy_replay.py`
+replays them back to back through the engine's LFU, LRU, decayed LFU, a
+cross-layer pool and Belady's offline optimum. What it is for, and the
+long-lived-runner question none of the numbers on this page could see, are
+in `docs/MOE_PRIOR_ART.md`.
+
 What remains open, and is a different mechanism entirely, is
 abliteration's actual trick applied at repack time: a directional weight
 edit for behavior steering. That is ROADMAP Later/Optional ("Directional
@@ -286,11 +292,60 @@ device. That 1.00x is also the answer to a question this page never asked --
 `F_RDADVISE` is not over-reading, since the disk-bound arm pulls exactly the
 strides the cache asked for and no more.
 
-**Re-running the PILOT sweep under that condition is OWED and has not been
-done.** The cost model above is a warm-cache measurement throughout, and both
-of its terms are expected to move: the miss rate rises, and each miss stops
-being a ~23.8 GiB/s memcpy. Until that sweep exists, the standing decision is
-scoped to the warm case and says nothing about the cold one.
+**The PILOT lookahead sweep under that condition is still OWED.** The cost
+model above is a warm-cache measurement throughout, and both of its terms are
+expected to move: the miss rate rises, and each miss stops being a ~23.8 GiB/s
+memcpy. Until that sweep exists, the standing decision is scoped to the warm
+case and says nothing about the cold one.
+
+**What the cold arm costs, and what does not fix it (2026-10-12, a reading,
+not a frozen row).** Gemma 4 26B-A4B INT4, streamed residency, one prompt,
+200 greedy tokens, AC power, 3 interleaved warm/cold pairs per slot count
+(host load 3.0 to 5.5, no other benchmark running). Cold is `sudo purge` plus
+`TURBOSPARK_EXPERT_NOCACHE=1`; every cold run read 1.00x physical. Warm is
+one discarded pass, then the measured pass.
+
+| slots | hit rate | requested MiB/token | cold tok/s (range) | cold pread ms/token | warm tok/s |
+|---|---|---|---|---|---|
+| 16 | 64.3% | 274.2 | 10.64 (10.60-10.83) | 50.9 | 45.6 |
+| 32 | 81.0% | 146.3 | 16.04 (15.98-16.58) | 29.0 | 50.8 |
+| 64 | 93.5% | 50.1 | 39.23 (39.02-39.79) | 10.1 | 52.3 |
+
+- The cold arm is disk-bound and reads about 5.3 GiB/s effective at 16 slots.
+  Cold decode is 4.3x slower than warm at 16 slots and 1.3x slower at 64.
+- The lever is the miss count, not the bytes per miss. 16 to 64 slots cut
+  requested bytes 5.5x and lifted cold decode 3.7x, while warm decode moved
+  15%. 64 slots cost 6.0 GiB of pinned cache against 1.5 GiB at 16.
+  `ExpertCacheSlots::Auto` already climbs with headroom (48 slots on a 36 GB
+  machine with this install), so a machine like this one sits between the 32
+  and 64 rows by default. The 16-slot row is what a 16 GB machine gets, since
+  Auto never resolves below 16.
+- Shrinking the blobs does not compete. Lossless zstd -3 on three 256 MiB
+  samples of an INT4 g64 `model_weights.bin` saved about 10% (241 of 268 MB).
+  Even with free decode that removes about 5 ms of the 94 ms cold token at 16
+  slots, and about 1 ms of 25.5 ms at 64. Decode would have to sustain more
+  than the disk's 5.3 GiB/s to break even, which was not measured. A 3x byte
+  reduction is not available losslessly, and `gemma4-iq3` is 12.8 GB against
+  13.0 GB for INT4, so a lower-bit catalog row does not shrink this family's
+  experts either. This closes the AirLLM "block-wise compression, 3x faster
+  loading" idea for this engine: AirLLM's gain comes from re-reading the whole
+  model per token, which this engine never does.
+- A cold-only anomaly stays unexplained: `gpu busy: cb1` was 13.0 ms/token
+  cold against 5.1 warm at 16 slots, 10.9 at 32, and 6.0 at 64 (warm 5.1
+  throughout). It tracks miss bytes and persisted with the host at load 3, so
+  it is not the earlier concurrent benchmark. The mechanism is not identified,
+  so the cold pread figure above may include time that is not purely the SSD.
+- Reproduce: `docs/BENCHMARKING.md`, Measurement hygiene (purge before every
+  cold arm, discarded refill pass before every warm arm, confirm 1.00x per
+  cold run). The install was `turbospark pull gemma4`. The 18 measured runs
+  and their load logs lived in a session scratch directory and are not
+  committed; the table above is the record.
+- Scope: one prompt, one 200-token generation, one machine and one model.
+  Hit rates are prompt-dependent (an earlier doc figure was about 84% at 16
+  slots on a different run), and the first warm 16-slot pass still read 18 MiB
+  physical (40.9 tok/s against 45.6 on the other two). Not run: a quality
+  comparison, a 16 GB machine, or the mapped residency arm under the same cold
+  condition.
 
 Note also what does NOT reopen it. `garnermccloud/sglang-ssd-stream` reports
 164.7 tok/s streaming a 47.68 GiB lookup table from NVMe and hiding the reads
@@ -337,3 +392,102 @@ weak, and both are findings about the Rust rather than about the script:
 
 Both details are worth keeping in `expert_cache.rs` for readability, but
 neither can change an answer, so neither is worth defending in a test.
+
+## Cache policy: cumulative LFU forgets nothing
+
+Prompted 2026-10-13 by `skeggsguy/Flash-next-ssd`, a llama.cpp fork that
+streams Qwen3.8-Flash-Next's experts from SSD. Its slot cache evicts by
+hotness with every counter halved each 1024 tokens, and its replay simulator
+put pure LRU at +11% misses for that model. This engine's `ExpertCache` LFU
+never decays, which no measurement here had priced, because every capture on
+this page is ONE request replayed through a FRESH cache. A server or app
+runner keeps its streamers for its whole life, so a later request inherits
+every count an earlier one left.
+
+### Instrument
+
+`scripts/pilot_ceiling.py --policies lfu,lru,lfu-decay:N` replays one or more
+`TURBOSPARK_ROUTER_TRACE` captures through ONE cache per layer, in order, so
+several captures read as one session. `lfu-decay:N` halves every count after
+each `N` committed plans at that layer, which is the shape
+`ExpertCachePolicy::LfuDecay` implements. The port was checked against a
+synthetic drifting hot set (cumulative LFU 74.8% hits, LRU 99.8%, decay 98.1%)
+and still reproduces this page's single-capture numbers (68.0% / 85.0% at
+16 / 32 slots for a 400-token capture, against 66.3% / 84.6% recorded for
+the 200-token one).
+
+Capture: real Gemma 4 install (`~/.turbospark/models/text/gemma4.gturbo`),
+greedy, 400 new tokens each, eight prompts (four coding, four general, the
+same topics as the hot-set measurement above), interleaved coding and general.
+3,467 passes on 30 routed layers. The session sweep skips the first capture's
+435 passes so it measures inherited state.
+
+### Measurement
+
+Session, eight requests through one cache:
+
+| slots | cumulative LFU | LRU | decay 16 | decay 32 | decay 128 | decay 1024 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 55.3% | 61.6% | **64.5%** | 63.9% | 60.3% | 56.0% |
+| 32 | 71.4% | 80.4% | **81.6%** | 81.3% | 77.4% | 72.4% |
+| 64 | 90.9% | 95.1% | | **95.2%** | 93.8% | 91.5% |
+
+At 32 slots that is 220 MiB of expert reads per pass under cumulative LFU
+against 144 MiB at decay 32, a 35% cut, from a policy change alone.
+
+Single requests, decode only, fresh cache (the case this page already
+measured, and the reason LFU was chosen over LRU):
+
+| prompt | slots | LFU | LRU | decay 16 | decay 32 |
+|---|---:|---:|---:|---:|---:|
+| c1 (Rust CSV) | 32 | 85.1% | 84.4% | 85.6% | 86.0% |
+| g1 (wetlands) | 32 | 83.4% | 82.2% | 83.7% | 84.2% |
+| c3 (B-trees) | 32 | 80.5% | 78.7% | 80.9% | 81.4% |
+| g4 (marathon) | 32 | 80.6% | 78.9% | 80.4% | 80.8% |
+
+At 16 slots the same ordering holds within 1.5 points.
+
+### Reading
+
+- **Cumulative LFU is the worst policy measured once a runner serves more
+  than one request**, below plain LRU by 6 to 9 points. An expert that was
+  hot for the last topic keeps its count and outranks the current topic's
+  experts, which then evict each other.
+- **Decay at 16 to 32 plans is at least as good as both alternatives in
+  both regimes.** Inside one request it keeps LFU's edge over LRU; across
+  requests it beats LRU slightly. Flash-Next's 1024-token interval does not
+  transfer: on Gemma 4 it is barely better than no decay.
+- This is a hit-rate result. Converting it to tok/s needs the expert-io
+  share of the step (`docs/DECODE_BUDGET.md`: about a sixth of decode at 32
+  slots, warm), and on a disk-bound install every miss avoided is an SSD
+  read, which is where it should matter most.
+
+### Real-install check (2026-10-13, Apple M4 Max, AC)
+
+`TURBOSPARK_EXPERT_CACHE_DECAY=32`, one request (c3), 16 slots, 200 tokens:
+
+| arm | greedy md5 | sampled md5 (`--temperature 0.7 --seed 1`) | greedy hits |
+|---|---|---|---:|
+| pre-change binary | `7cf23377586f9ecb23e83d3fd579e984` | `c65e3683df4cabd571cad42b3a751dc8` | 34,554 (61.5%) |
+| post-change, seam unset | `7cf23377586f9ecb23e83d3fd579e984` | `c65e3683df4cabd571cad42b3a751dc8` | 34,554 (61.5%) |
+| post-change, decay 32 | `7cf23377586f9ecb23e83d3fd579e984` | `c65e3683df4cabd571cad42b3a751dc8` | 35,149 (62.6%) |
+
+Byte-identical across all three arms in both modes, as expected structurally:
+the policy moves which slot holds an expert, never which experts run or in
+what order. The default arm's hit count equals the pre-change binary's
+exactly, so the unset seam did not move. The decay arm's +1.1 points matches
+the simulator's +1.0 for that prompt, which is the proof it engaged. No
+throughput is quoted: the host was running a build during the first arm, and
+a one-request +1 point is below run-to-run spread anyway.
+
+### Standing decision
+
+`TURBOSPARK_EXPERT_CACHE_DECAY` is a seam, default off. Flipping the default
+to decay 32 is supported by the hit-rate evidence on Gemma 4 and owes:
+
+1. A multi-request replay on a real runner (server or `--chat`), measuring
+   hits and tok/s with interleaved arms, since that is where the gain is.
+2. One more family with a different expert count, ideally the 512-expert
+   `qwen4exp` on an SSD-bound install, before assuming the interval carries
+   over. The interval counts plans per layer, so it does not scale with
+   layer count, but it may with experts per layer.

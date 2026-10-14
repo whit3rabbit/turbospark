@@ -13,7 +13,9 @@ use serde_json::Value;
 
 use super::cache::make_prompt_cache;
 use super::engine::Input;
-use super::{bailing_moe, cohere2, gpt2, llama, qwen2, qwen3, LayerCaches, PromptCache, Weights};
+use super::{
+    bailing_moe, cohere2, falcon_h1, gpt2, llama, qwen2, qwen3, LayerCaches, PromptCache, Weights,
+};
 use crate::Result;
 
 fn testdata(name: &str) -> PathBuf {
@@ -49,30 +51,43 @@ fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
         a.len(),
         b.len()
     );
+    // f32::max silently drops NaN, which would turn a NaN output into a
+    // passing 0.0 diff; propagate NaN into the result instead so the
+    // tolerance assert fails.
     a.iter()
         .zip(b)
         .map(|(x, y)| (x - y).abs())
-        .fold(0.0f32, f32::max)
+        .fold(0.0f32, |best, diff| {
+            if diff.is_nan() || diff > best {
+                diff
+            } else {
+                best
+            }
+        })
 }
 
 /// The largest tolerance any fixture needed when the gates were frozen;
 /// individual cases assert against it, not against re-measured values.
 const LOGITS_TOLERANCE: f32 = 2e-4;
 const HIDDEN_TOLERANCE: f32 = 2e-4;
+/// The falcon_h1 conv/ssm state gate (same absolute scale as the logits).
+const STATE_TOLERANCE: f32 = 2e-4;
 
 /// The fixture model union. Each flavor forwards through its own cache
-/// shape; cohere2 alternates dense and rotating caches, the rest use the
-/// plain appending cache.
+/// shape; cohere2 alternates dense and rotating caches, falcon_h1 carries
+/// the Mamba conv/ssm pairs, the rest use the plain appending cache.
 enum FixtureModel {
     Dense(super::Backbone),
     Gpt2(super::Gpt2Model),
     Cohere2(super::Cohere2Model),
     Moe(super::BailingMoeModel),
+    Falcon(falcon_h1::FalconH1Model),
 }
 
 enum FixtureCaches {
     Dense(LayerCaches),
     Mixed(Vec<PromptCache>),
+    Falcon(Vec<falcon_h1::FalconLayerCache>),
 }
 
 impl FixtureModel {
@@ -97,6 +112,8 @@ impl FixtureModel {
             Self::Cohere2(cohere2::load(weights, config).expect("model loads"))
         } else if name.starts_with("bailing_moe") {
             Self::Moe(bailing_moe::load(weights, config).expect("model loads"))
+        } else if name.starts_with("falcon_h1") {
+            Self::Falcon(falcon_h1::load(weights, config).expect("model loads"))
         } else {
             panic!("unknown flavor for case {name}");
         }
@@ -114,6 +131,7 @@ impl FixtureModel {
                 FixtureCaches::Dense(make_prompt_cache(model.config.n_layer))
             }
             FixtureModel::Cohere2(model) => FixtureCaches::Mixed(model.make_cache()),
+            FixtureModel::Falcon(model) => FixtureCaches::Falcon(model.make_cache()),
         }
     }
 
@@ -137,6 +155,10 @@ impl FixtureModel {
             }
             (FixtureModel::Cohere2(model), None) => model.forward(input, None),
             (FixtureModel::Cohere2(model), Some(FixtureCaches::Mixed(caches))) => {
+                model.forward(input, Some(caches))
+            }
+            (FixtureModel::Falcon(model), None) => model.forward(input, None),
+            (FixtureModel::Falcon(model), Some(FixtureCaches::Falcon(caches))) => {
                 model.forward(input, Some(caches))
             }
             _ => panic!("cache flavor does not match the model"),
@@ -163,6 +185,10 @@ impl FixtureModel {
             }
             (FixtureModel::Cohere2(model), None) => model.forward_hidden(input, None),
             (FixtureModel::Cohere2(model), Some(FixtureCaches::Mixed(caches))) => {
+                model.forward_hidden(input, Some(caches))
+            }
+            (FixtureModel::Falcon(model), None) => model.forward_hidden(input, None),
+            (FixtureModel::Falcon(model), Some(FixtureCaches::Falcon(caches))) => {
                 model.forward_hidden(input, Some(caches))
             }
             _ => panic!("cache flavor does not match the model"),
@@ -233,6 +259,57 @@ impl FixtureInputs {
     }
 }
 
+#[test]
+fn max_abs_diff_propagates_nan_instead_of_passing_vacuously() {
+    // f32::max drops NaN: a NaN model output once compared as a 0.0 diff
+    // and the tolerance assert passed. The gate must stay NaN-toxic.
+    let got = [f32::NAN, 1.0, 2.0];
+    let want = [1.0, 1.0, 2.0];
+    assert!(max_abs_diff(&got, &want).is_nan());
+    let got = [0.0, f32::NAN];
+    let want = [0.0, 1.0];
+    assert!(max_abs_diff(&got, &want).is_nan());
+    assert_eq!(max_abs_diff(&[1.0, -3.0], &[0.5, 3.0]), 6.0);
+}
+
+/// The falcon_h1 Mamba states a fixture pins: per layer, the conv buffer
+/// and the selective-scan state (each optional until the first call).
+fn falcon_state_diff(cache: &falcon_h1::FalconLayerCache, want: &Value) -> Option<f32> {
+    let mut worst: Option<f32> = None;
+    let mut consider = |got: &[f32], want: &Value| {
+        let want: Vec<f32> = flatten_f32(want);
+        let diff = max_abs_diff(got, &want);
+        worst = Some(match worst {
+            // Keep the NaN-propagation guarantee of max_abs_diff intact.
+            Some(w) if (w.is_nan() || diff.is_nan()) => f32::NAN,
+            Some(w) => w.max(diff),
+            None => diff,
+        });
+    };
+    let conv_want = want.get("conv").filter(|value| value.is_array());
+    match (&cache.conv, conv_want) {
+        (Some(conv), Some(want)) => consider(conv, want),
+        (None, None) => {}
+        (got, want) => panic!("conv state presence mismatch: {got:?} vs {want:?}"),
+    }
+    let ssm_want = want.get("ssm").filter(|value| value.is_array());
+    match (&cache.ssm, ssm_want) {
+        (Some(ssm), Some(want)) => consider(ssm, want),
+        (None, None) => {}
+        (got, want) => panic!("ssm state presence mismatch: {got:?} vs {want:?}"),
+    }
+    worst
+}
+
+/// Flattens nested JSON number arrays to f32.
+fn flatten_f32(value: &Value) -> Vec<f32> {
+    match value {
+        Value::Number(number) => vec![number.as_f64().unwrap() as f32],
+        Value::Array(items) => items.iter().flat_map(flatten_f32).collect(),
+        other => panic!("not a number array: {other}"),
+    }
+}
+
 fn run_case(name: &str) {
     let dir = testdata(name);
     let weights = Weights::open(&dir).expect("weights");
@@ -254,6 +331,22 @@ fn run_case(name: &str) {
         diff <= LOGITS_TOLERANCE,
         "{name} prefill logits diff {diff}"
     );
+
+    // Falcon_h1 pins the Mamba conv/ssm state after every cached call.
+    if let Some(states) = traces.get("mamba_states") {
+        if let (FixtureCaches::Falcon(falcon_caches), Some(prefill_states)) =
+            (&caches, states["prefill"].as_array())
+        {
+            for (cache, want) in falcon_caches.iter().zip(prefill_states) {
+                if let Some(diff) = falcon_state_diff(cache, want) {
+                    assert!(
+                        diff <= STATE_TOLERANCE,
+                        "{name} prefill ssm state diff {diff}"
+                    );
+                }
+            }
+        }
+    }
 
     // Optional multi-token chunk (the cohere2 streaming case): a second
     // prefill after the window is full exercises the concat trim path and
@@ -296,6 +389,27 @@ fn run_case(name: &str) {
             diff <= LOGITS_TOLERANCE,
             "{name} decode step {step} diff {diff}"
         );
+        if let Some(states) = traces.get("mamba_states") {
+            if let (FixtureCaches::Falcon(falcon_caches), Some(step_states)) =
+                (&caches, states["steps"][step].as_array())
+            {
+                println!(
+                    "MEASURE step {step} comparing {} layer states",
+                    falcon_caches.len()
+                );
+                let mut seen = 0.0f32;
+                let _ = &mut seen;
+                for (cache, state_want) in falcon_caches.iter().zip(step_states) {
+                    if let Some(diff) = falcon_state_diff(cache, state_want) {
+                        println!("MEASURE step {step} layer diff {diff}");
+                        assert!(
+                            diff <= STATE_TOLERANCE,
+                            "{name} step {step} ssm state diff {diff}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // Cacheless pass.
@@ -337,6 +451,8 @@ lm_case!(gpt2_indextts_embeddings);
 lm_case!(cohere2_default);
 lm_case!(cohere2_streaming);
 lm_case!(bailing_moe_default);
+lm_case!(falcon_h1_default);
+lm_case!(falcon_h1_untied);
 
 mod regressions {
     use serde_json::json;
@@ -586,3 +702,5 @@ mod regressions {
         assert_eq!(config.sliding_window, None);
     }
 }
+
+// Temporary probe appended to lm::tests

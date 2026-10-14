@@ -1,0 +1,43 @@
+[package]
+name = "turbospark-embeddings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Portable embedding models (EmbeddingGemma, Snowflake arctic-embed BERT/XLM-R/GTE/Nomic, SigLIP2 NaFlex, CLAP) plus sentence-transformers pooling, normalization, similarity, and late-interaction scoring."
+# testdata/ holds parity fixtures read only by #[cfg(test)] and tests/
+# code; shipping it would bloat the .crate.
+exclude = ["testdata/", "tools/"]
+
+[lib]
+name = "turbospark_embeddings"
+path = "src/lib.rs"
+
+[dependencies]
+# Shared portable f32 kernels (linear, norms, attention, conv2d), MLX
+# affine dequantization, and the mel/STFT frontends CLAP needs. Reused
+# rather than copied so a kernel fix lands once.
+turbospark-audio = { path = "../audio", version = "0.3.2" }
+turbospark-model-io = { path = "../model-io", version = "0.3.2" }
+# Portable image decode and PIL-compatible resize for the SigLIP2 vision
+# tower frontend.
+turbospark-vision-io = { path = "../vision-io", version = "0.3.2" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+# tokenizers permits newer releases that exceed our Rust 1.82 MSRV.
+unicode-segmentation = "=1.12.0"
+
+[features]
+# One feature per family, all on by default. A consumer that needs one
+# family can opt out of the others' code.
+default = ["embeddinggemma", "siglip2", "clap", "bert", "gte", "nomic-bert"]
+embeddinggemma = []
+siglip2 = []
+clap = []
+bert = []
+gte = []
+nomic-bert = []

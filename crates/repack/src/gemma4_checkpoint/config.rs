@@ -216,7 +216,32 @@ pub struct Gemma4Quant {
     pub default_bits: u32,
     pub group_size: u32,
     pub bits_overrides: std::collections::HashMap<String, u32>,
+    /// The checkpoint-wide scheme. Overrides are always affine: MLX writes
+    /// `mode` only at the top level, and the one mxfp4 checkpoint here
+    /// (`mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`) records its overrides as
+    /// `affine:8:g64` in its own `validation.json`.
+    pub mode: QuantMode,
+    /// Per-tensor group sizes that differ from [`Self::group_size`]. Only an
+    /// mxfp4 checkpoint can carry them (its affine overrides sit at group 64
+    /// under a 32-element mxfp4 default); an affine checkpoint that declares
+    /// one is still refused, since its kernels assume one group size.
+    pub group_overrides: std::collections::HashMap<String, u32>,
 }
+
+/// `config.json -> quantization -> mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuantMode {
+    /// MLX's default when `mode` is absent.
+    #[default]
+    Affine,
+    /// OCP MXFP4: E2M1 codes, one E8M0 exponent per 32, no biases. Accepted
+    /// only at 4 bits and group 32, the one shape MLX defines.
+    Mxfp4,
+}
+
+/// The only `(bits, group_size)` MLX's mxfp4 mode has.
+pub const MXFP4_BITS: u32 = 4;
+pub const MXFP4_GROUP_SIZE: u32 = 32;
 
 impl Default for Gemma4Quant {
     /// 4-bit, 64-element groups, no overrides: the base mode this port's
@@ -226,6 +251,8 @@ impl Default for Gemma4Quant {
             default_bits: 4,
             group_size: 64,
             bits_overrides: std::collections::HashMap::new(),
+            mode: QuantMode::Affine,
+            group_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -239,6 +266,21 @@ impl Gemma4Quant {
             .copied()
             .unwrap_or(self.default_bits)
     }
+
+    /// The group size `base_name` was quantized at.
+    pub fn group_for(&self, base_name: &str) -> u32 {
+        self.group_overrides
+            .get(base_name)
+            .copied()
+            .unwrap_or(self.group_size)
+    }
+
+    /// True when `base_name`'s packed weight is mxfp4 rather than affine.
+    /// Says nothing about unquantized tensors, which callers tell apart by
+    /// their dtype before asking.
+    pub fn is_mxfp4(&self, base_name: &str) -> bool {
+        self.mode == QuantMode::Mxfp4 && !self.bits_overrides.contains_key(base_name)
+    }
 }
 
 /// Parses `config.json -> quantization` into a [`Gemma4Quant`]. A missing
@@ -251,12 +293,38 @@ pub fn parse_gemma4_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error>
     };
     let default_bits = q.get("bits").and_then(|v| v.as_u64()).unwrap_or(4) as u32;
     let group_size = q.get("group_size").and_then(|v| v.as_u64()).unwrap_or(64) as u32;
+    let mode = match q.get("mode").map(|v| v.as_str()) {
+        None | Some(Some("affine")) => QuantMode::Affine,
+        Some(Some("mxfp4")) => QuantMode::Mxfp4,
+        Some(other) => {
+            return Err(Gemma4Error::Config(format!(
+                "quantization mode {other:?} has no kernels in this port (affine and mxfp4 do)"
+            )))
+        }
+    };
+    if mode == QuantMode::Mxfp4 && (default_bits, group_size) != (MXFP4_BITS, MXFP4_GROUP_SIZE) {
+        return Err(Gemma4Error::Config(format!(
+            "mxfp4 at {default_bits}-bit group {group_size}; MLX's mxfp4 is \
+             {MXFP4_BITS}-bit at group {MXFP4_GROUP_SIZE} and nothing else"
+        )));
+    }
     let mut bits_overrides = std::collections::HashMap::new();
+    let mut group_overrides = std::collections::HashMap::new();
     for (key, value) in q {
         if key == "bits" || key == "group_size" || key == "mode" {
             continue;
         }
         if let Some(obj) = value.as_object() {
+            if obj
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .is_some_and(|m| m != "affine")
+            {
+                return Err(Gemma4Error::Config(format!(
+                    "per-tensor quantization mode for {key} is not affine; only a \
+                     checkpoint-wide mode is supported"
+                )));
+            }
             if let Some(bits) = obj.get("bits").and_then(|v| v.as_u64()) {
                 bits_overrides.insert(key.clone(), bits as u32);
             }
@@ -271,7 +339,12 @@ pub fn parse_gemma4_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error>
                 // declared value from being refused, never store it anywhere.
                 let is_ngram_own_group_size = key.contains(super::classify::NGRAM_CONTAINER)
                     && gs == super::ngram::NGRAM_GROUP_SIZE;
-                if gs as u32 != group_size && !is_ngram_own_group_size {
+                // An mxfp4 checkpoint's overrides are affine and so cannot
+                // share mxfp4's 32-element group; each is recorded and held
+                // to the affine shape list below like any other width.
+                if mode == QuantMode::Mxfp4 && gs as u32 != group_size {
+                    group_overrides.insert(key.clone(), gs as u32);
+                } else if gs as u32 != group_size && !is_ngram_own_group_size {
                     return Err(Gemma4Error::Config(format!(
                         "per-tensor group_size {gs} for {key} differs from the \
                          global {group_size}; this port's kernels assume one group size"
@@ -285,9 +358,15 @@ pub fn parse_gemma4_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error>
     // single checkpoint can carry two widths (Gemma's routers are 8-bit under
     // 4-bit weights), and at one bit an override to 4 would ask for a shape
     // that exists at neither group size.
-    for (name, bits) in std::iter::once(("<default>", default_bits))
+    //
+    // Under mxfp4 the default is not affine (checked above), so only the
+    // overrides are, each at its own group size.
+    let affine_default = (mode == QuantMode::Affine).then_some(("<default>", default_bits));
+    for (name, bits) in affine_default
+        .into_iter()
         .chain(bits_overrides.iter().map(|(k, v)| (k.as_str(), *v)))
     {
+        let group_size = group_overrides.get(name).copied().unwrap_or(group_size);
         if !is_supported_affine_shape(bits, group_size) {
             return Err(Gemma4Error::Config(format!(
                 "unsupported affine quantization for {name}: {bits}-bit at group \
@@ -297,10 +376,22 @@ pub fn parse_gemma4_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error>
             )));
         }
     }
+    // An mxfp4 override that names a group size but no width would otherwise
+    // inherit mxfp4's 4 bits and be treated as mxfp4 by `is_mxfp4`.
+    if let Some(name) = group_overrides
+        .keys()
+        .find(|k| !bits_overrides.contains_key(*k))
+    {
+        return Err(Gemma4Error::Config(format!(
+            "per-tensor override for {name} sets group_size without bits"
+        )));
+    }
     Ok(Gemma4Quant {
         default_bits,
         group_size,
         bits_overrides,
+        mode,
+        group_overrides,
     })
 }
 

@@ -13,6 +13,7 @@ mod dflash_state;
 mod hadamard;
 mod moe;
 mod moe_batch;
+mod moe_prefill;
 mod mtp;
 mod mtp_dump;
 mod mtp_state;

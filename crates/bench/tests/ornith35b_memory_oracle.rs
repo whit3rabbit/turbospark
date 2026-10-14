@@ -29,12 +29,12 @@ const BASELINES: &[oracle_common::ChipBaseline] = &[
     //   slots  16 x 40 layers x 1,769,472 B expert stride  = 1,080.0 MiB
     //   KV     10 full layers x 2 kv heads x 256 head_dim
     //          x 2 x 2 B = 20 KiB/token x 4,096            =    80.0 MiB
-    //   GDN    30 linear layers x 32 v heads x 128 x 128 x 4 B = 180.0 MiB
+    //   GDN    30 linear layers x 32 v heads x 128 x 128 x 4 B =  60.0 MiB
     //          (delta-rule S; fixed, does NOT grow with context)
     //   conv   30 x 8,192 x 4 taps x 4 B                   =     3.8 MiB
     //   -----------------------------------------------------------------
-    //   sum                                                  1,343.8 MiB
-    // against 1,572.3 measured, leaving ~229 MiB of process baseline and host
+    //   sum                                                  1,223.8 MiB
+    // against 1,572.3 measured, leaving ~349 MiB of process baseline and host
     // scratch at a 248,320-wide vocab.
     //
     // **THE SLOT CACHE IS 69% OF IT**, which is the reading to carry: this
