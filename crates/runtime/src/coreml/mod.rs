@@ -7,10 +7,12 @@ use std::path::Path;
 pub mod embedding_gemma2;
 pub mod embedding_gemma2_media;
 pub mod parakeet;
+pub mod unlimited_ocr;
 
 pub use embedding_gemma2::{EmbeddingGemma2CoreMl, EmbeddingGemma2Options};
 pub use embedding_gemma2_media::AudioWindowEmbedding;
 pub use parakeet::{ParakeetCoreMl, ParakeetCoreMlOptions};
+pub use unlimited_ocr::{OcrEvent, OcrOptions, OcrPage, OcrResult, OcrStats, UnlimitedOcrCoreMl};
 
 /// Which Core ML pipeline a model directory holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
