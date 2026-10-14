@@ -697,6 +697,144 @@
           }
         ]
       }
+    },
+    {
+      "alias": "parakeet-redux-coreml",
+      "assets": [
+        {
+          "path": "Decoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "7f24e7248d57024c6f1c5a2ea306f4a6a89db45a363218523bb6410c4b1aecf0"
+        },
+        {
+          "path": "Decoder.mlmodelc/coremldata.bin",
+          "size": 560,
+          "sha256": "422da51d983e93a3e48cd6d46a17d6c32844452414c8e242fb0caaca2b8af5ed"
+        },
+        {
+          "path": "Decoder.mlmodelc/model.mil",
+          "size": 13110,
+          "sha256": "956f600207f88396017ca5c96cfa3acd5bfee60835a5b44b762e033a8fb28955"
+        },
+        {
+          "path": "Decoder.mlmodelc/weights/weight.bin",
+          "size": 23604992,
+          "sha256": "6c6c88c23ee5492a6b229e8cc636ddadb2b01ae0dd559d9cb63123bebf507d77"
+        },
+        {
+          "path": "Encoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "7862e972e09315df099d4bfd320743bf106acbf7fe4343317f9de45b0635d7b7"
+        },
+        {
+          "path": "Encoder.mlmodelc/coremldata.bin",
+          "size": 506,
+          "sha256": "ca0b212fe3c06c3ccd35e508fa61e4dfaad19dd0c55b82e4f5bf8711e7758fd9"
+        },
+        {
+          "path": "Encoder.mlmodelc/model.mil",
+          "size": 965906,
+          "sha256": "165487e314ed93c4a44dfec99d57be4e436e7c3dba6eef49fd3f0daf9de6d0d4"
+        },
+        {
+          "path": "Encoder.mlmodelc/weights/weight.bin",
+          "size": 182389312,
+          "sha256": "adbb5550dc6488717d3a1407b53122fbdb1af5e99c330ee20f8d8cfd9ec49252"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "fc857a756b8c9c9f31aa9e1062766cc0a82ac035ef369d6e1cbe97184921479c"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/coremldata.bin",
+          "size": 592,
+          "sha256": "611ea653e2adede7cc1cfe70da36296844f97e95e2c7dd961d45230e5599389d"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/model.mil",
+          "size": 11777,
+          "sha256": "791b3c3cf3eb2079c84623fc880f6bba008d1366e5f8b03e9a8ed8bd4d7194a0"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/weights/weight.bin",
+          "size": 12642764,
+          "sha256": "73b0288acd115fc4c36038f66b6cbf49233182488febf5d8c787bea4009535f7"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "c9beeb989c8d66f8be11df59bc6df277ec76cee404f6865b46243835ef562f6d"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/coremldata.bin",
+          "size": 486,
+          "sha256": "dbde3f2300842c1fd51ef3ff948a0bcffe65ffd2dca10707f2509f32c1d65b1d"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/metadata.json",
+          "size": 2841,
+          "sha256": "2a98699e22d279dd37fa1d238aeb1c6db1df0d6fad687775324157689d8f3acf"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/model.mil",
+          "size": 28181,
+          "sha256": "4b8518a956450fec57f06c2a21bdffc26973f7f1fa6842fb38fe917f896b6b93"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/weights/weight.bin",
+          "size": 491072,
+          "sha256": "129b76e3aeafa8afa3ea76d995b964b145fe83700d579f6ff42c4c38fa0968ea"
+        },
+        {
+          "path": "config.json",
+          "size": 458,
+          "sha256": "9b7d788ff3c1970c18a0c91ba1f3e0cc8d8123032dc7b6cd7da70629c4bef2e5"
+        },
+        {
+          "path": "parakeet_vocab.json",
+          "size": 151122,
+          "sha256": "7ec60e05f1b24480736ec0eed40900f4626bce1fa9a60fd700ec7e2a59198735"
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/parakeet-redux-coreml",
+        "revision": "8c5ef97a29cd120dc76b354b3f22b7fec3b486f9"
+      },
+      "metadata": {
+        "task": "speech_to_text",
+        "family": "parakeet_tdt",
+        "display_name": "Parakeet Redux (Core ML)",
+        "required_files": [
+          "Decoder.mlmodelc/analytics/coremldata.bin",
+          "Decoder.mlmodelc/coremldata.bin",
+          "Decoder.mlmodelc/model.mil",
+          "Decoder.mlmodelc/weights/weight.bin",
+          "Encoder.mlmodelc/analytics/coremldata.bin",
+          "Encoder.mlmodelc/coremldata.bin",
+          "Encoder.mlmodelc/model.mil",
+          "Encoder.mlmodelc/weights/weight.bin",
+          "JointDecisionv3.mlmodelc/analytics/coremldata.bin",
+          "JointDecisionv3.mlmodelc/coremldata.bin",
+          "JointDecisionv3.mlmodelc/model.mil",
+          "JointDecisionv3.mlmodelc/weights/weight.bin",
+          "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "Preprocessor.mlmodelc/coremldata.bin",
+          "Preprocessor.mlmodelc/metadata.json",
+          "Preprocessor.mlmodelc/model.mil",
+          "Preprocessor.mlmodelc/weights/weight.bin",
+          "config.json",
+          "parakeet_vocab.json"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [
+          "auto",
+          "multilingual"
+        ],
+        "voices": [],
+        "max_input_seconds": 1800
+      }
     }
   ]
 }

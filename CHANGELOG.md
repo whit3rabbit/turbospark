@@ -30,6 +30,10 @@ when this file gets updated relative to the version bump and the tag.
   recognition and EmbeddingGemma 2 multimodal (text, image, audio) embeddings
   with Matryoshka dimension truncation. Includes C FFI entry points, server
   embedding model attach, and Swift SDK bindings.
+- `crates/audio`: VoxCPM (MiniCPM backbone, LongRoPE factor tables, CFG
+  zero-star flow DiT, causal-conv AudioVAE) and VoxCPM2 (fusion-concat
+  conditioning, two-token mu DiT, reference/continuation prompts, and
+  SR-conditioned 48 kHz AudioVAE) TTS family ports with catalog assets.
 
 ### Changed
 - `swift/TurboSparkApp`: the Server pane's API key follows the same rule as

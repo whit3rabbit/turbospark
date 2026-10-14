@@ -244,6 +244,19 @@
     "evidence": "crates/audio/src/stt/parakeet/README.md; historical evidence only, not rerun by capability discovery"
   },
   {
+    "family": "stt/parakeet_coreml",
+    "task": "speech_to_text",
+    "operations": [
+      "transcribe"
+    ],
+    "backend": "coreml",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/runtime/src/coreml/parakeet.rs",
+    "evidence": "docs/COREML.md and crates/runtime/tests/coreml_parakeet.rs (macOS 15+ only); historical evidence only, not rerun by capability discovery"
+  },
+  {
     "family": "stt/phonon",
     "task": "speech_to_text",
     "operations": [

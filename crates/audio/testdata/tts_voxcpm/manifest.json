@@ -1,0 +1,19 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "generator": "tools/gen_voxcpm_fixtures.py",
+  "files": {
+    "generate/config.json": "sha256:5ba41a5f6a071c2b19ac4b06615acdada303375b437af890ea42a94786affbca",
+    "generate/model.safetensors": "sha256:a9d95e9c378f7be4aad35a8d6690ae0b9e5bd1f068bfc76238f9b7b52d197242",
+    "generate/traces.json": "sha256:a8921f7af78bf3143e2d3bf847e3ec6bda709d45ff46e49f1e701b6636583ac1",
+    "length/config.json": "sha256:5ba41a5f6a071c2b19ac4b06615acdada303375b437af890ea42a94786affbca",
+    "length/model.safetensors": "sha256:2b13f29be72ff9b823fa03ca5c381783c11ea55503aab1811302a10d0fa1a034",
+    "length/traces.json": "sha256:d5e1309e8e966e958fe8f18c910db185c1bf81093a7a2356225548df127f8d0f",
+    "longrope/config.json": "sha256:0bcc37fbb907a17c46abf31f783e009774a8b376681ea82f0e5395f441289645",
+    "longrope/model.safetensors": "sha256:2b13f29be72ff9b823fa03ca5c381783c11ea55503aab1811302a10d0fa1a034",
+    "longrope/traces.json": "sha256:e3cefec40bf03518840499c1d6f0275ca0fd87a39663eef2bc39b4b97066e017",
+    "manifest.json": "sha256:2148624f62e2192cc2d992af6ef6262ace11f41d88a2dda5d77e150cc73ab1c1",
+    "voice_clone/config.json": "sha256:5ba41a5f6a071c2b19ac4b06615acdada303375b437af890ea42a94786affbca",
+    "voice_clone/model.safetensors": "sha256:a9d95e9c378f7be4aad35a8d6690ae0b9e5bd1f068bfc76238f9b7b52d197242",
+    "voice_clone/traces.json": "sha256:5e6acd03b2e7ac3f34ca688a915a89e8394bad4e7283709786629d4b98af8248"
+  }
+}

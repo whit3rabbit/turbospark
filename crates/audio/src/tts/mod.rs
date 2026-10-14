@@ -33,6 +33,8 @@ pub mod soprano;
 pub mod spark;
 pub mod tada;
 pub mod vibevoice;
+pub mod voxcpm;
+pub mod voxcpm2;
 pub mod zonos2;
 
 pub use bailingmm::Model as BailingmmTts;
@@ -59,4 +61,6 @@ pub use soprano::Model as SopranoTts;
 pub use spark::Model as SparkTts;
 pub use tada::Model as TadaTts;
 pub use vibevoice::Model as VibeVoiceTts;
+pub use voxcpm::Model as VoxCpmTts;
+pub use voxcpm2::Model as VoxCpm2Tts;
 pub use zonos2::Model as Zonos2Tts;

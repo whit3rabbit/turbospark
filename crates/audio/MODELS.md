@@ -291,9 +291,9 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `spark` | README | 28 | Default task-qualified family; waveform decode through the [BiCodec codec port](src/codec/spark_bicodec/README.md) | [Family port](src/tts/spark/README.md) |
 | `tada` | Source | 75 | Default task-qualified family | [Family port](src/tts/tada/README.md) over the shared [lm llama backbone](src/lm/README.md); ends at the de-normalized acoustic features and gray-code durations (the tada-codec decoder is a separate download), caller-owned tokenization |
 | `vibevoice` | Source | 76 | Alias `vibevoice_streaming` | [Family port](src/tts/vibevoice/README.md) over the shared [lm qwen2 backbone](src/lm/README.md) (split lower/upper halves) with the deterministic DPM-Solver++, voice-cache conditioning, and the VAE acoustic decoder; non-streaming single batch, caller-owned tokenization |
-| `voxcpm` | Source | 77 | Alias `voxcpm1.5` | None |
-| `voxcpm2` | README | 37 | Default task-qualified family | None |
-| `voxtral_tts` | README | 43 | Default task-qualified family | None |
+| `voxcpm` | Source | 77 | Alias `voxcpm1.5` | [Family port](src/tts/voxcpm/README.md) over the family-local MiniCPM backbone with the LongRoPE factor tables, the CLS patch encoder, the CFG zero-star flow DiT, and the causal-conv AudioVAE; single batch, caller-owned tokenization |
+| `voxcpm2` | README | 37 | Default task-qualified family | [Family port](src/tts/voxcpm2/README.md) over the shared [voxcpm modules](src/tts/voxcpm/README.md) (fusion-concat conditioning, two-token mu DiT, reference/continuation prompts with warmup and decode trim, SR-conditioned 48 kHz AudioVAE with the scipy Fourier resample); `use_noise_block` checkpoints refused |
+| `voxtral_tts` | README | 43 | Default task-qualified family | None (port not started; see the PARTIAL note in the spec tasks) |
 | `zonos2` | Source | 78 | Default task-qualified family; waveform decode through the shared [Descript DAC codec port](src/codec/descript/README.md) | [Family port](src/tts/zonos2/README.md) |
 
 ## STT

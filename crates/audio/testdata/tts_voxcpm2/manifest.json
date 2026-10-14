@@ -1,0 +1,19 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "generator": "tools/gen_voxcpm2_fixtures.py",
+  "files": {
+    "continuation/config.json": "sha256:2a230ca99ee0b06665c3c4d9d13599b54a04d51e90b0a3bbd462bc231ea07883",
+    "continuation/model.safetensors": "sha256:23901b512f9540f6ceb17cc3f4c921d13daa897335aa609999dc3f991f038082",
+    "continuation/traces.json": "sha256:ede6e42d6f50dab306f1fae89046cc6509ad6e17da9ea55e8a2db537a99005eb",
+    "length/config.json": "sha256:2a230ca99ee0b06665c3c4d9d13599b54a04d51e90b0a3bbd462bc231ea07883",
+    "length/model.safetensors": "sha256:23901b512f9540f6ceb17cc3f4c921d13daa897335aa609999dc3f991f038082",
+    "length/traces.json": "sha256:dfccd0a96ccc0280e3c8532a5555ebed3fcc3091a4395b073f06de45ae905ee5",
+    "manifest.json": "sha256:a83155636aca437ef192db47f6af5632027a9a9b60f0e3a7a7799f3028830b05",
+    "ref_clone/config.json": "sha256:2a230ca99ee0b06665c3c4d9d13599b54a04d51e90b0a3bbd462bc231ea07883",
+    "ref_clone/model.safetensors": "sha256:0e0801b29ab1bd36a394b9b0eb987ee91b5732a049f753611916b6261ebd15ec",
+    "ref_clone/traces.json": "sha256:38841e4fccf194eb4ccbe2994412b13f6d66e915716152a64e3cb2af865fd2d5",
+    "zero_shot/config.json": "sha256:2a230ca99ee0b06665c3c4d9d13599b54a04d51e90b0a3bbd462bc231ea07883",
+    "zero_shot/model.safetensors": "sha256:0e0801b29ab1bd36a394b9b0eb987ee91b5732a049f753611916b6261ebd15ec",
+    "zero_shot/traces.json": "sha256:d2ff6b63f2e90e7cc124e3a186f973fdadecef55c03c8f9d136a2496ed1682ca"
+  }
+}
