@@ -59,6 +59,17 @@ These are durable implementation guardrails moved out of the always-loaded root 
    list by DESIGN rather than by luck, so a cfg or dependency that drops it
    from that list is a bug in the crate rather than an accepted limitation.
 
+   **A CLEAN COMPILE OF A RAW-SYSCALL PATH SAYS NOTHING ABOUT THE SYSCALLS.**
+   `crates/streaming/src/linux_uring.rs` compiled green under the
+   cross-target check for its whole life, and its first Linux run
+   (2026-10-14) could not complete one read: four io_uring flag constants
+   were off by bit position and the CQ cursor was unmasked. Each wrong bit
+   was another VALID flag (`ATTACH_WQ`, `FIXED_FILE`, `SQ_WAKEUP`), so no
+   type, size assertion or compiler could refuse it. Pin hand-copied UAPI
+   values in a test, and run the crate's TESTS on the platform, not just a
+   check. CI's Linux leg is `cargo check` only, so on Linux that run is
+   still a person running `cargo test -p turbospark-streaming`.
+
    The kernel inventory lives in
    [crates/gpu/AGENTS.md](../../crates/gpu/AGENTS.md); `DEVIATIONS.md` has the
    wired versus unwired list.
