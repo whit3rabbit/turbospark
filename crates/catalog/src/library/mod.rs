@@ -7,9 +7,13 @@
 //! be recognized after the volume is renamed or remounted elsewhere.
 
 mod locate;
+mod marker;
 mod mount_table;
 
 pub use locate::volume_root_of;
+pub use marker::{
+    join_relative, new_library_id, LibraryMarker, MarkerError, PortableRow, MARKER_FILE,
+};
 pub use mount_table::{
     parse_mount_table, validate_location, LocationEnv, LocationRefusal, MountEntry, MountSource,
 };
