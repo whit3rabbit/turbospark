@@ -684,6 +684,8 @@ impl AudioCatalog {
             } else {
                 None
             },
+            library: None,
+            relative_path: None,
         };
         if let Err(e) = store.record(&installed) {
             // Restore the caller's complete staging tree when the registry could not publish.
@@ -1551,6 +1553,8 @@ mod tests {
             kind: None,
             modality: ModelModality::Audio,
             variant: (task == AudioTask::Music).then_some("affine-4bit".into()),
+            library: None,
+            relative_path: None,
         };
         store.record(&row).unwrap();
         (catalog, identity, store, row)

@@ -455,6 +455,8 @@ fn install_with_selected_files(
         kind: None,
         modality: ModelModality::Text,
         variant: selected_variant.map(|variant| variant.label.to_string()),
+        library: None,
+        relative_path: None,
     };
     Ok(Installed { model, arch })
 }
@@ -516,6 +518,8 @@ fn install_vision_only(
         kind: Some(EntryKind::VisionTower.as_str().to_string()),
         modality: ModelModality::Text,
         variant: None,
+        library: None,
+        relative_path: None,
     };
     Ok(Installed { model, arch })
 }

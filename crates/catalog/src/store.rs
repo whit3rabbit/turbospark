@@ -63,6 +63,17 @@ pub struct InstalledModel {
     /// variant, preserving the earlier serialized shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
+    /// The id of the library holding this install. Absent means the internal
+    /// library ([`crate::library::INTERNAL_LIBRARY_ID`]), which is what every
+    /// row written before libraries existed is. Skipped when absent so an
+    /// internal row writes exactly as it did before, for older readers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<String>,
+    /// The install's path inside its library root. It survives a drive
+    /// mounting under a new name, which `path` (the last resolved absolute
+    /// path, kept for older readers) does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_path: Option<PathBuf>,
 }
 
 /// The user-facing model namespace under the shared TurboSpark store.
@@ -96,6 +107,20 @@ impl InstalledModel {
         } else {
             self.modality
         }
+    }
+
+    /// `<library>:<modality>/<alias>`, the key app metadata follows when the
+    /// install's location changes. Modality is the effective one so a legacy
+    /// image row gets the same id every reader already treats it as having.
+    pub fn install_id(&self) -> String {
+        format!(
+            "{}:{}/{}",
+            self.library
+                .as_deref()
+                .unwrap_or(crate::library::INTERNAL_LIBRARY_ID),
+            self.effective_modality().as_str(),
+            self.alias
+        )
     }
 }
 

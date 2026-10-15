@@ -491,6 +491,8 @@ mod tests {
                 kind: None,
                 modality: ModelModality::Text,
                 variant: None,
+                library: None,
+                relative_path: None,
             })
             .unwrap();
     }

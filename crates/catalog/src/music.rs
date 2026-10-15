@@ -297,6 +297,8 @@ pub fn install_music(
         kind: None,
         modality: ModelModality::Audio,
         variant: Some(entry.quantization.as_str().to_string()),
+        library: None,
+        relative_path: None,
     };
     if let Err(error) = store.record(&installed) {
         let _ = std::fs::remove_dir_all(&destination);
