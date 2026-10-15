@@ -32,6 +32,7 @@ mod hub_validation;
 mod image;
 mod install;
 pub mod embedding;
+pub mod library;
 pub mod music;
 mod probe;
 mod quant;
