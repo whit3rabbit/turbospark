@@ -1143,6 +1143,54 @@ fn corrupted_range_refetches_and_whole_file_sha_failure_invalidates_only_poisone
     assert_eq!(fixture.join().unwrap().len(), 7);
 }
 
+/// The receipt names the range cache trees it used, and they survive a
+/// successful transfer so a failed publish can still resume. Once the caller
+/// publishes, discarding them frees exactly those trees: before this, every
+/// pinned install left a full copy of its bytes under `.download-cache`.
+#[test]
+fn a_published_receipt_discards_only_its_own_range_cache() {
+    let _endpoint_lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (endpoint, fixture) = fixture_server(vec![
+        FixtureResponse::Json(retry_metadata()),
+        FixtureResponse::Body(b"done".to_vec()),
+        FixtureResponse::Body(b"next".to_vec()),
+    ]);
+    let _reset = set_endpoint(endpoint);
+    let client = Client::with_token(Some("hf_discard_fixture".into()));
+    let hub = hub_for(&client);
+    let root = TempRoot::new("discard-cache");
+    let pinned = root.0.join(".download-cache").join("pinned");
+    let other_owner = pinned.join("another-owner-source");
+    std::fs::create_dir_all(&other_owner).unwrap();
+    std::fs::write(other_owner.join("0-4.range"), b"keep").unwrap();
+
+    let receipt = hub
+        .download_pinned_artifacts(&retry_plan(), &root.0, &mut |_| {}, &CancelFlag::new())
+        .expect("both pinned files transfer");
+    assert_eq!(receipt.download_cache.len(), 2, "one tree per cached file");
+    for dir in &receipt.download_cache {
+        assert!(dir.starts_with(&pinned), "{}", dir.display());
+        assert!(dir.is_dir(), "a transfer keeps its cache until publish");
+    }
+    assert_eq!(cached_ranges(&root.0).len(), 3);
+
+    receipt.discard_download_cache().unwrap();
+    for dir in &receipt.download_cache {
+        assert!(!dir.exists(), "{} survived the discard", dir.display());
+    }
+    assert_eq!(
+        cached_ranges(&root.0),
+        vec![other_owner.join("0-4.range")],
+        "another owner's cache is not this receipt's to remove"
+    );
+    receipt
+        .discard_download_cache()
+        .expect("a second discard finds nothing and succeeds");
+    assert_eq!(fixture.join().unwrap().len(), 3);
+}
+
 #[test]
 fn changed_remote_validator_and_source_pin_cannot_reuse_previous_ranges() {
     let _endpoint_lock = ENDPOINT_LOCK

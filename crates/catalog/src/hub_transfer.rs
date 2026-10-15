@@ -204,13 +204,14 @@ pub(super) fn download_pinned_artifacts(
         cancel,
     );
     match transfer {
-        Ok(sources) => {
+        Ok((sources, download_cache)) => {
             cancel.checkpoint().map_err(|_| HubError::Cancelled)?;
             let staging_root = staging.retain();
             Ok(DownloadReceipt {
                 owner_id: plan.owner_id.clone(),
                 sources,
                 staging_root,
+                download_cache,
             })
         }
         Err(error) => {
@@ -237,11 +238,12 @@ fn transfer_prepared_sources(
     total_bytes: u64,
     progress: &mut dyn FnMut(HubDownloadProgress),
     cancel: &CancelFlag,
-) -> Result<Vec<VerifiedSourceGroup>, HubError> {
+) -> Result<(Vec<VerifiedSourceGroup>, Vec<PathBuf>), HubError> {
     let client = hub.client();
     let mut complete_files = 0u32;
     let mut complete_bytes = 0u64;
     let mut verified_sources = Vec::with_capacity(prepared.len());
+    let mut download_cache = Vec::new();
 
     progress(HubDownloadProgress {
         owner_id: plan.owner_id.clone(),
@@ -317,6 +319,7 @@ fn transfer_prepared_sources(
             // Immutable URLs alone do not establish the current source bytes.
             if resolved.source_sha256.is_some() || remote_validator.is_some() {
                 range = range.with_cache_dir(cache_root);
+                download_cache.extend(range.source_cache_dir());
             }
             let transfer = std::thread::scope(|scope| {
                 let range = &range;
@@ -463,7 +466,7 @@ fn transfer_prepared_sources(
             rule: "staged_file_set_matches_plan",
         });
     }
-    Ok(verified_sources)
+    Ok((verified_sources, download_cache))
 }
 
 fn append_relative_path(root: &Path, path: &str) -> PathBuf {

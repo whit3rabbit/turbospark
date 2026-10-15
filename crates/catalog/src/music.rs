@@ -302,6 +302,9 @@ pub fn install_music(
         let _ = std::fs::remove_dir_all(&destination);
         return Err(format!("recording MiniMax Music 3 install: {error}"));
     }
+    // Best effort: the published install holds these bytes now, and a
+    // leftover cache costs disk, not correctness.
+    let _ = receipt.discard_download_cache();
     Ok(installed)
 }
 
@@ -527,6 +530,7 @@ mod tests {
                 files,
             }],
             staging_root: staging_root.clone(),
+            download_cache: Vec::new(),
         };
         let destination = root.join("audio").join(format!("{}.gturbo", entry.alias));
         std::fs::create_dir_all(destination.parent().unwrap()).unwrap();

@@ -249,6 +249,9 @@ impl EmbeddingCatalog {
         })();
         let _ = std::fs::remove_dir_all(&receipt.staging_root);
         result?;
+        // Best effort: the published install holds these bytes now, and a
+        // leftover cache costs disk, not correctness.
+        let _ = receipt.discard_download_cache();
         Ok(destination)
     }
 }

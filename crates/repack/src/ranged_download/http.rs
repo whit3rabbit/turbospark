@@ -270,14 +270,24 @@ impl HttpRangeSource {
     /// A whole-file digest failure poisons otherwise internally valid chunks.
     /// Remove only this source's cache so retry can fetch fresh bytes.
     pub fn invalidate_cache(&self) -> Result<(), std::io::Error> {
-        let Some(path) = self.cache_path(0, 0) else {
+        let Some(dir) = self.source_cache_dir() else {
             return Ok(());
         };
-        let parent = path.parent().expect("cache path has a source parent");
-        match fs::remove_dir_all(parent) {
+        match fs::remove_dir_all(dir) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             result => result,
         }
+    }
+
+    /// The directory holding only this source's cached ranges, or `None`
+    /// without a cache. Callers that publish the bytes elsewhere remove it.
+    pub fn source_cache_dir(&self) -> Option<PathBuf> {
+        let path = self.cache_path(0, 0)?;
+        Some(
+            path.parent()
+                .expect("cache path has a source parent")
+                .to_path_buf(),
+        )
     }
 
     fn cache_path(&self, start: u64, end_exclusive: u64) -> Option<PathBuf> {

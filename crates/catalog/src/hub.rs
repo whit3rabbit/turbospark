@@ -279,6 +279,32 @@ pub struct DownloadReceipt {
     pub sources: Vec<VerifiedSourceGroup>,
     /// The unique child staging directory created and owned by this transfer.
     pub staging_root: PathBuf,
+    /// Per-file range cache trees under `<parent>/.download-cache/pinned`
+    /// that this transfer used. They stay so a failed install can resume;
+    /// the caller removes them with [`Self::discard_download_cache`] once
+    /// the install is published.
+    pub download_cache: Vec<PathBuf>,
+}
+
+impl DownloadReceipt {
+    /// Remove this transfer's range cache trees. Call only after the staged
+    /// bytes are published: until then the cache is what lets a retry
+    /// resume. Other owners' trees are untouched, and a missing tree is fine.
+    pub fn discard_download_cache(&self) -> Result<(), String> {
+        for dir in &self.download_cache {
+            match std::fs::remove_dir_all(dir) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "removing download cache {}: {error}",
+                        dir.display()
+                    ))
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Progress for one explicit pinned-source transfer.

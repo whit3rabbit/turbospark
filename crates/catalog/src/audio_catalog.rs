@@ -559,6 +559,11 @@ impl AudioCatalog {
             .map_err(|e| e.to_string())?;
         let published = self.publish_verified(store, identity, &receipt, cancel);
         let cleanup = std::fs::remove_dir_all(&receipt.staging_root);
+        if published.is_ok() {
+            // Best effort: the published install holds these bytes now, and
+            // a leftover cache costs disk, not correctness.
+            let _ = receipt.discard_download_cache();
+        }
         match (published, cleanup) {
             (Ok(installed), Ok(())) => Ok(installed),
             (Ok(_), Err(e)) => Err(format!(
@@ -1501,6 +1506,7 @@ mod tests {
         let receipt = DownloadReceipt {
             owner_id: plan.owner_id,
             staging_root,
+            download_cache: Vec::new(),
             sources: vec![VerifiedSourceGroup {
                 role: plan.sources[0].role.clone(),
                 repo: RepoRef::new(&identity.repository, &identity.revision),
