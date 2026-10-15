@@ -381,7 +381,20 @@ remaining levers.
   Speaker tags run `<|speaker:0|>` to `<|speaker:15|>`.
 - Voice cloning requires `consent: true` at every entry point.
 - Only the 4-bit expert, 8-bit dense conversion. The 3-bit and bf16
-  conversions are refused until each has its own gates.
+  conversions are refused until each has its own gates. Decided 2026-10-15
+  to stay on 4-bit and build no 3-bit support, after an mlx-audio comparison
+  of `mlx-community/fish-audio-drama-3-3bit` (7120e8b1, 3-bit routed experts
+  only) against the pinned 4-bit (20 sentences, 2 seeds, 40 clips each):
+  - On clips that complete, Parakeet WER is 1.46% (3-bit) against 1.43%,
+    with the same errors in both.
+  - Catastrophic clips: 3 of 40 against 2 of 40, not separable at this size.
+    One clip per quant ran to the 1,024-frame cap. The others are a
+    near-runaway and a `[sighs]` cue that turned into long sighing.
+  - Teacher-forced top-1 agreement is 77 to 80% at a KL of about 0.07 nats
+    per step. 3-bit's own samples are less likely under both models, and it
+    made 4.5% more audio.
+  - There is no higher-precision reference: the 8-bit checkpoint does not
+    run on a 36 GB machine.
 - No prebuilt TurboSpark install on Hugging Face yet. Installs convert locally
   from the pinned `mlx-community` revision. The repacked install is a
   Derivative Work under the Community License, so a published copy needs the
