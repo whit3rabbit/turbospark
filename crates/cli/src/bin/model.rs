@@ -50,6 +50,16 @@ COMMANDS:
     rm <ALIAS>                  delete an install
     auth                        inspect Hugging Face credentials, save one
                                 from stdin with --set, or clear with --clear
+    library list                the libraries that hold model files: This
+                                Mac and folders on connected drives
+    library add <PATH> [--name NAME]
+                                add a folder on a directly connected drive,
+                                or the library already there with its models
+    library remove <NAME> [--yes]
+                                stop listing a library and its models; the
+                                files on the drive stay untouched
+    library default <NAME>      the library new downloads go to
+                                (<NAME> is a library name or its id)
 
 OPTIONS:
     --out <DIR>                 install here instead of the default store
@@ -58,6 +68,7 @@ OPTIONS:
     --model-id <ID>             source model id for `pull-image`
     --model-revision <REV>      immutable 40-hex source revision for `pull-image`
     --alias <NAME>              name a --repo pull (required for one)
+    --name <NAME>               name a library for `library add`
     --file <NAME.gguf>          pick one file where a repo offers several,
                                 or (with `pull-vision`) an explicit filename
                                 for a repo whose shard index does not name
@@ -87,7 +98,7 @@ OPTIONS:
     --status                    verify and show authentication status (for `auth`)
     --set                       read and save a Hugging Face token (for `auth`)
     --force                     install past a probe refusal
-    --yes                       do not prompt before deleting
+    --yes                       do not prompt before deleting or removing
     --help                      print this text
     --version                   print the version
 
@@ -153,6 +164,8 @@ pub struct Options {
     pub discover: Option<usize>,
     pub probe: bool,
     pub alias: Option<String>,
+    /// The name for `library add`.
+    pub name: Option<String>,
     pub file: Option<String>,
     pub sidecar_repo: Option<String>,
     /// An already-installed alias to reuse the trunk's resident bytes from,
@@ -271,6 +284,8 @@ fn run(args: &[String]) -> Result<(), Error> {
             options.reject_unused(&["set", "clear", "status"])?;
             model_cmd::auth(&store, &positionals, &options)
         }
+        // Each library command checks its own flags.
+        "library" => model_cmd::library(&store, &positionals, &options),
         other => Err(Error::Usage(format!("unknown command {other:?}"))),
     }
 }
@@ -358,6 +373,10 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--alias" => {
                 options.alias = Some(value_for(&mut index, "--alias")?);
                 seen.push("alias");
+            }
+            "--name" => {
+                options.name = Some(value_for(&mut index, "--name")?);
+                seen.push("name");
             }
             "--file" => {
                 options.file = Some(value_for(&mut index, "--file")?);

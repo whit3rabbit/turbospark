@@ -9,6 +9,7 @@
 
 mod auth;
 mod image_source;
+mod library;
 mod progress;
 mod render;
 
@@ -23,6 +24,7 @@ use crate::{Error, Options};
 static AUDIO_PULL_INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 pub use auth::auth;
+pub use library::library;
 pub use render::human_bytes;
 
 /// Curated rows, marking which are installed.

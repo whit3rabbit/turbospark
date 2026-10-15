@@ -416,7 +416,7 @@ fn tok_s_column(row: &catalog::Recommendation) -> String {
     }
 }
 
-fn truncate(text: &str, width: usize) -> String {
+pub(super) fn truncate(text: &str, width: usize) -> String {
     if text.chars().count() <= width {
         text.to_string()
     } else {
