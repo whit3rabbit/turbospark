@@ -427,6 +427,7 @@ impl RealForwardRunner {
                 top_k,
                 use_silu,
                 &moe::RoutedSlot::sequential(),
+                &moe::MoeRowSources::per_token(qwen),
             )?;
             if let Some(shared) = shared {
                 shared_submissions.push(shared);

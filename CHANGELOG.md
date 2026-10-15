@@ -103,6 +103,19 @@ when this file gets updated relative to the version bump and the tag.
   Toggle Chat Sidebar) hides the panel, never the rail, and is disabled
   where there is no panel. The window minimum with a panel shown is 953pt
   (was 901).
+- The qwen MoE chunked prefill (`qwenGdnMoe`) batches its resident weight
+  reads by default on INT4-affine installs (Qwen 3.6, Ornith 35B): the GDN
+  and attention projections and the shared expert run as M-row GEMMs on
+  Steel at a 64-row micro-batch, and the routed experts keep the per-token
+  loop. A 2,940-token prompt on Qwen 3.6 prefills 1.42-1.56x faster than the
+  per-token chunked arm (53.7-58.5 s against 83.4-83.9 s on M4 Max, two pairs
+  on a shared host). The output is no longer byte-identical to sequential
+  prefill: top-8 routing near-ties flip under the batched arm's reduction
+  order (mean final-position KL 3.9e-3 nats against the per-token arm). The
+  text stays coherent. `TURBOSPARK_BATCHED_GEMV=0` restores the per-token arm,
+  which still matches sequential prefill exactly. MiniCPM-V 4.7 (BF16
+  resident matrices) keeps the per-token arm. Ornith 35B has not been checked
+  on a real install.
 
 ### Fixed
 - `crates/audio` nemo alignment: `merge_longest_contiguous` and

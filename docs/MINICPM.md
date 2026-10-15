@@ -257,14 +257,16 @@ promoted.
 
 In priority order.
 
-1. **Batched prefill for the qwen MoE flow.** The per-token chunked driver
-   landed (above) and bought 1.21-1.31x. The larger step batches the weight
-   reads themselves. For `qwen36` and `ornith35b` (INT4 affine) the M-row
-   kernels already exist in the dense driver and the MTP verify pass. For
-   MiniCPM it needs a new `bf16_gemm_rows` kernel for the BF16 resident
-   matrices and a qwen copy of gpt-oss's batched MXFP4 routed pair. Neither
-   `qwen36` nor `ornith35b` is installed on the development machine, so
-   their real-install checks of this driver are still owed too.
+1. **Batched prefill for MiniCPM.** The INT4 half landed on 2026-10-15: the
+   MoE driver's batched arm (`TURBOSPARK_BATCHED_GEMV`, default on for
+   INT4 installs) batches the resident weight reads and measured 1.42-1.56x
+   over the per-token arm on `qwen36` (`docs/BATCHED_PREFILL.md`, "The qwen
+   MoE batched arm"). MiniCPM keeps the per-token arm, because its resident
+   matrices are BF16. It needs a `bf16_gemm_rows` kernel for them, and a
+   qwen copy of gpt-oss's batched MXFP4 routed pair if the routed half is
+   ever batched. On `qwen36` the chunked driver itself was checked on the
+   real install (sequential and per-token stdout md5-identical). `ornith35b`
+   is not installed here, so its checks of both arms are still owed.
 2. **Explain the `turbospark-check` gap.** It reads 17-20 tok/s against
    `turbospark-bench`'s 24.3 at the same slot count. Phase timing is ruled
    out: the runtime never reads `TURBOSPARK_PHASES` (its counters always

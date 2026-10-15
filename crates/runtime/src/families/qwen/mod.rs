@@ -14,6 +14,7 @@ mod hadamard;
 mod moe;
 mod moe_batch;
 mod moe_prefill;
+mod moe_prefill_batched;
 mod mtp;
 mod mtp_dump;
 mod mtp_state;

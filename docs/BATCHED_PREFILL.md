@@ -1851,3 +1851,106 @@ being re-read after another session's 15 GB job pushed them out, and
 compilation is paid once per machine. The threshold was taken back out. Time
 short prompts with a warm page cache, and check `vm.swapusage` before trusting
 a cold number.
+
+## The qwen MoE batched arm, and why its bound is not the dense one (2026-10-15)
+
+`TURBOSPARK_BATCHED_GEMV` reached the MoE half of the qwen family
+(`qwenGdnMoe`: Qwen 3.6, Ornith 35B). The arm reuses the verify pass's M-row
+encoders for the GDN and full-attention blocks
+(`verify_layers::encode_qwen_layer_attn_and_norms_batched`), adds an M-row
+shared expert (`moe::encode_qwen_shared_expert_batched`), and runs the GEMMs
+on Steel at a 64-row micro-batch. The router stays one INT8 GEMV per row, and
+the routed experts stay the per-token pipelined loop, fed from the M-row
+buffers through `moe::MoeRowSources`. The batched routed pair was left alone:
+at 256 experts and top-8, the union cap allows sub-batches of about two
+tokens at 16 slots. Selection mirrors the dense arm. Unset is auto, `=1`
+forces it with by-name refusals, and `=0` keeps the per-token arm, which stays
+byte-identical to sequential. MiniCPM-V 4.7 is refused by the dtype probe
+(BF16 resident matrices) and keeps the per-token arm. Hidden-row prefill
+(Drama 3) always takes the per-token arm.
+
+Measured on the real `qwen36` install, M4 Max, AC, 16 slots, 4,096 context.
+
+**What did not move.** The frozen `qwen36_quality_gate` row reproduced on
+both the pre-change binary and this one: perplexity 6.2536, the same greedy,
+sampled and 8-slot digests. That gate prefills sequentially, so it pins the
+`moe.rs` refactor rather than the batched arm. The memory oracle (also
+sequential) read 1,611 MiB before and 1,609 MiB after, against the 1,700 MiB
+ceiling. A 300-token chat prompt, greedy and sampled at 400 new tokens, was
+stdout md5-identical across the sequential arm (`TURBOSPARK_QWEN_MOE_CHUNKED=0`)
+and the per-token chunked arm on both binaries. That is also the first
+real-install byte-identity check of the 2026-10-14 chunked driver on this
+model.
+
+**What did.** The batched arm's text diverges from the per-token arm's in its
+first sentence ("vulnerabilities, I recommend" against "vulnerabilities and
+financial inefficiencies, I recommend") and stays coherent, reaching the same
+recommendation. `crates/bench/tests/qwen36_prefill_arm_probe.rs`, with
+`qwen38_prefill_arm_probe`'s corpus, lengths and chunking:
+
+| tokens | KL scalar | KL Steel | top-1 scalar / Steel |
+| ---: | ---: | ---: | --- |
+| 64 | 7.06e-3 | 4.32e-3 | agree / agree |
+| 200 | 1.13e-4 | 5.40e-5 | agree / agree |
+| 500 | 2.30e-3 | 4.37e-3 | agree / agree |
+| 1000 | 2.49e-5 | 5.16e-5 | agree / differ |
+| 2000 | 1.65e-3 | 1.12e-3 | agree / agree |
+| 3000 | 4.17e-3 | 1.37e-2 | agree / agree |
+| mean | 2.55e-3 | 3.94e-3 | 6/6 / 5/6 |
+
+That is about 100 times the dense arm's 2.0e-5, and it fails the dense bound
+(1e-3). The scalar arm, whose GEMMs are bit-exact against the GEMVs, fails it
+too, so Steel is not the cause. There is no trend with length.
+
+**The mechanism is routing, and a router trace shows it.** With
+`TURBOSPARK_ROUTER_HIST` and `TURBOSPARK_ROUTER_TRACE=1` on the 300-token
+prompt, sequential and per-token prefill picked the same top-8 experts at all
+12,000 (token, layer) points. The per-token and scalar batched arms picked the
+same experts at every layer for tokens 0 to 14. The first difference is token
+15, layer 6, where only the 8th-ranked expert swaps (196 for 45). With
+`TURBOSPARK_ROUTER_LOGITS_LAYER=6 TURBOSPARK_ROUTER_LOGITS_PASS=15` (wired into
+the qwen MoE flow for this), the two experts sit 4.6e-4 apart in the per-token
+arm's router logits. Between the arms, the logits differ by at most 2.3e-3
+(mean 6.0e-4), on a spread of 4.87. So the M-row blocks' reduction-order
+floor, which the dense family absorbs at 6e-8 to 1.5e-5 nats, swaps an expert
+at a near-tie. The swap changes that token's FFN output and every later
+token's attention and GDN state, and 528 of 12,000 selections differ by the
+end of the prompt. A wiring or shape bug would diverge from token 0, layer 0,
+which the synthetic cases and eight mutation checks also rule out.
+
+**The default stays on, by decision, with a MoE bound.** The probe asserts a
+mean KL under 1e-2 nats and top-1 agreement on at least half the lengths. That
+is a sentinel for wiring regressions (a wrong row or seed gives KL of order 1
+and loses top-1), not a claim that the arm meets the dense bar. Making the
+arm byte-identical would need the M-row GDN path to match the per-token one
+bit for bit: the fused `gdn_in_proj_gemv_simd` against four separate GEMMs,
+and the prefill conv and delta kernels against the decode ones. Steel would
+still differ. That is open.
+
+Prefill, `turbospark-bench --expert-cache-slots 16`, three arms interleaved
+after a discarded warmup round, CPU polled every 10 s. Round 3 is refused:
+`st` and `rustc` from other sessions ran at 600-1,200% CPU through it.
+
+| case | sequential | per-token | batched (Steel) |
+| --- | ---: | ---: | ---: |
+| long-synthesis (2,940 tokens), round 1 | 86.88 s | 83.36 s | 58.53 s |
+| long-synthesis, round 2 | 101.17 s | 83.92 s | 53.67 s |
+| short-explanation (62 tokens), rounds 1-3 | 2.03-2.05 s (one 3.25 s) | 1.95-2.06 s | 1.47-1.66 s |
+
+- On the long prompt the batched arm is 1.42-1.56x the per-token arm and
+  1.48-1.89x sequential, from two usable pairs. Round 2's batched run had one
+  `MTLCompilerService` burst at 340%, and its sequential run read 101 s
+  against 87 s in round 1, so read the range, not a point.
+- The per-token arm is 1.04-1.21x sequential on this model, below
+  MiniCPM's 1.21-1.31x.
+- Peak footprint on the batched arm: 1,484-1,485 MiB on the long case,
+  1,466-1,637 MiB on the short one, under the 1,700 MiB ceiling. The
+  per-token arm read 1,446-1,477 MiB.
+- Not a frozen row: two pairs on a shared host. Re-measure on a quiet host
+  before quoting it in `docs/BENCHMARKS.md`.
+
+**Owed.** Ornith 35B gets this default through the family and has not been
+checked: the probe, its quality gate (frozen perplexity 6.2298), its memory
+oracle (1,750 MiB ceiling) and paired timing. `TURBOSPARK_BATCHED_GEMV=0`
+restores the per-token arm if it regresses. MiniCPM's batched arm still needs
+a BF16 M-row GEMM.

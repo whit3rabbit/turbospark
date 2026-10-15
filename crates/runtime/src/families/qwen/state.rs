@@ -448,7 +448,7 @@ impl RealQwenState {
     /// than a hope.
     pub(crate) fn batched_prefill(&self) -> &BatchedScratch {
         self.batched_prefill.as_ref().expect(
-            "prefill_chunk_real_qwen_dense calls ensure_batched_prefill before any layer runs",
+            "both qwen chunked drivers call ensure_batched_prefill before their batched arm runs",
         )
     }
 

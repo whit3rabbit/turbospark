@@ -45,14 +45,24 @@
 //! retired), and every row is read back. Same kernels, same inputs, so each
 //! row's hidden state is byte-identical to a sequential `hidden_out` step.
 //!
+//! **THE BATCHED ARM** (`moe_prefill_batched.rs`, `TURBOSPARK_BATCHED_GEMV`)
+//! replaces the per-token `cb1` with M-row GEMMs over a micro-batch of up to
+//! 64 rows (Steel) and feeds the same per-token routed loop from its M-row
+//! buffers. Which arm runs mirrors the dense driver: unset is auto (the
+//! batched arm wherever `qwen_moe_batched_prefill_refusal` allows it), `=1`
+//! forces it and refuses by name, and `=0` keeps the per-token arm described
+//! above, which stays the byte-identical reference. Hidden-row prefill always
+//! takes the per-token arm, so Drama 3's rows stay byte-identical to a
+//! sequential `hidden_out` step.
+//!
 //! REFUSED BY NAME, never silently served by the per-token loop:
-//! `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` (neither arm is
-//! wired for this family's MoE half), a hadamard-folded install (its
-//! single-row `moe_x_h` would need a row per token), an open drafter (the
-//! aux capture is not encoded here), and `TURBOSPARK_QWEN_SHARED_READ_OVERLAP`
-//! (its separate shared pass has not been checked against the pipelined
-//! routed loop). `supports_chunked_prefill` excludes the install-level ones,
-//! so the default `--prefill-chunk` routing never reaches these errors.
+//! `TURBOSPARK_ROUTED_BATCH` (the routed half is not batched on this family),
+//! a hadamard-folded install (its single-row `moe_x_h` would need a row per
+//! token), an open drafter (the aux capture is not encoded here), and
+//! `TURBOSPARK_QWEN_SHARED_READ_OVERLAP` (its separate shared pass has not
+//! been checked against the pipelined routed loop). `supports_chunked_prefill`
+//! excludes the install-level ones, so the default `--prefill-chunk` routing
+//! never reaches these errors.
 
 use std::collections::HashSet;
 use std::time::Instant;
@@ -63,6 +73,7 @@ use half::f16;
 use super::attn::{
     encode_full_attention_block, encode_linear_block, QkNormConvention, RopePosition,
 };
+use super::moe_prefill_batched::encode_qwen_moe_cb1_batched;
 use super::{layer_tensor, moe, RMS_EPS, TRUNK_PREFIX};
 use crate::moe_prefill_pipeline::routed_pipeline_banks;
 use crate::real_forward::RealForwardRunner;
@@ -120,9 +131,9 @@ impl RealForwardRunner {
                 "the qwen MoE chunked prefill driver cannot serve {reason}; prefill sequentially"
             )));
         }
-        // Both seams name an arm this driver does not have. Serving the
-        // per-token loop under either label would report the unbatched
-        // engine as the batched one (crate Gotcha 22).
+        // A seam naming an arm this driver does not have. Serving the
+        // per-token routed loop under it would report the unbatched engine as
+        // the batched one (crate Gotcha 22).
         if self.routed_batch_prefill {
             return Err(RealForwardError::Unsupported(
                 "TURBOSPARK_ROUTED_BATCH is not wired for the qwen MoE chunked driver: it \
@@ -130,22 +141,45 @@ impl RealForwardRunner {
                     .to_string(),
             ));
         }
-        if self.batched_gemv_prefill {
-            return Err(RealForwardError::Unsupported(
-                "TURBOSPARK_BATCHED_GEMV is not wired for the qwen MoE chunked driver: it \
-                 keeps every resident GEMV per token"
-                    .to_string(),
-            ));
-        }
+        // WHICH ARM, as in the dense driver (`prefill.rs`): `=1` forces the
+        // batched arm and refuses BY NAME where it cannot serve, unset is
+        // auto (batched wherever it qualifies, per-token otherwise, silently),
+        // and `=0` keeps the per-token arm, the byte-identical reference.
+        let batched = if self.batched_gemv_prefill {
+            if let Some(reason) = self.qwen_moe_batched_prefill_refusal()? {
+                return Err(RealForwardError::Unsupported(reason));
+            }
+            true
+        } else {
+            self.batched_gemv_prefill_auto && self.qwen_moe_batched_prefill_refusal()?.is_none()
+        };
+        let width = if batched {
+            // Allocated here, not at open, so a run that never takes this arm
+            // never pays for it. Idempotent. No multi-row attention: that
+            // kernel is gated per family (AGENTS.md) and this one has not
+            // paid for it, so the batched block keeps its one-row loop.
+            let arch = self.arch.clone();
+            let steel = self.prefill_steel;
+            let context = &mut self.context;
+            let qwen = self
+                .real_qwen
+                .as_mut()
+                .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?;
+            qwen.ensure_batched_prefill(context, &arch, steel, false)?;
+            qwen.batched_prefill().batch
+        } else {
+            MAX_PREFILL_BATCH
+        };
         let mut offset = 0usize;
         while offset < tokens.len() {
-            let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);
+            let take = (tokens.len() - offset).min(width);
             let last = offset + take == tokens.len();
             self.prefill_micro_batch_qwen_moe(
                 &tokens[offset..offset + take],
                 &[],
                 start_position + offset,
                 last,
+                batched,
                 logits,
                 None,
             )?;
@@ -201,6 +235,10 @@ impl RealForwardRunner {
                 &host_rows[offset..offset + take],
                 start_position + offset,
                 false,
+                // Always the per-token arm: its rows must stay byte-identical
+                // to a sequential `hidden_out` step, and the final norm below
+                // lands in `moe_x`, which is `MAX_PREFILL_BATCH` rows.
+                false,
                 &mut [],
                 Some(&mut hidden_out[offset * hidden..(offset + take) * hidden]),
             )?;
@@ -209,12 +247,14 @@ impl RealForwardRunner {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prefill_micro_batch_qwen_moe(
         &mut self,
         tokens: &[i32],
         host_rows: &[Option<&[u8]>],
         start_position: usize,
         want_head: bool,
+        batched: bool,
         logits: &mut [LogitValue],
         hidden_rows: Option<&mut [f16]>,
     ) -> Result<(), RealForwardError> {
@@ -224,6 +264,7 @@ impl RealForwardRunner {
             host_rows,
             start_position,
             want_head,
+            batched,
             logits,
             hidden_rows,
         );
@@ -234,12 +275,14 @@ impl RealForwardRunner {
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prefill_micro_batch_qwen_moe_inner(
         &mut self,
         tokens: &[i32],
         host_rows: &[Option<&[u8]>],
         start_position: usize,
         want_head: bool,
+        batched: bool,
         logits: &mut [LogitValue],
         hidden_rows: Option<&mut [f16]>,
     ) -> Result<(), RealForwardError> {
@@ -263,6 +306,43 @@ impl RealForwardRunner {
         if let Some(&bad) = tokens.iter().find(|&&t| (t as usize) >= vocab) {
             return Err(RealForwardError::Unsupported(format!(
                 "token id {bad} outside vocab {vocab}"
+            )));
+        }
+
+        // THE DENSE ARM'S KV-WRAP BACKSTOP, for its reason (`prefill.rs`):
+        // the batched K/V projections write M ADJACENT cache rows in one
+        // dispatch, which a micro-batch straddling `max_context` would
+        // scatter into row 0. Unreachable while admission refuses a prompt
+        // past capacity; asserted rather than assumed. Auto takes the
+        // per-token arm for this micro-batch; a forced arm is told why.
+        let mut batched = batched;
+        if batched {
+            for layer in 0..arch.num_layers as usize {
+                if arch.layer_is_linear(layer) {
+                    continue;
+                }
+                let capacity = self.kv.capacity(layer);
+                if start_position % capacity + m > capacity {
+                    if !self.batched_gemv_prefill {
+                        batched = false;
+                        break;
+                    }
+                    return Err(RealForwardError::Unsupported(format!(
+                        "TURBOSPARK_BATCHED_GEMV: a micro-batch of {m} rows at position \
+                         {start_position} wraps layer {layer}'s KV capacity {capacity}; the \
+                         batched projection writes M adjacent slots and cannot straddle the \
+                         boundary"
+                    )));
+                }
+            }
+        }
+        // A per-token micro-batch is at most `MAX_PREFILL_BATCH` rows wide:
+        // `moe_x` and `router_logits_f32` hold no more. The fallback above
+        // can only meet a batched-width micro-batch past capacity, which the
+        // KV cursor refuses anyway, so this is the backstop's backstop.
+        if !batched && m > MAX_PREFILL_BATCH {
+            return Err(RealForwardError::Unsupported(format!(
+                "a per-token qwen MoE micro-batch holds at most {MAX_PREFILL_BATCH} rows, got {m}"
             )));
         }
 
@@ -355,72 +435,94 @@ impl RealForwardRunner {
                     &layer_tensor(layer, "post_attention_layernorm.weight"),
                     hidden,
                 )?;
-                for (t, &rope_position) in rope.iter().enumerate() {
-                    let x_off = (t * hidden * 2) as u64;
-                    gpu::encode_rms_norm_bf16w(
-                        context,
-                        &pass,
-                        (&scratch.x, x_off),
-                        input_norm,
-                        (&scratch.normed, 0),
-                        hidden as u32,
-                        RMS_EPS,
-                    )
-                    .map_err(gpu_err)?;
-                    if arch.layer_is_linear(layer) {
-                        encode_linear_block(
-                            context, &pass, weights, index, &arch, qwen, scratch, layer,
-                        )?;
-                    } else {
-                        encode_full_attention_block(
-                            context,
-                            &pass,
-                            weights,
-                            index,
-                            &arch,
-                            qwen,
-                            scratch,
-                            kv,
-                            TRUNK_PREFIX,
-                            layer,
-                            start_position + t,
-                            QkNormConvention::Plain,
-                            rope_position,
-                        )?;
-                    }
-                    // RAW residual add: this family has no sandwich norms.
-                    gpu::encode_residual_add(
-                        context,
-                        &pass,
-                        (&scratch.x, x_off),
-                        (&scratch.o, 0),
-                        hidden as u32,
-                    )
-                    .map_err(gpu_err)?;
-                    // ONE post-attention norm feeds the router, the shared
-                    // expert and the routed experts, into this token's row.
-                    gpu::encode_rms_norm_bf16w(
-                        context,
-                        &pass,
-                        (&scratch.x, x_off),
-                        post_attn_norm,
-                        (&qwen.moe_x, x_off),
-                        hidden as u32,
-                        RMS_EPS,
-                    )
-                    .map_err(gpu_err)?;
-                    moe::encode_qwen_router(
+                if batched {
+                    encode_qwen_moe_cb1_batched(
                         context,
                         &pass,
                         weights,
                         index,
+                        scratch,
+                        kv,
                         qwen,
+                        &arch,
+                        input_norm,
+                        post_attn_norm,
                         layer,
                         hidden,
+                        inter,
                         num_experts,
-                        x_off,
-                        (t * num_experts * 4) as u64,
+                        use_silu,
+                        start_position,
+                        m,
                     )?;
+                } else {
+                    for (t, &rope_position) in rope.iter().enumerate() {
+                        let x_off = (t * hidden * 2) as u64;
+                        gpu::encode_rms_norm_bf16w(
+                            context,
+                            &pass,
+                            (&scratch.x, x_off),
+                            input_norm,
+                            (&scratch.normed, 0),
+                            hidden as u32,
+                            RMS_EPS,
+                        )
+                        .map_err(gpu_err)?;
+                        if arch.layer_is_linear(layer) {
+                            encode_linear_block(
+                                context, &pass, weights, index, &arch, qwen, scratch, layer,
+                            )?;
+                        } else {
+                            encode_full_attention_block(
+                                context,
+                                &pass,
+                                weights,
+                                index,
+                                &arch,
+                                qwen,
+                                scratch,
+                                kv,
+                                TRUNK_PREFIX,
+                                layer,
+                                start_position + t,
+                                QkNormConvention::Plain,
+                                rope_position,
+                            )?;
+                        }
+                        // RAW residual add: this family has no sandwich norms.
+                        gpu::encode_residual_add(
+                            context,
+                            &pass,
+                            (&scratch.x, x_off),
+                            (&scratch.o, 0),
+                            hidden as u32,
+                        )
+                        .map_err(gpu_err)?;
+                        // ONE post-attention norm feeds the router, the shared
+                        // expert and the routed experts, into this token's row.
+                        gpu::encode_rms_norm_bf16w(
+                            context,
+                            &pass,
+                            (&scratch.x, x_off),
+                            post_attn_norm,
+                            (&qwen.moe_x, x_off),
+                            hidden as u32,
+                            RMS_EPS,
+                        )
+                        .map_err(gpu_err)?;
+                        moe::encode_qwen_router(
+                            context,
+                            &pass,
+                            weights,
+                            index,
+                            qwen,
+                            layer,
+                            hidden,
+                            num_experts,
+                            x_off,
+                            (t * num_experts * 4) as u64,
+                        )?;
+                    }
                 }
             }
 
@@ -490,6 +592,23 @@ impl RealForwardRunner {
                         self.steering.as_ref(),
                         self.resid_capture.as_ref(),
                     );
+                    // The batched arm's `cb1` left this token's inputs, and
+                    // its gated shared-expert output, in the M-row scratch.
+                    let sources = if batched {
+                        let batched = qwen.batched_prefill();
+                        let routed = batched.routed.as_ref().ok_or_else(|| {
+                            RealForwardError::Unsupported(
+                                "routed scratch missing on a MoE install".to_string(),
+                            )
+                        })?;
+                        moe::MoeRowSources {
+                            moe_x: &batched.moe_x,
+                            router_logits_f32: &routed.batch_router_logits_f32,
+                            shared: moe::SharedSeed::Precomputed(&routed.batch_h1),
+                        }
+                    } else {
+                        moe::MoeRowSources::per_token(qwen)
+                    };
                     let (shared, used) = moe::encode_qwen_layer_moe(
                         context,
                         &routed_pass,
@@ -514,6 +633,7 @@ impl RealForwardRunner {
                         top_k,
                         use_silu,
                         &slot,
+                        &sources,
                     )?;
                     shared_submissions.extend(shared);
                     // After the MoE residual add, in the sequential flow's
