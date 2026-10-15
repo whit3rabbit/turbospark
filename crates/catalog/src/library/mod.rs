@@ -6,9 +6,13 @@
 //! `<home>/libraries.json` and described on its drive by a marker, so it can
 //! be recognized after the volume is renamed or remounted elsewhere.
 
+mod locate;
 mod mount_table;
 
-pub use mount_table::{LocationEnv, LocationRefusal, MountEntry, MountSource};
+pub use locate::volume_root_of;
+pub use mount_table::{
+    parse_mount_table, validate_location, LocationEnv, LocationRefusal, MountEntry, MountSource,
+};
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
