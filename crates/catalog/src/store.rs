@@ -15,11 +15,69 @@
 //! rows whose directory has gone.
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::Write;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
+
+use crate::library::{
+    locate, LibraryMarker, LibraryRegistry, Located, LocationEnv, INTERNAL_LIBRARY_ID,
+};
+
+/// The folder in an external library root that its installs stage in. It is
+/// on the destination's drive because publication is a same-volume rename.
+const LIBRARY_STAGING_DIR: &str = ".staging";
+
+/// Why a library-aware store operation failed. The store functions that
+/// predate libraries keep their `String` errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreError {
+    /// The library's drive is not connected. `library` is its name.
+    NotConnected {
+        library: String,
+    },
+    /// The library's drive went away during an install, taking the staged
+    /// install or the library root with it. Nothing was recorded (2.4).
+    LibraryDisconnected {
+        library: String,
+    },
+    /// A newer TurboSpark wrote the library's marker, so this build installs
+    /// nothing into it.
+    LibraryReadOnly {
+        library: String,
+    },
+    /// Embedding and OCR models install only into This Mac (2.5).
+    HomeOnly,
+    Io(String),
+}
+
+impl std::fmt::Display for StoreError {
+    // Names are quoted with escapes: an adopted library's name comes from
+    // an untrusted marker and must not put control characters on a terminal.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotConnected { library } => write!(
+                f,
+                "the library {library:?} is not connected; connect its drive and try again"
+            ),
+            Self::LibraryDisconnected { library } => write!(
+                f,
+                "the drive of the library {library:?} was disconnected; the install stopped"
+            ),
+            Self::LibraryReadOnly { library } => write!(
+                f,
+                "the library {library:?} was written by a newer TurboSpark and is read-only here"
+            ),
+            Self::HomeOnly => write!(f, "embedding and OCR models install only into This Mac"),
+            Self::Io(reason) => write!(f, "{reason}"),
+        }
+    }
+}
+
+impl std::error::Error for StoreError {}
 
 /// One recorded install.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +287,13 @@ fn copy_entry(
     }
 }
 
+/// Creates `path` at mode 0700 from the start, like the transfer staging
+/// folders, so staged weights are never readable by other local users.
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    fs::DirBuilder::new().mode(0o700).create(path)
+}
+
 fn managed_entries(root: &Path) -> Vec<PathBuf> {
     // Credentials and authenticated Hub metadata are deliberately not part of
     // model-store relocation. A destination may be removable or shared
@@ -435,17 +500,49 @@ impl Store {
         self.models_root().join(modality.as_str())
     }
 
+    /// `<root>/<modality>/<alias><suffix>`, the layout every library root
+    /// shares, This Mac's `<home>/models` included. Unchecked, so the
+    /// internal paths keep accepting every alias they always did.
+    fn modality_path(root: &Path, modality: ModelModality, alias: &str, suffix: &str) -> PathBuf {
+        root.join(modality.as_str())
+            .join(format!("{alias}{suffix}"))
+    }
+
+    /// [`Self::modality_path`] under a caller-chosen library root, after
+    /// refusing an alias that could name a folder outside it (empty, a
+    /// leading `.`, or a `/`), the rule marker rows meet. Every path joined
+    /// onto an external root goes through here.
+    fn checked_modality_path(
+        root: &Path,
+        modality: ModelModality,
+        alias: &str,
+        suffix: &str,
+    ) -> Result<PathBuf, StoreError> {
+        crate::library::validate_alias(alias)
+            .map_err(|_| StoreError::Io(format!("{alias:?} is not a valid install alias")))?;
+        Ok(Self::modality_path(root, modality, alias, suffix))
+    }
+
     /// Where a text-model pull of `alias` lands by default.
     pub fn install_path(&self, alias: &str) -> PathBuf {
-        self.modality_root(ModelModality::Text)
-            .join(format!("{alias}.gturbo"))
+        Self::modality_path(&self.models_root(), ModelModality::Text, alias, ".gturbo")
+    }
+
+    /// Where a text-model install of `alias` lands in the library rooted at
+    /// `root`, as [`Self::library_root_for_install`] returns it.
+    pub fn install_path_in(root: &Path, alias: &str) -> Result<PathBuf, StoreError> {
+        Self::checked_modality_path(root, ModelModality::Text, alias, ".gturbo")
     }
 
     /// Where an image install lands by default. The modality directory, not a
     /// filename suffix, keeps image and text aliases independent.
     pub fn image_install_path(&self, alias: &str) -> PathBuf {
-        self.modality_root(ModelModality::Image)
-            .join(format!("{alias}.gturbo"))
+        Self::modality_path(&self.models_root(), ModelModality::Image, alias, ".gturbo")
+    }
+
+    /// [`Self::image_install_path`] in the library rooted at `root`.
+    pub fn image_install_path_in(root: &Path, alias: &str) -> Result<PathBuf, StoreError> {
+        Self::checked_modality_path(root, ModelModality::Image, alias, ".gturbo")
     }
 
     /// The managed namespace for task-aware audio profiles.
@@ -455,7 +552,12 @@ impl Store {
 
     /// Where an audio model install lands by default.
     pub fn audio_install_path(&self, alias: &str) -> PathBuf {
-        self.audio_models_dir().join(format!("{alias}.gturbo"))
+        Self::modality_path(&self.models_root(), ModelModality::Audio, alias, ".gturbo")
+    }
+
+    /// [`Self::audio_install_path`] in the library rooted at `root`.
+    pub fn audio_install_path_in(root: &Path, alias: &str) -> Result<PathBuf, StoreError> {
+        Self::checked_modality_path(root, ModelModality::Audio, alias, ".gturbo")
     }
 
     /// The namespace for pinned embedding installs (`crate::embedding`).
@@ -472,8 +574,279 @@ impl Store {
     /// Where a vision-tower sidecar pull of `alias` lands by default. Towers
     /// are text-model accessories, so they stay in the text namespace.
     pub fn vision_install_path(&self, alias: &str) -> PathBuf {
-        self.modality_root(ModelModality::Text)
-            .join(format!("{alias}.gturbo-vision"))
+        Self::modality_path(
+            &self.models_root(),
+            ModelModality::Text,
+            alias,
+            ".gturbo-vision",
+        )
+    }
+
+    /// [`Self::vision_install_path`] in the library rooted at `root`.
+    pub fn vision_install_path_in(root: &Path, alias: &str) -> Result<PathBuf, StoreError> {
+        Self::checked_modality_path(root, ModelModality::Text, alias, ".gturbo-vision")
+    }
+
+    /// Refuses a destination library for the kinds that install only into
+    /// This Mac, embedding and OCR models (2.5). Their paths stay home-only,
+    /// so a caller that takes a destination checks it here before anything
+    /// else, and an unlisted id is refused the same as a listed one.
+    pub fn home_only(library: Option<&str>) -> Result<(), StoreError> {
+        match library {
+            None | Some(INTERNAL_LIBRARY_ID) => Ok(()),
+            Some(_) => Err(StoreError::HomeOnly),
+        }
+    }
+
+    /// The library root an install into `library` goes under: This Mac's
+    /// `<home>/models` for `None` or [`INTERNAL_LIBRARY_ID`], else the
+    /// canonical root of the listed library with that id. Choosing the
+    /// default library is the caller's business.
+    ///
+    /// `env` is a parameter rather than a field of `Store` (a refinement of
+    /// the design, which had the store carry it): the store is built on
+    /// server request paths that must never read the mount table, and only
+    /// this lookup needs it.
+    ///
+    /// A library that is not connected, or whose marker at its canonical
+    /// root is gone, unreadable, or another library's, is
+    /// [`StoreError::NotConnected`]. One a newer TurboSpark wrote is
+    /// [`StoreError::LibraryReadOnly`].
+    pub fn library_root_for_install(
+        &self,
+        library: Option<&str>,
+        env: &LocationEnv,
+    ) -> Result<PathBuf, StoreError> {
+        let id = match library {
+            None | Some(INTERNAL_LIBRARY_ID) => return Ok(self.models_root()),
+            Some(id) => id,
+        };
+        let record = LibraryRegistry::load(&self.root)
+            .libraries()
+            .into_iter()
+            .find(|record| record.id == id)
+            .ok_or_else(|| StoreError::Io(format!("no library with the id {id:?} is listed")))?;
+        let not_connected = || StoreError::NotConnected {
+            library: record.name.clone(),
+        };
+        let located = match locate(&record, env) {
+            Located::Available { root, .. } => root,
+            Located::NotConnected => return Err(not_connected()),
+        };
+        // `locate` builds the root as the volume joined with the relative
+        // path, so the volume is that many levels up.
+        let depth = record.volume_relative_path.components().count();
+        let volume = located
+            .ancestors()
+            .nth(depth)
+            .and_then(|volume| volume.canonicalize().ok())
+            .ok_or_else(not_connected)?;
+        let root = located.canonicalize().map_err(|_| not_connected())?;
+        // Adding a library refuses a linked folder, but a drive anyone could
+        // have written may have swapped one in since. Installs never follow
+        // a root off its drive.
+        let device = |path: &Path| fs::metadata(path).map(|found| found.dev()).ok();
+        if !root.starts_with(&volume) || device(&root) != device(&volume) {
+            return Err(StoreError::Io(format!(
+                "the library {:?} at {} leads off its drive",
+                record.name,
+                located.display()
+            )));
+        }
+        // The marker is read again at the canonical root, so the path an
+        // install joins onto is the one that carries this library's id.
+        match LibraryMarker::read(&root) {
+            Ok(Some(marker)) if marker.id == record.id => {
+                if marker.is_read_only() {
+                    return Err(StoreError::LibraryReadOnly {
+                        library: record.name.clone(),
+                    });
+                }
+                Ok(root)
+            }
+            // Gone or replaced since it was located, or unreadable, as a
+            // drive being unplugged can read.
+            _ => Err(not_connected()),
+        }
+    }
+
+    /// Whether `root` is This Mac's `<home>/models`, by spelling or, when
+    /// both exist, by identity.
+    fn is_internal_root(&self, root: &Path) -> bool {
+        let internal = self.models_root();
+        root == internal
+            || matches!(
+                (root.canonicalize(), internal.canonicalize()),
+                (Ok(given), Ok(internal)) if given == internal
+            )
+    }
+
+    /// Whether an install into `library_root` has lost its drive: the
+    /// external root, or `staging` (the staged install or staging folder it
+    /// was using), can no longer be examined. Anything that cannot be
+    /// examined counts as gone, since a drive being unplugged can answer
+    /// with an IO error before it disappears. Never true for This Mac: the
+    /// home does not unplug, so a folder missing there is an IO error.
+    fn library_gone(&self, staging: &Path, library_root: &Path) -> bool {
+        let vanished = |path: &Path| fs::symlink_metadata(path).is_err();
+        !self.is_internal_root(library_root) && (vanished(staging) || vanished(library_root))
+    }
+
+    /// The error for an install step into `library_root` that failed with
+    /// `error`, where `staging` is the staged install or staging folder the
+    /// step used and `library` names the library:
+    /// [`StoreError::LibraryDisconnected`] when the staging or the external
+    /// root is gone (see [`Self::library_gone`]), else [`StoreError::Io`].
+    ///
+    /// The one rule for every install step, so a disconnect reads the same
+    /// whichever step saw it: [`Self::publish_staged`] applies it, and the
+    /// library installers apply it to a failed transfer
+    /// (`HubError::Staging`) and a failed [`Self::staging_parent_for`].
+    pub(crate) fn install_failure(
+        &self,
+        staging: &Path,
+        library_root: &Path,
+        library: &str,
+        error: impl Into<String>,
+    ) -> StoreError {
+        if self.library_gone(staging, library_root) {
+            StoreError::LibraryDisconnected {
+                library: library.to_string(),
+            }
+        } else {
+            StoreError::Io(error.into())
+        }
+    }
+
+    /// The folder that pinned transfers into the library root
+    /// `library_root`, and every install into an external library, stage
+    /// under, with `library_root` as [`Self::library_root_for_install`]
+    /// returns it.
+    ///
+    /// This Mac's is the home, the parent internal pinned transfers have
+    /// always staged under. Internal installs keep their current staging
+    /// locations, including image sources under `<home>/models/image`, so
+    /// they do not change. An external library's is `<root>/.staging`,
+    /// created with mode 0700 on first use, so staging shares the
+    /// destination's volume and publication is a rename. A `.staging` that
+    /// is a symlink, not a folder, or on another device is refused rather
+    /// than followed: a drive anyone could have written must not be able to
+    /// point an install's writes elsewhere.
+    pub fn staging_parent_for(&self, library_root: &Path) -> Result<PathBuf, StoreError> {
+        if self.is_internal_root(library_root) {
+            return Ok(self.root.clone());
+        }
+        let io = |action: &str, path: &Path, e: std::io::Error| {
+            StoreError::Io(format!("{action} {}: {e}", path.display()))
+        };
+        // Canonical, so a `.staging` that is no link is inside the library
+        // by construction.
+        let root = library_root
+            .canonicalize()
+            .map_err(|e| io("resolving the library root", library_root, e))?;
+        let staging = root.join(LIBRARY_STAGING_DIR);
+        match create_private_dir(&staging) {
+            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+                return Err(io("creating", &staging, e));
+            }
+            _ => {}
+        }
+        // Examined after creating, so a link planted in between is caught.
+        let found = fs::symlink_metadata(&staging).map_err(|e| io("reading", &staging, e))?;
+        if !found.file_type().is_dir() {
+            return Err(StoreError::Io(format!(
+                "{} is not a plain folder",
+                staging.display()
+            )));
+        }
+        let root_device = fs::metadata(&root)
+            .map_err(|e| io("reading", &root, e))?
+            .dev();
+        if found.dev() != root_device {
+            return Err(StoreError::Io(format!(
+                "{} is on another drive than its library",
+                staging.display()
+            )));
+        }
+        Ok(staging)
+    }
+
+    /// Moves the staged install `staged` to `destination`, an install path
+    /// from one of the `*_path_in` helpers, creating its modality folder if
+    /// needed. `library` names the library for the error.
+    ///
+    /// Records nothing: the caller records the row only after this succeeds,
+    /// so an install that fails here leaves no row (2.4). Failures are
+    /// classified by [`Self::install_failure`]: a missing `staged` or a
+    /// vanished root of an external library is
+    /// [`StoreError::LibraryDisconnected`], since an unplugged drive takes
+    /// both with it, and the root is never recreated. In This Mac a missing
+    /// `staged` is an IO error. An existing `destination`, even an empty
+    /// folder that a rename would quietly replace, and a modality folder
+    /// that is a link are refused.
+    pub fn publish_staged(
+        &self,
+        staged: &Path,
+        destination: &Path,
+        library: &str,
+    ) -> Result<(), StoreError> {
+        fn parent(path: &Path) -> Option<&Path> {
+            path.parent().filter(|p| !p.as_os_str().is_empty())
+        }
+        let Some((modality_dir, library_root)) = parent(destination)
+            .and_then(|modality_dir| Some((modality_dir, parent(modality_dir)?)))
+        else {
+            return Err(StoreError::Io(format!(
+                "{} is not an install path",
+                destination.display()
+            )));
+        };
+        // This Mac's root is on the Mac and may not exist yet in a fresh
+        // home. Only an external root can vanish with its drive.
+        let internal = self.is_internal_root(library_root);
+        let failed = |message: String| self.install_failure(staged, library_root, library, message);
+        // Before anything is created, so a drive that is not the one the
+        // install started on, remounted under the same name, is left as it is.
+        if fs::symlink_metadata(staged).is_err() || self.library_gone(staged, library_root) {
+            return Err(failed(format!(
+                "the staged install {} cannot be read",
+                staged.display()
+            )));
+        }
+        if fs::symlink_metadata(destination).is_ok() {
+            return Err(StoreError::Io(format!(
+                "{} already exists, and publishing never replaces an install",
+                destination.display()
+            )));
+        }
+        // Not `create_dir_all` for an external root: with the drive gone it
+        // would rebuild the library root on the disk under the mount point.
+        let created = if internal {
+            fs::create_dir_all(modality_dir)
+        } else {
+            fs::create_dir(modality_dir)
+        };
+        match created {
+            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+                return Err(failed(format!("creating {}: {e}", modality_dir.display())));
+            }
+            _ => {}
+        }
+        // Not followed: a linked modality folder would put the install
+        // outside the library.
+        if !fs::symlink_metadata(modality_dir).is_ok_and(|found| found.file_type().is_dir()) {
+            return Err(failed(format!(
+                "{} is not a plain folder",
+                modality_dir.display()
+            )));
+        }
+        fs::rename(staged, destination).map_err(|e| {
+            failed(format!(
+                "moving {} to {}: {e}",
+                staged.display(),
+                destination.display()
+            ))
+        })
     }
 
     fn legacy_install_path(&self, alias: &str) -> PathBuf {

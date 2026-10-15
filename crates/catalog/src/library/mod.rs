@@ -23,6 +23,8 @@ pub use mount_table::{
 pub use registry::{AddedLibrary, LibraryRegistry, LoadReport, Refreshed, LIBRARIES_FILE};
 // The store writes `installed.json` the same way the library files are written.
 pub(crate) use marker::replace_file;
+// Install paths in a library root are built from aliases, as marker rows are.
+pub(crate) use marker::validate_alias;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

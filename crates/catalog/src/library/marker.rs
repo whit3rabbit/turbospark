@@ -366,8 +366,9 @@ pub(super) fn validate_id(id: &str) -> Result<(), MarkerError> {
     Ok(())
 }
 
-/// The same rule `Store::resolve_embedding` applies to a bare alias.
-fn validate_alias(alias: &str) -> Result<(), MarkerError> {
+/// The same rule `Store::resolve_embedding` applies to a bare alias. The
+/// store applies it too before joining an alias onto a library root.
+pub(crate) fn validate_alias(alias: &str) -> Result<(), MarkerError> {
     if alias.is_empty() || alias.starts_with('.') || alias.contains('/') {
         return Err(MarkerError::InvalidAlias(alias.to_string()));
     }

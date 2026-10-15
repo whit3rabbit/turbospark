@@ -5,9 +5,13 @@
 //! `--model foo` running the model at `./foo` and running some other model
 //! that happens to be recorded under that alias.
 
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 
-use turbospark_catalog::{set_default_root, InstalledModel, ModelModality, Store};
+use turbospark_catalog::library::{
+    parse_mount_table, LibraryRegistry, LocationEnv, MountSource, INTERNAL_LIBRARY_ID, MARKER_FILE,
+};
+use turbospark_catalog::{set_default_root, InstalledModel, ModelModality, Store, StoreError};
 
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -707,4 +711,499 @@ fn hf_token_resolution_order() {
     let (tok, src) = resolve_hf_token_with_source(Some("hf_explicit_arg")).unwrap();
     assert_eq!(tok, "hf_explicit_arg");
     assert_eq!(src, HfTokenSource::Explicit);
+}
+
+// Library-aware install roots, staging, and publication (2.4, 2.5, 2.6).
+
+const UNLISTED_ID: &str = "7a1e9c04-52b3-4f8d-a6e1-3c9b0d2f5e17";
+
+/// A temp home plus the fake volume `<base>/Volumes/T7` with a library added
+/// on it, through a fixed mount table. `home_device` differs from the temp
+/// dir's device so the same-disk refusal does not fire for the fake volume,
+/// which shares that device.
+struct LibraryFixture {
+    base: PathBuf,
+    store: Store,
+    volume: PathBuf,
+    env: LocationEnv,
+    id: String,
+}
+
+impl LibraryFixture {
+    fn new(tag: &str) -> Self {
+        // Canonical, because the temp dir is behind the /var symlink and the
+        // location rules compare canonical paths.
+        let base = temp_root(tag).canonicalize().unwrap();
+        let home = base.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let volumes_root = base.join("Volumes");
+        let volume = volumes_root.join("T7");
+        std::fs::create_dir_all(&volume).unwrap();
+        let table = format!(
+            "/dev/disk3s1s1 on / (apfs, sealed, local, read-only)\n\
+             /dev/disk20s1 on {} (hfs, local, journaled)\n",
+            volume.display()
+        );
+        let env = LocationEnv {
+            mount_source: MountSource::Fixed(parse_mount_table(&table)),
+            volumes_root,
+            home_device: std::fs::metadata(&base).unwrap().dev().wrapping_add(1),
+        };
+        let added = LibraryRegistry::load(&home)
+            .add(&volume, Some("T7"), &env)
+            .unwrap();
+        Self {
+            base,
+            store: Store::new(&home),
+            volume,
+            env,
+            id: added.view.record.id,
+        }
+    }
+
+    /// The library root as an install would get it.
+    fn root(&self) -> PathBuf {
+        self.store
+            .library_root_for_install(Some(&self.id), &self.env)
+            .unwrap()
+    }
+
+    fn record_bytes(&self) -> Option<Vec<u8>> {
+        std::fs::read(self.store.root().join("installed.json")).ok()
+    }
+}
+
+impl Drop for LibraryFixture {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.base).ok();
+    }
+}
+
+#[test]
+fn install_paths_in_a_library_root_mirror_the_internal_layout() {
+    let root = temp_root("library-paths");
+    let store = Store::new(&root);
+    let external = PathBuf::from("/Volumes/T7/TurboSpark");
+
+    assert_eq!(
+        Store::install_path_in(&external, "qwen").unwrap(),
+        external.join("text").join("qwen.gturbo")
+    );
+    assert_eq!(
+        Store::image_install_path_in(&external, "z-image").unwrap(),
+        external.join("image").join("z-image.gturbo")
+    );
+    assert_eq!(
+        Store::audio_install_path_in(&external, "whisper").unwrap(),
+        external.join("audio").join("whisper.gturbo")
+    );
+    assert_eq!(
+        Store::vision_install_path_in(&external, "qwen").unwrap(),
+        external.join("text").join("qwen.gturbo-vision")
+    );
+
+    // The internal root is `<home>/models`, so the same helpers give exactly
+    // today's paths and every existing row keeps resolving.
+    let models = store.models_root();
+    assert_eq!(models, root.join("models"));
+    assert_eq!(
+        Store::install_path_in(&models, "qwen").unwrap(),
+        store.install_path("qwen")
+    );
+    assert_eq!(
+        Store::image_install_path_in(&models, "z-image").unwrap(),
+        store.image_install_path("z-image")
+    );
+    assert_eq!(
+        Store::audio_install_path_in(&models, "whisper").unwrap(),
+        store.audio_install_path("whisper")
+    );
+    assert_eq!(
+        Store::vision_install_path_in(&models, "qwen").unwrap(),
+        store.vision_install_path("qwen")
+    );
+}
+
+#[test]
+fn an_alias_that_could_leave_the_library_root_is_refused() {
+    let external = PathBuf::from("/Volumes/T7/TurboSpark");
+    for alias in [
+        "",
+        ".hidden",
+        "..",
+        "../escape",
+        "nested/alias",
+        "/absolute",
+    ] {
+        for path in [
+            Store::install_path_in(&external, alias),
+            Store::image_install_path_in(&external, alias),
+            Store::audio_install_path_in(&external, alias),
+            Store::vision_install_path_in(&external, alias),
+        ] {
+            assert!(
+                matches!(path, Err(StoreError::Io(_))),
+                "{alias:?} gave {path:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn this_mac_is_the_install_root_without_a_library() {
+    let fx = LibraryFixture::new("root-internal");
+    let models = fx.store.models_root();
+    assert_eq!(
+        fx.store.library_root_for_install(None, &fx.env).unwrap(),
+        models
+    );
+    assert_eq!(
+        fx.store
+            .library_root_for_install(Some(INTERNAL_LIBRARY_ID), &fx.env)
+            .unwrap(),
+        models
+    );
+}
+
+#[test]
+fn a_connected_library_is_the_install_root_at_its_canonical_path() {
+    let fx = LibraryFixture::new("root-connected");
+    let root = fx.root();
+    assert_eq!(root, fx.volume.join("TurboSpark"));
+    assert_eq!(root, root.canonicalize().unwrap());
+    assert_eq!(
+        Store::install_path_in(&root, "qwen").unwrap(),
+        fx.volume
+            .join("TurboSpark")
+            .join("text")
+            .join("qwen.gturbo")
+    );
+}
+
+/// The registry refuses a linked library folder when a drive is added, but a
+/// drive anyone could have written may swap one in later. A root leading off
+/// its drive is refused, even to a folder carrying the library's marker.
+#[test]
+fn a_library_root_linked_off_its_drive_is_refused() {
+    let fx = LibraryFixture::new("root-linked");
+    let root = fx.volume.join("TurboSpark");
+    let elsewhere = fx.base.join("elsewhere");
+    std::fs::rename(&root, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &root).unwrap();
+
+    assert!(matches!(
+        fx.store.library_root_for_install(Some(&fx.id), &fx.env),
+        Err(StoreError::Io(_))
+    ));
+}
+
+#[test]
+fn an_unplugged_library_is_not_connected() {
+    let fx = LibraryFixture::new("root-unplugged");
+    std::fs::remove_dir_all(&fx.volume).unwrap();
+    let refused = fx.store.library_root_for_install(Some(&fx.id), &fx.env);
+    assert_eq!(
+        refused,
+        Err(StoreError::NotConnected {
+            library: "T7".to_string()
+        })
+    );
+    assert!(refused.unwrap_err().to_string().contains("T7"));
+}
+
+#[test]
+fn an_unlisted_library_is_refused() {
+    let fx = LibraryFixture::new("root-unlisted");
+    assert!(matches!(
+        fx.store
+            .library_root_for_install(Some(UNLISTED_ID), &fx.env),
+        Err(StoreError::Io(_))
+    ));
+}
+
+#[test]
+fn a_library_written_by_a_newer_turbospark_refuses_installs() {
+    let fx = LibraryFixture::new("root-read-only");
+    let marker = fx.volume.join("TurboSpark").join(MARKER_FILE);
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
+    json["format"] = serde_json::json!(2);
+    std::fs::write(&marker, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+
+    assert_eq!(
+        fx.store.library_root_for_install(Some(&fx.id), &fx.env),
+        Err(StoreError::LibraryReadOnly {
+            library: "T7".to_string()
+        })
+    );
+}
+
+#[test]
+fn embedding_and_ocr_installs_stay_in_this_mac() {
+    let fx = LibraryFixture::new("home-only");
+    assert_eq!(Store::home_only(None), Ok(()));
+    assert_eq!(Store::home_only(Some(INTERNAL_LIBRARY_ID)), Ok(()));
+    assert_eq!(Store::home_only(Some(&fx.id)), Err(StoreError::HomeOnly));
+    // Refused by kind, before any lookup: an unlisted id is refused the same.
+    assert_eq!(
+        Store::home_only(Some(UNLISTED_ID)),
+        Err(StoreError::HomeOnly)
+    );
+}
+
+/// Internal installs must not change at all: their staging parent is the
+/// home they have always staged in, and nothing new appears under models.
+#[test]
+fn internal_installs_stage_in_the_home_as_before() {
+    let root = temp_root("staging-internal");
+    let store = Store::new(&root);
+    assert_eq!(
+        store.staging_parent_for(&store.models_root()).unwrap(),
+        store.root()
+    );
+
+    std::fs::create_dir_all(store.models_root()).unwrap();
+    assert_eq!(
+        store.staging_parent_for(&store.models_root()).unwrap(),
+        store.root()
+    );
+    assert_eq!(
+        std::fs::read_dir(store.models_root()).unwrap().count(),
+        0,
+        "an internal install created something under models"
+    );
+}
+
+#[test]
+fn a_library_install_stages_in_the_librarys_private_staging_folder() {
+    let fx = LibraryFixture::new("staging-external");
+    let root = fx.root();
+
+    let staging = fx.store.staging_parent_for(&root).unwrap();
+    assert_eq!(staging, root.join(".staging"));
+    let metadata = std::fs::symlink_metadata(&staging).unwrap();
+    assert!(metadata.is_dir());
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+    // Same volume as the destination, so publication is a rename.
+    assert_eq!(metadata.dev(), std::fs::metadata(&root).unwrap().dev());
+    // Reused rather than recreated.
+    assert_eq!(fx.store.staging_parent_for(&root).unwrap(), staging);
+}
+
+#[test]
+fn a_symlinked_or_non_folder_staging_entry_is_refused() {
+    let fx = LibraryFixture::new("staging-symlink");
+    let root = fx.root();
+    let elsewhere = fx.base.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, root.join(".staging")).unwrap();
+
+    assert!(matches!(
+        fx.store.staging_parent_for(&root),
+        Err(StoreError::Io(_))
+    ));
+    assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+
+    std::fs::remove_file(root.join(".staging")).unwrap();
+    std::fs::write(root.join(".staging"), b"not a folder").unwrap();
+    assert!(matches!(
+        fx.store.staging_parent_for(&root),
+        Err(StoreError::Io(_))
+    ));
+}
+
+#[test]
+fn publishing_moves_the_staged_install_into_the_library_and_records_nothing() {
+    let fx = LibraryFixture::new("publish");
+    let root = fx.root();
+    let staged = fx.store.staging_parent_for(&root).unwrap().join("job");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::write(staged.join("weights.bin"), b"weights").unwrap();
+    let destination = Store::install_path_in(&root, "qwen").unwrap();
+    let record = fx.record_bytes();
+
+    fx.store
+        .publish_staged(&staged, &destination, "T7")
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read(destination.join("weights.bin")).unwrap(),
+        b"weights"
+    );
+    assert!(!staged.exists());
+    // The caller records the row, and only after a publish succeeds.
+    assert_eq!(fx.record_bytes(), record);
+
+    // An existing install is never replaced.
+    std::fs::create_dir_all(&staged).unwrap();
+    assert!(matches!(
+        fx.store.publish_staged(&staged, &destination, "T7"),
+        Err(StoreError::Io(_))
+    ));
+    assert!(staged.is_dir());
+    assert!(destination.join("weights.bin").is_file());
+}
+
+/// This Mac's models folder may not exist yet in a fresh home. That is not a
+/// disconnected drive, so publishing creates it.
+#[test]
+fn publishing_into_this_mac_creates_its_models_folder_in_a_fresh_home() {
+    let root = temp_root("publish-internal");
+    let store = Store::new(&root);
+    let staged = store
+        .staging_parent_for(&store.models_root())
+        .unwrap()
+        .join("job");
+    std::fs::create_dir_all(&staged).unwrap();
+    assert!(!store.models_root().exists());
+
+    let destination = Store::install_path_in(&store.models_root(), "qwen").unwrap();
+    store
+        .publish_staged(&staged, &destination, "This Mac")
+        .unwrap();
+    assert!(destination.is_dir());
+    assert_eq!(destination, store.install_path("qwen"));
+}
+
+/// The home does not unplug, so a staged install missing from it is an IO
+/// error, never a disconnected drive named "This Mac".
+#[test]
+fn a_staged_install_missing_from_this_mac_is_an_io_error() {
+    let root = temp_root("publish-internal-missing");
+    let store = Store::new(&root);
+    let staged = store
+        .staging_parent_for(&store.models_root())
+        .unwrap()
+        .join("job");
+    let destination = Store::install_path_in(&store.models_root(), "qwen").unwrap();
+
+    let published = store.publish_staged(&staged, &destination, "This Mac");
+    assert!(matches!(published, Err(StoreError::Io(_))), "{published:?}");
+    assert!(!destination.exists());
+}
+
+/// rename(2) quietly replaces an EMPTY folder, so an existing install folder
+/// that happens to be empty must still be refused rather than replaced.
+#[test]
+fn publishing_never_replaces_an_empty_existing_install_folder() {
+    let fx = LibraryFixture::new("publish-empty-destination");
+    let root = fx.root();
+    let staged = fx.store.staging_parent_for(&root).unwrap().join("job");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::write(staged.join("weights.bin"), b"weights").unwrap();
+    let destination = Store::install_path_in(&root, "qwen").unwrap();
+    std::fs::create_dir_all(&destination).unwrap();
+
+    let published = fx.store.publish_staged(&staged, &destination, "T7");
+    assert!(matches!(published, Err(StoreError::Io(_))), "{published:?}");
+    assert!(staged.join("weights.bin").is_file());
+    assert_eq!(std::fs::read_dir(&destination).unwrap().count(), 0);
+}
+
+/// Another drive remounted under the same name can bring its own TurboSpark
+/// folder, so the root is there while this install's staged folder is not.
+/// That is still the drive going away mid-install, and nothing is created on
+/// the drive that is there now.
+#[test]
+fn a_staged_install_gone_from_a_present_library_root_ends_disconnected() {
+    let fx = LibraryFixture::new("publish-staged-gone");
+    let kept = fx.store.models_root().join("text").join("kept.gturbo");
+    std::fs::create_dir_all(&kept).unwrap();
+    fx.store.record(&row("kept", &kept)).unwrap();
+    let record = fx.record_bytes();
+    assert!(record.is_some());
+
+    let root = fx.root();
+    let staged = fx.store.staging_parent_for(&root).unwrap().join("job");
+    std::fs::create_dir_all(&staged).unwrap();
+    let destination = Store::install_path_in(&root, "qwen").unwrap();
+    std::fs::remove_dir_all(&staged).unwrap();
+
+    assert_eq!(
+        fx.store.publish_staged(&staged, &destination, "T7"),
+        Err(StoreError::LibraryDisconnected {
+            library: "T7".to_string()
+        })
+    );
+    assert_eq!(fx.record_bytes(), record);
+    assert!(root.is_dir());
+    assert!(
+        !root.join("text").exists(),
+        "publishing created a modality folder on the drive"
+    );
+}
+
+#[test]
+fn publishing_through_a_symlinked_modality_folder_is_refused() {
+    let fx = LibraryFixture::new("publish-symlink");
+    let root = fx.root();
+    let elsewhere = fx.base.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, root.join("text")).unwrap();
+    let staged = fx.store.staging_parent_for(&root).unwrap().join("job");
+    std::fs::create_dir_all(&staged).unwrap();
+
+    let destination = Store::install_path_in(&root, "qwen").unwrap();
+    assert!(matches!(
+        fx.store.publish_staged(&staged, &destination, "T7"),
+        Err(StoreError::Io(_))
+    ));
+    assert!(staged.is_dir());
+    assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+}
+
+/// Unplugging the drive takes the staging folder with it. The install ends
+/// as disconnected, and the registry is exactly as it was (2.4).
+#[test]
+fn an_install_whose_staging_vanished_ends_disconnected_and_records_nothing() {
+    let fx = LibraryFixture::new("publish-unplugged");
+    let kept = fx.store.models_root().join("text").join("kept.gturbo");
+    std::fs::create_dir_all(&kept).unwrap();
+    fx.store.record(&row("kept", &kept)).unwrap();
+    let record = fx.record_bytes();
+    assert!(record.is_some());
+
+    let root = fx.root();
+    let staged = fx.store.staging_parent_for(&root).unwrap().join("job");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::write(staged.join("weights.bin"), b"weights").unwrap();
+    let destination = Store::install_path_in(&root, "qwen").unwrap();
+
+    std::fs::remove_dir_all(&fx.volume).unwrap();
+    let published = fx.store.publish_staged(&staged, &destination, "T7");
+
+    assert_eq!(
+        published,
+        Err(StoreError::LibraryDisconnected {
+            library: "T7".to_string()
+        })
+    );
+    assert!(published.unwrap_err().to_string().contains("T7"));
+    assert_eq!(fx.record_bytes(), record);
+    assert!(fx.store.installed().contains_key("kept"));
+    assert!(
+        !fx.volume.exists(),
+        "publishing recreated the unplugged volume"
+    );
+}
+
+/// A library root that is gone is never recreated on the disk under it,
+/// even when the staged install sits somewhere that still exists.
+#[test]
+fn a_vanished_library_root_is_never_recreated_by_publishing() {
+    let fx = LibraryFixture::new("publish-root-gone");
+    let root = fx.root();
+    let staged = fx.base.join("still-here").join("job");
+    std::fs::create_dir_all(&staged).unwrap();
+    let destination = Store::install_path_in(&root, "qwen").unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert_eq!(
+        fx.store.publish_staged(&staged, &destination, "T7"),
+        Err(StoreError::LibraryDisconnected {
+            library: "T7".to_string()
+        })
+    );
+    assert!(!root.exists(), "publishing recreated the library root");
+    assert!(staged.is_dir());
 }

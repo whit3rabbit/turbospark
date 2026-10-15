@@ -112,11 +112,15 @@ fn create_private_directory(path: &Path) -> Result<(), std::io::Error> {
 }
 
 /// Resolves every source before staging, then transfers only the owner-pinned
-/// paths. The caller-supplied directory is a parent and is never removed.
+/// paths. The caller-supplied directories are parents and are never removed.
+/// The range cache goes under `cache_parent`, apart from staging, because an
+/// install into a library stages on the library's drive while its cache
+/// stays in the home.
 pub(super) fn download_pinned_artifacts(
     hub: &HubClient<'_>,
     plan: &PinnedArtifactPlan,
     staging_parent: &Path,
+    cache_parent: &Path,
     progress: &mut dyn FnMut(HubDownloadProgress),
     cancel: &CancelFlag,
 ) -> Result<DownloadReceipt, HubError> {
@@ -197,7 +201,7 @@ pub(super) fn download_pinned_artifacts(
         &prepared,
         &endpoint,
         &staging.path,
-        &staging_parent.join(".download-cache").join("pinned"),
+        &cache_parent.join(".download-cache").join("pinned"),
         total_files,
         total_bytes,
         progress,
