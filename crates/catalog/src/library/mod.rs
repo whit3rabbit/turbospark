@@ -10,7 +10,9 @@ mod locate;
 mod marker;
 mod mount_table;
 
-pub use locate::volume_root_of;
+pub use locate::{
+    discover_at, locate, volume_relative_path, volume_root_of, Located, STANDARD_LIBRARY_FOLDER,
+};
 pub use marker::{
     join_relative, new_library_id, LibraryMarker, MarkerError, PortableRow, MARKER_FILE,
 };

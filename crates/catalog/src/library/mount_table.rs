@@ -49,8 +49,9 @@ pub enum LocationRefusal {
 }
 
 /// Where mount entries come from. `System` runs `/sbin/mount` only when
-/// `validate_location` asks, never at construction, because the default
-/// store is built on server request paths and must not spawn or fail there.
+/// `validate_location` or a relocating `locate` asks, never at construction,
+/// because the default store is built on server request paths and must not
+/// spawn or fail there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MountSource {
     System,
@@ -104,7 +105,8 @@ impl LocationEnv {
         })
     }
 
-    /// Reads the mount table on demand. Only `validate_location` calls it.
+    /// Reads the mount table on demand: `validate_location`, and `locate`
+    /// when the recorded root does not match.
     pub fn mount_table(&self) -> Result<Vec<MountEntry>, String> {
         match &self.mount_source {
             MountSource::Fixed(entries) => Ok(entries.clone()),
@@ -238,14 +240,7 @@ pub fn validate_location(path: &Path, env: &LocationEnv) -> Result<PathBuf, Loca
     let table = env
         .mount_table()
         .map_err(|_| LocationRefusal::UnknownVolume)?;
-    // Equality, never a prefix: `/Volumes/T7` must not decide for
-    // `/Volumes/T7 Backup`. The last entry wins because a later mount on the
-    // same point hides the earlier one.
-    let entry = table
-        .iter()
-        .rev()
-        .find(|entry| entry.mount_point == root)
-        .ok_or(LocationRefusal::UnknownVolume)?;
+    let entry = mount_entry_at(&table, &root).ok_or(LocationRefusal::UnknownVolume)?;
     if !entry.local {
         return Err(LocationRefusal::Network);
     }
@@ -259,6 +254,19 @@ pub fn validate_location(path: &Path, env: &LocationEnv) -> Result<PathBuf, Loca
         return Err(LocationRefusal::ReadOnly);
     }
     Ok(root)
+}
+
+/// The entry mounted at exactly `mount_point`. Equality, never a prefix:
+/// `/Volumes/T7` must not decide for `/Volumes/T7 Backup`. The last entry
+/// wins because a later mount on the same point hides the earlier one.
+pub(super) fn mount_entry_at<'a>(
+    table: &'a [MountEntry],
+    mount_point: &Path,
+) -> Option<&'a MountEntry> {
+    table
+        .iter()
+        .rev()
+        .find(|entry| entry.mount_point == mount_point)
 }
 
 #[cfg(test)]
