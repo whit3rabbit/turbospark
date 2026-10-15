@@ -143,6 +143,33 @@ final class ToolPermissionsTests: XCTestCase {
         XCTAssertFalse(ToolRiskClassifier.isSensitivePath("Cargo.toml"))
     }
 
+    /// Private keys and credential stores are matched by extension or dotfile
+    /// name, and the match ignores case and directory.
+    func testSensitivePathCoversKeyFilesAndCredentialStores() {
+        for path in [
+            "server.pem", "/etc/ssl/ca-bundle.pem", "deploy/TLS/Server.PEM",
+            "tls/prod.key", "/Users/user/certs/Client.KEY",
+            ".npmrc", "/Users/user/project/.npmrc", ".NPMRC",
+            ".netrc", "/Users/user/.netrc"
+        ] {
+            XCTAssertTrue(ToolRiskClassifier.isSensitivePath(path), path)
+        }
+
+        // `.key` is also Keynote's extension. The classifier cannot tell the two
+        // apart by name, so a Keynote file is treated as sensitive. This pins that
+        // accepted cost so a future change has to choose it again.
+        XCTAssertTrue(ToolRiskClassifier.isSensitivePath("Q3 review.key"))
+
+        // The match is the final extension or the whole dotfile name, not a
+        // substring, so look-alikes stay readable.
+        for path in [
+            "keys.md", "monkey.txt", "pem.txt", "notes.pem.md", "backup.key.md",
+            "npmrc.md", "my.npmrc.md", "netrc", "README.netrc.txt", "src/keyboard.swift"
+        ] {
+            XCTAssertFalse(ToolRiskClassifier.isSensitivePath(path), path)
+        }
+    }
+
     func testReadFileOnSensitivePathPromptsHighRisk() {
         let safeRead = ToolRiskClassifier.assessRisk(name: "read_file", arguments: ["path": "src/main.rs"])
         XCTAssertEqual(safeRead.level, .safe)
