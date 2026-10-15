@@ -232,18 +232,88 @@ pub fn resolve_expert_residency_for_install(
     let resident_bytes = std::fs::metadata(dir.join("model_weights.bin"))
         .map(|m| m.len())
         .unwrap_or(0);
-    let bytes_per_slot = model_io::load_packed_experts_layout(
+    let (bytes_per_slot, table_bytes) = model_io::load_packed_experts_layout(
         dir,
         model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
     )
-    .map(|layout| layout.layers.iter().map(|layer| layer.expert_stride).sum())
-    .unwrap_or(0);
-    Ok(resolve_expert_residency(
+    .map(|layout| expert_table_bytes(&layout))
+    .unwrap_or((0, 0));
+    let resolved = resolve_expert_residency(
         requested,
         physical_bytes,
         resident_bytes,
         bytes_per_slot,
         mapped_residency_supported(family),
+    );
+    guard_mapped_residency(
+        mapped_explicitly(requested),
+        resolved,
+        mapped_working_set(resolved),
+        resident_bytes,
+        table_bytes,
+    )
+}
+
+/// One slot's bytes across every layer, and the whole expert table's.
+fn expert_table_bytes(layout: &model_io::PackedExpertsLayout) -> (u64, u64) {
+    let per_slot = layout.layers.iter().map(|l| l.expert_stride).sum::<u64>();
+    (
+        per_slot,
+        per_slot.saturating_mul(layout.experts_per_layer as u64),
+    )
+}
+
+/// Whether mapped residency was asked for by name (the flag or the
+/// `TURBOSPARK_EXPERT_RESIDENCY=mapped` seam) rather than picked by `Auto`.
+fn mapped_explicitly(requested: model_io::ExpertResidency) -> bool {
+    match requested {
+        model_io::ExpertResidency::Mapped => true,
+        model_io::ExpertResidency::Auto => mapped_residency_requested(),
+        model_io::ExpertResidency::Streamed => false,
+    }
+}
+
+/// Metal's recommended working set, asked only when mapped residency is on
+/// the table. Zero when there is no device, which the guard reads as unknown.
+#[cfg(target_os = "macos")]
+fn mapped_working_set(resolved: model_io::ResolvedExpertResidency) -> u64 {
+    if resolved != model_io::ResolvedExpertResidency::Mapped {
+        return 0;
+    }
+    gpu::recommended_max_working_set().map_or(0, |(bytes, _)| bytes)
+}
+
+/// Mapped residency only where its mappings fit what the GPU keeps wired
+/// (`model_io::mapped_residency_fits`; `docs/EXPERT_RESIDENCY.md` has the
+/// measurement). Past that, mapped asked for by name is refused with the
+/// reason, and `Auto` resolves down to the streamer, as it does everywhere.
+pub(crate) fn guard_mapped_residency(
+    explicit: bool,
+    resolved: model_io::ResolvedExpertResidency,
+    working_set_bytes: u64,
+    resident_bytes: u64,
+    table_bytes: u64,
+) -> Result<model_io::ResolvedExpertResidency, String> {
+    use model_io::ResolvedExpertResidency;
+    if resolved != ResolvedExpertResidency::Mapped
+        || model_io::mapped_residency_fits(working_set_bytes, resident_bytes, table_bytes)
+    {
+        return Ok(resolved);
+    }
+    if !explicit {
+        return Ok(ResolvedExpertResidency::Streamed);
+    }
+    let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+    Err(format!(
+        "mapped expert residency refused: the GPU wires the whole {:.2} GiB expert table and \
+         the {:.2} GiB resident weights, and with {:.0} GiB kept for the rest of the process \
+         and the machine that exceeds Metal's {:.2} GiB recommended working set. Past it the \
+         driver unwires layers and every routed pass re-reads a whole layer (measured 70 to \
+         180 times slower, docs/EXPERT_RESIDENCY.md). Use streamed residency",
+        gib(table_bytes),
+        gib(resident_bytes),
+        gib(model_io::MAPPED_WIRED_RESERVE_BYTES),
+        gib(working_set_bytes)
     ))
 }
 
@@ -313,7 +383,7 @@ pub(crate) fn open_expert_streamers(
             layout.experts_per_layer, expecting.num_experts
         )));
     }
-    let bytes_per_slot = layout.layers.iter().map(|l| l.expert_stride).sum::<u64>();
+    let (bytes_per_slot, table_bytes) = expert_table_bytes(&layout);
     let resolved_residency = resolve_expert_residency(
         residency,
         gpu::physical_memory(),
@@ -321,6 +391,16 @@ pub(crate) fn open_expert_streamers(
         bytes_per_slot,
         mapped_residency_supported(expecting.family),
     );
+    // The admission resolver above runs this same guard on the same inputs,
+    // so admission and the open cannot disagree about the mode.
+    let resolved_residency = guard_mapped_residency(
+        mapped_explicitly(residency),
+        resolved_residency,
+        mapped_working_set(resolved_residency),
+        resident_bytes,
+        table_bytes,
+    )
+    .map_err(RealForwardError::Unsupported)?;
 
     // THE SLOT CACHE IS SIZED `slots x layers x expert_stride`, AND THAT
     // PRODUCT IS A PROPERTY OF THE MODEL'S EXPERT GRANULARITY, NOT OF ITS
@@ -511,7 +591,10 @@ pub(crate) fn open_expert_streamers(
 
 #[cfg(test)]
 mod tests {
-    use super::{mapped_residency_refusal, resolve_expert_residency, validate_arch_config};
+    use super::{
+        guard_mapped_residency, mapped_residency_refusal, resolve_expert_residency,
+        validate_arch_config,
+    };
     use model_io::ModelFamily;
 
     /// EVERY family is listed, not a sample, so adding a `ModelFamily`
@@ -651,5 +734,40 @@ mod tests {
             ),
             model_io::ResolvedExpertResidency::Streamed
         );
+    }
+
+    /// Fish Audio Drama 3's trunk (resident, expert table) against the
+    /// 36 GiB M4 Max's 28.08 GiB working set: decoded 180 times slower mapped.
+    const DRAMA3: (u64, u64) = (2_558_993_664, 18_124_701_696);
+    const WORKING_SET: u64 = 30_150_000_000;
+
+    #[test]
+    fn mapped_residency_past_the_wired_budget_is_refused_by_name_or_resolved_down() {
+        use model_io::ResolvedExpertResidency::{Mapped, Streamed};
+        let (resident, table) = DRAMA3;
+        let err = guard_mapped_residency(true, Mapped, WORKING_SET, resident, table)
+            .expect_err("asked for by name, a table past the budget is refused");
+        assert!(
+            err.contains("16.88 GiB expert table")
+                && err.contains("EXPERT_RESIDENCY.md")
+                && err.contains("streamed"),
+            "{err}"
+        );
+        assert_eq!(
+            guard_mapped_residency(false, Mapped, WORKING_SET, resident, table),
+            Ok(Streamed),
+            "Auto resolves down to the streamer"
+        );
+        assert_eq!(
+            guard_mapped_residency(true, Streamed, WORKING_SET, resident, table),
+            Ok(Streamed),
+            "a streamed open is never touched"
+        );
+        // A table that fits, and the same table with no working set known.
+        assert_eq!(
+            guard_mapped_residency(true, Mapped, WORKING_SET, resident, table / 2),
+            Ok(Mapped)
+        );
+        assert!(guard_mapped_residency(true, Mapped, 0, resident, table / 2).is_err());
     }
 }
