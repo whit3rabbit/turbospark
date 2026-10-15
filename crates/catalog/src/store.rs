@@ -1569,7 +1569,7 @@ impl Store {
 /// [`StoreError::NotConnected`]. A root that leads off its drive is
 /// [`StoreError::Io`]. A read-only marker is returned, for the caller to
 /// refuse or not.
-fn connected_library(
+pub(crate) fn connected_library(
     record: &LibraryRecord,
     table: &SharedMountTable,
 ) -> Result<(PathBuf, LibraryMarker), StoreError> {
@@ -1611,7 +1611,7 @@ fn connected_library(
 }
 
 /// The library a row records, unless it is This Mac's.
-fn external_library(row: &InstalledModel) -> Option<&str> {
+pub(crate) fn external_library(row: &InstalledModel) -> Option<&str> {
     row.library
         .as_deref()
         .filter(|id| *id != INTERNAL_LIBRARY_ID)

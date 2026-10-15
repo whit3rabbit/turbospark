@@ -1,10 +1,14 @@
 //! Task-aware pinned audio profiles and verified managed installs.
 
+use crate::library::{LibraryRegistry, LocationEnv, SharedMountTable};
+use crate::store::{connected_library, external_library};
 use crate::{
-    CancelFlag, Catalog, Client, DownloadReceipt, HubDownloadProgress, InstalledModel,
-    PinnedArtifactPlan, Store,
+    install_destination, record_into, CancelFlag, Catalog, Client, DownloadReceipt,
+    HubDownloadProgress, InstallKind, InstallTarget, InstalledModel, PinnedArtifactPlan, Store,
+    StoreError,
 };
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +150,23 @@ pub struct AudioInstalledReport {
     pub needs_adoption: Vec<AudioLegacyInstall>,
     pub incompatible: Vec<AudioInstalledRecordError>,
     pub other_audio: Vec<InstalledModel>,
+    /// Installs in a library that is not connected (3.1). Listed with the
+    /// library to connect and no error, and never as incompatible: an
+    /// unplugged drive is not a fault (3.4).
+    #[serde(default)]
+    pub not_connected: Vec<AudioNotConnectedInstall>,
+}
+
+/// An Audio install whose library is not connected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioNotConnectedInstall {
+    /// The registry row as recorded. Its `path` is where the install was
+    /// last found, under the drive's mount point at that time.
+    pub record: InstalledModel,
+    pub identity: Option<AudioProfileIdentity>,
+    /// The name of the library to connect. A library adopted from a drive
+    /// names itself in an untrusted marker, so display must escape it.
+    pub library_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -539,25 +560,134 @@ impl AudioCatalog {
         progress: &mut dyn FnMut(HubDownloadProgress),
         cancel: &CancelFlag,
     ) -> Result<InstalledModel, String> {
-        check_acknowledged(self.profile(identity)?, acknowledged)?;
-        let plan = self.pinned_plan(identity)?;
-        cancel.checkpoint().map_err(|e| e.to_string())?;
-        if store.audio_install_path(&identity.alias).exists() {
-            return Err("audio install already exists; delete it before downloading again".into());
-        }
-        std::fs::create_dir_all(store.root()).map_err(|e| format!("creating audio store: {e}"))?;
-        let hub = crate::HubClient::new(
+        let env = LocationEnv::system(store.root())?;
+        self.install_acknowledged_into(
             client,
-            catalog.clone(),
-            crate::Machine::default(),
-            4096,
-            model_io::ExpertCacheSlots::Auto,
+            catalog,
+            store,
+            identity,
+            acknowledged,
+            None,
+            &env,
+            progress,
+            cancel,
         )
-        .with_store(store.clone());
-        let receipt = hub
-            .download_pinned_artifacts(&plan, store.root(), progress, cancel)
-            .map_err(|e| e.to_string())?;
-        let published = self.publish_verified(store, identity, &receipt, cancel);
+        .map_err(|error| error.to_string())
+    }
+
+    /// [`Self::install_acknowledged`] into `library`, This Mac for `None`,
+    /// with `env` locating it (2.1, 2.6).
+    ///
+    /// Where the install lands is settled by [`install_destination`] before
+    /// anything is downloaded, so a library that is not connected or is
+    /// read-only, or an alias another library holds, fails before the first
+    /// request and progress callback. Into a library the transfer stages on
+    /// the library's drive (`Store::staging_parent_for`) and publishes with
+    /// a same-volume rename (`Store::publish_staged`), while the pinned
+    /// range cache stays in the home, where a retry into any library finds
+    /// it. A drive that goes away mid-install ends with
+    /// [`StoreError::LibraryDisconnected`] and no row. This Mac keeps
+    /// exactly today's staging, paths, and errors.
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_acknowledged_into(
+        &self,
+        client: &Client,
+        catalog: &Catalog,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        acknowledged: &[String],
+        library: Option<&str>,
+        env: &LocationEnv,
+        progress: &mut dyn FnMut(HubDownloadProgress),
+        cancel: &CancelFlag,
+    ) -> Result<InstalledModel, StoreError> {
+        self.install_with(
+            store,
+            identity,
+            acknowledged,
+            library,
+            env,
+            cancel,
+            |plan, staging_parent, cache_parent| {
+                crate::HubClient::new(
+                    client,
+                    catalog.clone(),
+                    crate::Machine::default(),
+                    4096,
+                    model_io::ExpertCacheSlots::Auto,
+                )
+                .with_store(store.clone())
+                .download_pinned_artifacts_into(
+                    plan,
+                    staging_parent,
+                    cache_parent,
+                    progress,
+                    cancel,
+                )
+            },
+        )
+    }
+
+    /// [`Self::install_acknowledged_into`] with the transfer passed in as
+    /// `download(plan, staging_parent, cache_parent)`, so tests can stand in
+    /// for the Hub and see where, and whether, a transfer was asked for.
+    #[allow(clippy::too_many_arguments)]
+    fn install_with(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        acknowledged: &[String],
+        library: Option<&str>,
+        env: &LocationEnv,
+        cancel: &CancelFlag,
+        download: impl FnOnce(
+            &PinnedArtifactPlan,
+            &Path,
+            &Path,
+        ) -> Result<DownloadReceipt, crate::HubError>,
+    ) -> Result<InstalledModel, StoreError> {
+        check_acknowledged(
+            self.profile(identity).map_err(StoreError::Io)?,
+            acknowledged,
+        )
+        .map_err(StoreError::Io)?;
+        let plan = self.pinned_plan(identity).map_err(StoreError::Io)?;
+        cancel
+            .checkpoint()
+            .map_err(|e| StoreError::Io(e.to_string()))?;
+        let target = install_destination(store, library, InstallKind::Audio, &identity.alias, env)?;
+        if target.dir.exists() {
+            return Err(StoreError::Io(
+                "audio install already exists; delete it before downloading again".into(),
+            ));
+        }
+        let into_library = target.library_id.is_some();
+        // A library's root is never created here: with its drive gone that
+        // would rebuild it on the disk under the mount point.
+        if !into_library {
+            std::fs::create_dir_all(store.root())
+                .map_err(|e| StoreError::Io(format!("creating audio store: {e}")))?;
+        }
+        // Classified by the store's one rule, so a step that failed because
+        // the drive went away reads as a disconnect. This Mac's are IO errors.
+        let failed = |staging: &Path, error: String| {
+            store.install_failure(staging, &target.root, &target.library_name, error)
+        };
+        let staging_parent = store
+            .staging_parent_for(&target.root)
+            .map_err(|error| failed(&target.root, error.to_string()))?;
+        let receipt =
+            download(&plan, &staging_parent, store.root()).map_err(|error| match error {
+                crate::HubError::Staging(_) => failed(&staging_parent, error.to_string()),
+                other => StoreError::Io(other.to_string()),
+            })?;
+        let published = self.publish_verified_to(
+            store,
+            identity,
+            &receipt,
+            into_library.then_some((&target, env)),
+            cancel,
+        );
         let cleanup = std::fs::remove_dir_all(&receipt.staging_root);
         if published.is_ok() {
             // Best effort: the published install holds these bytes now, and
@@ -566,9 +696,9 @@ impl AudioCatalog {
         }
         match (published, cleanup) {
             (Ok(installed), Ok(())) => Ok(installed),
-            (Ok(_), Err(e)) => Err(format!(
+            (Ok(_), Err(e)) => Err(StoreError::Io(format!(
                 "audio install published, but removing transfer staging failed: {e}"
-            )),
+            ))),
             (Err(e), _) => Err(e),
         }
     }
@@ -582,10 +712,105 @@ impl AudioCatalog {
         receipt: &DownloadReceipt,
         cancel: &CancelFlag,
     ) -> Result<InstalledModel, String> {
-        let profile = self.profile(identity)?;
+        self.publish_verified_to(store, identity, receipt, None, cancel)
+            .map_err(|error| error.to_string())
+    }
+
+    /// [`Self::publish_verified`] into This Mac for `None`, or into the
+    /// library of `into`'s target, located with its environment. In a
+    /// library the install is published with `Store::publish_staged` and
+    /// recorded with [`record_into`], which puts its row in the library's
+    /// marker too, and a step that failed because the drive went away is
+    /// [`StoreError::LibraryDisconnected`].
+    fn publish_verified_to(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        receipt: &DownloadReceipt,
+        into: Option<(&InstallTarget, &LocationEnv)>,
+        cancel: &CancelFlag,
+    ) -> Result<InstalledModel, StoreError> {
+        let failed = |error: String| match into {
+            Some((target, _)) => store.install_failure(
+                &receipt.staging_root,
+                &target.root,
+                &target.library_name,
+                error,
+            ),
+            None => StoreError::Io(error),
+        };
+        let profile = self.profile(identity).map_err(StoreError::Io)?;
+        let destination = match into {
+            Some((target, _)) => target.dir.clone(),
+            None => store.audio_install_path(&identity.alias),
+        };
+        let source_root = self
+            .verified_source(profile, identity, &destination, receipt, cancel)
+            .map_err(failed)?;
+        match into {
+            None => {
+                std::fs::create_dir_all(store.audio_models_dir())
+                    .map_err(|e| StoreError::Io(format!("creating audio namespace: {e}")))?;
+                std::fs::rename(&source_root, &destination)
+                    .map_err(|e| StoreError::Io(format!("publishing audio install: {e}")))?;
+            }
+            Some((target, _)) => {
+                store.publish_staged(&source_root, &destination, &target.library_name)?
+            }
+        }
+        let installed = InstalledModel {
+            alias: identity.alias.clone(),
+            repo: identity.repository.clone(),
+            revision: identity.revision.clone(),
+            path: destination.clone(),
+            family: profile.family.clone(),
+            install_bytes: crate::directory_bytes(&destination),
+            installed_on: crate::install::today(),
+            status: "unverified".into(),
+            kind: if identity.task == AudioTask::SpeechToText {
+                Some("speech".into())
+            } else {
+                None
+            },
+            modality: crate::ModelModality::Audio,
+            variant: if identity.task == AudioTask::Music {
+                Some("affine-4bit".into())
+            } else {
+                None
+            },
+            library: None,
+            relative_path: None,
+        };
+        let recorded = match into {
+            None => store.record(&installed).map(|()| installed),
+            Some((target, env)) => {
+                record_into(store, &installed, target, env).map_err(|e| e.to_string())
+            }
+        };
+        recorded.or_else(|e| {
+            // Restore the caller's complete staging tree when the registry could not publish.
+            std::fs::rename(&destination, &source_root).map_err(|rollback| {
+                failed(format!(
+                    "recording audio install failed: {e}; restoring staging failed: {rollback}"
+                ))
+            })?;
+            Err(failed(format!("recording audio install failed: {e}")))
+        })
+    }
+
+    /// The staged source tree of `receipt`, once the receipt and its bytes
+    /// are exactly `identity`'s pinned graph, with the install receipts
+    /// written into it, ready to publish at `destination`.
+    fn verified_source(
+        &self,
+        profile: &AudioProfile,
+        identity: &AudioProfileIdentity,
+        destination: &Path,
+        receipt: &DownloadReceipt,
+        cancel: &CancelFlag,
+    ) -> Result<PathBuf, String> {
         let plan = self.pinned_plan(identity)?;
         cancel.checkpoint().map_err(|e| e.to_string())?;
-        let destination = store.audio_install_path(&identity.alias);
         if destination.exists() {
             return Err("audio install already exists; publication cannot overwrite it".into());
         }
@@ -660,51 +885,48 @@ impl AudioCatalog {
             .and_then(|_| file.sync_all())
             .map_err(|e| format!("writing audio receipt: {e}"))?;
         cancel.checkpoint().map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(store.audio_models_dir())
-            .map_err(|e| format!("creating audio namespace: {e}"))?;
-        std::fs::rename(&source_root, &destination)
-            .map_err(|e| format!("publishing audio install: {e}"))?;
-        let installed = InstalledModel {
-            alias: identity.alias.clone(),
-            repo: identity.repository.clone(),
-            revision: identity.revision.clone(),
-            path: destination.clone(),
-            family: profile.family.clone(),
-            install_bytes: crate::directory_bytes(&destination),
-            installed_on: crate::install::today(),
-            status: "unverified".into(),
-            kind: if identity.task == AudioTask::SpeechToText {
-                Some("speech".into())
-            } else {
-                None
-            },
-            modality: crate::ModelModality::Audio,
-            variant: if identity.task == AudioTask::Music {
-                Some("affine-4bit".into())
-            } else {
-                None
-            },
-            library: None,
-            relative_path: None,
-        };
-        if let Err(e) = store.record(&installed) {
-            // Restore the caller's complete staging tree when the registry could not publish.
-            std::fs::rename(&destination, &source_root).map_err(|rollback| {
-                format!("recording audio install failed: {e}; restoring staging failed: {rollback}")
-            })?;
-            return Err(format!("recording audio install failed: {e}"));
-        }
-        Ok(installed)
+        Ok(source_root)
     }
 
     /// Fast picker lookup: receipt identity, graph, and sizes. This does not detect same-size corruption.
+    ///
+    /// An install in a library is located with the live environment, as
+    /// [`Self::resolve_with`] describes. This Mac's never needs it.
     pub fn resolve(
         &self,
         store: &Store,
         identity: &AudioProfileIdentity,
     ) -> Result<PathBuf, String> {
+        self.resolve_located(store, identity, &Locator::live(store))
+    }
+
+    /// [`Self::resolve`] with `env` locating an install's library (2.6).
+    /// An install in a library resolves to `<root>/audio/<alias>.gturbo`
+    /// under where the library is now, never its recorded path, which names
+    /// the drive's mount point at install time, and the folders on the way
+    /// are examined without following them before anything is read. A
+    /// library that is not connected is refused with
+    /// [`StoreError::NotConnected`]'s text.
+    pub fn resolve_with(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        env: &LocationEnv,
+    ) -> Result<PathBuf, String> {
+        self.resolve_located(store, identity, &Locator::Given(env))
+    }
+
+    fn resolve_located(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        locator: &Locator,
+    ) -> Result<PathBuf, String> {
         let profile = self.profile(identity)?;
-        let path = store.audio_install_path(&identity.alias);
+        let path = match library_row(store, &identity.alias)? {
+            None => store.audio_install_path(&identity.alias),
+            Some(row) => locate_library_install(store, &row, locator)?.path,
+        };
         read_receipt(profile, &path)?;
         verify_asset_bytes(profile, &path, false, None)?;
         Ok(path)
@@ -727,7 +949,43 @@ impl AudioCatalog {
         cancelled: &dyn Fn() -> bool,
         on_progress: &mut dyn FnMut(&str, u64, u64),
     ) -> Result<PathBuf, String> {
-        let path = self.resolve(store, identity)?;
+        self.verify_observed_located(
+            store,
+            identity,
+            &Locator::live(store),
+            cancelled,
+            on_progress,
+        )
+    }
+
+    /// [`Self::verify_observed`] with `env` locating an install's library,
+    /// as for [`Self::resolve_with`].
+    pub fn verify_observed_with(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        env: &LocationEnv,
+        cancelled: &dyn Fn() -> bool,
+        on_progress: &mut dyn FnMut(&str, u64, u64),
+    ) -> Result<PathBuf, String> {
+        self.verify_observed_located(
+            store,
+            identity,
+            &Locator::Given(env),
+            cancelled,
+            on_progress,
+        )
+    }
+
+    fn verify_observed_located(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        locator: &Locator,
+        cancelled: &dyn Fn() -> bool,
+        on_progress: &mut dyn FnMut(&str, u64, u64),
+    ) -> Result<PathBuf, String> {
+        let path = self.resolve_located(store, identity, locator)?;
         let mut observer = VerifyObserver {
             cancelled,
             on_progress,
@@ -748,7 +1006,27 @@ impl AudioCatalog {
         store: &Store,
         identity: &AudioProfileIdentity,
     ) -> Result<PathBuf, String> {
-        let path = self.resolve(store, identity)?;
+        self.verify_located(store, identity, &Locator::live(store))
+    }
+
+    /// [`Self::verify`] with `env` locating an install's library, as for
+    /// [`Self::resolve_with`].
+    pub fn verify_with(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        env: &LocationEnv,
+    ) -> Result<PathBuf, String> {
+        self.verify_located(store, identity, &Locator::Given(env))
+    }
+
+    fn verify_located(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        locator: &Locator,
+    ) -> Result<PathBuf, String> {
+        let path = self.resolve_located(store, identity, locator)?;
         verify_asset_bytes(self.profile(identity)?, &path, true, None)?;
         Ok(path)
     }
@@ -806,9 +1084,33 @@ impl AudioCatalog {
 
     /// Per-record discovery keeps a damaged or older install from hiding usable profiles.
     /// Legacy rows are candidates for explicit adoption, not trusted runtime installs.
+    ///
+    /// Rows in a library are located with the live environment, as
+    /// [`Self::installed_report_with`] describes. A store with only This
+    /// Mac's rows never needs it.
     pub fn installed_report(&self, store: &Store) -> AudioInstalledReport {
+        self.report(store, &Locator::live(store))
+    }
+
+    /// [`Self::installed_report`] with `env` locating the libraries rows are
+    /// in (2.6, 3.1, 3.4), each once, through one mount table read.
+    ///
+    /// A row whose library is not connected goes to `not_connected` with
+    /// the library's name and no error, never to `incompatible`. A row in a
+    /// connected library is checked at `<root>/audio/<alias>.gturbo` under
+    /// where the library is now, which becomes its `path`, with the folders
+    /// on the way examined unfollowed before anything is read. A folder
+    /// missing there is incompatible, as This Mac's is. Only This Mac's
+    /// legacy installs are offered for adoption, so a library install
+    /// without its receipt is incompatible.
+    pub fn installed_report_with(&self, store: &Store, env: &LocationEnv) -> AudioInstalledReport {
+        self.report(store, &Locator::Given(env))
+    }
+
+    fn report(&self, store: &Store, locator: &Locator) -> AudioInstalledReport {
         let mut report = AudioInstalledReport::default();
         let rows = store.audio_records();
+        let places = library_places(store, &rows, locator);
         let mut counts = std::collections::BTreeMap::new();
         for row in &rows {
             *counts.entry(row.alias.as_str()).or_insert(0usize) += 1;
@@ -817,9 +1119,26 @@ impl AudioCatalog {
             row.status = unqualified_status(&row.status);
             let profile = self.get(&row.alias);
             let identity = profile.map(|profile| profile.identity.clone());
+            let library_root = match external_library(&row).map(|id| place_of(&places, id)) {
+                None => None,
+                Some(Ok(LibraryPlace::NotConnected(library_name))) => {
+                    report.not_connected.push(AudioNotConnectedInstall {
+                        record: row,
+                        identity,
+                        library_name: library_name.clone(),
+                    });
+                    continue;
+                }
+                Some(Ok(LibraryPlace::Connected { root, .. })) => Some(Ok(root)),
+                Some(Err(error)) => Some(Err(error)),
+            };
             let checked = (|| {
                 if counts[row.alias.as_str()] != 1 {
                     return Err("ambiguous duplicate Audio store records".into());
+                }
+                if let Some(root) = library_root {
+                    check_library_row(&mut row, profile, root?)?;
+                    return Ok(false);
                 }
                 if let Some(profile) = profile {
                     let canonical = store.audio_install_path(&row.alias);
@@ -893,14 +1212,74 @@ impl AudioCatalog {
     }
 
     /// Callers must close idle native handles before deleting. Corrupt payloads remain deletable.
+    ///
+    /// An install in a library is located with the live environment, as
+    /// [`Self::delete_with`] describes. This Mac's never needs it.
     pub fn delete(&self, store: &Store, identity: &AudioProfileIdentity) -> Result<(), String> {
+        self.delete_located(store, identity, &Locator::live(store))
+    }
+
+    /// [`Self::delete`] with `env` locating an install's library.
+    ///
+    /// An install in a library is deleted on its drive, at the folder
+    /// [`Self::resolve_with`] finds, and its row leaves the registry and the
+    /// library's marker together (`Store::forget_install`). A library that
+    /// is not connected or is read-only is refused with nothing touched.
+    /// The folders on the way are examined again, unfollowed, right before
+    /// the folder is removed, so nothing is deleted through a link (2.2
+    /// SECURITY).
+    pub fn delete_with(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        env: &LocationEnv,
+    ) -> Result<(), String> {
+        self.delete_located(store, identity, &Locator::Given(env))
+    }
+
+    fn delete_located(
+        &self,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        locator: &Locator,
+    ) -> Result<(), String> {
         let profile = self.profile(identity)?;
-        let path = store.audio_install_path(&identity.alias);
-        require_directory(&store.models_root())?;
-        require_directory(&store.audio_models_dir())?;
-        read_receipt(profile, &path)?;
-        let row = store.installed_audio().remove(&identity.alias);
-        delete_managed_audio_path(store, identity, row)
+        let Some(mut row) = library_row(store, &identity.alias)? else {
+            let path = store.audio_install_path(&identity.alias);
+            require_directory(&store.models_root())?;
+            require_directory(&store.audio_models_dir())?;
+            read_receipt(profile, &path)?;
+            let row = store.installed_audio().remove(&identity.alias);
+            return delete_managed_audio_path(store, identity, row);
+        };
+        let install = locate_library_install(store, &row, locator)?;
+        if install.read_only {
+            return Err(StoreError::LibraryReadOnly {
+                library: install.library_name,
+            }
+            .to_string());
+        }
+        read_receipt(profile, &install.path)?;
+        // Again, right before the rename: a slow drive takes a while to read,
+        // and anyone with the drive could have swapped a link in meanwhile.
+        require_library_audio_dirs(&install.root, &install.path)?;
+        let env = locator.env()?;
+        row.path = install.path.clone();
+        let install_id = row.install_id();
+        let restore = || {
+            let _ = store.record_in_library(std::slice::from_ref(&row), env);
+        };
+        let forget = || {
+            store.forget_install(&install_id, env).map_err(|error| {
+                // The registry is written before the marker, so a marker
+                // write that failed has already dropped the row, and the
+                // folder is about to come back.
+                restore();
+                error.to_string()
+            })
+        };
+        let namespace = install.path.parent().unwrap_or(&install.root);
+        delete_through_tombstone(&install.path, namespace, &identity.alias, forget, restore)
     }
 }
 
@@ -909,29 +1288,256 @@ fn delete_managed_audio_path(
     identity: &AudioProfileIdentity,
     row: Option<InstalledModel>,
 ) -> Result<(), String> {
-    let path = store.audio_install_path(&identity.alias);
+    delete_through_tombstone(
+        &store.audio_install_path(&identity.alias),
+        &store.audio_models_dir(),
+        &identity.alias,
+        || store.forget_audio(&identity.alias),
+        || {
+            if let Some(row) = row {
+                let _ = store.record(&row);
+            }
+        },
+    )
+}
+
+/// Deletes the install folder `path` through a tombstone beside it in its
+/// audio folder `namespace`: the folder is renamed aside, its row is
+/// forgotten with `forget`, and only then is the tombstone removed. A failed
+/// `forget` renames the folder back. A failed removal renames it back too,
+/// and records the row again with `restore`.
+fn delete_through_tombstone(
+    path: &Path,
+    namespace: &Path,
+    alias: &str,
+    forget: impl FnOnce() -> Result<(), String>,
+    restore: impl FnOnce(),
+) -> Result<(), String> {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let tombstone = store.audio_models_dir().join(format!(
+    let tombstone = namespace.join(format!(
         ".delete-{}-{}-{}",
-        identity.alias,
+        alias,
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    std::fs::rename(&path, &tombstone).map_err(|e| format!("preparing audio deletion: {e}"))?;
-    if let Err(e) = store.forget_audio(&identity.alias) {
-        std::fs::rename(&tombstone, &path).map_err(|rollback| {
+    std::fs::rename(path, &tombstone).map_err(|e| format!("preparing audio deletion: {e}"))?;
+    if let Err(e) = forget() {
+        std::fs::rename(&tombstone, path).map_err(|rollback| {
             format!("forgetting audio install failed: {e}; restoring install failed: {rollback}")
         })?;
         return Err(e);
     }
     if let Err(e) = std::fs::remove_dir_all(&tombstone) {
-        let _ = std::fs::rename(&tombstone, &path);
-        if let Some(row) = row {
-            let _ = store.record(&row);
-        }
+        let _ = std::fs::rename(&tombstone, path);
+        restore();
         return Err(format!("removing audio install: {e}"));
     }
     Ok(())
+}
+
+/// How rows in a library are located. The calls that predate libraries use
+/// `Live`, which builds the live environment ([`LocationEnv::system`]) the
+/// first time a row in a library needs it, so with only This Mac's rows
+/// they do exactly what they did before and never build one.
+enum Locator<'a> {
+    Given(&'a LocationEnv),
+    Live(&'a Path, OnceCell<Result<LocationEnv, String>>),
+}
+
+impl<'a> Locator<'a> {
+    fn live(store: &'a Store) -> Self {
+        Self::Live(store.root(), OnceCell::new())
+    }
+
+    fn env(&self) -> Result<&LocationEnv, String> {
+        match self {
+            Self::Given(env) => Ok(env),
+            Self::Live(home, built) => built
+                .get_or_init(|| LocationEnv::system(home))
+                .as_ref()
+                .map_err(Clone::clone),
+        }
+    }
+}
+
+/// Where a library a row names is now, as one operation found it.
+enum LibraryPlace {
+    /// Connected at its canonical `root`. `read_only` when a newer
+    /// TurboSpark wrote its marker.
+    Connected {
+        root: PathBuf,
+        name: String,
+        read_only: bool,
+    },
+    /// Not connected, with the library's name.
+    NotConnected(String),
+}
+
+/// Each library that one of `rows` is in, by id, with where it is now.
+type LibraryPlaces = Vec<(String, Result<LibraryPlace, String>)>;
+
+/// Locates every library that `rows` name, each once and through one mount
+/// table read (2.5), so N rows on unplugged drives cost one `/sbin/mount`.
+/// Nothing is located, and the environment is not built, when no row is in
+/// a library. A library that is no longer listed, or whose root leads off
+/// its drive, is an error for its rows.
+fn library_places(store: &Store, rows: &[InstalledModel], locator: &Locator) -> LibraryPlaces {
+    let mut ids: Vec<&str> = Vec::new();
+    for id in rows.iter().filter_map(external_library) {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let env = match locator.env() {
+        Ok(env) => env,
+        Err(error) => {
+            return ids
+                .into_iter()
+                .map(|id| (id.to_string(), Err(error.clone())))
+                .collect()
+        }
+    };
+    let table = SharedMountTable::new(env);
+    let listed = LibraryRegistry::load(store.root()).libraries();
+    ids.into_iter()
+        .map(|id| {
+            let place = match listed.iter().find(|record| record.id == id) {
+                None => Err(format!("no library with the id {id:?} is listed")),
+                Some(record) => match connected_library(record, &table) {
+                    Ok((root, marker)) => Ok(LibraryPlace::Connected {
+                        root,
+                        name: record.name.clone(),
+                        read_only: marker.is_read_only(),
+                    }),
+                    Err(StoreError::NotConnected { library }) => {
+                        Ok(LibraryPlace::NotConnected(library))
+                    }
+                    Err(error) => Err(error.to_string()),
+                },
+            };
+            (id.to_string(), place)
+        })
+        .collect()
+}
+
+fn place_of<'a>(places: &'a LibraryPlaces, id: &str) -> Result<&'a LibraryPlace, String> {
+    match places.iter().find(|(known, _)| known == id) {
+        Some((_, place)) => place.as_ref().map_err(Clone::clone),
+        None => Err(format!("no library with the id {id:?} is listed")),
+    }
+}
+
+/// The audio row of `alias` when it is in a library. `None` means This
+/// Mac's install, or none, at today's managed path. Alias plus modality is
+/// unique across libraries (the 1.2 decision), so a library row sharing its
+/// alias with another Audio row is refused as ambiguous rather than either
+/// being picked.
+fn library_row(store: &Store, alias: &str) -> Result<Option<InstalledModel>, String> {
+    let mut rows: Vec<InstalledModel> = store
+        .audio_records()
+        .into_iter()
+        .filter(|row| row.alias == alias)
+        .collect();
+    match rows.iter().position(|row| external_library(row).is_some()) {
+        None => Ok(None),
+        Some(_) if rows.len() != 1 => Err("ambiguous duplicate Audio store records".into()),
+        Some(index) => Ok(Some(rows.swap_remove(index))),
+    }
+}
+
+/// A library row's install where its library is now.
+struct LibraryInstall {
+    /// The library's canonical root.
+    root: PathBuf,
+    /// The install folder, `<root>/audio/<alias>.gturbo`.
+    path: PathBuf,
+    library_name: String,
+    read_only: bool,
+}
+
+/// Where the library row `row`'s install is now, after the containment walk
+/// ([`require_library_audio_dirs`]). A library that is not connected is
+/// refused with [`StoreError::NotConnected`]'s text.
+fn locate_library_install(
+    store: &Store,
+    row: &InstalledModel,
+    locator: &Locator,
+) -> Result<LibraryInstall, String> {
+    let id = external_library(row).ok_or("the Audio record is not in a library")?;
+    let places = library_places(store, std::slice::from_ref(row), locator);
+    match place_of(&places, id)? {
+        LibraryPlace::NotConnected(library) => Err(StoreError::NotConnected {
+            library: library.clone(),
+        }
+        .to_string()),
+        LibraryPlace::Connected {
+            root,
+            name,
+            read_only,
+        } => {
+            let path = library_audio_path(row, root)?;
+            require_library_audio_dirs(root, &path)?;
+            Ok(LibraryInstall {
+                root: root.clone(),
+                path,
+                library_name: name.clone(),
+                read_only: *read_only,
+            })
+        }
+    }
+}
+
+/// The report's check of `row`, in a library connected at the canonical
+/// `root`. Its `path` becomes the folder worked out from the root, and the
+/// folders on the way are examined, unfollowed, before anything is read.
+fn check_library_row(
+    row: &mut InstalledModel,
+    profile: Option<&AudioProfile>,
+    root: &Path,
+) -> Result<(), String> {
+    row.path = library_audio_path(row, root)?;
+    require_library_audio_dirs(root, &row.path)?;
+    let Some(profile) = profile else {
+        return Ok(());
+    };
+    profile_record_matches(profile, row)?;
+    if audio_receipt_missing(&row.path)? {
+        return Err(
+            "an Audio install in a library needs its install receipt; only This Mac adopts legacy installs"
+                .into(),
+        );
+    }
+    read_receipt(profile, &row.path)?;
+    verify_asset_bytes(profile, &row.path, false, None)
+}
+
+/// The managed folder of the library row `row` in its library at the
+/// canonical `root`: `<root>/audio/<alias>.gturbo`, worked out from where
+/// the library is now rather than taken from `row.path`, which names the
+/// drive's mount point at install time. The row must be an Audio row with a
+/// safe alias that records exactly that folder as its `relative_path`.
+/// Nothing is read.
+fn library_audio_path(row: &InstalledModel, root: &Path) -> Result<PathBuf, String> {
+    audio_record_shape(row)?;
+    let path = Store::audio_install_path_in(root, &row.alias).map_err(|e| e.to_string())?;
+    if row.relative_path.as_deref() != path.strip_prefix(root).ok() {
+        return Err("library Audio record does not name its library's managed path".into());
+    }
+    Ok(path)
+}
+
+/// The containment walk before anything in a library is read or deleted
+/// (2.2 SECURITY): the canonical library root, its `audio` folder, and the
+/// install folder `path` must each be a plain folder, examined without
+/// following it. A drive anyone could have written must not point an
+/// install, or a delete, at a folder outside the library.
+fn require_library_audio_dirs(root: &Path, path: &Path) -> Result<(), String> {
+    require_directory(root)?;
+    require_directory(path.parent().unwrap_or(root))?;
+    require_directory(path)
 }
 
 /// Families whose generic catalog rows may run: a runtime adapter for them
@@ -1024,7 +1630,8 @@ fn unqualified_status(status: &str) -> String {
     }
 }
 
-fn validate_managed_audio_record(store: &Store, row: &InstalledModel) -> Result<(), String> {
+/// An Audio row whose alias is safe to join into a path.
+fn audio_record_shape(row: &InstalledModel) -> Result<(), String> {
     if row.modality != crate::ModelModality::Audio
         || row.effective_modality() != crate::ModelModality::Audio
     {
@@ -1038,6 +1645,11 @@ fn validate_managed_audio_record(store: &Store, row: &InstalledModel) -> Result<
     {
         return Err("legacy Audio alias is not safe".into());
     }
+    Ok(())
+}
+
+fn validate_managed_audio_record(store: &Store, row: &InstalledModel) -> Result<(), String> {
+    audio_record_shape(row)?;
     if row.path != store.audio_install_path(&row.alias) {
         return Err("legacy Audio record does not name this store's managed path".into());
     }
@@ -1053,6 +1665,12 @@ fn validate_profile_record(
     row: &InstalledModel,
 ) -> Result<(), String> {
     validate_managed_audio_record(store, row)?;
+    profile_record_matches(profile, row)
+}
+
+/// Whether `row` records `profile`: its alias and pin, its family, and the
+/// task metadata a row of that task carries.
+fn profile_record_matches(profile: &AudioProfile, row: &InstalledModel) -> Result<(), String> {
     if row.alias != profile.identity.alias
         || row.repo != profile.identity.repository
         || row.revision != profile.identity.revision
@@ -1449,6 +2067,10 @@ fn read_receipt(profile: &AudioProfile, root: &Path) -> Result<AudioInstallRecei
     }
     Ok(receipt)
 }
+
+#[cfg(test)]
+#[path = "audio_catalog_library_tests.rs"]
+mod library_tests;
 
 #[cfg(test)]
 mod tests {
