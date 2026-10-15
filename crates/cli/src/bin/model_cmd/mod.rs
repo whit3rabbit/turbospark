@@ -8,12 +8,14 @@
 //! tested without a terminal.
 
 mod auth;
+mod destination;
 mod image_source;
 mod library;
 mod progress;
 mod render;
 
-use catalog::{Catalog, Client, InstallPlan, RepoRef, Store, Verdict};
+use catalog::{Catalog, Client, InstallKind, InstallPlan, RepoRef, Store, Verdict};
+use destination::Destination;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -72,13 +74,17 @@ pub fn list_audio(store: &Store) {
 }
 
 /// Installs one curated music profile through the shared authenticated Hub
-/// transport and its verified staging lifecycle.
+/// transport and its verified staging lifecycle, into `--library` or the
+/// default library, settled before any request.
 pub fn pull_audio(
     catalog: &Catalog,
     store: &Store,
     client: &Client,
     alias: &str,
+    options: &Options,
 ) -> Result<(), Error> {
+    let (target, env) =
+        destination::library_target(store, InstallKind::Audio, alias, options.library.as_deref())?;
     AUDIO_PULL_INTERRUPTED.store(false, Ordering::Release);
     install_audio_sigint_handler();
     let cancel = catalog::CancelFlag::new();
@@ -110,12 +116,21 @@ pub fn pull_audio(
             );
         }
     };
-    let result = catalog::install_music(client, catalog, store, alias, &mut progress, &cancel);
+    let result = catalog::install_music_into(
+        client,
+        catalog,
+        store,
+        alias,
+        target.library_id.as_deref(),
+        &env,
+        &mut progress,
+        &cancel,
+    );
     done.store(true, Ordering::Release);
     watcher
         .join()
         .map_err(|_| Error::Failed("audio pull cancellation watcher failed".to_string()))?;
-    let installed = result.map_err(Error::Failed)?;
+    let installed = result.map_err(destination::failure)?;
     println!(
         "\ninstalled {} ({}) to {}",
         installed.alias,
@@ -139,16 +154,101 @@ extern "C" fn handle_audio_sigint(_: libc::c_int) {
     AUDIO_PULL_INTERRUPTED.store(true, Ordering::Release);
 }
 
+/// The curated rows, marking the ones installed, then every install with
+/// its library and whether it can be opened now (10.2).
 pub fn list(catalog: &Catalog, store: &Store, filter: Option<&str>) {
     let installed = store.installed();
     let rows: Vec<_> = match filter {
         Some(needle) => catalog.find(needle),
         None => catalog.entries().collect(),
     };
-    if rows.is_empty() {
+    let installs = installs_matching(store, filter);
+    if rows.is_empty() && installs.is_empty() {
         println!("no models match");
         return;
     }
+    if !rows.is_empty() {
+        catalog_table(&rows, &installed);
+    }
+    if !installs.is_empty() {
+        installs_table(&installs);
+    }
+}
+
+/// Every recorded install whose alias contains `filter`, ignoring case.
+/// Listing never fails (3.4): an environment that cannot be read leaves the
+/// installs out with a warning, and the catalog is still listed.
+fn installs_matching(store: &Store, filter: Option<&str>) -> Vec<catalog::InstalledEntry> {
+    let env = match catalog::library::LocationEnv::system(store.root()) {
+        Ok(env) => env,
+        Err(error) => {
+            eprintln!("warning: cannot list installs by library: {error}");
+            return Vec::new();
+        }
+    };
+    let needle = filter.map(str::to_lowercase);
+    store
+        .installed_with_availability(&env)
+        .into_iter()
+        .filter(|entry| {
+            needle
+                .as_deref()
+                .is_none_or(|needle| entry.row.alias.to_lowercase().contains(needle))
+        })
+        .collect()
+}
+
+/// Installs with LOCATION (the library's name, "This Mac", or "custom
+/// location") and STATUS. Names and aliases can come from a drive, so they
+/// are escaped and capped as `library list` does.
+fn installs_table(installs: &[catalog::InstalledEntry]) {
+    use library::{clean, NAME_LIMIT};
+    let rows: Vec<[String; 4]> = installs
+        .iter()
+        .map(|entry| {
+            let kind = entry
+                .row
+                .kind
+                .clone()
+                .unwrap_or_else(|| entry.row.effective_modality().as_str().to_string());
+            let status = match entry.availability {
+                catalog::library::Availability::Available => "available",
+                catalog::library::Availability::NotConnected { .. } => "not connected",
+                catalog::library::Availability::Missing => "missing",
+            };
+            [
+                clean(&entry.row.alias, NAME_LIMIT),
+                clean(&kind, NAME_LIMIT),
+                clean(&entry.library_name, NAME_LIMIT),
+                status.to_string(),
+            ]
+        })
+        .collect();
+    let width = |column: usize, header: &str| {
+        rows.iter()
+            .map(|row| row[column].chars().count())
+            .chain(std::iter::once(header.len()))
+            .max()
+            .unwrap_or(0)
+    };
+    let (alias_width, kind_width, location_width) =
+        (width(0, "ALIAS"), width(1, "KIND"), width(2, "LOCATION"));
+    println!("\ninstalled:");
+    println!(
+        "  {:<alias_width$}  {:<kind_width$}  {:<location_width$}  STATUS",
+        "ALIAS", "KIND", "LOCATION"
+    );
+    for [alias, kind, location, status] in &rows {
+        println!(
+            "  {alias:<alias_width$}  {kind:<kind_width$}  {location:<location_width$}  {status}"
+        );
+    }
+}
+
+fn catalog_table(
+    rows: &[&catalog::CatalogEntry],
+    installed: &std::collections::BTreeMap<String, catalog::InstalledModel>,
+) {
     let width = rows.iter().map(|e| e.alias.len()).max().unwrap_or(5).max(5);
     println!(
         "  {:<width$}  {:<9}  {:<12}  {:>9}  MODEL",
@@ -158,7 +258,7 @@ pub fn list(catalog: &Catalog, store: &Store, filter: Option<&str>) {
         "DOWNLOAD",
         width = width
     );
-    for entry in &rows {
+    for entry in rows {
         let mark = if installed.contains_key(&entry.alias) {
             "*"
         } else {
@@ -264,20 +364,24 @@ pub fn remove(store: &Store, alias: &str, yes: bool) -> Result<(), Error> {
     Ok(())
 }
 
-/// The install folder for `alias`: `out` when given, else This Mac's.
+/// Where a text or vision pull of `alias` lands: `--out`, `--library`, or
+/// the default library, settled before any network request.
 ///
 /// Through the same resolver a library install uses either way, so an alias
 /// another library holds is refused before anything is downloaded. That
 /// includes `--out`, whose row `record` would otherwise put over the other
 /// library's, orphaning its folder while its marker keeps listing it.
-fn install_dir(
+fn text_destination(
     store: &Store,
-    kind: catalog::InstallKind,
+    kind: InstallKind,
     alias: &str,
-    out: Option<&str>,
-) -> Result<std::path::PathBuf, Error> {
-    let this_mac = this_mac_destination(store, kind, alias)?;
-    Ok(out.map(std::path::PathBuf::from).unwrap_or(this_mac))
+    options: &Options,
+) -> Result<Destination, Error> {
+    let destination = destination::destination(store, kind, alias, options)?;
+    if let Destination::Out(_) = destination {
+        this_mac_destination(store, kind, alias)?;
+    }
+    Ok(destination)
 }
 
 /// The install folder in This Mac for `alias`, through the same resolver a
@@ -293,6 +397,86 @@ fn this_mac_destination(
         .map_err(|error| Error::Failed(error.to_string()))
 }
 
+/// Walks `plan` into `destination` and records it. Into a library through
+/// `catalog::install_text_into`, which records the row with its library and
+/// in the library's marker. Into This Mac or `--out` exactly as before
+/// libraries.
+fn walk_and_record(
+    plan: &InstallPlan,
+    destination: &Destination,
+    store: &Store,
+    client: &Client,
+    progress: impl FnMut(&str),
+    byte_progress: catalog::ByteProgressCallback,
+) -> Result<catalog::Installed, Error> {
+    // The CLI has no cancel surface: a pull runs until it finishes.
+    if let Destination::Target(target, env) = destination {
+        if target.library_id.is_some() {
+            return catalog::install_text_into(
+                plan,
+                target,
+                client,
+                progress,
+                Some(byte_progress),
+                None,
+                store,
+                env,
+            )
+            .map_err(destination::failure);
+        }
+    }
+    let installed = catalog::install_with_byte_progress(
+        plan,
+        destination.dir(),
+        client,
+        progress,
+        Some(byte_progress),
+        None,
+    )
+    .map_err(Error::Failed)?;
+    catalog::record(store, &installed).map_err(Error::Failed)?;
+    Ok(installed)
+}
+
+/// `pull`'s two argument forms, read without any network request, so the
+/// destination is settled before the probe a `--repo` pull makes.
+enum PullSource {
+    /// A curated row's plan.
+    Row(InstallPlan),
+    /// `--repo`, planned from its probe.
+    Repo {
+        alias: String,
+        weights: RepoRef,
+        sidecars: RepoRef,
+    },
+}
+
+impl PullSource {
+    fn alias(&self) -> &str {
+        match self {
+            Self::Row(plan) => &plan.alias,
+            Self::Repo { alias, .. } => alias,
+        }
+    }
+
+    /// The plan, probing a `--repo` source first.
+    fn plan(self, client: &Client, options: &Options) -> Result<InstallPlan, Error> {
+        match self {
+            Self::Row(plan) => Ok(plan),
+            Self::Repo {
+                alias,
+                weights,
+                sidecars,
+            } => {
+                let report =
+                    catalog::probe(client, &weights, options.file.as_deref(), Some(&sidecars))
+                        .map_err(Error::Failed)?;
+                Ok(InstallPlan::from_probe(&alias, &report, sidecars))
+            }
+        }
+    }
+}
+
 /// Install a curated row, or any repository the probe accepts.
 pub fn pull(
     catalog: &Catalog,
@@ -301,16 +485,14 @@ pub fn pull(
     positionals: &[String],
     options: &Options,
 ) -> Result<(), Error> {
-    let mut plan = resolve_plan(catalog, client, positionals, options)?;
+    let source = pull_source(catalog, positionals, options)?;
+    // Before the probe, a `--repo` pull's first network request (10.4).
+    let destination = text_destination(store, InstallKind::Text, source.alias(), options)?;
+    let mut plan = source.plan(client, options)?;
     if let Some(alias) = &options.reuse_trunk_from {
         plan.reuse_trunk_from = Some(resolve_reuse_trunk_from(store, &plan, alias)?);
     }
-    let dir = install_dir(
-        store,
-        catalog::InstallKind::Text,
-        &plan.alias,
-        options.out.as_deref(),
-    )?;
+    let dir = destination.dir();
     if dir.join("manifest.json").is_file() {
         return Err(Error::Failed(format!(
             "{} already holds an install. Remove it first, or pass --out.",
@@ -337,20 +519,15 @@ pub fn pull(
         pb_for_bytes.inc(bytes);
     });
 
-    let installed = catalog::install_with_byte_progress(
+    let installed = walk_and_record(
         &plan,
-        &dir,
+        &destination,
+        store,
         client,
         &mut progress,
-        Some(byte_callback),
-        // The CLI has no cancel surface: a pull runs until it finishes.
-        None,
+        byte_callback,
     )
-    .map_err(|e| {
-        pb.finish_and_clear();
-        Error::Failed(e)
-    })?;
-    catalog::record(store, &installed).map_err(Error::Failed)?;
+    .inspect_err(|_| pb.finish_and_clear())?;
     pb.finish_and_clear();
 
     println!(
@@ -405,6 +582,48 @@ pub fn pull_image(
             "--alias must contain only ASCII letters, digits, '.', '_' or '-'".to_string(),
         ));
     }
+    // Where the install lands, settled before any download (10.4). Into a
+    // library the source and the build stage on its drive and publish with
+    // one rename, so a partial build never shows there. This Mac and `--out`
+    // build in place, as before. Image installs are not recorded.
+    let destination = destination::destination(store, InstallKind::Image, alias, options)?;
+    let library = match &destination {
+        Destination::Target(target, _) if target.library_id.is_some() => {
+            // Publishing never replaces an install, so refuse before the
+            // download rather than after it.
+            if std::fs::symlink_metadata(&target.dir).is_ok() {
+                return Err(Error::Failed(format!(
+                    "{} already holds an image install; remove it first",
+                    target.dir.display()
+                )));
+            }
+            let staging = store.staging_parent_for(&target.root).map_err(|error| {
+                destination::failure(store.install_failure(
+                    &target.root,
+                    &target.root,
+                    &target.library_name,
+                    error.to_string(),
+                ))
+            })?;
+            Some((target, staging))
+        }
+        _ => None,
+    };
+    // Classified by the store's one rule, so a library step that failed
+    // because the drive went away reads as a disconnect.
+    let failed = |error: String| match &library {
+        Some((target, staging)) => destination::failure(store.install_failure(
+            staging,
+            &target.root,
+            &target.library_name,
+            error,
+        )),
+        None => Error::Failed(error),
+    };
+    let output = match &library {
+        Some((_, staging)) => staging.join(format!("{alias}.gturbo")),
+        None => destination.dir().to_path_buf(),
+    };
     let catalog_repo = if explicit_remote_repo.is_none() && options.source.is_none() {
         catalog::ImageCatalog::embedded()
             .map_err(Error::Failed)?
@@ -430,11 +649,9 @@ pub fn pull_image(
                 "pull-image --repo needs an immutable @<40-hex-commit> revision".to_string(),
             ));
         }
-        let output_parent = options
-            .out
-            .as_deref()
-            .map(std::path::PathBuf::from)
-            .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        let output_parent = output
+            .parent()
+            .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| {
                 store
                     .image_install_path(alias)
@@ -442,16 +659,28 @@ pub fn pull_image(
                     .unwrap()
                     .to_path_buf()
             });
-        std::fs::create_dir_all(&output_parent).map_err(|error| {
-            Error::Failed(format!(
-                "creating image install parent {}: {error}",
-                output_parent.display()
-            ))
-        })?;
+        // A library's staging folder exists already. Not recreated, which
+        // with its drive gone would rebuild it under the mount point.
+        if library.is_none() {
+            std::fs::create_dir_all(&output_parent).map_err(|error| {
+                Error::Failed(format!(
+                    "creating image install parent {}: {error}",
+                    output_parent.display()
+                ))
+            })?;
+        }
         let source = output_parent.join(format!(".{alias}.image-source-{}", std::process::id()));
+        // A drive's staging folder is untrusted: whatever already sits at
+        // this name, a link included, is removed without being followed, so
+        // the download cannot be redirected off the drive. Neither call
+        // follows a link; one of them fails harmlessly.
+        if library.is_some() {
+            let _ = std::fs::remove_dir_all(&source);
+            let _ = std::fs::remove_file(&source);
+        }
         let downloaded = image_source::materialize(client, &repo, &source).map_err(|error| {
             let _ = std::fs::remove_dir_all(&source);
-            Error::Failed(error)
+            failed(error)
         })?;
         println!("downloaded {} image source bytes", downloaded);
         (source.clone(), repo.repo, repo.revision, Some(source))
@@ -486,18 +715,21 @@ pub fn pull_image(
             None,
         )
     };
-    let output = options
-        .out
-        .clone()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| store.image_install_path(alias));
-    if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            Error::Failed(format!(
-                "creating image install parent {}: {error}",
-                parent.display()
-            ))
-        })?;
+    match (&library, output.parent()) {
+        // A build an earlier attempt left unpublished in staging. A link
+        // there is removed, not followed.
+        (Some(_), _) => {
+            let _ = std::fs::remove_dir_all(&output);
+        }
+        (None, Some(parent)) => {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                Error::Failed(format!(
+                    "creating image install parent {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+        (None, None) => {}
     }
     let report = image::build_image_install(&image::ImageInstallSpec {
         source_root: source,
@@ -506,11 +738,22 @@ pub fn pull_image(
         model_revision: model_revision.clone(),
     });
     let _ = cleanup_source.as_deref().map(std::fs::remove_dir_all);
-    let report = report.map_err(Error::Failed)?;
-    let path = report
-        .output_root
-        .canonicalize()
-        .unwrap_or_else(|_| report.output_root.clone());
+    let report = report.map_err(failed)?;
+    let path = match &library {
+        Some((target, _)) => {
+            if let Err(error) =
+                store.publish_staged(&report.output_root, &target.dir, &target.library_name)
+            {
+                let _ = std::fs::remove_dir_all(&report.output_root);
+                return Err(destination::failure(error));
+            }
+            target.dir.clone()
+        }
+        None => report
+            .output_root
+            .canonicalize()
+            .unwrap_or_else(|_| report.output_root.clone()),
+    };
     println!(
         "installed image {} ({} bytes) to {}",
         alias,
@@ -533,12 +776,8 @@ pub fn pull_vision(
     options: &Options,
 ) -> Result<(), Error> {
     let plan = resolve_vision_plan(catalog, positionals, options)?;
-    let dir = install_dir(
-        store,
-        catalog::InstallKind::VisionTower,
-        &plan.alias,
-        options.out.as_deref(),
-    )?;
+    let destination = text_destination(store, InstallKind::VisionTower, &plan.alias, options)?;
+    let dir = destination.dir();
     if dir.join("manifest.json").is_file() {
         return Err(Error::Failed(format!(
             "{} already holds an install. Remove it first, or pass --out.",
@@ -565,20 +804,15 @@ pub fn pull_vision(
         pb_for_bytes.inc(bytes);
     });
 
-    let installed = catalog::install_with_byte_progress(
+    let installed = walk_and_record(
         &plan,
-        &dir,
+        &destination,
+        store,
         client,
         &mut progress,
-        Some(byte_callback),
-        // The CLI has no cancel surface: a pull runs until it finishes.
-        None,
+        byte_callback,
     )
-    .map_err(|e| {
-        pb.finish_and_clear();
-        Error::Failed(e)
-    })?;
-    catalog::record(store, &installed).map_err(Error::Failed)?;
+    .inspect_err(|_| pb.finish_and_clear())?;
     pb.finish_and_clear();
 
     println!(
@@ -656,13 +890,13 @@ fn resolve_vision_plan(
     }
 }
 
-/// Turn `pull`'s two argument forms into one plan.
-fn resolve_plan(
+/// Read `pull`'s two argument forms, without the probe a `--repo` pull
+/// plans from.
+fn pull_source(
     catalog: &Catalog,
-    client: &Client,
     positionals: &[String],
     options: &Options,
-) -> Result<InstallPlan, Error> {
+) -> Result<PullSource, Error> {
     let repo_flag = positionals
         .iter()
         .find_map(|p| p.strip_prefix("--repo=").map(str::to_string));
@@ -688,15 +922,17 @@ fn resolve_plan(
                 Some(text) => RepoRef::parse(text).map_err(Error::Usage)?,
                 None => weights.clone(),
             };
-            let report = catalog::probe(client, &weights, options.file.as_deref(), Some(&sidecars))
-                .map_err(Error::Failed)?;
-            Ok(InstallPlan::from_probe(&alias, &report, sidecars))
+            Ok(PullSource::Repo {
+                alias,
+                weights,
+                sidecars,
+            })
         }
         (None, 1) => {
             let alias = aliases[0];
             catalog
                 .get(alias)
-                .map(InstallPlan::from_entry)
+                .map(|entry| PullSource::Row(InstallPlan::from_entry(entry)))
                 .ok_or_else(|| Error::Failed(unknown_alias(catalog, alias)))
         }
         (None, 0) => Err(Error::Usage(

@@ -10,9 +10,14 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::net::TcpListener;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 /// A temp home, a folder of fake volumes, and a mount table naming them,
 /// removed when the test ends, passing or not.
@@ -142,6 +147,21 @@ impl Fixture {
         }
     }
 
+    /// [`Self::run`] with `hub` as the Hugging Face endpoint.
+    fn run_against(&self, hub: &Hub, args: &[&str]) -> Outcome {
+        let out = self
+            .command_with_home_device(self.device.wrapping_add(1))
+            .env("HF_ENDPOINT", &hub.endpoint)
+            .args(args)
+            .output()
+            .expect("the binary runs");
+        Outcome {
+            code: out.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+        }
+    }
+
     /// `library add` that must succeed.
     fn add(&self, volume: &str, name: &str) -> Outcome {
         let path = self.volume(volume);
@@ -162,6 +182,61 @@ impl Fixture {
             .and_then(|record| record["id"].as_str())
             .unwrap_or_else(|| panic!("no library named {name} in {text}"))
             .to_string()
+    }
+}
+
+/// A local port standing in for the Hub. It answers nothing: it counts each
+/// connection and closes it, so a command that reaches the network fails
+/// fast, and a count of zero means the command made no network request.
+struct Hub {
+    endpoint: String,
+    connections: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Hub {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("hub bind");
+        listener.set_nonblocking(true).expect("nonblocking hub");
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let connections = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (counted, stopped) = (Arc::clone(&connections), Arc::clone(&stop));
+        let thread = thread::spawn(move || {
+            while !stopped.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        counted.fetch_add(1, Ordering::AcqRel);
+                        drop(stream);
+                    }
+                    Err(_) => thread::sleep(Duration::from_millis(2)),
+                }
+            }
+        });
+        Self {
+            endpoint,
+            connections,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    /// Connections so far. Called after the command exits, by which time
+    /// any connection it made is in the listener's queue or counted; the
+    /// short wait lets the accept loop drain the queue.
+    fn connections(&self) -> usize {
+        thread::sleep(Duration::from_millis(50));
+        self.connections.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for Hub {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -579,4 +654,617 @@ fn adopting_a_drive_library_reports_skipped_models_and_escapes_its_name() {
         assert!(output.contains("Archive\\u{1b}[31m"), "{output}");
         assert!(!output.contains(&"x".repeat(64)), "{output}");
     }
+}
+
+/// What a pull into the unplugged library "T7" fails with (10.4).
+const T7_NOT_CONNECTED: &str =
+    "the library \"T7\" is not connected; connect its drive and try again";
+
+/// A registry row for the text install `alias` at `path`, in the library
+/// `(id, path relative to its root)`, or with no library for `None`.
+fn text_row(alias: &str, path: &Path, library: Option<(&str, &str)>) -> serde_json::Value {
+    let mut row = serde_json::json!({
+        "alias": alias,
+        "repo": format!("owner/{alias}"),
+        "revision": "main",
+        "path": path,
+        "family": "qwen3",
+        "install_bytes": 4,
+        "installed_on": "2026-10-01",
+        "status": "runs",
+        "kind": null,
+        "modality": "text",
+    });
+    if let Some((id, relative)) = library {
+        row["library"] = serde_json::json!(id);
+        row["relative_path"] = serde_json::json!(relative);
+    }
+    row
+}
+
+impl Fixture {
+    fn write_rows(&self, rows: &[serde_json::Value]) {
+        fs::write(
+            self.home.join("installed.json"),
+            serde_json::to_vec_pretty(rows).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+/// A pull into a library whose drive is gone fails naming the library,
+/// before any network request (10.4). Every pull command takes the library,
+/// and `pull --repo`, whose probe is itself a request, checks it first too.
+#[test]
+fn a_pull_into_an_unplugged_library_fails_before_any_network_request() {
+    let fixture = Fixture::new("pull-unplugged");
+    fixture.add("T7", "T7");
+    fs::remove_dir_all(fixture.volume("T7")).unwrap();
+    let hub = Hub::start();
+    for args in [
+        &["pull", "tinyllama", "--library", "T7"][..],
+        &[
+            "pull",
+            "--repo",
+            "owner/name",
+            "--alias",
+            "mine",
+            "--library",
+            "t7",
+        ],
+        &["pull-vision", "qwen38-vision-tower", "--library", "T7"],
+        &["pull-image", "--alias", "z-image-turbo", "--library", "T7"],
+        &["pull-audio", "minimax-music3-mxfp8", "--library", "T7"],
+    ] {
+        let outcome = fixture.run_against(&hub, args);
+        assert_eq!(outcome.code, 1, "{args:?}: {}", outcome.stderr);
+        assert!(
+            outcome.stderr.contains(T7_NOT_CONNECTED),
+            "{args:?}: {}",
+            outcome.stderr
+        );
+        assert_eq!(hub.connections(), 0, "{args:?} reached the network");
+    }
+    // Nothing rebuilt the library's folder on the disk under the mount point.
+    assert!(!fixture.volume("T7").exists());
+    assert!(!fixture.home.join("installed.json").exists());
+}
+
+/// The destination's other refusals also come before the network: a
+/// library a newer TurboSpark wrote, an alias another library holds, and an
+/// alias that is not a plain name. For `pull --repo` these used to follow
+/// the probe's metadata request.
+#[test]
+fn a_refused_destination_fails_before_any_network_request() {
+    let fixture = Fixture::new("pull-refused");
+    fixture.add("T7", "T7");
+    fixture.add("T9", "T9");
+    let marker = fixture.volume("T7").join("TurboSpark").join("library.json");
+    let mut json: serde_json::Value = serde_json::from_slice(&fs::read(&marker).unwrap()).unwrap();
+    json["format"] = serde_json::json!(2);
+    fs::write(&marker, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+    let text = fixture.home.join("models").join("text");
+    fixture.write_rows(&[
+        text_row("tinyllama", &text.join("tinyllama.gturbo"), None),
+        text_row("mine", &text.join("mine.gturbo"), None),
+    ]);
+    let rows = fs::read(fixture.home.join("installed.json")).unwrap();
+    let hub = Hub::start();
+    let repo = |alias: &'static str, library: Option<&'static str>| {
+        let mut args = vec!["pull", "--repo", "owner/name", "--alias", alias];
+        if let Some(name) = library {
+            args.extend(["--library", name]);
+        }
+        args
+    };
+    for (args, expected) in [
+        (
+            vec!["pull", "tinyllama", "--library", "T7"],
+            "is read-only here",
+        ),
+        (repo("fresh", Some("T7")), "is read-only here"),
+        (
+            vec!["pull", "tinyllama", "--library", "T9"],
+            "already installed in This Mac",
+        ),
+        (repo("mine", Some("T9")), "already installed in This Mac"),
+        (repo("../escape", None), "is not a valid install alias"),
+    ] {
+        let outcome = fixture.run_against(&hub, &args);
+        assert_eq!(outcome.code, 1, "{args:?}: {}", outcome.stderr);
+        assert!(
+            outcome.stderr.contains(expected),
+            "{args:?}: {}",
+            outcome.stderr
+        );
+        assert_eq!(hub.connections(), 0, "{args:?} reached the network");
+    }
+    assert_eq!(fs::read(fixture.home.join("installed.json")).unwrap(), rows);
+}
+
+/// Without `--library` a pull goes to the default library, and when that
+/// library is not connected, to This Mac with a note saying so (2.2), and
+/// then on to the network. Where each pull was headed shows before any
+/// request: an install already in that folder stops it there.
+#[test]
+fn a_pull_falls_back_to_this_mac_when_the_default_library_is_unplugged() {
+    let fixture = Fixture::new("pull-default");
+    fixture.add("T7", "T7");
+    let made_default = fixture.run(&["library", "default", "T7"]);
+    assert_eq!(made_default.code, 0, "{}", made_default.stderr);
+    let hub = Hub::start();
+    let holds = |dir: &Path| {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("manifest.json"), b"{}").unwrap();
+        format!("{} already holds an install", dir.display())
+    };
+
+    let in_library = fixture
+        .volume("T7")
+        .join("TurboSpark")
+        .join("text")
+        .join("tinyllama.gturbo");
+    let expected = holds(&in_library);
+    let connected = fixture.run_against(&hub, &["pull", "tinyllama"]);
+    assert_eq!(connected.code, 1, "{}", connected.stderr);
+    assert!(connected.stderr.contains(&expected), "{}", connected.stderr);
+    assert!(!connected.stderr.contains("note:"), "{}", connected.stderr);
+
+    fs::remove_dir_all(fixture.volume("T7")).unwrap();
+    let on_mac = fixture
+        .home
+        .join("models")
+        .join("text")
+        .join("tinyllama.gturbo");
+    let expected = holds(&on_mac);
+    let fallback = fixture.run_against(&hub, &["pull", "tinyllama"]);
+    assert_eq!(fallback.code, 1, "{}", fallback.stderr);
+    assert!(fallback.stderr.contains(&expected), "{}", fallback.stderr);
+    let note = line_with(&fallback.stderr, "note:");
+    assert!(
+        note.contains("the default library \"T7\" is not connected"),
+        "{note}"
+    );
+    assert!(note.contains("This Mac"), "{note}");
+    assert_eq!(hub.connections(), 0);
+
+    // With nothing in the way, the pull carries on to the network.
+    fs::remove_dir_all(&on_mac).unwrap();
+    let onward = fixture.run_against(&hub, &["pull", "tinyllama"]);
+    assert_eq!(onward.code, 1, "{}", onward.stderr);
+    line_with(&onward.stderr, "note: the default library");
+    assert!(
+        !onward.stderr.contains("connect its drive"),
+        "{}",
+        onward.stderr
+    );
+    assert!(
+        hub.connections() > 0,
+        "the pull stopped before the network: {}",
+        onward.stderr
+    );
+    assert!(!fixture.volume("T7").exists());
+}
+
+/// `--out` and `--library` each name a destination, so together they are a
+/// usage error, and nothing is created.
+#[test]
+fn out_and_library_together_are_a_usage_error() {
+    let fixture = Fixture::new("pull-out");
+    fixture.add("T7", "T7");
+    let out = fixture.base.join("out");
+    for command in [
+        &["pull", "tinyllama"][..],
+        &["pull-vision", "qwen38-vision-tower"],
+        &["pull-image", "--alias", "z-image-turbo"],
+    ] {
+        let mut args = command.to_vec();
+        args.extend(["--out", out.to_str().unwrap(), "--library", "T7"]);
+        let outcome = fixture.run(&args);
+        assert_eq!(outcome.code, 2, "{args:?}: {}", outcome.stderr);
+        let first = outcome.stderr.lines().next().unwrap_or_default();
+        assert!(first.contains("--out and --library"), "{args:?}: {first}");
+    }
+    assert!(!out.exists());
+}
+
+/// `list` shows every install with its library and whether it can be
+/// opened now (10.2): available, not connected, and missing, plus a `pull
+/// --out` row, which has no library and is not This Mac's. A library name
+/// from a drive is escaped and capped.
+#[test]
+fn list_shows_each_install_with_its_location_and_status() {
+    let fixture = Fixture::new("list-installed");
+    fixture.add("T7", "T7");
+    let hostile = format!("Away\u{1b}[31m{}", "x".repeat(100));
+    fixture.add("T9", &hostile);
+    let (t7, t9) = (fixture.id_of("T7"), fixture.id_of(&hostile));
+    let t7_root = fixture.volume("T7").join("TurboSpark");
+    let t9_root = fixture.volume("T9").join("TurboSpark");
+    fs::create_dir_all(t7_root.join("text").join("qq-ready.gturbo")).unwrap();
+    let custom = fixture.base.join("elsewhere").join("qq-custom.gturbo");
+    fs::create_dir_all(&custom).unwrap();
+    let gone = fixture
+        .home
+        .join("models")
+        .join("text")
+        .join("qq-gone.gturbo");
+    fixture.write_rows(&[
+        text_row(
+            "qq-ready",
+            &t7_root.join("text").join("qq-ready.gturbo"),
+            Some((&t7, "text/qq-ready.gturbo")),
+        ),
+        text_row(
+            "qq-offline",
+            &t9_root.join("text").join("qq-offline.gturbo"),
+            Some((&t9, "text/qq-offline.gturbo")),
+        ),
+        text_row("qq-gone", &gone, None),
+        text_row("qq-custom", &custom, None),
+    ]);
+    fs::remove_dir_all(fixture.volume("T9")).unwrap();
+
+    let listed = fixture.run(&["list"]);
+    assert_eq!(listed.code, 0, "{}", listed.stderr);
+    // The catalog is still listed.
+    assert!(listed.stdout.contains("gemma4"), "{}", listed.stdout);
+    let header = line_with(&listed.stdout, "LOCATION");
+    assert!(header.contains("STATUS"), "{header}");
+    for (alias, location, status) in [
+        ("qq-ready", "T7", "available"),
+        ("qq-offline", "Away\\u{1b}[31m", "not connected"),
+        ("qq-gone", "This Mac", "missing"),
+        ("qq-custom", "custom location", "available"),
+    ] {
+        let line = line_with(&listed.stdout, alias);
+        assert!(line.contains(location), "{location} in {line}");
+        assert!(line.contains(status), "{status} in {line}");
+    }
+    assert!(!line_with(&listed.stdout, "qq-ready").contains("not connected"));
+    assert!(!listed.stdout.contains('\u{1b}'), "{}", listed.stdout);
+    assert!(
+        !listed.stdout.contains(&"x".repeat(64)),
+        "{}",
+        listed.stdout
+    );
+
+    // `--filter` narrows the installs too, even with no catalog row left.
+    let filtered = fixture.run(&["list", "--filter", "qq-off"]);
+    assert_eq!(filtered.code, 0, "{}", filtered.stderr);
+    line_with(&filtered.stdout, "qq-offline");
+    assert!(!filtered.stdout.contains("qq-ready"), "{}", filtered.stdout);
+}
+
+/// Serves one repository, `owner/model` at [`REVISION`], the way the Hub
+/// answers metadata, HEAD, and ranged file requests.
+struct FileHub {
+    endpoint: String,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+
+impl FileHub {
+    fn start(files: BTreeMap<String, Vec<u8>>) -> Self {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").expect("hub bind");
+        listener.set_nonblocking(true).expect("nonblocking hub");
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
+        let thread = thread::spawn(move || {
+            while !stopped.load(Ordering::Acquire) {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                if reader.read_line(&mut request).is_err() {
+                    continue;
+                }
+                let mut range = None;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = line.trim_end().split_once(':') {
+                        if name.eq_ignore_ascii_case("range") {
+                            range = Some(value.trim().to_string());
+                        }
+                    }
+                }
+                let mut parts = request.split_whitespace();
+                let method = parts.next().unwrap_or("GET").to_string();
+                let target = parts.next().unwrap_or("/").to_string();
+                let _ = stream.write_all(&answer(&method, &target, range.as_deref(), &files));
+            }
+        });
+        Self {
+            endpoint,
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for FileHub {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn answer(
+    method: &str,
+    target: &str,
+    range: Option<&str>,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Vec<u8> {
+    let path = target
+        .split('?')
+        .next()
+        .unwrap_or(target)
+        .to_ascii_lowercase();
+    if path.starts_with("/api/models/owner/model/") {
+        let siblings: Vec<_> = files
+            .iter()
+            .map(|(name, bytes)| {
+                serde_json::json!({
+                    "rfilename": name,
+                    "size": bytes.len() as u64,
+                    "blobId": "a".repeat(40),
+                })
+            })
+            .collect();
+        let body = serde_json::json!({
+            "id": "owner/model",
+            "sha": REVISION,
+            "siblings": siblings,
+        });
+        return response(200, &body.to_string().into_bytes(), &[]);
+    }
+    let prefix = format!("/owner/model/resolve/{REVISION}/");
+    let Some(bytes) = path.strip_prefix(&prefix).and_then(|name| {
+        files
+            .iter()
+            .find(|(file, _)| file.to_ascii_lowercase() == name)
+            .map(|(_, bytes)| bytes)
+    }) else {
+        return response(404, b"", &[]);
+    };
+    if method.eq_ignore_ascii_case("HEAD") {
+        return response(200, b"", &[("x-linked-size", bytes.len().to_string())]);
+    }
+    let Some((start, end)) = range
+        .and_then(|range| range.strip_prefix("bytes="))
+        .and_then(|range| range.split_once('-'))
+    else {
+        return response(200, bytes, &[]);
+    };
+    let start: usize = start.parse().unwrap();
+    let end = end.parse::<usize>().unwrap().min(bytes.len() - 1);
+    response(
+        206,
+        &bytes[start..=end],
+        &[(
+            "Content-Range",
+            format!("bytes {start}-{end}/{}", bytes.len()),
+        )],
+    )
+}
+
+fn response(status: u16, body: &[u8], headers: &[(&str, String)]) -> Vec<u8> {
+    let mut wire = format!(
+        "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
+    for (name, value) in headers {
+        wire.push_str(&format!("{name}: {value}\r\n"));
+    }
+    wire.push_str("\r\n");
+    let mut wire = wire.into_bytes();
+    wire.extend_from_slice(body);
+    wire
+}
+
+/// A text pull into a library lands in it end to end (10.3): the folder is
+/// on the library's drive, the row and the drive's marker list it, and
+/// `list` shows it in that library, available. Nothing lands in This Mac.
+#[test]
+fn a_text_pull_installs_into_the_named_library() {
+    let fixture = Fixture::new("pull-into");
+    fixture.add("T7", "T7");
+    let (mut gguf, _) = repack::build_synthetic_gemma4_gguf(repack::SyntheticGgufShape::default());
+    // Past the probe's first header read (1 MiB), as every real checkpoint
+    // is. A shorter file answers that read short, and the reader then backs
+    // off for seconds before asking for the size.
+    gguf.resize(gguf.len().max(1 << 21), 0);
+    let tokenizer =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../tokenizer/tests/fixtures/ChatMLTokenizer");
+    let files = BTreeMap::from([
+        ("model-Q8_0.gguf".to_string(), gguf),
+        (
+            "tokenizer.json".to_string(),
+            fs::read(tokenizer.join("tokenizer.json")).unwrap(),
+        ),
+        (
+            "tokenizer_config.json".to_string(),
+            fs::read(tokenizer.join("tokenizer_config.json")).unwrap(),
+        ),
+    ]);
+    let hub = FileHub::start(files);
+    let repo = format!("owner/model@{REVISION}");
+    let out = fixture
+        .command_with_home_device(fixture.device.wrapping_add(1))
+        .env("HF_ENDPOINT", &hub.endpoint)
+        .args([
+            "pull",
+            "--repo",
+            &repo,
+            "--alias",
+            "qwen",
+            "--file",
+            "model-Q8_0.gguf",
+            "--library",
+            "T7",
+            "--force",
+        ])
+        .output()
+        .expect("the binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}\n{stderr}");
+
+    let root = fixture.volume("T7").join("TurboSpark");
+    let dir = root.join("text").join("qwen.gturbo");
+    assert!(dir.join("model_weights.bin").is_file());
+    assert!(stdout.contains(&dir.display().to_string()), "{stdout}");
+    let rows: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture.home.join("installed.json")).unwrap()).unwrap();
+    assert_eq!(rows[0]["alias"], "qwen");
+    assert_eq!(rows[0]["library"], fixture.id_of("T7"));
+    assert_eq!(rows[0]["relative_path"], "text/qwen.gturbo");
+    let marker: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("library.json")).unwrap()).unwrap();
+    assert_eq!(marker["models"][0]["alias"], "qwen");
+    assert!(!fixture.home.join("models").join("text").exists());
+
+    let listed = fixture.run(&["list", "--filter", "qwen"]);
+    let line = line_with(&listed.stdout, "qwen ");
+    assert!(
+        line.contains("T7") && line.contains("available"),
+        "{}",
+        listed.stdout
+    );
+}
+
+/// A tiny local Diffusers export the image packer accepts: tokenizer,
+/// scheduler, and one F32 shard per weight component.
+fn write_image_source(source: &Path) {
+    fs::create_dir_all(source.join("tokenizer")).unwrap();
+    fs::create_dir_all(source.join("scheduler")).unwrap();
+    fs::write(source.join("tokenizer/tokenizer.json"), b"tokenizer").unwrap();
+    fs::write(
+        source.join("tokenizer/tokenizer_config.json"),
+        b"{\"chat_template\": \"test\"}",
+    )
+    .unwrap();
+    fs::write(
+        source.join("scheduler/scheduler_config.json"),
+        b"{\"shift\": 3.0}",
+    )
+    .unwrap();
+    for (component, index) in [
+        ("text_encoder", "model.safetensors.index.json"),
+        (
+            "transformer",
+            "diffusion_pytorch_model.safetensors.index.json",
+        ),
+        ("vae", "diffusion_pytorch_model.safetensors.index.json"),
+    ] {
+        let dir = source.join(component);
+        fs::create_dir_all(&dir).unwrap();
+        let file = index.strip_suffix(".index.json").unwrap();
+        let mut payload = Vec::new();
+        for value in std::iter::repeat_n(0.25f32, 64).chain(std::iter::repeat_n(1.0f32, 64)) {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        let header = serde_json::to_vec(&serde_json::json!({
+            "linear.weight": {"dtype": "F32", "shape": [1, 64], "data_offsets": [0, 256]},
+            "norm.weight": {"dtype": "F32", "shape": [64], "data_offsets": [256, 512]}
+        }))
+        .unwrap();
+        let mut shard = (header.len() as u64).to_le_bytes().to_vec();
+        shard.extend_from_slice(&header);
+        shard.extend_from_slice(&payload);
+        fs::write(dir.join(file), shard).unwrap();
+        if component != "vae" {
+            fs::write(
+                dir.join(index),
+                serde_json::to_vec(&serde_json::json!({
+                    "weight_map": {"linear.weight": file, "norm.weight": file}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+    }
+}
+
+/// An image pull into a library builds in the library's staging folder and
+/// publishes into its image folder, leaving nothing in staging or in This
+/// Mac. Its folder then holds the alias: another pull into the library, or
+/// into This Mac, is refused before any work.
+#[test]
+fn an_image_pull_installs_into_the_named_library() {
+    let fixture = Fixture::new("pull-image");
+    fixture.add("T7", "T7");
+    let source = fixture.base.join("export");
+    write_image_source(&source);
+    let before = snapshot(&source);
+    let pull = |library: Option<&str>| {
+        let mut args = vec![
+            "pull-image",
+            "--source",
+            source.to_str().unwrap(),
+            "--alias",
+            "pic",
+            "--model-id",
+            "Tongyi-MAI/Z-Image-Turbo",
+            "--model-revision",
+            "f332072aa78be7aecdf3ee76d5c247082da564a6",
+        ];
+        if let Some(name) = library {
+            args.extend(["--library", name]);
+        }
+        fixture.run(&args)
+    };
+
+    let installed = pull(Some("T7"));
+    assert_eq!(installed.code, 0, "{}", installed.stderr);
+    let root = fixture.volume("T7").join("TurboSpark");
+    let dir = root.join("image").join("pic.gturbo");
+    assert!(dir.join("manifest.json").is_file(), "{}", installed.stdout);
+    assert!(
+        installed.stdout.contains(&dir.display().to_string()),
+        "{}",
+        installed.stdout
+    );
+    assert!(
+        fs::read_dir(root.join(".staging"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "staging is left empty"
+    );
+    assert!(!fixture.home.join("models").exists());
+    assert_eq!(snapshot(&source), before, "the export is not touched");
+
+    let again = pull(Some("T7"));
+    assert_eq!(again.code, 1, "{}", again.stderr);
+    assert!(
+        again.stderr.contains("already holds an image install"),
+        "{}",
+        again.stderr
+    );
+    let elsewhere = pull(None);
+    assert_eq!(elsewhere.code, 1, "{}", elsewhere.stderr);
+    assert!(
+        elsewhere
+            .stderr
+            .contains("already installed in the library \"T7\""),
+        "{}",
+        elsewhere.stderr
+    );
+    assert!(!fixture.home.join("models").exists());
 }

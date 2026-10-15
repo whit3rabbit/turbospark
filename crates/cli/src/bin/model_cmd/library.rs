@@ -21,7 +21,7 @@ use super::render::truncate;
 use crate::{one_positional, Error, Options};
 
 /// The most characters printed of a library name or an alias.
-const NAME_LIMIT: usize = 64;
+pub(super) const NAME_LIMIT: usize = 64;
 /// The most characters printed of an error reason. Marker errors echo
 /// untrusted values up to the marker's size cap.
 const MESSAGE_LIMIT: usize = 300;
@@ -230,7 +230,7 @@ fn location_env(store: &Store) -> Result<LocationEnv, Error> {
 
 /// The library list, with whatever reading it set aside printed as
 /// warnings. Never fails: a list that cannot be read is only This Mac.
-fn load(store: &Store) -> LibraryRegistry {
+pub(super) fn load(store: &Store) -> LibraryRegistry {
     let registry = LibraryRegistry::load(store.root());
     for warning in report_warnings(registry.load_report()) {
         eprintln!("warning: {warning}");
@@ -264,8 +264,8 @@ fn report_warnings(report: &LoadReport) -> Vec<String> {
 /// The library `target` names: an id exactly, else a name ignoring case.
 /// Two libraries can share a name (an adopted library keeps the name its
 /// drive gives it), so a name that matches several is refused with their
-/// ids rather than guessed.
-fn resolve(registry: &LibraryRegistry, target: &str) -> Result<LibraryRecord, Error> {
+/// ids rather than guessed. Pulls name their `--library` the same way.
+pub(super) fn resolve(registry: &LibraryRegistry, target: &str) -> Result<LibraryRecord, Error> {
     let records = registry.libraries();
     if let Some(record) = records.iter().find(|record| record.id == target) {
         return Ok(record.clone());
@@ -395,7 +395,7 @@ fn clean_path(path: &Path) -> String {
 /// `text` with control and bidirectional formatting characters escaped,
 /// cut to `limit` characters. Printed raw, a name from a drive could move
 /// the cursor, recolor the terminal, or reorder what the user reads.
-fn clean(text: &str, limit: usize) -> String {
+pub(super) fn clean(text: &str, limit: usize) -> String {
     let escaped: String = text
         .chars()
         .map(|c| {

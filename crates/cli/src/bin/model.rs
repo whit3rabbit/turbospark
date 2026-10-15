@@ -25,8 +25,11 @@ USAGE:
     turbospark-model <COMMAND> [OPTIONS]
 
 COMMANDS:
-    list [--filter TEXT]        curated models, marking the ones installed
-    list-speech                 bundled whisper entries (STT installs)
+    list [--filter TEXT]        curated models, marking the ones installed,
+                                then every install with its library and
+                                whether it is available, not connected, or
+                                missing
+    list-speech                bundled whisper entries (STT installs)
     list-audio                  pinned MiniMax Music 3 profiles
     info <ALIAS>                one model in full, with its gate targets
     probe <REPO>[@REV]          what this engine makes of a Hugging Face repo,
@@ -63,6 +66,12 @@ COMMANDS:
 
 OPTIONS:
     --out <DIR>                 install here instead of the default store
+    --library <NAME>            for `pull`, `pull-vision`, `pull-image` and
+                                `pull-audio`: install into this library (a
+                                name or id from `library list`). Without it
+                                a pull goes to the default library, or to
+                                This Mac when that drive is not connected.
+                                Not with --out
     --source <DIR>              local Diffusers export for `pull-image`
     --repo <REPO>[@REV]         pinned Hugging Face source for `pull-image`
     --model-id <ID>             source model id for `pull-image`
@@ -166,6 +175,9 @@ pub struct Options {
     pub alias: Option<String>,
     /// The name for `library add`.
     pub name: Option<String>,
+    /// The library a pull installs into, by name or id. Absent means the
+    /// default library.
+    pub library: Option<String>,
     pub file: Option<String>,
     pub sidecar_repo: Option<String>,
     /// An already-installed alias to reuse the trunk's resident bytes from,
@@ -249,6 +261,7 @@ fn run(args: &[String]) -> Result<(), Error> {
         "pull" => {
             options.reject_unused(&[
                 "out",
+                "library",
                 "alias",
                 "file",
                 "sidecar-repo",
@@ -258,16 +271,23 @@ fn run(args: &[String]) -> Result<(), Error> {
             model_cmd::pull(&catalog, &store, &client, &positionals, &options)
         }
         "pull-image" => {
-            options.reject_unused(&["out", "alias", "source", "model-id", "model-revision"])?;
+            options.reject_unused(&[
+                "out",
+                "library",
+                "alias",
+                "source",
+                "model-id",
+                "model-revision",
+            ])?;
             model_cmd::pull_image(&catalog, &store, &client, &positionals, &options)
         }
         "pull-audio" => {
-            options.reject_unused(&[])?;
+            options.reject_unused(&["library"])?;
             let alias = one_positional(&positionals, "pull-audio", "<ALIAS>")?;
-            model_cmd::pull_audio(&catalog, &store, &client, alias)
+            model_cmd::pull_audio(&catalog, &store, &client, alias, &options)
         }
         "pull-vision" => {
-            options.reject_unused(&["out", "alias", "file", "force"])?;
+            options.reject_unused(&["out", "library", "alias", "file", "force"])?;
             model_cmd::pull_vision(&catalog, &store, &client, &positionals, &options)
         }
         "path" => {
@@ -377,6 +397,10 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--name" => {
                 options.name = Some(value_for(&mut index, "--name")?);
                 seen.push("name");
+            }
+            "--library" => {
+                options.library = Some(value_for(&mut index, "--library")?);
+                seen.push("library");
             }
             "--file" => {
                 options.file = Some(value_for(&mut index, "--file")?);

@@ -883,6 +883,57 @@ pub fn record_into(
     Ok(row)
 }
 
+/// Walks `plan` into `target`, a destination [`install_destination`]
+/// settled before any download, and records it there with
+/// [`record_into`]: the one text and vision-tower install step the CLI and
+/// the native interface share. The returned model is the row recorded.
+///
+/// The walk writes in place, with no staging rename. Into a library, the
+/// modality and install folders are made one level at a time first, so a
+/// library whose drive went away since `target` was settled is never rebuilt
+/// on the disk under its mount point by the walk's own `create_dir_all`.
+/// Failures are classified by [`Store::install_failure`] against the library
+/// ROOT, since `target.dir` may never have existed: a vanished root is
+/// [`StoreError::LibraryDisconnected`] and nothing is recorded. A cancelled
+/// walk is [`StoreError::Io`] carrying [`INSTALL_CANCELLED`].
+///
+/// Into This Mac it is [`install_with_byte_progress`] then [`record`], as
+/// before libraries: the same folder, the same walk, and the same row.
+#[allow(clippy::too_many_arguments)]
+pub fn install_text_into(
+    plan: &InstallPlan,
+    target: &InstallTarget,
+    client: &Client,
+    progress: impl FnMut(&str),
+    byte_progress: Option<ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+    store: &Store,
+    env: &LocationEnv,
+) -> Result<Installed, StoreError> {
+    let failed = |error: String| {
+        store.install_failure(&target.root, &target.root, &target.library_name, error)
+    };
+    if target.library_id.is_some() {
+        let modality_dir = target.dir.parent().unwrap_or(&target.root);
+        for dir in [modality_dir, target.dir.as_path()] {
+            match fs::create_dir(dir) {
+                Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+                    return Err(failed(format!("creating {}: {e}", dir.display())));
+                }
+                _ => {}
+            }
+        }
+    }
+    let installed =
+        install_with_byte_progress(plan, &target.dir, client, progress, byte_progress, cancel)
+            .map_err(failed)?;
+    let model = record_into(store, &installed.model, target, env)?;
+    Ok(Installed {
+        model,
+        arch: installed.arch,
+    })
+}
+
 /// `YYYY-MM-DD` in UTC, from the system clock.
 ///
 /// Hand-rolled rather than pulling in a date crate: this crate needs exactly

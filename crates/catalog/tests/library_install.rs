@@ -23,9 +23,10 @@ use turbospark_catalog::library::{
     MARKER_FILE,
 };
 use turbospark_catalog::{
-    embedded_music_entry, install_destination, install_music_into, install_with_byte_progress,
-    record_into, set_hf_endpoint_override, AudioCatalog, CancelFlag, Catalog, Client, InstallKind,
-    InstallPlan, InstalledModel, ModelModality, RepoRef, SourceKind, Store, StoreError,
+    embedded_music_entry, install_destination, install_music_into, install_text_into,
+    install_with_byte_progress, record_into, set_hf_endpoint_override, AudioCatalog, CancelFlag,
+    Catalog, Client, InstallKind, InstallPlan, InstalledModel, ModelModality, RepoRef, SourceKind,
+    Store, StoreError,
 };
 
 const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -450,6 +451,118 @@ fn a_text_install_lands_in_the_library_and_is_recorded_there() {
     assert_eq!(listed[0].availability, Availability::Available);
     // Nothing of a library install lands in the home's models folder.
     assert_eq!(LibraryFixture::listing(&fx.store.models_root()), None);
+}
+
+/// [`install_text_into`], the walk-and-record step the CLI and the native
+/// interface share, lands a text install in its library and records it
+/// there, in the registry and the marker alike.
+#[test]
+fn install_text_into_walks_into_the_library_and_records_it() {
+    let _lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let fx = LibraryFixture::new("text-into");
+    let (repo, plan) = text_repo();
+    let server = FixtureServer::start(vec![repo]);
+    let (_reset, client) = client_for(&server);
+
+    let target =
+        install_destination(&fx.store, Some(&fx.id), InstallKind::Text, "qwen", &fx.env).unwrap();
+    let installed = install_text_into(
+        &plan,
+        &target,
+        &client,
+        |_| {},
+        None,
+        None,
+        &fx.store,
+        &fx.env,
+    )
+    .expect("offline text install");
+
+    assert!(target.dir.join("model_weights.bin").is_file());
+    assert_eq!(installed.model.path, target.dir);
+    assert_eq!(installed.model.library.as_deref(), Some(fx.id.as_str()));
+    assert_eq!(
+        installed.model.relative_path.as_deref(),
+        Some(Path::new("text/qwen.gturbo"))
+    );
+    assert_eq!(fx.rows_on_disk(), vec![installed.model.clone()]);
+    let marker = fx.marker();
+    assert_eq!(marker.models.len(), 1);
+    assert_eq!(marker.models[0].alias, "qwen");
+}
+
+/// Into This Mac the helper is today's install: the same folder, and a row
+/// with no library fields.
+#[test]
+fn install_text_into_this_mac_installs_as_before() {
+    let _lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let fx = LibraryFixture::new("text-into-mac");
+    let (repo, plan) = text_repo();
+    let server = FixtureServer::start(vec![repo]);
+    let (_reset, client) = client_for(&server);
+
+    let target = install_destination(&fx.store, None, InstallKind::Text, "qwen", &fx.env).unwrap();
+    let installed = install_text_into(
+        &plan,
+        &target,
+        &client,
+        |_| {},
+        None,
+        None,
+        &fx.store,
+        &fx.env,
+    )
+    .expect("offline text install");
+
+    assert_eq!(target.dir, fx.store.install_path("qwen"));
+    assert!(target.dir.join("model_weights.bin").is_file());
+    assert_eq!(installed.model.library, None);
+    assert_eq!(installed.model.relative_path, None);
+    assert_eq!(fx.rows_on_disk(), vec![installed.model.clone()]);
+    assert!(fx.marker().models.is_empty());
+}
+
+/// A drive unplugged after the destination was settled ends the install as
+/// a disconnect before any request, and the walk never rebuilds the
+/// library's folders on the disk under the mount point.
+#[test]
+fn install_text_into_an_unplugged_library_is_a_disconnect_before_any_request() {
+    let _lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let fx = LibraryFixture::new("text-into-unplugged");
+    let (repo, plan) = text_repo();
+    let server = FixtureServer::start(vec![repo]);
+    let (_reset, client) = client_for(&server);
+
+    let target =
+        install_destination(&fx.store, Some(&fx.id), InstallKind::Text, "qwen", &fx.env).unwrap();
+    fx.unplug();
+    let error = install_text_into(
+        &plan,
+        &target,
+        &client,
+        |_| {},
+        None,
+        None,
+        &fx.store,
+        &fx.env,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        StoreError::LibraryDisconnected {
+            library: "T7".to_string()
+        }
+    );
+    assert!(server.requests().is_empty(), "{:?}", server.requests());
+    assert!(!fx.volume.exists());
+    assert!(fx.rows_on_disk().is_empty());
 }
 
 #[test]
