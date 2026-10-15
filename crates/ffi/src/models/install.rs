@@ -117,6 +117,16 @@ pub(crate) fn installs_finished() -> usize {
     INSTALLS_FINISHED.load(Ordering::Relaxed)
 }
 
+/// The text install folder in This Mac for `alias`, through the resolver a
+/// library install uses, so an alias another library holds is refused
+/// before anything is downloaded.
+fn this_mac_destination(store: &Store, alias: &str) -> Result<std::path::PathBuf, String> {
+    let env = catalog::library::LocationEnv::system(store.root())?;
+    catalog::install_destination(store, None, catalog::InstallKind::Text, alias, &env)
+        .map(|target| target.dir)
+        .map_err(|error| error.to_string())
+}
+
 /// Installs the catalog row named `alias` into the store.
 ///
 /// **IMMUTABLE-REVISION NETWORK RANGES RESUME.** Completed, SHA-256 checked
@@ -149,7 +159,7 @@ pub(crate) fn install(
         .ok_or_else(|| format!("no catalog row named {alias:?}"))?;
     let plan = InstallPlan::from_entry(entry);
     let store = Store::default_store()?;
-    let dir = store.install_path(alias);
+    let dir = this_mac_destination(&store, alias)?;
 
     on_stage(
         "failed or cancelled immutable-revision downloads reuse completed ranges; \
@@ -184,6 +194,9 @@ pub(crate) fn install_repo(
         Some(text) => parse_repo(text)?,
         None => weights.clone(),
     };
+    // Before the probe, so a refused destination costs no network request.
+    let store = Store::default_store()?;
+    let dir = this_mac_destination(&store, alias)?;
     let client = Client::new();
     let report = catalog::probe(&client, &weights, file, Some(&sidecars))?;
     if !report.verdict.is_runnable() {
@@ -193,8 +206,6 @@ pub(crate) fn install_repo(
         });
     }
     let plan = InstallPlan::from_probe(alias, &report, sidecars);
-    let store = Store::default_store()?;
-    let dir = store.install_path(alias);
     if dir.join("manifest.json").is_file() {
         return Err(format!("{} already holds an install", dir.display()));
     }

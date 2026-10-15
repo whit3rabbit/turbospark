@@ -642,8 +642,21 @@ impl Store {
         library: Option<&str>,
         env: &LocationEnv,
     ) -> Result<PathBuf, StoreError> {
+        self.library_for_install(library, env).map(|(root, _)| root)
+    }
+
+    /// [`Self::library_root_for_install`] with the library's record, whose
+    /// name the installers put in their errors. This Mac's is
+    /// [`LibraryRecord::internal`].
+    pub(crate) fn library_for_install(
+        &self,
+        library: Option<&str>,
+        env: &LocationEnv,
+    ) -> Result<(PathBuf, LibraryRecord), StoreError> {
         let id = match library {
-            None | Some(INTERNAL_LIBRARY_ID) => return Ok(self.models_root()),
+            None | Some(INTERNAL_LIBRARY_ID) => {
+                return Ok((self.models_root(), LibraryRecord::internal(&self.root)))
+            }
             Some(id) => id,
         };
         let record = LibraryRegistry::load(&self.root)
@@ -657,7 +670,69 @@ impl Store {
                 library: record.name,
             });
         }
-        Ok(root)
+        Ok((root, record))
+    }
+
+    /// Where an install of `alias` with `modality` into `library` (This Mac
+    /// for `None`) would duplicate one that is already elsewhere, as a
+    /// phrase naming that place, or `None`. Alias plus modality stays unique
+    /// across libraries (the 1.2 decision), so the installer refuses rather
+    /// than let the record replace the other row and orphan its folder.
+    ///
+    /// Recorded rows count wherever they are, connected or not. A row with
+    /// no library counts as This Mac's, the way [`Self::record`] keys rows,
+    /// so reinstalling into This Mac over a `pull --out` row stays allowed,
+    /// as it always was. Image installs are not recorded, so for them the
+    /// image folders of This Mac and of every connected library count too.
+    /// A library that is not connected cannot be searched for one.
+    pub(crate) fn alias_elsewhere(
+        &self,
+        alias: &str,
+        modality: ModelModality,
+        library: Option<&str>,
+        env: &LocationEnv,
+    ) -> Option<String> {
+        let target = library.filter(|id| *id != INTERNAL_LIBRARY_ID);
+        let models = self.models_root();
+        let registry = LibraryRegistry::load(&self.root);
+        let listed = registry.libraries();
+        // Quoted with escapes: a library name comes from an untrusted marker.
+        let named = |id: &str| match listed.iter().find(|record| record.id == id) {
+            Some(record) => format!("the library {:?}", record.name),
+            None => "a library that is no longer listed".to_string(),
+        };
+        let recorded = self.read_rows().into_iter().find(|row| {
+            row.alias == alias
+                && row.effective_modality() == modality
+                && external_library(row) != target
+        });
+        if let Some(row) = recorded {
+            return Some(match external_library(&row) {
+                Some(id) => named(id),
+                None if row.path.starts_with(&models) => "This Mac".to_string(),
+                None => format!("a custom location ({})", row.path.display()),
+            });
+        }
+        if modality != ModelModality::Image {
+            return None;
+        }
+        let present = |path: &Path| fs::symlink_metadata(path).is_ok();
+        if target.is_some()
+            && (present(&self.image_install_path(alias))
+                || present(&self.legacy_image_install_path(alias)))
+        {
+            return Some("This Mac".to_string());
+        }
+        let table = SharedMountTable::new(env);
+        listed
+            .iter()
+            .filter(|record| !record.is_internal() && Some(record.id.as_str()) != target)
+            .find(|record| {
+                connected_library(record, &table).is_ok_and(|(root, _)| {
+                    Self::image_install_path_in(&root, alias).is_ok_and(|path| present(&path))
+                })
+            })
+            .map(|record| named(&record.id))
     }
 
     /// Whether `root` is This Mac's `<home>/models`, by spelling or, when
@@ -692,7 +767,11 @@ impl Store {
     /// whichever step saw it: [`Self::publish_staged`] applies it, and the
     /// library installers apply it to a failed transfer
     /// (`HubError::Staging`) and a failed [`Self::staging_parent_for`].
-    pub(crate) fn install_failure(
+    /// Public because installers outside this crate, the native interface's
+    /// image installer among them, follow the same rule. `staging` must be
+    /// a path that existed before the step failed: in a library, one that
+    /// never existed reads as a disconnect.
+    pub fn install_failure(
         &self,
         staging: &Path,
         library_root: &Path,
@@ -771,9 +850,9 @@ impl Store {
     /// vanished root of an external library is
     /// [`StoreError::LibraryDisconnected`], since an unplugged drive takes
     /// both with it, and the root is never recreated. In This Mac a missing
-    /// `staged` is an IO error. An existing `destination`, even an empty
-    /// folder that a rename would quietly replace, and a modality folder
-    /// that is a link are refused.
+    /// `staged` is an IO error. A `staged` that is a link or not a folder, an
+    /// existing `destination`, even an empty folder that a rename would
+    /// quietly replace, and a modality folder that is a link are refused.
     pub fn publish_staged(
         &self,
         staged: &Path,
@@ -800,6 +879,14 @@ impl Store {
         if fs::symlink_metadata(staged).is_err() || self.library_gone(staged, library_root) {
             return Err(failed(format!(
                 "the staged install {} cannot be read",
+                staged.display()
+            )));
+        }
+        // Not followed: a link published into a library would list an
+        // install whose files live outside it.
+        if !fs::symlink_metadata(staged).is_ok_and(|found| found.file_type().is_dir()) {
+            return Err(StoreError::Io(format!(
+                "the staged install {} is not a plain folder",
                 staged.display()
             )));
         }

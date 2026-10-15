@@ -239,7 +239,7 @@ fn delete_from_store(store: &Store, alias: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use catalog::InstalledModel;
 
@@ -271,8 +271,9 @@ mod tests {
     }
 
     /// A minimal valid source tree: the production builder packs it, so the
-    /// scan below runs against a manifest the engine itself wrote.
-    fn write_synthetic_source(source: &Path) {
+    /// scan below runs against a manifest the engine itself wrote. The image
+    /// installer's tests materialize it as a downloaded source.
+    pub(in crate::models) fn write_synthetic_source(source: &Path) {
         use std::fs;
         fs::create_dir_all(source.join("tokenizer")).unwrap();
         fs::create_dir_all(source.join("scheduler")).unwrap();

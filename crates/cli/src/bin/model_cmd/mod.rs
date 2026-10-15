@@ -262,6 +262,35 @@ pub fn remove(store: &Store, alias: &str, yes: bool) -> Result<(), Error> {
     Ok(())
 }
 
+/// The install folder for `alias`: `out` when given, else This Mac's.
+///
+/// Through the same resolver a library install uses either way, so an alias
+/// another library holds is refused before anything is downloaded. That
+/// includes `--out`, whose row `record` would otherwise put over the other
+/// library's, orphaning its folder while its marker keeps listing it.
+fn install_dir(
+    store: &Store,
+    kind: catalog::InstallKind,
+    alias: &str,
+    out: Option<&str>,
+) -> Result<std::path::PathBuf, Error> {
+    let this_mac = this_mac_destination(store, kind, alias)?;
+    Ok(out.map(std::path::PathBuf::from).unwrap_or(this_mac))
+}
+
+/// The install folder in This Mac for `alias`, through the same resolver a
+/// library install uses.
+fn this_mac_destination(
+    store: &Store,
+    kind: catalog::InstallKind,
+    alias: &str,
+) -> Result<std::path::PathBuf, Error> {
+    let env = catalog::library::LocationEnv::system(store.root()).map_err(Error::Failed)?;
+    catalog::install_destination(store, None, kind, alias, &env)
+        .map(|target| target.dir)
+        .map_err(|error| Error::Failed(error.to_string()))
+}
+
 /// Install a curated row, or any repository the probe accepts.
 pub fn pull(
     catalog: &Catalog,
@@ -274,10 +303,12 @@ pub fn pull(
     if let Some(alias) = &options.reuse_trunk_from {
         plan.reuse_trunk_from = Some(resolve_reuse_trunk_from(store, &plan, alias)?);
     }
-    let dir = match &options.out {
-        Some(out) => std::path::PathBuf::from(out),
-        None => store.install_path(&plan.alias),
-    };
+    let dir = install_dir(
+        store,
+        catalog::InstallKind::Text,
+        &plan.alias,
+        options.out.as_deref(),
+    )?;
     if dir.join("manifest.json").is_file() {
         return Err(Error::Failed(format!(
             "{} already holds an install. Remove it first, or pass --out.",
@@ -500,10 +531,12 @@ pub fn pull_vision(
     options: &Options,
 ) -> Result<(), Error> {
     let plan = resolve_vision_plan(catalog, positionals, options)?;
-    let dir = match &options.out {
-        Some(out) => std::path::PathBuf::from(out),
-        None => store.vision_install_path(&plan.alias),
-    };
+    let dir = install_dir(
+        store,
+        catalog::InstallKind::VisionTower,
+        &plan.alias,
+        options.out.as_deref(),
+    )?;
     if dir.join("manifest.json").is_file() {
         return Err(Error::Failed(format!(
             "{} already holds an install. Remove it first, or pass --out.",

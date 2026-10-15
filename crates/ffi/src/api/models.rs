@@ -173,6 +173,7 @@ pub unsafe extern "C" fn ts_image_install(
         });
         let json = models::image_install(
             alias,
+            None,
             |line| {
                 if let Some(f) = sink.0 {
                     unsafe {

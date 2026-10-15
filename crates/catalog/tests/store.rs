@@ -1155,6 +1155,44 @@ fn publishing_through_a_symlinked_modality_folder_is_refused() {
     assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
 }
 
+/// A staged install that is a link is never published, wherever it points:
+/// renaming the link into the library would list an install whose files
+/// live outside it. A staged file is not an install either.
+#[test]
+fn publishing_refuses_a_staged_link_or_file() {
+    let fx = LibraryFixture::new("publish-staged-link");
+    let root = fx.root();
+    let staging = fx.store.staging_parent_for(&root).unwrap();
+    let elsewhere = fx.base.join("elsewhere").join("job");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("weights.bin"), b"weights").unwrap();
+    let link = staging.join("job");
+    std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+    let file = staging.join("file");
+    std::fs::write(&file, b"not an install").unwrap();
+
+    for staged in [&link, &file] {
+        let destination = Store::install_path_in(&root, "qwen").unwrap();
+        assert!(
+            matches!(
+                fx.store.publish_staged(staged, &destination, "T7"),
+                Err(StoreError::Io(_))
+            ),
+            "{} was published",
+            staged.display()
+        );
+        assert!(std::fs::symlink_metadata(&destination).is_err());
+    }
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        std::fs::read(elsewhere.join("weights.bin")).unwrap(),
+        b"weights"
+    );
+}
+
 /// Unplugging the drive takes the staging folder with it. The install ends
 /// as disconnected, and the registry is exactly as it was (2.4).
 #[test]

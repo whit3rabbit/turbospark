@@ -21,6 +21,7 @@
 //! floating revisions never use the cache. The cache is removed only after
 //! the published install passes its normal verification.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use model_io::ArchConfig;
@@ -29,9 +30,10 @@ use tokenizer::{Message, MfTokenizer, Role};
 use crate::entry::{CatalogEntry, EntryKind, SourceKind};
 use crate::hf::{Client, RepoRef};
 use crate::hub::{HubGgufVariant, VariantInstallability};
+use crate::library::LocationEnv;
 use crate::probe::{probe, ProbeReport, Verdict};
 use crate::quant::{group_variants, ShardSetStatus};
-use crate::store::{directory_bytes, InstalledModel, ModelModality, Store};
+use crate::store::{directory_bytes, InstalledModel, ModelModality, Store, StoreError};
 
 /// The sidecar files a vision-tower-only install fetches, in the order
 /// `install()` writes them: `config.json` decides the family and the
@@ -734,6 +736,151 @@ fn vision_tower_stub_report(plan: &InstallPlan) -> ProbeReport {
 /// Record an install in `store`.
 pub fn record(store: &Store, installed: &Installed) -> Result<(), String> {
     store.record(&installed.model)
+}
+
+/// What an install is, which decides the folder it lands in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallKind {
+    /// `<root>/text/<alias>.gturbo`.
+    Text,
+    /// A vision-tower sidecar, `<root>/text/<alias>.gturbo-vision`: a text
+    /// model accessory in the text namespace.
+    VisionTower,
+    /// `<root>/image/<alias>.gturbo`.
+    Image,
+    /// Audio models, music included, `<root>/audio/<alias>.gturbo`.
+    Audio,
+}
+
+impl InstallKind {
+    /// The registry modality, which with the alias keys a row.
+    pub fn modality(self) -> ModelModality {
+        match self {
+            Self::Text | Self::VisionTower => ModelModality::Text,
+            Self::Image => ModelModality::Image,
+            Self::Audio => ModelModality::Audio,
+        }
+    }
+
+    fn path_in(self, root: &Path, alias: &str) -> Result<PathBuf, StoreError> {
+        match self {
+            Self::Text => Store::install_path_in(root, alias),
+            Self::VisionTower => Store::vision_install_path_in(root, alias),
+            Self::Image => Store::image_install_path_in(root, alias),
+            Self::Audio => Store::audio_install_path_in(root, alias),
+        }
+    }
+}
+
+/// Where an install lands, worked out by [`install_destination`] before
+/// anything is downloaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallTarget {
+    /// The library's id, `None` for This Mac.
+    pub library_id: Option<String>,
+    /// The library's name, for errors: "This Mac", or the name of a library
+    /// adopted from an untrusted marker, which display must escape.
+    pub library_name: String,
+    /// This Mac's `<home>/models`, or the canonical root of the library.
+    pub root: PathBuf,
+    /// The install folder, under `root`.
+    pub dir: PathBuf,
+    /// `dir` relative to `root`, which a library's row records.
+    pub relative_path: PathBuf,
+}
+
+/// Where an install of `alias` as `kind` into `library` (This Mac for
+/// `None` or [`crate::library::INTERNAL_LIBRARY_ID`]) lands. Installers
+/// call it before anything is downloaded, so these all fail up front:
+///
+/// - a library that is not connected ([`StoreError::NotConnected`]) or that
+///   a newer TurboSpark wrote ([`StoreError::LibraryReadOnly`]);
+/// - an alias that could name a folder outside the library;
+/// - an alias another library already holds with the same modality
+///   ([`StoreError::Io`] naming it), since alias plus modality stays unique
+///   across libraries and the install must be moved instead. Reinstalling
+///   into the same library is allowed;
+/// - in a library, a modality folder or install folder that is a link or
+///   not a folder, since the walk writes through it.
+///
+/// For This Mac the folder is exactly today's, `Store::install_path` and
+/// its siblings. Nothing is created.
+pub fn install_destination(
+    store: &Store,
+    library: Option<&str>,
+    kind: InstallKind,
+    alias: &str,
+    env: &LocationEnv,
+) -> Result<InstallTarget, StoreError> {
+    let (root, record) = store.library_for_install(library, env)?;
+    let dir = kind.path_in(&root, alias)?;
+    let library_id = (!record.is_internal()).then_some(record.id);
+    if let Some(place) = store.alias_elsewhere(alias, kind.modality(), library_id.as_deref(), env) {
+        return Err(StoreError::Io(format!(
+            "{alias:?} is already installed in {place}; move it from there, \
+             or remove it there first"
+        )));
+    }
+    // Not followed: a text walk writes straight into `dir`, so a link a
+    // drive's owner put in its place would land the install outside the
+    // library. This Mac's folders are the user's own and stay as they were.
+    if library_id.is_some() {
+        let modality_dir = dir.parent().unwrap_or(&root);
+        for path in [modality_dir, dir.as_path()] {
+            match fs::symlink_metadata(path) {
+                Ok(found) if !found.file_type().is_dir() => {
+                    return Err(StoreError::Io(format!(
+                        "{} is not a plain folder",
+                        path.display()
+                    )));
+                }
+                _ => {}
+            }
+        }
+    }
+    let relative_path = dir
+        .strip_prefix(&root)
+        .map(Path::to_path_buf)
+        .map_err(|_| StoreError::Io(format!("{} is not in its library", dir.display())))?;
+    Ok(InstallTarget {
+        library_id,
+        library_name: record.name,
+        root,
+        dir,
+        relative_path,
+    })
+}
+
+/// Records `model`, installed into `target`, and returns the row recorded.
+/// In a library the row gets the library and its relative path, and goes
+/// into the library's marker too ([`Store::record_in_library`], with the
+/// same `env` given to [`install_destination`]). A This Mac row is recorded
+/// exactly as [`record`] records it.
+///
+/// A library row whose `path` is not `target.dir` is refused with nothing
+/// written: the walk resolves its folder as it goes, so a link swapped in
+/// under the library meanwhile shows up here rather than in the registry.
+pub fn record_into(
+    store: &Store,
+    model: &InstalledModel,
+    target: &InstallTarget,
+    env: &LocationEnv,
+) -> Result<InstalledModel, StoreError> {
+    let mut row = model.clone();
+    if let Some(id) = &target.library_id {
+        if row.path != target.dir {
+            return Err(StoreError::Io(format!(
+                "the install at {} is not where the library {:?} expects it, {}",
+                row.path.display(),
+                target.library_name,
+                target.dir.display()
+            )));
+        }
+        row.library = Some(id.clone());
+        row.relative_path = Some(target.relative_path.clone());
+    }
+    store.record_in_library(std::slice::from_ref(&row), env)?;
+    Ok(row)
 }
 
 /// `YYYY-MM-DD` in UTC, from the system clock.
