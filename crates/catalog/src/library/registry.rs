@@ -23,6 +23,11 @@ use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+// A child module, so the import writes the list through the same commit.
+#[path = "import.rs"]
+mod import;
+pub use import::ImportedStore;
+
 /// The list's file name inside the home.
 pub const LIBRARIES_FILE: &str = "libraries.json";
 

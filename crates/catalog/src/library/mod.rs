@@ -21,7 +21,9 @@ pub use marker::{
 pub use mount_table::{
     parse_mount_table, validate_location, LocationEnv, LocationRefusal, MountEntry, MountSource,
 };
-pub use registry::{AddedLibrary, LibraryRegistry, LoadReport, Refreshed, LIBRARIES_FILE};
+pub use registry::{
+    AddedLibrary, ImportedStore, LibraryRegistry, LoadReport, Refreshed, LIBRARIES_FILE,
+};
 pub use transfer::{move_install, MoveError, MoveOutcome};
 // The store locates every library of one listing through one mount table.
 pub(crate) use locate::SharedMountTable;
@@ -110,6 +112,9 @@ pub enum LibraryError {
     /// but cannot be read is never overwritten, because it may describe a
     /// library and its models.
     Marker(MarkerError),
+    /// The folder to import is not there, as when its drive is not
+    /// connected. The path as given. Nothing was written.
+    NotConnected(PathBuf),
     Io(String),
 }
 

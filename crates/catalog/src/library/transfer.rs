@@ -693,6 +693,35 @@ fn set_marker_row(
     Ok(previous)
 }
 
+/// Copies the folder `from` to `to`, which it creates at mode 0700, as a
+/// move copies: nothing is followed, a link or special file in `from`
+/// refuses the copy, and the copy must then hold the same bytes and files.
+/// The moved-store import copies embedding and OCR installs home with it.
+/// The caller removes `to` after a failure.
+pub(super) fn copy_folder(from: &Path, to: &Path) -> Result<(), MoveError> {
+    let expected = tally(from)?;
+    create_private_dir(to).map_err(|e| io_error("creating", to, e))?;
+    let never = AtomicBool::new(false);
+    let mut copier = Copier {
+        buffer: vec![0; CHUNK_BYTES],
+        copied: 0,
+        total: expected.bytes,
+        progress: &|_, _| {},
+        cancel: &never,
+    };
+    copier.copy_dir(from, to)?;
+    let found = tally(to)?;
+    if found != expected {
+        return Err(MoveError::VerifyFailed {
+            expected: expected.bytes,
+            found: found.bytes,
+            expected_files: expected.files,
+            found_files: found.files,
+        });
+    }
+    Ok(())
+}
+
 /// Copies a folder into the staged copy in chunks, reporting progress and
 /// checking cancel between files and between chunks.
 struct Copier<'a> {
