@@ -262,6 +262,26 @@ fn extract_api_key(args: &[String]) -> (Vec<String>, Option<String>) {
     (redacted, api_key)
 }
 
+/// Sets what the spawned server needs beyond its inherited environment.
+///
+/// `store_root` goes over as `TURBOSPARK_HOME` because the app's moved store
+/// is a process-local override (`ts_store_root_set`) the child cannot see;
+/// without it the server would resolve aliases against `~/.turbospark` while
+/// the app installs elsewhere. With no override this is the root the child
+/// would derive from the same inherited environment, so setting it is inert.
+fn apply_child_env(
+    cmd: &mut std::process::Command,
+    api_key: Option<String>,
+    store_root: Option<PathBuf>,
+) {
+    if let Some(key) = api_key {
+        cmd.env("TURBOSPARK_API_KEY", key);
+    }
+    if let Some(root) = store_root {
+        cmd.env("TURBOSPARK_HOME", root);
+    }
+}
+
 fn start_daemon_internal(args: &[String]) -> Result<(), String> {
     let run = run_dir();
     fs::create_dir_all(&run)
@@ -291,9 +311,7 @@ fn start_daemon_internal(args: &[String]) -> Result<(), String> {
 
     let mut cmd = std::process::Command::new(&server_bin);
     cmd.args(&args);
-    if let Some(key) = api_key {
-        cmd.env("TURBOSPARK_API_KEY", key);
-    }
+    apply_child_env(&mut cmd, api_key, catalog::default_root());
     cmd.stdout(log_handle.try_clone().map_err(|e| e.to_string())?);
     cmd.stderr(log_handle);
 
@@ -490,6 +508,43 @@ mod api_key_redaction_tests {
         let (redacted, key) = extract_api_key(&args(&["--api-key", "--port", "--port", "9001"]));
         assert_eq!(key.as_deref(), Some("--port"));
         assert_eq!(redacted, args(&["--port", "9001"]));
+    }
+}
+
+#[cfg(test)]
+mod child_env_tests {
+    use super::apply_child_env;
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+
+    fn env_of(cmd: &std::process::Command, name: &str) -> Option<Option<String>> {
+        cmd.get_envs()
+            .find(|(key, _)| *key == OsStr::new(name))
+            .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+    }
+
+    /// A store moved by the app lives only in this process's override. The
+    /// child must be told, or it serves a different store than the app shows.
+    #[test]
+    fn the_store_root_reaches_the_child_as_turbospark_home() {
+        let mut cmd = std::process::Command::new("turbospark-server");
+        apply_child_env(&mut cmd, None, Some(PathBuf::from("/Volumes/Models/ts")));
+        assert_eq!(
+            env_of(&cmd, "TURBOSPARK_HOME"),
+            Some(Some("/Volumes/Models/ts".to_string()))
+        );
+        assert_eq!(env_of(&cmd, "TURBOSPARK_API_KEY"), None);
+    }
+
+    #[test]
+    fn the_api_key_rides_env_and_no_root_sets_nothing() {
+        let mut cmd = std::process::Command::new("turbospark-server");
+        apply_child_env(&mut cmd, Some("sk-secret".to_string()), None);
+        assert_eq!(
+            env_of(&cmd, "TURBOSPARK_API_KEY"),
+            Some(Some("sk-secret".to_string()))
+        );
+        assert_eq!(env_of(&cmd, "TURBOSPARK_HOME"), None);
     }
 }
 
