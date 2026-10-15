@@ -10,6 +10,7 @@ pub mod confucius4;
 pub mod dia;
 pub mod dramabox;
 pub mod echo_tts;
+pub mod fish_drama3;
 pub mod fish_qwen3_omni;
 pub mod higgs_audio;
 pub mod higgs_audio_v3;

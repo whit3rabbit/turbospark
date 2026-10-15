@@ -339,6 +339,21 @@ impl MetalContext {
         &self.queue
     }
 
+    /// Blocks until every command buffer already committed to this queue has
+    /// completed. Commits an empty buffer and waits on it: same-queue buffers
+    /// complete in commit order, so its completion implies theirs.
+    ///
+    /// For work committed without a wait whose result the host is about to
+    /// touch, such as a GDN snapshot blit followed by a host-side state reset
+    /// (`GdnStateManager::snapshot`'s doc).
+    pub fn wait_until_idle(&self) {
+        crate::autorelease_pool(|| {
+            let command_buffer = self.queue.new_command_buffer();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+    }
+
     /// Opens one command buffer + one serial compute encoder to batch many
     /// kernel dispatches into a single submission (the Swift original
     /// encodes a whole layer, or more, per command buffer instead of one

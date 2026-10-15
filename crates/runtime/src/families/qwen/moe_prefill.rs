@@ -35,6 +35,16 @@
 //! server fall back to sequential prefill without an error, and it is the
 //! same-binary reference arm for byte-identity checks on a real install.
 //!
+//! **Headless hidden rows** (`HiddenTrunk::prefill`, Fish Audio Drama 3):
+//! [`RealForwardRunner::prefill_hidden_rows_qwen_moe`] runs the same micro-
+//! batches with two changes at the ends. A row may be a host embedding row,
+//! written over its `scratch.x` row before the first commit exactly as the
+//! sequential flow's `host_embed` is. And instead of the head, the final pass
+//! runs the sequential flow's own final norm once per row, each into its row
+//! of `moe_x` (micro-batch wide, and idle once the last routed pass has
+//! retired), and every row is read back. Same kernels, same inputs, so each
+//! row's hidden state is byte-identical to a sequential `hidden_out` step.
+//!
 //! REFUSED BY NAME, never silently served by the per-token loop:
 //! `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` (neither arm is
 //! wired for this family's MoE half), a hadamard-folded install (its
@@ -48,6 +58,7 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use foundation::LogitValue;
+use half::f16;
 
 use super::attn::{
     encode_full_attention_block, encode_linear_block, QkNormConvention, RopePosition,
@@ -132,9 +143,66 @@ impl RealForwardRunner {
             let last = offset + take == tokens.len();
             self.prefill_micro_batch_qwen_moe(
                 &tokens[offset..offset + take],
+                &[],
                 start_position + offset,
                 last,
                 logits,
+                None,
+            )?;
+            offset += take;
+        }
+        Ok(())
+    }
+
+    /// Runs `tokens` through the qwen MoE flow in micro-batches and writes
+    /// every row's post-final-norm hidden state into `hidden_out`
+    /// (`tokens.len() * hidden_size` values, row-major). Where `host_rows[t]`
+    /// is `Some`, its f16 bytes replace token `t`'s table lookup. No head
+    /// runs. The caller checks capacity: a row past it would assert in the
+    /// KV cursor.
+    pub(crate) fn prefill_hidden_rows_qwen_moe(
+        &mut self,
+        tokens: &[i32],
+        host_rows: &[Option<&[u8]>],
+        start_position: usize,
+        hidden_out: &mut [f16],
+    ) -> Result<(), RealForwardError> {
+        let hidden = self.arch.hidden_size as usize;
+        if tokens.is_empty()
+            || host_rows.len() != tokens.len()
+            || hidden_out.len() != tokens.len() * hidden
+            || host_rows
+                .iter()
+                .flatten()
+                .any(|row| row.len() != hidden * 2)
+        {
+            return Err(RealForwardError::Unsupported(format!(
+                "hidden-row prefill needs one row source and {hidden} outputs per row, and \
+                 {hidden} f16 values per host row"
+            )));
+        }
+        if let Some(reason) = self.qwen_moe_chunked_refusal() {
+            return Err(RealForwardError::Unsupported(format!(
+                "the qwen MoE chunked prefill driver cannot serve {reason}"
+            )));
+        }
+        if self.routed_batch_prefill || self.batched_gemv_prefill || self.prompt_vision.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "hidden-row prefill serves neither TURBOSPARK_ROUTED_BATCH, \
+                 TURBOSPARK_BATCHED_GEMV nor an image prompt"
+                    .to_string(),
+            ));
+        }
+        let mut offset = 0usize;
+        while offset < tokens.len() {
+            let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);
+            self.prefill_micro_batch_qwen_moe(
+                &tokens[offset..offset + take],
+                &host_rows[offset..offset + take],
+                start_position + offset,
+                false,
+                &mut [],
+                Some(&mut hidden_out[offset * hidden..(offset + take) * hidden]),
             )?;
             offset += take;
         }
@@ -144,13 +212,21 @@ impl RealForwardRunner {
     fn prefill_micro_batch_qwen_moe(
         &mut self,
         tokens: &[i32],
+        host_rows: &[Option<&[u8]>],
         start_position: usize,
         want_head: bool,
         logits: &mut [LogitValue],
+        hidden_rows: Option<&mut [f16]>,
     ) -> Result<(), RealForwardError> {
         let started = Instant::now();
-        let result =
-            self.prefill_micro_batch_qwen_moe_inner(tokens, start_position, want_head, logits);
+        let result = self.prefill_micro_batch_qwen_moe_inner(
+            tokens,
+            host_rows,
+            start_position,
+            want_head,
+            logits,
+            hidden_rows,
+        );
         // One forward pass per TOKEN, matching every other phase divisor in
         // this port (`crates/runtime/CLAUDE.md` Gotcha 6).
         self.phases.calls += tokens.len() as u64;
@@ -161,9 +237,11 @@ impl RealForwardRunner {
     fn prefill_micro_batch_qwen_moe_inner(
         &mut self,
         tokens: &[i32],
+        host_rows: &[Option<&[u8]>],
         start_position: usize,
         want_head: bool,
         logits: &mut [LogitValue],
+        hidden_rows: Option<&mut [f16]>,
     ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
         let hidden = arch.hidden_size as usize;
@@ -212,11 +290,14 @@ impl RealForwardRunner {
         // to every dispatch below. No hadamard arm: a folded install is
         // refused above.
         for (t, &token) in tokens.iter().enumerate() {
-            match self
-                .prompt_vision
-                .as_ref()
-                .and_then(|pv| pv.row_for(start_position + t))
-            {
+            // A host row (headless hidden-row prefill) replaces the lookup
+            // the same way, before the same first commit.
+            let host_row = host_rows.get(t).copied().flatten();
+            match host_row.or_else(|| {
+                self.prompt_vision
+                    .as_ref()
+                    .and_then(|pv| pv.row_for(start_position + t))
+            }) {
                 Some(row) => gpu::write_buffer_bytes(&self.scratch.x, t * hidden * 2, row),
                 None => encode_embed_any(
                     &mut self.context,
@@ -490,6 +571,32 @@ impl RealForwardRunner {
                 context, &pass, weights, index, scratch, qwen, &arch, embed_name, hidden, vocab, m,
             )?;
             pass.relabel("qwen moe final cb (head)");
+        } else if hidden_rows.is_some() {
+            let (context, weights, index, scratch, qwen) = (
+                &mut self.context,
+                &self.weights,
+                &self.index,
+                &self.scratch,
+                self.real_qwen.as_ref().expect("checked above"),
+            );
+            // `produce.rs`'s `hidden_out` final norm, once per row, each
+            // into its own `moe_x` row: the last routed pass that read
+            // `moe_x` retired above.
+            let final_norm = norm_view(weights, index, "language_model.model.norm.weight", hidden)?;
+            for t in 0..m {
+                let off = (t * hidden * 2) as u64;
+                gpu::encode_rms_norm_bf16w(
+                    context,
+                    &pass,
+                    (&scratch.x, off),
+                    final_norm,
+                    (&qwen.moe_x, off),
+                    hidden as u32,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+            }
+            pass.relabel("qwen moe final cb (hidden rows)");
         } else {
             pass.relabel("qwen moe final cb (chunk, no head)");
         }
@@ -504,6 +611,10 @@ impl RealForwardRunner {
             capture.record_pass(last_position, !want_head);
         }
 
+        if let Some(rows) = hidden_rows {
+            let qwen = self.real_qwen.as_ref().expect("checked above");
+            gpu::read_buffer_f16_into(&qwen.moe_x, 0, rows);
+        }
         if !want_head {
             return Ok(());
         }

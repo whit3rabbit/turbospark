@@ -58,6 +58,18 @@ impl RealForwardRunner {
                 "token id {token} outside vocab {vocab}"
             )));
         }
+        // A headless trunk has no head to run, so a logits pass on one is a
+        // caller error rather than a missing-tensor failure halfway through.
+        if self.headless && !self.hidden_out {
+            return Err(RealForwardError::Unsupported(
+                "a headless trunk produces hidden states, not logits".to_string(),
+            ));
+        }
+        if self.host_embed.is_some() && self.prompt_vision.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "a host input row and an image injection map cannot drive one pass".to_string(),
+            ));
+        }
 
         let embed_name = "language_model.model.embed_tokens.weight";
 
@@ -87,11 +99,14 @@ impl RealForwardRunner {
         // both halves -- the blit and the mRoPE angle. Change either here and
         // the driver diverges silently; `vision_chunked_synthetic.rs` is what
         // holds the two together, by requiring byte-identity between them.
-        match self
-            .prompt_vision
-            .as_ref()
-            .and_then(|pv| pv.row_for(position))
-        {
+        // THE HOST INPUT ROW (`HiddenTrunk`), the same host write as the image
+        // blit below and sound for the same reason: it lands in shared
+        // storage before `pass` is committed.
+        match self.host_embed.as_deref().or_else(|| {
+            self.prompt_vision
+                .as_ref()
+                .and_then(|pv| pv.row_for(position))
+        }) {
             Some(row) => gpu::write_buffer_bytes(&self.scratch.x, 0, row),
             None => {
                 // A folded embedding stores its rows in the rotated basis
@@ -426,7 +441,23 @@ impl RealForwardRunner {
 
         // Final norm + head. No softcap: Qwen has none, and the head must
         // hand `selection::select` raw logits either way.
-        if !self.skip_head {
+        // A `hidden_out` pass runs the final norm and stops: the caller reads
+        // `scratch.normed`, and the head GEMV is skipped (a headless trunk
+        // has none).
+        if self.hidden_out {
+            pass.relabel("final cb (hidden out)");
+            let final_norm = norm_view(weights, index, "language_model.model.norm.weight", hidden)?;
+            gpu::encode_rms_norm_bf16w(
+                context,
+                &pass,
+                (&scratch.x, 0),
+                final_norm,
+                (&scratch.normed, 0),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+        } else if !self.skip_head {
             pass.relabel("final cb (head)");
             let final_norm = norm_view(weights, index, "language_model.model.norm.weight", hidden)?;
             gpu::encode_rms_norm_bf16w(
@@ -496,7 +527,7 @@ impl RealForwardRunner {
             capture.record_pass(position, skip_head);
         }
 
-        if self.skip_head {
+        if self.skip_head || self.hidden_out {
             return Ok(());
         }
         if vocab != logits.len() {

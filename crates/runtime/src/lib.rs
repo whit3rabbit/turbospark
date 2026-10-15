@@ -27,6 +27,8 @@ mod producer;
 mod raw_completion;
 mod raw_completion_chunked;
 #[cfg(target_os = "macos")]
+mod hidden_trunk;
+#[cfg(target_os = "macos")]
 mod real_forward;
 #[cfg(target_os = "macos")]
 mod real_forward_api;
@@ -136,6 +138,8 @@ pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
 };
 #[cfg(target_os = "macos")]
+pub use hidden_trunk::{HiddenTrunk, PrefixSnapshot, TrunkRow};
+#[cfg(target_os = "macos")]
 pub use real_forward_init::{resolve_expert_residency, resolve_expert_residency_for_install};
 #[cfg(target_os = "macos")]
 pub use startup::{ExpertPrefetchStats, StartupStats};
@@ -160,6 +164,12 @@ pub use turn_stream::{TurnEvent, TurnSplitter};
 // edge live and documenting the interchange type this crate uses throughout.
 pub use foundation::TokenId;
 
+#[cfg(target_os = "macos")]
+pub mod fish_drama3;
+#[cfg(target_os = "macos")]
+pub mod fish_drama3_codec;
+#[cfg(target_os = "macos")]
+pub mod fish_drama3_tower;
 #[cfg(target_os = "macos")]
 pub mod kokoro;
 #[cfg(target_os = "macos")]

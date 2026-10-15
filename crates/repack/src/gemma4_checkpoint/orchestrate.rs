@@ -335,6 +335,13 @@ pub struct ResidentRead {
 fn int8_force_targets(family: ModelFamily) -> &'static [&'static str] {
     match family {
         ModelFamily::Qwen4Exp => &[".mlp.gate.weight", ".mlp.shared_expert_gate.weight"],
+        // The router only. The qwen flow's router kernel is INT8-only
+        // (`encode_qwen_router` refuses any other dtype), while the shared
+        // gate goes through the any-dtype GEMV. A U32-prepacked router never
+        // reaches this arm (the branch above takes it), so the published
+        // INT4 conversions are unchanged. A raw router (Fish Drama 3's
+        // trunk ships BF16) used to be written raw and refused at open.
+        ModelFamily::QwenGdnMoe => &[".mlp.gate.weight"],
         _ => &[],
     }
 }

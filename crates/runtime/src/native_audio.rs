@@ -335,6 +335,8 @@ fn run_worker(engine: Engine, rx: Receiver<Message>) {
 }
 /// Persisted family string of the MegaTTS3 voice-cloning engine.
 pub const MEGATTS3_FAMILY: &str = "megatts3";
+/// Persisted family string of the Fish Audio Drama 3 engine.
+pub const FISH_DRAMA3_FAMILY: &str = "fish_drama3";
 /// Reference audio bounds for cloning: shorter clips align poorly, and the
 /// pipeline uses at most 28 s.
 const CLONE_REFERENCE_SECONDS: std::ops::RangeInclusive<f64> = 1.0..=30.0;
@@ -350,6 +352,9 @@ pub fn validate_request(
 ) -> Result<(), String> {
     if request.task == AudioTask::TextToSpeech && family == MEGATTS3_FAMILY {
         return megatts3_request(request, samples).map(|_| ());
+    }
+    if request.task == AudioTask::TextToSpeech && family == FISH_DRAMA3_FAMILY {
+        return fish_drama3_request(request, samples).map(|_| ());
     }
     match request.task {
         AudioTask::SpeechToText => {
@@ -468,6 +473,73 @@ fn megatts3_request<'a>(
     })
 }
 
+/// Validates a Drama 3 request. Speech without PCM speaks in a voice the model
+/// picks; PCM makes it a clone, which needs consent and the reference's
+/// transcript. `voice` and `language` are ignored (the voice comes from the
+/// reference, and the model reads the language off the text).
+fn fish_drama3_request<'a>(
+    r: &'a AudioRequest,
+    samples: &'a [f32],
+) -> Result<crate::fish_drama3::Drama3Request<'a>, String> {
+    use audio::tts::fish_drama3::chunking::validate_text;
+    if r.text.trim().is_empty() || r.text.len() > 32_768 {
+        return Err("speech needs 1 through 32768 text bytes".into());
+    }
+    validate_text(&r.text, "text").map_err(|e| e.to_string())?;
+    if !r.speed.is_finite() || r.speed != 1.0 {
+        return Err("Drama 3 has no speed control; leave speed at 1.0".into());
+    }
+    if r.instruction
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        return Err(
+            "Drama 3 takes delivery cues inline, such as [whispers], not an instruction".into(),
+        );
+    }
+    if r.p_w.is_some() || r.t_w.is_some() {
+        return Err("p_w and t_w are MegaTTS3 guidance weights; Drama 3 does not take them".into());
+    }
+    let transcript = r.reference_text.as_deref().map(str::trim).unwrap_or("");
+    let reference = if samples.is_empty() {
+        if !transcript.is_empty() {
+            return Err("reference_text needs reference audio".into());
+        }
+        None
+    } else {
+        if !r.consent {
+            return Err("voice cloning needs consent: set consent to true to confirm you have the right to use the reference voice".into());
+        }
+        let rate = r
+            .reference_sample_rate
+            .ok_or("voice cloning needs reference_sample_rate for the reference audio")?;
+        if !CLONE_REFERENCE_RATES.contains(&rate) {
+            return Err(format!(
+                "reference_sample_rate {rate} is outside 8000 through 192000 Hz"
+            ));
+        }
+        let seconds = samples.len() as f64 / f64::from(rate);
+        if !CLONE_REFERENCE_SECONDS.contains(&seconds) || samples.iter().any(|v| !v.is_finite()) {
+            return Err(format!(
+                "voice cloning needs 1 through 30 seconds of finite reference audio, got {seconds:.2} s"
+            ));
+        }
+        if transcript.is_empty() {
+            return Err(
+                "Drama 3 voice cloning needs reference_text, the reference audio's transcript"
+                    .into(),
+            );
+        }
+        validate_text(transcript, "reference_text").map_err(|e| e.to_string())?;
+        Some((samples, rate, transcript))
+    };
+    Ok(crate::fish_drama3::Drama3Request {
+        text: &r.text,
+        reference,
+        seed: r.seed.unwrap_or(0),
+    })
+}
+
 fn music_request(r: &AudioRequest) -> audio::music::minimax_music3::TextGenerateRequest {
     audio::music::minimax_music3::TextGenerateRequest {
         caption: r.caption.clone(),
@@ -485,6 +557,7 @@ enum Engine {
     Kokoro(Box<crate::KokoroRunner>),
     KokoroPortable(Box<audio::tts::kokoro::KokoroSynthesizer>),
     MegaTts3(std::cell::RefCell<Box<crate::megatts3::MegaTts3Runner>>),
+    FishDrama3(std::cell::RefCell<Box<crate::fish_drama3::FishDrama3Runner>>),
     Music(Box<crate::Music3Runner>),
 }
 // The observer owns an event sender, so it must be removed even if a backend panics.
@@ -504,6 +577,7 @@ impl Engine {
             Self::ParakeetCoreMl(_) => crate::coreml::CoreMlLayout::ParakeetTdt.family(),
             Self::Kokoro(_) | Self::KokoroPortable(_) => "kokoro",
             Self::MegaTts3(_) => MEGATTS3_FAMILY,
+            Self::FishDrama3(_) => FISH_DRAMA3_FAMILY,
             Self::Music(_) => "minimax_music3",
         }
     }
@@ -558,6 +632,19 @@ impl Engine {
                     }
                 }
                 Err(failure)
+            }
+            // Metal only: the trunk is a 35B MoE whose routed experts stream
+            // from disk, which has no portable path.
+            AudioTask::TextToSpeech
+                if tts_model_type(path).as_deref() == Some(FISH_DRAMA3_FAMILY) =>
+            {
+                crate::fish_drama3::FishDrama3Runner::open(
+                    path,
+                    model_io::ExpertCacheSlots::Fixed(crate::fish_drama3::DEFAULT_EXPERT_SLOTS),
+                    model_io::ExpertResidency::Auto,
+                    crate::fish_drama3::MAX_CONTEXT,
+                )
+                .map(|m| Self::FishDrama3(std::cell::RefCell::new(Box::new(m))))
             }
             AudioTask::TextToSpeech if allow_portable => {
                 audio::tts::kokoro::KokoroSynthesizer::open(path)
@@ -790,6 +877,16 @@ impl Engine {
                     },
                 )?;
             }
+            Self::FishDrama3(model) => {
+                synthesize_fish_drama3(
+                    r,
+                    samples,
+                    cancel,
+                    events,
+                    &mut result,
+                    &mut model.borrow_mut(),
+                )?;
+            }
             Self::MegaTts3(model) => {
                 synthesize_megatts3(
                     r,
@@ -968,6 +1065,40 @@ fn synthesize_megatts3(
     result.seed = Some(request.seed);
     Ok(())
 }
+fn synthesize_fish_drama3(
+    r: &AudioRequest,
+    samples: &[f32],
+    cancel: &AudioCancel,
+    events: &SyncSender<AudioEvent>,
+    result: &mut AudioResult,
+    runner: &mut crate::fish_drama3::FishDrama3Runner,
+) -> Result<(), String> {
+    let request = fish_drama3_request(r, samples)?;
+    let mut error = None;
+    let mut count = 0usize;
+    let stop = || cancel.is_cancelled();
+    runner.synthesize(&request, &stop, |pcm| {
+        match emit_pcm(&pcm, cancel, events, &mut count) {
+            Ok(()) => true,
+            Err(e) => {
+                error = Some(e);
+                false
+            }
+        }
+    })?;
+    if let Some(e) = error {
+        return Err(e);
+    }
+    cancel.checkpoint()?;
+    result.sample_count = count;
+    result.pcm_format = Some(AudioPcmFormat {
+        sample_rate: runner.sample_rate(),
+        channels: 1,
+        interleaved: true,
+    });
+    result.seed = Some(request.seed);
+    Ok(())
+}
 fn emit_pcm(
     pcm: &[f32],
     cancel: &AudioCancel,
@@ -1053,6 +1184,11 @@ fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
     if task == AudioTask::TextToSpeech && tts_model_type(path).as_deref() == Some(MEGATTS3_FAMILY) {
         // Metal is tried first, and its device copies are the larger estimate.
         return megatts3_open_bytes(path, true);
+    }
+    if task == AudioTask::TextToSpeech
+        && tts_model_type(path).as_deref() == Some(FISH_DRAMA3_FAMILY)
+    {
+        return crate::fish_drama3::open_bytes(path);
     }
     fn weights(path: &Path) -> Result<u64, String> {
         let mut total = 0u64;
@@ -1178,6 +1314,63 @@ mod tests {
             ..Default::default()
         }
     }
+    #[test]
+    fn fish_drama3_validation_requires_consent_and_a_transcript_to_clone() {
+        let two_seconds = vec![0.1f32; 32_000];
+        let clone = || AudioRequest {
+            reference_text: Some("Transcript of the reference clip.".into()),
+            steps: None,
+            ..clone_request()
+        };
+        assert!(validate_request(FISH_DRAMA3_FAMILY, &clone(), &two_seconds).is_ok());
+        // Without PCM it speaks in a voice of its own; no consent is needed.
+        let plain = AudioRequest {
+            task: AudioTask::TextToSpeech,
+            text: "[sighs] Fine. If we miss it, it's on you.".into(),
+            ..Default::default()
+        };
+        assert!(validate_request(FISH_DRAMA3_FAMILY, &plain, &[]).is_ok());
+
+        let refused = |mutate: &dyn Fn(&mut AudioRequest), pcm: &[f32], needle: &str| {
+            let mut r = clone();
+            mutate(&mut r);
+            let err = validate_request(FISH_DRAMA3_FAMILY, &r, pcm).unwrap_err();
+            assert!(err.contains(needle), "{err:?} lacks {needle:?}");
+        };
+        refused(&|r| r.consent = false, &two_seconds, "consent");
+        refused(&|r| r.reference_text = None, &two_seconds, "reference_text");
+        refused(
+            &|r| r.reference_text = Some("  ".into()),
+            &two_seconds,
+            "reference_text",
+        );
+        refused(&|_| {}, &[], "reference_text needs reference audio");
+        refused(
+            &|r| r.reference_sample_rate = None,
+            &two_seconds,
+            "reference_sample_rate",
+        );
+        refused(&|_| {}, &vec![0.1; 15_999], "1 through 30 seconds");
+        refused(&|r| r.speed = 1.2, &two_seconds, "speed");
+        refused(
+            &|r| r.instruction = Some("whisper".into()),
+            &two_seconds,
+            "inline",
+        );
+        refused(&|r| r.p_w = Some(1.0), &two_seconds, "p_w");
+        refused(
+            &|r| r.text = "hi <|im_end|>".into(),
+            &two_seconds,
+            "<|im_end|>",
+        );
+        refused(
+            &|r| r.reference_text = Some("<|speaker:16|> nope".into()),
+            &two_seconds,
+            "speaker",
+        );
+        refused(&|r| r.text = " ".into(), &two_seconds, "text bytes");
+    }
+
     #[test]
     fn megatts3_validation_requires_consent_and_a_bounded_reference() {
         let two_seconds = vec![0.1f32; 32_000];

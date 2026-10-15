@@ -74,6 +74,12 @@ pub fn evaluate_config(
         warnings: Vec::new(),
     };
 
+    // Before the registry lookup, so the refusal names what the model is
+    // rather than calling a known checkpoint unknown.
+    if let Some(owner) = repack::headless_tts_trunk_owner(&config) {
+        report.refuse(repack::describe_headless_tts_trunk(owner));
+        return Ok(report);
+    }
     let Some(family) = repack::config_json_family(&config) else {
         report.refuse(format!(
             "config.json declares model_type {:?}, which is not in this port's registry \

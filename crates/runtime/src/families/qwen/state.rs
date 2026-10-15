@@ -107,6 +107,7 @@ impl RealQwenState {
         index: &ResidentIndex,
         arch: &ArchConfig,
         hadamard: Option<(&model_io::ManifestHadamard, &[u8])>,
+        headless: bool,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
         // DENSE AND MoE ARE BOTH THIS FLOW. The two are mutually exclusive
@@ -283,12 +284,17 @@ impl RealQwenState {
                 entry(index, &name)?;
             }
         }
-        let head_name = if arch.tie_word_embeddings {
-            "language_model.model.embed_tokens.weight"
-        } else {
-            "language_model.lm_head.weight"
-        };
-        entry(index, head_name)?;
+        // A headless trunk (`model_io::trunk_role`) has no head by design: the
+        // model that owns it applies its own to the final hidden state. Every
+        // other install must carry one. The final norm is required by both.
+        if !headless {
+            let head_name = if arch.tie_word_embeddings {
+                "language_model.model.embed_tokens.weight"
+            } else {
+                "language_model.lm_head.weight"
+            };
+            entry(index, head_name)?;
+        }
         entry(index, "language_model.model.norm.weight")?;
         let _ = weights;
 

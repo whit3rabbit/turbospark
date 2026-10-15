@@ -19,6 +19,7 @@
 
 mod arch_registry;
 pub mod control_vector;
+mod fish_drama3;
 mod gemma4_checkpoint;
 mod gguf_checkpoint;
 mod gguf_config;
@@ -49,9 +50,14 @@ mod synthetic_tensors;
 mod trained_context;
 
 pub use arch_registry::{
-    config_json_family, describe_gguf_architecture, gguf_arch_support, has_foreign_vision_tower,
-    hf_family_for_model_type, planned_gguf_architectures, refuse_foreign_config, ArchSupport,
-    PlannedArch,
+    config_json_family, describe_gguf_architecture, describe_headless_tts_trunk, gguf_arch_support,
+    has_foreign_vision_tower, headless_tts_trunk_owner, hf_family_for_model_type,
+    planned_gguf_architectures, refuse_foreign_config, ArchSupport, PlannedArch,
+};
+pub use fish_drama3::{
+    canonicalize_drama3_header, check_drama3_norm_shift, drama3_trunk_config,
+    write_drama3_side_safetensors, write_fish_drama3_install_streamed, DRAMA3_MODEL_TYPE,
+    DRAMA3_SIDE_FILE, DRAMA3_SIDE_PREFIX, DRAMA3_TRUNK_DIR,
 };
 pub use gemma4_checkpoint::{
     canonicalize_qwen2_header, canonicalize_vision_header, classify_for_family, classify_gemma4,
@@ -141,7 +147,8 @@ pub use synthetic_model::{
 };
 pub use synthetic_muse::{build_synthetic_muse_glimmer_install, tiny_muse_glimmer_arch};
 pub use synthetic_qwen::{
-    build_synthetic_qwen4_exp_decode_install, build_synthetic_qwen4_exp_decode_install_raw_router,
+    build_synthetic_fish_drama3_install, build_synthetic_qwen4_exp_decode_install,
+    build_synthetic_qwen4_exp_decode_install_raw_router,
     build_synthetic_qwen4_exp_decode_install_with_indexer_budget,
     build_synthetic_qwen4_exp_install, build_synthetic_qwen4_exp_install_streamed,
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
@@ -154,10 +161,12 @@ pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_dense_install_with_vision_streamed,
     build_synthetic_qwen_gdn_moe_install, build_synthetic_qwen_gdn_moe_install_with_mtp,
     build_synthetic_qwen_gdn_moe_mxfp4_install, build_synthetic_vision_sidecar,
-    tiny_qwen4_exp_arch, tiny_qwen4_exp_decode_arch, tiny_qwen_gdn_dense_arch,
-    tiny_qwen_gdn_moe_arch, tiny_vision_config, HC_COUNT, HEAD_DIM, NUM_EXPERTS,
-    QWEN4_DECODE_HIDDEN, QWEN4_DECODE_NGRAM_EOS_TOKEN_ID, QWEN4_DECODE_NUM_HEADS,
-    QWEN4_DECODE_NUM_KV_HEADS, QWEN4_DECODE_NUM_LAYERS, QWEN4_DECODE_PLE_LAYER, TOP_K,
+    synthetic_fish_drama3_checkpoint, tiny_qwen4_exp_arch, tiny_qwen4_exp_decode_arch,
+    tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch, tiny_vision_config,
+    write_synthetic_fish_drama3, Drama3NormStorage, SyntheticDrama3, DRAMA3_FIXTURE_LAYERS,
+    HC_COUNT, HEAD_DIM, NUM_EXPERTS, QWEN4_DECODE_HIDDEN, QWEN4_DECODE_NGRAM_EOS_TOKEN_ID,
+    QWEN4_DECODE_NUM_HEADS, QWEN4_DECODE_NUM_KV_HEADS, QWEN4_DECODE_NUM_LAYERS,
+    QWEN4_DECODE_PLE_LAYER, TOP_K,
 };
 pub use synthetic_real::{
     build_synthetic_gemma4_dense_real_install, build_synthetic_gemma4_real_install,

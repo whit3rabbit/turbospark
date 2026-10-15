@@ -3,6 +3,7 @@
 mod dense;
 mod dense_arch;
 mod dense_tensors;
+mod drama3;
 mod moe;
 mod moe_mxfp4;
 mod qwen4;
@@ -18,6 +19,10 @@ pub use dense::{
     build_synthetic_qwen_gdn_dense_install_with_mtp_streamed,
     build_synthetic_qwen_gdn_dense_install_with_vision,
     build_synthetic_qwen_gdn_dense_install_with_vision_streamed, tiny_qwen_gdn_dense_arch,
+};
+pub use drama3::{
+    build_synthetic_fish_drama3_install, synthetic_fish_drama3_checkpoint,
+    write_synthetic_fish_drama3, Drama3NormStorage, SyntheticDrama3, DRAMA3_FIXTURE_LAYERS,
 };
 pub use moe::{
     build_synthetic_qwen_gdn_moe_install, build_synthetic_qwen_gdn_moe_install_with_mtp,

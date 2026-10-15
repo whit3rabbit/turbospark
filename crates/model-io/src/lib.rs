@@ -30,6 +30,7 @@ mod sha256;
 pub mod speech_family;
 pub mod speech_receipt;
 mod steering_set;
+pub mod trunk_role;
 mod vision_sidecar;
 pub mod whisper_config;
 

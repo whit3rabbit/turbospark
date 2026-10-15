@@ -176,6 +176,9 @@ pub(crate) fn stream_mlx(
         .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
     let config: serde_json::Value =
         serde_json::from_str(&config_text).map_err(|e| format!("parsing config.json: {e}"))?;
+    if let Some(owner) = repack::headless_tts_trunk_owner(&config) {
+        return Err(repack::describe_headless_tts_trunk(owner));
+    }
     let family = repack::config_json_family(&config)
         .ok_or_else(|| "config.json declares no model_type this port recognizes".to_string())?;
 

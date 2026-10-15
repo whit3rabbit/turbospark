@@ -360,4 +360,16 @@ pub struct RealForwardRunner {
     /// Everything else, including committing and waiting on the open command
     /// buffer and advancing the KV cache, still runs.
     pub(crate) skip_head: bool,
+    /// One host-supplied input row (`hidden_size` f16 values, little-endian)
+    /// that replaces this pass's embedding lookup. Set per pass by
+    /// [`crate::hidden_trunk::HiddenTrunk`] and cleared after it; `None` for
+    /// every other caller.
+    pub(crate) host_embed: Option<Vec<u8>>,
+    /// Run the final norm and stop there: no head GEMV and no logits
+    /// readback. The caller reads the post-norm hidden state from
+    /// `scratch.normed`. Set per pass by `HiddenTrunk`.
+    pub(crate) hidden_out: bool,
+    /// Opened as a headless trunk (`model_io::trunk_role`): there is no LM
+    /// head, so a pass that is not a `hidden_out` pass is refused.
+    pub(crate) headless: bool,
 }
